@@ -718,22 +718,46 @@ def _build_next_empty_content(
     return "\n".join(lines)
 
 
+# Locale-branched copy for auto-approved instruction documents (group 0099 B0001).
+# The stored document title/body are NOT re-rendered through FE i18n — they are persisted
+# verbatim in the .md and shown as-is — so the only place to honor the selected locale is
+# here, at generation time. The earlier "delegate the locale-specific copy to i18n" design
+# (D0004 §4-4) never materialized (no auto-approved i18n key exists), which left the
+# unmanned continuous chain emitting Korean regardless of the chosen locale. The label
+# itself is already localized by get_type_name; these tables localize the surrounding copy
+# and drop the Korean subject particle for non-ko locales.
+_AUTO_APPROVED_TITLE = {
+    "ko": "{label} 승인",
+    "ja": "{label} 承認",
+    "en": "{label} approved",
+}
+_AUTO_APPROVED_BODY = {
+    "ko": "{label} 가 승인되었습니다.",
+    "ja": "{label} が承認されました。",
+    "en": "{label} has been approved.",
+}
+
+
 def _auto_approved_title(label: str, locale: str) -> str:
     """Title for an auto-approved instruction document (R0001 #2 / 0048 D0004 §4-4).
 
-    Baseline literal template: ``"{label} 승인"``. Korean particle / locale-specific
-    copy finishing is delegated to i18n (D0004 §4-4); the server owns only the
-    deterministic label binding (get_type_name).
+    Locale-branched (ko/ja/en, group 0099 B0001); ``get_type_name`` already localizes the
+    label, this localizes the surrounding copy. Unsupported locales fold to ko.
     """
-    return f"{label} 승인"
+    from modules.flow_gate.template_provision import normalize_locale
+    loc = normalize_locale(locale)
+    return _AUTO_APPROVED_TITLE.get(loc, _AUTO_APPROVED_TITLE["ko"]).format(label=label)
 
 
 def _auto_approved_body(label: str, locale: str) -> str:
     """Body line for an auto-approved instruction document.
 
-    Baseline literal template (R0001 #2): ``"{label} 가 승인되었습니다."``.
+    Locale-branched (ko/ja/en, group 0099 B0001). The Korean subject particle ``가`` is
+    only emitted in the ko branch; non-ko branches use natural copy. Unsupported → ko.
     """
-    return f"{label} 가 승인되었습니다."
+    from modules.flow_gate.template_provision import normalize_locale
+    loc = normalize_locale(locale)
+    return _AUTO_APPROVED_BODY.get(loc, _AUTO_APPROVED_BODY["ko"]).format(label=label)
 
 
 @router.post("/related", status_code=201)
