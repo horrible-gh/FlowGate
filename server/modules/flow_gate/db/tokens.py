@@ -24,8 +24,8 @@ def create(data: dict[str, Any]) -> dict:
         "INSERT INTO tokens "
         "(token_id, hash, pepper_id, project, group_id, doc_ref, "
         "action_scope, issued_to, created_at, expires_at, consumed_at, revoked_at, scratch_dir, "
-        "continuation_target_seq, continuation_review_mode) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "continuation_target_seq, continuation_review_mode, continuation_locale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -36,6 +36,9 @@ def create(data: dict[str, Any]) -> dict:
             # Continuous work (group 0051 / migration 050). NULL/0 for ordinary tokens.
             data.get("continuation_target_seq"),
             1 if data.get("continuation_review_mode") else 0,
+            # Chosen locale carried across the unmanned self-chain (group 0099 / migration
+            # 051). NULL for ordinary + legacy continuation tokens → header/ko fallback.
+            data.get("continuation_locale"),
         ],
     )
     return get_by_id(data["token_id"])  # type: ignore[return-value]

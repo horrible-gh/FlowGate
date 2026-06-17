@@ -138,6 +138,7 @@ def issue(
     issued_to: str,
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
+    continuation_locale: Optional[str] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -182,6 +183,9 @@ def issue(
         "scratch_dir": to_storage_relative(scratch_path, project),
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
+        # Chosen locale persisted so the unmanned self-chain honors it on every hop
+        # without depending on a per-request x-locale header (group 0099 B0001).
+        "continuation_locale": continuation_locale,
     })
 
     db_events.create({
@@ -207,6 +211,7 @@ def issue(
         "group_id": group_id,
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
+        "continuation_locale": continuation_locale,
     }
 
 

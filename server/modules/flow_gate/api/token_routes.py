@@ -123,6 +123,11 @@ def issue_token(
     else:
         resolved_action_scope = _determine_action_scope(body.doc_ref)
 
+    # The dialog request carries the chosen locale in x-locale; persist it on a continuation
+    # token so the unmanned self-chain honors it on every hop (group 0099 B0001).
+    req_locale = request.headers.get("x-locale") or "ko"
+    is_continuous = body.continuation_target_seq is not None
+
     # Step 7: issue token
     result = token_service.issue(
         project=body.project,
@@ -132,12 +137,12 @@ def issue_token(
         issued_to=user_id,
         continuation_target_seq=body.continuation_target_seq,
         continuation_review_mode=body.continuation_review_mode,
+        continuation_locale=req_locale if is_continuous else None,
     )
 
     # Step 8: build M020 mention (when doc_ref + sequence head exist)
     # Continuous work (group 0086): a continuation token swaps the mention's Q-guard for the
     # delegation/unmanned/no-stop/autonomous block (mention_service continuous branch).
-    is_continuous = body.continuation_target_seq is not None
     mention = _build_mention_for_token(
         doc_ref=body.doc_ref,
         group_id=group_id,
@@ -147,7 +152,7 @@ def issue_token(
         request=request,
         ref_doc_ids=body.selected_docs,
         action_scope=resolved_action_scope,
-        locale=request.headers.get("x-locale") or "ko",
+        locale=req_locale,
         continuous=is_continuous,
     )
 
