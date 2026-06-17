@@ -691,7 +691,11 @@ def _continuation_self_chain(
     # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).
     from modules.flow_gate.services import workflow_decision_service
     api_base_url = _inbox_api_base(request)
-    locale = request.headers.get("x-locale") or "ko"
+    # Prefer the locale persisted on the continuation token (group 0099 B0001): the unmanned
+    # AI worker's inbox POST carries no x-locale header, so relying on the header alone always
+    # folded to 'ko' and discarded the dialog-chosen locale on every hop. Legacy tokens
+    # (NULL continuation_locale) fall back to the header / 'ko' — prior behavior preserved.
+    locale = token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
     try:
         adv = workflow_decision_service.advance_workflow(
             doc_id=spine_doc_ref,

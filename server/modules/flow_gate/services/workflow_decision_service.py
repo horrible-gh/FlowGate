@@ -364,6 +364,9 @@ def advance_workflow(
         issued_to=issued_to,
         continuation_target_seq=continuation_target_seq if continuous else None,
         continuation_review_mode=bool(continuous and continuation_review_mode),
+        # Persist the chosen locale on the continuation token so the unmanned self-chain
+        # honors it on every hop (group 0099 B0001). Ordinary tokens leave it NULL.
+        continuation_locale=locale if continuous else None,
     )
     raw_token: str = issue_result["raw_token"]
     scratch_dir: str = issue_result["scratch_dir"]

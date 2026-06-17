@@ -146,7 +146,6 @@ const STEP_ICON: Record<StepVisual, string> = {
 function buildStepStates(
   workflowSteps: string[],
   headType: string | null,
-  headStatus: string | null,
   headDocReviewStatus: string | null,
   allDone = false,
   providedHeadIndex: number | null = null,
@@ -224,9 +223,9 @@ export function resolveWorkflowViewState(input: WorkflowViewInput): WorkflowView
   const headStatus = input.headStatus ?? null
   const headDocReviewStatus = input.headDocReviewStatus ?? null
 
-  const normalSS = buildStepStates(input.workflowSteps, headType, headStatus, headDocReviewStatus, false, input.headIndex ?? null)
-  const allFutureSS = buildStepStates(input.workflowSteps, null, null, null)
-  const allDoneSS = buildStepStates(input.workflowSteps, null, null, null, true)
+  const normalSS = buildStepStates(input.workflowSteps, headType, headDocReviewStatus, false, input.headIndex ?? null)
+  const allFutureSS = buildStepStates(input.workflowSteps, null, null)
+  const allDoneSS = buildStepStates(input.workflowSteps, null, null, true)
 
   if (!tabTypeCode) return noAction('review', null, { stepStates: [], nextStepIndex: null })
 
