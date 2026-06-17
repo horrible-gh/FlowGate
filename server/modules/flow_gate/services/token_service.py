@@ -33,18 +33,45 @@ TOKEN_TTL_HOURS = 24
 
 # ── Internal helpers ─────────────────────────────────────────────────────────────────
 
+def _pepper_env(name: str) -> str:
+    """Resolve a pepper env var, preferring the real environment.
+
+    Real OS env vars (and tests that set os.environ directly) take priority.
+    Falls back to the pydantic `settings` object, because pydantic-settings loads
+    .env into `settings` only — it does NOT export those values to os.environ, so
+    pepper values supplied via .env are invisible to os.environ.get() alone.
+    """
+    value = os.environ.get(name)
+    if not value:
+        try:
+            from config import settings
+            value = getattr(settings, name, None)
+            if value is None:
+                # pydantic matches .env vars case-insensitively and stores them on
+                # uppercase fields; the pepper id (e.g. ACTIVE_ID="v1") may differ
+                # in case from the field suffix ("V1"). Mirror that tolerance here.
+                lname = name.lower()
+                for fname in getattr(settings, "model_fields", {}):
+                    if fname.lower() == lname:
+                        value = getattr(settings, fname, None)
+                        break
+        except Exception:
+            value = None
+    return (value or "").strip()
+
+
 def _active_pepper() -> tuple[str, str]:
     """Return (pepper_id, pepper_value).
 
     Reads the active pepper id from FLOWGATE_TOKEN_PEPPER_ACTIVE_ID,
     and the actual value from FLOWGATE_TOKEN_PEPPER_<id>.
     """
-    active_id = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", "").strip()
+    active_id = _pepper_env("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
     if not active_id:
         raise RuntimeError(
             "FLOWGATE_TOKEN_PEPPER_ACTIVE_ID environment variable is not set."
         )
-    value = os.environ.get(f"FLOWGATE_TOKEN_PEPPER_{active_id}", "").strip()
+    value = _pepper_env(f"FLOWGATE_TOKEN_PEPPER_{active_id}")
     if not value:
         raise RuntimeError(
             f"FLOWGATE_TOKEN_PEPPER_{active_id} environment variable is not set."
@@ -54,7 +81,7 @@ def _active_pepper() -> tuple[str, str]:
 
 def _pepper_by_id(pepper_id: str) -> str:
     """Return the pepper value for pepper_id. For supporting old peppers during verification."""
-    value = os.environ.get(f"FLOWGATE_TOKEN_PEPPER_{pepper_id}", "").strip()
+    value = _pepper_env(f"FLOWGATE_TOKEN_PEPPER_{pepper_id}")
     if not value:
         raise RuntimeError(
             f"FLOWGATE_TOKEN_PEPPER_{pepper_id} environment variable is not set."
