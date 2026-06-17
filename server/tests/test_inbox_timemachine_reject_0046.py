@@ -335,3 +335,66 @@ def test_normal_reject_rework_transitions_and_registers(tmp_path):
     # register_workflow_result ran (head matched) → the N slot now points at the resubmit.
     refreshed = db_wfseq.get_item_by_result_doc_id(n_doc)
     assert refreshed is not None and refreshed["type"] == "N"
+
+
+def test_reopen_deletes_ac_after_releasing_workflow_event_fk():
+    """AC rejection reopens the workflow and deletes the file-less AC document.
+
+    PostgreSQL enforces workflow_events.document_id -> documents.id, so the low-level
+    delete path must release that FK first. SQLite catches the same shape here with
+    foreign_keys=ON.
+    """
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db.connection import get_store, now_iso
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    store = get_store()
+    group_id = f"{PROJECT_ID}-__ALL__-0048"
+    db_groups.create({
+        "group_id": group_id,
+        "project_id": PROJECT_ID,
+        "module": "__ALL__",
+        "title": "B0046 AC reopen FK",
+    })
+    r_doc = f"{group_id}-R0048"
+    n_doc = f"{group_id}-N0048"
+    ac_doc = f"{group_id}-AC0048"
+
+    db_docs.create({
+        "doc_id": r_doc, "project_id": PROJECT_ID, "type_code": "R", "seq": 1,
+        "title": "Root3", "group_id": group_id, "module": "__ALL__", "owner_id": USER_ID,
+    })
+    db_docs.update(r_doc, {"doc_review_status": "wf_done"})
+    db_docs.create({
+        "doc_id": n_doc, "project_id": PROJECT_ID, "type_code": "N", "seq": 2,
+        "title": "Rollback target", "group_id": group_id, "module": "__ALL__", "owner_id": USER_ID,
+    })
+    db_docs.update(n_doc, {"doc_review_status": "approved"})
+    db_docs.create({
+        "doc_id": ac_doc, "project_id": PROJECT_ID, "type_code": "AC", "seq": 3,
+        "title": "Final Approval", "group_id": group_id, "module": "__ALL__", "owner_id": USER_ID,
+    })
+    ac = db_docs.get_by_id(ac_doc)
+    store._execute(
+        "INSERT INTO workflow_events "
+        "(event_type, project_id, group_id, document_id, actor_user_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ["ac_reopen_fk_test", PROJECT_ID, group_id, ac["id"], USER_ID, now_iso()],
+    )
+
+    result = doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ac_doc, target_seq=2),
+        {"user_id": USER_ID},
+    )
+
+    assert result["ok"] is True
+    assert n_doc in result["reopened"]
+    assert db_docs.get_by_id(ac_doc) is None
+    assert db_docs.get_by_id(r_doc)["doc_review_status"] == "wf_in_progress"
+    assert db_docs.get_by_id(n_doc)["doc_review_status"] == "pending_review"
+    event = store._fetch_one(
+        "SELECT document_id FROM workflow_events WHERE event_type = ?",
+        ["ac_reopen_fk_test"],
+    )
+    assert event["document_id"] is None

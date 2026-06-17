@@ -99,7 +99,20 @@ def update(doc_id: str, updates: dict[str, Any]) -> Optional[dict]:
 
 
 def delete(doc_id: str) -> None:
-    get_store()._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
+    store = get_store()
+    doc = get_by_id(doc_id)
+    if doc is not None:
+        # Preserve workflow history while releasing the FK to documents.id. This
+        # mirrors document_service.delete_document and protects internal cleanup
+        # paths that intentionally call the low-level delete helper.
+        try:
+            store._execute(
+                "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
+                [doc["id"]],
+            )
+        except Exception:
+            pass
+    store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
 
 
 def fetch_recent_group_docs(
