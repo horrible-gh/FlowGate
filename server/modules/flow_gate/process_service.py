@@ -5107,11 +5107,34 @@ def get_tvr_detail(tvr_doc_id: str) -> dict | None:
 
 # ── Tree API queries ──────────────────────────────────────────────────────────
 
+_FILE_TREE_NATURAL_RE = re.compile(r"(\d+)")
+
+
+def _file_tree_sort_key(name: str, is_dir: bool) -> tuple:
+    """Sort key for file-tree entries (R0003 fix).
+
+    Folders are grouped before files (folders-first convention), and within
+    each group entries are ordered case-insensitively with numeric-aware
+    ("natural") comparison so that, e.g., ``file2`` precedes ``file10`` and
+    ``Zebra`` is not forced ahead of ``apple``. This replaces the previous bare
+    ``sorted(os.listdir(...))`` which interleaved folders and files in raw
+    Unicode codepoint order — causing numeric/uppercase-named files to float
+    above lowercase-named folders.
+    """
+    parts = _FILE_TREE_NATURAL_RE.split(name.lower())
+    # re.split with a capturing group yields text at even indices and digit
+    # runs at odd indices; cast digit runs to int for natural ordering.
+    natural = [int(part) if i % 2 else part for i, part in enumerate(parts)]
+    return (0 if is_dir else 1, natural)
+
+
 def get_file_tree(project_id: str) -> dict:
     """Return the project's file tree.
 
     Recursively scan the src/{project_name}/{branch} path.
     Return an empty node list when the directory does not exist.
+    Entries are ordered folders-first, then by natural case-insensitive name
+    (see :func:`_file_tree_sort_key`).
     """
     from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
@@ -5134,19 +5157,26 @@ def get_file_tree(project_id: str) -> dict:
     def walk_directory(path: str, parent_id: str | None = None) -> None:
         nonlocal node_id
         try:
-            entries = sorted(os.listdir(path))
+            raw_entries = os.listdir(path)
         except (OSError, PermissionError):
             return
 
-        for entry in entries:
-            full_path = os.path.join(path, entry)
+        visible: list[tuple[str, str, bool]] = []
+        for entry in raw_entries:
             # Do not expose DB files or hidden items in the tree
             if entry.startswith(".") or entry.lower().endswith(".db"):
                 continue
+            full_path = os.path.join(path, entry)
+            visible.append((entry, full_path, os.path.isdir(full_path)))
+
+        # Folders-first + natural, case-insensitive ordering (R0003).
+        visible.sort(key=lambda item: _file_tree_sort_key(item[0], item[2]))
+
+        for entry, full_path, is_dir in visible:
             node_id += 1
             current_id = str(node_id)
 
-            if os.path.isdir(full_path):
+            if is_dir:
                 node: dict[str, Any] = {
                     "id": current_id,
                     "parent_id": parent_id,
