@@ -471,6 +471,36 @@ def _parse_doc_workflow(doc: dict) -> dict:
         except Exception:
             pass
 
+    def _effective_head_from_seq_items(items: list[dict]) -> dict | None:
+        review_by_doc_id = {
+            c.get("doc_id"): c.get("doc_review_status")
+            for c in candidates
+            if c.get("doc_id")
+        }
+
+        linked: list[tuple[dict, int]] = []
+        pending: list[tuple[dict, int]] = []
+        for index, item in enumerate(items):
+            item_type = item.get("type")
+            result_doc_id = item.get("result_doc_id")
+            if result_doc_id:
+                result_review = item.get("result_doc_review_status")
+                if result_review is None:
+                    result_review = review_by_doc_id.get(result_doc_id)
+                if item_type not in NON_HEAD_TYPES and result_review not in APPROVED_STATUSES:
+                    linked.append((item, index))
+            elif item_type not in NON_HEAD_TYPES:
+                pending.append((item, index))
+
+        sort_key = lambda pair: (pair[0].get("sort_order", pair[1]), pair[1])
+        if linked:
+            linked.sort(key=sort_key)
+            return linked[0][0]
+        if pending:
+            pending.sort(key=sort_key)
+            return pending[0][0]
+        return None
+
     # Premature-AC guard: an already-opened AC (final-approval) document lingers
     # as an in_progress group doc after new pending steps are inserted before it
     # (sequence edit). It must NOT win head resolution while earlier actionable
@@ -484,7 +514,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
         and group_head.get("type_code") == "AC"
         and _seq_found
     ):
-        _eff = _db_wfseq.get_effective_head(_seq["id"])
+        _eff = _effective_head_from_seq_items(seq_items)
         if _eff and _eff.get("type") not in (None, "AC"):
             group_head = None
 
@@ -504,7 +534,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
             # NOT by matching document TYPE — type matching collapses repeated types
             # (e.g. M appearing twice) to one and skips the later occurrence, which
             # made the head disagree with create_next_empty for such workflows.
-            eff_head = _db_wfseq.get_effective_head(_seq["id"]) if _seq else None
+            eff_head = _effective_head_from_seq_items(seq_items)
             head_type = eff_head.get("type") if eff_head else None
             if head_type is not None:
                 out["workflow_head_status"] = "pending"
@@ -521,8 +551,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 if root_done:
                     out["workflow_head_status"] = "done"
                 else:
-                    out["workflow_head_type"] = "AC"
-                    out["workflow_head_status"] = "pending"
+                    out["workflow_head_status"] = "done"
         else:
             out["workflow_head_status"] = "done"
 
@@ -539,20 +568,20 @@ def _parse_doc_workflow(doc: dict) -> dict:
         eff_head_type = out.get("workflow_head_type")
         head_doc_id = out.get("workflow_head_doc_id")
         head_idx = None
-        if eff_head_type == "AC":
-            head_idx = len([it for it in seq_items if it.get("type")])
-        elif head_doc_id:
+        if head_doc_id:
             # in-progress existing doc → the slot it is registered to
             for i, item in enumerate(seq_items):
                 if item.get("result_doc_id") == head_doc_id:
                     head_idx = i
                     break
-        elif eff_head_type:
+        if head_idx is None and eff_head_type:
             # pending step → first not-yet-realized slot of this type
             for i, item in enumerate(seq_items):
                 if item.get("type") == eff_head_type and not item.get("result_doc_id"):
                     head_idx = i
                     break
+        if eff_head_type == "AC" and head_idx is None:
+            head_idx = len([it for it in seq_items if it.get("type")])
         out["workflow_head_index"] = head_idx
         # Resolve the VIEWED doc's own slot index (workflow_self_index) by slot
         # identity, so the DocInfoPanel "next" box can find the step that follows
@@ -566,13 +595,8 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 self_idx = i
                 break
         out["workflow_self_index"] = self_idx
-        # next_step_exists = there is a pending step (the head) to advance to.
-        # AC (final approval) is a synthetic head outside seq_items, so treat it
-        # as an advanceable step explicitly.
-        if eff_head_type == "AC":
-            out["next_step_exists"] = True
-        else:
-            out["next_step_exists"] = head_idx is not None
+        step_count = len([it for it in seq_items if it.get("type")])
+        out["next_step_exists"] = head_idx is not None and head_idx < step_count - 1
 
     return out
 

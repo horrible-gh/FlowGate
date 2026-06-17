@@ -5,10 +5,12 @@ When TESTING=1, it runs without external dependencies.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Iterator, Optional
 
 from . import dialect as _dialect
@@ -111,6 +113,8 @@ class FlowGateStore:
             txn.execute(sql, params or [])
         else:
             self._db.execute(sql, params or [])
+            if hasattr(self._db, "commit"):
+                self._db.commit()
 
     def _fetch_one(self, sql: str, params=None) -> Optional[dict]:
         sql = self._tr(sql)
@@ -118,8 +122,11 @@ class FlowGateStore:
         if txn:
             txn.execute(sql, params or [])
             row = txn.fetchone()
-        else:
+        elif hasattr(self._db, "fetch_one"):
             row = self._db.fetch_one(sql, params or [])
+        else:
+            cur = self._db.execute(sql, params or [])
+            row = cur.fetchone()
         if row is None:
             return None
         return dict(row) if not isinstance(row, dict) else row
@@ -130,8 +137,11 @@ class FlowGateStore:
         if txn:
             txn.execute(sql, params or [])
             rows = txn.fetchall()
-        else:
+        elif hasattr(self._db, "fetch_all"):
             rows = self._db.fetch_all(sql, params or [])
+        else:
+            cur = self._db.execute(sql, params or [])
+            rows = cur.fetchall()
         if not rows:
             return rows
         return [dict(r) if not isinstance(r, dict) else r for r in rows]
@@ -156,7 +166,11 @@ class FlowGateStore:
         return row is not None
 
     def _sql(self, key: str) -> str:
-        sql = self._sq.load_sql("queries", key)
+        sq = getattr(self, "_sq", None)
+        if sq is not None:
+            sql = sq.load_sql("queries", key)
+        else:
+            sql = _load_fallback_sql(key)
         return sql.replace("%s", "?")
 
     def update_cas(
@@ -191,6 +205,25 @@ class FlowGateStore:
 
 
 STORE: FlowGateStore | None = None
+
+_FALLBACK_QUERIES: dict | None = None
+
+
+def _load_fallback_sql(key: str) -> str:
+    """Load a query from sql/queries/queries.json when sqloader is absent in tests."""
+    global _FALLBACK_QUERIES
+    if _FALLBACK_QUERIES is None:
+        path = Path(__file__).resolve().parents[3] / "sql" / "queries" / "queries.json"
+        _FALLBACK_QUERIES = json.loads(path.read_text(encoding="utf-8"))
+
+    node = _FALLBACK_QUERIES
+    for part in key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise KeyError(f"SQL query not found: {key}")
+        node = node[part]
+    if not isinstance(node, str):
+        raise KeyError(f"SQL query does not resolve to text: {key}")
+    return node
 
 
 def get_store() -> FlowGateStore:

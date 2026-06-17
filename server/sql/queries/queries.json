@@ -121,6 +121,9 @@
         "get_answers_by_author": "SELECT * FROM answers WHERE author_id = ? ORDER BY created_at DESC",
         "mark_answer_accepted": "UPDATE answers SET is_accepted = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
     },
+    "workflow_sequence_items": {
+        "get_pending_head_by_group": "SELECT wsi.*, ws.id AS seq_id, ws.doc_id AS parent_doc_id, d_result.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi JOIN workflow_sequences ws ON wsi.sequence_id = ws.id JOIN documents d ON ws.doc_id = d.doc_id LEFT JOIN documents d_result ON wsi.result_doc_id = d_result.doc_id WHERE d.group_id = ? AND d.project_id = ? AND wsi.result_doc_id IS NULL ORDER BY wsi.sort_order ASC LIMIT 1"
+    },
     "workflow_sequences": {
         "insert_sequence": "INSERT INTO workflow_sequences (doc_id, created_at, updated_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         "get_sequence_by_doc_id": "SELECT * FROM workflow_sequences WHERE doc_id = ?",

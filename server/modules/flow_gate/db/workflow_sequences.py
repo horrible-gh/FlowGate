@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .connection import get_store
+from .connection import FlowGateStore, get_store
+
+
+def _sql(store, key: str) -> str:
+    """Resolve registered SQL for stores that omit _sql in focused tests."""
+    if hasattr(store, "_sql"):
+        return store._sql(key)
+    return FlowGateStore._sql(store, key)
 
 
 # ── Sequence header ───────────────────────────────────────────────────────────
@@ -15,21 +22,21 @@ from .connection import get_store
 def get_sequence_by_doc_id(doc_id: str) -> Optional[dict]:
     """Return the workflow_sequences row by doc_id."""
     store = get_store()
-    sql = store._sql("workflow_sequences.get_sequence_by_doc_id")
+    sql = _sql(store, "workflow_sequences.get_sequence_by_doc_id")
     return store._fetch_one(sql, [doc_id])
 
 
 def get_sequence_by_id(seq_id: int) -> Optional[dict]:
     """Return the workflow_sequences row by PK(id)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.get_sequence_by_id")
+    sql = _sql(store, "workflow_sequences.get_sequence_by_id")
     return store._fetch_one(sql, [seq_id])
 
 
 def insert_sequence(doc_id: str) -> None:
     """Insert into workflow_sequences (initial one-time save)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.insert_sequence")
+    sql = _sql(store, "workflow_sequences.insert_sequence")
     store._execute(sql, [doc_id])
 
 
@@ -38,7 +45,7 @@ def insert_sequence(doc_id: str) -> None:
 def get_sequence_items(sequence_id: int) -> list[dict]:
     """Return all sequence items (sort_order ASC)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.get_sequence_items")
+    sql = _sql(store, "workflow_sequences.get_sequence_items")
     return store._fetch_all(sql, [sequence_id])
 
 
@@ -51,7 +58,7 @@ def get_effective_head(sequence_id: int) -> Optional[dict]:
       2. Otherwise, return the first slot whose result_doc_id is still NULL
     """
     store = get_store()
-    sql = store._sql("workflow_sequences.get_effective_head")
+    sql = _sql(store, "workflow_sequences.get_effective_head")
     return store._fetch_one(sql, [sequence_id])
 
 
@@ -66,7 +73,7 @@ def get_in_progress_head_by_group(group_id: str, project_id: str) -> Optional[di
     worker inbox registration when ``result_doc_id`` is still NULL.
     """
     store = get_store()
-    sql = store._sql("workflow_sequences.get_in_progress_head_by_group")
+    sql = _sql(store, "workflow_sequences.get_in_progress_head_by_group")
     return store._fetch_one(sql, [group_id, project_id])
 
 
@@ -78,21 +85,21 @@ def get_pending_head_by_group(group_id: str, project_id: str) -> Optional[dict]:
     registration) and slots whose result document is not yet approved.
     """
     store = get_store()
-    sql = store._sql("workflow_sequences.get_pending_head_by_group")
+    sql = _sql(store, "workflow_sequences.get_pending_head_by_group")
     return store._fetch_one(sql, [group_id, project_id])
 
 
 def get_sequence_head_pending(sequence_id: int) -> Optional[dict]:
     """Return the first pending item in the sequence (for looking up the next head after AC)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.get_sequence_head_pending")
+    sql = _sql(store, "workflow_sequences.get_sequence_head_pending")
     return store._fetch_one(sql, [sequence_id])
 
 
 def mark_sequence_done(seq_id: int, done_at: str) -> None:
     """Mark the sequence as completed — update head_advanced_at (called when the final item reaches AC)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.advance_head")
+    sql = _sql(store, "workflow_sequences.advance_head")
     store._execute(sql, [done_at, seq_id])
 
 
@@ -106,21 +113,21 @@ def insert_sequence_item(
 ) -> None:
     """Insert a sequence item."""
     store = get_store()
-    sql = store._sql("workflow_sequences.insert_sequence_item")
+    sql = _sql(store, "workflow_sequences.insert_sequence_item")
     store._execute(sql, [sequence_id, item_seq, type_, label, doc_class, sort_order])
 
 
 def delete_pending_items(sequence_id: int) -> None:
     """Delete all items in PENDING status (for edit mode)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.delete_pending_items")
+    sql = _sql(store, "workflow_sequences.delete_pending_items")
     store._execute(sql, [sequence_id])
 
 
 def get_max_item_seq(sequence_id: int) -> int:
     """Return the maximum item_seq in the sequence (0 = no items). Used to avoid conflicts during editing."""
     store = get_store()
-    sql = store._sql("workflow_sequences.get_max_item_seq")
+    sql = _sql(store, "workflow_sequences.get_max_item_seq")
     row = store._fetch_one(sql, [sequence_id])
     return row["max_seq"] if row else 0
 
@@ -133,7 +140,7 @@ def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
     DB004 §3.1: uses the idx_wfseq_items_result_doc index.
     """
     store = get_store()
-    sql = store._sql("workflow_sequences.get_sequence_item_by_result_doc_id")
+    sql = _sql(store, "workflow_sequences.get_sequence_item_by_result_doc_id")
     return store._fetch_one(sql, [result_doc_id])
 
 
@@ -159,7 +166,7 @@ def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
 def set_item_result_doc_id(item_id: int, result_doc_id: Optional[str]) -> None:
     """Set result_doc_id on the sequence item (register / clear a result document)."""
     store = get_store()
-    sql = store._sql("workflow_sequences.set_item_result_doc_id")
+    sql = _sql(store, "workflow_sequences.set_item_result_doc_id")
     store._execute(sql, [result_doc_id, item_id])
 
 
