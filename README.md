@@ -21,6 +21,10 @@ A typed document pipeline that makes AI agents **prove** their work before it co
 
 ![FlowGate dashboard](assets/images/flowgate-dashboard-v0.1.png)
 
+*Register a requirement → kick off a continuous run → watch documents advance → approve at the gate.*
+
+![FlowGate demo](assets/images/flowgate-demo.gif)
+
 </div>
 
 ---
@@ -66,16 +70,6 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 - **Mentions & handoffs** — generated, copy-ready mention blocks carry the exact context (references, predecessors) the next worker needs.
 - **Continuous (unmanned) work** — a scoped continuation token lets an agent run a self-chaining sequence: the server auto-advances through the workflow toward a target stage, optionally pausing for human Q&A in review mode, so a long task can run unattended without dropping its gates.
 - **Conversation documents** — a dedicated chat-style document type (`CH`) for back-and-forth that doesn't fit the requirement → task → report spine.
-
-### See it in action
-
-<div align="center">
-
-*Register a requirement → kick off a continuous run → watch documents advance → approve at the gate.*
-
-![FlowGate demo](assets/images/flowgate-demo.gif)
-
-</div>
 
 ---
 
