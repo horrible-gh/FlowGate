@@ -13,6 +13,21 @@
 
 ---
 
+## Try it (Docker)
+
+```bash
+git clone https://github.com/horrible-gh/FlowGate.git
+cd FlowGate
+docker compose up -d --build
+docker compose exec flowgate python create_dev_user.py \
+  --username admin --email admin@flowgate.local --password 'ChangeMe!' --admin
+# → open http://localhost:8089/flowgate  and log in as admin
+```
+
+> That's the fastest taste. The full Quick start — local dev with auto-reload, plus MySQL/PostgreSQL — is [further down](#quick-start-local-sqlite).
+
+---
+
 ## Why this exists
 
 Hand a coding task to an autonomous AI agent and you eventually hit the same wall: **it tells you it's done when it isn't.** The tests "pass," the bug is "fixed," the feature is "fully implemented" — and none of it is true. The agent isn't lying maliciously; it just has no structural reason to be accountable. There's no gate between *"I claim I did X"* and *"X is accepted."*
@@ -142,7 +157,7 @@ FlowGate/
 
 ## Status
 
-FlowGate is a **working system**, not a prototype — it runs the document pipeline that drives its own development. The backend, auth, workflow engine, multi-database support, and remote API are production-grade; the frontend's conversation and review-UI polish is the area under active iteration.
+FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development. The backend, auth, workflow engine, multi-database support, and remote API are the solid, well-tested core; the frontend's conversation and review-UI polish is the area under active iteration.
 
 Recently landed: full **multi-database** migration sets (MySQL / PostgreSQL alongside SQLite) plus a runtime dialect-translation layer · **continuous (unmanned) work** chains · a notification feed · conversation documents · and a cleaned-up router layout (stray test files moved out of `routers/`).
 
