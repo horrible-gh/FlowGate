@@ -75,6 +75,26 @@ def _rewrite_now(sql: str, strftime_repl: str, datetime_repl: str) -> str:
     return sql
 
 
+# --- SQLite-only last-inserted-id retrieval (group 0088) ---------------------
+# Call sites recover an auto-increment PK right after INSERT with
+#   SELECT last_insert_rowid()
+# inside the same transaction connection. SQLite executes it natively (translate
+# is a no-op there); MySQL/PostgreSQL have no such function and raise
+# UndefinedFunction. Rewrite to the dialect-native session-scoped equivalent:
+#   PostgreSQL: lastval()        — last sequence value obtained in this session
+#   MySQL:      LAST_INSERT_ID() — last AUTO_INCREMENT value in this connection
+# Both are correct only when read on the same connection as the INSERT, which the
+# call sites guarantee via store.transaction() (see messages.create docstring).
+_LAST_INSERT_ROWID_RE = re.compile(r"last_insert_rowid\s*\(\s*\)", re.IGNORECASE)
+_PG_LAST_INSERT_ID = "lastval()"
+_MY_LAST_INSERT_ID = "LAST_INSERT_ID()"
+
+
+def _rewrite_last_insert_id(sql: str, repl: str) -> str:
+    """Replace SQLite last_insert_rowid() with the dialect-native equivalent."""
+    return _LAST_INSERT_ROWID_RE.sub(lambda _m: repl, sql)
+
+
 def _convert_placeholders(sql: str) -> str:
     """Replace ``?`` with ``%s`` outside of single-quoted string literals.
 
@@ -115,6 +135,7 @@ def _insert_target(sql: str) -> str | None:
 
 def _to_mysql(sql: str) -> str:
     sql = _rewrite_now(sql, _MY_STRFTIME, _MY_DATETIME)
+    sql = _rewrite_last_insert_id(sql, _MY_LAST_INSERT_ID)
     # INSERT OR REPLACE/IGNORE → MySQL prefixes (defensive; call sites use ON CONFLICT).
     sql = re.sub(r"\binsert\s+or\s+replace\s+into\b", "REPLACE INTO", sql, flags=re.IGNORECASE)
     sql = re.sub(r"\binsert\s+or\s+ignore\s+into\b", "INSERT IGNORE INTO", sql, flags=re.IGNORECASE)
@@ -158,6 +179,7 @@ def _to_mysql(sql: str) -> str:
 
 def _to_postgres(sql: str) -> str:
     sql = _rewrite_now(sql, _PG_STRFTIME, _PG_DATETIME)
+    sql = _rewrite_last_insert_id(sql, _PG_LAST_INSERT_ID)
     # ON CONFLICT / excluded are PostgreSQL-native; only handle SQLite-only prefixes.
     if re.search(r"\binsert\s+or\s+ignore\s+into\b", sql, re.IGNORECASE):
         sql = re.sub(r"\binsert\s+or\s+ignore\s+into\b", "INSERT INTO", sql, flags=re.IGNORECASE)
