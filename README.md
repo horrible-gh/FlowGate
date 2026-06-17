@@ -19,8 +19,7 @@ A typed document pipeline that makes AI agents **prove** their work before it co
 
 ***The agent didn't lie. It just never had to be right.***
 
-<!-- TODO: drop a 10–15s demo GIF here — submit a doc via the remote API, watch it land in the inbox,
-     get reviewed, rejected, revised, and approved. The GIF is the single most persuasive asset on this page. -->
+![FlowGate dashboard](assets/images/flowgate-dashboard-v0.1.png)
 
 </div>
 
