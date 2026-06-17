@@ -1,10 +1,10 @@
--- 040 Q/A/V 개편 ② — Q/A/V 도큐타입 은퇴.
+-- 040 Q/A/V revamp 2 - retire Q/A/V document types.
 -- Basis: group 0022 DB0006 §4.3, D0005 §3.6, R0001-3,4
--- 시스템 타입은 삭제 불가 → 비활성화(은퇴)로 처리. 행은 보존(과거 문서 FK 정합).
--- is_system 필터 제거: 전역 시스템 사본(is_system=1)과 향후 프로젝트 오버라이드
--- (통상 is_system=0)를 모두 덮는다. 현재 Q/A/V 는 전역 시스템 타입뿐이라 실커버리지
--- 영향은 없으나 주석-실제 불일치를 방지한다.
--- 효과: 생성 다이얼로그·타입 범례에서 자동 제외(활성 타입만 노출), 신규 생성 차단.
+-- System types cannot be deleted, so mark them inactive. Keep rows to preserve historical document FKs.
+-- Remove the is_system filter so both global system copies (is_system=1) and future project overrides
+-- (typically is_system=0) are covered. Today Q/A/V only exists as global system types, so runtime coverage
+-- is unchanged; this avoids a mismatch between the comment and behavior.
+-- Effect: excluded from create dialogs and type legends because only active types are shown; new creation is blocked.
 
 BEGIN;
 

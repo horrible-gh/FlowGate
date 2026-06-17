@@ -1,7 +1,7 @@
 -- 046_mention_copy_state.sql
--- R0001 (group 0015): persistent "mention copied" header badge (NR0003 rev4 — B안).
+-- R0001 (group 0015): persistent "mention copied" header badge (NR0003 rev4, B option).
 --
--- A `mention` (멘트) is the work-instruction block a person copies and pastes to an AI worker
+-- A `mention` is the work-instruction block a person copies and pastes to an AI worker
 -- to advance the document (edit / review / next-step / ...). The only existing signal was a
 -- transient toast, so on re-entry/refresh the user could not tell whether they had already
 -- copied this document's mention (R0001). This table persists that fact as SERVER user-state

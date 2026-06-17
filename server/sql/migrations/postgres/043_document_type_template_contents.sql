@@ -1,7 +1,7 @@
 -- 043_document_type_template_contents.sql
 -- flowgate.default.0024.0015-T  (design: D0010 / P0011 / P0012 / L0013 / DB0014)
 -- Stage 3-1 (DB0014 §3-1): additive, zero-risk creation of the template-body table.
---   Holds one markdown body per (template_id, locale) — the D안 (DB-resident body)
+--   Holds one markdown body per (template_id, locale); the D option stores the body in DB
 --   that replaces the old file-path pointer for design-document template provision.
 -- Rollback = DROP TABLE document_type_template_contents (loses ingested bodies only).
 

@@ -1,21 +1,21 @@
--- 038 Q/A/V 개편 ② — questions 컨테이너를 documents(doc_id) 에 매단다.
+-- 038 Q/A/V revamp 2 - attach the questions container to documents(doc_id).
 -- Basis: group 0022 DB0006 §3.3/§4.1, L0007 §3.1
--- (가) questions.doc_id FK + UNIQUE(doc_id) → 문서당 컨테이너 1개
--- (나) question_items.title / asker_kind (제목·질의주체)
--- (다) AI 질의 컨테이너용 예약 시스템 user 'u-system' (created_by FK·NOT NULL 충족)
--- 백필: 레거시 프로젝트 단위 questions 를 다대일 가드로 doc_id 표준화(대표 1행만 승격).
+-- (a) questions.doc_id FK + UNIQUE(doc_id) means one container per document.
+-- (b) question_items.title / asker_kind (title and asker type).
+-- (c) Reserved system user 'u-system' for AI question containers; satisfies created_by FK and NOT NULL.
+-- Backfill: normalize legacy project-scoped questions to doc_id with a many-to-one guard; promote one representative row.
 --
--- 재실행 안전성은 migrations 추적 테이블 + 파일 단일 트랜잭션 롤백에서 온다(035 등과 동일).
--- ALTER TABLE ADD COLUMN 은 SQLite 에 IF NOT EXISTS 가 없어 문 단위로 idempotent 하지 않다.
+-- Re-run safety comes from migration tracking plus whole-file transaction rollback, as in 035.
+-- SQLite has no IF NOT EXISTS for ALTER TABLE ADD COLUMN, so this is not statement-level idempotent.
 
--- (가) questions: 문서 FK 부여 (기본값 없음 → ALTER ADD COLUMN 허용)
+-- (a) questions: add the document FK without a default, which SQLite allows for ADD COLUMN.
 ALTER TABLE questions ADD COLUMN doc_id TEXT
     REFERENCES documents(doc_id) ON DELETE CASCADE;
--- (나) question_items: 제목·질의주체
+-- (b) question_items: title and asker type.
 ALTER TABLE question_items ADD COLUMN title TEXT;
 ALTER TABLE question_items ADD COLUMN asker_kind TEXT NOT NULL DEFAULT 'human'
     CHECK (asker_kind IN ('human','ai'));
--- (다) AI 질의 컨테이너용 예약 시스템 user (로그인 불가: is_active=0)
+-- (c) Reserved system user for AI question containers; login disabled with is_active=0.
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO users
@@ -27,20 +27,20 @@ VALUES
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
--- ── 백필 (다대일 가드) ─────────────────────────────────────────────────────────
--- 레거시 questions 는 프로젝트 단위 독립 채번이라 같은 related_doc 를 가리키는 행이
--- 복수일 수 있다(다대일). 모든 행을 doc_id=q_id=related_doc 로 만들면 q_id 전역
--- UNIQUE(idx_questions_q_id) 와 신규 ux_questions_doc 부분 UNIQUE 를 동시에 위반해
--- 트랜잭션 전체가 실패한다. → 문서당 "대표 1행"만 승격.
+-- Backfill (many-to-one guard) --------------------------------------------
+-- Legacy questions were independently numbered per project, so multiple rows
+-- can point at the same related_doc. If every row becomes doc_id=q_id=related_doc,
+-- both the global q_id UNIQUE(idx_questions_q_id) and the new ux_questions_doc
+-- partial UNIQUE index can be violated, failing the whole transaction. Promote one representative row per document.
 
--- 1) 이미 q_id 가 실제 doc_id(=문서 연동 관행)인 행: q_id 재설정 없이 doc_id 만 채움.
---    (q_id 는 전역 UNIQUE 라 doc 당 최대 1행 → 충돌 없음)
+-- 1) Rows where q_id is already a real doc_id: fill doc_id without resetting q_id.
+--    q_id is globally UNIQUE, so there can be at most one row per document and no collision.
 UPDATE questions
    SET doc_id = q_id
  WHERE doc_id IS NULL
    AND q_id IN (SELECT doc_id FROM documents);
--- 2) 미표준화 + related_doc 가 실제 문서 + 그 문서에 아직 컨테이너 없음 → 대표 1행만 승격.
---    대표는 MIN(id). 다대일 잔여 행은 doc_id IS NULL 로 남아 §6 비노출 대상.
+-- 2) Non-normalized rows whose related_doc is a real document and has no container: promote one representative row.
+--    The representative is MIN(id). Remaining many-to-one rows stay doc_id IS NULL and remain hidden per section 6.
 UPDATE questions
    SET doc_id = related_doc,
        q_id   = related_doc
@@ -49,7 +49,7 @@ UPDATE questions
    AND related_doc NOT IN (SELECT doc_id FROM questions WHERE doc_id IS NOT NULL)
    AND id = (SELECT MIN(q2.id) FROM questions q2
               WHERE q2.doc_id IS NULL AND q2.related_doc = questions.related_doc);
--- 문서당 컨테이너 1개 (백필 후 NULL/잔존 전역행은 부분 인덱스로 제외)
+-- One container per document; after backfill, NULL and remaining global rows are excluded by the partial index.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_questions_doc
     ON questions(doc_id) WHERE doc_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_questions_doc_status

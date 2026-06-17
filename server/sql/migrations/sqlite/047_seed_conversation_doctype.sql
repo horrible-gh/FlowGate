@@ -2,7 +2,7 @@
 -- T0044.0009 / L0044.0008 §2, §10: register the conversation (chat) document type.
 --
 -- Decision (R0044.0001 answer): the conversation type code is 'CH' (CHat). 'C' was
--- rejected because it is already an active system type (커밋/Commit, series 'work'),
+-- rejected because it is already an active system type (Commit, series 'work'),
 -- and the system identifies types by the bare letter — a second 'C' would be
 -- indistinguishable at that layer. 'CH' is a 2-letter code consistent with the
 -- existing convention (DS/NR/TR/DB/AC/RJ/TS/TSR) and collides with nothing.

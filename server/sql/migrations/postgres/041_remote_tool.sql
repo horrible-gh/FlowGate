@@ -1,9 +1,9 @@
 -- 041 — Project-control remote tool storage (group 0003: R0001 / DB0007).
 --
 -- Three tables per DB0007:
---   remote_tool_grant        권한 부여 (1 token = 1 위임)
---   remote_tool_grant_scope  선택된 권한 스코프 집합 (read/write/grep/remove)
---   remote_tool_op_log       작업 이력 (1요청 = 1행)
+--   remote_tool_grant        permission grant (1 token = 1 delegation)
+--   remote_tool_grant_scope  selected permission scope set (read/write/grep/remove)
+--   remote_tool_op_log       operation history (1 request = 1 row)
 --
 -- enum CHECKs mirror P0005 §6 / L0006 §5.1·§8 / DB0007 §7. The success⇔NULL
 -- bijection AND the non-success result↔error_code 1:1 mapping (DB0007 §7.5) are

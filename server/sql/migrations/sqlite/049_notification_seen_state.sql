@@ -1,8 +1,8 @@
 -- 049_notification_seen_state.sql
--- R0001 (group 0045): persistent 🔔 notification center for document inflow (NR0003 — A안 + D안).
+-- R0001 (group 0045): persistent notification center for document inflow (NR0003, A option + D option).
 --
--- R0001: "여러 AI를 관리하다 보면 어떤 문서가 언제·어디에 들어왔는지 알 수가 없다 / 어느 그룹을
--- 확인해야 하는지 일목요연하게 / 개요는 잘 안 본다 / 차라리 알람 히스토리를 넣든가". NR0003
+-- R0001: when managing several AI workers, users cannot tell which document arrived when or where,
+-- which group needs attention, and they rarely check the overview; notification history is preferable. NR0003
 -- diagnosed that the inflow data ALREADY exists in workflow_events (time/group indexed) and the 🔔
 -- UI entry point already exists (AppHeader emit + DashboardView dead handler) — the only missing
 -- piece is a persistent, always-visible, unread-aware SURFACE. The notification feed itself is read

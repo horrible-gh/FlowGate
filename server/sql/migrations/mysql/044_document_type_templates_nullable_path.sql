@@ -3,7 +3,7 @@ SET FOREIGN_KEY_CHECKS=0;
 -- flowgate.default.0024.0015-T  (design: DB0014 §2-4 / §3-2)
 -- Stage 3-2: relax document_type_templates.template_path from NOT NULL to nullable,
 --   so JSON body registration (P0011 E4) can create a registry row without a file
---   path (the D안 stores the body in document_type_template_contents, not on disk).
+--   path; the D option stores the body in document_type_template_contents, not on disk.
 --
 -- DB0014 §2-4 sanctioned either dropping the column OR "at minimum, removing the
 -- NOT NULL constraint". We take the latter: the column is retained (nullable)
@@ -26,7 +26,7 @@ CREATE TABLE document_type_templates__new (
     id              INTEGER PRIMARY KEY AUTO_INCREMENT,
     project_id      VARCHAR(191) REFERENCES projects(project_id) ON DELETE CASCADE,
     type_code       VARCHAR(191) NOT NULL,
-    template_path   TEXT,                          -- was NOT NULL; now nullable (D안 body lives in contents)
+    template_path   TEXT,                          -- was NOT NULL; now nullable (D option body lives in contents)
     is_active       INTEGER NOT NULL DEFAULT 1,
     uploaded_by     VARCHAR(191) REFERENCES users(user_id),
     uploaded_at     TEXT NOT NULL,

@@ -1,6 +1,6 @@
 -- 050_tokens_continuation.sql
--- Continuous work (unmanned continuous work) — group 0051 R0001, NR0003 B안 foundation.
--- Basis: NR0003 §4 (B안), §6-② "action_scope 신규 값 대신 new + 토큰 메타 플래그" (recommended).
+-- Continuous work (unmanned continuous work) - group 0051 R0001, NR0003 B option foundation.
+-- Basis: NR0003 §4 (B option), §6-2: use new + token metadata flags instead of adding action_scope values (recommended).
 --
 -- A continuous-mode token carries WHERE the unmanned chain should stop (the target
 -- workflow_sequence_items.item_seq) and WHETHER it runs in AI review mode (Q&A-first,
