@@ -73,11 +73,11 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 
 | Area | What's in the box |
 |------|-------------------|
-| **Backend** | Python · FastAPI · ~31k LOC of source across ~17 v1 route modules (documents, workflow, RBAC, tokens, remote tools, SSE, dashboard, inbox, Q&A, …) |
+| **Backend** | Python · FastAPI · v1 route modules for documents, workflow, RBAC, tokens, remote tools, SSE, dashboard, inbox, Q&A, and more |
 | **Database** | SQLite / MySQL / PostgreSQL — **50 ordered migrations** generated per backend (one SQL set each) plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
 | **Auth & security** | JWT + bcrypt + **TOTP 2FA** (with backup codes) + refresh/blacklist · per-token action scopes · `slowapi` rate limiting |
-| **Frontend** | Vue 3 · Pinia · vue-i18n (ko / ja / en) · vue-router · Vite · ~27k LOC |
-| **Testing** | **~33k LOC of tests** — the test suite is larger than the source it covers |
+| **Frontend** | Vue 3 · Pinia · vue-i18n (ko / ja / en) · vue-router · Vite |
+| **Testing** | Focused backend and frontend regression tests around workflow, auth, documents, SSE, dashboard, Q&A, and review flows |
 | **Ops** | **Docker / docker-compose** (one-command, SQLite or bundled Postgres/MySQL) · `systemd` unit (`deploy/flowgate.service`) · one-shot `setup.sh` (Linux) / `setup.ps1` (Windows) · selectable DB backend · Redis-ready |
 
 ---
@@ -154,7 +154,7 @@ FlowGate/
 │   │   ├── documents/  conversation.py  process_service.py
 │   │   └── db/                # multi-backend data access
 │   ├── sql/migrations/        # 50 ordered migrations × {sqlite, mysql, postgres}
-│   └── tests/                 # ~33k LOC
+│   └── tests/                 # backend regression tests
 ├── client/                    # Vue 3 + Pinia + Vite SPA
 ├── Dockerfile                 # multi-stage: build client → Python runtime
 ├── docker-compose.yml         # one-command stack (SQLite / Postgres / MySQL profiles)
