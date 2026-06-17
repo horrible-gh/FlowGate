@@ -45,6 +45,10 @@ class _TestStore:
         self._db.execute(sql, params or [])
         self._db.commit()
 
+    def _sql(self, key: str) -> str:
+        from modules.flow_gate.db.connection import FlowGateStore
+        return FlowGateStore._sql(self, key)
+
 
 @pytest.fixture(scope="module", autouse=True)
 def t330_db(all_migrations_db):
@@ -66,7 +70,7 @@ def t330_db(all_migrations_db):
             "(group_id, project_id, module, title, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                f"proj-t330-server-{group_seq}",
+                f"proj-t330.server.{group_seq}",
                 "proj-t330",
                 "server",
                 f"Test Group {group_seq}",
@@ -94,25 +98,32 @@ def t330_db(all_migrations_db):
     # Create documents
     docs = [
         {
-            "doc_id": "proj-t330-server-0001-R0001",
-            "group_id": "proj-t330-server-0001",
+            "doc_id": "proj-t330.server.0001.0001-R",
+            "group_id": "proj-t330.server.0001",
             "type_code": "R",
             "seq": 1,
             "title": "Case1: Head Pending",
         },
         {
-            "doc_id": "proj-t330-server-0002-D0001",
-            "group_id": "proj-t330-server-0002",
+            "doc_id": "proj-t330.server.0002.0001-D",
+            "group_id": "proj-t330.server.0002",
             "type_code": "D",
             "seq": 1,
             "title": "Case2: No Sequence",
         },
         {
-            "doc_id": "proj-t330-server-0003-DS0001",
-            "group_id": "proj-t330-server-0003",
+            "doc_id": "proj-t330.server.0003.0001-DS",
+            "group_id": "proj-t330.server.0003",
             "type_code": "DS",
             "seq": 1,
             "title": "Case3: Head In Progress",
+        },
+        {
+            "doc_id": "proj-t330.server.0003.0002-D",
+            "group_id": "proj-t330.server.0003",
+            "type_code": "D",
+            "seq": 2,
+            "title": "Case3: In Progress Result",
         },
     ]
 
@@ -134,19 +145,19 @@ def t330_db(all_migrations_db):
         "INSERT OR IGNORE INTO workflow_sequences "
         "(doc_id, created_at, updated_at) "
         "VALUES (?, ?, ?)",
-        ["proj-t330-server-0001-R0001", now, now],
+        ["proj-t330.server.0001.0001-R", now, now],
     )
     # Get workflow_sequences sequence ID
     seq1_id = db.execute(
         "SELECT id FROM workflow_sequences WHERE doc_id = ?",
-        ["proj-t330-server-0001-R0001"],
+        ["proj-t330.server.0001.0001-R"],
     ).fetchone()[0]
     
     db.execute(
         "INSERT OR IGNORE INTO workflow_sequence_items "
-        "(sequence_id, item_seq, type, label, doc_class, sort_order, status, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [seq1_id, 1, "D", "Design", "R", 0, "pending", now, now],
+        "(sequence_id, item_seq, type, label, doc_class, sort_order, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [seq1_id, 1, "D", "Design", "R", 0, now, now],
     )
 
     # Case 3: workflow sequence + head (in_progress)
@@ -154,19 +165,19 @@ def t330_db(all_migrations_db):
         "INSERT OR IGNORE INTO workflow_sequences "
         "(doc_id, created_at, updated_at) "
         "VALUES (?, ?, ?)",
-        ["proj-t330-server-0003-DS0001", now, now],
+        ["proj-t330.server.0003.0001-DS", now, now],
     )
     # Get workflow_sequences sequence ID
     seq3_id = db.execute(
         "SELECT id FROM workflow_sequences WHERE doc_id = ?",
-        ["proj-t330-server-0003-DS0001"],
+        ["proj-t330.server.0003.0001-DS"],
     ).fetchone()[0]
     
     db.execute(
         "INSERT OR IGNORE INTO workflow_sequence_items "
-        "(sequence_id, item_seq, type, label, doc_class, sort_order, status, created_at, updated_at) "
+        "(sequence_id, item_seq, type, label, doc_class, sort_order, result_doc_id, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [seq3_id, 1, "D", "Design", "R", 0, "in_progress", now, now],
+        [seq3_id, 1, "D", "Design", "R", 0, "proj-t330.server.0003.0002-D", now, now],
     )
 
     db.commit()
@@ -207,7 +218,7 @@ def t330_app():
 @pytest.fixture(scope="module")
 def t330_client(t330_app, t330_store):
     """TestClient ? real HTTP calls."""
-    return TestClient(t330_app, raise_server_exceptions=False)
+    return TestClient(t330_app, raise_server_exceptions=True)
 
 
 def make_jwt(user_id: str, roles: list[str] | None = None) -> str:
@@ -237,7 +248,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0001", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0001-R0001",
+                "doc_ref": "proj-t330.server.0001.0001-R",
             },
             headers=auth_header("usr_t330_worker"),
         )
@@ -281,7 +292,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0002", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0002-D0001",
+                "doc_ref": "proj-t330.server.0002.0001-D",
             },
             headers=auth_header("usr_t330_worker"),
         )
@@ -303,8 +314,8 @@ class TestT330MentionVerification:
 
         assert next_type_line, "next_type line missing"
         actual_next_type = next_type_line.split("next_type:")[1].split("#")[0].strip()
-        assert actual_next_type == "<Sequence unresolved>", (
-            f"expected '<Sequence unresolved>', actual '{actual_next_type}'"
+        assert actual_next_type == "<Sequence undecided>", (
+            f"expected '<Sequence undecided>', actual '{actual_next_type}'"
         )
 
         # Validation 2: Authorization token matches
@@ -327,7 +338,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0003", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0003-DS0001",
+                "doc_ref": "proj-t330.server.0003.0001-DS",
             },
             headers=auth_header("usr_t330_worker"),
         )

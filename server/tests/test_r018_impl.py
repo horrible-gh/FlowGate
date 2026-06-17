@@ -906,7 +906,7 @@ class TestMentionSections:
 
         mention = self._build_mention(group_recent_docs=[])
 
-        assert "## Recent documents in Groups" not in mention
+        assert "## Recent documents in group" not in mention
 
 
 
@@ -924,7 +924,7 @@ class TestMentionSections:
 
         mention = self._build_mention(group_recent_docs=docs)
 
-        assert "## Recent documents in Groups" in mention
+        assert "## Recent documents in group" in mention
 
         assert "R0001" in mention
 
@@ -961,7 +961,7 @@ class TestMentionSections:
     def test_section_5_post_prefill(self):
         """The output registration section includes a complete POST example."""
         mention = self._build_mention()
-        assert "## Output registration" in mention
+        assert "## Artifact registration" in mention
 
         assert "Authorization: Bearer test-raw-token-xyz" in mention
 
@@ -973,8 +973,8 @@ class TestMentionSections:
         assert '"group_name": "testprj-__ALL__-0001"' in mention
         assert '"prev_doc_id": "testprj.__ALL__.0001.0001-R"' in mention
         assert '"doc_type": "DS"' in mention
-        assert '"title": "<fill this in>"' in mention
-        assert '"content": "<fill this in>"' in mention
+        assert '"title": "<Fill this in>"' in mention
+        assert '"content": "<Fill this in>"' in mention
 
     def test_section_5_token_context_uses_canonical_ids(self):
         """A token_rec-based mention uses the canonical id required by the inbox API."""
@@ -1000,7 +1000,7 @@ class TestMentionSections:
             raw_token="test-raw-token-xyz",
         )
 
-        reg_section = mention[mention.find("## Output registration"):]
+        reg_section = mention[mention.find("## Artifact registration"):]
         assert '"group_name": "testprj.test.0001"' in reg_section
         assert '"prev_doc_id": "testprj.test.0001.0001-R"' in reg_section
         assert '"target_id"' not in reg_section
@@ -1108,7 +1108,7 @@ class TestMentionSections:
         )
 
         # The JSON block in the output registration section must not contain prev_doc_id
-        reg_idx = mention.find("## Output registration")
+        reg_idx = mention.find("## Artifact registration")
         assert reg_idx != -1
         reg_section = mention[reg_idx:]
         # Extract the JSON block ({...})
@@ -1163,7 +1163,7 @@ class TestMentionSections:
 
         )
 
-        assert "next_type: <sequence undecided>" in mention
+        assert "next_type: <Sequence undecided>" in mention
 
 
 
@@ -1189,7 +1189,7 @@ class TestMentionSections:
 
         )
 
-        assert "next_type: <in progress: DS>" in mention
+        assert "next_type: <In progress: DS>" in mention
 
 
 
@@ -1255,13 +1255,34 @@ class TestMentionSections:
 
 
 
-    def test_section_3_new_format_head_only(self):
+    def test_section_3_new_format_single_ref(self):
 
-        """Section 3: when only one head document exists, output one line in slash-path: GET url format."""
+        """Section 3: each reference document is emitted on one line as
+        '{canonical-id}: GET {url}'. Current contract: the head doc is NOT
+        auto-listed for a new hand-off; only the ids passed via ref_doc_ids
+        appear, verbatim (canonical dot-style ids)."""
 
-        mention = self._build_mention()
+        from modules.flow_gate.services.mention_service import build_mention
 
-        s3_idx = mention.find("## Referenced documents")
+        mention = build_mention(
+            project="testprj",
+            module="__ALL__",
+            group="0001",
+            parent_type="R",
+            parent_doc_number="R0001",
+            parent_title="Test Requirement",
+            parent_doc_id="R0001",
+            parent_canonical_doc_id="testprj.__ALL__.0001.0001-R",
+            head_type="DS",
+            head_status="pending",
+            scratch_dir="/scratch/tok_001",
+            raw_token="test-raw-token-xyz",
+            api_base_url="http://localhost:8000/ctx/flow_gate/api/v1",
+            group_id="testprj-__ALL__-0001",
+            ref_doc_ids=["testprj.__ALL__.0001.0001-R"],
+        )
+
+        s3_idx = mention.find("## Reference documents")
 
         assert s3_idx != -1
 
@@ -1271,15 +1292,15 @@ class TestMentionSections:
 
         s3_body = s3_section[:next_section] if next_section != -1 else s3_section
 
-        # Verify the new format
+        # Verify the current format (canonical dot-style id, one line each)
 
-        assert "testprj/__ALL__/0001/R0001: GET" in s3_body
+        assert "testprj.__ALL__.0001.0001-R: GET" in s3_body
 
         assert "localhost:8000" in s3_body
 
-        assert "/document/testprj/__ALL__/0001/R0001" in s3_body
+        assert "/document/testprj.__ALL__.0001.0001-R" in s3_body
 
-        # The old format must not appear
+        # The old list-style format must not appear
 
         assert "- Referenced documents:" not in s3_body
 
@@ -1291,7 +1312,7 @@ class TestMentionSections:
 
     def test_section_3_with_selected_docs(self):
 
-        """Section 3: output one line each for the head and selected documents."""
+        """Section 3: output one line per selected reference document, verbatim."""
 
         from modules.flow_gate.services.mention_service import build_mention
 
@@ -1323,11 +1344,11 @@ class TestMentionSections:
 
             group_id="testprj-__ALL__-0001",
 
-            ref_doc_ids=["testprj/__ALL__/0001/M0002", "testprj/__ALL__/0001/DS0003"],
+            ref_doc_ids=["testprj.__ALL__.0001.0002-M", "testprj.__ALL__.0001.0003-DS"],
 
         )
 
-        s3_idx = mention.find("## Referenced documents")
+        s3_idx = mention.find("## Reference documents")
 
         s3_section = mention[s3_idx:]
 
@@ -1335,21 +1356,17 @@ class TestMentionSections:
 
         s3_body = s3_section[:next_section] if next_section != -1 else s3_section
 
-        # One head line
+        # Two selected lines (current contract: only the passed ref ids appear)
 
-        assert "testprj/__ALL__/0001/R0001: GET" in s3_body
+        assert "testprj.__ALL__.0001.0002-M: GET" in s3_body
 
-        # Two selected lines
-
-        assert "testprj/__ALL__/0001/M0002: GET" in s3_body
-
-        assert "testprj/__ALL__/0001/DS0003: GET" in s3_body
+        assert "testprj.__ALL__.0001.0003-DS: GET" in s3_body
 
 
 
-    def test_section_3_dedup_head_in_ref_doc_ids(self):
+    def test_section_3_dedup_repeated_ref_doc_ids(self):
 
-        """Section 3: remove duplicates when ref_doc_ids contains the same item as head."""
+        """Section 3: deduplicate when ref_doc_ids contains the same id twice."""
 
         from modules.flow_gate.services.mention_service import build_mention
 
@@ -1381,11 +1398,15 @@ class TestMentionSections:
 
             group_id="testprj-__ALL__-0001",
 
-            ref_doc_ids=["testprj/__ALL__/0001/R0001", "testprj/__ALL__/0001/M0002"],
+            ref_doc_ids=[
+                "testprj.__ALL__.0001.0001-R",
+                "testprj.__ALL__.0001.0001-R",
+                "testprj.__ALL__.0001.0002-M",
+            ],
 
         )
 
-        s3_idx = mention.find("## Referenced documents")
+        s3_idx = mention.find("## Reference documents")
 
         s3_section = mention[s3_idx:]
 
@@ -1393,13 +1414,13 @@ class TestMentionSections:
 
         s3_body = s3_section[:next_section] if next_section != -1 else s3_section
 
-        # The R0001 line must appear only once
+        # The R line must appear only once
 
-        assert s3_body.count("testprj/__ALL__/0001/R0001: GET") == 1
+        assert s3_body.count("testprj.__ALL__.0001.0001-R: GET") == 1
 
-        # The M0002 line exists
+        # The M line exists
 
-        assert "testprj/__ALL__/0001/M0002: GET" in s3_body
+        assert "testprj.__ALL__.0001.0002-M: GET" in s3_body
 
 
 
@@ -1409,7 +1430,7 @@ class TestMentionSections:
 
         mention = self._build_mention()
 
-        assert "## doc_type information" in mention
+        assert "## doc_type guide" in mention
 
         assert "GET" in mention
 
@@ -1792,7 +1813,9 @@ class TestHelpQuestion:
 
     def test_question_required_fields_list(self, seed, tmp_path):
 
-        """example.body.content must include the ### Q heading."""
+        """Current contract (Q/A revamp): a query is document-bound DATA, not a Q
+        document. example.body therefore carries a structured `questions` list
+        (each {title, body}) plus asker_kind — not a `### Q` markdown body."""
 
         client = self._build_help_client()
 
@@ -1808,9 +1831,22 @@ class TestHelpQuestion:
 
         data = resp.json()
 
-        content = data.get("example", {}).get("body", {}).get("content", "")
+        body = data.get("example", {}).get("body", {})
 
-        assert "### Q" in content, "example.body.content is missing the '### Q' heading"
+        assert body.get("asker_kind") == "ai", "example.body.asker_kind must be 'ai'"
+
+        questions = body.get("questions")
+
+        assert isinstance(questions, list) and questions, (
+            "example.body.questions must be a non-empty list"
+        )
+
+        for q in questions:
+            assert "title" in q, f"question item missing title: {q}"
+            assert "body" in q, f"question item missing body: {q}"
+
+        # The retired Q-document markdown form must not be present.
+        assert "content" not in body, "example.body must not carry a markdown 'content' field"
 
 
 

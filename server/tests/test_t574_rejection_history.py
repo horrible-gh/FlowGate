@@ -432,6 +432,9 @@ class TestGetDocumentResponse:
         # Bypass auth and ID validation
         monkeypatch.setattr(dr, "verify_bearer", lambda req: {"ok": True})
         monkeypatch.setattr(dr, "_validate_outbound_doc_id", lambda doc_id: None)
+        # get_document now also fetches Q/A pairs; that path uses the (unmocked)
+        # questions store, so stub it out for this rejection-history-focused test.
+        monkeypatch.setattr(dr, "get_answers_for_document", lambda doc_id: [])
 
         # Request mock (no file reading)
         class FakeRequest:

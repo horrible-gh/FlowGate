@@ -194,12 +194,6 @@ def patch_store(tmp_db):
 
 
 
-        def _sql(self, key: str) -> str:
-
-            raise NotImplementedError
-
-
-
     conn_mod.STORE = _PatchedStore()
 
     yield
@@ -234,7 +228,13 @@ def seed_data(tmp_db, tmp_storage):
 
 
 
-    doc_path = tmp_storage / "testprj-__ALL__-0001-NR0002.md"
+    # Jail document content reads to this storage root so resolve_storage_path()
+    # accepts the seeded file (the current contract rejects files outside the root).
+    os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_storage)
+
+    doc_rel = "testprj-__ALL__-0001-NR0002.md"
+
+    doc_path = tmp_storage / doc_rel
 
     doc_path.write_text("# Phase2\n\nHello", encoding="utf-8")
 
@@ -368,7 +368,7 @@ def seed_data(tmp_db, tmp_storage):
 
         "owner_id": "usr_test_001",
 
-        "file_path": str(doc_path),
+        "file_path": doc_rel,
 
         "status": "open",
 
@@ -386,7 +386,71 @@ def seed_data(tmp_db, tmp_storage):
 
     )
 
+    # Canonical dot-style group for the group next-action endpoint, whose path
+    # param is validated against the canonical group_id regex ({proj}.{module}.{seq}).
+    db_groups.create({
+
+        "group_id": "testprj.none.0001",
+
+        "project_id": "testprj",
+
+        "module": "none",
+
+        "title": "Next Action Group",
+
+    })
+
+    db_docs.create({
+
+        "doc_id": "testprj.none.0001.0001-R",
+
+        "project_id": "testprj",
+
+        "type_code": "R",
+
+        "seq": 1,
+
+        "title": "Root Requirement",
+
+        "group_id": "testprj.none.0001",
+
+        "module": "none",
+
+        "owner_id": "usr_test_001",
+
+    })
+
+    db_docs.create({
+
+        "doc_id": "testprj.none.0001.0002-NR",
+
+        "project_id": "testprj",
+
+        "type_code": "NR",
+
+        "seq": 2,
+
+        "title": "Phase 2 Doc",
+
+        "group_id": "testprj.none.0001",
+
+        "module": "none",
+
+        "owner_id": "usr_test_001",
+
+    })
+
+    store._execute(
+
+        "INSERT INTO workflow_events (event_type, project_id, group_id, document_id, actor_user_id, from_state, to_state, metadata, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+
+        ["action_taken", "testprj", "testprj.none.0001", None, "usr_test_001", None, "open", '{"action_code":"doc_created","doc_id":"testprj.none.0001.0002-NR"}', now],
+
+    )
+
     yield
+
+    os.environ.pop("FLOWGATE_STORAGE_DIR", None)
 
 
 
@@ -608,7 +672,7 @@ def test_get_group_next_action_success(seed_data, tmp_path):
 
 
 
-    resp = client.get("/api/v1/group/testprj-__ALL__-0001/next-action", headers={"Authorization": f"Bearer {raw}"})
+    resp = client.get("/api/v1/group/testprj.none.0001/next-action", headers={"Authorization": f"Bearer {raw}"})
 
 
 
@@ -632,7 +696,9 @@ def test_get_group_next_action_404(seed_data, tmp_path):
 
 
 
-    resp = client.get("/api/v1/group/missing-__ALL__-9999/next-action", headers={"Authorization": f"Bearer {raw}"})
+    # Canonical-format group_id that does not exist -> 404 (group not found),
+    # distinct from a malformed id which would be 422.
+    resp = client.get("/api/v1/group/missing.none.9999/next-action", headers={"Authorization": f"Bearer {raw}"})
 
 
 

@@ -1346,9 +1346,10 @@ class TestTokenIssueRbac:
 
                 ):
 
-                    # Call -> has_permission is called -> permission_id is validated
-
-                    issue_token(body, current_user)
+                    # Call -> has_permission is called -> permission_id is validated.
+                    # issue_token signature is (body, request, current_user=Depends(...)),
+                    # so current_user must be passed by keyword; request is unused here.
+                    issue_token(body, request=None, current_user=current_user)
 
             except HTTPException as e:
 

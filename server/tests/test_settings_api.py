@@ -32,31 +32,16 @@ def test_db_path(tmp_path_factory):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(_SCHEMA_001.read_text(encoding="utf-8"))
-    try:
-        conn.executescript(_SCHEMA_002.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.executescript(_SCHEMA_006.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.executescript(_SCHEMA_008.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.executescript(_SCHEMA_022.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.executescript(_SCHEMA_023.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
-    try:
-        conn.executescript(_SCHEMA_025.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        pass
+    # Apply ALL migrations so the schema matches current product (e.g. project_settings
+    # has columns added by later migrations such as `branch`). A hardcoded subset went
+    # stale as the schema evolved.
+    _migrations_dir = _SERVER_DIR / "sql" / "migrations" / "sqlite"
+    for _sql_file in sorted(_migrations_dir.glob("*.sql")):
+        try:
+            conn.executescript(_sql_file.read_text(encoding="utf-8"))
+        except sqlite3.OperationalError:
+            # Some migrations re-add existing tables/columns - safe to ignore in tests.
+            pass
     conn.executescript(
         """
         INSERT OR IGNORE INTO roles(role_id,role_name,is_system,created_at,updated_at)
@@ -136,15 +121,44 @@ def mock_db(test_db_path):
             return [dict(r) for r in cur.fetchall()]
 
     store = TestStore(test_db_path)
-    with patch("modules.flow_gate.db.connection.get_store", return_value=store):
-        with patch("modules.flow_gate.db.system_settings.get_store", return_value=store):
-            with patch("modules.flow_gate.db.users.get_store", return_value=store):
-                with patch("modules.flow_gate.db.projects.get_store", return_value=store):
-                    with patch("modules.flow_gate.db.templates.get_store", return_value=store):
-                        with patch("modules.flow_gate.db.numbering_jobs.get_store", return_value=store):
-                            with patch("modules.flow_gate.db.totp_backup_codes.get_store", return_value=store):
-                                with patch("modules.flow_gate.rbac.decorators.get_store", return_value=store):
-                                    yield store
+    # Each db/rbac module does `from .connection import get_store`, so the name must be
+    # overridden in every importing namespace. The previous nested `with patch(...)`
+    # form did NOT restore reliably here (the shared underlying function object made
+    # mock's per-target restore leak the patched stub into later test modules, e.g.
+    # test_inbox). Capture the canonical original once and restore every binding to it
+    # explicitly so this fixture is leak-free regardless of test ordering.
+    import importlib
+
+    import modules.flow_gate.db.connection as _conn
+    _real_get_store = _conn.get_store
+    _modules = [
+        importlib.import_module(_name)
+        for _name in (
+            "modules.flow_gate.db.connection",
+            "modules.flow_gate.db.system_settings",
+            "modules.flow_gate.db.users",
+            "modules.flow_gate.db.projects",
+            "modules.flow_gate.db.templates",
+            "modules.flow_gate.db.numbering_jobs",
+            "modules.flow_gate.db.totp_backup_codes",
+            "modules.flow_gate.rbac.decorators",
+            # Settings services do `from ..db.connection import get_store` at import
+            # time, so their bound `get_store` is whatever the name pointed at when the
+            # module was first imported. In a full-suite run these modules are imported
+            # early (before this fixture patches), binding the real get_store -> global
+            # STORE (which has _db=None under TESTING=1). Patch them here too so the test
+            # store is used regardless of import order.
+            "modules.flow_gate.settings.user_admin_service",
+            "modules.flow_gate.settings.project_settings_service",
+        )
+    ]
+    for _m in _modules:
+        _m.get_store = lambda store=store: store
+    try:
+        yield store
+    finally:
+        for _m in _modules:
+            _m.get_store = _real_get_store
 
 
 class TestSystemSettingsService:
@@ -165,7 +179,7 @@ class TestSystemSettingsService:
     def test_set_values_allowlist_rejected(self):
         from modules.flow_gate.settings.system_settings_service import set_values
 
-        with pytest.raises(ValueError, match="not allowed"):
+        with pytest.raises(ValueError, match="Disallowed setting key"):
             set_values({"unknown_key": "bad"})
 
     def test_set_values_multiple(self):
@@ -294,7 +308,7 @@ class TestProjectSettingsService:
         row = mock_db._fetch_one(
             "SELECT * FROM document_types WHERE type_code='SYS' AND project_id='proj_001'"
         )
-        with pytest.raises(ValueError, match="system reserved"):
+        with pytest.raises(ValueError, match="System-reserved document types cannot be deleted"):
             delete_document_type("proj_001", row["id"])
         mock_db._execute("DELETE FROM document_types WHERE type_code='SYS' AND project_id='proj_001'")
 
@@ -366,8 +380,9 @@ class TestProjectCreate:
         client = self._make_client()
         resp = client.post("/api/v1/projects", json={"project_name": "Test"})
         assert resp.status_code == 201
-        assert resp.json()["project_id"] == "Test"
-        mock_db._execute("DELETE FROM projects WHERE project_id = 'Test'")
+        # Slugification lowercases the name (cf. test_create_project_slug_from_name).
+        assert resp.json()["project_id"] == "test"
+        mock_db._execute("DELETE FROM projects WHERE project_id = 'test'")
 
     def test_create_project_dangerous_chars_rejected(self):
         client = self._make_client()

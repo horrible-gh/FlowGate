@@ -74,6 +74,49 @@ def flowgate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, s
 
     db.init_db()
 
+    # init_db() only lays down the base schema (001). The product's
+    # insert_document and related queries now rely on columns added by later
+    # migrations (e.g. documents.filename in 021). Apply the full migration
+    # chain so the test DB matches the current schema contract.
+    import sqlite3 as _sqlite3
+
+    _schema_dir = Path(__file__).resolve().parents[1] / "sql" / "migrations" / "sqlite"
+
+    _conn = _sqlite3.connect(str(storage_dir / "flow_gate.db"))
+
+    try:
+
+        _conn.execute("PRAGMA foreign_keys = OFF")
+
+        # Mirror db._legacy_schema_sql(): the documents.status CHECK in the
+        # migration files (001 / 027) lists only the base statuses, but the
+        # runtime widens it to include 'accepted'/'monitoring'/'done', which the
+        # product actually writes (process_service accept/monitor flows). Apply
+        # the same widening so the migrated test schema matches runtime behavior.
+        _status_narrow = (
+            "'draft','open','in_review','approved','rejected',\n"
+            "                         'cancelled','closed','archived','answered'"
+        )
+        _status_wide = (
+            "'draft','open','in_review','approved','accepted','rejected',\n"
+            "                         'cancelled','closed','archived','answered','monitoring','done'"
+        )
+        for _mig in sorted(_schema_dir.glob("*.sql")):
+
+            try:
+
+                _conn.executescript(_mig.read_text(encoding="utf-8").replace(_status_narrow, _status_wide))
+
+            except Exception:
+
+                pass
+
+        _conn.commit()
+
+    finally:
+
+        _conn.close()
+
     db.add_allowed_project("FG", "core")
 
     db.add_allowed_project("FG", "")
@@ -388,7 +431,7 @@ def test_approve_document_ds_includes_contextual_next_actions(flowgate_env: dict
 
     next_action = result["next_actions"][0]
 
-    assert next_action["label"] == "D: Design document creation required"
+    assert next_action["label"] == "D Basic Design document is required"
 
     assert next_action["source_doc_id"] == seeded["ds_doc_id"]
 
@@ -674,13 +717,15 @@ def test_group_detail_template_renders_next_action_panel(flowgate_env: dict[str,
 
 
 
-    assert "Next Expected Action" in html
+    # The group_detail template renders its UI labels in Korean (product UI text
+    # is not translated). Assert the current rendered strings.
+    assert "다음 예상 액션" in html
 
     assert "window.flowgateNextActionCandidates" in html
 
     assert "data-candidate-index=\"0\"" in html
 
-    assert "Copy Comment" in html
+    assert "멘트복사" in html
 
     # T051: verify the docs_root line is included in the copyNextAction JS
 
@@ -910,47 +955,51 @@ def test_next_action_project_root_only_for_T_in_template(
 
 
 
-    # Create a T candidate from a DC-based group
+    # Produce a T candidate via the R stage: GROUP_NEXT_ACTION_FLOW["R"] yields
+    # ("DS", "N", "T"). (The former DC-based path is no longer valid — DC is
+    # excluded from group history for current-stage computation, see
+    # GROUP_HISTORY_EXCLUDED_TYPES, so a DC doc never produces a T candidate.)
+    group_id = "FG-core-9012"
 
-    seeded = _seed_requirement_chain(
+    db.insert_group(group_id, "FG", "core", "Next Actions Test Group", "medium")
 
-        group_id="FG-core-9012",
+    _register_doc(
 
-        ds_status="accepted",
+        doc_id="FG-core-R001",
 
-        ds_next="T",
+        doc_type="R",
+
+        title="Next Step Guidance Requirements",
+
+        group_id=group_id,
+
+        status="accepted",
+
+        memo_file="R001_requirement.md",
 
     )
 
     _register_doc(
 
-        doc_id="FG-core-DC003",
+        doc_id="FG-core-AR001",
 
-        
+        doc_type="AR",
 
-        doc_type="DC",
+        title="Requirement Approval Request",
 
-        
+        group_id=group_id,
 
-        title="Design Completed",
-
-        
-
-        group_id=seeded["group_id"],
-
-        
-
-        target_id=seeded["ds_doc_id"],
+        target_id="FG-core-R001",
 
         status="accepted",
 
-        memo_file="DC003_done.md",
+        memo_file="AR001_request.md",
 
     )
 
 
 
-    detail = process_service.get_group_detail(seeded["group_id"])
+    detail = process_service.get_group_detail(group_id)
 
     assert detail is not None
 

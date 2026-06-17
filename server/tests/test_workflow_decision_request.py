@@ -174,7 +174,11 @@ def test_next_step_token_guard_ignores_workflow_decision_tokens(monkeypatch):
 
     sql, params = store._fetch_one.call_args.args
     assert "action_scope = 'new'" in sql
-    assert params == ["flowgate.default.0002.0001-R"]
+    # The query now also filters out expired tokens via `expires_at > ?`, so the
+    # current-time bound is bound as a second positional param after the doc_ref.
+    assert "expires_at > ?" in sql
+    assert params[0] == "flowgate.default.0002.0001-R"
+    assert len(params) == 2
 
 
 def test_workflow_decide_broadcasts_status_and_group_refresh(monkeypatch):

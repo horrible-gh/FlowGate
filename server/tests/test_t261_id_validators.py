@@ -79,16 +79,16 @@ class TestValidateProjectId:
 class TestValidateGroupId:
     # positive
     def test_all_module(self):
-        assert validate_group_id("myproject-__ALL__-0001") == "myproject-__ALL__-0001"
+        assert validate_group_id("myproject.none.0001") == "myproject.none.0001"
 
     def test_specific_module(self):
-        assert validate_group_id("myproject-server-0001") == "myproject-server-0001"
+        assert validate_group_id("myproject.server.0001") == "myproject.server.0001"
 
     def test_korean_project(self):
-        assert validate_group_id("my-korean-project-__ALL__-0042") == "my-korean-project-__ALL__-0042"
+        assert validate_group_id("my-korean-project.none.0042") == "my-korean-project.none.0042"
 
     def test_seq_4digits(self):
-        assert validate_group_id("proj-__ALL__-9999") == "proj-__ALL__-9999"
+        assert validate_group_id("proj.none.9999") == "proj.none.9999"
 
     # negative
     def test_project_id_format_raises(self):
@@ -115,19 +115,19 @@ class TestValidateGroupId:
 class TestValidateDocId:
     # positive
     def test_all_module(self):
-        val = "myproject-__ALL__-0001-NR0001"
+        val = "myproject.none.0001.0001-NR"
         assert validate_doc_id(val) == val
 
     def test_specific_module(self):
-        val = "myproject-server-0001-D0042"
+        val = "myproject.server.0001.0042-D"
         assert validate_doc_id(val) == val
 
     def test_korean_project(self):
-        val = "my-korean-project-__ALL__-0001-R0001"
+        val = "my-korean-project.none.0001.0001-R"
         assert validate_doc_id(val) == val
 
     def test_multi_char_type(self):
-        val = "proj-__ALL__-0001-DS0010"
+        val = "proj.none.0001.0010-DS"
         assert validate_doc_id(val) == val
 
     # negative

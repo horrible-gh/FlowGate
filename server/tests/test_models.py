@@ -186,7 +186,8 @@ def test_group_crud():
         "title": "Test Group",
     })
     assert g["group_id"] == "GRPPRJ-__ALL__-0001"
-    assert g["module"] == "__ALL__"
+    # When no module is supplied, groups.create defaults the module to "none".
+    assert g["module"] == "none"
 
     lst = groups.list_groups("GRPPRJ")
     assert len(lst) >= 1

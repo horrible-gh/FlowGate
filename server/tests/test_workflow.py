@@ -414,7 +414,7 @@ class TestTransitionDocument:
             "UPDATE documents SET status='open' WHERE doc_id='P001-G001-R0001'"
         )
         db_conn.commit()
-        with pytest.raises(ValueError, match="comment"):
+        with pytest.raises(ValueError, match="Comment required when rejecting"):
             transition_document(
                 doc_id="P001-G001-R0001",
                 action="reject",
@@ -509,11 +509,13 @@ class TestPromptCopyService:
         # workflow_sequences: None by default (non-VR); set vr_head=True for VR tests
         mock_ws = MagicMock()
         if vr_head:
+            # _get_v_report_path now reads the canonical "type" key (not "item_type")
+            # on the head and sequence items.
             mock_ws.get_sequence_by_doc_id = MagicMock(return_value={"id": 99})
-            mock_ws.get_effective_head = MagicMock(return_value={"item_type": "VR", "sort_order": 2, "id": 10})
+            mock_ws.get_effective_head = MagicMock(return_value={"type": "VR", "sort_order": 2, "id": 10})
             mock_ws.get_sequence_items = MagicMock(return_value=[
-                {"id": 5, "item_type": "V", "sort_order": 1},
-                {"id": 10, "item_type": "VR", "sort_order": 2},
+                {"id": 5, "type": "V", "sort_order": 1},
+                {"id": 10, "type": "VR", "sort_order": 2},
             ])
         else:
             mock_ws.get_sequence_by_doc_id = MagicMock(return_value=None)
@@ -597,7 +599,7 @@ class TestPromptCopyService:
         self._patch_db(monkeypatch, doc, group, [], vr_head=True)
         result = build_prompt(doc_id="P001-G001-R0001", actor_user_id="u001")
         assert "/docs/V0001.md" in result["prompt_text"]
-        assert "corrections" in result["prompt_text"]
+        assert "Corrections" in result["prompt_text"]
 
     def test_build_prompt_non_vr_no_v_report(self, monkeypatch):
         """If it is not the VR stage, the issue-fix section is not included."""

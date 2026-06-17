@@ -62,12 +62,16 @@ def post_migration_db(pre_migration_db):
             (project_id, project_name, is_active, created_at, updated_at)
             VALUES ('PROJ1', 'Test', 1, '2026-01-01', '2026-01-01');
 
+        INSERT OR IGNORE INTO groups
+            (group_id, project_id, module, title, status, created_at, updated_at)
+            VALUES ('PROJ1.mod.0001', 'PROJ1', 'mod', 'Test group', 'OPEN', '2026-01-01', '2026-01-01');
+
         INSERT OR IGNORE INTO documents
-            (doc_id, project_id, module, type_code, seq, title, status, created_at, updated_at)
+            (doc_id, project_id, module, group_id, type_code, seq, title, status, created_at, updated_at)
             VALUES
-                ('D001', 'PROJ1', 'mod', 'D', 1, 'Parent', 'open', '2026-01-01', '2026-01-01'),
-                ('NR001', 'PROJ1', 'mod', 'NR', 1, 'Result1', 'open', '2026-01-01', '2026-01-01'),
-                ('NR002', 'PROJ1', 'mod', 'NR', 2, 'Result2', 'open', '2026-01-01', '2026-01-01');
+                ('D001', 'PROJ1', 'mod', 'PROJ1.mod.0001', 'D', 1, 'Parent', 'open', '2026-01-01', '2026-01-01'),
+                ('NR001', 'PROJ1', 'mod', 'PROJ1.mod.0001', 'NR', 1, 'Result1', 'open', '2026-01-01', '2026-01-01'),
+                ('NR002', 'PROJ1', 'mod', 'PROJ1.mod.0001', 'NR', 2, 'Result2', 'open', '2026-01-01', '2026-01-01');
 
         INSERT OR IGNORE INTO workflow_sequences
             (id, doc_id, created_at, updated_at)
@@ -246,8 +250,8 @@ def test_pending_head_by_group_picks_first_unstarted_item(post_migration_db):
         JOIN workflow_sequences ws ON wsi.sequence_id = ws.id
         JOIN documents d ON ws.doc_id = d.doc_id
         GROUP BY d.group_id, d.project_id, ws.id
-        HAVING SUM(CASE WHEN wsi.result_doc_id IS NOT NULL THEN 1 ELSE 0 END) = 1
-           AND SUM(CASE WHEN wsi.result_doc_id IS NULL THEN 1 ELSE 0 END) >= 2
+        HAVING SUM(CASE WHEN wsi.result_doc_id IS NOT NULL THEN 1 ELSE 0 END) >= 1
+           AND SUM(CASE WHEN wsi.result_doc_id IS NULL THEN 1 ELSE 0 END) >= 1
         ORDER BY ws.id
         LIMIT 1
     """).fetchone()

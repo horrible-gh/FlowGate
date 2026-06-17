@@ -112,6 +112,13 @@ def patch_store(tmp_db):
 
     original_store = conn_mod.STORE
 
+    # The active pepper id is set at this module's import (line ~31), but another test
+    # module imported later in the same session (e.g. test_r018_impl) overwrites
+    # FLOWGATE_TOKEN_PEPPER_ACTIVE_ID at its own import time. token_service.verify hashes
+    # with the active pepper, so re-assert it at run time and restore on teardown.
+    _orig_active_id = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
+    os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
+
     class _PatchedStore(conn_mod.FlowGateStore):
         def __init__(self):
             self._db = mock_db
@@ -123,6 +130,10 @@ def patch_store(tmp_db):
     conn_mod.STORE = _PatchedStore()
     yield
     conn_mod.STORE = original_store
+    if _orig_active_id is None:
+        os.environ.pop("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", None)
+    else:
+        os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = _orig_active_id
 
 
 @pytest.fixture(scope="module")
@@ -308,7 +319,7 @@ class TestTokenService:
         with pytest.raises(HTTPException) as exc:
             token_service.verify(raw)
         assert exc.value.status_code == 401
-        assert "already used" in exc.value.detail
+        assert "already been used" in exc.value.detail
 
     def test_revoke(self, seed_data, tmp_path):
         """Reuse after revoke -> 401."""

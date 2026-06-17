@@ -48,6 +48,12 @@ class _Store:
         self._conn.execute(sql, params or [])
         self._conn.commit()
 
+    def table_exists(self, name: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [name]
+        ).fetchone()
+        return row is not None
+
 
 @pytest.fixture(scope="module")
 def t505_conn():

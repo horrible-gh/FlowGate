@@ -88,7 +88,7 @@ def test_case2_no_sequence():
     for line in mention.split("\n"):
         if line.startswith("next_type:"):
             actual = line.split("next_type:")[1].split("#")[0].strip()
-            assert actual == "<sequence undetermined>", f"FAIL: expected '<sequence undetermined>', actual '{actual}'"
+            assert actual == "<Sequence undecided>", f"FAIL: expected '<Sequence undecided>', actual '{actual}'"
             print(f"\n✓ next_type = '<sequence undetermined>' (OK)")
             break
     else:
@@ -130,8 +130,8 @@ def test_case3_seq_head_in_progress():
     for line in mention.split("\n"):
         if line.startswith("next_type:"):
             actual = line.split("next_type:")[1].split("#")[0].strip()
-            assert actual == "<in progress: D>", f"FAIL: expected '<in progress: D>', actual '{actual}'"
-            print(f"\n✓ next_type = '<in progress: D>' (OK)")
+            assert actual == "<In progress: D>", f"FAIL: expected '<In progress: D>', actual '{actual}'"
+            print(f"\n✓ next_type = '<In progress: D>' (OK)")
             break
     else:
         raise AssertionError("next_type line missing")

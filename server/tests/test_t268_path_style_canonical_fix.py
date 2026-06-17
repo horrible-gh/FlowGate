@@ -98,6 +98,9 @@ class TestPathStyleCanonicalReconstruction:
             with patch(
                 "modules.flow_gate.api.v1.document_routes.db_docs.get_by_id",
                 return_value=mock_doc,
+            ), patch(
+                "modules.flow_gate.api.v1.document_routes.get_answers_for_document",
+                return_value=[],
             ):
                 resp = self.client.get(
                     "/api/v1/document/test/__ALL__/0001/R0001",
@@ -137,6 +140,9 @@ class TestPathStyleCanonicalReconstruction:
             with patch(
                 "modules.flow_gate.api.v1.document_routes.db_docs.get_by_id",
                 return_value=mock_doc,
+            ), patch(
+                "modules.flow_gate.api.v1.document_routes.get_answers_for_document",
+                return_value=[],
             ):
                 resp = self.client.get(
                     "/api/v1/document/test-__ALL__-0001-R0001",
@@ -258,6 +264,9 @@ class TestPathStyleCanonicalReconstruction:
             with patch(
                 "modules.flow_gate.api.v1.document_routes.db_docs.get_by_id",
                 return_value=mock_doc,
+            ), patch(
+                "modules.flow_gate.api.v1.document_routes.get_answers_for_document",
+                return_value=[],
             ):
                 resp = self.client.get(
                     "/api/v1/document/myproject/__ALL__/0001/R0001",

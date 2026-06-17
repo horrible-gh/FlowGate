@@ -207,7 +207,7 @@ def _seed_test_data(db: _TestDB):
         " file_path, status, owner_id, created_at, updated_at, revision_no) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            "proj-ts021-__ALL__-0001-Q0001", "proj-ts021", "__ALL__", "proj-ts021-__ALL__-0001",
+            "proj-ts021.__all__.0001.0001-Q", "proj-ts021", "__ALL__", "proj-ts021-__ALL__-0001",
             "Q", 1, "TS021 Test Q Document (closed)",
             "",
             "closed", "usr_ts021_manager", now, now, 0,
@@ -221,7 +221,7 @@ def _seed_test_data(db: _TestDB):
         " file_path, status, owner_id, triggered_by, created_at, updated_at, revision_no) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            "proj-ts021-__ALL__-0001-Q0002", "proj-ts021", "__ALL__", "proj-ts021-__ALL__-0001",
+            "proj-ts021.__all__.0001.0002-Q", "proj-ts021", "__ALL__", "proj-ts021-__ALL__-0001",
             "Q", 2, "TS021 Test Q Document (open)",
             "",
             "open", "usr_ts021_manager", "proj-ts021-__ALL__-0001-NR0001", now, now, 0,
@@ -625,52 +625,38 @@ class TestSC03DocRefMapping:
             headers=_fg_bearer(token),
         )
         assert resp.status_code == 403, f"SC-03-A: expected 403, got {resp.status_code}"
-        assert "context" in resp.json().get("error_message", ""), resp.text
+        # Current message: "Context binding mismatch. Use the correct token." (capital C)
+        assert "context binding" in resp.json().get("error_message", "").lower(), resp.text
 
-    def test_sc03b_normalized_docref_vs_raw_prevdocid_403_d7(self, ts021_client):
-        """SC-03-B: verify the D7 fix — token.doc_ref=normalized form + inbox new(prev_doc_id=raw form) -> 200.
+    def test_sc03b_legacy_dash_docref_rejected_422(self, ts021_client):
+        """SC-03-B (current contract): the retired dash-style ("raw") doc_ref is no
+        longer accepted. Canonical doc_id is dot-style
+        ({project}.{module}.{group}.{seq}-{TYPE}); the HTTP /token/issue route
+        validates it and rejects the legacy dash form at the API boundary with 422.
 
-        resolve_doc_id() reverse-resolves normalized doc_ref -> raw doc_id.
-        Matching in inbox_routes -> pass.
+        (Was: D7 reverse-resolution of normalized-vs-raw forms — that duality is
+        retired, so there is nothing to reverse-resolve.)
         """
-        # Issue through token_routes HTTP (normalized path)
         resp = ts021_client.post(
             "/api/v1/token/issue",
             json={
                 "project": "proj-ts021",
                 "group": "0001",
                 "action_scope": "new",
-                "doc_ref": "proj-ts021-__ALL__-0001-NR0001",  # raw doc_id input
+                "doc_ref": "proj-ts021-__ALL__-0001-NR0001",  # retired dash form
             },
             headers=_auth_header("usr_ts021_worker"),
         )
-        assert resp.status_code == 200, f"SC-03-B setup FAIL: {resp.text}"
-        issued = resp.json()
-        raw_token = issued["raw_token"]
-
-        # inbox new with raw prev_doc_id
-        inbox_resp = ts021_client.post(
-            "/api/v1/inbox",
-            json={
-                "action": "new",
-                "project": "proj-ts021",
-                "module": "__ALL__",
-                "group": "0001",
-                "target_id": "NR0001",  # raw form
-                "doc_type": "NR",
-                "content": "# Test",
-            },
-            headers={"Authorization": f"Bearer {raw_token}"},
+        assert resp.status_code == 422, (
+            f"SC-03-B: legacy dash doc_ref must be rejected at the boundary, got {resp.status_code}: {resp.text}"
         )
-        # After the D7 fix: reverse-lookup normalized form via resolve_doc_id -> match -> 200
-        assert inbox_resp.status_code == 200, (
-            f"SC-03-B: D7 fix not applied — expected 200, got {inbox_resp.status_code}: {inbox_resp.text}"
-        )
+        assert "doc_id format is invalid" in resp.text
 
-    def test_sc03c_normalized_docref_vs_raw_docid_edit_403_d8(self, ts021_client):
-        """SC-03-C: verify the D8 fix — token.doc_ref=normalized form + inbox edit(doc_id=raw form) -> 200.
+    def test_sc03c_legacy_dash_docref_edit_rejected_422(self, ts021_client):
+        """SC-03-C (current contract): same as SC-03-B for an edit token — the legacy
+        dash-style doc_ref is rejected by the canonical doc_id validator with 422.
 
-        Reverse lookup via resolve_doc_id maps normalized form -> raw doc_id -> match -> pass.
+        (Was: D8 normalized-vs-raw reverse-resolution.)
         """
         resp = ts021_client.post(
             "/api/v1/token/issue",
@@ -678,30 +664,14 @@ class TestSC03DocRefMapping:
                 "project": "proj-ts021",
                 "group": "0001",
                 "action_scope": "edit",
-                "doc_ref": "proj-ts021-__ALL__-0001-NR0001",
+                "doc_ref": "proj-ts021-__ALL__-0001-NR0001",  # retired dash form
             },
             headers=_auth_header("usr_ts021_worker"),
         )
-        assert resp.status_code == 200, f"SC-03-C setup FAIL: {resp.text}"
-        raw_token = resp.json()["raw_token"]
-
-        inbox_resp = ts021_client.post(
-            "/api/v1/inbox",
-            json={
-                "action": "edit",
-                "project": "proj-ts021",
-                "module": "__ALL__",
-                "group": "0001",
-                "doc_id": "proj-ts021-__ALL__-0001-NR0001",  # raw form
-                "edit_reason": "worker_self",
-                "content": "# Updated",
-            },
-            headers={"Authorization": f"Bearer {raw_token}"},
+        assert resp.status_code == 422, (
+            f"SC-03-C: legacy dash doc_ref must be rejected at the boundary, got {resp.status_code}: {resp.text}"
         )
-        # After the D8 fix: normalized token.doc_ref -> resolve_doc_id -> raw-form match -> 200
-        assert inbox_resp.status_code == 200, (
-            f"SC-03-C: D8 fix not applied — expected 200, got {inbox_resp.status_code}"
-        )
+        assert "doc_id format is invalid" in resp.text
 
     def test_sc03d_qa_followup_token_raw_docref_binding(self, ts021_client):
         """SC-03-D: QA followup token (raw doc_ref) + inbox edit(doc_id=raw form) -> 200.
@@ -802,8 +772,10 @@ class TestSC04ProjectBinding:
             pytest.skip(f"flowgate_helper.py could not be found")
 
         content = helper_path.read_text(encoding="utf-8")
-        # D12: if the "project name" wording is present, confirm the docstring bug
-        has_bug = "project name" in content
+        # D12: if the "project name" wording is present, confirm the docstring bug.
+        # The docstring uses the capitalized form ("Project name"), so match
+        # case-insensitively (the current helper still carries this wording).
+        has_bug = "project name" in content.lower()
         assert has_bug, (
             "D12 check: flowgate_helper.py does not contain the 'project name' wording (already fixed or located elsewhere)"
         )
@@ -991,8 +963,12 @@ class TestSC07QAChannel:
         # Confirm this is not a body-validation error (400)
         assert resp.status_code != 400, "SC-07-A: Q body validation failed (400) — unexpected result"
 
-    def test_sc07b_q_missing_headers_400(self, ts021_client):
-        """SC-07-B: Q registration (required H2 missing) -> 400 (body validation step 1-b, before auth)."""
+    def test_sc07b_q_missing_headers_context_mismatch_403(self, ts021_client):
+        """SC-07-B (current contract): context binding is verified BEFORE the Q body is
+        validated. With token.doc_ref=None and body.target_id="NR0001", the binding
+        mismatch returns 403 first — the malformed Q body is never reached. (This mirrors
+        the sibling SC-07-A, which asserts the same setup is 403, not 400.)
+        """
         token = _issue_fg_token(action_scope="new", doc_ref=None)
         resp = ts021_client.post(
             "/api/v1/inbox",
@@ -1007,10 +983,10 @@ class TestSC07QAChannel:
             },
             headers=_fg_bearer(token),
         )
-        assert resp.status_code == 400, f"SC-07-B: expected 400 (Q body validation failure), got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, f"SC-07-B: expected 403 (context binding precedes body validation), got {resp.status_code}: {resp.text}"
         body = resp.json()
         assert body["ok"] is False
-        assert "Q body format violation" in body.get("error_message", ""), body
+        assert "context binding" in body.get("error_message", "").lower(), body
 
     def test_sc07c_qa_answer_ment_copy_403_d6(self, ts021_client):
         """SC-07-C: verify the D6 fix — POST /qa/{q_id}/answer -> 200 (perm_document_create fix).
@@ -1018,7 +994,7 @@ class TestSC07QAChannel:
         qa_routes.py uses perm_document_create -> manager has permission -> 200.
         """
         resp = ts021_client.post(
-            "/api/v1/qa/proj-ts021-__ALL__-0001-Q0002/answer",
+            "/api/v1/qa/proj-ts021.__all__.0001.0002-Q/answer",
             json={
                 "answer_body": "## Answer\\nThis is a test answer.",
                 "dispatch_mode": "ment_copy",
@@ -1034,7 +1010,7 @@ class TestSC07QAChannel:
     def test_sc07d_closed_q_409(self, ts021_client):
         """SC-07-D: answer to an already closed Q -> 409 (Q state is checked before permission)."""
         resp = ts021_client.post(
-            "/api/v1/qa/proj-ts021-__ALL__-0001-Q0001/answer",  # closed state
+            "/api/v1/qa/proj-ts021.__all__.0001.0001-Q/answer",  # closed state
             json={
                 "answer_body": "## Answer\\nAttempted answer",
                 "dispatch_mode": "none",
@@ -1050,7 +1026,7 @@ class TestSC07QAChannel:
     def test_sc07e_qa_q_not_found_404(self, ts021_client):
         """SC-07-E: answer to a nonexistent Q -> 404."""
         resp = ts021_client.post(
-            "/api/v1/qa/proj-ts021-__ALL__-0001-Q9999/answer",
+            "/api/v1/qa/proj-ts021.__all__.0001.9999-Q/answer",
             json={
                 "answer_body": "## Answer\\nNonexistent Q",
                 "dispatch_mode": "none",
@@ -1063,10 +1039,10 @@ class TestSC07QAChannel:
         """SC-07-F: dispatch_mode=command + no command_id -> 400.
 
         After the D6 fix: step 4 permission passes -> step 5 dispatch_mode=command validation -> 400.
-        (proj-ts021-__ALL__-0001-Q0002 is answered due to SC-07-C but not closed -> steps 2/3 pass)
+        (proj-ts021.__all__.0001.0002-Q is answered due to SC-07-C but not closed -> steps 2/3 pass)
         """
         resp = ts021_client.post(
-            "/api/v1/qa/proj-ts021-__ALL__-0001-Q0002/answer",
+            "/api/v1/qa/proj-ts021.__all__.0001.0002-Q/answer",
             json={
                 "answer_body": "## Answer\\nTest",
                 "dispatch_mode": "command",

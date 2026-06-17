@@ -72,6 +72,65 @@ def _patch_ps(monkeypatch, doc: dict):
     return mock_docs, updated_doc
 
 
+def _parse_r_workflow(monkeypatch, seq_items, workflow_steps_str, *, r_doc_id="R001"):
+    """Run _parse_doc_workflow for an R doc under the current D030 slot contract.
+
+    D030 (status column removed): the workflow head is derived from result_doc_id +
+    the result doc's review status — NOT a legacy slot `status` column. _parse_doc_workflow
+    resolves the head from (a) the group documents (list_documents) and (b) the sequence
+    slots. Tests express each slot via a convenience `status` token which is translated:
+      - 'pending'     -> result_doc_id = None
+      - 'in_progress' -> result_doc_id set, result review = pending_review
+      - 'done'        -> result_doc_id set, result review = approved
+    Both SSOT channels (the slot's result_doc_review_status and a matching candidate from
+    list_documents) are populated, and the R doc carries project_id/group_id so the lookup
+    runs. An explicit result_doc_id / result_doc_review_status on a slot overrides the token.
+    """
+    from modules.flow_gate.db import documents as db_docs_mod
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    enriched = []
+    candidates = [{
+        "doc_id": r_doc_id, "type_code": "R", "seq": 0,
+        "doc_review_status": "wf_in_progress", "workflow_steps": workflow_steps_str,
+    }]
+    for i, item in enumerate(seq_items):
+        it = dict(item)
+        status = it.pop("status", "pending")
+        if "result_doc_id" not in it:
+            it["result_doc_id"] = (
+                f"{it['type']}_{status}_{i}" if status in ("done", "in_progress") else None
+            )
+        rid = it.get("result_doc_id")
+        if rid:
+            review = it.get("result_doc_review_status") or (
+                "approved" if status == "done" else "pending_review"
+            )
+            it["result_doc_review_status"] = review
+            candidates.append({
+                "doc_id": rid, "type_code": it["type"], "seq": i + 1,
+                "doc_review_status": review,
+            })
+        enriched.append(it)
+
+    monkeypatch.setattr(db_wfseq, "get_sequence_by_doc_id",
+                        lambda doc_id: {"id": 1} if doc_id == r_doc_id else None)
+    monkeypatch.setattr(db_wfseq, "get_sequence_items", lambda seq_id: enriched)
+    monkeypatch.setattr(
+        db_docs_mod, "list_documents",
+        lambda **kw: ([c for c in candidates if c["type_code"] == kw["type_code"]]
+                      if kw.get("type_code") else candidates),
+    )
+
+    return doc_routes._parse_doc_workflow({
+        "doc_id": r_doc_id, "type_code": "R",
+        "project_id": "P001", "group_id": "G001",
+        "doc_review_status": "wf_in_progress",
+        "workflow_steps": workflow_steps_str, "rejection_history": None,
+    })
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # §1: doc_review_status transition consistency for 8 doctypes
 # ══════════════════════════════════════════════════════════════════════════════
@@ -215,29 +274,14 @@ def test_r_workflow_decided_first_slot_pending_shows_next(monkeypatch):
 
     D030 §4.1 #2: R, after workflow decision, headStatus=pending -> [Proceed to next step].
     """
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[
             {"type": "DS", "status": "pending"},
             {"type": "T", "status": "pending"},
         ],
+        workflow_steps_str='["DS", "T"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {"type": "DS", "status": "pending", "result_doc_id": None},
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["DS", "T"]', "rejection_history": None,
-    })
 
     assert parsed["workflow_head_type"] == "DS"
     assert parsed["workflow_head_status"] == "pending"
@@ -272,35 +316,16 @@ def test_r_workflow_in_progress_slot_guarded(monkeypatch):
 
     D030 §4.1 #3: head≠pending (in progress) -> next-step button disabled + "In progress" badge.
     """
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [{"type": "DS", "status": "in_progress", "result_doc_id": "DS001"}],
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {
-            "type": "DS", "status": "in_progress", "result_doc_id": "DS001",
-        },
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "pending_review"} if doc_id == "DS001" else None,
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[{"type": "DS", "status": "in_progress",
+                    "result_doc_id": "DS001",
+                    "result_doc_review_status": "pending_review"}],
+        workflow_steps_str='["DS"]',
     )
 
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["DS"]', "rejection_history": None,
-    })
-
-    # in_progress + result_doc_id set → NOT stranded → head_status stays in_progress
+    # in_progress + result_doc_id set (result not yet approved) → NOT stranded
+    # → head_status stays in_progress
     assert parsed["workflow_head_type"] == "DS"
     assert parsed["workflow_head_status"] == "in_progress"
 
@@ -315,31 +340,12 @@ def test_m_single_slot_complete_head_status_done(monkeypatch):
 
     D030 §4.1 #4: for M, if there is no next label, show [Complete].
     """
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[{"type": "M", "status": "done", "result_doc_id": "M001",
+                    "result_doc_review_status": "approved"}],
+        workflow_steps_str='["M"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [{"type": "M", "status": "done", "result_doc_id": "M001"}],
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: None,  # sequence complete
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "approved"} if doc_id == "M001" else None,
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["M"]', "rejection_history": None,
-    })
 
     assert parsed["workflow_head_status"] == "done"
     assert parsed.get("workflow_head_type") is None
@@ -350,34 +356,15 @@ def test_m_before_next_slot_pending(monkeypatch):
 
     D030 §4.1 #4: for M, if there is a next label, show [Next step].
     """
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [
-            {"type": "M", "status": "done", "result_doc_id": "M001"},
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[
+            {"type": "M", "status": "done", "result_doc_id": "M001",
+             "result_doc_review_status": "approved"},
             {"type": "T", "status": "pending", "result_doc_id": None},
         ],
+        workflow_steps_str='["M", "T"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {"type": "T", "status": "pending", "result_doc_id": None},
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "approved"} if doc_id == "M001" else None,
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["M", "T"]', "rejection_history": None,
-    })
 
     assert parsed["workflow_head_type"] == "T"
     assert parsed["workflow_head_status"] == "pending"
@@ -396,37 +383,17 @@ def test_auto_result_draft_n_approval_head_stays_in_progress(monkeypatch):
 
     T624 fixes the old D-1 behavior by deriving slot completion from doc_review_status.
     """
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [
-            {"type": "N", "status": "in_progress", "result_doc_id": "N001"},
+    # N slot realized with an APPROVED result doc -> treated as done; NR has no
+    # result doc -> pending head (T624 SSOT).
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[
+            {"type": "N", "status": "done", "result_doc_id": "N001",
+             "result_doc_review_status": "approved"},
             {"type": "NR", "status": "pending", "result_doc_id": None},
         ],
+        workflow_steps_str='["N", "NR"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {
-            "type": "N", "status": "in_progress", "result_doc_id": "N001",
-        },
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "approved"} if doc_id == "N001" else None,
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "doc_review_status": "wf_in_progress",
-        "workflow_steps": '["N", "NR"]', "rejection_history": None,
-    })
 
     assert parsed["workflow_head_type"] == "NR"
     assert parsed["workflow_head_status"] == "pending"
@@ -435,37 +402,15 @@ def test_auto_result_draft_n_approval_head_stays_in_progress(monkeypatch):
 
 def test_auto_result_draft_t_approval_head_stays_in_progress(monkeypatch):
     """[AUTO-T] After T approval, the workflow head advances to TR (pending)."""
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [
-            {"type": "T", "status": "in_progress", "result_doc_id": "T001"},
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[
+            {"type": "T", "status": "done", "result_doc_id": "T001",
+             "result_doc_review_status": "approved"},
             {"type": "TR", "status": "pending", "result_doc_id": None},
         ],
+        workflow_steps_str='["T", "TR"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {
-            "type": "T", "status": "in_progress", "result_doc_id": "T001",
-        },
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "approved"} if doc_id == "T001" else None,
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "doc_review_status": "wf_in_progress",
-        "workflow_steps": '["T", "TR"]', "rejection_history": None,
-    })
 
     assert parsed["workflow_head_type"] == "TR"
     assert parsed["workflow_head_status"] == "pending"
@@ -483,28 +428,14 @@ def test_stranded_in_progress_null_result_doc_reopens_as_pending(monkeypatch):
     DB004 §5: stranded = in_progress AND result_doc_id IS NULL -> reopen as pending.
     Verify handling without recovery code.
     """
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
+    # Stranded: slot has no result_doc_id (the legacy 'in_progress' status no longer
+    # exists). A slot with result_doc_id IS NULL is simply an unrealized (pending) slot
+    # under the D030 contract — i.e. it reopens as pending.
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[{"type": "DS", "status": "in_progress", "result_doc_id": None}],
+        workflow_steps_str='["DS"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [{"type": "DS", "status": "in_progress"}],
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {
-            "type": "DS", "status": "in_progress", "result_doc_id": None,
-        },
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["DS"]', "rejection_history": None,
-    })
 
     # DB004 §5: stranded → reopen as pending
     assert parsed["workflow_head_type"] == "DS"
@@ -515,36 +446,20 @@ def test_stranded_in_progress_null_result_doc_reopens_as_pending(monkeypatch):
 
 
 def test_non_stranded_in_progress_with_result_doc_stays_in_progress(monkeypatch):
-    """[STR-2] in_progress + result_doc_id IS NOT NULL -> not stranded -> remain in_progress."""
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
+    """[STR-2] in_progress + result_doc_id IS NOT NULL -> not stranded -> remain in_progress.
 
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [{"type": "M", "status": "in_progress", "result_doc_id": "M001"}],
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: {
-            "type": "M", "status": "in_progress", "result_doc_id": "M001",
-        },
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "pending_review"} if doc_id == "M001" else None,
+    Uses DS (a reviewable, non-auto-complete type): a slot whose result doc exists but is
+    not yet approved is a genuine in-progress head. (M is excluded here because under the
+    current contract M is an AUTO_COMPLETE_TYPE and can never be the actionable head.)
+    """
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[{"type": "DS", "status": "in_progress", "result_doc_id": "DS001",
+                    "result_doc_review_status": "pending_review"}],
+        workflow_steps_str='["DS"]',
     )
 
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": '["M"]', "rejection_history": None,
-    })
-
-    assert parsed["workflow_head_type"] == "M"
+    assert parsed["workflow_head_type"] == "DS"
     assert parsed["workflow_head_status"] == "in_progress"
 
 
@@ -595,34 +510,16 @@ def test_sequence_complete_head_status_done_never_null(monkeypatch):
 
     feedback_actionbar_always_shows: head_status=None risks a null actionbar.
     """
-    from modules.flow_gate.db import documents as db_docs_mod
-    from modules.flow_gate.db import workflow_sequences as db_wfseq
-    from modules.flow_gate.documents.routers import documents as doc_routes
-
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_by_doc_id",
-        lambda doc_id: {"id": 1} if doc_id == "R001" else None,
-    )
-    monkeypatch.setattr(
-        db_wfseq, "get_sequence_items",
-        lambda seq_id: [
-            {"type": "DS", "status": "done", "result_doc_id": "DS001"},
-            {"type": "T", "status": "done", "result_doc_id": "T001"},
+    parsed = _parse_r_workflow(
+        monkeypatch,
+        seq_items=[
+            {"type": "DS", "status": "done", "result_doc_id": "DS001",
+             "result_doc_review_status": "approved"},
+            {"type": "T", "status": "done", "result_doc_id": "T001",
+             "result_doc_review_status": "approved"},
         ],
+        workflow_steps_str='["DS", "T"]',
     )
-    monkeypatch.setattr(
-        db_wfseq, "get_effective_head",
-        lambda seq_id: None,  # all done
-    )
-    monkeypatch.setattr(
-        db_docs_mod, "get_by_id",
-        lambda doc_id: {"doc_review_status": "approved"} if doc_id in {"DS001", "T001"} else None,
-    )
-
-    parsed = doc_routes._parse_doc_workflow({
-        "doc_id": "R001", "type_code": "R",
-        "workflow_steps": None, "rejection_history": None,
-    })
 
     assert parsed["workflow_head_status"] == "done", (
         "workflow_head_status must be 'done' when the sequence is complete (null forbidden)"

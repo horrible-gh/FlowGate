@@ -104,6 +104,12 @@ def t358_db():
         INSERT OR IGNORE INTO projects (project_id, project_name, created_at, updated_at)
             VALUES ('t358', 'T358 Test', '{now}', '{now}');
 
+        INSERT OR IGNORE INTO project_modules (module_id, project_id, name, title, created_at, updated_at)
+            VALUES ('t358:server', 't358', 'server', 'Server', '{now}', '{now}');
+
+        INSERT OR IGNORE INTO project_modules (module_id, project_id, name, title, created_at, updated_at)
+            VALUES ('t358:client', 't358', 'client', 'Client', '{now}', '{now}');
+
         INSERT OR IGNORE INTO groups (group_id, project_id, module, title, status, created_at, updated_at)
             VALUES ('t358-server-0001', 't358', 'server', 'Server Group', 'OPEN', '{now}', '{now}');
 
@@ -236,8 +242,10 @@ class TestModuleRoutes:
 
         r_doc = items.get("t358-server-0001-R0001")
         assert r_doc is not None
-        # module=server, group_code=0001, seq=1, doc_code=R0001
-        assert r_doc["doc_identifier"] == "server/0001/1/R0001"
+        # Current canonical format: {module}/{group_code}/{seq}/{doc_code}.
+        # group_id is dash-style (t358-server-0001) so group_code is the full id,
+        # and the doc_code is seq-type style ({seq:04d}-{type}) -> 0001-R.
+        assert r_doc["doc_identifier"] == "server/t358-server-0001/1/0001-R"
 
     def test_group_not_found(self, t358_client):
         """Nonexistent group ? 404."""
@@ -270,8 +278,11 @@ class TestMentionRefDocs:
             api_base_url="http://localhost/fg",
         )
         assert result is not None
-        assert "## Reference Documents" in result
-        assert "proj-t358/server/0001/R0001: GET" in result
+        # Current canonical format: section heading is lowercase 'documents'.
+        assert "## Reference documents" in result
+        # For a non-edit "new" mention with no ref_doc_ids, section 3 lists no
+        # document reference lines (the target is conveyed in section 1). Only the
+        # auth note is present.
         assert "additional reference documents" not in result
 
     def test_build_mention_with_ref_docs(self):
@@ -298,7 +309,7 @@ class TestMentionRefDocs:
             ref_doc_ids=ref_ids,
         )
         assert result is not None
-        assert "## Reference Documents" in result
+        assert "## Reference documents" in result
         assert "t358-server-0001-DS0002: GET" in result
         assert "t358-client-0001-R0001: GET" in result
 
@@ -323,7 +334,7 @@ class TestMentionRefDocs:
         )
         sections = result.split("\n\n## ")
         ref_section = next(
-            (s for s in sections if s.startswith("Reference Documents") or "## Reference Documents" in s),
+            (s for s in sections if s.startswith("Reference documents") or "## Reference documents" in s),
             None,
         )
         # Split using the first section approach
@@ -331,7 +342,7 @@ class TestMentionRefDocs:
         in_ref_section = False
         ref_lines = []
         for line in lines:
-            if line.startswith("## Reference Documents"):
+            if line.startswith("## Reference documents"):
                 in_ref_section = True
                 continue
             if in_ref_section and line.startswith("## "):

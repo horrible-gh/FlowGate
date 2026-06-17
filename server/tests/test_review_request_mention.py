@@ -59,4 +59,7 @@ def test_review_mention_includes_target_get_and_token():
     # Worker must be able to read the doc and authenticate the submission.
     assert "GET http://127.0.0.1:8088/flowgate/api/v1/document/test.none.0002.0003-DS" in m
     assert "Bearer RAWTOKEN123" in m
-    assert "D:\\test\\storage2\\work\\test\\tok_x" in m
+    # Current contract: the scratch-directory section is disabled — a remote HTTP
+    # worker cannot reach the server host's local paths — so the token's local
+    # scratch_dir must NOT leak into the mention.
+    assert "D:\\test\\storage2\\work\\test\\tok_x" not in m

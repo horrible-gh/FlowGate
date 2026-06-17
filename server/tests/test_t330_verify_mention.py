@@ -106,7 +106,7 @@ def t330_db(t330_storage):
             "(group_id, project_id, module, title, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                f"proj-t330-server-{group_seq}",
+                f"proj-t330.server.{group_seq}",
                 "proj-t330",
                 "server",
                 f"TestGroup{group_seq}",
@@ -118,9 +118,10 @@ def t330_db(t330_storage):
 
     # Documents
     docs = [
-        ("proj-t330-server-0001-R0001", "proj-t330-server-0001", "R", 1),
-        ("proj-t330-server-0002-D0001", "proj-t330-server-0002", "D", 1),
-        ("proj-t330-server-0003-DS0001", "proj-t330-server-0003", "DS", 1),
+        ("proj-t330.server.0001.0001-R", "proj-t330.server.0001", "R", 1),
+        ("proj-t330.server.0002.0001-D", "proj-t330.server.0002", "D", 1),
+        ("proj-t330.server.0003.0001-DS", "proj-t330.server.0003", "DS", 1),
+        ("proj-t330.server.0003.0002-D", "proj-t330.server.0003", "D", 2),
     ]
 
     for doc_id, group_id, type_code, seq in docs:
@@ -136,30 +137,30 @@ def t330_db(t330_storage):
     db.execute(
         "INSERT OR IGNORE INTO workflow_sequences (doc_id, created_at, updated_at) "
         "VALUES (?, ?, ?)",
-        ["proj-t330-server-0001-R0001", now, now],
+        ["proj-t330.server.0001.0001-R", now, now],
     )
-    seq1 = db.fetch_one("SELECT id FROM workflow_sequences WHERE doc_id = ?", ["proj-t330-server-0001-R0001"])
+    seq1 = db.fetch_one("SELECT id FROM workflow_sequences WHERE doc_id = ?", ["proj-t330.server.0001.0001-R"])
     if seq1:
         db.execute(
             "INSERT OR IGNORE INTO workflow_sequence_items "
-            "(sequence_id, item_seq, type, label, doc_class, sort_order, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [seq1["id"], 1, "D", "Design", "R", 0, "pending", now, now],
+            "(sequence_id, item_seq, type, label, doc_class, sort_order, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [seq1["id"], 1, "D", "Design", "R", 0, now, now],
         )
 
     # Case 3: in_progress
     db.execute(
         "INSERT OR IGNORE INTO workflow_sequences (doc_id, created_at, updated_at) "
         "VALUES (?, ?, ?)",
-        ["proj-t330-server-0003-DS0001", now, now],
+        ["proj-t330.server.0003.0001-DS", now, now],
     )
-    seq3 = db.fetch_one("SELECT id FROM workflow_sequences WHERE doc_id = ?", ["proj-t330-server-0003-DS0001"])
+    seq3 = db.fetch_one("SELECT id FROM workflow_sequences WHERE doc_id = ?", ["proj-t330.server.0003.0001-DS"])
     if seq3:
         db.execute(
             "INSERT OR IGNORE INTO workflow_sequence_items "
-            "(sequence_id, item_seq, type, label, doc_class, sort_order, status, created_at, updated_at) "
+            "(sequence_id, item_seq, type, label, doc_class, sort_order, result_doc_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [seq3["id"], 1, "D", "Design", "R", 0, "in_progress", now, now],
+            [seq3["id"], 1, "D", "Design", "R", 0, "proj-t330.server.0003.0002-D", now, now],
         )
 
     yield db
@@ -232,7 +233,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0001", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0001-R0001",
+                "doc_ref": "proj-t330.server.0001.0001-R",
             },
             headers=_auth_header("usr_t330_worker"),
         )
@@ -261,7 +262,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0002", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0002-D0001",
+                "doc_ref": "proj-t330.server.0002.0001-D",
             },
             headers=_auth_header("usr_t330_worker"),
         )
@@ -274,7 +275,7 @@ class TestT330MentionVerification:
         for line in mention.split("\n"):
             if line.startswith("next_type:"):
                 actual = line.split("next_type:")[1].split("#")[0].strip()
-                assert actual == "<Sequence unresolved>", f"expected <Sequence unresolved>, got {actual}"
+                assert actual == "<Sequence undecided>", f"expected <Sequence undecided>, got {actual}"
                 break
         else:
             assert False, "next_type line missing"
@@ -290,7 +291,7 @@ class TestT330MentionVerification:
                 "project": "proj-t330",
                 "group": "0003", "module": "server",
                 "action_scope": "new",
-                "doc_ref": "proj-t330-server-0003-DS0001",
+                "doc_ref": "proj-t330.server.0003.0001-DS",
             },
             headers=_auth_header("usr_t330_worker"),
         )

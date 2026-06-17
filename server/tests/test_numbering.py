@@ -131,9 +131,9 @@ class TestIdFormatter:
 
     def test_format_doc_code(self):
         from modules.flow_gate.numbering.id_formatter import format_doc_code
-        assert format_doc_code("R", 1, 4) == "R0001"
-        assert format_doc_code("DS", 12, 4) == "DS0012"
-        assert format_doc_code("T", 999, 4) == "T0999"
+        assert format_doc_code("R", 1, 4) == "0001-R"
+        assert format_doc_code("DS", 12, 4) == "0012-DS"
+        assert format_doc_code("T", 999, 4) == "0999-T"
 
     def test_parse_group_code(self):
         from modules.flow_gate.numbering.id_formatter import parse_group_code
@@ -147,8 +147,8 @@ class TestIdFormatter:
 
     def test_parse_doc_code(self):
         from modules.flow_gate.numbering.id_formatter import parse_doc_code
-        assert parse_doc_code("R0001") == ("R", 1)
-        assert parse_doc_code("DS0012") == ("DS", 12)
+        assert parse_doc_code("0001-R") == ("R", 1)
+        assert parse_doc_code("0012-DS") == ("DS", 12)
 
     def test_parse_doc_code_invalid(self):
         from modules.flow_gate.numbering.id_formatter import parse_doc_code
@@ -166,8 +166,8 @@ class TestIdFormatter:
 
     def test_reformat_document(self):
         from modules.flow_gate.numbering.id_formatter import reformat_code
-        assert reformat_code("R0001", 5, "document") == "R00001"
-        assert reformat_code("DS0012", 3, "document") == "DS012"
+        assert reformat_code("0001-R", 5, "document") == "00001-R"
+        assert reformat_code("0012-DS", 3, "document") == "012-DS"
 
     def test_reformat_unknown_kind(self):
         from modules.flow_gate.numbering.id_formatter import reformat_code
@@ -222,7 +222,7 @@ class TestReserve:
         db_conn.commit()
         from modules.flow_gate.numbering.numbering_service import reserve_document
         code = reserve_document("GRP1", "R")
-        assert re.fullmatch(r'R\d{4}', code), f"Expected format R0001, actual: {code}"
+        assert re.fullmatch(r'\d{4}-R', code), f"Expected format 0001-R, actual: {code}"
 
     def test_reserve_group_not_found(self, patched_store, seed_project):
         from modules.flow_gate.numbering.numbering_service import reserve_subgroup
@@ -314,9 +314,9 @@ class TestVerifyIdWidths:
         """Detect orphan files in storage that are not in the DB."""
         import os
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
-        # project_dir_name returns the slug of project_name, not project_id
-        # "Test Project" -> "Test_Project"
-        proj_dir = tmp_path / "documents" / "Test_Project"
+        # project_root canonical shape: documents/{project_id}/{branch}
+        # project_dir_name sanitizes the project_id ("PRJ01"); branch defaults "main"
+        proj_dir = tmp_path / "documents" / "PRJ01" / "main"
         proj_dir.mkdir(parents=True)
         orphan = proj_dir / "orphan.md"
         orphan.write_text("test", encoding="utf-8")
@@ -340,7 +340,7 @@ class TestStoragePaths:
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
         try:
             from modules.flow_gate.storage.paths import project_root
-            assert project_root("PRJ01") == tmp_path / "documents" / "PRJ01"
+            assert project_root("PRJ01") == tmp_path / "documents" / "PRJ01" / "main"
         finally:
             del os.environ["FLOWGATE_STORAGE_DIR"]
 
@@ -349,8 +349,8 @@ class TestStoragePaths:
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
         try:
             from modules.flow_gate.storage.paths import group_path
-            p = group_path("PRJ01", "0001")
-            assert p == tmp_path / "documents" / "PRJ01" / "__ALL__" / "0001"
+            p = group_path("PRJ01", "0001", module="__ALL__")
+            assert p == tmp_path / "documents" / "PRJ01" / "main" / "__ALL__" / "0001"
         finally:
             del os.environ["FLOWGATE_STORAGE_DIR"]
 
@@ -359,8 +359,8 @@ class TestStoragePaths:
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
         try:
             from modules.flow_gate.storage.paths import subgroup_path
-            p = subgroup_path("PRJ01", "0001", "001")
-            assert p == tmp_path / "documents" / "PRJ01" / "__ALL__" / "0001" / "001"
+            p = subgroup_path("PRJ01", "0001", "001", module="__ALL__")
+            assert p == tmp_path / "documents" / "PRJ01" / "main" / "__ALL__" / "0001" / "001"
         finally:
             del os.environ["FLOWGATE_STORAGE_DIR"]
 
@@ -369,8 +369,8 @@ class TestStoragePaths:
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
         try:
             from modules.flow_gate.storage.paths import document_path
-            p = document_path("PRJ01", "0001", "R0001", "req.md", subgroup_code="001")
-            assert p == tmp_path / "documents" / "PRJ01" / "__ALL__" / "0001" / "001" / "R0001_req.md"
+            p = document_path("PRJ01", "0001", "0001-R", "req.md", subgroup_code="001", module="__ALL__")
+            assert p == tmp_path / "documents" / "PRJ01" / "main" / "__ALL__" / "0001" / "001" / "0001-R_req.md"
         finally:
             del os.environ["FLOWGATE_STORAGE_DIR"]
 
@@ -379,8 +379,8 @@ class TestStoragePaths:
         os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_path)
         try:
             from modules.flow_gate.storage.paths import document_path
-            p = document_path("PRJ01", "0001", "R0001", "req.md")
-            assert p == tmp_path / "documents" / "PRJ01" / "__ALL__" / "0001" / "R0001_req.md"
+            p = document_path("PRJ01", "0001", "0001-R", "req.md", module="__ALL__")
+            assert p == tmp_path / "documents" / "PRJ01" / "main" / "__ALL__" / "0001" / "0001-R_req.md"
         finally:
             del os.environ["FLOWGATE_STORAGE_DIR"]
 
@@ -536,7 +536,7 @@ class TestT266CanonicalFormat:
         db_conn.commit()
         doc_code = reserve_document(group_id, "R", module="__ALL__")
         doc_id = f"{group_id}-{doc_code}"
-        assert re.fullmatch(r'PROJ2-__ALL__-\d{4}-R\d{4}', doc_id), \
+        assert re.fullmatch(r'PROJ2-__ALL__-\d{4}-\d{4}-R', doc_id), \
             f"Invalid canonical doc_id format: {doc_id}"
 
     def test_doc_id_no_double_hyphen(self, patched_store, db_conn):
@@ -584,5 +584,5 @@ class TestT266CanonicalFormat:
         )
         db_conn.commit()
         doc_code = reserve_document(group_id, "R", module="__ALL__")
-        assert re.fullmatch(r'R\d{4}', doc_code), f"Expected R+4 digits, actual: {doc_code}"
-        assert doc_code == "R0001"
+        assert re.fullmatch(r'\d{4}-R', doc_code), f"Expected 4 digits+R, actual: {doc_code}"
+        assert doc_code == "0001-R"
