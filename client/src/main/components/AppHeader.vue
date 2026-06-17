@@ -15,7 +15,7 @@
     <RouterLink to="/" class="header-brand" @click="goToOverview">
       <div class="brand-icon">FG</div>
       <span class="brand-name">FlowGate</span>
-      <span class="brand-ver">v0.2</span>
+      <span class="brand-ver">v0.1</span>
     </RouterLink>
 
     <!-- Project Selector -->

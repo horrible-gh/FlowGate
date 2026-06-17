@@ -3,7 +3,7 @@
     <a href="/main" class="header-brand" style="min-width:auto;">
       <div class="brand-icon">FG</div>
       <span class="brand-name">FlowGate</span>
-      <span class="brand-ver">v0.2</span>
+      <span class="brand-ver">v0.1</span>
     </a>
 
     <div class="proj-sw-wrap">
