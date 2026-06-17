@@ -41,6 +41,6 @@ def validate_password(plain: str) -> list[str]:
         bool(re.search(r"[^A-Za-z0-9]", plain)),
     ])
     if type_count < 3:
-        errors.append("Password must include at least 3 of: uppercase letters, lowercase letters, digits, special characters.")
+        errors.append("Password must include at least 3 categories: uppercase letters, lowercase letters, digits, special characters.")
 
     return errors
