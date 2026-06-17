@@ -19,7 +19,7 @@ describe('TotpInput', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('Two-factor authentication (OTP)')
+    expect(wrapper.text()).toContain(i18n.global.t('auth.totp.title'))
     expect(wrapper.find('input[autocomplete="one-time-code"]').exists()).toBe(true)
   })
 

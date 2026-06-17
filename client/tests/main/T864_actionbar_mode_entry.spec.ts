@@ -154,7 +154,7 @@ describe('T864-S3 — rejected mode: R head doc rejected', () => {
     })
     const navBtn = wrapper.find('.sfb-actions button.btn-primary')
     expect(navBtn.exists()).toBe(true)
-    expect(navBtn.text()).toContain('0003-D 로 이동')
+    expect(navBtn.text()).toContain(i18n.global.t('main.review_action_bar.btn_go_to_head', { doc: '0003-D' }))
     expect(wrapper.find('.sfb-actions--rework').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Approve')
   })

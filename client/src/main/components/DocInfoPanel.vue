@@ -19,7 +19,7 @@
             <i class="fa-solid fa-chevron-right"></i>
           </button>
         </div>
-        <div :class="['dip-status-badge', statusClass, nextStep?.visual === 'current' ? 'dip-badge-clickable' : '']" @click="nextStep?.visual === 'current' ? emit('next-action') : undefined">
+        <div :class="['dip-status-badge', statusClass, (nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? 'dip-badge-clickable' : '']" @click="(nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? emit('next-action') : undefined">
           <i class="fa-solid" :class="statusIcon"></i>
           {{ statusLabel }}
         </div>

@@ -168,14 +168,9 @@ function buildStepStates(
       nextStepIndex: null,
     }
   }
-  let headVisual: StepVisual
-  if (headDocReviewStatus === 'rejected') {
-    headVisual = 'rejected'
-  } else if (!headStatus || headStatus === 'pending' || headStatus === 'in_progress') {
-    headVisual = 'current'
-  } else {
-    headVisual = 'current'
-  }
+  const headVisual: StepVisual = headDocReviewStatus === 'rejected'
+    ? 'rejected'
+    : 'highlight'
   const stepStates: StepState[] = workflowSteps.map((code, idx) => {
     const visual = (idx < headIndex ? 'done' : idx === headIndex ? headVisual : 'future') as StepVisual
     return { code, visual, className: STEP_CLASS[visual], iconClass: STEP_ICON[visual] }

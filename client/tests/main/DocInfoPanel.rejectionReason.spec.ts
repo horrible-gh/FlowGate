@@ -85,7 +85,7 @@ describe('DocInfoPanel rejection reason height', () => {
     expect(openBlock).toMatch(/scrollbar-width\s*:\s*thin/)
     expect(webkitOpenBlock).toMatch(/scrollbar-color\s*:\s*auto/)
     expect(webkitOpenBlock).toMatch(/scrollbar-width\s*:\s*auto/)
-    expect(scrollbar).toMatch(/width\s*:\s*12px/)
+    expect(scrollbar).toMatch(/width\s*:\s*14px/)
     expect(scrollbarTrack).toMatch(/background\s*:\s*#fff1f2/)
     expect(scrollbarThumb).toMatch(/background\s*:\s*#f87171/)
   })

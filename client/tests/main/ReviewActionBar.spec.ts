@@ -37,7 +37,7 @@ describe('ReviewActionBar', () => {
     // It should have the move button:
     const navBtn = wrapper.find('button.btn-primary')
     expect(navBtn.exists()).toBe(true)
-    expect(navBtn.text()).toContain('0005-D 로 이동')
+    expect(navBtn.text()).toContain(i18n.global.t('main.review_action_bar.btn_go_to_head', { doc: '0005-D' }))
 
     // Standard action buttons such as approve/reject must not be visible:
     expect(wrapper.text()).not.toContain('Approve')
@@ -58,7 +58,7 @@ describe('ReviewActionBar', () => {
     })
 
     // It should NOT show the navigation button:
-    expect(wrapper.text()).not.toContain('0005-D 로 이동')
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.review_action_bar.btn_go_to_head', { doc: '0005-D' }))
 
     // It should show standard review buttons:
     expect(wrapper.text()).toContain('Approve')
@@ -551,7 +551,7 @@ describe('ReviewActionBar', () => {
     // isViewingPastDoc = headDocId !== viewedDocId
     const navBtn = wrapper.find('.sfb-actions button.btn-primary')
     expect(navBtn.exists()).toBe(true)
-    expect(navBtn.text()).toContain('0005-D 로 이동')
+    expect(navBtn.text()).toContain(i18n.global.t('main.review_action_bar.btn_go_to_head', { doc: '0005-D' }))
     expect(wrapper.text()).not.toContain('Approve')
     expect(wrapper.text()).not.toContain('Reject')
   })

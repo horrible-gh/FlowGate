@@ -34,8 +34,8 @@
         <div v-for="(s, idx) in stepStates" :key="s.code + idx" class="wf-unit">
           <div
             class="wf-step"
-            :class="[s.className, s.visual === 'current' && canNextAction ? 'wf-current-clickable' : '']"
-            @click="s.visual === 'current' && canNextAction ? emit('next-action') : undefined"
+            :class="[s.className, (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '']"
+            @click="(s.visual === 'highlight' || s.visual === 'current') && canNextAction ? emit('next-action') : undefined"
           >
             <i :class="s.iconClass"></i>
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>

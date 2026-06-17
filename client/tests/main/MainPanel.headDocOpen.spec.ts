@@ -222,9 +222,9 @@ describe('MainPanel head-doc navigation', () => {
     })
 
     await wrapper.vm.$nextTick()
-    // ReviewActionBar is hidden when mode=null (docLoaded not true).
-    // The mock ensures workflowViewState is called via our new integration path.
-    expect(wrapper.findComponent({ name: 'ReviewActionBar' }).exists()).toBe(false)
+    const actionBar = wrapper.findComponent({ name: 'ReviewActionBar' })
+    expect(actionBar.exists()).toBe(true)
+    expect(actionBar.props('canNextAction')).toBe(false)
   })
 
   it('NR157 transport fix: headDocReviewStatus propagates through getWorkflowViewInput', async () => {

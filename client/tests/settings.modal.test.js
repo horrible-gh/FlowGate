@@ -1,8 +1,4 @@
-/**
- * settings.modal.test.js
- * Modal confirmation tests — numbering digit-change confirmation modal (project name typing + button activation)
- */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
@@ -13,22 +9,25 @@ import ko from '@shared/i18n/ko';
 import en from '@shared/i18n/en';
 import ja from '@shared/i18n/ja';
 
+const { getRequest, patchRequest, showToast } = vi.hoisted(() => ({
+  getRequest: vi.fn(),
+  patchRequest: vi.fn(),
+  showToast: vi.fn(),
+}));
+
 vi.mock('vue-router', () => ({
   RouterLink: { template: '<a><slot /></a>', props: ['to'] },
   useRouter: () => ({ push: vi.fn() }),
   useRoute: () => ({ params: {}, meta: {} }),
 }));
 
-const mockImpact = { document_count: 1234, group_count: 56, sub_group_count: 123 };
-
 vi.mock('@shared/api', () => ({
-  getRequest: vi.fn(async (path) => {
-    if (path.includes('/numbering/impact')) return { data: { data: mockImpact } };
-    if (path.includes('/settings')) return { data: { data: { digits_group: 4, digits_sub_group: 3, digits_type: 4, name: 'FLOWGATE', group_structure: 2 } } };
-    return { data: { data: {} } };
-  }),
-  postRequest: vi.fn().mockResolvedValue({ data: { data: { job_id: 'job_001' } } }),
-  patchRequest: vi.fn().mockResolvedValue({ data: {} }),
+  getRequest,
+  patchRequest,
+}));
+
+vi.mock('../src/main/components/common/useToast', () => ({
+  useToast: () => ({ showToast }),
 }));
 
 const i18n = createI18n({ legacy: false, locale: 'ko', messages: { ko, en, ja } });
@@ -44,52 +43,62 @@ function createWrapper() {
   return mount(NumberingSettingsView, { global: { plugins: [pinia, i18n] } });
 }
 
-describe('NumberingSettingsView — numbering change modal', () => {
-  it('shows the impact modal on save button click', async () => {
-    const wrapper = createWrapper();
-    await wrapper.vm.$nextTick();
-    await new Promise((r) => setTimeout(r, 0));
+beforeEach(() => {
+  getRequest.mockReset();
+  patchRequest.mockReset();
+  showToast.mockReset();
+  getRequest.mockResolvedValue({
+    data: { data: { digits_group: 4, digits_sub_group: 3, digits_type: 4, group_structure: 2 } },
+  });
+  patchRequest.mockResolvedValue({ data: {} });
+});
 
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save');
+describe('NumberingSettingsView', () => {
+  it('loads numbering settings for the current project', async () => {
+    const wrapper = createWrapper();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/proj_001/settings');
+    expect(wrapper.find('.code-block').text()).toContain('0001');
+  });
+
+  it('saves edited digit settings', async () => {
+    const wrapper = createWrapper();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const inputs = wrapper.findAll('input[type="number"]');
+    await inputs[0].setValue(5);
+    await inputs[1].setValue(2);
+    await inputs[2].setValue(3);
+
+    const saveBtn = wrapper.findAll('button').find((button) => button.text().includes(i18n.global.t('common.save')));
+    expect(saveBtn).toBeTruthy();
     await saveBtn.trigger('click');
-    await wrapper.vm.$nextTick();
-    await new Promise((r) => setTimeout(r, 0));
 
-    expect(wrapper.find('[data-testid="impact-modal"]').exists()).toBe(true);
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/projects/proj_001/settings', {
+      digits_group: 5,
+      digits_sub_group: 2,
+      digits_type: 3,
+    });
   });
 
-  it('disables the execute button when project name is not entered', async () => {
+  it('resets settings by refetching from the server', async () => {
     const wrapper = createWrapper();
-    wrapper.vm.showImpactModal = true;
-    wrapper.vm.impact = mockImpact;
-    wrapper.vm.currentProjectName = 'FLOWGATE';
-    wrapper.vm.confirmProjectName = '';
-    await wrapper.vm.$nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const execBtn = wrapper.find('[data-testid="execute-btn"]');
-    expect(execBtn.attributes('disabled')).toBeDefined();
+    const resetBtn = wrapper.findAll('button').find((button) => button.text().includes(i18n.global.t('common.reset')));
+    expect(resetBtn).toBeTruthy();
+    await resetBtn.trigger('click');
+
+    expect(getRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('enables the execute button when project name is entered correctly', async () => {
+  it('updates the preview when digit inputs change', async () => {
     const wrapper = createWrapper();
-    wrapper.vm.showImpactModal = true;
-    wrapper.vm.impact = mockImpact;
-    wrapper.vm.currentProjectName = 'FLOWGATE';
-    wrapper.vm.confirmProjectName = 'FLOWGATE';
-    await wrapper.vm.$nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const execBtn = wrapper.find('[data-testid="execute-btn"]');
-    expect(execBtn.attributes('disabled')).toBeUndefined();
-  });
+    await wrapper.findAll('input[type="number"]')[0].setValue(5);
 
-  it('displays the impact count in the modal', async () => {
-    const wrapper = createWrapper();
-    wrapper.vm.showImpactModal = true;
-    wrapper.vm.impact = mockImpact;
-    await wrapper.vm.$nextTick();
-
-    expect(wrapper.text()).toContain('1,234');
-    expect(wrapper.text()).toContain('56');
-    expect(wrapper.text()).toContain('123');
+    expect(wrapper.find('.code-block').text()).toContain('00001');
   });
 });

@@ -3,7 +3,7 @@
 // ReviewActionBar renders the correct actions at each side of the transition
 // boundary and after the reverse transition.
 // Memory: [feedback_actionbar_always_shows], [feedback_actionbar_d030_guard]
-// Key boundary: wfDecided = tabReviewStatus.startsWith('wf_')
+// Key boundary: wfDecided = tabReviewStatus.startsWith('wf_') or a materialized head.
 
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -46,13 +46,13 @@ beforeEach(() => {
 })
 
 // ── S1: undecided state ──────────────────────────────────────────────────────
-// Entry condition: R tab, tabReviewStatus has no 'wf_' prefix (null / '' / 'pending_review').
+// Entry condition: R tab, tabReviewStatus has no 'wf_' prefix and no materialized head.
 // Expected action: [Decide Workflow] button only. No Next / Approve / Reject.
 // D030 §4 #1. stepStates must all be 'future' (wfDecided=false → allFutureSS).
 
 describe('T865-S1 — R undecided: mode=workflow, [Decide Workflow] only', () => {
   it('pure: R + null tabReviewStatus → mode=workflow, canNextAction=false, all stepStates future', () => {
-    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: null, headType: 'DS', headStatus: 'pending' })
+    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: null, headType: null, headStatus: null })
     expect(result.mode).toBe('workflow')
     expect(result.canNextAction).toBe(false)
     expect(result.highlightStepCode).toBeNull()
@@ -62,13 +62,13 @@ describe('T865-S1 — R undecided: mode=workflow, [Decide Workflow] only', () =>
   })
 
   it('pure: R + empty-string tabReviewStatus → mode=workflow (no wf_ prefix)', () => {
-    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: '', headType: 'DS', headStatus: 'pending' })
+    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: '', headType: null, headStatus: null })
     expect(result.mode).toBe('workflow')
     expect(result.canNextAction).toBe(false)
   })
 
   it('pure: R + pending_review tabReviewStatus → mode=workflow (non-wf_ status is undecided)', () => {
-    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: 'pending_review', headType: 'DS', headStatus: 'pending' })
+    const result = resolve({ tabTypeCode: 'R', tabReviewStatus: 'pending_review', headType: null, headStatus: null })
     expect(result.mode).toBe('workflow')
     expect(result.canNextAction).toBe(false)
   })
@@ -94,7 +94,7 @@ describe('T865-S1 — R undecided: mode=workflow, [Decide Workflow] only', () =>
 
 describe('T865-S2 — undecided → decided: mode workflow → next, [Next step] enabled', () => {
   it('pure: before (null) → mode=workflow; after (wf_in_progress + head pending) → mode=next, canNextAction=true', () => {
-    const before = resolve({ tabTypeCode: 'R', tabReviewStatus: null, headType: 'DS', headStatus: 'pending' })
+    const before = resolve({ tabTypeCode: 'R', tabReviewStatus: null, headType: null, headStatus: null })
     expect(before.mode).toBe('workflow')
     expect(before.canNextAction).toBe(false)
 
@@ -136,8 +136,8 @@ describe('T865-S2 — undecided → decided: mode workflow → next, [Next step]
 })
 
 // ── S3: decided → undecided (reverse transition) ─────────────────────────────
-// Verifies the wf_ prefix is the sole decision boundary: any status without 'wf_'
-// reverts to mode='workflow' regardless of head state.
+// Verifies that an R doc can revert to undecided only when both decision signals
+// are absent: no wf_ prefix and no materialized workflow head.
 // This guards against a regression where a formerly-decided R doc cannot be
 // re-presented with the [Decide Workflow] action after a status reset.
 
@@ -145,13 +145,13 @@ describe('T865-S3 — decided → undecided (reverse): mode reverts to workflow'
   it('pure: wf_in_progress (decided) → mode=next; same input with revised (non-wf_) → mode=workflow', () => {
     const decided = resolve({
       tabTypeCode: 'R', tabReviewStatus: 'wf_in_progress',
-      headType: 'DS', headStatus: 'pending',
+      headType: null, headStatus: null,
     })
     expect(decided.mode).toBe('next')
 
     const reverted = resolve({
       tabTypeCode: 'R', tabReviewStatus: 'revised',
-      headType: 'DS', headStatus: 'pending',
+      headType: null, headStatus: null,
     })
     expect(reverted.mode).toBe('workflow')
     expect(reverted.canNextAction).toBe(false)
@@ -162,7 +162,7 @@ describe('T865-S3 — decided → undecided (reverse): mode reverts to workflow'
     const decided = resolve({ tabTypeCode: 'R', tabReviewStatus: 'wf_in_progress', headType: 'T', headStatus: 'pending' })
     expect(decided.mode).not.toBe('workflow')
 
-    const undecided = resolve({ tabTypeCode: 'R', tabReviewStatus: 'approved', headType: 'T', headStatus: 'pending' })
+    const undecided = resolve({ tabTypeCode: 'R', tabReviewStatus: 'approved', headType: null, headStatus: null })
     expect(undecided.mode).toBe('workflow')
   })
 

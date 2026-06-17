@@ -88,7 +88,8 @@ describe('T868-S1 — workflowViewState: 미결정 R-doc → mode=workflow, step
 })
 
 // ── T868-S2 ── workflowViewState: all non-wf_ statuses -> mode=workflow regression guard ──
-// Any value without the wf_ prefix must preserve the undecided path (mode=workflow).
+// Any value without the wf_ prefix must preserve the undecided path when the
+// server has not materialized a workflow head.
 
 describe('T868-S2 — workflowViewState: non-wf_ tabReviewStatus 전부 mode=workflow 회귀 가드', () => {
   it.each([null, '', 'pending', 'pending_review', 'revised', 'some_arbitrary_value'])(
@@ -99,8 +100,8 @@ describe('T868-S2 — workflowViewState: non-wf_ tabReviewStatus 전부 mode=wor
         tabTypeCode: 'R',
         tabReviewStatus: status as string | null,
         workflowSteps: ['R', 'DS', 'D', 'T'],
-        headType: 'DS',
-        headStatus: 'pending',
+        headType: null,
+        headStatus: null,
       })
       expect(result.mode).toBe('workflow')
       expect(result.canNextAction).toBe(false)

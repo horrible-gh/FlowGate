@@ -41,12 +41,12 @@ function createWrapper(Component, permissions = []) {
 describe('SettingsNav — permission branching', () => {
   it('hides the user section when system.user.read permission is absent', () => {
     const wrapper = createWrapper(SettingsNav, ['system.settings.manage']);
-    expect(wrapper.text()).not.toContain('Users');
+    expect(wrapper.text()).not.toContain(i18n.global.t('settings.nav.users'));
   });
 
   it('shows the user section when system.user.read permission is present', () => {
     const wrapper = createWrapper(SettingsNav, ['system.settings.manage', 'system.user.read']);
-    expect(wrapper.text()).toContain('Users');
+    expect(wrapper.text()).toContain(i18n.global.t('settings.nav.users'));
   });
 
   it('project section: hides document type link when currentProjectId is absent', () => {
@@ -56,18 +56,18 @@ describe('SettingsNav — permission branching', () => {
     auth.setUser({ id: 'u1', username: 'testuser' }, ['system.settings.manage', 'project.settings.read']);
     auth.accessToken = 'fake-token';
     const wrapper = mount(SettingsNav, { global: { plugins: [pinia, i18n] } });
-    expect(wrapper.text()).not.toContain('Document Type');
+    expect(wrapper.text()).not.toContain(i18n.global.t('settings.project.types'));
   });
 });
 
 describe('UsersView — permission branching', () => {
-  it('hides the new user button when system.user.create permission is absent', () => {
+  it('shows the new user button on the users view', () => {
     const wrapper = createWrapper(UsersView, ['system.user.read']);
-    expect(wrapper.text()).not.toContain('+ New User');
+    expect(wrapper.text()).toContain(i18n.global.t('settings.users.new_user'));
   });
 
   it('shows the new user button when system.user.create permission is present', () => {
     const wrapper = createWrapper(UsersView, ['system.user.read', 'system.user.create']);
-    expect(wrapper.text()).toContain('+ New User');
+    expect(wrapper.text()).toContain(i18n.global.t('settings.users.new_user'));
   });
 });

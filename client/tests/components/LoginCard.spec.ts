@@ -19,7 +19,7 @@ describe('LoginCard', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('FlowGate Login')
+    expect(wrapper.text()).toContain(i18n.global.t('auth.login.title'))
     expect(wrapper.find('input[autocomplete="username"]').exists()).toBe(true)
     expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(true)
   })
