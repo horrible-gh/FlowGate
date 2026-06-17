@@ -1,0 +1,391 @@
+<template>
+  <teleport to="body">
+    <div
+      v-if="visible"
+      ref="overlayRef"
+      class="modal-bg"
+      tabindex="-1"
+      @keydown.escape.prevent="onClose"
+    >
+      <div class="modal-box modal-rrd" role="dialog" aria-modal="true" aria-labelledby="rrd-title">
+
+        <!-- Header -->
+        <div class="modal-hd">
+          <div class="modal-title" id="rrd-title">
+            <i class="fa-solid fa-xmark-circle" style="color:var(--danger); margin-right:6px;"></i>{{ t('main.review_reject_dialog.title') }}
+          </div>
+          <button type="button" class="modal-close" @click="onClose">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <!-- Body -->
+        <div class="modal-bd rrd-body">
+          <div class="rrd-doc-info">
+            <span class="rrd-doc-label">{{ t('main.review_reject_dialog.target_doc') }}</span>
+            <span class="rrd-doc-name">{{ displayDocName }}</span>
+          </div>
+
+          <div class="rrd-field">
+            <label class="rrd-field-label" for="rrd-reason">{{ t('main.review_reject_dialog.reason_label') }}</label>
+            <textarea
+              id="rrd-reason"
+              ref="textareaRef"
+              v-model="reason"
+              class="rrd-textarea"
+              rows="5"
+              :placeholder="t('main.review_reject_dialog.reason_placeholder')"
+              :disabled="saved"
+            ></textarea>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="modal-ft rrd-footer">
+          <!-- Save message button -->
+          <button
+            type="button"
+            class="btn btn-danger btn-sm"
+            :disabled="saved || saving || !reason.trim()"
+            @click="onSaveReason"
+          >
+            <template v-if="saving">
+              <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.review_reject_dialog.saving') }}
+            </template>
+            <template v-else-if="saved">
+              <i class="fa-solid fa-check"></i> {{ t('main.review_reject_dialog.saved') }}
+            </template>
+            <template v-else>
+              <i class="fa-solid fa-floppy-disk"></i> {{ t('main.review_reject_dialog.save_message') }}
+            </template>
+          </button>
+
+          <!-- Reject ▼ dropdown -->
+          <div class="rrd-split-wrap">
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm rrd-split-caret"
+              @click.stop="toggleDropdown"
+            >
+              {{ t('main.review_reject_dialog.reject') }} <i class="fa-solid fa-caret-down"></i>
+            </button>
+            <div v-if="dropdownOpen" class="rrd-dropdown">
+              <button
+                type="button"
+                class="rrd-dropdown-item"
+                @click="onCopyMention"
+              >
+                <i class="fa-regular fa-copy"></i> {{ t('main.review_reject_dialog.copy_mention') }}
+              </button>
+              <button
+                type="button"
+                class="rrd-dropdown-item"
+                disabled
+                :title="t('main.review_reject_dialog.coming_soon')"
+              >
+                <i class="fa-solid fa-terminal"></i> {{ t('main.review_reject_dialog.invoke_command') }}
+              </button>
+            </div>
+          </div>
+
+          <button type="button" class="btn btn-outline btn-sm rrd-close-btn" @click="onClose">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </teleport>
+</template>
+
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useDocTypeStore } from '../stores/docTypeStore'
+
+const props = defineProps<{
+  visible: boolean
+  docId: string
+  docName?: string
+  docType?: string | null
+  existingReason?: string | null
+}>()
+
+const emit = defineEmits<{
+  'update:visible': [value: boolean]
+  'save-reason': [reason: string]
+  'copy-mention': [reason: string]
+  'invoke-command': [reason: string]
+}>()
+
+const { t } = useI18n()
+const docTypeStore = useDocTypeStore()
+const overlayRef = ref<HTMLElement | null>(null)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const reason = ref('')
+const saving = ref(false)
+const saved = ref(false)
+const dropdownOpen = ref(false)
+const displayDocName = computed(() => {
+  const raw = props.docName || props.docId
+  if (!props.docType) return raw
+  const localizedType = docTypeStore.getLabel(props.docType)
+  return raw.replace(/^\[[^\]]+\]/, `[${localizedType}]`)
+})
+
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) {
+      reason.value = props.existingReason ?? ''
+      saved.value = false
+      saving.value = false
+      dropdownOpen.value = false
+      nextTick(() => {
+        overlayRef.value?.focus()
+        if (!reason.value) textareaRef.value?.focus()
+      })
+    }
+  },
+)
+
+watch(
+  () => props.existingReason,
+  (v) => {
+    if (!saved.value) {
+      reason.value = v ?? ''
+    }
+  },
+)
+
+function onClose() {
+  dropdownOpen.value = false
+  emit('update:visible', false)
+}
+
+async function onSaveReason() {
+  const trimmed = reason.value.trim()
+  if (!trimmed || saving.value || saved.value) return
+  saving.value = true
+  emit('save-reason', trimmed)
+}
+
+function toggleDropdown() {
+  dropdownOpen.value = !dropdownOpen.value
+}
+
+function onCopyMention() {
+  dropdownOpen.value = false
+  const r = reason.value.trim() || props.existingReason?.trim() || ''
+  emit('copy-mention', r)
+}
+
+function onOutsideDropdownClick() {
+  if (dropdownOpen.value) dropdownOpen.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('click', onOutsideDropdownClick)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', onOutsideDropdownClick)
+})
+
+function notifySaved() {
+  saved.value = true
+  saving.value = false
+  emit('update:visible', false)
+}
+
+function notifySaveFailed() {
+  saving.value = false
+}
+
+defineExpose({ notifySaved, notifySaveFailed })
+</script>
+
+<style scoped>
+.modal-bg {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.modal-box {
+  background: var(--bg-card, #fff);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.modal-rrd {
+  width: 480px;
+}
+
+.modal-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text, #1e293b);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text-m, #64748b);
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.modal-close:hover {
+  background: var(--bg-hover, #f1f5f9);
+}
+
+.modal-bd {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.rrd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rrd-doc-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-sub, #f8fafc);
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.rrd-doc-label {
+  color: var(--text-m, #64748b);
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+}
+
+.rrd-doc-name {
+  color: var(--text, #1e293b);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.rrd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rrd-field-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text, #1e293b);
+}
+
+.rrd-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: var(--text, #1e293b);
+  background: var(--bg-input, #fff);
+  resize: vertical;
+  min-height: 100px;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.rrd-textarea:focus {
+  outline: none;
+  border-color: var(--primary, #2563eb);
+}
+.rrd-textarea:disabled {
+  background: var(--bg-sub, #f8fafc);
+  color: var(--text-m, #64748b);
+  cursor: not-allowed;
+}
+
+.modal-ft {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rrd-footer {
+  justify-content: flex-start;
+}
+
+.rrd-close-btn {
+  margin-left: auto;
+}
+
+.rrd-split-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.rrd-split-caret {
+  border-radius: 6px;
+  padding-inline: 10px;
+}
+
+.rrd-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);   /* drop-up */
+  top: auto;
+  left: 0;
+  min-width: 140px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.rrd-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  font-size: 0.8125rem;
+  color: var(--text, #1e293b);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.rrd-dropdown-item:hover:not(:disabled) {
+  background: var(--bg-hover, #f1f5f9);
+}
+.rrd-dropdown-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+</style>

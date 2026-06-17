@@ -1,0 +1,1582 @@
+"""Inbound endpoint (D020 §3).
+
+POST /api/v1/inbox
+Auth: Authorization: Bearer {raw_token}
+action: "new" | "edit"
+"""
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import shutil
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, model_validator
+
+from modules.flow_gate import linter as _linter
+from modules.flow_gate import process_service
+from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import workflow_events as db_events
+from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import document_revisions as db_revisions
+from modules.flow_gate.db.connection import get_store, now_iso
+from modules.flow_gate.numbering import numbering_service
+from modules.flow_gate.numbering.id_formatter import parse_doc_code
+from modules.flow_gate.documents import document_service
+from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services import token_service
+from modules.flow_gate.storage.paths import (
+    get_storage_root,
+    group_path,
+    document_path,
+    to_storage_relative,
+    resolve_storage_path,
+    resolve_storage_dir,
+)
+from modules.flow_gate.utils.id_validators import (
+    validate_doc_id,
+    validate_group_id,
+)
+
+router = APIRouter(prefix="/api/v1", tags=["Inbox"])
+
+# ── Environment variables ──────────────────────────────────────────────────────────────────
+
+_CONTENT_MAX_DEFAULT = 10 * 1024 * 1024  # 10 MB
+
+_DRYRUN_MAX_DEFAULT = 5  # max dry-run attempts per token (R0001 dry-run, group 0050)
+
+
+def _content_max() -> int:
+    try:
+        return int(os.environ.get("FLOWGATE_INBOX_CONTENT_MAX", _CONTENT_MAX_DEFAULT))
+    except (ValueError, TypeError):
+        return _CONTENT_MAX_DEFAULT
+
+
+def _dryrun_max() -> int:
+    """Per-token dry-run attempt limit (L0007 §6.1). Env-tunable, default 5.
+
+    Mirrors _content_max(): a policy value lives in config, not the DB schema (DB0008 §7).
+    """
+    try:
+        return int(os.environ.get("FLOWGATE_INBOX_DRYRUN_MAX", _DRYRUN_MAX_DEFAULT))
+    except (ValueError, TypeError):
+        return _DRYRUN_MAX_DEFAULT
+
+
+def _truthy(v) -> bool:
+    """Normalize a dry_run flag defensively (L0007 §2.1).
+
+    `bool(body.get("dry_run"))` would treat the string "false" as truthy. JSON booleans
+    are the normal path, but a client may send a string/int, so accept those explicitly.
+    None / missing / anything else → False (backward-compatible: existing callers unaffected).
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "on")
+    return False
+
+
+def _maybe_dry_run(
+    body: dict, token_rec: dict, would_register: dict
+) -> Optional[JSONResponse]:
+    """Shared dry-run short-circuit for all three inbox handlers (L0007 §3, P0006).
+
+    Returns:
+      - None when this is not a dry-run → caller proceeds to the real side-effect path,
+        byte-for-byte unchanged (backward compatibility).
+      - HTTP 200 dry-run response (validation passed; every side effect skipped except the
+        per-token counter +1) when under the limit.
+      - HTTP 429 when the per-token dry-run limit is already reached (no counter bump).
+
+    MUST be invoked only after Step 1~5 validation has fully passed and immediately before
+    the first side effect, so a dry-run can never reach numbering/storage/DB/consume/SSE.
+    This ordering is the structural guarantee behind the side-effect-zero invariant (L0007 §7).
+    Validation *failures* never reach here (handlers already returned _fail), so a failed
+    dry-run carries the exact same status/message as a real submission and is not counted
+    (L0007 §5.1).
+    """
+    if not _truthy(body.get("dry_run")):
+        return None
+
+    limit = _dryrun_max()
+    cnt = int(token_rec.get("dry_run_count") or 0)
+    if cnt >= limit:
+        # P0006 §3.5: limit-exceeded body carries the counters alongside the _fail shape.
+        return JSONResponse(status_code=429, content={
+            "ok": False,
+            "http_status": 429,
+            "error_message": (
+                f"Dry-run 한도({limit}회) 도달. 실제 제출하거나 새 토큰을 요청하세요."
+            ),
+            "help_url": "https://example.com/api/v1/help",
+            "dry_run_count": cnt,
+            "dry_run_remaining": 0,
+        })
+
+    # The only side effect a dry-run is allowed to have (L0007 §5.1 / DB0008 §3).
+    token_service.increment_dry_run(token_rec["token_id"])
+    return JSONResponse(status_code=200, content={
+        "ok": True,
+        "dry_run": True,
+        "would_register": would_register,
+        "dry_run_count": cnt + 1,
+        "dry_run_remaining": limit - (cnt + 1),
+        "message": "Dry-run OK. 이대로 제출하면 등록됩니다. 아무것도 등록되지 않았습니다.",
+    })
+
+
+# ── Permission mapping (D020 §6) ───────────────────────────────────────────────────────
+
+# new action: doc_type → required permission
+_NEW_PERM_MAP: dict[str, str] = {
+    "AC": "perm_document_approve",
+    "RJ": "perm_document_reject",
+}
+_NEW_PERM_DEFAULT = "perm_document_create"
+
+
+def _permission_for_new(doc_type: str) -> str:
+    return _NEW_PERM_MAP.get(doc_type.upper(), _NEW_PERM_DEFAULT)
+
+
+# ── Path validation (D020 §7-5) ─────────────────────────────────────────────────────
+
+def validate_doc_path(doc_path: str, scratch_dir: str) -> bool:
+    """Verify that doc_path is within the scratch_dir prefix."""
+    p = pathlib.Path(doc_path)
+    if not p.is_absolute():
+        return False
+    if str(p).startswith("\\\\"):  # UNC
+        return False
+    real = os.path.realpath(doc_path)
+    if real != os.path.abspath(doc_path):
+        return False  # symlink
+    return real.lower().startswith(os.path.realpath(scratch_dir).lower())
+
+
+# ── Pydantic schema ───────────────────────────────────────────────────────────
+# NF-01: InboxNewRequest/InboxEditRequest are not used directly by the current route handler.
+# Because the handler uses manual JSON parsing, validation errors return 400 instead of
+# 422 (Pydantic) to preserve TSR021 SC-06-A/B expectations. Cleanup (B) adopted to prevent response-code regression.
+
+class InboxNewRequest(BaseModel):
+    project: str
+    module: str
+    group_name: str
+    action: str  # "new"
+    prev_doc_id: str
+    doc_type: str
+    title: Optional[str] = None
+    doc_path: Optional[str] = None
+    content: Optional[str] = None
+
+    @model_validator(mode="after")
+    def check_xor(self) -> "InboxNewRequest":
+        has_path = self.doc_path is not None
+        has_content = self.content is not None
+        if has_path == has_content:
+            raise ValueError("Exactly one of doc_path or content must be provided")
+        return self
+
+
+class InboxEditRequest(BaseModel):
+    project: str
+    module: str
+    group_name: str
+    action: str  # "edit"
+    doc_id: str
+    edit_reason: str
+    linked_doc_id: Optional[str] = None
+    doc_path: Optional[str] = None
+    content: Optional[str] = None
+
+    @model_validator(mode="after")
+    def check_xor(self) -> "InboxEditRequest":
+        has_path = self.doc_path is not None
+        has_content = self.content is not None
+        if has_path == has_content:
+            raise ValueError("Exactly one of doc_path or content must be provided")
+        return self
+
+    @model_validator(mode="after")
+    def check_edit_reason(self) -> "InboxEditRequest":
+        valid = {"rejected", "qna_followup", "user_comment", "worker_self"}
+        if self.edit_reason not in valid:
+            raise ValueError("edit_reason value is invalid")
+        return self
+
+
+# ── Failure response helper (D020 §3-5) ────────────────────────────────────────────────
+
+def _extract_title_from_content(content: Optional[str]) -> Optional[str]:
+    """Extract display title from document body.
+
+    Priority:
+      1. `title:` line inside a frontmatter (`---` block), excluding placeholder `<Title here>`
+      2. First `# Heading` line in the body
+    Returns None if extraction fails.
+    """
+    if not content:
+        return None
+    lines = content.splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            stripped = line.strip()
+            if stripped == "---":
+                break
+            if stripped.lower().startswith("title:"):
+                value = stripped[len("title:"):].strip()
+                if value and value != "<Title here>":
+                    return value
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+    return None
+
+
+def _fail(status: int, message: str, help_url: str = "https://example.com/api/v1/help") -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={
+            "ok": False,
+            "http_status": status,
+            "error_message": message,
+            "help_url": help_url,
+        },
+    )
+
+
+def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONResponse]:
+    """Return a 409 _fail response when group_id's group has been disposed, else None.
+
+    TR0079.0003 rework: the action-bar hiding (rev1) and the workflow/review/decision
+    409 guards (rev2) left the INBOX ingestion path open, so a document in a disposed
+    group could still be created/edited via a direct inbox submission ("documents in a
+    disposed group still get edited fine"). The action bar is UX-only and depends on SSE arriving; a
+    stale tab or a worker holding a live token bypasses it entirely. This makes a
+    disposed group's documents inert at the ingestion source — the authoritative
+    block. Shares process_service.is_group_disposed (the same file-less DC marker the
+    dashboard exclusion and the document-detail group_disposed flag key off), so it
+    fails open (None) for live groups and on any lookup failure: legitimate work on a
+    live group is never blocked.
+    """
+    if group_id and process_service.is_group_disposed(group_id):
+        return _fail(409, f"{action} not allowed: the group has been disposed.")
+    return None
+
+
+# ── Bearer token extraction ──────────────────────────────────────────────────────────
+
+def _extract_bearer(request: Request) -> Optional[str]:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[len("Bearer "):]
+    return None
+
+
+# ── Group resolution ────────────────────────────────────────────────────────────────
+
+_LEGACY_GROUP_SEQ_RE = re.compile(r"^\d{4}$")
+_LEGACY_DOC_CODE_RE = re.compile(r"^[A-Z]+\d{4}$")
+_LEGACY_GROUP_ID_RE = re.compile(r"^[a-z0-9_\-]+-__ALL__-\d{4}$")
+_LEGACY_DOC_ID_RE = re.compile(r"^[a-z0-9_\-]+-__ALL__-\d{4}-[A-Z]+\d{4}$")
+
+
+def _normalize_group_name(project_id: str, module: str, group_name: str) -> str:
+    if _LEGACY_GROUP_ID_RE.fullmatch(group_name):
+        return group_name
+    try:
+        validate_group_id(group_name)
+        return group_name
+    except ValueError:
+        if _LEGACY_GROUP_SEQ_RE.fullmatch(group_name):
+            return f"{project_id}-{module}-{group_name}"
+        raise ValueError(f"Invalid group_id format: {group_name!r}")
+
+
+def _normalize_doc_id(group_id: str, doc_id: str) -> str:
+    if _LEGACY_DOC_ID_RE.fullmatch(doc_id):
+        return doc_id
+    try:
+        validate_doc_id(doc_id)
+        return doc_id
+    except ValueError:
+        if _LEGACY_DOC_CODE_RE.fullmatch(doc_id):
+            return f"{group_id}-{doc_id}"
+        raise ValueError(f"Invalid doc_id format: {doc_id!r}")
+
+
+def _build_doc_id(group_id: str, doc_code: str) -> str:
+    return f"{group_id}.{doc_code}" if "." in group_id else f"{group_id}-{doc_code}"
+
+
+def _resolve_group(project_id: str, group_name: str) -> Optional[dict]:
+    """Return groups record for group_name. group_name is a canonical group_id (T261).
+
+    Title-matching fallback removed (T261 §4 — direct lookup only after validate_group_id passes).
+    """
+    grp = db_groups.get_by_id(group_name)
+    if grp and grp.get("project_id") == project_id:
+        return grp
+    return None
+
+
+# ── document_types validation ────────────────────────────────────────────────────────
+
+def _is_valid_doc_type(doc_type: str, project_id: str) -> bool:
+    store = get_store()
+    row = store._fetch_one(
+        "SELECT 1 FROM document_types "
+        "WHERE type_code = ? AND (project_id IS NULL OR project_id = ?) AND is_active = 1",
+        [doc_type, project_id],
+    )
+    return row is not None
+
+
+# ── resolve_storage_path ──────────────────────────────────────────────────────
+
+def _resolve_storage_path(
+    project_id: str,
+    module: str,
+    group: dict,
+    doc_id: str,
+    branch: str = "main",
+) -> pathlib.Path:
+    """Return canonical storage path using the D013 §5 pattern.
+
+    The filename is composed of a short doc_code (`{seq}-{type}`) prefix plus `document.md`
+    (consistent with other callers, e.g. `0002-M_document.md`).
+    If a canonical full ID is given, the group prefix is stripped to use only the short code.
+    """
+    group_code = group["group_id"]
+    if doc_id.startswith(group_code + "."):
+        doc_code = doc_id[len(group_code) + 1:]
+    elif doc_id.startswith(group_code + "-"):
+        doc_code = doc_id[len(group_code) + 1:]
+    else:
+        doc_code = doc_id
+    return document_path(
+        project_id=project_id,
+        group_code=group_code,
+        doc_code=doc_code,
+        filename="document.md",
+        module=module,
+        branch=branch,
+    )
+
+
+# ── Main endpoint ────────────────────────────────────────────────────────────
+
+@router.post("/inbox")
+async def inbox(request: Request):
+    """Inbound endpoint (D020 §3).
+
+    Step 1: Form validation
+    Step 2: Authentication (token verification)
+    Step 3: Context binding validation
+    Step 4: Permission check
+    Step 5: Referential integrity + body validation
+    Step 6: Storage processing
+    Step 7: DB registration/update
+    Step 8: Token consumption
+    Step 9: Screen push [Phase 2 deferred — leave hook empty]
+    Step 10: Return response
+    """
+    # ── Step 1: Form validation ─────────────────────────────────────────────────────
+    raw = _extract_bearer(request)
+    if raw is None:
+        return _fail(401, "Authorization header is required")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _fail(400, "Request body is not valid JSON")
+
+    action = body.get("action", "")
+    if action not in ("new", "edit", "review"):
+        return _fail(400, "action must be new, edit, or review")
+
+    if action == "new":
+        return await _handle_new(request, raw, body)
+    elif action == "review":
+        return await _handle_review(request, raw, body)
+    else:
+        return await _handle_edit(request, raw, body)
+
+
+async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse:
+    """Store an AI review result for action: review (document_reviews child record).
+
+    A review belongs to its target document rather than being a document itself.
+    Collection is automatic, while a person makes the approval or rejection decision.
+    Payload: {project, doc_id, verdict(pass|issues|hold), findings:[{locus,note}], comment?}
+    The server derives the finding count from findings; the AI does not provide the number.
+    """
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    # ── Step 1: Field validation ──
+    project = body.get("project")
+    doc_id_raw = body.get("doc_id") or body.get("doc_ref") or body.get("target_id")
+    verdict = body.get("verdict")
+    findings = body.get("findings", [])
+    comment = body.get("comment")
+
+    if not project:
+        return _fail(400, "Required field missing: project")
+    if not doc_id_raw:
+        return _fail(400, "Required field missing: doc_id")
+    if verdict not in ("pass", "issues", "hold"):
+        return _fail(400, "verdict must be one of: pass, issues, hold")
+    if not isinstance(findings, list):
+        return _fail(400, "findings must be a list")
+    project = str(project)
+    doc_id = str(doc_id_raw)
+
+    # ── Step 2: Authentication ──
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 3: Context binding (scope + project + target document) ──
+    # Scope guard mirrors _handle_new/_handle_edit: a review submission requires a
+    # review-scoped token. This is what stops an "edit" token from being replayed as
+    # a review (and, conversely, a review token from editing) — B0057.0001/NR0057.0003.
+    if token_rec["action_scope"] != "review":
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec["project"] != project:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec.get("doc_ref") not in (None, "", doc_id):
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+
+    actor_user_id: str = token_rec["issued_to"]
+
+    # ── Step 4: Permission ──
+    if not has_permission(actor_user_id, project, "perm_document_update"):
+        return _fail(403, "Insufficient permissions for this operation")
+
+    # ── Step 5: Referential integrity ──
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
+        return _fail(422, f"Referenced document {doc_id} does not exist")
+
+    # Disposed-group guard (TR0079.0003 rework): a review is a forward action on the
+    # target document; reject it when the group has been discarded.
+    disposed = _disposed_group_fail(doc.get("group_id"), "Review")
+    if disposed is not None:
+        return disposed
+
+    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.3) ──
+    # All validation has passed; bail out before any side effect (insert_review/consume/SSE).
+    dry_resp = _maybe_dry_run(body, token_rec, {
+        "action": "review",
+        "doc_id": doc_id,
+        "verdict": verdict,
+        "finding_count": len(findings),
+        "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
+    })
+    if dry_resp is not None:
+        return dry_resp
+
+    # ── Step 6: Insert review record ──
+    revision_no = int(doc.get("revision_no") or 0)
+    findings_json = json.dumps(findings, ensure_ascii=False)
+    try:
+        db_reviews.insert_review(
+            doc_id=doc_id,
+            revision_no=revision_no,
+            reviewer_id=actor_user_id,
+            verdict=verdict,
+            findings_json=findings_json,
+            comment=comment if (comment is None or isinstance(comment, str)) else str(comment),
+            reviewed_at=now_iso(),
+        )
+    except Exception as exc:
+        return _fail(500, f"DB registration error: {exc}")
+
+    # ── Step 7: Token consumption ──
+    token_service.consume(
+        token_id=token_rec["token_id"],
+        project_id=project,
+        doc_id=doc_id,
+    )
+
+    # ── Step 8: Screen push — notify reviewers an AI verdict arrived ──
+    # Without this, a review lands silently: the human's open tab shows no "AI review arrived"
+    # pill and no refresh (review submission is not a doc_review_status change, so it was
+    # emitting nothing). Broadcast (audience="*") since the reviewer may be a different user.
+    try:
+        import asyncio
+        from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
+        from modules.flow_gate.api.v1.events.event_types import EventType
+        group_id_val = doc.get("group_id")
+
+        async def _push():
+            await broadcast_event(FlowEvent(
+                event_type=EventType.AI_REVIEW_ARRIVED,
+                payload={
+                    "doc_id": doc_id,
+                    "title": doc.get("title"),
+                    "verdict": verdict,
+                    "finding_count": len(findings),
+                },
+                audience="*",
+                doc_id=doc_id,
+                project=project,
+                group_id=group_id_val,
+            ))
+            # Refresh open document tabs / group view so the pill surfaces without a
+            # manual reload (rides the fg:open_docs_refresh path on the client).
+            await broadcast_event(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": group_id_val, "reason": "review_added"},
+                audience="*",
+                doc_id=doc_id,
+                project=project,
+                group_id=group_id_val,
+            ))
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(_push())
+            else:
+                loop.run_until_complete(_push())
+        except RuntimeError:
+            asyncio.run(_push())
+    except Exception as _push_exc:
+        import LogAssist.log as logger
+        logger.warning(f"[inbox review] Step 9 SSE publish failed (ignored): {_push_exc}")
+
+    # ── Step 9: Response (finding count computed server-side) ──
+    return JSONResponse(content={
+        "ok": True,
+        "doc_id": doc_id,
+        "verdict": verdict,
+        "finding_count": len(findings),
+        "message": f"Review for {doc_id} registered.",
+    }, status_code=201)
+
+
+def _inbox_api_base(request: Request) -> str:
+    """API base URL for self-chain mentions (mirrors token_routes._build_api_base)."""
+    from config import settings
+    base = str(request.base_url).rstrip("/")
+    context = settings.CONTEXT.rstrip("/")
+    return f"{base}{context}/api/v1"
+
+
+def _continuation_self_chain(
+    request: Request,
+    token_rec: dict,
+    project: str,
+    canonical_doc_id: str,
+    doc_type: str,
+) -> Optional[dict]:
+    """Server-driven self-chaining for continuous (unmanned) work (group 0051 / NR0003 B안).
+
+    After an inbox `new` submission consumes a *continuation* token, decide what the
+    worker does next without a human re-issuing a token:
+
+      • Ordinary token (no continuation_target_seq) → return None: nothing changes.
+      • Review mode (group 0086 TR0004 rework rev4) → PAUSE. Review mode is the pre-flight
+        Q-registration phase, not "go": it never auto-approves or advances. The worker
+        registers clarifying Qs (or a "no blockers, confirm to proceed" Q) and the run waits
+        for the human go (review mode off → non-review auto-run).
+      • Non-review (go) → auto-approve the just-submitted document (NR0003 §6-①: the
+        deliberate gate relaxation the FE warning dialog made the user accept) so the head
+        advances, then, if the target is reached, stop with the last step already approved
+        (point 2: "최종승인 전까지이므로 마지막 작업도 승인한 상태가 되어야 함"); otherwise advance_workflow
+        mints the next token + continuous mention. Auto-approve uses the issuer's REAL
+        document.approve permission (P0005 §4 — approve is never bypassed); if they genuinely
+        lack it, pause honestly instead of forcing it.
+
+    Returns an envelope merged into the inbox 201 response, or None for ordinary tokens.
+    Any failure degrades to a paused envelope (the submitted document is already saved;
+    only the *continuation* stops), never a 500.
+    """
+    target_seq = token_rec.get("continuation_target_seq")
+    if target_seq is None:
+        return None  # ordinary token — not a continuation chain
+
+    review_mode = bool(token_rec.get("continuation_review_mode"))
+    spine_doc_ref = token_rec.get("doc_ref")
+    actor_user_id = token_rec["issued_to"]
+
+    envelope: dict = {
+        "continuation": True,
+        "continuation_review_mode": review_mode,
+        "continuation_target_seq": target_seq,
+    }
+
+    # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (group 0086 TR0004 rework
+    # rev4: "검토모드=아직 go가 아니라 사전 질의등록 시간"). It must NOT auto-approve or advance:
+    # the worker registers clarifying Qs (or a "no blockers, confirm to proceed" Q) and the run
+    # waits for the human to give the explicit go (turn review mode off → non-review auto-run).
+    # The review-phase mention already tells the worker not to create documents, so reaching
+    # this self-chain in review mode is unexpected; pause honestly rather than producing work.
+    if review_mode:
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = (
+            "review mode (pre-flight Q phase): register clarifying questions; the run advances "
+            "only after the human gives the go."
+        )
+        return envelope
+
+    from modules.flow_gate.db import workflow_sequences as _wfseq
+    completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
+    completed_seq = completed_item.get("item_seq") if completed_item else None
+
+    # Auto-approve the just-submitted document so the head can advance — and do it BEFORE the
+    # target-reached check so the LAST step is left approved too (group 0086 TR0004 rework
+    # rev4 point 2: "최종승인 전까지이므로 마지막 작업도 승인한 상태가 되어야 함"). The continuous run
+    # runs up to the last sequence item; final approval (AC) remains a separate human gate.
+    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
+    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+        # Permission source of truth = the SAME resolver the live approve button and
+        # documents.create_next_approved use (workflow._get_user_permissions, the is_admin
+        # stub). The real RBAC tables (user_project_roles / role_permissions) are
+        # unpopulated on the live system, so permission_service.get_user_permissions
+        # returns ∅ for an is_admin approver → this auto-approve ALWAYS paused with "lacks
+        # document.approve" even though the human IS an approver. That is the reported
+        # "continuous run stops at the work instruction" bug (group 0086 TR0004 rework).
+        # documents.py:create_next_approved warns both approval paths must move together;
+        # this is the second path, previously left on the wrong (∅) resolver.
+        from modules.flow_gate.db import users as _db_users
+        from modules.flow_gate.workflow.routers.workflow import (
+            _get_user_permissions as _resolve_user_permissions,
+        )
+        actor_user = _db_users.get_by_id(actor_user_id) or {
+            "user_id": actor_user_id, "is_admin": 0,
+        }
+        approver_perms = _resolve_user_permissions(actor_user)
+        if "document.approve" not in approver_perms:
+            envelope["continuation_paused"] = True
+            envelope["continuation_reason"] = (
+                "issuer lacks document.approve; awaiting human approval before continuing."
+            )
+            return envelope
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+        try:
+            transition_document_review(
+                doc_id=canonical_doc_id,
+                action="approve",
+                actor_user_id=actor_user_id,
+                user_permissions=approver_perms,
+            )
+        except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
+            envelope["continuation_paused"] = True
+            envelope["continuation_reason"] = f"auto-approve failed: {exc}"
+            return envelope
+
+    # Target reached → stop the chain. Reached only AFTER the just-submitted document was
+    # auto-approved above, so the last step ends approved (point 2), not left submitted.
+    if completed_seq is not None and completed_seq >= target_seq:
+        envelope["continuation_remaining"] = 0
+        envelope["continuation_done"] = True
+        return envelope
+
+    # Advance: mint the next step's token + continuous mention (carry the review flag so the
+    # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).
+    from modules.flow_gate.services import workflow_decision_service
+    api_base_url = _inbox_api_base(request)
+    locale = request.headers.get("x-locale") or "ko"
+    try:
+        adv = workflow_decision_service.advance_workflow(
+            doc_id=spine_doc_ref,
+            issued_to=actor_user_id,
+            api_base_url=api_base_url,
+            locale=locale,
+            continuous=True,
+            continuation_target_seq=target_seq,
+            continuation_review_mode=review_mode,
+        )
+    except (LookupError, ValueError) as exc:
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = f"advance blocked: {exc}"
+        return envelope
+
+    envelope.update({
+        "next_token": adv["token"],
+        "next_token_id": adv["token_id"],
+        "next_mention": adv["mention"],
+        "next_expires_at": adv.get("expires_at"),
+        "continuation_remaining": adv.get("continuation_remaining"),
+    })
+    return envelope
+
+
+async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
+    """Processing flow for action: new (D020 §3-3-2)."""
+
+    # ── Step 1: Field validation ────────────────────────────────────────────────────
+    project = body.get("project")
+    module = body.get("module")
+    group_raw = body.get("group_name") or body.get("group")
+    prev_doc_raw = body.get("prev_doc_id") or body.get("target_id")
+    doc_type = body.get("doc_type")
+
+    required_pairs = {
+        "project": project,
+        "module": module,
+        "group_name": group_raw,
+        "prev_doc_id": prev_doc_raw,
+        "doc_type": doc_type,
+    }
+    for field, value in required_pairs.items():
+        if not value:
+            return _fail(400, f"Required field missing: {field}")
+
+    has_path = body.get("doc_path") is not None
+    has_content = body.get("content") is not None
+    if has_path == has_content:
+        return _fail(400, "Exactly one of doc_path or content must be provided")
+
+    project = str(project)
+    module = str(module)
+    doc_type = str(doc_type)
+    try:
+        group_name = _normalize_group_name(project, module, str(group_raw))
+        prev_doc_id = _normalize_doc_id(group_name, str(prev_doc_raw))
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    doc_path: Optional[str] = body.get("doc_path")
+    content: Optional[str] = body.get("content")
+    related_doc_ids = body.get("related_doc_ids")
+    title_override: Optional[str] = body.get("title")
+
+    # NOTE (group 0022 §7.4): the Q document path is retired. Q is an inactive doc type
+    # (migration 040) so _is_valid_doc_type blocks new Q docs at Step 5; AI queries are now
+    # registered as document-bound data (POST /q/{doc_id}/questions), not Q documents.
+
+    # ── Step 2: Authentication ─────────────────────────────────────────────────────────
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 3: Context binding ───────────────────────────────────────────────
+    if token_rec["project"] != project:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec["action_scope"] != "new":
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec.get("doc_ref") != prev_doc_id:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+
+    actor_user_id: str = token_rec["issued_to"]
+
+    # ── Step 4: Permission check ────────────────────────────────────────────────────
+    required_perm = _permission_for_new(doc_type)
+    if not has_permission(actor_user_id, project, required_perm):
+        return _fail(403, "Insufficient permissions for this operation")
+
+    # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
+    if not _is_valid_doc_type(doc_type, project):
+        return _fail(400, f"Invalid doc_type: {doc_type}")
+
+    if db_docs.get_by_id(prev_doc_id) is None:
+        return _fail(422, f"Referenced document {prev_doc_id} does not exist")
+
+    group = _resolve_group(project, group_name)
+    if group is None:
+        return _fail(422, f"Group not found: {group_name}")
+
+    # Disposed-group guard (TR0079.0003 rework): no new documents in a discarded group.
+    disposed = _disposed_group_fail(group["group_id"], "Creation")
+    if disposed is not None:
+        return disposed
+
+    if doc_path is not None:
+        scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(
+            token_rec["project"], token_rec["token_id"]
+        )
+        if not validate_doc_path(doc_path, scratch_dir):
+            return _fail(422, f"doc_path is not accessible: {doc_path}")
+        if not os.path.isfile(doc_path):
+            return _fail(422, f"doc_path file does not exist: {doc_path}")
+
+    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
+    # All validation has passed; bail out before the first side effect (reserve_document).
+    # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
+    # content_size is NOT a check here: _handle_new has no body-size validation (L0007 §1.1).
+    new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
+    if doc_path is not None:
+        new_checks.append("doc_path")
+    dry_resp = _maybe_dry_run(body, token_rec, {
+        "action": "new",
+        "doc_id": None,
+        "group_name": group["group_id"],
+        "doc_type": doc_type,
+        "checks_passed": new_checks,
+    })
+    if dry_resp is not None:
+        return dry_resp
+
+    try:
+        doc_code = numbering_service.reserve_document(
+            group_id=group["group_id"],
+            doc_type=doc_type,
+            module=module,
+        )
+    except RuntimeError as exc:
+        return _fail(503, f"Numbering lock timeout. Please retry shortly.: {exc}")
+
+    canonical_doc_id = _build_doc_id(group["group_id"], doc_code)
+    try:
+        _, seq = parse_doc_code(doc_code)
+    except ValueError:
+        m = re.search(r"(\d+)$", doc_code)
+        seq = int(m.group(1)) if m else 0
+    project_settings = db_projects.get_settings(project)
+    branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
+    stored_path = _resolve_storage_path(project, module, group, canonical_doc_id, branch=branch)
+
+    try:
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if doc_path is not None:
+            shutil.move(str(doc_path), str(stored_path))
+        else:
+            stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
+    except OSError as exc:
+        return _fail(500, f"Storage error: {exc}")
+
+    try:
+        file_content_for_title = stored_path.read_text(encoding="utf-8")
+    except OSError:
+        file_content_for_title = content if isinstance(content, str) else ""
+    if title_override:
+        extracted_title = title_override
+    else:
+        extracted_title = _extract_title_from_content(file_content_for_title) or canonical_doc_id
+
+    # ── Step 7: DB registration ──────────────────────────────────────────────────────
+    now = now_iso()
+    # D022 §2-3: related_doc_ids → meta JSON
+    meta_value = json.dumps({"related_doc_ids": related_doc_ids}) if related_doc_ids else None
+    try:
+        db_docs.create({
+            "doc_id": canonical_doc_id,
+            "project_id": project,
+            "module": module,
+            "group_id": group["group_id"],
+            "type_code": doc_type,
+            "seq": seq,
+            "title": extracted_title,
+            "file_path": to_storage_relative(stored_path, project),
+            "status": "open",
+            "owner_id": actor_user_id,
+            "triggered_by": prev_doc_id,
+            "revision_no": 0,
+            "created_at": now,
+            "updated_at": now,
+            "meta": meta_value,
+        })
+        # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
+        # worker attaches low-confidence points as queries on that document
+        # (asker_kind='ai'). On failure, roll back the document and file.
+        new_questions = body.get("questions")
+        if new_questions:
+            from modules.flow_gate.services import q_service
+            q_service.add_questions(
+                doc_id=canonical_doc_id,
+                questions=new_questions,
+                asker_kind="ai",
+                project_id=project,
+                notify_audience=actor_user_id,
+            )
+    except Exception as exc:
+        # storage rollback
+        try:
+            stored_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            db_docs.delete(canonical_doc_id)
+        except Exception:
+            pass
+        return _fail(500, f"DB registration error: {exc}")
+
+    db_events.create({
+        "event_type": "action_taken",
+        "project_id": project,
+        "group_id": group["group_id"],
+        "document_id": None,
+        "actor_user_id": actor_user_id,
+        "from_state": None,
+        "to_state": "open",
+        "metadata": json.dumps({"action_code": "doc_created", "doc_id": canonical_doc_id}),
+    })
+
+    # ── Step 7.5: Workflow head processing (M: auto-complete / others: pending-review transition) ──────
+    # T823: head-slot registration is best-effort (inside try/except);
+    #       doc_review_status transition is mandatory for non-M (outside try/except).
+    # L0044.0008 §3.1/§3.2: auto-complete types (M memo, CH conversation) are the
+    # single source of truth in AUTO_COMPLETE_TYPES; the literal "M" branches below
+    # generalize to set membership so CH takes the same non-gate path as M.
+    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
+    try:
+        from modules.flow_gate.db import workflow_sequences as _db_wfseq
+        from modules.flow_gate.workflow.pipeline_service import register_workflow_result
+        head_item = _db_wfseq.get_pending_head_by_group(group["group_id"], project)
+        if head_item is not None and head_item.get("type") == doc_type.upper():
+            if doc_type.upper() in AUTO_COMPLETE_TYPES:
+                # M (memo) / CH (conversation): review step not needed — fill the
+                # result slot. Approval is set unconditionally below (L-AUTO §3.3).
+                _db_wfseq.set_item_result_doc_id(head_item["id"], canonical_doc_id)
+                # NOTE: do NOT silently finalize here even when this memo fills the
+                # last pending slot. AC (final approval) is an explicit review step
+                # (M042 §3.1 — PM rejected silent wf_done). With no pending slots
+                # left, head resolution surfaces AC/pending so the final-approval
+                # screen appears; wf_done is set only when AC is approved.
+                # NR0003: the inbox path previously called mark_sequence_done +
+                # set the parent R to wf_done here, bypassing the AC gate and the
+                # "all steps approved" guard (a memo as the final slot finalized the
+                # whole workflow without review). Aligned with documents.py:819-827.
+            else:
+                # Non-auto-complete with a matching head: register result slot.
+                # Status transition is handled unconditionally below (T823).
+                register_workflow_result(
+                    item_id=head_item["id"],
+                    registered_path=to_storage_relative(stored_path, project),
+                    registered_doc_id=canonical_doc_id,
+                    registered_at=now,
+                    actor_user_id=actor_user_id,
+                )
+    except Exception:
+        pass
+
+    # L0044.0008 §3.3 (L-AUTO): auto-complete types are created already-approved
+    # regardless of whether a matching pending head slot existed above. A standalone-
+    # opened conversation (CH) has no pre-seeded head, so without this its
+    # doc_review_status would leak NULL — violating "approved on creation"
+    # (D0044.0006 §4 / P0044.0007 §3). Idempotent for M (already approved above).
+    if doc_type.upper() in AUTO_COMPLETE_TYPES:
+        try:
+            from modules.flow_gate.db import documents as _db_docs_ac
+            _db_docs_ac.update(canonical_doc_id, {"doc_review_status": "approved"})
+        except Exception:
+            pass
+
+    # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
+    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+        transition_document_review(
+            doc_id=canonical_doc_id,
+            action="submit",
+            actor_user_id=actor_user_id,
+            user_permissions={"document.update"},
+        )
+
+    # ── Step 8: Token consumption ────────────────────────────────────────────────────
+    token_service.consume(
+        token_id=token_rec["token_id"],
+        project_id=project,
+        doc_id=canonical_doc_id,
+    )
+
+    # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
+    try:
+        import asyncio
+        from modules.flow_gate.api.v1.events.publisher import publish_event, FlowEvent
+        from modules.flow_gate.api.v1.events.event_types import EventType
+        from modules.flow_gate.api.v1.group_routes import get_next_action_candidates
+
+        async def _push():
+            base = dict(project=project, group_id=group["group_id"],
+                        doc_id=canonical_doc_id, audience=actor_user_id)
+            await publish_event(FlowEvent(
+                event_type=EventType.FILE_EXPLORER_REFRESH,
+                payload={"operation": "created", "stored_path": str(stored_path)},
+                **base,
+            ))
+            doc_rec = db_docs.get_by_id(canonical_doc_id)
+            await publish_event(FlowEvent(
+                event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
+                payload={"operation": "created", "doc_id": canonical_doc_id,
+                         "type": doc_type, "title": extracted_title,
+                         "status": "open", "revision_no": 0},
+                **base,
+            ))
+            await publish_event(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": group["group_id"], "reason": "document_added"},
+                **base,
+            ))
+            # M026 Fix-4: SSE broadcast on None → pending_review transition.
+            # L0044.0008 §3.2: auto-complete types (M/CH) never reach pending_review,
+            # so generalize the literal "M" guard to set membership.
+            from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
+            if (
+                doc_type.upper() not in AUTO_COMPLETE_TYPES
+                and doc_rec
+                and doc_rec.get("doc_review_status") == "pending_review"
+            ):
+                from modules.flow_gate.api.v1.events.publisher import broadcast_event
+                await broadcast_event(FlowEvent(
+                    event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
+                    payload={
+                        "doc_id": canonical_doc_id,
+                        "prev_status": None,
+                        "next_status": "pending_review",
+                        "rejection_reason": None,
+                    },
+                    audience="*",
+                    doc_id=canonical_doc_id,
+                    project=project,
+                    group_id=group["group_id"],
+                ))
+            candidates = get_next_action_candidates(group["group_id"])
+            if candidates:
+                await publish_event(FlowEvent(
+                    event_type=EventType.NOTIFICATION_NEW_ACTION_CANDIDATE,
+                    payload={"doc_id": canonical_doc_id, "type": doc_type,
+                             "title": extracted_title, "candidates": candidates},
+                    **base,
+                ))
+            # D022 §3-3: Q-registration-only event (when doc_type='Q')
+            if doc_type.upper() == "Q":
+                await publish_event(FlowEvent(
+                    event_type=EventType.QNA_Q_REGISTERED,
+                    payload={"q_doc_id": canonical_doc_id, "prev_doc_id": prev_doc_id,
+                             "title": extracted_title, "status": "open"},
+                    **base,
+                ))
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(_push())
+            else:
+                loop.run_until_complete(_push())
+        except RuntimeError:
+            asyncio.run(_push())
+    except Exception as _push_exc:
+        import LogAssist.log as logger
+        logger.warning(f"[inbox new] Step 9 SSE publish failed (ignored): {_push_exc}")
+
+    # ── Step 10: Response ─────────────────────────────────────────────────────────
+    resp_content: dict = {
+        "ok": True,
+        "doc_id": canonical_doc_id,
+        "stored_path": str(stored_path),
+        "message": f"{canonical_doc_id} registered. You may end the session.",
+    }
+    # Continuous work self-chain (group 0051 / NR0003 B안): for a continuation token,
+    # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
+    # next step without a human re-issuing a token. No-op for ordinary tokens. Never
+    # fails the (already-saved) submission — degrades to a paused envelope on any error.
+    try:
+        chain = _continuation_self_chain(
+            request, token_rec, project, canonical_doc_id, doc_type
+        )
+        if chain:
+            resp_content.update(chain)
+            if chain.get("next_token"):
+                resp_content["message"] = (
+                    f"{canonical_doc_id} registered. Continuous run: proceed to the next "
+                    "step with next_token/next_mention."
+                )
+    except Exception as _chain_exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[inbox new] continuation self-chain failed (ignored): {_chain_exc}")
+
+    return JSONResponse(content=resp_content, status_code=201)
+
+
+def _carry_over_conversation(
+    project: str,
+    module: str,
+    group: dict,
+    prev_doc_id: str,
+    prev_content: str,
+    actor_user_id: str,
+) -> str:
+    """L0044.0008 §7: open a successor CH document carrying the most recent turns of
+    *prev_content* as its intro, and return its doc_id.
+
+    Reuses the same creation primitives as _handle_new (numbering → path → file → DB)
+    and marks the successor auto-approved (L-AUTO §3.3), since a conversation is an
+    auto-complete, non-gate document. Raises on failure; callers guard it so a failed
+    carry-over never breaks the edit that already committed.
+    """
+    from modules.flow_gate import conversation as _conv
+
+    doc_code = numbering_service.reserve_document(
+        group_id=group["group_id"], doc_type="CH", module=module,
+    )
+    new_doc_id = _build_doc_id(group["group_id"], doc_code)
+    try:
+        _, seq = parse_doc_code(doc_code)
+    except ValueError:
+        m = re.search(r"(\d+)$", doc_code)
+        seq = int(m.group(1)) if m else 0
+
+    project_settings = db_projects.get_settings(project)
+    branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
+    stored_path = _resolve_storage_path(project, module, group, new_doc_id, branch=branch)
+    stored_path.parent.mkdir(parents=True, exist_ok=True)
+    stored_path.write_text(
+        _conv.build_carryover_intro(prev_doc_id, prev_content), encoding="utf-8",
+    )
+
+    now = now_iso()
+    db_docs.create({
+        "doc_id": new_doc_id,
+        "project_id": project,
+        "module": module,
+        "group_id": group["group_id"],
+        "type_code": "CH",
+        "seq": seq,
+        "title": "대화 (이어서)",
+        "file_path": to_storage_relative(stored_path, project),
+        "status": "open",
+        "owner_id": actor_user_id,
+        "triggered_by": prev_doc_id,
+        "revision_no": 0,
+        "created_at": now,
+        "updated_at": now,
+    })
+    # L-AUTO (§3.3): auto-complete types are created already-approved.
+    db_docs.update(new_doc_id, {"doc_review_status": "approved"})
+    return new_doc_id
+
+
+async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
+    """Processing flow for action: edit (D020 §3-4-2)."""
+
+    # ── Step 1: Field validation ────────────────────────────────────────────────────
+    project = body.get("project")
+    module = body.get("module")
+    group_raw = body.get("group_name") or body.get("group")
+    doc_id_raw = body.get("doc_id")
+    edit_reason = body.get("edit_reason")
+
+    required_pairs = {
+        "project": project,
+        "module": module,
+        "group_name": group_raw,
+        "doc_id": doc_id_raw,
+        "edit_reason": edit_reason,
+    }
+    for field, value in required_pairs.items():
+        if not value:
+            return _fail(400, f"Required field missing: {field}")
+
+    valid_reasons = {"rejected", "qna_followup", "user_comment", "worker_self"}
+    if edit_reason not in valid_reasons:
+        return _fail(400, "edit_reason value is invalid")
+
+    has_path = body.get("doc_path") is not None
+    has_content = body.get("content") is not None
+    if has_path == has_content:
+        return _fail(400, "Exactly one of doc_path or content must be provided")
+
+    project = str(project)
+    module = str(module)
+    try:
+        group_name = _normalize_group_name(project, module, str(group_raw))
+        doc_id = _normalize_doc_id(group_name, str(doc_id_raw))
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    edit_reason = str(edit_reason)
+    linked_doc_id: Optional[str] = body.get("linked_doc_id")
+    doc_path: Optional[str] = body.get("doc_path")
+    content: Optional[str] = body.get("content")
+    # P0005/T0006: when re-submitting a rejected document, the AI may include its
+    # response to the rejection alongside the body. The body stays the body; this
+    # text is recorded against the latest rejection so reviewers can see how the
+    # AI addressed their comment. Only meaningful for edit_reason="rejected".
+    rejection_response: Optional[str] = body.get("rejection_response")
+
+    # ── Step 2: Authentication ─────────────────────────────────────────────────────────
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 3: Context binding ───────────────────────────────────────────────
+    if token_rec["project"] != project:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec["action_scope"] != "edit":
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec.get("doc_ref") != doc_id:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+
+    actor_user_id: str = token_rec["issued_to"]
+
+    # ── Step 4: Permission check (D020 §6-2) ────────────────────────────────────────
+    if not has_permission(actor_user_id, project, "perm_document_update"):
+        return _fail(403, "Insufficient permissions for this operation")
+
+    # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
+    existing_doc = db_docs.get_by_id(doc_id)
+    if existing_doc is None:
+        return _fail(422, f"Referenced document {doc_id} does not exist")
+    final_approved = document_service.is_final_approved(existing_doc)
+    if not document_service.is_document_editable(
+        existing_doc,
+        final_approved=final_approved,
+    ):
+        if final_approved:
+            return _fail(422, "Modification not allowed after final approval.")
+        return _fail(
+            422,
+            f"Modification not allowed for status: {existing_doc.get('status')}",
+        )
+
+    if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
+        return _fail(422, f"Referenced document {linked_doc_id} does not exist")
+
+    group = _resolve_group(project, group_name)
+    if group is None:
+        return _fail(422, f"Group not found: {group_name}")
+
+    # Disposed-group guard (TR0079.0003 rework — the exact rejected symptom: "documents
+    # in a disposed group still get edited fine"). Editing a document in a discarded group is a forward
+    # action and must be rejected at the source, independent of any client state.
+    disposed = _disposed_group_fail(group["group_id"], "Modification")
+    if disposed is not None:
+        return disposed
+
+    if doc_path is not None:
+        scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(
+            token_rec["project"], token_rec["token_id"]
+        )
+        if not validate_doc_path(doc_path, scratch_dir):
+            return _fail(422, f"doc_path is not accessible: {doc_path}")
+        if not os.path.isfile(doc_path):
+            return _fail(422, f"doc_path file does not exist: {doc_path}")
+
+    if content is not None:
+        if isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+        else:
+            content_bytes = content
+        if len(content_bytes) > _content_max():
+            return _fail(422, f"content size exceeds the limit (max {_content_max()} bytes)")
+
+    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
+    # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
+    # checks_passed reflects checks actually run on this path (L0007 §1.1/§4 principle):
+    # content_size only when content was supplied; linked/doc_path only when those inputs exist.
+    edit_checks = ["auth", "context_binding", "permission", "referential_integrity", "editable"]
+    if content is not None:
+        edit_checks.append("content_size")
+    if linked_doc_id:
+        edit_checks.append("linked")
+    if doc_path is not None:
+        edit_checks.append("doc_path")
+    dry_resp = _maybe_dry_run(body, token_rec, {
+        "action": "edit",
+        "doc_id": doc_id,
+        "checks_passed": edit_checks,
+    })
+    if dry_resp is not None:
+        return dry_resp
+
+    # ── Step 6a: Back up existing file (D020 §4) ────────────────────────────────────
+    current_revision_no: int = existing_doc.get("revision_no", 0)
+    stored_path_str: str = existing_doc.get("file_path", "")
+    # file_path is persisted relative (L0054.0002) → resolve to an absolute Path for
+    # the filesystem operations below. None when the file cannot be located, which
+    # falls through to the recompute branch.
+    existing_branch = (existing_doc.get("branch") or "main") or "main"
+    stored_path = None
+    if stored_path_str:
+        # Prefer the jailed resolve (handles relative + branch drift, confirms the
+        # file exists); fall back to a soft resolve for trusted legacy DB values
+        # that live outside the storage jail (relative→root, absolute→passthrough).
+        stored_path = (
+            resolve_storage_path(stored_path_str, project, branch=existing_branch)
+            or resolve_storage_dir(stored_path_str, project)
+        )
+
+    # backup_path_str stays absolute for the in-request shutil rollback (below);
+    # backup_path_rel is the relative value persisted to document_revisions.
+    backup_path_str: Optional[str] = None
+    backup_path_rel: Optional[str] = None
+    if stored_path and stored_path.exists():
+        revisions_dir = stored_path.parent / "revisions"
+        revisions_dir.mkdir(parents=True, exist_ok=True)
+        backup_filename = f"{doc_id}.r{current_revision_no}.md"
+        backup_path = revisions_dir / backup_filename
+        try:
+            shutil.copy2(str(stored_path), str(backup_path))
+            backup_path_str = str(backup_path)
+            backup_path_rel = to_storage_relative(backup_path, project)
+        except OSError as exc:
+            return _fail(500, f"Storage error: {exc}")
+
+    # ── Step 6b: Replace with new content ─────────────────────────────────────────────
+    if stored_path is None:
+        project_settings = db_projects.get_settings(project)
+        branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
+        stored_path = _resolve_storage_path(project, module, group, doc_id, branch=branch)
+
+    try:
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if doc_path is not None:
+            shutil.copy2(str(doc_path), str(stored_path))
+        else:
+            stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
+    except OSError as exc:
+            return _fail(500, f"Storage error: {exc}")
+
+    # ── Step 7: DB update (CAS) ────────────────────────────────────────────────
+    store = get_store()
+    now = now_iso()
+    store._execute(
+        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? "
+        "WHERE doc_id = ? AND revision_no = ?",
+        [now, doc_id, current_revision_no],
+    )
+    refreshed = db_docs.get_by_id(doc_id)
+    if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
+        # CAS conflict → rollback
+        if backup_path_str:
+            try:
+                shutil.copy2(backup_path_str, str(stored_path))
+            except OSError:
+                pass
+        return _fail(409, "Concurrent modification conflict. Please retry.")
+
+    new_revision_no: int = refreshed["revision_no"]
+
+    # document_revisions INSERT
+    if backup_path_str:
+        db_revisions.create({
+            "doc_id": doc_id,
+            "revision_no": current_revision_no,
+            "backup_path": backup_path_rel,
+            "edit_reason": edit_reason,
+            "linked_doc_id": linked_doc_id,
+            "created_by": actor_user_id,
+            "created_at": now,
+        })
+
+    db_events.create({
+        "event_type": "doc_edited",
+        "project_id": project,
+        "group_id": group["group_id"],
+        "document_id": None,
+        "actor_user_id": actor_user_id,
+        "from_state": None,
+        "to_state": None,
+        "metadata": json.dumps({
+            "doc_id": doc_id,
+            "edit_reason": edit_reason,
+            "linked_doc_id": linked_doc_id,
+            "revision_no": new_revision_no,
+        }),
+    })
+
+    # ── Step 7.5: Transition doc_review_status → revised when edit_reason=rejected ──────
+    # B0046: the rejected→revised transition MUST NOT hang off the in-progress head
+    # matching this doc's type. A time-machine reopen restores doc_review_status but not
+    # sequence-head alignment, so the head can resolve to a trailing slot (or None). The
+    # old code nested the transition inside that head guard, so on a time-machine resubmit
+    # the transition was skipped, the doc stayed 'rejected', and — because the Step 9 SSE
+    # below is gated on doc_review_status == 'revised' — no DOC_REVIEW_STATUS_CHANGED was
+    # broadcast, leaving the reviewer's action bar stuck on the [Revision complete] rework toolbar
+    # instead of flipping back to Approve/Reject. Separate the transition out of the head guard
+    # so it always runs on a rejected resubmit (NR0003 candidate 2). register_workflow_result
+    # still needs the head item id, so only IT stays head-gated.
+    if edit_reason == "rejected":
+        from modules.flow_gate.db import workflow_sequences as _db_wfseq
+        from modules.flow_gate.workflow.pipeline_service import (
+            TransitionError,
+            record_rejection_response,
+            register_workflow_result,
+            transition_document_review,
+        )
+        import LogAssist.log as logger
+        doc_type_code = existing_doc.get("type_code", "").upper()
+        try:
+            head_item = _db_wfseq.get_in_progress_head_by_group(group["group_id"], project)
+            if head_item is not None and head_item.get("type") == doc_type_code:
+                register_workflow_result(
+                    item_id=head_item["id"],
+                    registered_path=to_storage_relative(stored_path, project),
+                    registered_doc_id=doc_id,
+                    registered_at=now,
+                    actor_user_id=actor_user_id,
+                )
+        except Exception as _rwr_exc:
+            logger.warning(f"[inbox edit] Step 7.5 register_workflow_result failed (ignored): {_rwr_exc}")
+        # DB004 §6.1: the doc_review_status transition is the caller's responsibility and is
+        # INDEPENDENT of the workflow head — transition_document_review reads only the doc's
+        # own doc_review_status. Run it unconditionally so a rejected resubmit always advances
+        # rejected→revised (which fires the Step 9 SSE), even when the head is misaligned
+        # (time-machine) or absent.
+        try:
+            transition_document_review(
+                doc_id=doc_id,
+                action="submit",
+                actor_user_id=actor_user_id,
+                user_permissions={"document.update"},
+            )
+        except (TransitionError, ValueError, PermissionError) as _tr_exc:
+            logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
+        # P0005/T0006: attach the AI's rejection response (if supplied) to the latest
+        # rejection. Independent of the workflow head.
+        if rejection_response:
+            try:
+                record_rejection_response(
+                    doc_id=doc_id,
+                    response_text=rejection_response,
+                    recorded_by=actor_user_id,
+                    revision_no=new_revision_no,
+                )
+            except Exception as _rr_exc:
+                logger.warning(f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}")
+
+    # ── Step 7.6: Conversation carry-over (L0044.0008 §7) ──────────────────────────
+    # A CH body is replaced wholesale on every turn, so it grows toward the inbox
+    # content cap. When it reaches CARRYOVER_RATIO of the cap, open a successor CH
+    # document that carries the most recent turns as its intro, so the chat continues
+    # without ever tripping the hard 422 limit. Best-effort: a failure here must never
+    # break the edit that already succeeded (decision ⓐ — reuse the edit surface).
+    carried_over_doc_id: Optional[str] = None
+    if (
+        isinstance(content, str)
+        and (existing_doc.get("type_code") or "").upper() in {"CH"}
+    ):
+        try:
+            from modules.flow_gate import conversation as _conv
+            if _conv.should_carry_over(len(content.encode("utf-8")), _content_max()):
+                carried_over_doc_id = _carry_over_conversation(
+                    project, module, group, doc_id, content, actor_user_id,
+                )
+        except Exception as _co_exc:
+            import LogAssist.log as logger
+            logger.warning(f"[inbox edit] conversation carry-over failed (ignored): {_co_exc}")
+
+    # ── Step 8: Token consumption ────────────────────────────────────────────────────
+    token_service.consume(
+        token_id=token_rec["token_id"],
+        project_id=project,
+        doc_id=doc_id,
+    )
+
+    # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
+    try:
+        import asyncio
+        from modules.flow_gate.api.v1.events.publisher import publish_event, FlowEvent
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        async def _push():
+            base = dict(project=project, group_id=group["group_id"],
+                        doc_id=doc_id, audience=actor_user_id)
+            await publish_event(FlowEvent(
+                event_type=EventType.FILE_EXPLORER_REFRESH,
+                payload={"operation": "updated", "stored_path": str(stored_path)},
+                **base,
+            ))
+            refreshed_doc = db_docs.get_by_id(doc_id)
+            await publish_event(FlowEvent(
+                event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
+                payload={"operation": "updated", "doc_id": doc_id,
+                         "type": refreshed_doc.get("type_code") if refreshed_doc else None,
+                         "title": refreshed_doc.get("title") if refreshed_doc else doc_id,
+                         "status": refreshed_doc.get("status") if refreshed_doc else None,
+                         "revision_no": new_revision_no},
+                **base,
+            ))
+            # L0044.0008 §8 (I-SSE): a conversation (CH) turn-append must reach the
+            # human owner's live view even when the AI/service token that submitted
+            # the edit is a different subject than the owner. The publishes above are
+            # audience=actor_user_id only; additionally deliver an owner-targeted
+            # DOCUMENT_EXPLORER_REFRESH so the chat view auto-updates regardless of
+            # which subject holds the edit token. Skipped when owner == actor (already
+            # delivered) and for non-conversation types (memo/M behaviour unchanged).
+            from modules.flow_gate.documents.routers.documents import CONVERSATION_TYPE_CODES
+            if refreshed_doc and (refreshed_doc.get("type_code") or "").upper() in CONVERSATION_TYPE_CODES:
+                _owner_id = refreshed_doc.get("owner_id")
+                if _owner_id and _owner_id != actor_user_id:
+                    await publish_event(FlowEvent(
+                        event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
+                        payload={"operation": "updated", "doc_id": doc_id,
+                                 "type": refreshed_doc.get("type_code"),
+                                 "title": refreshed_doc.get("title"),
+                                 "status": refreshed_doc.get("status"),
+                                 "revision_no": new_revision_no},
+                        project=project, group_id=group["group_id"],
+                        doc_id=doc_id, audience=_owner_id,
+                    ))
+            await publish_event(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": group["group_id"], "reason": "document_updated"},
+                **base,
+            ))
+            await publish_event(FlowEvent(
+                event_type=EventType.EDIT_MARKER_ADDED,
+                payload={"doc_id": doc_id, "revision_no": new_revision_no,
+                         "edit_reason": edit_reason, "linked_doc_id": linked_doc_id},
+                **base,
+            ))
+            # M026 Fix-4: SSE broadcast on rejected → revised transition
+            if edit_reason == "rejected":
+                edited_doc = db_docs.get_by_id(doc_id)
+                if edited_doc and edited_doc.get("doc_review_status") == "revised":
+                    from modules.flow_gate.api.v1.events.publisher import broadcast_event
+                    await broadcast_event(FlowEvent(
+                        event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
+                        payload={
+                            "doc_id": doc_id,
+                            "prev_status": "rejected",
+                            "next_status": "revised",
+                            "rejection_reason": None,
+                        },
+                        audience="*",
+                        doc_id=doc_id,
+                        project=project,
+                        group_id=group["group_id"],
+                    ))
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(_push())
+            else:
+                loop.run_until_complete(_push())
+        except RuntimeError:
+            asyncio.run(_push())
+    except Exception as _push_exc:
+        import LogAssist.log as logger
+        logger.warning(f"[inbox edit] Step 9 SSE publish failed (ignored): {_push_exc}")
+
+    # ── Step 10: Response ─────────────────────────────────────────────────────────
+    resp_body = {
+        "ok": True,
+        "doc_id": doc_id,
+        "stored_path": str(stored_path),
+        "previous_revision_path": backup_path_str,
+        "revision_no": new_revision_no,
+        "message": f"{doc_id} registered. You may end the session.",
+    }
+    if carried_over_doc_id:
+        # L0044.0008 §7: the conversation rolled over; subsequent turns go here.
+        resp_body["carried_over_doc_id"] = carried_over_doc_id
+    return JSONResponse(content=resp_body)
+
+
+# ── Internal helpers ─────────────────────────────────────────────────────────────────
+
+def _token_scratch_dir(project: str, token_id: str) -> str:
+    """Return scratch directory path string (delegated to single source of truth, D10 fix).
+
+    Delegates to token_service.scratch_dir_path() to consistently return a project_name-based path.
+    Used as a fallback for legacy token records that lack a tokens.scratch_dir column.
+    """
+    return token_service.scratch_dir_path(project, token_id)

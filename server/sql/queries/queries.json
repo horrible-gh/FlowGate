@@ -1,0 +1,155 @@
+{
+    "get_password": "SELECT password from users WHERE user_id = %s",
+    "get_user": "SELECT u.group_uuid, u.user_uuid, u.user_id, u.user_name, us.storage_uuid, s.storage_name, s.storage_type FROM users u JOIN user_storages us ON u.user_uuid = us.user_uuid JOIN storages s ON s.storage_uuid = us.storage_uuid WHERE u.user_id = %s AND us.is_default = 1",
+    "test": {
+        "test1": "test/test.sql",
+        "test2": "SELECT * FROM test WHERE test_var = %s"
+    },
+    "documents": {
+        "get_next_number": "SELECT COUNT(*) as count FROM documents WHERE doc_id LIKE ?",
+        "get_document_by_id": "SELECT * FROM documents WHERE doc_id = ?",
+        "get_document_by_pk": "SELECT * FROM documents WHERE id = ?",
+        "get_documents_by_group_id": "SELECT * FROM documents WHERE group_id = ? ORDER BY created_at ASC, id ASC",
+        "get_documents_by_target_id": "SELECT * FROM documents WHERE target_id = ? ORDER BY created_at ASC, id ASC",
+        "get_all_documents": "SELECT * FROM documents ORDER BY id DESC",
+        "get_documents_by_status": "SELECT * FROM documents WHERE status = ? ORDER BY id DESC",
+        "get_open_documents": "SELECT * FROM documents WHERE status = 'open' ORDER BY id DESC",
+        "get_outbox_documents": "SELECT * FROM documents WHERE type IN (?, ?, ?, ?, ?) ORDER BY created_at DESC, id DESC",
+        "get_inbox_process_documents": "SELECT * FROM documents WHERE type IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ORDER BY created_at DESC, id DESC",
+        "get_recently_closed_or_rejected_documents": "SELECT * FROM documents WHERE status IN ('closed', 'rejected') ORDER BY updated_at DESC, id DESC LIMIT ?",
+        "get_rejected_documents": "SELECT * FROM documents WHERE status = 'rejected' ORDER BY updated_at DESC, id DESC",
+        "get_latest_t_number_in_group": "SELECT doc_id FROM documents WHERE group_id = ? AND type = 'T'",
+        "get_latest_ds_in_group": "SELECT * FROM documents WHERE group_id = ? AND type = 'DS' ORDER BY id DESC LIMIT 1",
+        "get_latest_d_in_group": "SELECT * FROM documents WHERE group_id = ? AND type = 'D' ORDER BY id DESC LIMIT 1",
+        "insert_document": "INSERT INTO documents (doc_id, type, project, module, target_id, group_id, owner, priority, due_date, title, status, next, direction, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_document_status": "UPDATE documents SET status = ?, updated_at = ? WHERE doc_id = ?",
+        "update_document_status_by_pk": "UPDATE documents SET status = ?, updated_at = ? WHERE id = ?",
+        "update_document_metadata": "UPDATE documents SET owner = ?, priority = ?, due_date = ?, updated_at = ? WHERE doc_id = ?",
+        "set_review_required": "UPDATE documents SET review_required = ?, updated_at = ? WHERE doc_id = ?",
+        "set_superseded_by": "UPDATE documents SET superseded_by = ?, updated_at = ? WHERE doc_id = ?",
+        "set_triggered_by": "UPDATE documents SET triggered_by = ?, updated_at = ? WHERE doc_id = ?",
+        "get_pending_nr_tr_documents": "SELECT * FROM documents WHERE status = 'open' AND type IN ('N', 'T') ORDER BY id DESC",
+        "get_linked_result_documents": "SELECT d.doc_id, d.type, d.status, d.title, d.created_at, d.target_id, e.memo_file FROM documents d LEFT JOIN events e ON e.doc_id = d.doc_id AND e.event_type = 'created' WHERE d.type IN ('NR', 'TR') ORDER BY d.id DESC",
+        "get_next_outbox_seq": "SELECT COUNT(*) as cnt FROM documents WHERE group_id = ? AND type = ?",
+        "get_active_tv_for_t": "SELECT d.* FROM documents d JOIN tv_status ts ON ts.tv_doc_id = d.doc_id WHERE d.target_id = ? AND d.type = 'TV' ORDER BY d.id DESC LIMIT 1",
+        "get_previous_active_tv": "SELECT d.* FROM documents d WHERE d.type = 'TV' AND d.target_id = ? AND d.doc_id != ? AND (d.superseded_by IS NULL OR d.superseded_by = '') ORDER BY d.id DESC LIMIT 1"
+    },
+    "events": {
+        "insert_event": "INSERT INTO events (doc_id, event_type, memo_file, file_hash, reason, related_doc_id, related_target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "get_created_memo_file": "SELECT memo_file FROM events WHERE doc_id = ? AND event_type = 'created' AND memo_file IS NOT NULL AND memo_file != '' ORDER BY event_id DESC LIMIT 1",
+        "is_file_processed": "SELECT 1 FROM events WHERE memo_file = ? AND event_type = 'created' LIMIT 1",
+        "is_hash_processed": "SELECT 1 FROM events WHERE file_hash = ? AND event_type = 'created' LIMIT 1",
+        "get_events_by_doc_id": "SELECT * FROM events WHERE doc_id = ? ORDER BY event_id DESC",
+        "get_recent_events_by_doc_id": "SELECT * FROM events WHERE doc_id = ? ORDER BY event_id DESC LIMIT ?",
+        "get_recent_events": "SELECT * FROM events ORDER BY event_id DESC LIMIT ?",
+        "get_conflict_events": "SELECT * FROM events WHERE event_type = 'conflict_detected' ORDER BY event_id DESC LIMIT ?"
+    },
+    "groups": {
+        "issue_group_id": "SELECT value FROM id_counter WHERE counter_key = ?",
+        "get_group": "SELECT * FROM groups WHERE group_id = ?",
+        "get_all_groups": "SELECT * FROM groups ORDER BY created_at DESC",
+        "get_groups_by_status": "SELECT * FROM groups WHERE status = ? ORDER BY created_at DESC",
+        "insert_group": "INSERT INTO groups (group_id, project, module, title, priority, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_group_status": "UPDATE groups SET status = ?, closed_at = ?, updated_at = ? WHERE group_id = ?",
+        "update_group_updated_at": "UPDATE groups SET updated_at = ? WHERE group_id = ?",
+        "close_group": "UPDATE groups SET status = ?, closed_at = ?, updated_at = ? WHERE group_id = ?"
+    },
+    "project_settings": {
+        "get_project_settings": "SELECT project, docs_root, project_root, updated_at FROM project_settings ORDER BY project",
+        "get_project_settings_by_project": "SELECT * FROM project_settings WHERE project = ?",
+        "upsert_project_settings": "INSERT INTO project_settings (project, docs_root, project_root, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(project) DO UPDATE SET docs_root = excluded.docs_root, project_root = excluded.project_root, updated_at = excluded.updated_at",
+        "remove_project_settings": "DELETE FROM project_settings WHERE project = ?"
+    },
+    "allowed_projects": {
+        "get_allowed_projects": "SELECT project_id AS project, project_name, '' AS module FROM projects WHERE is_active = 1 ORDER BY project_id",
+        "get_allowed_project_names": "SELECT project_id AS project FROM projects WHERE is_active = 1",
+        "add_allowed_project": "INSERT INTO projects (project_id, project_name, is_active, created_at, updated_at) VALUES (?, ?, 1, datetime('now'), datetime('now')) ON CONFLICT(project_id) DO UPDATE SET is_active = 1, updated_at = datetime('now') WHERE projects.is_active = 0",
+        "remove_allowed_project": "UPDATE projects SET is_active = 0, updated_at = datetime('now') WHERE project_id = ?"
+    },
+    "tv_scenarios": {
+        "get_tv_scenarios": "SELECT * FROM tv_scenarios WHERE tv_doc_id = ? ORDER BY scenario_idx ASC",
+        "insert_tv_scenario": "INSERT INTO tv_scenarios (tv_doc_id, scenario_idx, source, title, result, note, disabled, disabled_reason, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_tv_scenario_result": "UPDATE tv_scenarios SET result = ?, note = ?, updated_at = ? WHERE tv_doc_id = ? AND scenario_idx = ?",
+        "update_tv_scenario_hold_to_skip": "UPDATE tv_scenarios SET result = 'skip', note = ?, updated_at = ? WHERE tv_doc_id = ? AND scenario_idx = ? AND result = 'hold'",
+        "disable_tv_scenario": "UPDATE tv_scenarios SET disabled = 1, disabled_reason = ?, updated_at = ? WHERE tv_doc_id = ? AND scenario_idx = ?",
+        "get_max_scenario_idx": "SELECT COALESCE(MAX(scenario_idx), 0) AS max_idx FROM tv_scenarios WHERE tv_doc_id = ?"
+    },
+    "tv_views": {
+        "get_active_tv_for_t": "SELECT d.* FROM documents d WHERE d.target_id = ? AND d.type = 'TV' AND d.status IN ('open', 'running', 'pass', 'fail', 'reject') ORDER BY d.id DESC LIMIT 1",
+        "get_active_tvs_by_statuses": "SELECT d.* FROM documents d WHERE d.type = 'TV' AND d.status IN (?) ORDER BY d.id DESC",
+        "get_tv_tvr_chain_tvs": "SELECT d.* FROM documents d WHERE d.target_id = ? AND d.type = 'TV' ORDER BY d.id ASC",
+        "get_tv_tvr_chain_tvrs": "SELECT * FROM documents WHERE target_id = ? AND type = 'TVR' ORDER BY id ASC",
+        "get_running_tv_in_env": "SELECT d.* FROM documents d WHERE d.project = ? AND d.module = ? AND d.type = 'TV' AND d.status IN ('open', 'running') ORDER BY d.id DESC LIMIT 1",
+        "get_previous_active_tv": "SELECT d.* FROM documents d WHERE d.type = 'TV' AND d.target_id = ? AND d.doc_id != ? AND (d.superseded_by IS NULL OR d.superseded_by = '') ORDER BY d.id DESC LIMIT 1",
+        "extract_tv_status": "SELECT d.doc_id as tv_doc_id, CASE WHEN d.status = 'open' THEN 'Open' WHEN d.status = 'running' THEN 'Running' WHEN d.status = 'pass' THEN 'Pass' WHEN d.status = 'fail' THEN 'Fail' WHEN d.status = 'reject' THEN 'Reject' ELSE d.status END as tv_status, COALESCE(json_extract(d.meta, '$.progress_done'), 0) as progress_done, COALESCE(json_extract(d.meta, '$.progress_total'), 0) as progress_total FROM documents d WHERE d.type = 'TV' AND d.doc_id = ?"
+    },
+    "id_counter": {},
+    "numbering_jobs": {},
+    "sub_groups": {},
+    "questions": {
+        "insert_question": "INSERT INTO questions (q_id, project_id, title, created_by, pm_id, related_doc, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_question_by_id": "SELECT * FROM questions WHERE q_id = ?",
+        "get_question_by_pk": "SELECT * FROM questions WHERE id = ?",
+        "get_questions_by_project": "SELECT * FROM questions WHERE project_id = ? ORDER BY created_at DESC",
+        "get_questions_by_project_status": "SELECT * FROM questions WHERE project_id = ? AND status = ? ORDER BY created_at DESC",
+        "get_questions_by_status": "SELECT * FROM questions WHERE status = ? ORDER BY created_at DESC",
+        "get_pending_questions": "SELECT * FROM questions WHERE status = 'pending' ORDER BY created_at DESC",
+        "get_questions_by_created_by": "SELECT * FROM questions WHERE created_by = ? ORDER BY created_at DESC",
+        "get_questions_by_pm": "SELECT * FROM questions WHERE pm_id = ? AND status = 'pending' ORDER BY created_at DESC",
+        "update_question_status": "UPDATE questions SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE q_id = ?",
+        "update_question_updated_at": "UPDATE questions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        "get_next_q_number": "SELECT COUNT(*) as count FROM questions WHERE q_id LIKE 'Q%'",
+        "get_container_by_doc": "SELECT * FROM questions WHERE doc_id = ?",
+        "insert_container_for_doc": "INSERT INTO questions (q_id, doc_id, project_id, title, created_by, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN documents d ON d.doc_id = q.doc_id WHERE qi.answer_count = 0 AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) ORDER BY q.updated_at DESC"
+    },
+    "question_items": {
+        "insert_question_item": "INSERT INTO question_items (question_id, seq, title, body, asker_kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_question_items": "SELECT * FROM question_items WHERE question_id = ? ORDER BY seq ASC",
+        "get_question_item_by_pk": "SELECT * FROM question_items WHERE id = ?",
+        "get_unanswered_items": "SELECT * FROM question_items WHERE question_id = ? AND answer_count = 0 ORDER BY seq ASC",
+        "get_max_seq": "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM question_items WHERE question_id = ?",
+        "increment_answer_count": "UPDATE question_items SET answer_count = answer_count + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        "decrement_answer_count": "UPDATE question_items SET answer_count = MAX(0, answer_count - 1), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        "list_by_doc": "SELECT qi.* FROM question_items qi JOIN questions q ON qi.question_id = q.id WHERE q.doc_id = ? ORDER BY qi.seq",
+        "qa_bundle_by_doc": "SELECT qi.seq, qi.title, qi.body, qi.asker_kind, a.author_kind, a.body AS answer_body FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN answers a ON a.question_item_id = qi.id WHERE q.doc_id = ? ORDER BY qi.seq, a.created_at"
+    },
+    "answers": {
+        "insert_answer": "INSERT INTO answers (question_item_id, body, author_kind, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_answers_by_question_item": "SELECT * FROM answers WHERE question_item_id = ? ORDER BY created_at ASC",
+        "get_answer_by_pk": "SELECT * FROM answers WHERE id = ?",
+        "get_answers_by_author": "SELECT * FROM answers WHERE author_id = ? ORDER BY created_at DESC",
+        "mark_answer_accepted": "UPDATE answers SET is_accepted = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+    },
+    "workflow_sequences": {
+        "insert_sequence": "INSERT INTO workflow_sequences (doc_id, created_at, updated_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_sequence_by_doc_id": "SELECT * FROM workflow_sequences WHERE doc_id = ?",
+        "get_sequence_by_id": "SELECT * FROM workflow_sequences WHERE id = ?",
+        "advance_head": "UPDATE workflow_sequences SET head_advanced_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        "insert_sequence_item": "INSERT INTO workflow_sequence_items (sequence_id, item_seq, type, label, doc_class, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_sequence_items": "SELECT wsi.id, wsi.sequence_id, wsi.item_seq, wsi.type, wsi.label, wsi.doc_class, wsi.sort_order, wsi.result_doc_id, wsi.created_at, wsi.updated_at, d.doc_review_status AS result_doc_review_status, CASE WHEN wsi.result_doc_id IS NULL THEN 'pending' WHEN COALESCE(d.doc_review_status, '') = 'approved' THEN 'done' ELSE 'in_progress' END AS status FROM workflow_sequence_items wsi LEFT JOIN documents d ON wsi.result_doc_id = d.doc_id WHERE wsi.sequence_id = ? ORDER BY wsi.sort_order ASC",
+        "get_sequence_head": "SELECT wsi.*, d.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi LEFT JOIN documents d ON wsi.result_doc_id = d.doc_id WHERE wsi.sequence_id = ? AND wsi.result_doc_id IS NULL ORDER BY wsi.sort_order ASC LIMIT 1",
+        "get_effective_head": "SELECT wsi.*, d.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi LEFT JOIN documents d ON wsi.result_doc_id = d.doc_id WHERE wsi.sequence_id = ? AND (wsi.result_doc_id IS NULL OR (wsi.type NOT IN ('M') AND COALESCE(d.doc_review_status, '') NOT IN ('approved'))) ORDER BY CASE WHEN wsi.result_doc_id IS NOT NULL THEN 0 ELSE 1 END ASC, wsi.sort_order ASC LIMIT 1",
+        "get_in_progress_head_by_group": "SELECT wsi.*, ws.id AS seq_id, ws.doc_id AS parent_doc_id, d_result.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi JOIN workflow_sequences ws ON wsi.sequence_id = ws.id JOIN documents d ON ws.doc_id = d.doc_id LEFT JOIN documents d_result ON wsi.result_doc_id = d_result.doc_id WHERE d.group_id = ? AND d.project_id = ? AND wsi.result_doc_id IS NOT NULL AND COALESCE(d_result.doc_review_status, '') NOT IN ('approved') ORDER BY wsi.updated_at DESC LIMIT 1",
+        "get_pending_head_by_group": "SELECT wsi.*, ws.id AS seq_id, ws.doc_id AS parent_doc_id, d_result.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi JOIN workflow_sequences ws ON wsi.sequence_id = ws.id JOIN documents d ON ws.doc_id = d.doc_id LEFT JOIN documents d_result ON wsi.result_doc_id = d_result.doc_id WHERE d.group_id = ? AND d.project_id = ? AND wsi.result_doc_id IS NULL ORDER BY wsi.sort_order ASC LIMIT 1",
+        "get_sequence_head_pending": "SELECT wsi.*, d.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi LEFT JOIN documents d ON wsi.result_doc_id = d.doc_id WHERE wsi.sequence_id = ? AND wsi.result_doc_id IS NULL ORDER BY wsi.sort_order ASC LIMIT 1",
+        "delete_pending_items": "DELETE FROM workflow_sequence_items WHERE sequence_id = ? AND result_doc_id IS NULL",
+        "get_max_item_seq": "SELECT COALESCE(MAX(item_seq), 0) AS max_seq FROM workflow_sequence_items WHERE sequence_id = ?",
+        "get_sequence_item_by_result_doc_id": "SELECT * FROM workflow_sequence_items WHERE result_doc_id = ? LIMIT 1",
+        "set_item_result_doc_id": "UPDATE workflow_sequence_items SET result_doc_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+    },
+    "workflow_item_results": {
+        "insert_result": "INSERT INTO workflow_item_results (item_id, registered_path, registered_doc_id, status, registered_at, created_at, updated_at) VALUES (?, ?, ?, 'pending_approval', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "get_latest_result_by_item": "SELECT * FROM workflow_item_results WHERE item_id = ? ORDER BY id DESC LIMIT 1",
+        "get_pending_result_by_item": "SELECT * FROM workflow_item_results WHERE item_id = ? AND status = 'pending_approval' ORDER BY id DESC LIMIT 1",
+        "update_result_status": "UPDATE workflow_item_results SET status = ?, reviewed_at = ?, reviewed_by = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+    },
+    "messages": {
+        "list_messages_by_project": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE project = ? ORDER BY doc_type, updated_at DESC, id ASC",
+        "get_messages_for_dialog": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE project = ? AND doc_type IN (?, '*')",
+        "get_message_by_id": "SELECT id, project, doc_type, message, updated_at FROM project_messages WHERE id = ?",
+        "insert_message": "INSERT INTO project_messages (project, doc_type, message, updated_at) VALUES (?, ?, ?, ?)",
+        "update_message": "UPDATE project_messages SET doc_type = ?, message = ?, updated_at = ? WHERE id = ?",
+        "delete_message": "DELETE FROM project_messages WHERE id = ?"
+    }
+}

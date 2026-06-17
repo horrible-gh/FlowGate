@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --primary: #2563eb; --primary-h: #1d4ed8; --primary-l: #dbeafe;
+  --success: #16a34a; --success-l: #dcfce7;
+  --warning: #d97706; --warning-l: #fef3c7;
+  --danger:  #dc2626; --danger-l:  #fee2e2;
+  --info:    #0284c7; --info-l:    #e0f2fe;
+
+  --bg: #f0f4f8; --surface: #fff; --surface-h: #f8fafc;
+  --border: #e2e8f0; --border-d: #cbd5e1;
+  --text: #0f172a; --text-s: #475569; --text-m: #94a3b8;
+
+  --hdr-bg: #1a2744; --hdr-h: 52px; --tab-h: 38px;
+  --sdb-bg: #1e2d47; --sdb-w: 280px; --sdb-bdr: #2d3f5c;
+
+  --r-sm: 4px; --r: 6px; --r-lg: 10px; --r-xl: 16px;
+  --sh-sm: 0 1px 3px rgba(0,0,0,.08);
+  --sh:    0 2px 8px rgba(0,0,0,.10);
+  --sh-lg: 0 8px 32px rgba(0,0,0,.16);
+  --tr: 150ms ease;
+}

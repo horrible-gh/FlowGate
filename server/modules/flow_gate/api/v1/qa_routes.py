@@ -1,0 +1,270 @@
+"""Q/A endpoint (D022 §4-3).
+
+POST /api/v1/qa/{q_id}/answer
+Auth: login session cookie (get_current_user dependency)
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+from modules.flow_gate.auth.middleware import get_current_user
+from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services import qa_service
+from modules.flow_gate.db import commands as db_commands
+from modules.flow_gate.commands import resolve_template
+from modules.flow_gate.utils.id_validators import validate_doc_id
+from config import settings
+
+router = APIRouter(prefix="/api/v1", tags=["QA"])
+
+_HELP_URL = "https://example.com/api/v1/help"
+
+
+def _fail(status: int, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={
+            "ok": False,
+            "http_status": status,
+            "error_message": message,
+            "help_url": _HELP_URL,
+        },
+    )
+
+
+class AnswerRequest(BaseModel):
+    answer_body: str
+    dispatch_mode: str          # "command" | "ment_copy" | "none"
+    command_id: Optional[str] = None
+
+
+@router.get("/qa/{doc_pk}/form")
+def get_answer_form(
+    doc_pk: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Returns answer form data for the Q document (process_service.get_answer_form_data)."""
+    from modules.flow_gate import process_service
+    result = process_service.get_answer_form_data(doc_pk)
+    if result is None:
+        return _fail(404, f"Document not found: {doc_pk}")
+    return JSONResponse(content=result)
+
+
+@router.post("/qa/{q_id}/answer")
+def post_answer(
+    q_id: str,
+    body: AnswerRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Answer registration endpoint (D022 §4-3-1).
+
+    Step 1. Verify session auth (get_current_user dependency)
+    Step 2. Confirm q_id exists
+    Step 3. Check Q.status
+    Step 4. Validate permissions (perm_document_create)
+    Step 5. Validate dispatch_mode
+    Step 6. Number, save, and register A document to DB
+    Step 7. Transition Q status open → answered
+    Step 8. Branch on dispatch_mode (issue new token / execute command)
+    Step 9. Return response
+    """
+    actor_user_id: str = current_user["user_id"]
+
+    # ── Validate q_id canonical format (T261) ──────────────────────────────────────
+    try:
+        validate_doc_id(q_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+
+    # ── Step 2 & 3: Verify Q document exists + check status ─────────────────────────────────
+    from fastapi import HTTPException
+    try:
+        q_doc = qa_service.get_q_for_answer(q_id)
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 3.5: Reject disposed (DC) group ────────────────────────────────────────────
+    # TR0079.0003 rework (3rd pass): answering a Q (writing a Q&A answer) creates an A
+    # document in the group — a forward write that must be rejected once the group is
+    # disposed. Shares process_service.is_group_disposed (fail-open for live groups).
+    from modules.flow_gate import process_service
+    if process_service.is_group_disposed(q_doc.get("group_id")):
+        return _fail(409, "Modification not allowed: the group has been disposed.")
+
+    # ── Step 4: Validate permissions (perm_document_create) ─────────────────────────────
+    project_id: str = q_doc["project_id"]
+    if not has_permission(actor_user_id, project_id, "perm_document_create"):
+        return _fail(403, "You do not have permission to perform this action")
+
+    # ── Step 5: Validate dispatch_mode ───────────────────────────────────
+    valid_modes = {"command", "ment_copy", "none"}
+    if body.dispatch_mode not in valid_modes:
+        return _fail(400, f"dispatch_mode must be one of {', '.join(valid_modes)}")
+
+    if body.dispatch_mode == "command" and not body.command_id:
+        return _fail(400, "command_id is required when dispatch_mode is command.")
+
+    # Validate command_id (command mode)
+    if body.dispatch_mode == "command":
+        cmd_rec = db_commands.get_by_id(body.command_id)  # type: ignore[arg-type]
+        if cmd_rec is None:
+            return _fail(404, f"Command {body.command_id} does not exist")
+
+    # ── Step 6: Create A document ─────────────────────────────────────────────────
+    try:
+        a_doc_id, stored_path = qa_service.create_answer_doc(
+            q_doc=q_doc,
+            answer_body=body.answer_body,
+            actor_user_id=actor_user_id,
+        )
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 7: Transition Q status open → answered ─────────────────────────────────
+    try:
+        qa_service.transition_q_to_answered(
+            q_id=q_id,
+            a_doc_id=a_doc_id,
+            actor_user_id=actor_user_id,
+        )
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+
+    # ── Step 7.5: Publish SSE (A registration complete notification) ───────────────────────────────
+    try:
+        import asyncio
+        from modules.flow_gate.api.v1.events.publisher import publish_event, FlowEvent
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        async def _push():
+            base = dict(
+                project=project_id,
+                group_id=q_doc["group_id"],
+                doc_id=a_doc_id,
+                audience=actor_user_id,
+            )
+            await publish_event(FlowEvent(
+                event_type=EventType.FILE_EXPLORER_REFRESH,
+                payload={"operation": "created", "stored_path": stored_path},
+                **base,
+            ))
+            await publish_event(FlowEvent(
+                event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
+                payload={"operation": "created", "doc_id": a_doc_id,
+                         "type": "A", "status": "open"},
+                **base,
+            ))
+            await publish_event(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": q_doc["group_id"], "reason": "document_added"},
+                **base,
+            ))
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(_push())
+            else:
+                loop.run_until_complete(_push())
+        except RuntimeError:
+            asyncio.run(_push())
+    except Exception as _push_exc:
+        import LogAssist.log as logger
+        logger.warning(f"[qa answer] SSE publish failed (ignored): {_push_exc}")
+
+    # ── Step 8: Branch on dispatch_mode ──────────────────────────────────────────
+    raw_token: Optional[str] = None
+    token_id: Optional[str] = None
+    scratch_dir: Optional[str] = None
+    expires_at: Optional[str] = None
+    ment_text: Optional[str] = None
+
+    if body.dispatch_mode in ("command", "ment_copy"):
+        try:
+            token_result = qa_service.issue_followup_token(
+                q_doc=q_doc,
+                a_doc_id=a_doc_id,
+                actor_user_id=actor_user_id,
+                dispatch_mode=body.dispatch_mode,
+            )
+        except HTTPException as exc:
+            return _fail(exc.status_code, exc.detail)
+
+        raw_token = token_result["raw_token"]
+        token_id = token_result["token_id"]
+        scratch_dir = token_result["scratch_dir"]
+        expires_at = token_result["expires_at"]
+
+        if body.dispatch_mode == "command":
+            # Auto-execute command (D022 §4-3-2)
+            _execute_command(
+                command_id=body.command_id,  # type: ignore[arg-type]
+                raw_token=raw_token,
+                scratch_dir=scratch_dir,
+            )
+        else:
+            # ment_copy: Build ment body (per M020)
+            base = str(request.base_url).rstrip("/")
+            context = settings.CONTEXT.rstrip("/")
+            api_base_url = f"{base}{context}/api/v1"
+            ment_text = qa_service.build_ment_text(
+                q_doc_id=q_id,
+                a_doc_id=a_doc_id,
+                scratch_dir=scratch_dir,
+                prev_doc_id=q_doc.get("triggered_by"),
+                api_base_url=api_base_url,
+                raw_token=raw_token,
+            )
+
+    # ── Step 9: Return response ────────────────────────────────────────────────────
+    resp: dict = {
+        "ok": True,
+        "a_doc_id": a_doc_id,
+        "stored_path": stored_path,
+        "raw_token": raw_token,
+        "token_id": token_id,
+        "scratch_dir": scratch_dir,
+        "expires_at": expires_at,
+        "dispatch_mode": body.dispatch_mode,
+    }
+    if ment_text is not None:
+        resp["ment_text"] = ment_text
+    return JSONResponse(content=resp)
+
+
+def _execute_command(command_id: str, raw_token: str, scratch_dir: str) -> None:
+    """Execute command (D022 §4-3-2 — D021 §6-4 pattern).
+
+    Injects FLOWGATE_TOKEN / FLOWGATE_SCRATCH via env_overrides and
+    runs the command via subprocess. Result is ignored (fire-and-forget).
+    """
+    cmd_rec = db_commands.get_by_id(command_id)
+    if cmd_rec is None:
+        return
+
+    try:
+        resolved = resolve_template(cmd_rec["template"])["resolved"]
+    except Exception:
+        return
+
+    env = {
+        **os.environ,
+        "FLOWGATE_TOKEN": raw_token,
+        "FLOWGATE_SCRATCH": scratch_dir,
+    }
+    try:
+        subprocess.Popen(
+            resolved,
+            shell=True,
+            env=env,
+        )
+    except Exception:
+        pass  # fire-and-forget — A registration is complete even on failure

@@ -1,0 +1,99 @@
+# FlowGate — docker compose
+#
+# Default (no profile): single container, SQLite, state on a named volume.
+#
+#   docker compose up -d --build
+#   # → http://localhost:8089/flowgate   (DB + document storage live in the
+#   #   `flowgate-data` volume; secrets are generated once and kept there too)
+#
+# Seed the first admin (idempotent) either by setting FLOWGATE_ADMIN_* below, or:
+#   docker compose exec flowgate python create_dev_user.py \
+#       --username admin --email admin@flowgate.local --password 'ChangeMe!' --admin
+#
+# Networked DB instead of SQLite — bring up a bundled database with a profile:
+#   docker compose --profile postgres up -d --build      # + Postgres 16
+#   docker compose --profile mysql    up -d --build      # + MariaDB 11
+# and set DB_TYPE accordingly (see the per-profile notes below). The app waits
+# for the DB to accept connections before starting; schema auto-migrates on boot.
+#
+# Override any value without editing this file via a `.env` file in this dir or
+# the shell environment, e.g.  DB_TYPE=postgres docker compose --profile postgres up
+
+services:
+  flowgate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: flowgate:latest
+    restart: unless-stopped
+    ports:
+      - "${FLOWGATE_PORT:-8089}:8089"
+    environment:
+      CONTEXT: ${CONTEXT:-/flowgate}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-*}
+      FLOWGATE_STORAGE_DIR: /data
+      # DB selection — default sqlite3 (no external server). For a bundled DB,
+      # set DB_TYPE=postgres or mysql and start with the matching --profile.
+      DB_TYPE: ${DB_TYPE:-sqlite3}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-}
+      DB_USER: ${DB_USER:-flowgate}
+      DB_PASSWORD: ${DB_PASSWORD:-flowgate}
+      DB_DATABASE: ${DB_DATABASE:-flowgate}
+      DB_SCHEMA: ${DB_SCHEMA:-}
+      # Optional one-shot admin bootstrap (SQLite only; safe to leave unset).
+      FLOWGATE_ADMIN_USERNAME: ${FLOWGATE_ADMIN_USERNAME:-}
+      FLOWGATE_ADMIN_PASSWORD: ${FLOWGATE_ADMIN_PASSWORD:-}
+      FLOWGATE_ADMIN_EMAIL: ${FLOWGATE_ADMIN_EMAIL:-}
+    volumes:
+      - flowgate-data:/data
+
+  # ── Optional bundled databases (opt-in via --profile) ──────────────────────
+  # Start with:  docker compose --profile postgres up -d   and  DB_TYPE=postgres
+  db-postgres:
+    profiles: ["postgres"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # The flowgate service connects to host "db", so expose this under that name.
+    hostname: db
+    networks:
+      default:
+        aliases: ["db"]
+    environment:
+      POSTGRES_USER: ${DB_USER:-flowgate}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-flowgate}
+      POSTGRES_DB: ${DB_DATABASE:-flowgate}
+    volumes:
+      - flowgate-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-flowgate} -d ${DB_DATABASE:-flowgate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Start with:  docker compose --profile mysql up -d   and  DB_TYPE=mysql
+  db-mysql:
+    profiles: ["mysql"]
+    image: mariadb:11
+    restart: unless-stopped
+    hostname: db
+    networks:
+      default:
+        aliases: ["db"]
+    environment:
+      MARIADB_USER: ${DB_USER:-flowgate}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-flowgate}
+      MARIADB_DATABASE: ${DB_DATABASE:-flowgate}
+      MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - flowgate-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  flowgate-data:
+  flowgate-postgres:
+  flowgate-mysql:

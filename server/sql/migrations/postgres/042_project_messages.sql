@@ -1,0 +1,20 @@
+-- 042_project_messages.sql
+-- R0001 (group 0004): project-custom messages + mention-add feature.
+-- Backing store for the 설정 > 프로젝트 관리 > 메세지 관리 screen CRUD and the
+-- mention-copy dialog query. [전체] is stored as doc_type='*' (DB0008 §3).
+-- Display merge/sort/fallback is L0007's concern.
+--
+-- NOTE: DB0008 §5 specified migration 041, but 041 was taken by 041_remote_tool.sql
+-- on the dev trunk (group 0003). Next free number is 042.
+
+CREATE TABLE IF NOT EXISTS project_messages (
+    id          SERIAL PRIMARY KEY,
+    project     TEXT    NOT NULL
+                    REFERENCES projects(project_id) ON DELETE CASCADE,
+    doc_type    TEXT    NOT NULL,                       -- document-type code or '*' ([전체])
+    message     TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+    updated_at  TEXT    NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+CREATE INDEX IF NOT EXISTS idx_project_messages_lookup
+    ON project_messages(project, doc_type);

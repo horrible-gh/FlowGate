@@ -1,0 +1,1 @@
+SELECT * FROM test WHERE test_var = %s

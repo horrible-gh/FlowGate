@@ -1,0 +1,298 @@
+"""T378 — Added tree & disposal API v1 track (R021 T-A).
+T533 — Added single-file download + directory ZIP streaming download.
+
+New endpoints:
+  GET  /api/v1/projects/{project_id}/files/tree
+  GET  /api/v1/projects/{project_id}/groups/tree
+  GET  /api/v1/projects/{project_id}/files/src-content
+  POST /api/v1/groups/{group_id}/dispose
+  GET  /api/v1/projects/{project_id}/files/download
+  GET  /api/v1/projects/{project_id}/files/download-zip
+"""
+from __future__ import annotations
+
+import tempfile
+import zipfile
+from urllib.parse import quote
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
+from starlette.requests import Request
+
+from modules.flow_gate import process_service
+from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services.auth_outbound import verify_bearer
+
+router = APIRouter(prefix="/api/v1", tags=["Tree"])
+
+
+class SrcContentUpdate(BaseModel):
+    content: str
+
+
+@router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
+async def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+    """Return the file tree for the project."""
+    tree = process_service.get_file_tree(project_id)
+    return {"data": tree}
+
+
+def _resolve_src_path(project_id: str, path: str):
+    from modules.flow_gate.storage.paths import src_root
+    from modules.flow_gate.db import projects as _proj
+
+    row = _proj.get_by_id(project_id)
+    project_name = (row.get("project_name") or "").strip() if row else ""
+    settings = _proj.get_settings(project_id)
+    branch = (settings.get("branch") or "main").strip() if settings else "main"
+
+    if not project_name:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    docs_root = src_root(project_name, branch).resolve()
+    try:
+        full_path = (docs_root / path).resolve()
+        full_path.relative_to(docs_root)  # prevent path traversal
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return full_path
+
+
+@router.api_route("/projects/{project_id}/files/src-content", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+async def get_src_file_content(request: Request, project_id: str, path: str = Query(..., description="relative path from docs_root")):
+    """Return the content of a src-tree file as UTF-8 text.
+    For HEAD requests, return only the Content-Length header (for file size checks).
+    """
+    full_path = _resolve_src_path(project_id, path)
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    file_size = full_path.stat().st_size
+    if request.method == "HEAD":
+        return PlainTextResponse("", headers={"Content-Length": str(file_size)})
+
+    with open(full_path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+@router.patch("/projects/{project_id}/files/src-content", response_class=JSONResponse)
+async def update_src_file_content(
+    project_id: str,
+    body: SrcContentUpdate,
+    path: str = Query(..., description="relative path from docs_root"),
+):
+    """Save the content of a src-tree file as UTF-8 text."""
+    full_path = _resolve_src_path(project_id, path)
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    full_path.write_text(body.content, encoding="utf-8")
+    return {"path": path, "content_length": len(body.content)}
+
+
+@router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
+async def get_groups_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+    """Return the group tree for the project."""
+    tree = process_service.get_group_tree(project_id)
+    return {"data": tree}
+
+
+@router.post("/groups/{group_id}/dispose", response_class=JSONResponse)
+async def group_dispose(request: Request, group_id: str):
+    """Process group disposal."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason_option = str(body.get("reason_option", "")).strip()
+    reason_detail = str(body.get("reason_detail", "")).strip()
+    result = process_service.dispose_group(
+        group_id,
+        reason_option=reason_option,
+        reason_detail=reason_detail,
+    )
+    # TR0079.0003 (rework): a group disposal must propagate over SSE so already-open
+    # clients react immediately — without it the only refresh was the disposing user's
+    # local explorer reload, leaving open document tabs (and other users' views) stale:
+    # the action bar kept offering approve/reject/workflow actions on a now-discarded
+    # group ("the action bar still lets you act on documents in a disposed group"), and nothing
+    # changed until F5 ("SSE isn't applied immediately, so the action bar doesn't update"). Reuse the
+    # existing GROUP_VIEW_REFRESH event: its FE handler invalidates the dashboard +
+    # explorer and signals open tabs to refetch, which now surfaces group_disposed and
+    # collapses the action bar. Best-effort; never fail the request on a delivery error.
+    if isinstance(result, dict) and result.get("status") == "success":
+        try:
+            from modules.flow_gate.api.v1.events import publisher as _events_pub
+            from modules.flow_gate.api.v1.events.event_types import EventType
+
+            await _events_pub.broadcast_event(_events_pub.FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": group_id, "reason": "group_disposed"},
+                audience="*",
+                project=result.get("project"),
+                group_id=group_id,
+            ))
+        except Exception:
+            pass
+    return JSONResponse(content=result)
+
+
+# ---------------------------------------------------------------------------
+# T533 — Download endpoint helpers
+# ---------------------------------------------------------------------------
+
+def _err(status: int, code: str, message: str) -> JSONResponse:
+    """P007 §3 error response format."""
+    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+
+
+def _validate_path_param(path: str) -> None:
+    """Pre-validate the path parameter.
+
+    Absolute paths, drive prefixes, and '..' segments are rejected immediately with 400.
+    Actual path traversal prevention is handled with 403 in _resolve_src_path().
+    """
+    if not path:
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_PATH", "message": "path parameter is required"}})
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_PATH", "message": "absolute paths are not allowed"}})
+    if len(normalized) >= 2 and normalized[1] == ":":
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_PATH", "message": "drive prefix is not allowed"}})
+    if ".." in normalized.split("/"):
+        raise HTTPException(status_code=400, detail={"error": {"code": "INVALID_PATH", "message": "'..' path segments are not allowed"}})
+
+
+def _rfc5987_encode(name: str) -> str:
+    """RFC 5987 UTF-8 percent-encoding — Content-Disposition filename* value."""
+    return "UTF-8''" + quote(name, safe="")
+
+
+def _check_project_auth(request: Request, project_id: str):
+    """Verify Bearer token and check project_id permission.
+
+    - Worker token: perm_document_read is checked inside verify_bearer() against the token's project.
+    - User JWT: after verify_bearer() validation, perm_document_read is additionally checked
+      against the requested project_id.
+
+    Success: returns token_rec dict.
+    Failure: returns JSONResponse (caller must return immediately).
+    """
+    token_rec = verify_bearer(request)
+    if isinstance(token_rec, JSONResponse):
+        return token_rec
+
+    if token_rec.get("_is_user_jwt"):
+        user_id: str = token_rec["issued_to"]
+        if not has_permission(user_id, project_id, "perm_document_read"):
+            return _err(403, "FORBIDDEN", "insufficient permission for this operation")
+
+    return token_rec
+
+
+# ---------------------------------------------------------------------------
+# T533 — Single-file download
+# ---------------------------------------------------------------------------
+
+@router.get("/projects/{project_id}/files/download")
+async def download_file(
+    request: Request,
+    project_id: str,
+    path: str = Query(..., description="relative path from project root (POSIX '/' separator)"),
+):
+    """Single-file download.
+
+    Complies with P007 §2-1 spec.
+    - Response: application/octet-stream, Content-Disposition RFC 5987 UTF-8 encoding.
+    - Auth: verify_bearer() + perm_document_read.
+    - Path guard: _validate_path_param (400) → _resolve_src_path (403).
+    """
+    auth = _check_project_auth(request, project_id)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    _validate_path_param(path)
+
+    full_path = _resolve_src_path(project_id, path)
+    if not full_path.is_file():
+        return _err(404, "FILE_NOT_FOUND", "file does not exist")
+
+    filename = full_path.name
+    # RFC 5987: filename* required; include filename fallback if name is ASCII
+    encoded = _rfc5987_encode(filename)
+    try:
+        ascii_name = filename.encode("ascii").decode("ascii")
+        disposition = f'attachment; filename="{ascii_name}"; filename*={encoded}'
+    except UnicodeEncodeError:
+        disposition = f"attachment; filename*={encoded}"
+
+    return FileResponse(
+        path=str(full_path),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
+
+
+# ---------------------------------------------------------------------------
+# T533 — Directory ZIP streaming download
+# ---------------------------------------------------------------------------
+
+@router.get("/projects/{project_id}/files/download-zip")
+async def download_zip(
+    request: Request,
+    project_id: str,
+    path: str = Query(..., description="relative path from project root to the directory to compress"),
+):
+    """Directory ZIP streaming download.
+
+    Complies with P007 §2-2 spec.
+    - Reads the ZIP from SpooledTemporaryFile in chunks and sends via StreamingResponse.
+    - Preserves directory structure; empty folders are not included.
+    - Content-Disposition RFC 5987 UTF-8 encoding.
+    - Auth: verify_bearer() + perm_document_read.
+    - Path guard: _validate_path_param (400) → _resolve_src_path (403).
+    """
+    auth = _check_project_auth(request, project_id)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    _validate_path_param(path)
+
+    full_path = _resolve_src_path(project_id, path)
+    if not full_path.is_dir():
+        return _err(404, "DIRECTORY_NOT_FOUND", "directory does not exist")
+
+    dir_name = full_path.name
+    zip_filename = f"{dir_name}.zip"
+
+    def _generate_zip():
+        # SpooledTemporaryFile: kept in memory if below max_size, spooled to disk if exceeded.
+        buf = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024)
+        try:
+            with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                for file_path in sorted(full_path.rglob("*")):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(full_path)
+                        zf.write(str(file_path), arcname=str(arcname))
+            buf.seek(0)
+            while True:
+                chunk = buf.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            buf.close()
+
+    encoded_zip = _rfc5987_encode(zip_filename)
+    try:
+        ascii_zip = zip_filename.encode("ascii").decode("ascii")
+        disposition = f'attachment; filename="{ascii_zip}"; filename*={encoded_zip}'
+    except UnicodeEncodeError:
+        disposition = f"attachment; filename*={encoded_zip}"
+
+    return StreamingResponse(
+        _generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": disposition},
+    )

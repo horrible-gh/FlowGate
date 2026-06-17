@@ -1,0 +1,1481 @@
+-- 045_seed_global_design_templates.sql
+-- flowgate.default.0024.0015-T  (design: D0010 / P0011 / P0012 / L0013 / DB0014)
+-- Stage 3-3: SEED the GLOBAL standard template body for every design type
+-- (D/P/L/DB) in EVERY supported locale (ko/ja/en).
+--
+-- R0001 요건: D/P/L/DB 의 '예전부터 쓰던 레거시 포맷'(template_design /
+-- template_protocol_design / template_logic)을 프로그램이 흡수해 작성 시 제공하되,
+-- 플로게이트에 맞게 개편하고, 파일 경로를 본문에 싣지 않으며(AC-1), 한글 기준 원본을
+-- i18n(ko/ja/en) 각 언어로 제공한다. DB설계는 레거시 템플릿이 없어 동일 포맷 체계로
+-- 신규 작성(플로게이트 네이티브).
+--
+-- WHY GLOBAL: 043/044 는 빈 레지스트리/본문 테이블만 만든다. 행이 없으면 resolution
+-- 이 영구히 rank-5(type-default 골격)로 떨어져 '표준 템플릿 미등록'만 나온다. 전역
+-- (project_id IS NULL) 표준 본문을 적재해 모든 프로젝트가 즉시 global-exact 로 실제
+-- 본문을 받는다(수동 등록·재배포 불요). 프로젝트 전용 본문(E4/E5)은 project-first
+-- 정렬로 여전히 우선한다(DB0014 §4-2).
+--
+-- IDEMPOTENT: 레지스트리는 uq_dtt_global_type(044), 본문은 PK(template_id, locale)에
+-- 기대어 INSERT IGNORE. 재적용/재실행은 무위(no-op). template_path 는 NULL 유지
+-- (D안 본문은 document_type_template_contents 보유, AC-1 경로 미노출).
+-- 이 파일은 tools/gen_seed_045.py 로 생성됨(본문 단일 진실은 거기). 직접 손편집 금지.
+-- Rollback = DELETE FROM document_type_templates WHERE project_id IS NULL (CASCADE).
+
+-- 1. Global registry rows (<=1 per type via uq_dtt_global_type) ----------------
+INSERT IGNORE INTO document_type_templates
+    (project_id, type_code, template_path, is_active, uploaded_by, uploaded_at)
+VALUES
+    (NULL, 'D', NULL, 1, NULL, '2026-06-14T00:00:00+09:00'),
+    (NULL, 'P', NULL, 1, NULL, '2026-06-14T00:00:00+09:00'),
+    (NULL, 'L', NULL, 1, NULL, '2026-06-14T00:00:00+09:00'),
+    (NULL, 'DB', NULL, 1, NULL, '2026-06-14T00:00:00+09:00');
+-- 2. Per-locale standard bodies (ko/ja/en), joined to each global row ----------
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ko',
+'# {모듈명} 기본설계 (D)
+
+> 이 문서는 전역 표준 기본설계 템플릿입니다. 각 절을 프로젝트 맥락에 맞게 채워 작성하세요.
+> D 문서는 **PM이 읽고 이해할 수 있는 수준**으로 작성합니다.
+> 알고리즘·공식·SQL·수식은 이 문서에 쓰지 않습니다. → 로직 설계서(L)로 위임.
+> 데이터 구조·스키마 상세는 DB 설계서로 위임.
+> 실제 데이터 값·포맷은 프로토콜 설계서(P)로 위임.
+
+---
+
+## 판단 기준 — D에 쓸 수 있는 것 / 없는 것
+
+| 쓸 수 있음 | 쓰면 안 됨 |
+|---|---|
+| 컴포넌트 이름과 한 줄 역할 | SQL 쿼리 |
+| "A가 B를 판단한다" 수준의 흐름 | 수식, 알고리즘, 의사코드(pseudocode) |
+| 화살표+박스 흐름도 (텍스트) | 구체적 임계값, 수치 |
+| 입력/출력 항목 목록 (이름과 설명) | 데이터 포맷 상세 (JSON 구조 등) |
+| 판단 기준 설명 (자연어) | 단계별 처리 순서 코드 |
+| 모듈 간 의존 관계 | CHECK 제약, 인덱스 설계 |
+| 화면 구성 설명 (UI 모듈) | 라이브러리·기술 스택 세부 결정 |
+| DEFERRED 항목 | |
+
+---
+
+## 문서 구조
+
+```
+# {모듈명} 기본설계 (D)
+
+> 단계: 기본설계(D)
+> 참조: {요건 번호}, {DB 번호}
+
+---
+
+## 목적
+
+## 1. 모듈 역할 요약
+## 2. 컴포넌트 구성
+## 3. 판단 흐름
+## 4. 모듈 간 관계
+## 5. 입출력 요약
+(## 6. 화면 구성 — UI 모듈만)
+## [DEFERRED]
+```
+
+---
+
+## 섹션별 작성 기준
+
+### 목적
+- 이 모듈이 왜 존재하는지 2~4문장으로 설명.
+- 어떤 문제를 해결하는지, 어떤 결과를 내는지.
+
+---
+
+### 1. 모듈 역할 요약
+- 한 문단. PM이 읽고 모듈의 존재 이유를 이해할 수 있어야 한다.
+- 기술 용어 최소화. 불가피한 경우 괄호로 설명.
+
+**예시 (좋음):**
+> 인증 모듈은 로그인 요청을 받아 사용자의 신원을 확인하는 단계를 담당한다.
+> 자격 증명이 유효하면 세션을 발급하고, 유효하지 않으면 요청을 거부한다.
+> 짧은 시간에 실패가 반복되면 잠시 차단하는 간단한 원칙으로 작동한다.
+
+**예시 (나쁨 — L 레벨):**
+> bcrypt.compare(pw, hash) 결과로 일치를 판단하고 fail_count 테이블에서 임계값을 조회한다.
+
+---
+
+### 2. 컴포넌트 구성
+- 컴포넌트 이름 목록과 각 역할을 한 줄로 기술.
+- 테이블 형식 권장.
+
+| 컴포넌트 | 역할 |
+|---|---|
+| {이름} | {한 줄 역할} |
+
+- 컴포넌트 간 의존 관계가 있으면 간단한 흐름도(텍스트)로 추가.
+- 코드 클래스 구조나 함수 목록은 쓰지 않는다.
+
+---
+
+### 3. 판단 흐름
+- 모듈이 어떤 순서로 판단을 내리는지 자연어로 기술.
+- 흐름이 복잡하면 텍스트 흐름도(→, ↓, ├─) 사용 가능.
+- 분기 조건은 "어떤 경우에 어떻게 한다"를 자연어로. 수치/수식 없이.
+- SQL·의사코드·알고리즘 → 해당 항목 옆에 `→ L-{번호} 참조` 표기하고 생략.
+
+**예시 (좋음):**
+> 자격 증명이 유효하면 세션을 발급한다.
+> 유효하지 않으면 요청을 거부한다.
+> 실패가 연속으로 쌓이면 일시적으로 차단한다. (차단 기준 → L-{번호})
+
+**예시 (나쁨 — L 레벨):**
+> fail_count < 5 → 통과
+> 5 ≤ fail_count → 300초 차단
+
+---
+
+### 4. 모듈 간 관계
+- 이 모듈이 읽는 데이터: 어느 모듈/DB에서 무엇을 읽는가.
+- 이 모듈이 쓰는 데이터: 어느 모듈/DB에 무엇을 남기는가.
+- 테이블 형식 권장.
+
+| 방향 | 대상 | 내용 |
+|---|---|---|
+| 읽기 | DB-{번호} {이름} | {무엇을} |
+| 쓰기 | DB-{번호} {이름} | {무엇을} |
+
+---
+
+### 5. 입출력 요약
+- 모듈의 입력 항목 목록 (이름 + 한 줄 설명).
+- 모듈의 출력 항목 목록 (이름 + 한 줄 설명).
+- 실제 데이터 포맷(JSON, 타입 등)은 여기 쓰지 않는다. → P 문서로.
+
+---
+
+### 6. 화면 구성 (UI 모듈 전용)
+화면(UI)이 있는 모듈만 작성.
+
+- 화면 목록: 어떤 화면들이 있는가.
+- 화면별 구성 요소: 무엇이 표시되고, 무엇을 입력하는가.
+- 텍스트 와이어프레임(ASCII) 또는 항목 나열 형식.
+- 기술 구현 방식(라이브러리, 레이아웃 CSS 등)은 쓰지 않는다.
+
+---
+
+### DEFERRED
+- 이 문서에서 결정하지 않고 미룬 항목.
+- 각 항목마다 결정 시점과 위임처 명시.
+
+| 항목 | 결정 시점 / 위임처 |
+|---|---|
+| {항목} | L-{번호} / P-{번호} / 운영 후 판단 등 |
+
+---
+
+## 체크리스트 (작성 완료 전 확인)
+
+- [ ] SQL 쿼리가 포함되어 있지 않은가
+- [ ] 수식·알고리즘·의사코드가 포함되어 있지 않은가
+- [ ] 구체적 수치(임계값, 가중치 등)가 포함되어 있지 않은가
+- [ ] JSON 등 데이터 포맷 상세가 포함되어 있지 않은가
+- [ ] 각 섹션을 PM이 읽고 이해할 수 있는가
+- [ ] L/P 위임 항목에 `→ L-{번호}` 표기가 있는가
+- [ ] DEFERRED 항목이 빠짐없이 기재되어 있는가
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'D';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ja',
+'# {モジュール名} 基本設計 (D)
+
+> これはグローバル標準の基本設計テンプレートです。各節をプロジェクトの文脈に合わせて記入してください。
+> D 文書は **PM が読んで理解できる水準** で記述します。
+> アルゴリズム・数式・SQL・計算式はこの文書に書きません。→ ロジック設計書(L)へ委譲。
+> データ構造・スキーマ詳細は DB 設計書へ委譲。
+> 実際のデータ値・フォーマットはプロトコル設計書(P)へ委譲。
+
+---
+
+## 判断基準 — D に書けるもの / 書けないもの
+
+| 書ける | 書いてはいけない |
+|---|---|
+| コンポーネント名と一行の役割 | SQL クエリ |
+| 「A が B を判断する」程度の流れ | 数式・アルゴリズム・擬似コード |
+| 矢印+ボックスのフロー図(テキスト) | 具体的な閾値・数値 |
+| 入力/出力項目の一覧(名前と説明) | データフォーマット詳細(JSON 構造など) |
+| 判断基準の説明(自然言語) | 段階的な処理順序コード |
+| モジュール間の依存関係 | CHECK 制約・インデックス設計 |
+| 画面構成の説明(UI モジュール) | ライブラリ・技術スタックの詳細決定 |
+| DEFERRED 項目 | |
+
+---
+
+## 文書構造
+
+```
+# {モジュール名} 基本設計 (D)
+
+> 段階: 基本設計(D)
+> 参照: {要件番号}, {DB 番号}
+
+---
+
+## 目的
+
+## 1. モジュール役割の要約
+## 2. コンポーネント構成
+## 3. 判断フロー
+## 4. モジュール間の関係
+## 5. 入出力の要約
+(## 6. 画面構成 — UI モジュールのみ)
+## [DEFERRED]
+```
+
+---
+
+## 節ごとの記述基準
+
+### 目的
+- このモジュールがなぜ存在するのかを 2〜4 文で説明。
+- どの問題を解決し、どの結果を出すのか。
+
+---
+
+### 1. モジュール役割の要約
+- 一段落。PM が読んでモジュールの存在理由を理解できること。
+- 技術用語は最小限。やむを得ない場合は括弧で説明。
+
+**例(良い):**
+> 認証モジュールはログイン要求を受け取り、ユーザーの身元を確認する段階を担う。
+> 資格情報が有効ならセッションを発行し、無効なら要求を拒否する。
+> 短時間に失敗が繰り返されると一時的にブロックする単純な原則で動作する。
+
+**例(悪い — L レベル):**
+> bcrypt.compare(pw, hash) の結果で一致を判断し、fail_count テーブルから閾値を取得する。
+
+---
+
+### 2. コンポーネント構成
+- コンポーネント名の一覧と各役割を一行で記述。
+- テーブル形式を推奨。
+
+| コンポーネント | 役割 |
+|---|---|
+| {名前} | {一行の役割} |
+
+- コンポーネント間に依存関係があれば簡単なフロー図(テキスト)を追加。
+- コードのクラス構造や関数一覧は書かない。
+
+---
+
+### 3. 判断フロー
+- モジュールがどの順序で判断を下すかを自然言語で記述。
+- フローが複雑なときはテキストフロー図(→, ↓, ├─)を使用可。
+- 分岐条件は「どの場合にどうする」を自然言語で。数値・数式なし。
+- SQL・擬似コード・アルゴリズム → 該当項目の横に `→ L-{番号} 参照` と表記し省略。
+
+**例(良い):**
+> 資格情報が有効ならセッションを発行する。
+> 無効なら要求を拒否する。
+> 失敗が連続して積み重なると一時的にブロックする。(ブロック基準 → L-{番号})
+
+**例(悪い — L レベル):**
+> fail_count < 5 → 通過
+> 5 ≤ fail_count → 300 秒ブロック
+
+---
+
+### 4. モジュール間の関係
+- このモジュールが読むデータ:どのモジュール/DB から何を読むか。
+- このモジュールが書くデータ:どのモジュール/DB に何を残すか。
+- テーブル形式を推奨。
+
+| 方向 | 対象 | 内容 |
+|---|---|---|
+| 読み | DB-{番号} {名前} | {何を} |
+| 書き | DB-{番号} {名前} | {何を} |
+
+---
+
+### 5. 入出力の要約
+- モジュールの入力項目一覧(名前 + 一行説明)。
+- モジュールの出力項目一覧(名前 + 一行説明)。
+- 実際のデータフォーマット(JSON・型など)はここに書かない。→ P 文書へ。
+
+---
+
+### 6. 画面構成 (UI モジュール専用)
+画面(UI)があるモジュールのみ記述。
+
+- 画面一覧:どんな画面があるか。
+- 画面ごとの構成要素:何が表示され、何を入力するか。
+- テキストワイヤーフレーム(ASCII)または項目列挙形式。
+- 技術実装方式(ライブラリ、レイアウト CSS など)は書かない。
+
+---
+
+### DEFERRED
+- この文書で決定せず先送りした項目。
+- 各項目に決定時点と委譲先を明記。
+
+| 項目 | 決定時点 / 委譲先 |
+|---|---|
+| {項目} | L-{番号} / P-{番号} / 運用後に判断 など |
+
+---
+
+## チェックリスト (記述完了前に確認)
+
+- [ ] SQL クエリが含まれていないか
+- [ ] 数式・アルゴリズム・擬似コードが含まれていないか
+- [ ] 具体的な数値(閾値・重みなど)が含まれていないか
+- [ ] JSON などデータフォーマット詳細が含まれていないか
+- [ ] 各節を PM が読んで理解できるか
+- [ ] L/P へ委譲した項目に `→ L-{番号}` 表記があるか
+- [ ] DEFERRED 項目が漏れなく記載されているか
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'D';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'en',
+'# {module} Basic Design (D)
+
+> This is the global standard Basic Design template. Fill each section to fit your project context.
+> A D document is written **at a level a PM can read and understand**.
+> Do not put algorithms, formulas, SQL, or math here. → delegate to the Logic design (L).
+> Delegate data-structure / schema detail to the DB design.
+> Delegate concrete data values / formats to the Protocol design (P).
+
+---
+
+## What may / may not go into a D
+
+| May include | Must not include |
+|---|---|
+| Component names with a one-line role | SQL queries |
+| Flow at the "A decides B" level | Formulas, algorithms, pseudocode |
+| Arrow + box flow diagrams (text) | Concrete thresholds / numbers |
+| Input/output item lists (name + description) | Data-format detail (JSON structure, etc.) |
+| Decision criteria in natural language | Step-by-step processing code |
+| Inter-module dependencies | CHECK constraints, index design |
+| Screen layout description (UI modules) | Library / tech-stack detail decisions |
+| DEFERRED items | |
+
+---
+
+## Document structure
+
+```
+# {module} Basic Design (D)
+
+> Stage: Basic Design (D)
+> References: {requirement no.}, {DB no.}
+
+---
+
+## Purpose
+
+## 1. Module role summary
+## 2. Component composition
+## 3. Decision flow
+## 4. Inter-module relations
+## 5. I/O summary
+(## 6. Screen layout — UI modules only)
+## [DEFERRED]
+```
+
+---
+
+## Per-section writing guide
+
+### Purpose
+- Explain in 2-4 sentences why this module exists.
+- What problem it solves and what result it produces.
+
+---
+
+### 1. Module role summary
+- One paragraph. A PM should grasp the module''s reason for existing.
+- Minimize jargon; when unavoidable, gloss it in parentheses.
+
+**Example (good):**
+> The authentication module handles the step of verifying a user''s identity from a login request.
+> If the credentials are valid it issues a session; otherwise it rejects the request.
+> If failures repeat in a short window it temporarily blocks — a simple guiding rule.
+
+**Example (bad — L level):**
+> Call bcrypt.compare(pw, hash) to decide a match and read the threshold from the fail_count table.
+
+---
+
+### 2. Component composition
+- List component names with a one-line role each.
+- Table form recommended.
+
+| Component | Role |
+|---|---|
+| {name} | {one-line role} |
+
+- Add a simple text flow diagram if components depend on each other.
+- Do not write code class structures or function lists.
+
+---
+
+### 3. Decision flow
+- Describe, in natural language, the order in which the module makes decisions.
+- For complex flows a text diagram (→, ↓, ├─) is allowed.
+- State branch conditions as "in case X, do Y" — no numbers / formulas.
+- SQL / pseudocode / algorithm → mark `→ see L-{no.}` next to the item and omit it.
+
+**Example (good):**
+> If the credentials are valid, issue a session.
+> If invalid, reject the request.
+> If failures pile up consecutively, block temporarily. (block criteria → L-{no.})
+
+**Example (bad — L level):**
+> fail_count < 5 → pass
+> 5 ≤ fail_count → block 300s
+
+---
+
+### 4. Inter-module relations
+- Data this module reads: from which module/DB, what.
+- Data this module writes: to which module/DB, what.
+- Table form recommended.
+
+| Direction | Target | Content |
+|---|---|---|
+| read | DB-{no.} {name} | {what} |
+| write | DB-{no.} {name} | {what} |
+
+---
+
+### 5. I/O summary
+- List of the module''s input items (name + one-line description).
+- List of the module''s output items (name + one-line description).
+- Do not write the actual data format (JSON, types) here. → P document.
+
+---
+
+### 6. Screen layout (UI modules only)
+Write only for modules that have a screen (UI).
+
+- Screen list: which screens exist.
+- Per-screen elements: what is shown, what is entered.
+- Text wireframe (ASCII) or an item list.
+- Do not write implementation tech (libraries, layout CSS, etc.).
+
+---
+
+### DEFERRED
+- Items deferred rather than decided here.
+- State the decision point and delegate target for each.
+
+| Item | Decision point / delegate |
+|---|---|
+| {item} | L-{no.} / P-{no.} / decide after launch, etc. |
+
+---
+
+## Checklist (confirm before completion)
+
+- [ ] No SQL queries included
+- [ ] No formulas / algorithms / pseudocode included
+- [ ] No concrete numbers (thresholds, weights) included
+- [ ] No JSON or data-format detail included
+- [ ] Each section is readable and understandable by a PM
+- [ ] Items delegated to L/P carry a `→ L-{no.}` marker
+- [ ] All DEFERRED items are recorded
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'D';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ko',
+'# {시나리오 묶음명} 프로토콜설계 (P)
+
+> 이 문서는 전역 표준 프로토콜설계 템플릿입니다. 실제 요청/응답 데이터를 시나리오별로 채워 작성하세요.
+
+## 표기 규칙
+
+```
+S: 서버가 클라이언트에게 보내는 데이터
+C: 클라이언트가 서버에게 보내는 데이터
+(액션): 데이터 없이 처리만 하는 동작
+```
+
+---
+
+## [시나리오명]
+
+```
+C: { 실제 요청 데이터 }
+S: (처리 액션 설명)
+S: { 실제 응답 데이터 — 모든 필드 값 포함 }
+C: (화면 액션 설명) 실제 표시 내용
+```
+
+---
+
+## 작성 원칙
+
+- S/C 표기 필수
+- 실제 데이터 값 포함 (예시값이라도 구체적으로)
+- `...` 생략 금지 — 모든 필드 명시
+- 처리 액션은 `(괄호)` 로 표기
+- 시나리오별로 분리 (정상 / 실패 / 엣지케이스)
+- 클라이언트 관련 필드는 실제 클라 코드 확인 후 작성
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'P';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ja',
+'# {シナリオ群名} プロトコル設計 (P)
+
+> これはグローバル標準のプロトコル設計テンプレートです。実際の要求/応答データをシナリオごとに記入してください。
+
+## 表記規則
+
+```
+S: サーバーがクライアントへ送るデータ
+C: クライアントがサーバーへ送るデータ
+(アクション): データなしで処理だけ行う動作
+```
+
+---
+
+## [シナリオ名]
+
+```
+C: { 実際の要求データ }
+S: (処理アクションの説明)
+S: { 実際の応答データ — 全フィールドの値を含む }
+C: (画面アクションの説明) 実際の表示内容
+```
+
+---
+
+## 記述原則
+
+- S/C 表記は必須
+- 実際のデータ値を含める(例示値でも具体的に)
+- `...` の省略禁止 — 全フィールドを明示
+- 処理アクションは `(括弧)` で表記
+- シナリオごとに分離(正常 / 失敗 / エッジケース)
+- クライアント関連フィールドは実際のクライアントコードを確認してから記述
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'P';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'en',
+'# {scenario group} Protocol Design (P)
+
+> This is the global standard Protocol Design template. Fill in the actual request/response data per scenario.
+
+## Notation
+
+```
+S: data the server sends to the client
+C: data the client sends to the server
+(action): an action that only processes, carrying no data
+```
+
+---
+
+## [scenario name]
+
+```
+C: { actual request data }
+S: (processing action description)
+S: { actual response data — include every field value }
+C: (screen action description) actual displayed content
+```
+
+---
+
+## Writing principles
+
+- S/C notation is mandatory
+- Include actual data values (concrete, even if illustrative)
+- No `...` elision — list every field
+- Mark processing actions with `(parentheses)`
+- Separate by scenario (normal / failure / edge case)
+- For client-related fields, confirm against the real client code first
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'P';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ko',
+'# {모듈명} 로직설계 (L)
+
+> 이 문서는 전역 표준 로직설계 템플릿입니다. 알고리즘과 처리 로직을 절별로 채워 작성하세요.
+> L 문서는 **구현자(AI 워커 또는 개발자)가 코드를 작성하기 위한 기준 문서**입니다.
+> D 문서에서 "→ L 참조"로 위임된 항목들을 여기서 전부 확정합니다.
+> PM 가독성은 고려하지 않습니다. 정확성과 완결성이 우선입니다.
+
+---
+
+## 판단 기준 — L에 쓸 수 있는 것 / 없는 것
+
+| 쓸 수 있음 | 쓰면 안 됨 |
+|---|---|
+| 알고리즘 단계별 기술 | 실제 코드 (언어 종속) |
+| 수식·공식 (수학 표기) | 특정 라이브러리 API 호출 |
+| 의사코드 (pseudocode) | UI 레이아웃·화면 설명 |
+| 구체적 임계값·파라미터 | 인프라 설정 (포트, 호스트 등) |
+| 상태 전이표·결정 트리 | 비즈니스 요건 설명 (→ D 또는 요건) |
+| 경계 조건·엣지 케이스 | |
+| 데이터 변환 로직 | |
+| 연산 순서 명세 | |
+
+---
+
+## 문서 구조
+
+```
+# {모듈명} 로직설계 (L)
+
+> 단계: 로직설계(L)
+> 참조: {요건 번호}, {D 번호}, {P 번호}
+
+---
+
+## 목적
+
+## 1. 파라미터 정의
+## 2. 알고리즘 / 처리 로직
+## 3. 상태 전이 (상태머신이 있는 경우)
+## 4. 결정 트리 / 분기 조건
+## 5. 경계 조건 및 예외 처리
+## [DEFERRED]
+```
+
+---
+
+## 섹션별 작성 기준
+
+### 목적
+- 이 문서가 확정하는 로직의 범위를 1~2문장으로 기술.
+- D 문서의 어느 섹션에서 위임받은 것인지 참조 명시.
+
+---
+
+### 1. 파라미터 정의
+이 모듈에서 사용하는 모든 수치 파라미터를 한곳에 모은다.
+구현 시 이 섹션이 단일 진실 공급원(source of truth)이 된다.
+
+| 파라미터 | 값 | 단위 | 설명 | 출처 |
+|---|---|---|---|---|
+| {이름} | {값} | {단위} | {설명} | 요건_{번호} 또는 설계 결정 |
+
+> 값이 아직 미확정이면 `TBD`로 표기하고 DEFERRED에 포함.
+> 환경/대상별로 값이 다른 경우 테이블에 구분 열을 추가.
+
+---
+
+### 2. 알고리즘 / 처리 로직
+모듈의 핵심 처리 로직을 의사코드 또는 수식으로 기술한다.
+
+#### 의사코드 작성 규칙
+- 언어 종속 문법 사용 금지 (Python/Java/Dart 문법 지양)
+- 들여쓰기로 블록 구분
+- 함수명·변수명은 snake_case로 통일
+- 외부 모듈 호출은 `{모듈명}.{동작}({인자})` 형식
+
+**예시:**
+```
+function resolve_retry_delay(attempt, base_delay, max_delay):
+    raw = base_delay * (2 ^ attempt)
+    return clamp(raw, base_delay, max_delay)
+```
+
+#### 수식 작성 규칙
+- 분수는 `분자 / 분모` 형식
+- 합산은 `Σ` 기호 사용
+- 범위 클램프는 `clamp(값, 하한, 상한)` 표기
+
+**예시:**
+```
+score      = Σ (weight_i × signal_i)
+total      = score_a + score_b + score_c
+ratio_a    = score_a / total
+```
+
+---
+
+### 3. 상태 전이 (상태머신이 있는 경우)
+상태가 존재하는 모듈만 작성. 없으면 생략.
+
+#### 상태 목록
+| 상태 | 설명 | 진입 조건 |
+|---|---|---|
+| {상태명} | {이 상태의 의미} | {어떤 조건에서 이 상태가 됨} |
+
+#### 전이 표
+| 현재 상태 | 이벤트/조건 | 다음 상태 | 부수 처리 |
+|---|---|---|---|
+| {상태} | {트리거} | {상태} | {진입 시 실행할 처리} |
+
+#### 상태 전이도 (텍스트)
+```
+[상태A] --조건1--> [상태B]
+[상태B] --조건2--> [상태C]
+[상태B] --조건3--> [상태A]  (역전환 가능한 경우)
+```
+
+---
+
+### 4. 결정 트리 / 분기 조건
+입력값에 따라 다른 경로로 분기되는 로직을 트리 형태로 기술.
+
+```
+if 조건A:
+    if 조건B:
+        → 결과1
+    else:
+        → 결과2
+elif 조건C:
+    → 결과3
+else:
+    → 결과4 (기본값)
+```
+
+- 모든 분기에 기본값(else/default)을 명시한다.
+- 조건에는 구체적 수치를 사용한다 (1절 파라미터 참조).
+- 조건 평가 순서가 중요한 경우 번호로 명시.
+
+---
+
+### 5. 경계 조건 및 예외 처리
+정상 흐름에서 벗어나는 모든 케이스를 정의한다.
+
+| 상황 | 발생 조건 | 처리 방법 | 비고 |
+|---|---|---|---|
+| {케이스명} | {언제 발생하는가} | {어떻게 처리하는가} | {로그 여부 등} |
+
+필수 포함 항목:
+- 입력값이 범위를 벗어나는 경우
+- 참조 데이터가 없는 경우 (DB 조회 결과 없음, 캐시 키 없음)
+- 분모가 0이 되는 경우 (나눗셈 포함 로직)
+- 타임아웃 / 연결 실패 (외부 호출이 있는 경우)
+
+---
+
+### DEFERRED
+이 문서에서 확정하지 못한 항목.
+
+| 항목 | 미확정 이유 | 결정 시점 |
+|---|---|---|
+| {항목} | {이유} | {언제 결정 가능한가} |
+
+---
+
+## 체크리스트 (작성 완료 전 확인)
+
+- [ ] 1절에 모든 수치 파라미터가 모여 있는가
+- [ ] 알고리즘에 언어 종속 문법이 없는가
+- [ ] 모든 분기에 기본값(else)이 있는가
+- [ ] 분모가 0이 되는 경우가 5절에 처리되어 있는가
+- [ ] D 문서에서 위임한 항목이 전부 이 문서에서 확정되었는가
+- [ ] TBD 파라미터가 있으면 DEFERRED에 포함되어 있는가
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'L';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ja',
+'# {モジュール名} ロジック設計 (L)
+
+> これはグローバル標準のロジック設計テンプレートです。アルゴリズムと処理ロジックを節ごとに記入してください。
+> L 文書は **実装者(AI ワーカーまたは開発者)がコードを書くための基準文書** です。
+> D 文書で「→ L 参照」と委譲された項目をここで全て確定します。
+> PM の可読性は考慮しません。正確性と完結性を優先します。
+
+---
+
+## 判断基準 — L に書けるもの / 書けないもの
+
+| 書ける | 書いてはいけない |
+|---|---|
+| アルゴリズムの段階的記述 | 実際のコード(言語依存) |
+| 数式・公式(数学表記) | 特定ライブラリの API 呼び出し |
+| 擬似コード(pseudocode) | UI レイアウト・画面説明 |
+| 具体的な閾値・パラメータ | インフラ設定(ポート・ホストなど) |
+| 状態遷移表・決定木 | ビジネス要件の説明(→ D または要件) |
+| 境界条件・エッジケース | |
+| データ変換ロジック | |
+| 演算順序の明細 | |
+
+---
+
+## 文書構造
+
+```
+# {モジュール名} ロジック設計 (L)
+
+> 段階: ロジック設計(L)
+> 参照: {要件番号}, {D 番号}, {P 番号}
+
+---
+
+## 目的
+
+## 1. パラメータ定義
+## 2. アルゴリズム / 処理ロジック
+## 3. 状態遷移(状態機械がある場合)
+## 4. 決定木 / 分岐条件
+## 5. 境界条件および例外処理
+## [DEFERRED]
+```
+
+---
+
+## 節ごとの記述基準
+
+### 目的
+- この文書が確定するロジックの範囲を 1〜2 文で記述。
+- D 文書のどの節から委譲されたかを参照で明記。
+
+---
+
+### 1. パラメータ定義
+このモジュールで使う全ての数値パラメータを一箇所に集める。
+実装時にこの節が単一の真実の源(source of truth)になる。
+
+| パラメータ | 値 | 単位 | 説明 | 出所 |
+|---|---|---|---|---|
+| {名前} | {値} | {単位} | {説明} | 要件_{番号} または設計判断 |
+
+> 値が未確定なら `TBD` と表記し DEFERRED に含める。
+> 環境/対象ごとに値が異なる場合はテーブルに区分列を追加。
+
+---
+
+### 2. アルゴリズム / 処理ロジック
+モジュールの中核処理ロジックを擬似コードまたは数式で記述する。
+
+#### 擬似コードの作成規則
+- 言語依存の文法を使わない(Python/Java/Dart 文法を避ける)
+- インデントでブロックを区切る
+- 関数名・変数名は snake_case に統一
+- 外部モジュール呼び出しは `{モジュール名}.{動作}({引数})` 形式
+
+**例:**
+```
+function resolve_retry_delay(attempt, base_delay, max_delay):
+    raw = base_delay * (2 ^ attempt)
+    return clamp(raw, base_delay, max_delay)
+```
+
+#### 数式の作成規則
+- 分数は `分子 / 分母` 形式
+- 合算は `Σ` 記号を使用
+- 範囲クランプは `clamp(値, 下限, 上限)` と表記
+
+**例:**
+```
+score      = Σ (weight_i × signal_i)
+total      = score_a + score_b + score_c
+ratio_a    = score_a / total
+```
+
+---
+
+### 3. 状態遷移(状態機械がある場合)
+状態が存在するモジュールのみ記述。無ければ省略。
+
+#### 状態一覧
+| 状態 | 説明 | 進入条件 |
+|---|---|---|
+| {状態名} | {この状態の意味} | {どの条件でこの状態になるか} |
+
+#### 遷移表
+| 現在状態 | イベント/条件 | 次状態 | 付随処理 |
+|---|---|---|---|
+| {状態} | {トリガー} | {状態} | {進入時に実行する処理} |
+
+#### 状態遷移図(テキスト)
+```
+[状態A] --条件1--> [状態B]
+[状態B] --条件2--> [状態C]
+[状態B] --条件3--> [状態A]  (逆遷移が可能な場合)
+```
+
+---
+
+### 4. 決定木 / 分岐条件
+入力値によって別経路へ分岐するロジックを木構造で記述。
+
+```
+if 条件A:
+    if 条件B:
+        → 結果1
+    else:
+        → 結果2
+elif 条件C:
+    → 結果3
+else:
+    → 結果4 (デフォルト)
+```
+
+- 全ての分岐にデフォルト(else/default)を明記する。
+- 条件には具体的な数値を用いる(1 節のパラメータを参照)。
+- 条件評価の順序が重要な場合は番号で明示。
+
+---
+
+### 5. 境界条件および例外処理
+正常フローから外れる全てのケースを定義する。
+
+| 状況 | 発生条件 | 処理方法 | 備考 |
+|---|---|---|---|
+| {ケース名} | {いつ発生するか} | {どう処理するか} | {ログの有無など} |
+
+必須の含有項目:
+- 入力値が範囲を外れる場合
+- 参照データが無い場合(DB 取得結果なし、キャッシュキーなし)
+- 分母が 0 になる場合(除算を含むロジック)
+- タイムアウト / 接続失敗(外部呼び出しがある場合)
+
+---
+
+### DEFERRED
+この文書で確定できなかった項目。
+
+| 項目 | 未確定の理由 | 決定時点 |
+|---|---|---|
+| {項目} | {理由} | {いつ決定できるか} |
+
+---
+
+## チェックリスト (記述完了前に確認)
+
+- [ ] 1 節に全ての数値パラメータが集まっているか
+- [ ] アルゴリズムに言語依存の文法が無いか
+- [ ] 全ての分岐にデフォルト(else)があるか
+- [ ] 分母が 0 になる場合が 5 節で処理されているか
+- [ ] D 文書で委譲した項目が全てこの文書で確定したか
+- [ ] TBD パラメータがあれば DEFERRED に含まれているか
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'L';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'en',
+'# {module} Logic Design (L)
+
+> This is the global standard Logic Design template. Fill the algorithm and processing logic per section.
+> An L document is the **reference an implementer (AI worker or developer) uses to write code**.
+> Everything delegated from the D document via "→ see L" is finalized here.
+> PM readability is not a concern; correctness and completeness come first.
+
+---
+
+## What may / may not go into an L
+
+| May include | Must not include |
+|---|---|
+| Step-by-step algorithm description | Actual code (language-specific) |
+| Formulas / equations (math notation) | Specific library API calls |
+| Pseudocode | UI layout / screen description |
+| Concrete thresholds / parameters | Infra config (ports, hosts, etc.) |
+| State-transition tables / decision trees | Business-requirement narrative (→ D or requirement) |
+| Boundary conditions / edge cases | |
+| Data-transformation logic | |
+| Operation-ordering specification | |
+
+---
+
+## Document structure
+
+```
+# {module} Logic Design (L)
+
+> Stage: Logic Design (L)
+> References: {requirement no.}, {D no.}, {P no.}
+
+---
+
+## Purpose
+
+## 1. Parameter definitions
+## 2. Algorithm / processing logic
+## 3. State transitions (if a state machine exists)
+## 4. Decision tree / branch conditions
+## 5. Boundary conditions and exception handling
+## [DEFERRED]
+```
+
+---
+
+## Per-section writing guide
+
+### Purpose
+- State in 1-2 sentences the scope of logic this document finalizes.
+- Note which D-document section delegated it.
+
+---
+
+### 1. Parameter definitions
+Collect every numeric parameter used by this module in one place.
+At implementation time this section is the single source of truth.
+
+| Parameter | Value | Unit | Description | Source |
+|---|---|---|---|---|
+| {name} | {value} | {unit} | {description} | requirement_{no.} or design decision |
+
+> If a value is undecided, mark it `TBD` and include it in DEFERRED.
+> If the value differs per environment/target, add a distinguishing column.
+
+---
+
+### 2. Algorithm / processing logic
+Describe the module''s core logic as pseudocode or formulas.
+
+#### Pseudocode rules
+- No language-specific syntax (avoid Python/Java/Dart grammar)
+- Delimit blocks by indentation
+- Use snake_case for function and variable names
+- Write external calls as `{module}.{action}({args})`
+
+**Example:**
+```
+function resolve_retry_delay(attempt, base_delay, max_delay):
+    raw = base_delay * (2 ^ attempt)
+    return clamp(raw, base_delay, max_delay)
+```
+
+#### Formula rules
+- Fractions as `numerator / denominator`
+- Use `Σ` for summation
+- Range clamping as `clamp(value, low, high)`
+
+**Example:**
+```
+score      = Σ (weight_i × signal_i)
+total      = score_a + score_b + score_c
+ratio_a    = score_a / total
+```
+
+---
+
+### 3. State transitions (if a state machine exists)
+Write only for modules that have state. Omit otherwise.
+
+#### State list
+| State | Description | Entry condition |
+|---|---|---|
+| {state} | {what this state means} | {under what condition it is entered} |
+
+#### Transition table
+| Current state | Event/condition | Next state | Side effect |
+|---|---|---|---|
+| {state} | {trigger} | {state} | {action on entry} |
+
+#### State diagram (text)
+```
+[State A] --cond1--> [State B]
+[State B] --cond2--> [State C]
+[State B] --cond3--> [State A]  (if reverse transition is allowed)
+```
+
+---
+
+### 4. Decision tree / branch conditions
+Describe input-dependent branching as a tree.
+
+```
+if condA:
+    if condB:
+        → result1
+    else:
+        → result2
+elif condC:
+    → result3
+else:
+    → result4 (default)
+```
+
+- Every branch states a default (else/default).
+- Conditions use concrete numbers (reference section 1 parameters).
+- Number the conditions when evaluation order matters.
+
+---
+
+### 5. Boundary conditions and exception handling
+Define every case that departs from the normal flow.
+
+| Situation | Trigger condition | Handling | Note |
+|---|---|---|---|
+| {case} | {when it occurs} | {how it is handled} | {logged or not, etc.} |
+
+Must cover:
+- Input out of range
+- Missing reference data (no DB row, no cache key)
+- Denominator becomes 0 (any division logic)
+- Timeout / connection failure (when there is an external call)
+
+---
+
+### DEFERRED
+Items this document could not finalize.
+
+| Item | Why undecided | Decision point |
+|---|---|---|
+| {item} | {reason} | {when it can be decided} |
+
+---
+
+## Checklist (confirm before completion)
+
+- [ ] Section 1 gathers every numeric parameter
+- [ ] The algorithm has no language-specific syntax
+- [ ] Every branch has a default (else)
+- [ ] A zero-denominator case is handled in section 5
+- [ ] Every item delegated by the D document is finalized here
+- [ ] Any TBD parameter is included in DEFERRED
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'L';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ko',
+'# {대상 영역} DB설계 (DB)
+
+> 이 문서는 전역 표준 DB설계 템플릿입니다. 스키마 변경을 절별로 채워 작성하세요.
+> DB 문서는 **데이터 구조·스키마·마이그레이션의 단일 진실 공급원**입니다.
+> 비즈니스 의도는 D로, 알고리즘은 L로, 실제 데이터 값/포맷은 P로 위임합니다.
+
+---
+
+## 판단 기준 — DB에 쓸 수 있는 것 / 없는 것
+
+| 쓸 수 있음 | 쓰면 안 됨 |
+|---|---|
+| 테이블·컬럼·타입 정의 | 비즈니스 요건 서술 (→ D) |
+| PK/FK·유니크·CHECK 제약 | 알고리즘·의사코드 (→ L) |
+| 인덱스 설계와 근거 | 라이브러리/ORM 코드 |
+| 마이그레이션 순서·가역성 | UI·화면 설명 |
+| 읽기/쓰기 핫패스 쿼리 | 인프라 설정 (포트·호스트) |
+| 무결성 불변식·롤백 절차 | |
+
+---
+
+## 문서 구조
+
+```
+# {대상 영역} DB설계 (DB)
+
+> 단계: DB설계(DB)
+> 참조: {요건 번호}, {D 번호}
+
+---
+
+## 목적
+
+## 1. 대상 테이블
+## 2. 컬럼·키·제약
+## 3. 마이그레이션
+## 4. 읽기/쓰기 쿼리
+## 5. 무결성·롤백
+## [DEFERRED]
+```
+
+---
+
+## 섹션별 작성 기준
+
+### 목적
+- 이 스키마 변경이 무엇을 가능하게 하는지 1~2문장.
+- D 문서의 어느 요구에서 비롯됐는지 참조.
+
+---
+
+### 1. 대상 테이블
+신설/변경 테이블과 목적을 표로 정리.
+
+| 테이블 | 신설/변경 | 목적 |
+|---|---|---|
+| {이름} | {신설/변경} | {무엇을 담는가} |
+
+---
+
+### 2. 컬럼·키·제약
+| 컬럼 | 타입 | NULL | 기본값 | 제약(PK/FK/UQ/CHECK) | 설명 |
+|---|---|---|---|---|---|
+| {이름} | {타입} | {Y/N} | {값} | {제약} | {설명} |
+
+- FK는 참조 테이블과 ON DELETE 동작을 명시.
+- 부분 유니크/복합 키는 별도로 풀어서 기술.
+
+---
+
+### 3. 마이그레이션
+- 적용 순서(번호)와 각 파일의 역할.
+- 가역성: 롤백 SQL 또는 롤백 불가 사유.
+- 데이터 보존/백필 전략 (기존 행 처리).
+- 가산(추가만)인지, 파괴적 변경(recreate)인지 명시.
+
+---
+
+### 4. 읽기/쓰기 쿼리
+- 핫패스 쿼리와 사용 인덱스.
+- 쿼리당 예상 접근 패턴(키 조회/범위 스캔).
+- 트랜잭션 경계가 필요한 경우 명시.
+
+---
+
+### 5. 무결성·롤백
+- 지켜야 할 불변식 (예: 타입당 전역행 ≤ 1).
+- 위반 시 동작과 방어 수단(제약/인덱스).
+- 롤백 절차와 부작용(CASCADE 범위 등).
+
+---
+
+### DEFERRED
+| 항목 | 미확정 이유 | 결정 시점 |
+|---|---|---|
+| {항목} | {이유} | {언제} |
+
+---
+
+## 체크리스트 (작성 완료 전 확인)
+
+- [ ] 모든 FK에 ON DELETE 동작이 명시되어 있는가
+- [ ] 마이그레이션이 가역적인가(불가 시 사유 기재)
+- [ ] 핫패스 쿼리에 대응하는 인덱스가 있는가
+- [ ] 무결성 불변식과 그 강제 수단이 1:1로 매칭되는가
+- [ ] 비즈니스 서술(→ D)·알고리즘(→ L)이 섞여 있지 않은가
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'DB';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'ja',
+'# {対象領域} DB設計 (DB)
+
+> これはグローバル標準の DB 設計テンプレートです。スキーマ変更を節ごとに記入してください。
+> DB 文書は **データ構造・スキーマ・マイグレーションの単一の真実の源** です。
+> ビジネス意図は D へ、アルゴリズムは L へ、実際のデータ値/フォーマットは P へ委譲します。
+
+---
+
+## 判断基準 — DB に書けるもの / 書けないもの
+
+| 書ける | 書いてはいけない |
+|---|---|
+| テーブル・カラム・型定義 | ビジネス要件の叙述(→ D) |
+| PK/FK・ユニーク・CHECK 制約 | アルゴリズム・擬似コード(→ L) |
+| インデックス設計と根拠 | ライブラリ/ORM コード |
+| マイグレーション順序・可逆性 | UI・画面説明 |
+| 読み/書きホットパスのクエリ | インフラ設定(ポート・ホスト) |
+| 整合性不変条件・ロールバック手順 | |
+
+---
+
+## 文書構造
+
+```
+# {対象領域} DB設計 (DB)
+
+> 段階: DB設計(DB)
+> 参照: {要件番号}, {D 番号}
+
+---
+
+## 目的
+
+## 1. 対象テーブル
+## 2. カラム・キー・制約
+## 3. マイグレーション
+## 4. 読み/書きクエリ
+## 5. 整合性・ロールバック
+## [DEFERRED]
+```
+
+---
+
+## 節ごとの記述基準
+
+### 目的
+- このスキーマ変更が何を可能にするかを 1〜2 文。
+- D 文書のどの要求に由来するかを参照。
+
+---
+
+### 1. 対象テーブル
+新設/変更テーブルと目的を表で整理。
+
+| テーブル | 新設/変更 | 目的 |
+|---|---|---|
+| {名前} | {新設/変更} | {何を保持するか} |
+
+---
+
+### 2. カラム・キー・制約
+| カラム | 型 | NULL | デフォルト | 制約(PK/FK/UQ/CHECK) | 説明 |
+|---|---|---|---|---|---|
+| {名前} | {型} | {Y/N} | {値} | {制約} | {説明} |
+
+- FK は参照テーブルと ON DELETE 動作を明記。
+- 部分ユニーク/複合キーは個別に分けて記述。
+
+---
+
+### 3. マイグレーション
+- 適用順序(番号)と各ファイルの役割。
+- 可逆性:ロールバック SQL またはロールバック不可の理由。
+- データ保存/バックフィル戦略(既存行の扱い)。
+- 加算(追加のみ)か、破壊的変更(recreate)かを明記。
+
+---
+
+### 4. 読み/書きクエリ
+- ホットパスのクエリと使用インデックス。
+- クエリごとの想定アクセスパターン(キー取得/範囲スキャン)。
+- トランザクション境界が必要な場合は明記。
+
+---
+
+### 5. 整合性・ロールバック
+- 守るべき不変条件(例:型ごとのグローバル行 ≤ 1)。
+- 違反時の動作と防御手段(制約/インデックス)。
+- ロールバック手順と副作用(CASCADE の範囲など)。
+
+---
+
+### DEFERRED
+| 項目 | 未確定の理由 | 決定時点 |
+|---|---|---|
+| {項目} | {理由} | {いつ} |
+
+---
+
+## チェックリスト (記述完了前に確認)
+
+- [ ] 全ての FK に ON DELETE 動作が明記されているか
+- [ ] マイグレーションが可逆か(不可なら理由を記載)
+- [ ] ホットパスのクエリに対応するインデックスがあるか
+- [ ] 整合性不変条件とその強制手段が 1:1 で対応しているか
+- [ ] ビジネス叙述(→ D)・アルゴリズム(→ L)が混ざっていないか
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'DB';
+INSERT IGNORE INTO document_type_template_contents
+    (template_id, locale, content, updated_by, updated_at)
+SELECT id, 'en',
+'# {target area} DB Design (DB)
+
+> This is the global standard DB Design template. Fill the schema change per section.
+> A DB document is the **single source of truth for data structure, schema, and migrations**.
+> Delegate business intent to D, algorithms to L, and actual data values/formats to P.
+
+---
+
+## What may / may not go into a DB
+
+| May include | Must not include |
+|---|---|
+| Table / column / type definitions | Business-requirement narrative (→ D) |
+| PK/FK, unique, CHECK constraints | Algorithms / pseudocode (→ L) |
+| Index design and rationale | Library / ORM code |
+| Migration order and reversibility | UI / screen description |
+| Read/write hot-path queries | Infra config (ports, hosts) |
+| Integrity invariants / rollback steps | |
+
+---
+
+## Document structure
+
+```
+# {target area} DB Design (DB)
+
+> Stage: DB Design (DB)
+> References: {requirement no.}, {D no.}
+
+---
+
+## Purpose
+
+## 1. Target tables
+## 2. Columns, keys, constraints
+## 3. Migration
+## 4. Read/write queries
+## 5. Integrity & rollback
+## [DEFERRED]
+```
+
+---
+
+## Per-section writing guide
+
+### Purpose
+- 1-2 sentences on what this schema change enables.
+- Reference which D-document requirement it stems from.
+
+---
+
+### 1. Target tables
+List new/changed tables and their purpose.
+
+| Table | New/Changed | Purpose |
+|---|---|---|
+| {name} | {new/changed} | {what it holds} |
+
+---
+
+### 2. Columns, keys, constraints
+| Column | Type | NULL | Default | Constraint (PK/FK/UQ/CHECK) | Description |
+|---|---|---|---|---|---|
+| {name} | {type} | {Y/N} | {value} | {constraint} | {description} |
+
+- For FKs, state the referenced table and the ON DELETE behavior.
+- Spell out partial-unique / composite keys separately.
+
+---
+
+### 3. Migration
+- Apply order (number) and the role of each file.
+- Reversibility: rollback SQL, or the reason rollback is impossible.
+- Data-preservation / backfill strategy (how existing rows are handled).
+- State whether it is additive (add-only) or destructive (recreate).
+
+---
+
+### 4. Read/write queries
+- Hot-path queries and the indexes they use.
+- Expected access pattern per query (key lookup / range scan).
+- Note any required transaction boundaries.
+
+---
+
+### 5. Integrity & rollback
+- Invariants to uphold (e.g., at most one global row per type).
+- Behavior on violation and the defense (constraint / index).
+- Rollback procedure and side effects (CASCADE scope, etc.).
+
+---
+
+### DEFERRED
+| Item | Why undecided | Decision point |
+|---|---|---|
+| {item} | {reason} | {when} |
+
+---
+
+## Checklist (confirm before completion)
+
+- [ ] Every FK states its ON DELETE behavior
+- [ ] The migration is reversible (state the reason if not)
+- [ ] Hot-path queries have matching indexes
+- [ ] Each integrity invariant maps 1:1 to an enforcement mechanism
+- [ ] No business narrative (→ D) / algorithm (→ L) is mixed in
+',
+       NULL, '2026-06-14T00:00:00+09:00'
+FROM document_type_templates WHERE project_id IS NULL AND type_code = 'DB';

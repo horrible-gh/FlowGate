@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>{{ detail.group_id if detail else 'FlowGate Group Detail' }}</title>
+</head>
+<body>
+  <section id="next-action-panel">
+    <h2>다음 예상 액션</h2>
+    <div class="next-action-list">
+      {% for candidate in detail.next_action_candidates or [] %}
+      <article class="next-action-item" data-candidate-index="{{ loop.index0 }}">
+        <strong>{{ candidate.type }}</strong>
+        <span>{{ candidate.label }}</span>
+        <button type="button">멘트복사</button>
+        <div class="next-action-meta">docs_root: {{ candidate.docs_root }}</div>
+        {% if candidate.type == 'T' %}
+        <div class="next-action-meta">project_root: {{ candidate.project_root }}</div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <script>
+    window.flowgateNextActionCandidates = {{ detail.next_action_candidates | tojson }};
+    function copyNextAction(candidate) {
+      const lines = [
+        'docs_root: ' + (candidate.docs_root || ''),
+      ];
+      if (candidate.type === 'T' && candidate.project_root) {
+        lines.push('project_root: ' + candidate.project_root);
+      }
+      return lines.join('\n');
+    }
+  </script>
+</body>
+</html>

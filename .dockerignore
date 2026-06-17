@@ -1,0 +1,49 @@
+# Keep the build context small and the image clean. Source (server/, client/)
+# is copied in by the Dockerfile; everything below is host-only or rebuilt.
+
+# VCS / editor / CI
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+.claude
+.pytest_cache
+
+# Python virtualenvs & caches
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+.mypy_cache
+.pyre
+
+# Node (client deps reinstalled in the build stage; dist rebuilt in-image)
+node_modules
+**/node_modules
+client/dist
+
+# Host-only runtime state — must never leak into the image
+storage
+server/storage
+server/flowgate.db
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+logs
+**/logs
+**/*.log
+
+# Host env files & rendered secrets (the container generates its own)
+**/.env
+**/.env.*
+!**/.env.sample
+deploy/flowgate.rendered.service
+
+# Docker artifacts & docs not needed at build time
+Dockerfile
+.dockerignore
+docker-compose*.yml
+work
+assets

@@ -1,0 +1,25 @@
+[Unit]
+Description=FlowGate staging (FastAPI API + built client)
+After=network.target
+
+[Service]
+Type=simple
+# __ROOT__ / __USER__ / __GROUP__ are filled in by setup.sh.
+User=__USER__
+Group=__GROUP__
+# FLOWGATE_STORAGE_DIR is an OS env var (NOT a pydantic Settings field), so it
+# must be injected here rather than in .env (the .env file forbids extra keys).
+Environment=FLOWGATE_STORAGE_DIR=__STORAGE__
+WorkingDirectory=__ROOT__/server
+# Rebuild the client before each start so `systemctl restart flowgate` picks up
+# FE changes (server + client in one command). Leading '-' makes a failed build
+# non-fatal — the server still starts on the previous dist instead of looping
+# against Restart=always. '-lc' uses a login shell so node/npm from the user's
+# profile (nvm, /usr/local/bin) are on PATH (systemd's default PATH lacks them).
+ExecStartPre=-/bin/bash -lc '__ROOT__/client/build.sh'
+ExecStart=__ROOT__/.venv/bin/python __ROOT__/server/stg.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1 @@
+"""Documents router package."""

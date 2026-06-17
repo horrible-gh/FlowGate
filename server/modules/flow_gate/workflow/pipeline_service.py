@@ -1,0 +1,597 @@
+"""Pipeline service — group/document lifecycle management (D017 r1).
+
+Responsibilities:
+- Group creation and state transitions (draft→in_progress→clarifying→approved→closed)
+- CAS (Compare-And-Swap) handling for document state transitions
+- Automatic Q state management (§8-5)
+- Group completion candidate checks (§6)
+
+Because T_documents is incomplete, this module directly uses the documents DB layer
+(db.documents). The TR059 stub status is explicitly documented.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import workflow_item_results as db_wir
+from modules.flow_gate.db.connection import get_store, now_iso
+
+from .event_logger import (
+    EVT_GROUP_APPROVED,
+    log_group_approved,
+    log_group_completion_candidate,
+    log_state_changed,
+)
+from .rejection_identity import new_rejection_id
+from .transition_rules import (
+    check_permission,
+    get_doc_review_rule,
+    get_doc_rule,
+    get_group_rule,
+)
+
+_log = logging.getLogger(__name__)
+
+
+class TransitionError(Exception):
+    """Attempted an invalid transition."""
+
+
+class PermissionError(Exception):
+    """Insufficient permissions."""
+
+
+# ── Group service ─────────────────────────────────────────────────────────────
+
+def create_group(
+    *,
+    project_id: str,
+    module: str,
+    title: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    group_id: str,
+    priority: str | None = None,
+) -> dict:
+    """Create a new group and register it in draft state (D017 r1 Step 1).
+
+    Parameters
+    ----------
+    group_id:
+        Reserved group_id (determined by numbering_service).
+    """
+    if not check_permission(user_permissions, ("project.group.manage",)):
+        raise PermissionError("Permission 'project.group.manage' is required.")
+
+    now = now_iso()
+    return db_groups.create(
+        {
+            "group_id": group_id,
+            "project_id": project_id,
+            "module": module,
+            "title": title,
+            "priority": priority,
+            "status": "draft",
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+def transition_group(
+    *,
+    group_id: str,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    comment: str | None = None,
+) -> dict:
+    """Transition the group state.
+
+    Returns
+    -------
+    dict
+        Updated group row plus warning information.
+    """
+    group = db_groups.get_by_id(group_id)
+    if not group:
+        raise ValueError(f"Group not found: {group_id}")
+
+    current_status = group["status"]
+    rule = get_group_rule(current_status, action)
+    if rule is None:
+        raise TransitionError(
+            f"Invalid transition: group {current_status} + action {action}"
+        )
+
+    if not check_permission(user_permissions, rule.required_permissions):
+        raise PermissionError(
+            f"Insufficient permissions: one of {rule.required_permissions} is required"
+        )
+
+    next_status = rule.next_state
+    warnings: list[str] = []
+
+    # Warn about incomplete child documents when approving the group
+    if action == "approve":
+        warnings = _collect_incomplete_warnings(group_id)
+
+    # Update the database
+    update_data: dict[str, Any] = {"status": next_status}
+    if next_status == "closed":
+        update_data["closed_at"] = now_iso()
+
+    updated = db_groups.update(group_id, update_data)
+
+    # Record the event
+    log_state_changed(
+        project_id=group["project_id"],
+        actor_user_id=actor_user_id,
+        from_state=current_status,
+        to_state=next_status,
+        group_id=group_id,
+        action_code=action,
+    )
+    if action == "approve":
+        log_group_approved(
+            project_id=group["project_id"],
+            actor_user_id=actor_user_id,
+            group_id=group_id,
+        )
+
+    result = dict(updated or {})
+    if warnings:
+        result["__warnings"] = warnings
+    return result
+
+
+def _collect_incomplete_warnings(group_id: str) -> list[str]:
+    """Return incomplete documents (open/draft/rejected) in the group."""
+    terminal = {"approved", "closed", "cancelled"}
+    docs = db_docs.list_documents(
+        project_id=_get_group_project(group_id) or "",
+        group_id=group_id,
+    )
+    incomplete = [d["doc_id"] for d in docs if d.get("status") not in terminal]
+    return incomplete
+
+
+def _get_group_project(group_id: str) -> str | None:
+    g = db_groups.get_by_id(group_id)
+    return g["project_id"] if g else None
+
+
+# ── Document transition service ───────────────────────────────────────────────
+
+def transition_document(
+    *,
+    doc_id: str,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    comment: str | None = None,
+) -> dict:
+    """Transition document state using the CAS (Compare-And-Swap) pattern.
+
+    D017 r1 §8-3: UPDATE documents SET status=? WHERE doc_id=? AND status=?
+    If rowcount=0, treat it as a concurrent update and raise TransitionError.
+    """
+    doc = db_docs.get_by_id(doc_id)
+    if not doc:
+        raise ValueError(f"Document not found: {doc_id}")
+
+    current_status = doc["status"]
+    rule = get_doc_rule(current_status, action)
+    if rule is None:
+        raise TransitionError(
+            f"Invalid transition: document status {current_status} + action {action}"
+        )
+
+    # own.draft permission check: allow operating on the caller's own draft
+    # document even without document.update
+    effective_perms = set(user_permissions)
+    if doc.get("owner_id") == actor_user_id and current_status == "draft":
+        effective_perms.add("own.draft")
+    if doc.get("owner_id") == actor_user_id:
+        effective_perms.add("document.delete.own.draft")
+
+    if not check_permission(effective_perms, rule.required_permissions):
+        raise PermissionError(
+            f"Insufficient permissions: one of {rule.required_permissions} is required"
+        )
+
+    # comment is required for reject
+    if action == "reject" and not comment:
+        raise ValueError("Comment required when rejecting (reason for rejection).")
+
+    next_status = rule.next_state
+    store = get_store()
+
+    # CAS UPDATE
+    update_fields: dict[str, Any] = {"status": next_status, "updated_at": now_iso()}
+    if comment:
+        existing_meta = {}
+        if doc.get("meta"):
+            try:
+                existing_meta = json.loads(doc["meta"])
+            except (json.JSONDecodeError, TypeError):
+                existing_meta = {}
+        existing_meta["reject_comment"] = comment
+        update_fields["meta"] = json.dumps(existing_meta, ensure_ascii=False)
+
+    success = store.update_cas(
+        table="documents",
+        row_id=doc_id,
+        id_col="doc_id",
+        expected_col="status",
+        expected_val=current_status,
+        updates=update_fields,
+    )
+    if not success:
+        raise TransitionError("State transition failed (no fields to update)")
+
+    # Re-read to confirm the actual change and detect CAS races
+    updated = db_docs.get_by_id(doc_id)
+    if not updated or updated["status"] != next_status:
+        raise TransitionError(
+            "Concurrent transition conflict detected. Please retry."
+        )
+
+    # Record the event
+    project_id = doc.get("project_id", "")
+    group_id = doc.get("group_id")
+    log_state_changed(
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        from_state=current_status,
+        to_state=next_status,
+        group_id=group_id,
+        document_id=doc.get("id"),
+        action_code=action,
+    )
+
+    # Handle automatic follow-up actions
+    _handle_side_effects(
+        doc=updated,
+        action=action,
+        actor_user_id=actor_user_id,
+        user_permissions=user_permissions,
+    )
+
+    return updated
+
+
+def _handle_side_effects(
+    *,
+    doc: dict,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+) -> None:
+    """Automatic follow-up after a document transition (group updates, Q handling, etc.)."""
+    doc_type = doc.get("type_code", "")
+    group_id = doc.get("group_id")
+    project_id = doc.get("project_id", "")
+
+    # Workflow-root submit → group draft → in_progress
+    if doc_type in {"R", "B"} and action == "submit" and group_id:
+        group = db_groups.get_by_id(group_id)
+        if group and group.get("status") == "draft":
+            try:
+                transition_group(
+                    group_id=group_id,
+                    action="start",
+                    actor_user_id=actor_user_id,
+                    user_permissions=user_permissions,
+                )
+            except (TransitionError, PermissionError):
+                pass  # Ignore if it is already at in_progress or beyond
+
+    # Q document creation (open) → group in_progress → clarifying
+    if doc_type == "Q" and action == "submit" and group_id:
+        group = db_groups.get_by_id(group_id)
+        if group and group.get("status") == "in_progress":
+            try:
+                transition_group(
+                    group_id=group_id,
+                    action="clarify",
+                    actor_user_id=actor_user_id,
+                    user_permissions=user_permissions,
+                )
+            except (TransitionError, PermissionError):
+                pass
+
+    # A document submit → linked Q.status = 'answered' (D017 r1 §8-5)
+    if doc_type == "A" and action == "submit" and group_id:
+        _auto_answer_linked_q(doc=doc, actor_user_id=actor_user_id, user_permissions=user_permissions)
+
+    # Q document approve → Q.status = 'closed'
+    if doc_type == "Q" and action == "approve":
+        pass  # Already handled in transition_document
+
+    # When a Q document closes, check group clarifying → in_progress
+    if doc_type == "Q" and action in ("approve", "close") and group_id:
+        _check_clarifying_resume(
+            group_id=group_id,
+            actor_user_id=actor_user_id,
+            user_permissions=user_permissions,
+            project_id=project_id,
+        )
+
+    # Emit group_completion_candidate when all child documents are complete
+    if action in ("approve", "close") and group_id:
+        _check_group_completion(
+            group_id=group_id,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+        )
+
+
+def _auto_answer_linked_q(
+    *,
+    doc: dict,
+    actor_user_id: str,
+    user_permissions: set[str],
+) -> None:
+    """Set the Q linked by an A document's target_id or triggered_by to 'answered'."""
+    q_doc_id = doc.get("target_id") or doc.get("triggered_by")
+    if not q_doc_id:
+        return
+    q_doc = db_docs.get_by_id(q_doc_id)
+    if q_doc and q_doc.get("type_code") == "Q" and q_doc.get("status") == "open":
+        store = get_store()
+        now = now_iso()
+        store.update_cas(
+            table="documents",
+            row_id=q_doc_id,
+            id_col="doc_id",
+            expected_col="status",
+            expected_val="open",
+            updates={"status": "answered", "updated_at": now},
+        )
+        log_state_changed(
+            project_id=q_doc.get("project_id", ""),
+            actor_user_id=actor_user_id,
+            from_state="open",
+            to_state="answered",
+            group_id=q_doc.get("group_id"),
+            document_id=q_doc.get("id"),
+            action_code="auto_answered",
+        )
+
+
+def _check_clarifying_resume(
+    *,
+    group_id: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    project_id: str,
+) -> None:
+    """Return clarifying → in_progress when the group has no open Q documents."""
+    open_qs = db_docs.list_documents(
+        project_id=project_id,
+        group_id=group_id,
+        type_code="Q",
+        status="open",
+    )
+    if open_qs:
+        return
+    group = db_groups.get_by_id(group_id)
+    if group and group.get("status") == "clarifying":
+        try:
+            transition_group(
+                group_id=group_id,
+                action="resume",
+                actor_user_id=actor_user_id,
+                user_permissions=user_permissions,
+            )
+        except (TransitionError, PermissionError):
+            pass
+
+
+def _check_group_completion(
+    *,
+    group_id: str,
+    project_id: str,
+    actor_user_id: str,
+) -> None:
+    """Emit completion_candidate when all group child documents are in terminal states."""
+    terminal = {"approved", "closed", "cancelled"}
+    docs = db_docs.list_documents(project_id=project_id, group_id=group_id)
+    incomplete = [d for d in docs if d.get("status") not in terminal]
+    log_group_completion_candidate(
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        incomplete_count=len(incomplete),
+    )
+
+
+# ── Document review-state transition service ─────────────────────────────────
+
+def transition_document_review(
+    *,
+    doc_id: str,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    comment: str | None = None,
+) -> dict:
+    """Transition the document review state (doc_review_status column).
+
+    M026 §8-1: based on the DOC_REVIEW_TRANSITIONS rules.
+    action: approve | reject | mark_revised
+    """
+    doc = db_docs.get_by_id(doc_id)
+    if not doc:
+        raise ValueError(f"Document not found: {doc_id}")
+
+    current_review_status = doc.get("doc_review_status") or ""
+    next_status = get_doc_review_rule(current_review_status, action)
+    if next_status is None:
+        raise TransitionError(
+            f"Invalid review transition: doc_review_status={current_review_status!r} + action={action!r}"
+        )
+
+    # Permission check
+    if action == "reject":
+        required = ("document.reject",)
+    elif action in ("mark_revised", "submit"):
+        required = ("document.update", "own.draft")
+    else:
+        required = ("document.approve",)
+    if not check_permission(user_permissions, required):
+        raise PermissionError(f"Insufficient permissions: one of {required} is required")
+
+    # comment is required for reject
+    if action == "reject" and not comment:
+        raise ValueError("Comment required when rejecting (reason for rejection).")
+
+    update_fields: dict[str, Any] = {
+        "doc_review_status": next_status,
+        "updated_at": now_iso(),
+    }
+    if comment:
+        existing_meta: dict = {}
+        if doc.get("meta"):
+            try:
+                existing_meta = json.loads(doc["meta"])
+            except (json.JSONDecodeError, TypeError):
+                existing_meta = {}
+        existing_meta["review_comment"] = comment
+        update_fields["meta"] = json.dumps(existing_meta, ensure_ascii=False)
+    if action == "reject" and comment:
+        update_fields["rejection_reason"] = comment  # Compatibility: keep the latest reason
+        existing_history: list = []
+        if doc.get("rejection_history"):
+            try:
+                existing_history = json.loads(doc["rejection_history"])
+                if not isinstance(existing_history, list):
+                    existing_history = []
+            except (json.JSONDecodeError, TypeError):
+                existing_history = []
+        # P0005/T0006: assign a time-sortable rejection_id at creation so the AI
+        # response can later be attached to this exact item (index/time alone is
+        # unsafe). The four response fields start null — they are filled in when
+        # the AI re-submits the rejected document through the inbox edit path
+        # (see record_rejection_response below), not via any manual-input UI.
+        existing_history.append({
+            "rejection_id": new_rejection_id(),
+            "reason": comment,
+            "rejected_at": now_iso(),
+            "rejected_by": actor_user_id,
+            "ai_response": None,
+            "responded_at": None,
+            "response_recorded_by": None,
+            "response_revision_no": None,
+        })
+        update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
+
+    updated = db_docs.update(doc_id, update_fields)
+    if not updated:
+        raise TransitionError("Review status transition failed")
+
+    log_state_changed(
+        project_id=doc.get("project_id", ""),
+        actor_user_id=actor_user_id,
+        from_state=f"review:{current_review_status}",
+        to_state=f"review:{next_status}",
+        group_id=doc.get("group_id"),
+        document_id=doc.get("id"),
+        action_code=f"review_{action}",
+    )
+
+    return updated
+
+
+# P0005/T0006: AI response length ceiling (fixed by T0006).
+AI_RESPONSE_MAX_LEN = 4000
+
+
+def record_rejection_response(
+    *,
+    doc_id: str,
+    response_text: str | None,
+    recorded_by: str,
+    revision_no: int | None,
+) -> dict | None:
+    """Annotate the most recent rejection with how the AI addressed it.
+
+    Reviewer intent (TR0007 rework): the AI's response to a rejection arrives
+    *with the inbox re-submission* of the rejected document — the body stays the
+    body, and this records, against the latest rejection_history item, what the AI
+    did about the reviewer's comment. There is no separate manual-input UI/API.
+
+    Single-latest policy: re-submitting overwrites the same item idempotently.
+    Returns the updated item, or None if there is nothing to record (blank
+    response, missing document, or no rejection history to attach to).
+    """
+    text = (response_text or "").strip()
+    if not text:
+        return None
+    if len(text) > AI_RESPONSE_MAX_LEN:
+        text = text[:AI_RESPONSE_MAX_LEN]
+
+    doc = db_docs.get_by_id(doc_id)
+    if not doc:
+        return None
+
+    history: list = []
+    if doc.get("rejection_history"):
+        try:
+            history = json.loads(doc["rejection_history"])
+            if not isinstance(history, list):
+                history = []
+        except (json.JSONDecodeError, TypeError):
+            history = []
+    if not history:
+        return None
+
+    target = history[-1]
+    target["ai_response"] = text
+    target["responded_at"] = now_iso()
+    target["response_recorded_by"] = recorded_by
+    target["response_revision_no"] = revision_no
+
+    db_docs.update(doc_id, {
+        "rejection_history": json.dumps(history, ensure_ascii=False),
+        "updated_at": now_iso(),
+    })
+    return target
+
+
+# ── Workflow result registration ──────────────────────────────────────────────
+
+def register_workflow_result(
+    *,
+    item_id: int,
+    registered_path: str,
+    registered_doc_id: str,
+    registered_at: str,
+    actor_user_id: str,
+) -> dict | None:
+    """Register a workflow result — INSERT into workflow_item_results and set result_doc_id.
+
+    DB004 §6.3: set workflow_sequence_items.result_doc_id when registering a result doc.
+
+    .. deprecated:: T601
+        The doc_review_status transition logic was removed from this function.
+        Callers must perform doc_review_status transitions directly.
+        T602 is expected to remove this function itself.
+    """
+    from modules.flow_gate.db import workflow_sequences as _db_wfseq
+
+    db_wir.insert_result(
+        item_id=item_id,
+        registered_path=registered_path,
+        registered_doc_id=registered_doc_id,
+        registered_at=registered_at,
+    )
+    _db_wfseq.set_item_result_doc_id(item_id, registered_doc_id)
+
+    return db_docs.get_by_id(registered_doc_id)
+

@@ -1,0 +1,1 @@
+ALTER TABLE project_settings ADD COLUMN branch TEXT NOT NULL DEFAULT 'main';

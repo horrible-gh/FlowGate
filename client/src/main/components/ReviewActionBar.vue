@@ -1,0 +1,759 @@
+<template>
+  <div class="sticky-footer-bar">
+    <div class="sfb-inner">
+      <!-- Labels section (1 row normally; 2 rows when viewing a past doc) -->
+      <div class="sfb-labels">
+        <!-- Row 1 -->
+        <span class="sfb-label">
+          <!-- Head-format label is an *orientation* cue shown only while viewing a PAST doc
+               (the workflow head lives elsewhere). When viewing the head doc itself, fall
+               through to the normal branch so the status pills (review pending / AI review arrived) render. -->
+          <template v-if="isViewingPastDoc">
+            <i
+              class="fa-solid"
+              :class="statusIconClass"
+              :style="statusIconStyle"
+            ></i>
+            <span class="sfb-mono">{{ headDocId }}</span>
+            <span class="sfb-title">— [{{ headTypeLabel }}]: {{ headDocTitle || '(pending)' }}</span>
+          </template>
+          <template v-else-if="currentMode !== 'sequence-complete'">
+            <i
+              class="fa-solid"
+              :class="statusIconClass"
+              :style="statusIconStyle"
+            ></i>
+            <span class="sfb-mono">{{ docRef }}</span>
+            <span v-if="docTitle" class="sfb-title">— {{ docTitle }}</span>
+            <span
+              v-if="showStatusPill"
+              :class="['sfb-status-pill', statusPillClass]"
+            >{{ statusLabel }}</span>
+            <span
+              v-else-if="currentMode === 'q'"
+              class="sfb-status-pill q-answering"
+            >{{ t('main.doc_info_panel.status_q_answering') }}</span>
+            <span
+              v-if="showAiArrivedPill"
+              class="sfb-status-pill ai-arrived"
+            ><i class="fa-solid fa-robot"></i> {{ t('main.review_action_bar.ai_arrived') }}</span>
+          </template>
+          <template v-else>
+            <span class="sfb-mono">{{ docRef }}</span>
+            <span v-if="docTitle" class="sfb-title">— {{ docTitle }}</span>
+            <span class="sfb-status-pill wf-done">{{ t('main.doc_info_panel.status_wf_done') }}</span>
+          </template>
+        </span>
+
+      </div>
+
+      <div v-if="isViewingPastDoc" class="sfb-actions">
+        <button class="btn btn-primary btn-sm" type="button" @click="onOpenHeadDocClick">
+          <i class="fa-solid fa-arrow-right"></i>
+          {{ t('main.review_action_bar.btn_go_to_head', { doc: headDocShort }) }}
+        </button>
+      </div>
+
+      <template v-else>
+        <div v-if="currentMode === 'workflow'" class="sfb-actions">
+          <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
+               mirroring the NextActionModal proceed dropdown (.fa-chevron-up). Clicking it
+               no longer opens a dialog; it expands the dropdown of workflow actions. -->
+          <div class="ab-dd-wrap">
+            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
+              <i class="fa-solid fa-diagram-project"></i> {{ t('main.review_action_bar.btn_decide_workflow') }}
+              <i class="fa-solid ab-dd-chevron" :class="dropdownOpen ? 'fa-chevron-down' : 'fa-chevron-up'"></i>
+            </button>
+            <div v-if="dropdownOpen" class="ab-split-dd">
+              <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
+              <button class="ab-split-item" type="button" @click="onWorkflowMentionCopyClick">
+                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <button class="ab-split-item" type="button" @click="onWorkflowCommandClick">
+                <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+              </button>
+              <button class="ab-split-item" type="button" @click="onWorkflowManualClick">
+                <i class="fa-solid fa-sliders"></i> {{ t('main.review_action_bar.btn_manual_decision') }}
+              </button>
+              <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
+                   current head to a chosen step without a human re-issuing tokens each step. -->
+              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+                <i class="fa-solid fa-forward-fast"></i> {{ t('main.review_action_bar.btn_continuous_work') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="currentMode === 'next'" class="sfb-actions">
+          <!-- R0001 (0078): when the NEXT workflow step is the final-approval gate (AC),
+               collapse to a single [Final approval] button — no list, no dropdown. Clicking it
+               emits next-action → MainPanel.onProceedNextStep → onOpenFinalApproval, which
+               opens the group final-approval (AC) screen directly. Mirrors the CH carve-out
+               and takes precedence over it (an AC step is never also a CH step). -->
+          <button
+            v-if="isNextFinalApproval"
+            class="btn btn-primary btn-sm"
+            type="button"
+            :disabled="canNextAction === false"
+            @click="$emit('next-action')"
+          >
+            <i class="fa-solid fa-clipboard-check"></i> {{ t('main.review_action_bar.final_approval') }}
+          </button>
+          <!-- TR0044.0010 rev3: when the NEXT workflow step is a conversation (CH),
+               creating it is a single one-click action — no [Create empty doc]/[Create approved doc]
+               split, no dialog. The CH doc is auto-created (L-AUTO approved) and opened.
+               (reviewer: "only when the next document is a conversation, show just a single
+               [Create conversation doc] / don't create via dialog, auto-create the conversation doc") -->
+          <button
+            v-else-if="isNextConversation"
+            class="btn btn-primary btn-sm"
+            type="button"
+            :disabled="canNextAction === false"
+            @click="$emit('create-conversation')"
+          >
+            <i class="fa-regular fa-comments"></i> {{ t('main.review_action_bar.btn_create_conversation') }}
+          </button>
+          <div v-else class="ab-dd-wrap">
+            <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
+                 mirroring the NextActionModal proceed dropdown (.fa-chevron-up). Clicking
+                 the button opens the dropdown (no dialog). The proceed/copy/create actions
+                 all live as dropdown items; order per reviewer (rev3, reversed):
+                 Create approved doc → Create empty doc → Copy mention → Proceed to next step. -->
+            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
+              <i class="fa-solid fa-arrow-right"></i>
+              {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
+              <i class="fa-solid ab-dd-chevron" :class="dropdownOpen ? 'fa-chevron-down' : 'fa-chevron-up'"></i>
+            </button>
+            <div v-if="dropdownOpen" class="ab-split-dd">
+              <button v-if="canCreateApproved" class="ab-split-item" type="button" @click="onNextCreateApprovedClick">
+                <i class="fa-solid fa-file-circle-check"></i> {{ t('main.review_action_bar.btn_create_approved') }}
+              </button>
+              <button class="ab-split-item" type="button" @click="onNextCreateEmptyClick">
+                <i class="fa-regular fa-file"></i> {{ t('main.review_action_bar.btn_create_empty') }}
+              </button>
+              <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
+                   opening the proceed dialog. -->
+              <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
+                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
+                <i class="fa-solid fa-arrow-right"></i> {{ t('main.review_action_bar.btn_proceed_next') }}
+              </button>
+              <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
+                   current head to a chosen step without a human re-issuing tokens each step. -->
+              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+                <i class="fa-solid fa-forward-fast"></i> {{ t('main.review_action_bar.btn_continuous_work') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="currentMode === 'q'" class="sfb-actions">
+          <span class="sfb-hint">
+            <i class="fa-solid fa-circle-info"></i>
+            {{ t('main.main_panel.q_doc_hint') }}
+          </span>
+        </div>
+
+        <div v-else-if="currentMode === 'info'" class="sfb-actions"></div>
+
+        <div v-else-if="currentMode === 'sequence-complete'" class="sfb-actions"></div>
+
+        <div v-else-if="currentMode === 'rejected'" class="sfb-actions sfb-actions--rework">
+          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkMentionCopyClick">
+            <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+          </button>
+          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onInvokeCommandClick">
+            <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+          </button>
+          <button
+            class="btn btn-sm sfb-rework-complete"
+            :disabled="markRevising"
+            @click="onMarkRevisedClick"
+          >
+            <i class="fa-solid fa-check"></i> {{ t('main.review_action_bar.btn_mark_revised') }}
+          </button>
+        </div>
+
+        <div v-else class="sfb-actions">
+          <!-- Approve -->
+          <button class="btn btn-success btn-sm" :disabled="approving" @click="onApproveClick">
+            <i class="fa-solid fa-check"></i> {{ t('main.review_action_bar.btn_approve') }}
+          </button>
+
+          <!-- Reject -->
+          <button class="btn btn-danger btn-sm" :disabled="approving" @click="onRejectClick">
+            <i class="fa-solid fa-ban"></i> {{ t('main.review_action_bar.btn_reject') }}
+          </button>
+
+          <!-- Review request ▼ split button (excluding R type) -->
+          <div v-if="canShowReviewRequestAction" class="ab-split-wrap">
+            <button :class="reviewRequestMainClass" @click="onMentionCopyClick">
+              <i :class="reviewRequestIconClass"></i> {{ reviewRequestButtonLabel }}
+            </button>
+            <button :class="reviewRequestCaretClass" @click.stop="toggleDropdown">
+              <i class="fa-solid fa-chevron-down"></i>
+            </button>
+            <div v-if="dropdownOpen" class="ab-split-dd">
+              <button class="ab-split-item" @click="onMentionCopyClick">
+                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
+                <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Approve confirm dialog -->
+    <ConfirmModal
+      v-model:visible="showApproveConfirm"
+      :title="t('main.review_action_bar.approve_confirm_title')"
+      :message="t('main.review_action_bar.approve_confirm_message')"
+      @confirm="doApprove"
+    />
+
+    <!-- Revision complete confirm dialog -->
+    <ConfirmModal
+      v-model:visible="showMarkRevisedConfirm"
+      :title="t('main.review_action_bar.mark_revised_confirm_title')"
+      :message="t('main.review_action_bar.mark_revised_confirm_message')"
+      @confirm="doMarkRevised"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { postRequest } from '@shared/api'
+import ConfirmModal from './ConfirmModal.vue'
+import { useToast } from './common/useToast'
+import { useDocTypeStore } from '../stores/docTypeStore'
+
+type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected'
+
+const props = defineProps<{
+  mode?: ActionBarMode
+  docId: string
+  projectId: string
+  groupId: string
+  docRef: string
+  docTitle?: string
+  reviewStatus: string | null
+  /** Variant C: whether AI review feedback exists; shows an "AI review arrived" pill in the pending-review footer. */
+  aiReviewArrived?: boolean
+  nextStepLabel?: string
+  /** R0001 #2 (0048): next workflow step type code, used to gate the "create approved doc" item to N/T/TS. */
+  nextStepCode?: string
+  reviewRequestLabel?: string
+  docType?: string
+  /** D031: whether the "proceed to next step" action is available (false = show button disabled). */
+  canNextAction?: boolean
+  // T813: head doc label fields
+  headDocId?: string | null
+  /** D031: head step type code (replaces headDocType), sourced from workflowViewState.headDocLabel. */
+  headDocLabel?: string | null
+  headDocTitle?: string | null
+  // T813: viewed doc id for isViewingPastDoc check
+  viewedDocId?: string | null
+}>()
+
+const emit = defineEmits<{
+  'approve': [nextStatus?: string | null]
+  'reject': []
+  'open-mention-dialog': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'copy-rework-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'revision-complete': [nextStatus?: string | null]
+  'decide-workflow': []
+  'copy-workflow-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-workflow-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'next-action': []
+  'copy-next-mention': []
+  'create-empty': []
+  'create-approved': []
+  'create-conversation': []
+  'continuous-work': []
+  'open-head-doc': [payload: { docId: string; title: string; typeCode: string | null }]
+}>()
+
+const { t } = useI18n()
+const approving = ref(false)
+const showApproveConfirm = ref(false)
+const markRevising = ref(false)
+const showMarkRevisedConfirm = ref(false)
+const dropdownOpen = ref(false)
+const { showToast } = useToast()
+const docTypeStore = useDocTypeStore()
+const currentMode = computed(() => props.mode ?? 'review')
+const normalizedStatus = computed(() => props.reviewStatus || 'pending_review')
+const isRootDecided = computed(() =>
+  ['R', 'B'].includes(props.docType ?? '') && (props.reviewStatus?.startsWith('wf_') ?? false)
+)
+const showHeadLabel = computed(() => !!props.headDocId && currentMode.value !== 'sequence-complete')
+const isViewingPastDoc = computed(
+  () => showHeadLabel.value && props.viewedDocId !== props.headDocId
+)
+const headDocShort = computed(
+  () => props.headDocId ? (props.headDocId.split('.').pop() ?? props.headDocId) : ''
+)
+const headTypeLabel = computed(() => props.headDocLabel ? docTypeStore.getLabel(props.headDocLabel) : '')
+const showStatusPill = computed(() =>
+  (currentMode.value === 'review' || currentMode.value === 'info') && props.reviewStatus != null,
+)
+const showAiArrivedPill = computed(() =>
+  !!props.aiReviewArrived && normalizedStatus.value === 'pending_review',
+)
+const statusLabel = computed(() => {
+  if (normalizedStatus.value === 'approved') return t('main.doc_header.status_approved')
+  if (normalizedStatus.value === 'rejected') return t('main.doc_header.status_rejected')
+  if (normalizedStatus.value === 'revised') return t('main.review_action_bar.status_revised')
+  if (normalizedStatus.value === 'wf_in_progress') return t('main.doc_info_panel.status_wf_in_progress')
+  if (normalizedStatus.value === 'wf_done') return t('main.doc_info_panel.status_wf_done')
+  return t('main.review_action_bar.status_pending_review')
+})
+const statusPillClass = computed(() => {
+  if (normalizedStatus.value === 'approved') return 'approved'
+  if (normalizedStatus.value === 'rejected') return 'rejected'
+  if (normalizedStatus.value === 'revised') return 'revised'
+  if (normalizedStatus.value === 'wf_in_progress') return 'wf-in-progress'
+  if (normalizedStatus.value === 'wf_done') return 'wf-done'
+  return 'review-pending'
+})
+const statusIconClass = computed(() => {
+  if (isRootDecided.value) return 'fa-solid fa-circle-check'
+  if (normalizedStatus.value === 'approved' || normalizedStatus.value === 'wf_done') return 'fa-solid fa-circle-check'
+  if (normalizedStatus.value === 'rejected') return 'fa-ban'
+  if (normalizedStatus.value === 'revised') return 'fa-rotate'
+  if (normalizedStatus.value === 'wf_in_progress') return 'fa-play'
+  return 'fa-hourglass-half'
+})
+const statusIconStyle = computed(() => ({
+  color:
+    isRootDecided.value
+      ? '#16a34a'
+      : normalizedStatus.value === 'approved' || normalizedStatus.value === 'wf_done'
+      ? '#16a34a'
+      : normalizedStatus.value === 'rejected'
+        ? '#dc2626'
+        : normalizedStatus.value === 'revised' || normalizedStatus.value === 'wf_in_progress'
+          ? '#0284c7'
+          : '#d97706',
+}))
+const defaultReviewRequestLabel = computed(() => t('main.review_action_bar.btn_review_request'))
+// Before approval (pending review or revised), requesting a review is the primary action.
+// Always force the review-request label so a workflow "next step" label cannot take over
+// this slot and hide the button. The mode='next' branch handles advancement after approval.
+const isPreApprovalReview = computed(() =>
+  normalizedStatus.value === 'pending_review' || normalizedStatus.value === 'revised',
+)
+const reviewRequestButtonLabel = computed(() =>
+  isPreApprovalReview.value
+    ? defaultReviewRequestLabel.value
+    : (props.reviewRequestLabel || defaultReviewRequestLabel.value),
+)
+const isNextStageRequest = computed(() =>
+  reviewRequestButtonLabel.value !== defaultReviewRequestLabel.value,
+)
+const reviewRequestVariantClass = computed(() =>
+  // Review request (default) uses amber for AI worker actions; next-step advancement uses primary emphasis.
+  isNextStageRequest.value ? 'btn-primary' : 'btn-soft-amber',
+)
+const reviewRequestMainClass = computed(() => [
+  'btn',
+  reviewRequestVariantClass.value,
+  'btn-sm',
+  'ab-split-main',
+  isNextStageRequest.value ? 'ab-split-main--next' : '',
+])
+const reviewRequestCaretClass = computed(() => [
+  'btn',
+  reviewRequestVariantClass.value,
+  'btn-sm',
+  'ab-split-caret',
+  isNextStageRequest.value ? 'ab-split-caret--next' : '',
+])
+const reviewRequestIconClass = computed(() =>
+  isNextStageRequest.value ? 'fa-solid fa-arrow-right' : 'fa-regular fa-paper-plane',
+)
+const canShowReviewRequestAction = computed(() =>
+  // R (workflow root) and AC (final approval gate) are not AI review targets. They are
+  // synthetic/gate types rather than content documents, so exclude them from this slot.
+  !['R', 'AC'].includes(props.docType ?? '') &&
+  normalizedStatus.value !== 'rejected' &&
+  (!isNextStageRequest.value || normalizedStatus.value === 'approved'),
+)
+
+// R0001 #2 (0048): "create approved doc" is offered only when the next step is an
+// instruction type (N/T/TS). approve-permission gating is enforced by the server
+// (next-approved → 403); the FE does not hold the granular permission set.
+const canCreateApproved = computed(() =>
+  ['N', 'T', 'TS'].includes((props.nextStepCode ?? '').toUpperCase()),
+)
+
+// TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action
+// collapses to a single [Create conversation doc] auto-create button (no split / no dialog).
+const isNextConversation = computed(() =>
+  (props.nextStepCode ?? '').toUpperCase() === 'CH',
+)
+
+// R0001 (0078): the next workflow step is the final-approval gate (AC) → the 'next'
+// action collapses to a single [Final approval] button (no list / no dropdown). AC is an
+// approval gate, not a document-creation target, so the create-approved / create-empty
+// / copy-mention items are meaningless here. Mirrors the CH carve-out and takes
+// precedence over it. next-action → MainPanel.onProceedNextStep → onOpenFinalApproval.
+const isNextFinalApproval = computed(() =>
+  (props.nextStepCode ?? '').toUpperCase() === 'AC',
+)
+
+function onNextCreateEmptyClick() {
+  dropdownOpen.value = false
+  emit('create-empty')
+}
+
+function onNextCreateApprovedClick() {
+  dropdownOpen.value = false
+  emit('create-approved')
+}
+
+function onNextProceedClick() {
+  dropdownOpen.value = false
+  emit('next-action')
+}
+
+// R0001 ③-b: copy the next-step mention directly from the action bar, without
+// going through the proceed dialog. MainPanel reuses the existing token/mention
+// plumbing; the backend auto-merges "R + previous + 2-previous" predecessors.
+function onNextMentionCopyClick() {
+  dropdownOpen.value = false
+  emit('copy-next-mention')
+}
+
+function onOpenHeadDocClick() {
+  if (!props.headDocId) return
+  emit('open-head-doc', {
+    docId: props.headDocId,
+    title: props.headDocTitle ?? '',
+    typeCode: props.headDocLabel ?? null,
+  })
+}
+
+function onApproveClick() {
+  showApproveConfirm.value = true
+}
+
+async function doApprove() {
+  if (approving.value) return
+  approving.value = true
+  try {
+    const res = await postRequest<any>(
+      `/api/v1/documents/review_transitions/approve`,
+      { doc_id: props.docId, comment: null },
+    )
+    // Pass the server-confirmed status up so DocHeader can optimistically flip the
+    // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
+    const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    emit('approve', updated?.doc_review_status ?? 'approved')
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? e
+    console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
+    showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+  } finally {
+    approving.value = false
+  }
+}
+
+function onRejectClick() {
+  emit('reject')
+}
+
+function onMarkRevisedClick() {
+  showMarkRevisedConfirm.value = true
+}
+
+async function doMarkRevised() {
+  if (markRevising.value) return
+  markRevising.value = true
+  try {
+    const res = await postRequest<any>(
+      `/api/v1/documents/review_transitions/mark_revised`,
+      { doc_id: props.docId, comment: null },
+    )
+    showToast(t('main.review_action_bar.toast_mark_revised_success'), 'success')
+    // Pass the server-confirmed status up for the optimistic flip (gap D, NR0003 §6 item 2).
+    const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    emit('revision-complete', updated?.doc_review_status ?? null)
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? e
+    showToast(t('main.review_action_bar.toast_mark_revised_failed', { detail }), 'danger')
+  } finally {
+    markRevising.value = false
+  }
+}
+
+function reworkPayload() {
+  return {
+    docId: props.docId,
+    projectId: props.projectId,
+    groupId: props.groupId,
+    docRef: props.docRef,
+  }
+}
+
+function onReworkMentionCopyClick() {
+  emit('copy-rework-mention', reworkPayload())
+}
+
+function onInvokeCommandClick() {
+  emit('invoke-command', reworkPayload())
+}
+
+function toggleDropdown() {
+  dropdownOpen.value = !dropdownOpen.value
+}
+
+function onWorkflowManualClick() {
+  dropdownOpen.value = false
+  emit('decide-workflow')
+}
+
+function onWorkflowMentionCopyClick() {
+  dropdownOpen.value = false
+  emit('copy-workflow-mention', reworkPayload())
+}
+
+function onWorkflowCommandClick() {
+  dropdownOpen.value = false
+  emit('invoke-workflow-command', reworkPayload())
+}
+
+// R0001 (0086): open the continuous (unmanned) work dialog. Shared by the 'workflow' and
+// 'next' dropdowns; MainPanel owns the sequence dialog + warning gate + token issuance.
+function onContinuousWorkClick() {
+  dropdownOpen.value = false
+  emit('continuous-work')
+}
+
+function onMentionCopyClick() {
+  dropdownOpen.value = false
+  emit('open-mention-dialog', {
+    docId: props.docId,
+    projectId: props.projectId,
+    groupId: props.groupId,
+    docRef: props.docRef,
+  })
+}
+
+function onOutsideClick() {
+  if (dropdownOpen.value) dropdownOpen.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('click', onOutsideClick)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', onOutsideClick)
+})
+</script>
+
+<style scoped>
+/* T813: two-line layout (head + viewed doc) */
+.sfb--two-line {
+  height: auto;
+  min-height: 60px;
+}
+.sfb-labels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+.sfb-row-prefix {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #60748a;
+  font-size: 0.75rem;
+}
+.sfb-label--past {
+  opacity: 0.72;
+  font-size: 0.78rem;
+}
+
+.ab-split-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* R0001 ③-a (rework): single button + trailing chevron drop-up
+   (mirrors NextActionModal .nad-proceed-wrap). */
+.ab-dd-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ab-dd-toggle {
+  border-radius: 6px;
+}
+
+.ab-dd-chevron {
+  font-size: 0.6rem;
+  margin-left: 4px;
+}
+
+.sfb-status-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .72rem;
+  margin-left: 4px;
+  font-weight: 700;
+}
+
+.sfb-status-pill.review-pending {
+  background: #fef3c7;
+  color: #d97706;
+  border: 1px solid #fde68a;
+}
+
+.sfb-status-pill.revised {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+}
+
+.sfb-status-pill.approved,
+.sfb-status-pill.wf-done {
+  background: #dcfce7;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+.sfb-status-pill.wf-in-progress {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+}
+
+.sfb-status-pill.rejected {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.sfb-status-pill.q-answering {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+}
+
+.sfb-status-pill.ai-arrived {
+  background: #fff7d6;
+  color: #6f4e00;
+  border: 1px solid #f6d98b;
+}
+
+.sfb-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-m);
+  font-size: .82rem;
+  font-weight: 600;
+}
+
+.sfb-rework-tool {
+  background: #fff7d6;
+  border: 1px solid #f6d98b;
+  color: #6f4e00;
+}
+
+.sfb-rework-tool:hover {
+  background: #ffefb0;
+  border-color: #eecb6a;
+}
+
+.sfb-rework-complete {
+  margin-left: 4px;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  color: var(--text, #1e293b);
+  font-weight: 700;
+}
+
+.sfb-rework-complete:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.ab-split-main {
+  border-radius: 6px 0 0 6px;
+  border-right: none;
+}
+
+.ab-split-main--next {
+  font-weight: 600;
+}
+
+.ab-split-caret {
+  border-radius: 0 6px 6px 0;
+  padding-inline: 8px;
+  min-width: 0;
+}
+
+.ab-split-caret--next {
+  border-left: 1px solid rgba(255, 255, 255, .22);
+}
+
+.ab-split-dd {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  top: auto;
+  /* R0001 (0087): right-anchor so a narrow toggle (short label e.g. "로직")
+     opens the menu leftward and never overflows the viewport's right edge. */
+  right: 0;
+  left: auto;
+  min-width: 140px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.ab-split-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  font-size: 0.8125rem;
+  color: var(--text, #1e293b);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.ab-split-item:hover:not(:disabled) {
+  background: var(--bg-hover, #f1f5f9);
+}
+
+.ab-split-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* R0001 (0086): the continuous-work entry is set apart from the per-step actions above it. */
+.ab-split-item--continuous {
+  border-top: 1px solid var(--border, #e2e8f0);
+  color: var(--primary, #2563eb);
+  font-weight: 600;
+}
+</style>

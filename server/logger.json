@@ -1,0 +1,18 @@
+{
+    "base": {
+        "name": "MailAnchorLogger",
+        "level": "debug"
+    },
+    "console": {
+        "level": "debug",
+        "format": "%(asctime)s[%(levelname)s]%(message)s"
+    },
+    "file_timed": {
+        "level": "debug",
+        "format": "%(asctime)s[%(levelname)s]%(message)s",
+        "file_name": "logs/default.log",
+        "when": "midnight",
+        "interval": 1,
+        "backup_count": 30
+    }
+}
