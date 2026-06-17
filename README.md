@@ -2,9 +2,22 @@
 
 # FlowGate
 
-### A document pipeline that makes AI agents *prove* their work before it counts.
+### `rm -rf` isn't a human-only mistake anymore.
 
-*Requirement → Task → Task Report. Every handoff passes through a gate that a human (or another agent) must approve.*
+**"oops… I deleted it. sorry"** — coming soon, from your AI agent.
+
+</div>
+
+> **You handed the task to an autonomous agent, said *"it'll figure it out,"* and walked away.**
+> Did it, though?
+
+### FlowGate is the gate between *"the agent says it's done"* and *"it's actually done."*
+
+A typed document pipeline that makes AI agents **prove** their work before it counts. *Requirement → Task → Task Report — every handoff passes through a gate a human (or another agent) must approve.*
+
+<div align="center">
+
+***The agent didn't lie. It just never had to be right.***
 
 <!-- TODO: drop a 10–15s demo GIF here — submit a doc via the remote API, watch it land in the inbox,
      get reviewed, rejected, revised, and approved. The GIF is the single most persuasive asset on this page. -->
