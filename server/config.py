@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional
 from enum import Enum
 from sqloader.init import database_init
@@ -56,6 +57,18 @@ class Settings(BaseSettings):
     FLOWGATE_TOKEN_PEPPER_ACTIVE_ID: str | None = None
     FLOWGATE_TOKEN_PEPPER_V1: str | None = None
     FLOWGATE_INBOX_CONTENT_MAX: int = 10485760  # 10 MB default
+
+    @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
+    @classmethod
+    def _blank_int_uses_default(cls, v):
+        # .env / OS env / compose can supply this key as an EMPTY string (e.g.
+        # `.env.sample` ships `FLOWGATE_INBOX_CONTENT_MAX=` and setup copies it
+        # verbatim without filling it in). pydantic only falls back to the
+        # default when a key is ABSENT, so a present-but-blank value would try to
+        # coerce "" -> int and crash the boot (B0101). Treat blank as "unset".
+        if isinstance(v, str) and v.strip() == "":
+            return 10485760
+        return v
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
