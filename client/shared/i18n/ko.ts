@@ -517,6 +517,11 @@
       no_project: '프로젝트를 선택해주세요.',
       no_tab_open: '파일을 더블클릭하면 여기에 표시됩니다.',
       no_md_file: '연결된 MD 파일이 없습니다.',
+      regenerate_file: '파일 재생성',
+      regenerating: '재생성 중…',
+      regenerated_revision: '백업에서 파일을 복원했습니다.',
+      regenerated_metadata: '메타데이터로 파일을 재생성했습니다(본문은 복원되지 않음).',
+      regenerate_failed: '파일 재생성에 실패했습니다.',
     },
     md_viewer: {
       copy_md: '마크다운 복사',

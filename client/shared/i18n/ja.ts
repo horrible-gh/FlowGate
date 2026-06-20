@@ -517,6 +517,11 @@ export default {
       no_project: 'プロジェクトを選択してください。',
       no_tab_open: 'ファイルをダブルクリックするとここに表示されます。',
       no_md_file: '関連するMDファイルがありません。',
+      regenerate_file: 'ファイル再生成',
+      regenerating: '再生成中…',
+      regenerated_revision: 'バックアップからファイルを復元しました。',
+      regenerated_metadata: 'メタデータからファイルを再生成しました（本文は復元されません）。',
+      regenerate_failed: 'ファイルの再生成に失敗しました。',
     },
     md_viewer: {
       copy_md: 'Markdownをコピー',

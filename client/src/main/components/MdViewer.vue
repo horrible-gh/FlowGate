@@ -24,7 +24,18 @@
       </div>
       <div class="md-viewer__content" v-html="renderedContent" @click.capture="handleContentClick" />
     </template>
-    <div v-else class="md-viewer__empty">{{ t('main.state.no_md_file') }}</div>
+    <div v-else class="md-viewer__empty">
+      <div>{{ t('main.state.no_md_file') }}</div>
+      <button
+        v-if="docId"
+        class="md-viewer__regen-btn"
+        :disabled="regenerating"
+        @click="regenerateFile"
+      >
+        <i class="fa-solid fa-rotate-right"></i>
+        {{ regenerating ? t('main.state.regenerating') : t('main.state.regenerate_file') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -32,7 +43,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Marked } from 'marked'
-import { getRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import api from '@shared/api'
 import { stripFrontmatter } from '@shared/utils/markdown'
 import { useToast } from './common/useToast'
@@ -52,6 +63,7 @@ const error = ref(false)
 const hasLinkedSource = ref(false)
 const copyMdDone = ref(false)
 const copyHeaderDone = ref(false)
+const regenerating = ref(false)
 
 // gfm: enable GitHub-Flavored Markdown (tables, etc.) — R0001 #3.
 const mdRenderer = new Marked({ gfm: true })
@@ -135,6 +147,35 @@ async function handleContentClick(e: MouseEvent) {
     btn.textContent = ''
     btn.classList.remove('code-copy-btn--copied')
   }, 1500)
+}
+
+async function regenerateFile() {
+  // R0001 / NR0003: recreate the missing .md file for this document. Only meaningful
+  // for DB-backed documents (docId); src-file (path) views have no regenerate path.
+  if (!props.docId || regenerating.value) return
+  regenerating.value = true
+  try {
+    const res = await postRequest<{ body_lost?: boolean }>(
+      `/api/v1/documents/${encodeURIComponent(props.docId)}/regenerate`,
+      {},
+    )
+    const bodyLost = (res.data as any)?.body_lost === true
+    showToast(
+      bodyLost ? t('main.state.regenerated_metadata') : t('main.state.regenerated_revision'),
+      bodyLost ? 'warning' : 'success',
+    )
+    await loadContent()
+  } catch (e: any) {
+    const status = e?.response?.status
+    // 409 = the file already exists (e.g. another tab regenerated it) — just reload.
+    if (status === 409) {
+      await loadContent()
+      return
+    }
+    showToast(t('main.state.regenerate_failed'), 'danger')
+  } finally {
+    regenerating.value = false
+  }
 }
 
 async function loadContent(): Promise<boolean> {
@@ -271,6 +312,37 @@ defineExpose({
 .md-viewer__empty {
   padding: 32px;
   text-align: center;
+  opacity: 0.6;
+}
+
+.md-viewer__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.md-viewer__regen-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: .8rem;
+  color: var(--text-m);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+
+.md-viewer__regen-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--primary);
+}
+
+.md-viewer__regen-btn:disabled {
+  cursor: default;
   opacity: 0.6;
 }
 

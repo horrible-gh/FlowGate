@@ -517,6 +517,11 @@
       no_project: 'Please select a project.',
       no_tab_open: 'Double-click a file to open it here.',
       no_md_file: 'No linked MD file.',
+      regenerate_file: 'Regenerate file',
+      regenerating: 'Regenerating…',
+      regenerated_revision: 'File restored from a backup.',
+      regenerated_metadata: 'File regenerated from metadata (body not recovered).',
+      regenerate_failed: 'Failed to regenerate the file.',
     },
     md_viewer: {
       copy_md: 'Copy Markdown',
