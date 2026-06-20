@@ -212,6 +212,11 @@ class DocumentContentUpdate(BaseModel):
     content: str
 
 
+class RootTypeConvert(BaseModel):
+    """Convert a workflow root document between R and B (NR0066.0003 §5)."""
+    new_type: Literal["R", "B"]
+
+
 class ConversationTurnAppend(BaseModel):
     """A single conversation (CH) turn submitted from the session UI (L0044.0008 §6).
 
@@ -1934,6 +1939,32 @@ def update_document_content(
         actor_user_id=current_user["user_id"],
     )
     return {"data": updated, "content": body.content}
+
+
+@router.patch("/{doc_id}/root-type")
+@require_permission("perm_document_update")
+def convert_root_type(
+    doc_id: str,
+    body: RootTypeConvert,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Convert a workflow root document between R (requirement) and B (bug).
+
+    Implements NR0066.0003 §5: the type code is part of the document identity
+    (doc_id, filename, inbound references), so a plain field update cannot flip it.
+    This is allowed ONLY on a pristine root — before the workflow decision is taken
+    — and rewrites the identity atomically. Rejections: 404 (missing), 422 (not a
+    root / invalid target), 409 (decision already taken or target id collision).
+    """
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+    return {
+        "data": document_service.convert_root_document_type(
+            doc_id, body.new_type, actor_user_id=current_user["user_id"]
+        )
+    }
 
 
 @router.post("/{doc_id}/conversation/turn", status_code=201)
