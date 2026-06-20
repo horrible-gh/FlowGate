@@ -4,12 +4,22 @@ import { postRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
 import { appendMessageToMention } from '../utils/mentionMessages'
 
+// Base URL used ONLY to build copy-paste mention text (buildConversationMention /
+// buildMentText). Mentions are consumed by an AI worker on another machine, so the URL
+// MUST be absolute (scheme+host) — a relative value has no host to resolve against.
+// In production setup.ps1 writes VITE_API_BASE_URL=/flowgate (relative, correct for the
+// SPA's same-origin axios calls) which left mentions host-less (group 0103 B0001: "the
+// chat copy mention shows no host anywhere"). When the configured base is relative we
+// absolutize it against window.location.origin — the browser copying the mention is on
+// the same origin as the server the worker must reach, so origin is the right host.
 function getFlowGateBaseUrl(): string {
-  return (
+  const raw =
     (import.meta.env.VITE_FLOWGATE_PUBLIC_URL as string | undefined) ??
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
     'http://127.0.0.1:8088/flowgate'
-  )
+  if (/^https?:\/\//i.test(raw)) return raw
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}${raw.startsWith('/') ? '' : '/'}${raw}`
 }
 
 export interface TokenIssueParams {
