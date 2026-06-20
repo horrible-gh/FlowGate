@@ -6,6 +6,7 @@ action: "new" | "edit"
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -243,6 +244,49 @@ def _extract_title_from_content(content: Optional[str]) -> Optional[str]:
         if stripped.startswith("# "):
             return stripped[2:].strip()
     return None
+
+
+# ── Duplicate-body guard (B0106 / NR0003) ──────────────────────────────────────
+# The investigation proved the server faithfully writes whatever body the submitter
+# sends; the contamination it surfaced — four separate NR documents in different
+# groups all carrying 0082's 5 KB report body, each with its own correct title —
+# happened in the submission (worker/client) layer, not here. Since that layer is an
+# ad-hoc AI worker assembling a POST from scratch files rather than one fixed client,
+# the durable defense lives at the gate: refuse to let a *substantial* body land
+# byte-identical to an existing document in a *different* group (the contamination
+# signature). Short bodies (approval stubs, one-line memos, boilerplate) legitimately
+# repeat across groups and are exempt, so the guard fires only on the signature.
+
+_DUP_MIN_CHARS_DEFAULT = 1024  # bodies shorter than this never trip the guard
+
+
+def _dup_min_chars() -> int:
+    """Minimum stripped body length for the cross-group duplicate guard (env-tunable).
+
+    Mirrors _content_max()/_dryrun_max(): a policy threshold lives in config, not the
+    DB schema. The observed contamination was 5397 bytes — far above any reasonable
+    threshold — so 1024 leaves a wide margin while exempting approval stubs.
+    """
+    try:
+        return int(os.environ.get("FLOWGATE_INBOX_DUP_MIN_CHARS", _DUP_MIN_CHARS_DEFAULT))
+    except (ValueError, TypeError):
+        return _DUP_MIN_CHARS_DEFAULT
+
+
+def _content_fingerprint(text: Optional[str]) -> Optional[str]:
+    """sha256 hex of a substantial body, else None.
+
+    Returns None for non-str input and for short bodies (< _dup_min_chars stripped
+    chars): approval stubs ("조사지시 가 승인되었습니다."), short memos and shared
+    boilerplate legitimately repeat across groups and must never trip the cross-group
+    duplicate guard. The contamination this catches is a full report copied verbatim,
+    always well above the threshold.
+    """
+    if not isinstance(text, str):
+        return None
+    if len(text.strip()) < _dup_min_chars():
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _fail(status: int, message: str, help_url: str = "https://example.com/api/v1/help") -> JSONResponse:
@@ -810,6 +854,37 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
         if not os.path.isfile(doc_path):
             return _fail(422, f"doc_path file does not exist: {doc_path}")
 
+    # ── Step 5.5: Duplicate-body guard (B0106 / NR0003) ──────────────────────────
+    # Refuse a substantial body that is byte-identical to an existing document in a
+    # *different* group — the submission-layer contamination signature (correct title,
+    # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
+    # returned before the dry-run short-circuit, exactly like the other Step 5 checks
+    # (L0007: failures never reach the dry-run path). fingerprint is reused at Step 7
+    # to persist the body's hash into meta, making the guard effective going forward.
+    # Fail-open on any read/lookup error — the guard must never 500 a real submission.
+    fingerprint: Optional[str] = None
+    try:
+        body_for_fp = (
+            pathlib.Path(doc_path).read_text(encoding="utf-8")
+            if doc_path is not None
+            else content
+        )
+        fingerprint = _content_fingerprint(body_for_fp)
+        if fingerprint is not None:
+            twin = db_docs.find_by_content_fingerprint(
+                fingerprint, exclude_group_id=group["group_id"]
+            )
+            if twin is not None:
+                return _fail(
+                    409,
+                    "Duplicate body: this content is byte-identical to "
+                    f"{twin['doc_id']} in another group. The submitted body looks like "
+                    "stale/reused content (correct title, wrong body). Re-send with this "
+                    "document's own content.",
+                )
+    except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real submission
+        fingerprint = None  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
     # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
@@ -817,6 +892,8 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
     if doc_path is not None:
         new_checks.append("doc_path")
+    if fingerprint is not None:
+        new_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {
         "action": "new",
         "doc_id": None,
@@ -866,8 +943,17 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
 
     # ── Step 7: DB registration ──────────────────────────────────────────────────────
     now = now_iso()
-    # D022 §2-3: related_doc_ids → meta JSON
-    meta_value = json.dumps({"related_doc_ids": related_doc_ids}) if related_doc_ids else None
+    # D022 §2-3: related_doc_ids → meta JSON. B0106: also persist the body fingerprint
+    # ("content_sha256") so a later cross-group duplicate submission can be detected by
+    # find_by_content_fingerprint. Insertion order keeps the value a stable substring
+    # ('"content_sha256": "<hash>"') regardless of related_doc_ids, which the LIKE match
+    # relies on (no schema migration; dialect-portable).
+    meta_payload: dict = {}
+    if related_doc_ids:
+        meta_payload["related_doc_ids"] = related_doc_ids
+    if fingerprint is not None:
+        meta_payload["content_sha256"] = fingerprint
+    meta_value = json.dumps(meta_payload) if meta_payload else None
     try:
         db_docs.create({
             "doc_id": canonical_doc_id,

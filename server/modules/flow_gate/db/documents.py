@@ -49,6 +49,32 @@ def list_documents(
     return store._fetch_all(sql, params)
 
 
+def find_by_content_fingerprint(
+    content_sha256: str, exclude_group_id: Optional[str] = None
+) -> Optional[dict]:
+    """Return one document whose body fingerprint matches, optionally excluding a group.
+
+    Backs the inbox duplicate-body guard (B0106 / NR0003): a substantial body
+    byte-identical to an existing document in a *different* group is the
+    submission-layer contamination signature (correct title, stale/reused body).
+
+    The fingerprint is stored inside the meta JSON ("content_sha256") rather than a
+    dedicated column, so this matches a stable substring with LIKE — no schema
+    migration and dialect-portable (the same literal lands in sqlite/mysql/postgres).
+    Returns the earliest-created match so the guard's error names the original.
+    """
+    if not content_sha256:
+        return None
+    needle = f'"content_sha256": "{content_sha256}"'
+    sql = "SELECT * FROM documents WHERE meta LIKE ?"
+    params: list = [f"%{needle}%"]
+    if exclude_group_id is not None:
+        sql += " AND group_id != ?"
+        params.append(exclude_group_id)
+    sql += " ORDER BY created_at ASC LIMIT 1"
+    return get_store()._fetch_one(sql, params)
+
+
 def create(data: dict[str, Any]) -> dict:
     store = get_store()
     now = now_iso()
