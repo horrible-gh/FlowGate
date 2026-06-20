@@ -876,24 +876,36 @@ def test_d030_row3_r_head_in_progress_not_stranded(monkeypatch):
     assert parsed["workflow_head_status"] == "in_progress"
 
 
-def test_d030_row4_m_auto_complete_is_never_head(monkeypatch):
-    """[D030 #4] M is an auto-complete type → never the actionable head.
+def test_d030_row4_pending_m_is_create_head_realized_m_never_head(monkeypatch):
+    """[D030 #4, revised by B0001 / group 0105] The M-never-head invariant applies to a
+    *realized* (already-created, auto-approved) memo — it must not re-surface as the head.
+    It does NOT apply to a *pending* (not-yet-created) M slot: that is an actionable
+    'create next document' step and must surface as the head, so the action bar offers
+    [create document] rather than collapsing to the AC final-approval gate.
 
-    M (AUTO_COMPLETE_TYPES = {"M", "CH"}) is excluded from head resolution as an invariant
-    guard — it never surfaces as the workflow head. A sequence whose only slot is M has no
-    actionable document head; the remaining action is final approval, so the head resolves
-    to AC/pending (M042 / group 0104), NOT to M. The M-never-head invariant is preserved.
+    B0001 reported the old behavior (pending M → AC) as a bug: "if the last step is an
+    auto-approve type (memo/chat), final approval shows instead of document creation".
+    The fix aligns _parse_doc_workflow with the SSOT workflow_sequences.get_effective_head,
+    which never type-filters unrealized slots.
     """
-    parsed = _parse_r_doc(
+    # (a) pending M (not yet created) -> head = M (create), NOT AC.
+    parsed_pending = _parse_r_doc(
         monkeypatch,
         seq_items=[{"type": "M", "status": "pending"}],
         workflow_steps_str='["M"]',
     )
+    assert parsed_pending["workflow_head_status"] == "pending"
+    assert parsed_pending.get("workflow_head_type") == "M"
 
-    # M never becomes the head; the final-approval gate (AC) does.
-    assert parsed.get("workflow_head_type") != "M"
-    assert parsed["workflow_head_status"] == "pending"
-    assert parsed.get("workflow_head_type") == "AC"
+    # (b) realized + approved M -> no actionable document step remains; the remaining
+    #     action is final approval, so head = AC/pending (invariant preserved).
+    parsed_done = _parse_r_doc(
+        monkeypatch,
+        seq_items=[{"type": "M", "status": "done"}],
+        workflow_steps_str='["M"]',
+    )
+    assert parsed_done["workflow_head_status"] == "pending"
+    assert parsed_done.get("workflow_head_type") == "AC"
 
 
 def test_d030_row5_q_answered_next_pending(monkeypatch):

@@ -523,9 +523,12 @@ def test_head_type_filled_for_pending_with_unrealized_step(monkeypatch):
     assert parsed.get("workflow_head_doc_id") is None
 
 
-def test_head_type_skips_m_in_sequence_when_picking_first_unrealized(monkeypatch):
-    """T831: M is in seq but in NON_HEAD_TYPES -- skipped during head_type scan.
-    First non-M unrealized step (DS) is chosen as head_type."""
+def test_head_type_pending_m_is_head_not_skipped(monkeypatch):
+    """B0001 (group 0105): a PENDING (not-yet-created) auto-approve slot (M) is an
+    actionable 'create next document' step and must surface as the head, matching the
+    SSOT workflow_sequences.get_effective_head (which does not type-filter unrealized
+    slots). Previously (T831) the pending M was skipped to DS, diverging the action-bar
+    head from the slot create_next_empty / worker inbox actually advance to."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
@@ -546,7 +549,36 @@ def test_head_type_skips_m_in_sequence_when_picking_first_unrealized(monkeypatch
     })
 
     assert parsed["workflow_head_status"] == "pending"
-    assert parsed["workflow_head_type"] == "DS"
+    assert parsed["workflow_head_type"] == "M"
+
+
+def test_head_type_pending_memo_tail_offers_create_not_final_approval(monkeypatch):
+    """B0001 (group 0105) core repro: seq=[R(realized), M(pending)]. The only remaining
+    slot is a memo that has not been created yet -> head must be M ([create document]),
+    NOT the synthetic AC final-approval gate. Was head_type='AC' before the fix."""
+    GROUP_ID = "G001"
+    _list_docs_patch(monkeypatch, {GROUP_ID: [
+        {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
+    ]})
+    _seq_patch(monkeypatch, [
+        {"type": "R", "result_doc_id": "R001",
+         "result_doc_review_status": "wf_in_progress", "sort_order": 0},
+        {"type": "M", "result_doc_id": None, "sort_order": 1},
+    ], r_doc_id="R001")
+
+    parsed = document_routes._parse_doc_workflow({
+        "doc_id": "R001",
+        "type_code": "R",
+        "project_id": "P001",
+        "group_id": GROUP_ID,
+        "doc_review_status": "wf_in_progress",
+        "workflow_steps": None,
+        "rejection_history": None,
+    })
+
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed["workflow_head_type"] == "M"
+    assert parsed["next_step_exists"] is True
 
 
 def test_head_final_approval_gate_when_only_m_approved(monkeypatch):
