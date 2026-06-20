@@ -378,7 +378,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -426,7 +426,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -456,7 +456,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -499,7 +499,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -525,11 +525,11 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.mode).toBe('next')
     expect(result.nextStepIndex).toBe(2)
     expect(result.stepStates[1]).toEqual(ss('M', 'done'))
-    expect(result.stepStates[2]).toEqual(ss('DS', 'highlight'))
+    expect(result.stepStates[2]).toEqual(ss('DS', 'current'))
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -554,7 +554,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('DS', 'done'),
-      ss('D', 'highlight'),
+      ss('D', 'current'),
       ss('AC', 'future'),
     ])
   })
@@ -575,7 +575,7 @@ describe('resolveWorkflowViewState — stepStates v2 regression', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('DS', 'done'),
-      ss('D', 'highlight'),
+      ss('D', 'current'),
       ss('AC', 'future'),
     ])
   })
@@ -624,7 +624,7 @@ describe('resolveWorkflowViewState — M-tab partial-progress (T855)', () => {
     expect(result.stepStates).toEqual([
       ss('R', 'done'),
       ss('M', 'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D', 'future'),
       ss('T', 'future'),
       ss('TR', 'future'),
@@ -712,7 +712,7 @@ describe('resolveWorkflowViewState — T-tab partial-progress (T856)', () => {
       ss('M', 'done'),
       ss('DS', 'done'),
       ss('D', 'done'),
-      ss('T', 'highlight'),
+      ss('T', 'current'),
       ss('TR', 'future'),
     ])
   })
@@ -737,7 +737,7 @@ describe('resolveWorkflowViewState — T-tab partial-progress (T856)', () => {
       ss('DS', 'done'),
       ss('D', 'done'),
       ss('T', 'done'),
-      ss('TR', 'highlight'),
+      ss('TR', 'current'),
     ])
   })
 
@@ -763,7 +763,7 @@ describe('resolveWorkflowViewState — T-tab partial-progress (T856)', () => {
       ss('M', 'done'),
       ss('DS', 'done'),
       ss('D', 'done'),
-      ss('T', 'highlight'),
+      ss('T', 'current'),
     ])
   })
 
@@ -824,7 +824,7 @@ describe('resolveWorkflowViewState — pending head type from server (T860)', ()
     expect(result.nextStepIndex).toBe(1)
     expect(result.stepStates).toEqual([
       ss('M',  'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D',  'future'),
       ss('T',  'future'),
       ss('TR', 'future'),
@@ -849,7 +849,7 @@ describe('resolveWorkflowViewState — pending head type from server (T860)', ()
     expect(result.nextStepIndex).toBe(1)
     expect(result.stepStates).toEqual([
       ss('M',  'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
     ])
   })
 
@@ -894,7 +894,7 @@ describe('resolveWorkflowViewState — pending head type from server (T860)', ()
     expect(result.headDocId).toBeNull()
     expect(result.nextStepIndex).toBe(0)
     expect(result.stepStates).toEqual([
-      ss('D', 'highlight'),
+      ss('D', 'current'),
       ss('T', 'future'),
     ])
   })
@@ -909,7 +909,7 @@ describe('resolveWorkflowViewState — cross-type partial-progress consistency (
   // Regression guard: any tab branch accidentally switching to allFutureSS or allDoneSS diverges here.
   const step2SS = [
     ss('M',  'done'),
-    ss('DS', 'highlight'),
+    ss('DS', 'current'),
     ss('D',  'future'),
     ss('T',  'future'),
     ss('TR', 'future'),
@@ -935,7 +935,7 @@ describe('resolveWorkflowViewState — cross-type partial-progress consistency (
   const step3SS = [
     ss('M',  'done'),
     ss('DS', 'done'),
-    ss('D',  'highlight'),
+    ss('D',  'current'),
     ss('T',  'future'),
     ss('TR', 'future'),
   ]
@@ -1075,7 +1075,7 @@ describe('resolveWorkflowViewState — 미결정 M-doc 현재 단계 강조 (T86
     expect(result.nextStepIndex).toBe(1)
     expect(result.stepStates).toEqual([
       ss('R',  'done'),
-      ss('M',  'highlight'),
+      ss('M',  'current'),
       ss('DS', 'future'),
       ss('D',  'future'),
       ss('T',  'future'),
@@ -1099,7 +1099,7 @@ describe('resolveWorkflowViewState — 미결정 M-doc 현재 단계 강조 (T86
     expect(result.canNextAction).toBe(true)
     expect(result.highlightStepCode).toBe('M')
     expect(result.nextStepIndex).toBe(1)
-    expect(result.stepStates[1]).toEqual(ss('M', 'highlight'))
+    expect(result.stepStates[1]).toEqual(ss('M', 'current'))
   })
 
   // T869-S3: M tab + tabReviewStatus=null (wfDecided=false for R) -> mode=next, not workflow.
@@ -1213,7 +1213,7 @@ describe('resolveWorkflowViewState — M-tab 액션 제외 (T867)', () => {
     expect(result.stepStates).toEqual([
       ss('R',  'done'),
       ss('M',  'done'),
-      ss('DS', 'highlight'),
+      ss('DS', 'current'),
       ss('D',  'future'),
       ss('T',  'future'),
     ])
@@ -1354,7 +1354,7 @@ describe('resolveWorkflowViewState — rejected head cell 강조 (T872)', () => 
   // T872-S3: [feedback_head_viewed_nullcoalesce_trap] — headDocReviewStatus null / undefined →
   // Do not enter the rejected branch: after ?? null normalization, null === 'rejected' is false -> mode=next.
   // Verify that undefined is normalized identically at the null-coalescing boundary.
-  it('T872-S3: [feedback_head_viewed_nullcoalesce_trap] headDocReviewStatus=null/undefined → rejected 분기 미진입, mode=next, head cell visual=highlight', () => {
+  it('T872-S3: [feedback_head_viewed_nullcoalesce_trap] headDocReviewStatus=null/undefined → rejected 분기 미진입, mode=next, head cell visual=current', () => {
     // null: explicit null does not trigger rejected detection.
     const resultNull = s({
       tabTypeCode: 'R',
@@ -1367,8 +1367,8 @@ describe('resolveWorkflowViewState — rejected head cell 강조 (T872)', () => 
     expect(resultNull.mode).not.toBe('rejected')
     expect(resultNull.mode).toBe('next')
     const headCellNull = resultNull.stepStates.find(st => st.code === 'DS')!
-    expect(headCellNull.visual).toBe('highlight')
-    expect(headCellNull.className).toBe('wf-next-action dip-step-clickable dip-step-active')
+    expect(headCellNull.visual).toBe('current')
+    expect(headCellNull.className).toBe('current')
 
     // undefined: the ?? null boundary must treat undefined exactly like null.
     const resultUndef = s({
@@ -1382,7 +1382,7 @@ describe('resolveWorkflowViewState — rejected head cell 강조 (T872)', () => 
     expect(resultUndef.mode).not.toBe('rejected')
     expect(resultUndef.mode).toBe('next')
     const headCellUndef = resultUndef.stepStates.find(st => st.code === 'DS')!
-    expect(headCellUndef.visual).toBe('highlight')
-    expect(headCellUndef.className).toBe('wf-next-action dip-step-clickable dip-step-active')
+    expect(headCellUndef.visual).toBe('current')
+    expect(headCellUndef.className).toBe('current')
   })
 })

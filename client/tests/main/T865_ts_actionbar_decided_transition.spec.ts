@@ -90,7 +90,7 @@ describe('T865-S1 — R undecided: mode=workflow, [Decide Workflow] only', () =>
 // Entry condition after transition: R tab, tabReviewStatus='wf_in_progress', headStatus=pending.
 // Expected: mode flips from 'workflow' to 'next', canNextAction=true,
 //           [Next step] button enabled, [Decide Workflow] absent.
-// D030 §4 #2. stepStates: steps before headIndex → done, head → highlight, rest → future.
+// D030 §4 #2. stepStates: steps before headIndex → done, head → current, rest → future.
 
 describe('T865-S2 — undecided → decided: mode workflow → next, [Next step] enabled', () => {
   it('pure: before (null) → mode=workflow; after (wf_in_progress + head pending) → mode=next, canNextAction=true', () => {
@@ -106,7 +106,7 @@ describe('T865-S2 — undecided → decided: mode workflow → next, [Next step]
     expect(after.nextStepActive).toBe(true)
   })
 
-  it('pure: decided → stepStates has highlight at headIndex, not all future', () => {
+  it('pure: decided → stepStates marks the head (current) at headIndex, not all future', () => {
     const result = resolve({
       tabTypeCode: 'R',
       tabReviewStatus: 'wf_in_progress',
@@ -115,8 +115,8 @@ describe('T865-S2 — undecided → decided: mode workflow → next, [Next step]
       headStatus: 'pending',
     })
     const dsState = result.stepStates.find(s => s.code === 'DS')
-    expect(dsState?.visual).toBe('highlight')
-    expect(dsState?.className).toContain('wf-next-action')
+    expect(dsState?.visual).toBe('current')
+    expect(dsState?.className).toBe('current')
     const mState = result.stepStates.find(s => s.code === 'M')
     expect(mState?.visual).toBe('done')
   })
@@ -200,7 +200,7 @@ describe('T865-S4 — decided + head in_progress: [Next step] disabled (guard), 
     expect(result.headDocId).toBe('proj.grp.0001.0003-D')
   })
 
-  it('pure: head=in_progress → headStep visual=highlight (still shown as active in strip)', () => {
+  it('pure: head=in_progress → headStep visual=current (shown as active/blue in strip)', () => {
     const result = resolve({
       tabTypeCode: 'R',
       tabReviewStatus: 'wf_in_progress',
@@ -209,8 +209,8 @@ describe('T865-S4 — decided + head in_progress: [Next step] disabled (guard), 
       headStatus: 'in_progress',
     })
     const dState = result.stepStates.find(s => s.code === 'D')
-    expect(dState?.visual).toBe('highlight')
-    expect(dState?.className).toContain('wf-next-action')
+    expect(dState?.visual).toBe('current')
+    expect(dState?.className).toBe('current')
   })
 
   it('component: mode=next, canNextAction=false → next button present (opens dropdown); proceed item disabled, not hidden (R0001 ③-a)', async () => {

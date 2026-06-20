@@ -167,9 +167,14 @@ function buildStepStates(
       nextStepIndex: null,
     }
   }
+  // Non-rejected head paints 'current' (blue) — the head is the doc being reported/
+  // acted on, not a far-off "go here" target. 5be8bee had switched this to 'highlight'
+  // (warning yellow, wf-next-action), turning every workflow head yellow; the product
+  // owner flagged the yellow next-action as a regression (group 0104). Restore the
+  // pre-5be8bee blue. (DocWorkflow/DocInfoPanel click handlers accept both visuals.)
   const headVisual: StepVisual = headDocReviewStatus === 'rejected'
     ? 'rejected'
-    : 'highlight'
+    : 'current'
   const stepStates: StepState[] = workflowSteps.map((code, idx) => {
     const visual = (idx < headIndex ? 'done' : idx === headIndex ? headVisual : 'future') as StepVisual
     return { code, visual, className: STEP_CLASS[visual], iconClass: STEP_ICON[visual] }
