@@ -478,6 +478,17 @@ def _parse_doc_workflow(doc: dict) -> dict:
             if c.get("doc_id")
         }
 
+        # B0001 (group 0105): a *pending* (not-yet-created) auto-approve slot (M / CH)
+        # IS an actionable "create next document" step — it just auto-approves on
+        # creation. Excluding it from `pending` made the resolver return None when the
+        # only remaining slot was a memo/chat, which collapsed the head to the synthetic
+        # AC gate (action bar showed [final approval] instead of [create document]).
+        # The canonical SSOT (workflow_sequences.get_effective_head) does NOT type-filter
+        # the `result_doc_id IS NULL` branch, so the action-bar head diverged from the
+        # head that create_next_empty / worker inbox actually advance to. Align them:
+        # keep excluding REALIZED auto-approve docs (T818 invariant — an existing memo
+        # never re-surfaces as head) but allow PENDING M / CH as head candidates.
+        pending_non_head = NON_HEAD_TYPES - AUTO_COMPLETE_TYPES  # roots + Q only
         linked: list[tuple[dict, int]] = []
         pending: list[tuple[dict, int]] = []
         for index, item in enumerate(items):
@@ -489,7 +500,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                     result_review = review_by_doc_id.get(result_doc_id)
                 if item_type not in NON_HEAD_TYPES and result_review not in APPROVED_STATUSES:
                     linked.append((item, index))
-            elif item_type not in NON_HEAD_TYPES:
+            elif item_type not in pending_non_head:
                 pending.append((item, index))
 
         sort_key = lambda pair: (pair[0].get("sort_order", pair[1]), pair[1])
