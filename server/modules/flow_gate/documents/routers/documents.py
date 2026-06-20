@@ -171,6 +171,110 @@ def _document_file_path(doc: dict) -> Path:
     return resolved
 
 
+def _short_doc_code(doc: dict) -> str:
+    """Derive the short ``{seq}-{type}`` doc_code from a document's full doc_id.
+
+    Mirrors inbox_routes._resolve_storage_path: strip the group_id prefix so the
+    recomputed canonical filename matches the rest of the storage layout.
+    """
+    doc_id = doc.get("doc_id") or ""
+    group_id = doc.get("group_id") or ""
+    if group_id and (doc_id.startswith(group_id + ".") or doc_id.startswith(group_id + "-")):
+        return doc_id[len(group_id) + 1:]
+    return doc_id
+
+
+def _regenerate_target_path(doc: dict) -> Path:
+    """Resolve the path a regenerated file should be written to (R0001 / NR0003).
+
+    Unlike :func:`_document_file_path`, this never raises and never requires the file
+    to already exist — the whole point is that the file is *missing*. When ``file_path``
+    is present it reconstructs the originally-intended absolute location (so recovery
+    lands where the document expects it); when ``file_path`` is empty or escapes the
+    storage jail it recomputes the canonical D013 §5 path from DB metadata.
+    """
+    raw = (doc.get("file_path") or "").strip()
+    project_id = doc.get("project_id")
+    branch = (doc.get("branch") or "main") or "main"
+    if raw:
+        resolved = storage_paths.resolve_storage_path(raw, project_id, branch=branch)
+        if resolved is not None:
+            return resolved  # file unexpectedly exists / branch-drift hit
+        root = get_storage_root(project_id).resolve()
+        cand = (
+            Path(raw) if (Path(raw).is_absolute() or _re.match(r"^[A-Za-z]:", raw))
+            else root / raw
+        ).resolve(strict=False)
+        if storage_paths._within_allowed_roots(cand, project_id):
+            return cand
+        # escaping path → fall through to a recomputed jailed path
+    return storage_paths.document_path(
+        project_id=project_id,
+        group_code=doc.get("group_id") or "",
+        doc_code=_short_doc_code(doc),
+        filename="document.md",
+        module=doc.get("module") or "none",
+        branch=branch,
+    )
+
+
+def _latest_revision_body(doc_id: str, project_id: Optional[str]) -> Optional[str]:
+    """Return the body of the newest readable revision backup, or None (NR0003 §3a).
+
+    On every inbox edit the prior file is copied to ``revisions/{doc_id}.r{n}.md`` and
+    recorded in ``document_revisions``. When the live file is lost we can restore the
+    last-saved body from the newest backup that still resolves to a real file. Returns
+    None when there is no backup (e.g. revision_no=0 / pruned by delete_old).
+    """
+    from modules.flow_gate.db import document_revisions as _db_rev
+    try:
+        revisions = _db_rev.list_by_doc(doc_id)  # newest first (revision_no DESC)
+    except Exception:
+        return None
+    for row in revisions:
+        backup_path = (row.get("backup_path") or "").strip()
+        if not backup_path:
+            continue
+        resolved = storage_paths.resolve_storage_path(backup_path, project_id)
+        if resolved is not None and resolved.is_file():
+            try:
+                return resolved.read_text(encoding="utf-8")
+            except OSError:
+                continue
+    return None
+
+
+def _broadcast_document_refresh(doc: dict) -> None:
+    """Best-effort SSE so an open MdViewer reloads after regeneration (NR0003 §4).
+
+    Mirrors the append_conversation_turn broadcast; failures are swallowed so a
+    successful regeneration is never undone by an SSE hiccup.
+    """
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            FlowEvent,
+            broadcast_event_threadsafe,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        broadcast_event_threadsafe(FlowEvent(
+            event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
+            payload={
+                "operation": "updated",
+                "doc_id": doc.get("doc_id"),
+                "type": doc.get("type_code"),
+                "title": doc.get("title"),
+                "status": doc.get("status"),
+            },
+            audience="*",
+            project=doc.get("project_id"),
+            group_id=doc.get("group_id"),
+            doc_id=doc.get("doc_id"),
+        ))
+    except Exception as _sse_exc:  # pragma: no cover - defensive
+        _log.warning("[regenerate] SSE publish failed (ignored): %s", _sse_exc)
+
+
 # ── Request/response models ──────────────────────────────────────────────────────────
 
 class DocumentCreate(BaseModel):
@@ -1939,6 +2043,79 @@ def update_document_content(
         actor_user_id=current_user["user_id"],
     )
     return {"data": updated, "content": body.content}
+
+
+@router.post("/{doc_id}/regenerate")
+@require_permission("perm_document_update")
+def regenerate_document_file(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Recreate the Markdown file for a document whose stored file is missing (R0001).
+
+    This is a *recovery* operation, not a content edit, so it deliberately does NOT
+    apply the editable/final-approval gate (NR0003 §5) — a missing file must be
+    recoverable regardless of workflow state (R0001 itself is ``closed``). Safety
+    instead comes from two guards: the document row must exist, and an existing file
+    is never clobbered (409).
+
+    Recovery source priority (NR0003 §3): the newest readable revision backup (restores
+    the last-saved body) → else a frontmatter stub synthesized from DB metadata (always
+    works, but the body is lost — surfaced as ``body_lost: true``).
+    """
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+
+    target = _regenerate_target_path(doc)
+    if target.is_file():
+        # The file is present — there is nothing to recover, and overwriting it would
+        # destroy good data. Treat as a no-op conflict (NR0003 §7-3).
+        raise HTTPException(
+            status_code=409,
+            detail="Document file already exists; nothing to regenerate.",
+        )
+
+    project_id = doc.get("project_id")
+    body = _latest_revision_body(doc_id, project_id)
+    if body is not None:
+        restored_from = "revision"
+    else:
+        restored_from = "metadata"
+        body = _build_next_empty_content(
+            project_id=project_id,
+            module=doc.get("module") or "none",
+            group_id=doc.get("group_id") or "",
+            type_code=doc.get("type_code") or "",
+            doc_code=_short_doc_code(doc),
+            title=doc.get("title") or "",
+            target_id=doc.get("target_id") or "",
+            next_type="",
+        )
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Storage error: {exc}") from exc
+
+    # L0054.0002: persist the path relative so recovery never re-introduces an
+    # absolute path (B0001 regression).
+    updated = document_service.update_document(
+        doc_id,
+        {"file_path": storage_paths.to_storage_relative(target, project_id)},
+        actor_user_id=current_user["user_id"],
+    )
+
+    _broadcast_document_refresh(doc)
+
+    return {
+        "data": updated,
+        "restored_from": restored_from,
+        "body_lost": restored_from == "metadata",
+        "content": body,
+    }
 
 
 @router.patch("/{doc_id}/root-type")
