@@ -201,6 +201,70 @@ def test_convert_rewrites_inbound_references(env):
     assert _query(db_path, "SELECT doc_ref FROM tokens WHERE doc_ref=?", [old_id]) == []
 
 
+def test_convert_succeeds_with_created_event_under_immediate_fk(env):
+    """Reproduces B0108: every document keeps a `created` event referencing it, so
+    the root is never truly free of inbound FK rows. The portable converter (candidate
+    b) drops the in-place rename and the SQLite-only defer pragma, so this test runs
+    under IMMEDIATE foreign-key checking — exactly how PostgreSQL/MySQL behave, where
+    the old in-place rewrite failed with `events_doc_id_fkey ... still referenced`.
+    """
+    from modules.flow_gate.documents import document_service as svc
+
+    _store, db_path, tmp_path = env
+    root = _make_root(tmp_path, "B")
+    old_id = root["doc_id"]
+    # The unavoidable `created` event that always exists in production.
+    _store._execute(
+        "INSERT INTO events (doc_id, event_type, created_at) "
+        "VALUES (?, 'created', datetime('now'))",
+        [old_id],
+    )
+
+    result = svc.convert_root_document_type(old_id, "R", actor_user_id="usr_admin")
+    new_id = "flowgate.default.0066.0001-R"
+
+    assert result["doc_id"] == new_id
+    # The created event followed the rename; nothing dangles on the old id.
+    assert _query(db_path, "SELECT 1 FROM events WHERE doc_id=?", [new_id])
+    assert _query(db_path, "SELECT 1 FROM events WHERE doc_id=?", [old_id]) == []
+    assert _query(db_path, "SELECT 1 FROM documents WHERE doc_id=?", [old_id]) == []
+
+
+def test_convert_remaps_integer_document_id_references(env):
+    """workflow_events.document_id is a FK to documents.id (integer). Candidate (b)
+    inserts a fresh row with a NEW SERIAL id and drops the old one, so this integer
+    reference must be repointed too or the DELETE of the old row would fail."""
+    from modules.flow_gate.documents import document_service as svc
+
+    _store, db_path, tmp_path = env
+    root = _make_root(tmp_path, "R")
+    old_id = root["doc_id"]
+    old_row = _query(db_path, "SELECT id FROM documents WHERE doc_id=?", [old_id])
+    old_int_id = old_row[0]["id"]
+
+    # A workflow_events row points at the root by its integer documents.id.
+    _store._execute(
+        "INSERT INTO workflow_events (event_type, project_id, group_id, document_id, "
+        "actor_user_id, created_at) "
+        "VALUES ('state_change','flowgate','flowgate.default.0066',?, 'usr_admin', datetime('now'))",
+        [old_int_id],
+    )
+
+    svc.convert_root_document_type(old_id, "B", actor_user_id="usr_admin")
+    new_id = "flowgate.default.0066.0001-B"
+    new_int_id = _query(db_path, "SELECT id FROM documents WHERE doc_id=?", [new_id])[0]["id"]
+
+    # The integer reference was repointed to the new row; none dangle on the old id.
+    assert new_int_id != old_int_id
+    assert _query(
+        db_path, "SELECT 1 FROM workflow_events WHERE document_id=? AND event_type='state_change'",
+        [new_int_id],
+    )
+    assert _query(
+        db_path, "SELECT 1 FROM workflow_events WHERE document_id=?", [old_int_id],
+    ) == []
+
+
 def test_convert_is_idempotent_for_same_type(env):
     from modules.flow_gate.documents import document_service as svc
 

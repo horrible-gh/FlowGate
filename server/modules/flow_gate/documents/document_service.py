@@ -367,6 +367,15 @@ _DOC_REFERENCE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("remote_tool_grant", "report_doc_id"),
 )
 
+# Columns that reference the documents *integer* primary key (documents.id) rather
+# than the textual doc_id. The portable converter (NR0108.0003 §7 candidate b)
+# inserts a fresh identity row — which gets a new SERIAL id — and drops the old one,
+# so these must be repointed old_id → new_id too. (workflow_events.document_id is the
+# only such FK in the schema; doc_id-based references live in _DOC_REFERENCE_COLUMNS.)
+_DOC_REFERENCE_ID_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("workflow_events", "document_id"),
+)
+
 
 def compute_converted_doc_id(doc_id: str, new_type: str) -> str:
     """Return the doc_id with its trailing document-code type suffix swapped.
@@ -481,28 +490,30 @@ def convert_root_document_type(
     new_file_path = _rename_document_file(doc, old_code, new_code)
     new_filename = _converted_filename(doc.get("filename"), old_code, new_code)
 
-    from modules.flow_gate.db import dialect as _dialect
+    old_int_id = doc.get("id")
 
     try:
         with store.transaction():
-            # Defer FK validation to COMMIT so the doc_id rename and its inbound
-            # references can be updated in any order (SQLite-only pragma; other
-            # backends rely on the pristine-root gate leaving no referencing rows).
-            # The pragma only takes effect inside an open transaction, and this
-            # adapter does not emit an explicit BEGIN, so open one first.
-            if store.dialect == _dialect.SQLITE:
-                try:
-                    store._execute("BEGIN")
-                    store._execute("PRAGMA defer_foreign_keys = ON")
-                except Exception:
-                    pass
-            # Rewrite the identity row itself.
-            store._execute(
-                "UPDATE documents SET doc_id = ?, type_code = ?, file_path = ?, "
-                "filename = ?, updated_at = ? WHERE doc_id = ?",
-                [new_doc_id, new_type, new_file_path, new_filename, now_iso(), doc_id],
-            )
-            # Rewrite every inbound / self reference to the old id.
+            # Portable identity rewrite (NR0108.0003 §7 candidate b). An in-place
+            # UPDATE of documents.doc_id is impossible under IMMEDIATE foreign keys
+            # (PostgreSQL/MySQL): the rename momentarily diverges from the rows that
+            # reference it — and every document keeps at least its `created` event —
+            # so the FK check aborts the transaction (B0108). The earlier SQLite-only
+            # `PRAGMA defer_foreign_keys` masked this on SQLite but had no equivalent
+            # on other backends. Instead create the new identity row FIRST, repoint
+            # every reference to it, then drop the old row: a parent-first ordering
+            # that satisfies IMMEDIATE FKs on every dialect and needs no deferral.
+            new_row = dict(doc)
+            new_row.pop("id", None)  # let the backend assign a fresh SERIAL id
+            new_row["doc_id"] = new_doc_id
+            new_row["type_code"] = new_type
+            new_row["file_path"] = new_file_path
+            new_row["filename"] = new_filename
+            new_row["updated_at"] = now_iso()
+            inserted = db_docs.create(new_row)
+            new_int_id = (inserted or {}).get("id")
+
+            # Repoint every inbound / self reference keyed on the textual doc_id.
             for table, column in _DOC_REFERENCE_COLUMNS:
                 try:
                     store._execute(
@@ -512,6 +523,20 @@ def convert_root_document_type(
                 except Exception:
                     # Table/column absent for this dialect or migration level — skip.
                     continue
+
+            # Repoint references keyed on the integer documents.id (new SERIAL).
+            if old_int_id is not None and new_int_id is not None:
+                for table, column in _DOC_REFERENCE_ID_COLUMNS:
+                    try:
+                        store._execute(
+                            f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+                            [new_int_id, old_int_id],
+                        )
+                    except Exception:
+                        continue
+
+            # Drop the old identity row; nothing references it anymore.
+            store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - defensive: surface as 409, file already moved is best-effort
