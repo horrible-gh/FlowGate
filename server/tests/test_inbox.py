@@ -923,3 +923,117 @@ class TestInboxAuth:
         )
         assert resp.status_code == 401
 
+
+# ── 7. Duplicate-body guard (B0106 / NR0003) ────────────────────────────────
+
+class TestInboxDuplicateBodyGuard:
+    """The submission layer occasionally POSTs a stale/reused body (correct title,
+    wrong body): the investigation found four NR docs in different groups all carrying
+    0082's 5 KB report. The gate must reject a substantial body byte-identical to an
+    existing document in a *different* group, while leaving short/boilerplate bodies
+    (which legitimately repeat) untouched.
+    """
+
+    # A body comfortably above _DUP_MIN_CHARS_DEFAULT (1024), like the 5 KB report.
+    _BIG_BODY = "# Investigation Report\n\n" + ("Root cause analysis line. " * 120)
+    _SHORT_BODY = "조사지시 가 승인되었습니다.\n\nflowgate/flowgate/flowgate"
+
+    def _seed_second_group(self):
+        """Create a second group + its root R doc so a cross-group duplicate is possible.
+
+        Idempotent: the module-scoped DB persists across tests in this class.
+        """
+        from modules.flow_gate.db import groups as db_groups, documents as db_docs
+        if db_groups.get_by_id("testprj-__ALL__-0002") is None:
+            db_groups.create({
+                "group_id": "testprj-__ALL__-0002",
+                "project_id": "testprj",
+                "module": "__ALL__",
+                "title": "Test Group 2",
+            })
+        if db_docs.get_by_id("testprj-__ALL__-0002-R0001") is None:
+            db_docs.create({
+                "doc_id": "testprj-__ALL__-0002-R0001",
+                "project_id": "testprj",
+                "type_code": "R",
+                "seq": 1,
+                "title": "Root Requirement 2",
+                "group_id": "testprj-__ALL__-0002",
+                "module": "__ALL__",
+                "owner_id": "usr_test_001",
+            })
+
+    def _token_for(self, tmp_path, group_id: str, doc_ref: str) -> str:
+        from modules.flow_gate.services import token_service
+        with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+            result = token_service.issue(
+                project="testprj",
+                group_id=group_id,
+                action_scope="new",
+                doc_ref=doc_ref,
+                issued_to="usr_test_001",
+            )
+        return result["raw_token"]
+
+    def _post(self, tmp_path, group: str, doc_ref: str, doc_code: str, content: str):
+        from modules.flow_gate.api import inbox_routes
+        raw = self._token_for(
+            tmp_path, f"testprj-__ALL__-{group}", f"testprj-__ALL__-{group}-{doc_ref}"
+        )
+        with patch(
+            "modules.flow_gate.api.inbox_routes.get_storage_root", return_value=tmp_path,
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.document_path",
+            return_value=tmp_path / "docs" / f"{doc_code}_document.md",
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
+            return_value=doc_code,
+        ), patch(
+            "modules.flow_gate.rbac.permission_service.has_permission", return_value=True,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            return TestClient(app).post(
+                "/api/v1/inbox",
+                json={
+                    "project": "testprj", "module": "__ALL__", "group": group,
+                    "action": "new", "target_id": doc_ref, "doc_type": "NR",
+                    "content": content,
+                },
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+    def test_cross_group_identical_substantial_body_rejected(self, seed_data, tmp_path):
+        """Second group, same big body → 409 naming the original; first one persists its hash."""
+        from modules.flow_gate.db import documents as db_docs
+        self._seed_second_group()
+
+        first = self._post(tmp_path, "0001", "R0001", "NR8101", self._BIG_BODY)
+        assert first.status_code == 201, first.text
+        # The fingerprint is persisted into meta so the guard can match it later.
+        stored = db_docs.get_by_id(first.json()["doc_id"])
+        assert stored["meta"] and "content_sha256" in stored["meta"]
+
+        second = self._post(tmp_path, "0002", "R0001", "NR8201", self._BIG_BODY)
+        assert second.status_code == 409, second.text
+        assert first.json()["doc_id"] in second.json()["error_message"]
+
+    def test_same_group_identical_body_allowed(self, seed_data, tmp_path):
+        """The guard is cross-group only: a duplicate within the same group is not blocked
+        here (same-group dedup is a separate concern; the contamination signature is
+        cross-group)."""
+        a = self._post(tmp_path, "0001", "R0001", "NR8301", self._BIG_BODY + " v-same-group")
+        assert a.status_code == 201, a.text
+        b = self._post(tmp_path, "0001", "R0001", "NR8302", self._BIG_BODY + " v-same-group")
+        assert b.status_code == 201, b.text
+
+    def test_short_boilerplate_body_exempt(self, seed_data, tmp_path):
+        """Short approval-stub bodies repeat legitimately across groups → never blocked."""
+        self._seed_second_group()
+        a = self._post(tmp_path, "0001", "R0001", "NR8401", self._SHORT_BODY)
+        assert a.status_code == 201, a.text
+        b = self._post(tmp_path, "0002", "R0001", "NR8402", self._SHORT_BODY)
+        assert b.status_code == 201, b.text
+
