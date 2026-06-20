@@ -842,6 +842,12 @@
       edit_direction: 'Edit direction',
       toast_direction_saved: 'Direction saved.',
       toast_direction_save_failed: 'Failed to save direction',
+      convert_title: 'Convert document type to {to}',
+      convert_confirm_title: 'Convert document type',
+      convert_confirm_message: 'Convert this document from {from} to {to}. This rewrites the document ID and is only possible before the workflow decision.',
+      convert_confirm_action: 'Convert',
+      toast_converted: 'Document type converted.',
+      toast_convert_failed: 'Failed to convert document type.',
     },
     final_approval: {
       panel_title: 'Final Approval',

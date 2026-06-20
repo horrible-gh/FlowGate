@@ -4,6 +4,19 @@
       <span class="doc-chip" :class="`c-${headerTypeCode}`">
         <i :class="typeIcon"></i> {{ typeLabel }}
       </span>
+      <!-- R↔B root-type conversion (TR0066.0006 — UI for the TR0066.0005 backend endpoint).
+           Shown only on a pristine workflow root (R/B) before the workflow decision; the
+           server enforces the same gate (409) and we surface its message on failure. -->
+      <button
+        v-if="canConvertRootType"
+        class="doc-convert-btn"
+        type="button"
+        :disabled="converting"
+        :title="convertButtonTitle"
+        @click.stop="openConvertConfirm"
+      >
+        <i class="fa-solid fa-right-left"></i> {{ convertTargetType }}
+      </button>
       <span class="doc-id-badge">{{ docFullPath }}</span>
       <span class="doc-status" :class="statusCls">{{ statusLabel }}</span>
       <!-- Mention-copied badge (R0001 group 0015 / NR0003 rev4): shown ONLY when this user has
@@ -96,6 +109,14 @@
     :submitting="deciding"
     @confirmed="onWorkflowConfirmed"
   />
+  <ConfirmModal
+    :visible="showConvertConfirm"
+    :title="t('main.doc_header.convert_confirm_title')"
+    :message="convertConfirmMessage"
+    :confirm-label="t('main.doc_header.convert_confirm_action')"
+    @update:visible="showConvertConfirm = $event"
+    @confirm="doConvertRootType"
+  />
   <ContextMenu v-model:visible="showGroupMenu" :x="menuX" :y="menuY">
     <div class="dgm-cap">{{ t('main.group_actions.menu_caption') }}</div>
     <ContextMenuItem icon="fa-solid fa-circle-info" @click="openGroupInfo">
@@ -148,6 +169,7 @@ import GroupInfoModal from './GroupInfoModal.vue'
 import type { GroupInfoDoc } from './GroupInfoModal.vue'
 import GroupDiscardModal from './GroupDiscardModal.vue'
 import CreateEditGroupModal from './CreateEditGroupModal.vue'
+import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from './common/useToast'
 import { MENTION_COPIED_EVENT, type MentionCopiedDetail } from '../composables/useMentionCopy'
 import type { Tab } from '../stores/tabs'
@@ -612,6 +634,89 @@ function openWorkflowDecisionModal() {
   showWorkflowDecisionModal.value = true
 }
 
+// ── R↔B root-type conversion (TR0066.0006 — UI for the TR0066.0005 backend) ──────────
+// The conversion is allowed ONLY on a pristine workflow root (R or B) before its workflow
+// decision: once decided, a workflow_sequence and child documents reference this root and
+// the server gate rejects the change (409). We mirror that gate for visibility — root type,
+// editable, undisposed group, not yet decided — and still rely on the server as the
+// authority (a 409 from a not-quite-pristine root is surfaced as an error toast).
+const showConvertConfirm = ref(false)
+const converting = ref(false)
+
+const convertTargetType = computed(() => (headerTypeCode.value === 'R' ? 'B' : 'R'))
+const convertTargetLabel = computed(() => docTypeStore.getLabel(convertTargetType.value))
+const currentTypeLabel = computed(() => docTypeStore.getLabel(headerTypeCode.value))
+const convertButtonTitle = computed(() =>
+  t('main.doc_header.convert_title', { to: convertTargetLabel.value }),
+)
+const convertConfirmMessage = computed(() =>
+  t('main.doc_header.convert_confirm_message', {
+    from: currentTypeLabel.value,
+    to: convertTargetLabel.value,
+  }),
+)
+const canConvertRootType = computed(() => {
+  if (!doc.value) return false
+  const tc = headerTypeCode.value
+  if (tc !== 'R' && tc !== 'B') return false
+  if (groupDisposed.value) return false
+  if (!canEditDocument.value) return false
+  // Pristine = no workflow decision yet. _isDecided() is the same two-signal test the
+  // action bar uses (wf_* review status OR a materialized workflow_head_type).
+  if (_isDecided(doc.value)) return false
+  return true
+})
+
+function openConvertConfirm() {
+  if (!canConvertRootType.value) return
+  showConvertConfirm.value = true
+}
+
+async function doConvertRootType() {
+  if (!doc.value || converting.value) return
+  const oldId = doc.value.doc_id
+  const target = convertTargetType.value
+  converting.value = true
+  try {
+    const res = await patchRequest<any>(
+      `/api/v1/documents/${encodeURIComponent(oldId)}/root-type`,
+      { new_type: target },
+    )
+    const newDoc = (res.data as any)?.data ?? res.data
+    showToast(t('main.doc_header.toast_converted'), 'success')
+    if (newDoc?.doc_id && newDoc.doc_id !== oldId) {
+      // The conversion rewrote the identity (…-R ↔ …-B), so the open tab's id is now
+      // stale. Open the new identity (which becomes active) BEFORE dropping the old one
+      // so closeTab's active-fallback never lands on an unrelated tab, then refresh the
+      // sidebar tree so the renamed node appears without a manual reload.
+      const pid = newDoc.project_id ?? doc.value.project_id ?? null
+      tabsStore.openTab({
+        id: newDoc.doc_id,
+        title: newDoc.title ?? doc.value.title,
+        path: '',
+        type: 'md',
+        typeCode: newDoc.type_code ?? target,
+        projectId: pid,
+      })
+      tabsStore.closeTab(oldId)
+      const gid = newDoc.group_id ?? doc.value.group_id
+      if (gid) {
+        if (pid) explorerStore.invalidateProject(pid)
+        window.dispatchEvent(new CustomEvent('fg:group_tree_changed', { detail: { groupId: gid } }))
+      }
+    } else {
+      // Idempotent no-op (server returned the same id, e.g. already the target type) —
+      // just refresh this view in place.
+      await fetchDoc(props.tab.id, { silent: true })
+    }
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? t('main.doc_header.toast_convert_failed')
+    showToast(msg, 'error')
+  } finally {
+    converting.value = false
+  }
+}
+
 // The group tree's doc node label is "[type label]: title" — strip the bracketed
 // type prefix so the modals show just the title.
 function _cleanTitle(label: string): string {
@@ -973,6 +1078,10 @@ defineExpose({
   headDocNumber,
   docTitle,
   nextStepExists,
+  canConvertRootType,
+  convertTargetType,
+  doConvertRootType,
+  openConvertConfirm,
 })
 
 const docTypeStore = useDocTypeStore()
@@ -1087,6 +1196,41 @@ const statusLabel = computed(() => {
 
 .doc-mc-badge i {
   font-size: 0.72rem;
+}
+
+/* R↔B root-type conversion pill (TR0066.0006): compact chip next to the type chip,
+   shown only on a pristine root. The bare target letter (R/B) keeps it locale-free; the
+   tooltip carries the full localized label. */
+.doc-convert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--text-s);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.doc-convert-btn:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-l);
+}
+
+.doc-convert-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.doc-convert-btn i {
+  font-size: 0.68rem;
 }
 
 .doc-title-row {

@@ -842,6 +842,12 @@ export default {
       edit_direction: '方向編集',
       toast_direction_saved: '方向が保存されました。',
       toast_direction_save_failed: '方向の保存に失敗しました',
+      convert_title: '文書タイプを{to}に変換',
+      convert_confirm_title: '文書タイプの変換',
+      convert_confirm_message: 'この文書を{from}から{to}に変換します。文書IDが変更され、ワークフロー決定前のみ可能です。',
+      convert_confirm_action: '変換',
+      toast_converted: '文書タイプを変換しました。',
+      toast_convert_failed: '文書タイプの変換に失敗しました。',
     },
     final_approval: {
       panel_title: '最終承認',

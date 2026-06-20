@@ -842,6 +842,12 @@
       edit_direction: 'Outbox/Inbox 편집',
       toast_direction_saved: '방향이 저장되었습니다.',
       toast_direction_save_failed: '방향 저장 실패',
+      convert_title: '문서 타입을 {to}(으)로 전환',
+      convert_confirm_title: '문서 타입 전환',
+      convert_confirm_message: '이 문서를 {from}에서 {to}(으)로 전환합니다. 문서 ID가 변경되며, 워크플로 결정 전에만 가능합니다.',
+      convert_confirm_action: '전환',
+      toast_converted: '문서 타입이 전환되었습니다.',
+      toast_convert_failed: '문서 타입 전환에 실패했습니다.',
     },
     final_approval: {
       panel_title: '최종 승인',
