@@ -335,10 +335,10 @@ def test_r_workflow_in_progress_slot_guarded(monkeypatch):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_m_single_slot_complete_head_status_done(monkeypatch):
-    """[M-1] Single M slot complete -> sequence done -> workflow_head_status='done'.
-
-    D030 §4.1 #4: for M, if there is no next label, show [Complete].
+def test_m_single_slot_complete_final_approval_gate(monkeypatch):
+    """[M-1 / M042] Single M slot complete -> document steps done, but final approval (AC)
+    not yet performed -> head = AC/pending so the action bar shows [final approval]
+    (group 0104 restore; was 'done' under b39f6b8 which auto-finalized memo workflows).
     """
     parsed = _parse_r_workflow(
         monkeypatch,
@@ -347,8 +347,8 @@ def test_m_single_slot_complete_head_status_done(monkeypatch):
         workflow_steps_str='["M"]',
     )
 
-    assert parsed["workflow_head_status"] == "done"
-    assert parsed.get("workflow_head_type") is None
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed.get("workflow_head_type") == "AC"
 
 
 def test_m_before_next_slot_pending(monkeypatch):
@@ -505,10 +505,13 @@ def test_review_transition_matrix_official_types(
     )
 
 
-def test_sequence_complete_head_status_done_never_null(monkeypatch):
-    """[A-1] When the sequence is complete, workflow_head_status='done' (not null).
+def test_sequence_complete_final_approval_gate_never_null(monkeypatch):
+    """[A-1 / M042] When all document steps are approved but final approval (AC) is not yet
+    done, head = AC/pending (never null) so the action bar shows [final approval].
 
-    feedback_actionbar_always_shows: head_status=None risks a null actionbar.
+    feedback_actionbar_always_shows: head_status=None risks a null actionbar — here it is
+    'pending' with head_type='AC'. (Was 'done'/None under b39f6b8's auto-finalize; the
+    mandatory-AC gate of M042 supersedes the T602 "no synthetic AC" coupling — group 0104.)
     """
     parsed = _parse_r_workflow(
         monkeypatch,
@@ -521,7 +524,7 @@ def test_sequence_complete_head_status_done_never_null(monkeypatch):
         workflow_steps_str='["DS", "T"]',
     )
 
-    assert parsed["workflow_head_status"] == "done", (
-        "workflow_head_status must be 'done' when the sequence is complete (null forbidden)"
+    assert parsed["workflow_head_status"] == "pending", (
+        "head_status must be a non-null actionable value (final-approval gate)"
     )
-    assert parsed.get("workflow_head_type") is None  # no synthetic AC emitted (T602)
+    assert parsed.get("workflow_head_type") == "AC"

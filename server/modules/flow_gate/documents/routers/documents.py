@@ -548,10 +548,24 @@ def _parse_doc_workflow(doc: dict) -> dict:
                     and c.get("doc_review_status") == "wf_done"
                     for c in candidates
                 )
-                if root_done:
+                # Mandatory final-approval (AC) gate (M042 / group 0104): every workflow ends
+                # in an explicit final approval, even memo / auto-approved instruction chains.
+                # When all document steps are realized + approved but final approval has NOT
+                # happened yet, keep the head at AC/pending so the action bar surfaces the
+                # [final approval] control. Only report 'done' once final approval is actually
+                # performed — the root is finalized (wf_done) or an approved AC document exists.
+                # (b39f6b8 had collapsed this to always-'done', auto-finalizing the workflow
+                #  and removing the final-approval action — the regression in group 0104.)
+                ac_done = any(
+                    c.get("type_code") == "AC"
+                    and c.get("doc_review_status") in APPROVED_STATUSES
+                    for c in candidates
+                )
+                if root_done or ac_done:
                     out["workflow_head_status"] = "done"
                 else:
-                    out["workflow_head_status"] = "done"
+                    out["workflow_head_type"] = "AC"
+                    out["workflow_head_status"] = "pending"
         else:
             out["workflow_head_status"] = "done"
 
@@ -595,8 +609,20 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 self_idx = i
                 break
         out["workflow_self_index"] = self_idx
-        step_count = len([it for it in seq_items if it.get("type")])
-        out["next_step_exists"] = head_idx is not None and head_idx < step_count - 1
+        # next_step_exists = there IS a head step to advance to — NOT "a step after the
+        # head". A present head_idx already means an advanceable step (the next doc to
+        # create/approve, or the synthetic AC final-approval head whose head_idx is
+        # len(steps)). b39f6b8 changed this to `head_idx < step_count - 1`, which goes
+        # False whenever the head is the LAST sequence slot — i.e. the last real doc
+        # before the (synthetic, off-sequence) AC gate. Concretely, group test.test.0007
+        # has steps [N,NR,T,TR] with TR pending (head_idx=3, step_count=4): 3 < 3 is
+        # False, so the action bar blanked on every approved doc whose next step is TR
+        # (next-next = final approval). This is the group 0104 regression the prior fix
+        # missed — restored to the pre-b39f6b8 semantics.
+        if eff_head_type == "AC":
+            out["next_step_exists"] = True
+        else:
+            out["next_step_exists"] = head_idx is not None
 
     return out
 

@@ -879,11 +879,10 @@ def test_d030_row3_r_head_in_progress_not_stranded(monkeypatch):
 def test_d030_row4_m_auto_complete_is_never_head(monkeypatch):
     """[D030 #4] M is an auto-complete type → never the actionable head.
 
-    Current contract (documents.py: AUTO_COMPLETE_TYPES = {"M", "CH"}): an M slot can
-    never surface as the workflow head regardless of its realization state — it is
-    excluded from head resolution as an invariant guard. A sequence whose only slot is
-    M therefore has no actionable head and resolves to head_status='done' with
-    head_type=None (the [Complete] case).
+    M (AUTO_COMPLETE_TYPES = {"M", "CH"}) is excluded from head resolution as an invariant
+    guard — it never surfaces as the workflow head. A sequence whose only slot is M has no
+    actionable document head; the remaining action is final approval, so the head resolves
+    to AC/pending (M042 / group 0104), NOT to M. The M-never-head invariant is preserved.
     """
     parsed = _parse_r_doc(
         monkeypatch,
@@ -891,8 +890,10 @@ def test_d030_row4_m_auto_complete_is_never_head(monkeypatch):
         workflow_steps_str='["M"]',
     )
 
-    assert parsed["workflow_head_status"] == "done"
-    assert parsed.get("workflow_head_type") is None
+    # M never becomes the head; the final-approval gate (AC) does.
+    assert parsed.get("workflow_head_type") != "M"
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed.get("workflow_head_type") == "AC"
 
 
 def test_d030_row5_q_answered_next_pending(monkeypatch):
@@ -911,17 +912,19 @@ def test_d030_row5_q_answered_next_pending(monkeypatch):
     assert parsed["workflow_head_type"] == "T"
 
 
-def test_d030_row6_sequence_complete_done_status(monkeypatch):
-    """[D030 #6] Sequence complete (head=None) -> workflow_head_status='done' (mode='info')."""
+def test_d030_row6_sequence_complete_final_approval_gate(monkeypatch):
+    """[D030 #6 / M042] All document steps done but final approval (AC) not yet performed
+    -> head = AC/pending so the action bar shows [final approval] (group 0104 restore).
+    (Was head_status='done' under b39f6b8, which auto-finalized and dropped the AC gate.)"""
     parsed = _parse_r_doc(
         monkeypatch,
         seq_items=[{"type": "DS", "status": "done"}],
-        effective_head=None,  # sequence complete
+        effective_head=None,  # all document steps realized; only final approval remains
         workflow_steps_str='["DS"]',
     )
 
-    assert parsed["workflow_head_status"] == "done"
-    assert parsed.get("workflow_head_type") is None
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed.get("workflow_head_type") == "AC"
 
 
 @pytest.mark.parametrize("type_code", ["DS", "N", "T", "TR", "NR", "DC", "VR", "AR"])
@@ -964,8 +967,11 @@ def test_d030_row7_approved_next_slot_pending_execution_level(monkeypatch, type_
             "T605 fix not applied -> user cannot proceed."
         )
     else:
-        # single-slot complete -> mode='info'
-        assert parsed.get("workflow_head_status") == "done"
+        # single-slot complete, but final approval (AC) not yet done → AC gate is the head
+        # (M042 / group 0104): head_status='pending', head_type='AC', so the action bar shows
+        # the [final approval] control instead of auto-finalizing the workflow.
+        assert parsed.get("workflow_head_status") == "pending"
+        assert parsed.get("workflow_head_type") == "AC"
 
     # feedback_actionbar_always_shows: workflow information is always present
     has_workflow = (

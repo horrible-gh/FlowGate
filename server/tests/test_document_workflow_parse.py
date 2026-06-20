@@ -299,8 +299,13 @@ def test_next_step_exists_true_when_head_not_last(monkeypatch):
     assert parsed["next_step_exists"] is True
 
 
-def test_next_step_exists_false_when_head_is_last(monkeypatch):
-    """next_step_exists=False when group_head's type_code is the last sequence item."""
+def test_next_step_exists_true_when_head_is_last_slot(monkeypatch):
+    """next_step_exists reflects "a head step exists to advance to", NOT "a step exists
+    after the head". When the head is the LAST sequence slot (here T, with the AC final
+    approval synthesized off-sequence), it is still advanceable — the action bar must
+    surface the next step. b39f6b8 wrongly reported False here (head_idx < step_count-1),
+    blanking the action bar on the doc whose next step is the last real slot before AC
+    (group test.test.0007 / 0104 regression). Restored to True."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001",  "type_code": "R",  "doc_review_status": "wf_in_progress", "seq": 0},
@@ -321,7 +326,7 @@ def test_next_step_exists_false_when_head_is_last(monkeypatch):
     })
 
     assert parsed["workflow_head_type"] == "T"
-    assert parsed["next_step_exists"] is False
+    assert parsed["next_step_exists"] is True
 
 
 # ── non-R doc: T doc in-progress with group lookup ───────────────────────────
@@ -356,7 +361,10 @@ def test_non_r_viewing_sibling_shows_t_doc_as_head(monkeypatch):
     assert parsed["workflow_head_doc_id"] == "T001"
     assert parsed["workflow_head_doc_title"] == "Test Report v1"
     assert parsed["workflow_head_doc_review_status"] == "pending_review"
-    assert parsed["next_step_exists"] is False
+    # The in-progress T head is the last slot but still an advanceable step (the action
+    # bar points the viewer to it); next_step_exists=True. (Was False under b39f6b8's
+    # `head_idx < step_count-1`; group 0104 restore.)
+    assert parsed["next_step_exists"] is True
 
 
 # ── T829: 'pending' derivation ───────────────────────────────────────────────
@@ -541,8 +549,10 @@ def test_head_type_skips_m_in_sequence_when_picking_first_unrealized(monkeypatch
     assert parsed["workflow_head_type"] == "DS"
 
 
-def test_head_done_when_only_m_in_sequence_approved(monkeypatch):
-    """T831: seq=["M"], M approved -> no actionable step remains -> status='done', head_type unset."""
+def test_head_final_approval_gate_when_only_m_approved(monkeypatch):
+    """T831 / M042: seq=["M"], M approved -> no actionable document step remains, but final
+    approval (AC) is not yet done -> head = AC/pending so the action bar shows [final approval]
+    (group 0104 restore; was status='done' / head_type unset under b39f6b8's auto-finalize)."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
@@ -562,8 +572,12 @@ def test_head_done_when_only_m_in_sequence_approved(monkeypatch):
         "rejection_history": None,
     })
 
-    assert parsed["workflow_head_status"] == "done"
-    assert parsed.get("workflow_head_type") is None
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed.get("workflow_head_type") == "AC"
+    # Synthetic AC (no AC slot in seq_items, head_idx == len(steps)) must still report
+    # an advanceable next step, so the action bar surfaces [final approval] rather than
+    # blanking to 'info' (group 0104 regression part 2).
+    assert parsed["next_step_exists"] is True
 
 
 def test_head_type_first_design_step_when_no_m_in_sequence(monkeypatch):
@@ -626,7 +640,11 @@ def test_n158_non_r_partial_progress_emits_pending(monkeypatch):
 
 def test_n158_non_r_two_unrealized_steps(monkeypatch):
     """NR158: DS+D approved, AC not created, seq=[DS,D,AC]
-    → head_status='pending', head_type='AC', next_step_exists=False (AC is last)."""
+    → head_status='pending', head_type='AC', next_step_exists=True.
+
+    The final-approval gate (AC) is itself the advanceable action — viewing the last
+    approved doc must surface [final approval]. b39f6b8 had reported False here (AC is
+    the last slot), blanking that action bar; restored to True (group 0104)."""
     GROUP_ID = "G001"
     _list_docs_patch(monkeypatch, {GROUP_ID: [
         {"doc_id": "R001",  "type_code": "R",  "doc_review_status": "wf_in_progress", "seq": 0},
@@ -651,7 +669,43 @@ def test_n158_non_r_two_unrealized_steps(monkeypatch):
 
     assert parsed["workflow_head_status"] == "pending"
     assert parsed["workflow_head_type"] == "AC"
-    assert parsed["next_step_exists"] is False
+    assert parsed["next_step_exists"] is True
+
+
+def test_group_0104_last_real_step_before_synthetic_ac_advanceable(monkeypatch):
+    """Group 0104 regression (real data: group test.test.0007). steps=[N,NR,T,TR] with
+    N/NR/T approved and TR not yet created; AC is synthesized off-sequence. Viewing the
+    approved T doc, the head is TR (the LAST sequence slot, head_idx=3, step_count=4).
+    next_step_exists must be True so the action bar shows [next step: TR] — b39f6b8's
+    `head_idx < step_count-1` (3 < 3) blanked it."""
+    GROUP_ID = "test.test.0007"
+    _list_docs_patch(monkeypatch, {GROUP_ID: [
+        {"doc_id": "test.test.0007.0001-R",  "type_code": "R",  "doc_review_status": "wf_in_progress", "seq": 1},
+        {"doc_id": "test.test.0007.0002-N",  "type_code": "N",  "doc_review_status": "approved",        "seq": 2},
+        {"doc_id": "test.test.0007.0003-NR", "type_code": "NR", "doc_review_status": "approved",        "seq": 3},
+        {"doc_id": "test.test.0007.0004-T",  "type_code": "T",  "doc_review_status": "approved",        "seq": 4},
+    ]})
+    _seq_patch(monkeypatch, [
+        {"type": "N",  "result_doc_id": "test.test.0007.0002-N"},
+        {"type": "NR", "result_doc_id": "test.test.0007.0003-NR"},
+        {"type": "T",  "result_doc_id": "test.test.0007.0004-T"},
+        {"type": "TR", "result_doc_id": None},
+    ], r_doc_id="test.test.0007.0001-R")
+
+    parsed = document_routes._parse_doc_workflow({
+        "doc_id": "test.test.0007.0004-T",
+        "type_code": "T",
+        "project_id": "test",
+        "group_id": GROUP_ID,
+        "doc_review_status": "approved",
+        "workflow_steps": None,
+        "rejection_history": None,
+    })
+
+    assert parsed["workflow_head_type"] == "TR"
+    assert parsed["workflow_head_status"] == "pending"
+    assert parsed["workflow_head_index"] == 3
+    assert parsed["next_step_exists"] is True
 
 
 def test_n158_non_r_truly_complete_still_done(monkeypatch):
