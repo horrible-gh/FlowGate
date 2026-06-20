@@ -125,6 +125,16 @@
     <ContextMenuItem icon="fa-solid fa-pen" @click="openRename">
       {{ t('main.group_actions.rename_group') }}
     </ContextMenuItem>
+    <!-- R↔B root-type conversion (TR0066.0006 rev1): the reviewer asked for the same action
+         exposed in the group menu (it is also a group-relevant action), keeping the type-chip
+         pill button too. Shown by the SAME gate as the pill (canConvertRootType): only on a
+         pristine root before the workflow decision; absent otherwise. -->
+    <template v-if="canConvertRootType">
+      <div class="dgm-sep" role="separator"></div>
+      <ContextMenuItem icon="fa-solid fa-right-left" @click="openConvertFromMenu">
+        {{ t('main.group_actions.convert_root_type', { to: convertTargetLabel }) }}
+      </ContextMenuItem>
+    </template>
     <div class="dgm-sep" role="separator"></div>
     <ContextMenuItem icon="fa-solid fa-ban" :danger="true" @click="openDiscard">
       {{ t('main.group_actions.dispose_group') }}
@@ -672,6 +682,13 @@ function openConvertConfirm() {
   showConvertConfirm.value = true
 }
 
+// Same conversion, reached from the group menu (TR0066.0006 rev1). Close the menu first,
+// then open the same confirm modal the pill button uses — one code path, two entry points.
+function openConvertFromMenu() {
+  showGroupMenu.value = false
+  openConvertConfirm()
+}
+
 async function doConvertRootType() {
   if (!doc.value || converting.value) return
   const oldId = doc.value.doc_id
@@ -1082,6 +1099,7 @@ defineExpose({
   convertTargetType,
   doConvertRootType,
   openConvertConfirm,
+  openConvertFromMenu,
 })
 
 const docTypeStore = useDocTypeStore()

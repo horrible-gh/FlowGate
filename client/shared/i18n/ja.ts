@@ -1140,6 +1140,7 @@ export default {
       menu_caption: 'グループメニュー',
       group_info: 'グループ情報',
       rename_group: 'グループ名変更',
+      convert_root_type: 'ルートタイプを{to}に変換…',
       dispose_group: 'グループ廃棄…',
       info_title: 'グループ情報',
       info_group_id: 'グループID',

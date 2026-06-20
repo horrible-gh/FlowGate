@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import DocHeader from '@main/components/DocHeader.vue'
+import ConfirmModal from '@main/components/ConfirmModal.vue'
 import { useTabsStore } from '@main/stores/tabs'
 
 // Covers TR0066.0006: the R↔B root-type conversion UI that drives the TR0066.0005
@@ -171,6 +172,30 @@ describe('DocHeader root-type convert action', () => {
 
     // the original tab is untouched when the server refuses
     expect(tabsStore.tabs.find((t) => t.id === ROOT_ID)).toBeTruthy()
+    wrapper.unmount()
+  })
+})
+
+// TR0066.0006 rev1: the reviewer asked for the SAME conversion exposed in the document
+// header's group menu (it is also a group-relevant action), keeping the type-chip pill.
+// Both entry points open the one shared confirm modal and share the canConvertRootType gate.
+describe('DocHeader root-type convert from the group menu (rev1)', () => {
+  it('opens the shared convert confirm from the group menu on a pristine root', async () => {
+    const wrapper = mountHeader()
+    await flushPromises()
+    ;(wrapper.vm as any).openConvertFromMenu()
+    await flushPromises()
+    expect(wrapper.findComponent(ConfirmModal).props('visible')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('group-menu convert is gated by canConvertRootType (no-op on a non-root)', async () => {
+    typeCode = 'T'
+    const wrapper = mountHeader()
+    await flushPromises()
+    ;(wrapper.vm as any).openConvertFromMenu()
+    await flushPromises()
+    expect(wrapper.findComponent(ConfirmModal).props('visible')).toBe(false)
     wrapper.unmount()
   })
 })

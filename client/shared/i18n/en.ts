@@ -1140,6 +1140,7 @@
       menu_caption: 'Group menu',
       group_info: 'Group info',
       rename_group: 'Rename group',
+      convert_root_type: 'Convert root type to {to}…',
       dispose_group: 'Discard group…',
       info_title: 'Group info',
       info_group_id: 'Group ID',

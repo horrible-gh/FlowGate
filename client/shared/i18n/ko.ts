@@ -1140,6 +1140,7 @@
       menu_caption: '그룹 메뉴',
       group_info: '그룹 정보',
       rename_group: '그룹 이름 변경',
+      convert_root_type: '루트 타입을 {to}(으)로 전환…',
       dispose_group: '그룹 폐기…',
       info_title: '그룹 정보',
       info_group_id: '그룹 ID',
