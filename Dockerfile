@@ -65,4 +65,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8089/', timeout=4)" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["python", "-m", "uvicorn", "routers.main:app", "--host", "0.0.0.0", "--port", "8089"]
+# --timeout-graceful-shutdown: backstop so a stuck in-flight request (e.g. a
+# long-lived SSE stream) cannot block container shutdown indefinitely (group
+# 0102 R0001); the app-level shutdown_event is the primary, immediate mechanism.
+CMD ["python", "-m", "uvicorn", "routers.main:app", "--host", "0.0.0.0", "--port", "8089", "--timeout-graceful-shutdown", "3"]
