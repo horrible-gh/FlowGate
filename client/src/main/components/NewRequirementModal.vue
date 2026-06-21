@@ -105,15 +105,27 @@
 
           <div class="form-group">
             <label class="form-label req">{{ $t('main.new_requirement_modal.title_label') }}</label>
-            <input
-              v-model="form.title"
-              class="form-ctrl"
-              id="newReqTitle"
-              type="text"
-              maxlength="100"
-              :placeholder="$t(`main.new_requirement_modal.title_placeholder_${rootType}`)"
-              required
-            />
+            <div class="title-input-row">
+              <input
+                v-model="form.title"
+                class="form-ctrl"
+                id="newReqTitle"
+                type="text"
+                maxlength="100"
+                :placeholder="$t(`main.new_requirement_modal.title_placeholder_${rootType}`)"
+                required
+              />
+              <button
+                v-if="groupNameForTitle"
+                class="title-fill-btn"
+                type="button"
+                :aria-label="$t('main.new_requirement_modal.use_group_name')"
+                :title="$t('main.new_requirement_modal.use_group_name')"
+                @click="applyGroupNameToTitle"
+              >
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+              </button>
+            </div>
           </div>
 
           <div class="form-group">
@@ -203,6 +215,7 @@ const emit = defineEmits<{ close: []; created: [payload: { docId: string; openAf
 const { t } = useI18n()
 const projectStore = useProjectStore()
 const explorerStore = useExplorerStore()
+const { showToast } = useToast()
 
 const projects = ref<ProjectItem[]>([])
 const currentModules = ref<Array<{ id: string; label: string }>>([])
@@ -241,9 +254,30 @@ const groupOptions = computed(() => {
   return groups.map((group) => ({
     id: group.id,
     label: group.number ? `${group.number}: ${group.label}` : group.label,
+    // Pure group title (no number prefix) — the value dropped into the document
+    // title field by the "use group name" button. NR0003 §3/§10.
+    name: group.label,
     module: getGroupModule(group, nodes),
   }))
 })
+
+// Group title to drop into the title field. Existing-group mode → the selected
+// group's pure title; new-group mode → the name the user is typing. '' hides the
+// button (no group list / nothing selected / empty new-group name).
+const groupNameForTitle = computed(() => {
+  if (groupMode.value === 'existing') {
+    return groupOptions.value.find((group) => group.id === form.value.groupId)?.name ?? ''
+  }
+  return form.value.newGroupName.trim()
+})
+
+// R0001 group 0111: one click fills the title input with the group name, instead of
+// hand-typing a placeholder and renaming the document afterwards.
+function applyGroupNameToTitle() {
+  const name = groupNameForTitle.value
+  if (!name) return
+  form.value.title = name
+}
 
 function getGroupModule(group: { id: string; parent_id: string | null }, nodes: Array<{ id: string; label: string }>): string {
   const parent = group.parent_id ? nodes.find((node) => node.id === group.parent_id) : null
@@ -401,7 +435,6 @@ async function submit() {
       // surface server error via toast only — no inline .alert-danger in .modal-ft
       try {
         // show toast above modal (teleport ensures visibility)
-        const { showToast } = useToast()
         showToast(message, 'danger')
       } catch (e) {
         // best-effort; do not throw from UI error handling
@@ -486,5 +519,40 @@ async function submit() {
   border-color: #fecaca;
   background: #fff1f2;
   color: #b91c1c;
+}
+
+/* Title input + "use group name" button (group 0111 / R0001): one click drops the
+   group name into the title so it no longer has to be hand-typed and renamed later. */
+.title-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-input-row .form-ctrl {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.title-fill-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text-m);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.title-fill-btn:hover {
+  color: var(--primary);
+  border-color: #bfdbfe;
+  background: var(--surface-h);
 }
 </style>
