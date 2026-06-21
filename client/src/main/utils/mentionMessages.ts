@@ -12,6 +12,8 @@ const RANK_SPECIFIC = 0
 const RANK_ALL = 1
 /** Blank line between the prepended message section and the rest of the mention (mirrors _section join). */
 export const SECTION_SEPARATOR = '\n\n'
+/** Blank line between multiple chosen message bodies inside the single prepended section. */
+export const MESSAGES_SEPARATOR = '\n\n'
 
 export interface MessageEntry {
   id: number
@@ -66,19 +68,28 @@ export function buildCandidateList(
 }
 
 /**
- * Prepend the chosen project message as a labeled section to the TOP of the mention
+ * Prepend the chosen project message(s) as ONE labeled section to the TOP of the mention
  * (R0001 group 0081 "버려져있는 사용자 메세지"). The user message specifies macros the AI
  * must obey, so it must lead the prompt instead of being dumped below the Reminder (the
  * previous append-at-the-end behavior, L0007 §2.4). This mirrors two existing precedents:
  * the rejection-section prepend in useFlowGateToken.copyMentToClipboard, and the server's
  * deliberate hoisting of the clarification guide ("was last → ignored", build_mention).
  *
+ * Multiple selections (N0006: radio→checkbox) are merged into a SINGLE section, bodies
+ * joined by a blank line (MESSAGES_SEPARATOR) in the caller's display order — no repeated
+ * headers, so the AI reads the macro bundle as one block (NR0007 §3). A single selection is
+ * the N=1 special case and produces output byte-identical to the prior single-message form.
+ *
  * The section uses the server _section() format ('## header\n---\nbody', P005 §3-1) so it
- * reads as a first-class section. Empty message → mention unchanged; empty mention → the
- * section alone (no trailing separator).
+ * reads as a first-class section. Each body is trimmed and blank entries are dropped; if no
+ * non-blank body survives → mention unchanged; empty mention → the section alone (no
+ * trailing separator).
  */
-export function prependMessageSection(mentionText: string, message: string, header: string): string {
-  const body = message.trim()
+export function prependMessagesSection(mentionText: string, messages: string[], header: string): string {
+  const body = messages
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0)
+    .join(MESSAGES_SEPARATOR)
   if (!body) return mentionText
   const section = `## ${header}\n---\n${body}`
   if (!mentionText) return section

@@ -30,9 +30,9 @@
               v-for="c in localCandidates"
               :key="c.id"
               class="mm-candidate"
-              :class="{ selected: selectedId === c.id }"
+              :class="{ selected: selectedIds.includes(c.id) }"
             >
-              <input type="radio" name="mm-candidate" :value="c.id" v-model="selectedId" />
+              <input type="checkbox" :value="c.id" v-model="selectedIds" />
               <span class="mm-candidate-text">{{ c.message }}</span>
               <span v-if="c.doc_type === WILDCARD_DOC_TYPE" class="mm-all-tag">
                 {{ t('main.next_action_modal.mm_dialog_all_label') }}
@@ -44,7 +44,7 @@
         <!-- Footer -->
         <div class="modal-ft">
           <button class="btn btn-secondary" type="button" @click="cancel">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" type="button" :disabled="selectedId === null" @click="confirm">
+          <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirm">
             <i class="fa-solid fa-plus"></i> {{ t('main.next_action_modal.mm_dialog_add') }}
           </button>
         </div>
@@ -71,7 +71,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  select: [message: string]
+  select: [messages: string[]]
   cancel: []
 }>()
 
@@ -80,7 +80,7 @@ const { showToast } = useToast()
 
 const selectedType = ref(props.docType)
 const localCandidates = ref<MessageEntry[]>([])
-const selectedId = ref<number | null>(null)
+const selectedIds = ref<number[]>([])
 const loading = ref(false)
 
 // [All]('*') first, then active project doc types; ensure the current type is present
@@ -113,7 +113,7 @@ async function onTypeChange(newType: string) {
     )
     selectedType.value = newType
     localCandidates.value = buildCandidateList(res.data?.data ?? [], newType)
-    selectedId.value = null
+    selectedIds.value = []
   } catch {
     showToast(t('main.next_action_modal.copy_mention_error_toast'), 'danger')
     // keep selectedType, localCandidates as-is (L0007 §2.3 / §5)
@@ -123,9 +123,12 @@ async function onTypeChange(newType: string) {
 }
 
 function confirm() {
-  const chosen = localCandidates.value.find((c) => c.id === selectedId.value)
-  if (!chosen) return
-  emit('select', chosen.message)
+  // Collect selected candidates in DISPLAY order (buildCandidateList already deduped/sorted),
+  // so multi-select preserves on-screen order and never duplicates a body (NR0007 §3).
+  const picked = new Set(selectedIds.value)
+  const messages = localCandidates.value.filter((c) => picked.has(c.id)).map((c) => c.message)
+  if (messages.length === 0) return
+  emit('select', messages)
 }
 
 function cancel() {
@@ -139,7 +142,7 @@ watch(
     if (!val) return
     selectedType.value = props.docType
     localCandidates.value = [...props.candidates]
-    selectedId.value = null
+    selectedIds.value = []
     loading.value = false
   },
   { immediate: true },
