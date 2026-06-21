@@ -1356,6 +1356,38 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         if len(content_bytes) > _content_max():
             return _fail(422, f"content size exceeds the limit (max {_content_max()} bytes)")
 
+    # ── Step 5.5: Duplicate-body guard (B0106 / NR0003 → B0107) ──────────────────────
+    # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
+    # defended `new`, so the same contamination (correct title, stale/reused body from
+    # another group) recurred through inbox edit — most often on CH conversations, whose
+    # body the worker rewrites wholesale every turn (NR0003 §2a). Refuse a substantial
+    # body byte-identical to a document in a *different* group; the current group is
+    # excluded, so an edit that legitimately keeps or extends its own body is never
+    # blocked. The fingerprint is reused at Step 7.1 to (re)persist meta.content_sha256.
+    # Fail-open on any read/lookup error — the guard must never 500 a real edit.
+    edit_fingerprint: Optional[str] = None
+    try:
+        body_for_fp = (
+            pathlib.Path(doc_path).read_text(encoding="utf-8")
+            if doc_path is not None
+            else content
+        )
+        edit_fingerprint = _content_fingerprint(body_for_fp)
+        if edit_fingerprint is not None:
+            twin = db_docs.find_by_content_fingerprint(
+                edit_fingerprint, exclude_group_id=group["group_id"]
+            )
+            if twin is not None:
+                return _fail(
+                    409,
+                    "Duplicate body: this content is byte-identical to "
+                    f"{twin['doc_id']} in another group. The submitted body looks like "
+                    "stale/reused content (correct title, wrong body). Re-send with this "
+                    "document's own content.",
+                )
+    except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real edit
+        edit_fingerprint = None  # unreadable doc_path / lookup error → skip; edit still proceeds
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
     # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
     # checks_passed reflects checks actually run on this path (L0007 §1.1/§4 principle):
@@ -1367,6 +1399,8 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         edit_checks.append("linked")
     if doc_path is not None:
         edit_checks.append("doc_path")
+    if edit_fingerprint is not None:
+        edit_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {
         "action": "edit",
         "doc_id": doc_id,
@@ -1442,6 +1476,29 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         return _fail(409, "Concurrent modification conflict. Please retry.")
 
     new_revision_no: int = refreshed["revision_no"]
+
+    # ── Step 7.1: Persist body fingerprint (NR0003 §4-2) ─────────────────────────────
+    # The dup-body guard can only catch a twin whose meta carries content_sha256.
+    # _handle_new persists it on creation, but an edited/grown body — notably an
+    # accumulating CH conversation — never updated it, so the *source* of a future
+    # contamination stayed invisible to the guard (NR0003 §2b: "가드를 edit에 붙여도
+    # 소스 핑거프린트가 없으면 매칭되지 않음"). Refresh it on every body change: write the
+    # new hash for a substantial body, else drop a now-stale hash so the guard can never
+    # match an outdated body. Best-effort: a failure here must not break the edit that
+    # already committed (mirrors the other Step 7.x best-effort blocks).
+    try:
+        _existing_meta = existing_doc.get("meta")
+        _meta_obj = json.loads(_existing_meta) if _existing_meta else {}
+        if not isinstance(_meta_obj, dict):
+            _meta_obj = {}
+        if edit_fingerprint is not None:
+            _meta_obj["content_sha256"] = edit_fingerprint
+        else:
+            _meta_obj.pop("content_sha256", None)
+        db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
+    except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
+        import LogAssist.log as logger
+        logger.warning(f"[inbox edit] Step 7.1 fingerprint persist failed (ignored): {_fp_exc}")
 
     # document_revisions INSERT
     if backup_path_str:

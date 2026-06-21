@@ -1037,3 +1037,159 @@ class TestInboxDuplicateBodyGuard:
         b = self._post(tmp_path, "0002", "R0001", "NR8402", self._SHORT_BODY)
         assert b.status_code == 201, b.text
 
+
+# ── 8. Duplicate-body guard on the EDIT path (NR0003 → B0107) ───────────────
+
+class TestInboxEditDuplicateBodyGuard:
+    """B0106 only defended `new`, so the same cross-group contamination recurred via
+    inbox edit (NR0003, group 0107) — most often on CH conversations the worker
+    rewrites wholesale each turn. The guard must now also fire on edit, and an edited
+    body must (re)persist its fingerprint so a grown body becomes a detectable twin.
+    """
+
+    _BIG_BODY = "# Investigation Report\n\n" + ("Root cause analysis line. " * 120)
+    _SHORT_BODY = "조사지시 가 승인되었습니다."
+
+    @staticmethod
+    def _fp(text: str) -> str:
+        import hashlib
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _seed_source_group(self, body: str) -> str:
+        """A doc in a *different* group carrying body + its content_sha256 in meta.
+
+        The guard matches twins by the meta fingerprint, so the source must already
+        have it persisted (exactly what Step 7.1 now does for edited docs).
+        """
+        import json
+        from modules.flow_gate.db import groups as db_groups, documents as db_docs
+        if db_groups.get_by_id("testprj-__ALL__-0007") is None:
+            db_groups.create({
+                "group_id": "testprj-__ALL__-0007",
+                "project_id": "testprj",
+                "module": "__ALL__",
+                "title": "Source Group",
+            })
+        src_id = "testprj-__ALL__-0007-CH0001"
+        if db_docs.get_by_id(src_id) is None:
+            db_docs.create({
+                "doc_id": src_id,
+                "project_id": "testprj",
+                "type_code": "CH",
+                "seq": 1,
+                "title": "Source conversation",
+                "group_id": "testprj-__ALL__-0007",
+                "module": "__ALL__",
+                "owner_id": "usr_test_001",
+                "meta": json.dumps({"content_sha256": self._fp(body)}),
+            })
+        return src_id
+
+    def _create_target_doc(self, doc_id: str, stored_path: Path, body: str = "# Original") -> None:
+        from modules.flow_gate.db import documents as db_docs
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        stored_path.write_text(body)
+        db_docs.create({
+            "doc_id": doc_id,
+            "project_id": "testprj",
+            "type_code": "CH",
+            "seq": 99,
+            "title": doc_id,
+            "group_id": "testprj-__ALL__-0001",
+            "module": "__ALL__",
+            "owner_id": "usr_test_001",
+            "file_path": str(stored_path),
+            "revision_no": 0,
+        })
+
+    def _edit(self, tmp_path, doc_id: str, content: str):
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.services import token_service
+        with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "s_edit"):
+            raw = token_service.issue(
+                project="testprj",
+                group_id="testprj-__ALL__-0001",
+                action_scope="edit",
+                doc_ref=doc_id,
+                issued_to="usr_test_001",
+            )["raw_token"]
+        with patch(
+            "modules.flow_gate.rbac.permission_service.has_permission", return_value=True,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            return TestClient(app).post(
+                "/api/v1/inbox",
+                json={
+                    "project": "testprj", "module": "__ALL__", "group": "0001",
+                    "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+                    "content": content,
+                },
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+    def test_edit_cross_group_identical_body_rejected(self, seed_data, tmp_path):
+        """Editing a doc to a body byte-identical to another group's doc → 409 (the
+        exact NR0003 contamination: a CH body overwritten with another group's CH)."""
+        src_id = self._seed_source_group(self._BIG_BODY)
+        doc_id = "testprj-__ALL__-0001-CH7101"
+        self._create_target_doc(doc_id, tmp_path / "docs" / f"{doc_id}_document.md")
+
+        resp = self._edit(tmp_path, doc_id, self._BIG_BODY)
+        assert resp.status_code == 409, resp.text
+        assert src_id in resp.json()["error_message"]
+
+    def test_edit_persists_fingerprint(self, seed_data, tmp_path):
+        """A substantial edited body persists content_sha256 into meta, so a later
+        cross-group copy of THIS body is detectable as a twin (NR0003 §2b/§4-2)."""
+        import json
+        from modules.flow_gate.db import documents as db_docs
+        doc_id = "testprj-__ALL__-0001-CH7201"
+        self._create_target_doc(doc_id, tmp_path / "docs" / f"{doc_id}_document.md")
+
+        grown = self._BIG_BODY + "\n\nTurn 2 appended content for this conversation."
+        resp = self._edit(tmp_path, doc_id, grown)
+        assert resp.status_code == 200, resp.text
+
+        stored = db_docs.get_by_id(doc_id)
+        assert stored["meta"] and json.loads(stored["meta"]).get("content_sha256") == self._fp(grown)
+
+    def test_edit_same_group_identical_body_allowed(self, seed_data, tmp_path):
+        """The guard is cross-group only: editing to a body identical to a doc in the
+        SAME group is not blocked (the contamination signature is cross-group)."""
+        from modules.flow_gate.db import documents as db_docs
+        # A body unique to this test, so the only twin lives in the SAME group (the
+        # shared module DB keeps the group-0007 source from the cross-group test).
+        body = self._BIG_BODY + " v-same-group-only"
+        sibling = "testprj-__ALL__-0001-CH7301"
+        if db_docs.get_by_id(sibling) is None:
+            db_docs.create({
+                "doc_id": sibling, "project_id": "testprj", "type_code": "CH", "seq": 50,
+                "title": sibling, "group_id": "testprj-__ALL__-0001", "module": "__ALL__",
+                "owner_id": "usr_test_001",
+                "meta": json.dumps({"content_sha256": self._fp(body)}),
+            })
+
+        doc_id = "testprj-__ALL__-0001-CH7302"
+        self._create_target_doc(doc_id, tmp_path / "docs" / f"{doc_id}_document.md")
+        resp = self._edit(tmp_path, doc_id, body)
+        assert resp.status_code == 200, resp.text
+
+    def test_edit_short_body_exempt_and_clears_stale_fingerprint(self, seed_data, tmp_path):
+        """A short body trips no guard; it also drops any prior fingerprint so the guard
+        never matches an outdated body (Step 7.1 else-branch)."""
+        import json
+        from modules.flow_gate.db import documents as db_docs
+        doc_id = "testprj-__ALL__-0001-CH7401"
+        self._create_target_doc(doc_id, tmp_path / "docs" / f"{doc_id}_document.md")
+        # Seed a prior big-body fingerprint, then shrink the body via edit.
+        db_docs.update(doc_id, {"meta": json.dumps({"content_sha256": self._fp(self._BIG_BODY)})})
+
+        resp = self._edit(tmp_path, doc_id, self._SHORT_BODY)
+        assert resp.status_code == 200, resp.text
+        stored = db_docs.get_by_id(doc_id)
+        meta = json.loads(stored["meta"]) if stored["meta"] else {}
+        assert "content_sha256" not in meta
+
