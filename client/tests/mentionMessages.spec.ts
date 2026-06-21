@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCandidateList,
-  appendMessageToMention,
+  prependMessageSection,
   WILDCARD_DOC_TYPE,
-  MESSAGE_SEPARATOR,
+  SECTION_SEPARATOR,
   type MessageEntry,
 } from '@main/utils/mentionMessages'
 
@@ -58,17 +58,21 @@ describe('buildCandidateList (L0007 §2.1)', () => {
   })
 })
 
-describe('appendMessageToMention (L0007 §2.4)', () => {
-  it('joins mention + LF + message', () => {
-    expect(appendMessageToMention('mention', 'msg')).toBe('mention' + MESSAGE_SEPARATOR + 'msg')
+describe('prependMessageSection (R0001 group 0081)', () => {
+  it('prepends the message as a labeled section ABOVE the mention (not buried at the end)', () => {
+    const out = prependMessageSection('mention', 'msg', '사용자 메세지')
+    expect(out).toBe('## 사용자 메세지\n---\nmsg' + SECTION_SEPARATOR + 'mention')
+    // the section leads; the original mention follows
+    expect(out.startsWith('## 사용자 메세지')).toBe(true)
+    expect(out.endsWith('mention')).toBe(true)
   })
-  it('empty mention -> message alone (no leading separator)', () => {
-    expect(appendMessageToMention('', 'msg')).toBe('msg')
+  it('empty mention -> section alone (no trailing separator)', () => {
+    expect(prependMessageSection('', 'msg', 'User message')).toBe('## User message\n---\nmsg')
   })
   it('blank message -> mention unchanged', () => {
-    expect(appendMessageToMention('mention', '   ')).toBe('mention')
+    expect(prependMessageSection('mention', '   ', 'User message')).toBe('mention')
   })
-  it('trims the appended message body', () => {
-    expect(appendMessageToMention('mention', '  msg  ')).toBe('mention' + MESSAGE_SEPARATOR + 'msg')
+  it('trims the message body inside the section', () => {
+    expect(prependMessageSection('mention', '  msg  ', 'H')).toBe('## H\n---\nmsg' + SECTION_SEPARATOR + 'mention')
   })
 })

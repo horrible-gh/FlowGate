@@ -1247,6 +1247,7 @@ export default {
       mm_dialog_empty: 'この文書タイプに登録されたメッセージがありません。',
       mm_dialog_all_label: '[全体]',
       mm_dialog_add: '追加',
+      mm_section_header: 'ユーザーメッセージ',
       ref_return_r: '発行後の返却先 R:',
       locked_doc_hint: 'BASE',
       none_module_label: '[なし]',

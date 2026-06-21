@@ -944,7 +944,7 @@ import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
 import MentionMessageDialog from './MentionMessageDialog.vue'
-import { buildCandidateList, appendMessageToMention, type MessageEntry } from '../utils/mentionMessages'
+import { buildCandidateList, prependMessageSection, type MessageEntry } from '../utils/mentionMessages'
 import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
@@ -1991,7 +1991,7 @@ async function onNextActionCopyMention(selectedDocs?: string[]) {
 // copy logic in onNextActionCopyMention; returns whether the clipboard write succeeded.
 async function copyTokenMention(token: IssuedToken, selectedDocs?: string[], appendMessage?: string): Promise<boolean> {
   if (token.mention) {
-    const text = appendMessage ? appendMessageToMention(token.mention, appendMessage) : token.mention
+    const text = appendMessage ? prependMessageSection(token.mention, appendMessage, t('main.next_action_modal.mm_section_header')) : token.mention
     await doClipboardCopy(text)
     return true
   }

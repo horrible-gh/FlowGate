@@ -1247,6 +1247,7 @@
       mm_dialog_empty: 'No messages registered for this doc type.',
       mm_dialog_all_label: '[All]',
       mm_dialog_add: 'Add',
+      mm_section_header: 'User message',
       ref_return_r: 'Returns to R after issue:',
       locked_doc_hint: 'BASE',
       none_module_label: '[None]',

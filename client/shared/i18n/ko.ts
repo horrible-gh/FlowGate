@@ -1247,6 +1247,7 @@
       mm_dialog_empty: '이 문서타입에 등록된 메세지가 없습니다.',
       mm_dialog_all_label: '[전체]',
       mm_dialog_add: '추가',
+      mm_section_header: '사용자 메세지',
       ref_return_r: '발급 후 복귀 R:',
       locked_doc_hint: 'BASE',
       none_module_label: '[없음]',

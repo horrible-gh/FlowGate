@@ -10,8 +10,8 @@ export const WILDCARD_DOC_TYPE = '*'
 /** Specific-type messages rank above [All] (L0007 §1). */
 const RANK_SPECIFIC = 0
 const RANK_ALL = 1
-/** Joins the mention body and the chosen message (single LF, L0007 §1). */
-export const MESSAGE_SEPARATOR = '\n'
+/** Blank line between the prepended message section and the rest of the mention (mirrors _section join). */
+export const SECTION_SEPARATOR = '\n\n'
 
 export interface MessageEntry {
   id: number
@@ -66,12 +66,21 @@ export function buildCandidateList(
 }
 
 /**
- * Append a chosen message to the mention text (L0007 §2.4).
- * Empty mention → message alone; otherwise mention + LF + message.
+ * Prepend the chosen project message as a labeled section to the TOP of the mention
+ * (R0001 group 0081 "버려져있는 사용자 메세지"). The user message specifies macros the AI
+ * must obey, so it must lead the prompt instead of being dumped below the Reminder (the
+ * previous append-at-the-end behavior, L0007 §2.4). This mirrors two existing precedents:
+ * the rejection-section prepend in useFlowGateToken.copyMentToClipboard, and the server's
+ * deliberate hoisting of the clarification guide ("was last → ignored", build_mention).
+ *
+ * The section uses the server _section() format ('## header\n---\nbody', P005 §3-1) so it
+ * reads as a first-class section. Empty message → mention unchanged; empty mention → the
+ * section alone (no trailing separator).
  */
-export function appendMessageToMention(mentionText: string, message: string): string {
+export function prependMessageSection(mentionText: string, message: string, header: string): string {
   const body = message.trim()
   if (!body) return mentionText
-  if (!mentionText) return body
-  return mentionText + MESSAGE_SEPARATOR + body
+  const section = `## ${header}\n---\n${body}`
+  if (!mentionText) return section
+  return section + SECTION_SEPARATOR + mentionText
 }

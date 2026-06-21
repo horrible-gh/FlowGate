@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
-import { appendMessageToMention } from '../utils/mentionMessages'
+import { prependMessageSection } from '../utils/mentionMessages'
 
 // Base URL used ONLY to build copy-paste mention text (buildConversationMention /
 // buildMentText). Mentions are consumed by an AI worker on another machine, so the URL
@@ -364,8 +364,9 @@ export function useFlowGateToken() {
     } else {
       text = token.mention ?? buildMentText(token, selectedDocs ?? token.selected_docs, rejectionContext)
     }
-    // Mention-add (L0007 §2.4): append the chosen project message to the final mention text.
-    if (appendMessage) text = appendMessageToMention(text, appendMessage)
+    // Mention-add (R0001 group 0081): prepend the chosen project message as a labeled
+    // section at the top so the AI sees its macros first, not buried below the Reminder.
+    if (appendMessage) text = prependMessageSection(text, appendMessage, t('main.next_action_modal.mm_section_header'))
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(text)
