@@ -35,11 +35,11 @@ from modules.flow_gate.api.v1.events import sse_routes  # noqa: E402
 async def test_sse_idle_heartbeat_is_observable_ping_event():
     empty_queue = asyncio.Queue()  # never delivers an event -> generator hits the idle path
 
-    async def _raise_timeout(*_args, **_kwargs):
-        raise asyncio.TimeoutError
-
     request = Mock()
     request.is_disconnected = AsyncMock(return_value=False)
+    # An unset shutdown event: the generator should keep streaming heartbeats,
+    # not stop. Shrink the heartbeat cadence so the idle path fires immediately.
+    request.app.state.shutdown_event = asyncio.Event()
 
     decoded = {
         "sub": "usr_test_hb",
@@ -52,7 +52,7 @@ async def test_sse_idle_heartbeat_is_observable_ping_event():
          patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False), \
          patch("modules.flow_gate.api.v1.events.sse_routes.subscribe", new=AsyncMock(return_value=empty_queue)), \
          patch("modules.flow_gate.api.v1.events.sse_routes.unsubscribe", new=AsyncMock()), \
-         patch("modules.flow_gate.api.v1.events.sse_routes.asyncio.wait_for", new=_raise_timeout):
+         patch("modules.flow_gate.api.v1.events.sse_routes._SSE_HEARTBEAT_TIMEOUT", 0.05):
         resp = await sse_routes.sse_stream(request, token="good-jwt")
         gen = resp.body_iterator
         try:

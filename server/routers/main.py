@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,8 +55,15 @@ limiter = Limiter(
 async def lifespan(app: FastAPI):
     """Lifespan handler executed on server startup/shutdown."""
     _bootstrap()          # console encoding + pre-build PercentileTable
+    # Cooperative-shutdown signal for long-lived SSE streams. Without this, an
+    # open EventSource keeps its response generator running forever, and uvicorn
+    # waits on that in-flight connection — so the server only exits once the
+    # browser is closed (group 0102 R0001). SSE generators race this event and
+    # stop promptly when it is set. (timeout_graceful_shutdown on every startup
+    # path is the belt-and-suspenders backstop for any other stuck request.)
+    app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
-    # add shutdown logic here if needed
+    app.state.shutdown_event.set()
 
 
 app = FastAPI(lifespan=lifespan)

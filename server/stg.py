@@ -14,4 +14,9 @@ sys.path.insert(0, BASE_DIR)
 if __name__ == "__main__":
     import uvicorn
     # reload=True per staging request; import-string form required for reload.
-    uvicorn.run("routers.main:app", host="0.0.0.0", port=8089, reload=True)
+    # timeout_graceful_shutdown: backstop so any stuck in-flight request (e.g. a
+    # long-lived SSE stream) cannot block shutdown indefinitely (group 0102 R0001).
+    uvicorn.run(
+        "routers.main:app", host="0.0.0.0", port=8089,
+        reload=True, timeout_graceful_shutdown=3,
+    )

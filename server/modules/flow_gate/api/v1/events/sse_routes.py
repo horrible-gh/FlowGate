@@ -22,6 +22,45 @@ import LogAssist.log as logger
 
 router = APIRouter(prefix="/api/v1", tags=["SSE"])
 
+# Idle heartbeat cadence (seconds). Module constant so tests can shrink it to
+# force the idle path without a real 30s wait.
+_SSE_HEARTBEAT_TIMEOUT = 30.0
+
+
+async def _await_next_event(q, shutdown_event, timeout):
+    """Wait up to ``timeout`` seconds for the next queued event.
+
+    Returns the FlowEvent if one arrives, or ``None`` if ``shutdown_event``
+    fires first (server is shutting down). Raises ``asyncio.TimeoutError`` on an
+    idle timeout so the caller can emit a heartbeat ping.
+
+    Racing the subscriber queue against the shutdown event lets a graceful
+    server shutdown stop a long-lived SSE stream immediately, instead of
+    blocking uvicorn's shutdown until the browser disconnects
+    (group 0102 R0001 — open SSE streams blocked graceful shutdown forever).
+    """
+    get_task = asyncio.ensure_future(q.get())
+    waiters = {get_task}
+    shutdown_task = None
+    if shutdown_event is not None:
+        shutdown_task = asyncio.ensure_future(shutdown_event.wait())
+        waiters.add(shutdown_task)
+    try:
+        done, _pending = await asyncio.wait(
+            waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+        )
+        if not done:
+            raise asyncio.TimeoutError
+        # Prefer a delivered event over the shutdown signal if both fired in the
+        # same tick, so a final queued event is never dropped on the way out.
+        if get_task in done:
+            return get_task.result()
+        return None
+    finally:
+        for t in (get_task, shutdown_task):
+            if t is not None and not t.done():
+                t.cancel()
+
 
 def _extract_jwt(request: Request, token_param: Optional[str]) -> Optional[str]:
     """Extract JWT: prefer query param, then Authorization header."""
@@ -76,13 +115,25 @@ async def sse_stream(request: Request, token: Optional[str] = None):
 
     q = await subscribe(user_id)
 
+    # Set in routers.main.lifespan; absent in lightweight test apps (then None,
+    # which simply disables the shutdown race and keeps the heartbeat behaviour).
+    shutdown_event = getattr(request.app.state, "shutdown_event", None)
+
     async def event_generator():
         try:
             while True:
                 if await request.is_disconnected():
                     break
+                if shutdown_event is not None and shutdown_event.is_set():
+                    break
                 try:
-                    event = await asyncio.wait_for(q.get(), timeout=30.0)
+                    event = await _await_next_event(
+                        q, shutdown_event, _SSE_HEARTBEAT_TIMEOUT
+                    )
+                    if event is None:
+                        # shutdown_event fired — end the stream so uvicorn's
+                        # graceful shutdown can complete instead of hanging.
+                        break
                     event_id = (
                         f"sse_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
                         f"_{uuid.uuid4().hex[:6]}"
