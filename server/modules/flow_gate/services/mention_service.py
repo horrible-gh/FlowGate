@@ -1001,22 +1001,23 @@ def build_workflow_decision_mention(
     )
 
     # R0001/T0004: clarification/no-choices guide hoisted directly under the
-    # document-identity header (was last → ignored). R-decision workers explain the
-    # missing context rather than registering a Q, so there is no /help/question link.
+    # document-identity header (was last → ignored).
+    # Group 0110 B0001/NR0003: the non-continuous branch previously used inline text
+    # that ONLY told the worker to "explain what context is missing", with neither the
+    # embedded Q-registration POST nor the "register a Q" guidance the other worker
+    # mentions (build_mention/build_review_mention) carry via _clarification_guide_body.
+    # That left this mention with the no-choices warning but no non-interactive way to
+    # actually get an answer (internal contradiction) and leaked English in ko/ja. We now
+    # use the shared, locale-aware helper here too, anchoring the Q on the R-root doc_id —
+    # the same doc_ref the workflow_decide token is minted with, which the Q endpoint
+    # accepts (NR0003 §타당성 검증).
     # Continuous (group 0086): this is the first link of an unmanned chain, so the guide
     # is REPLACED by the delegation/unmanned block — the worker decides autonomously and
     # never stops to ask (consistent with build_mention's continuous branch).
     if continuous:
         clarification_body = _continuous_guide_body(locale, review_mode=continuous_review_mode)
     else:
-        clarification_body = (
-            "If the requirement is unclear, do NOT guess and do NOT submit a workflow\n"
-            "decision. Explain what context is missing so the user can clarify it.\n"
-            "\n"
-            "⚠️ Do NOT present choices or options to the user (no multiple-choice lists,\n"
-            "no interactive selection prompts). You are a remote worker: such prompts get\n"
-            "no response and the run is force-terminated with no answer."
-        )
+        clarification_body = _clarification_guide_body(base, doc_id, raw_token, locale)
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", clarification_body),
@@ -1066,6 +1067,10 @@ def build_workflow_decision_mention(
     ])
     if continuous:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=continuous_review_mode)))
+    else:
+        # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
+        # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
+        sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
     return "\n\n".join(sections)
 
 
