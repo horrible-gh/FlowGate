@@ -48,6 +48,38 @@
                   <span>{{ a.body }}</span>
                 </p>
               </template>
+
+              <!-- R0001 (group 0093): answer directly from the full view. The actions
+                   call the parent's bound write functions (shared useQaAnswers state),
+                   so a submitted answer refetches once and updates both this dialog and
+                   the side panel in sync. Only shown when the dialog is given a docId. -->
+              <template v-if="docId">
+                <div v-if="answerOpenId === item.id" class="qhd-answer-form">
+                  <textarea
+                    v-model="answerBody"
+                    class="qhd-answer-textarea"
+                    rows="3"
+                    :placeholder="t('main.doc_info_panel.qa_answer_ph')"
+                  ></textarea>
+                  <div class="qhd-answer-actions">
+                    <button type="button" class="btn btn-outline btn-sm" @click="closeAnswer">{{ t('common.cancel') }}</button>
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm"
+                      :disabled="!answerBody.trim() || busy"
+                      @click="onSubmitAnswer(item.id)"
+                    >{{ t('main.doc_info_panel.qa_answer_submit') }}</button>
+                  </div>
+                </div>
+                <div v-else class="qhd-answer-actions">
+                  <button type="button" class="btn btn-outline btn-sm" @click="openAnswer(item.id)">
+                    {{ t('main.doc_info_panel.qa_answer_write') }}
+                  </button>
+                  <button type="button" class="btn btn-outline btn-sm" :disabled="busy" @click="onRequestAi(item.id)">
+                    <i class="fa-solid fa-robot"></i> {{ t('main.doc_info_panel.qa_answer_ai') }}
+                  </button>
+                </div>
+              </template>
             </li>
           </ul>
         </div>
@@ -62,34 +94,60 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import type { QaItem } from '../composables/useQaAnswers'
 
-interface QaAnswer {
-  body: string
-  author_kind: string
-}
-interface QaItem {
-  id: number
-  seq: number
-  title: string | null
-  body: string
-  asker_kind: string
-  answer_count?: number
-  answers?: QaAnswer[]
-}
-
-defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   items: QaItem[]
-}>()
+  // R0001 (group 0093): when a docId and write actions are supplied, the full view
+  // becomes answer-capable. Omitting them keeps the dialog read-only (back-compat).
+  docId?: string
+  busy?: boolean
+  submitAnswer?: (itemId: number, body: string) => Promise<boolean>
+  requestAiAnswer?: (itemId: number) => Promise<boolean>
+}>(), {
+  docId: '',
+  busy: false,
+  submitAnswer: undefined,
+  requestAiAnswer: undefined,
+})
 
 const emit = defineEmits<{ 'update:visible': [value: boolean] }>()
 
 const { t } = useI18n()
 
+const answerOpenId = ref<number | null>(null)
+const answerBody = ref('')
+
 function answered(item: QaItem): boolean {
   return (item.answer_count ?? item.answers?.length ?? 0) > 0
 }
+
+function openAnswer(id: number) {
+  answerOpenId.value = id
+  answerBody.value = ''
+}
+function closeAnswer() {
+  answerOpenId.value = null
+  answerBody.value = ''
+}
+
+async function onSubmitAnswer(itemId: number) {
+  if (!props.submitAnswer || !answerBody.value.trim() || props.busy) return
+  if (await props.submitAnswer(itemId, answerBody.value)) {
+    closeAnswer()
+  }
+}
+
+async function onRequestAi(itemId: number) {
+  if (!props.requestAiAnswer || props.busy) return
+  await props.requestAiAnswer(itemId)
+}
+
+// Reset any open answer form when the dialog is closed so it reopens clean.
+watch(() => props.visible, (v) => { if (!v) closeAnswer() })
 
 function onClose() {
   emit('update:visible', false)
@@ -122,6 +180,15 @@ function onClose() {
 .qhd-answer { display: flex; gap: 6px; align-items: flex-start; border-left: 3px solid #22c55e; margin-top: 4px; }
 .qhd-answer-icon { color: #15803d; margin-top: 2px; }
 .qhd-footer { display: flex; justify-content: flex-end; }
+
+/* R0001 (group 0093): inline answer form within the full view (mirrors the
+   DocInfoPanel .dip-qa-form idiom). */
+.qhd-answer-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.qhd-answer-textarea {
+  width: 100%; box-sizing: border-box; font-size: .78rem; font-family: inherit;
+  padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; resize: vertical;
+}
+.qhd-answer-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 
 /* Theme the single scroll surface to match ReviewHistoryDialog (14px, tinted). */
 .qhd-body { scrollbar-width: thin; scrollbar-color: #b8c4d6 #eef2f8; }

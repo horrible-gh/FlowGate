@@ -260,15 +260,23 @@
     <!-- R0001 (AC3): show-all modal for the full query/answer text. Owned here since
          the QA data already lives in this panel (the AI review history modal lives in
          MainPanel because its data lives in DocHeader). -->
-    <QaHistoryDialog v-model:visible="qaHistoryVisible" :items="qaItems" />
+    <QaHistoryDialog
+      v-model:visible="qaHistoryVisible"
+      :items="qaItems"
+      :doc-id="props.docId"
+      :busy="qaBusy"
+      :submit-answer="submitAnswerCore"
+      :request-ai-answer="requestAiAnswer"
+    />
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { getRequest } from '@shared/api'
 import QaHistoryDialog from './QaHistoryDialog.vue'
+import { useQaAnswers } from '../composables/useQaAnswers'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiReviewFinding } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
@@ -485,25 +493,22 @@ const nextStep = computed(() =>
   props.nextStepIndex != null ? (props.stepStates[props.nextStepIndex] ?? null) : null
 )
 
-// ── group 0022 §3.1/§3.2: document-bound query/answer panel ──────────────────────
-interface QaAnswer {
-  body: string
-  author_kind: string
-}
-interface QaItem {
-  id: number
-  seq: number
-  title: string | null
-  body: string
-  asker_kind: string
-  answer_count?: number
-  answers?: QaAnswer[]
-}
+// ── group 0022 §3.1/§3.2 · group 0093 R0001: document-bound query/answer panel ──────
+// The data + write actions live in the shared useQaAnswers composable so the
+// "full view" dialog (QaHistoryDialog) can reuse the SAME qaItems ref and bound
+// actions — answering there refetches once and both surfaces stay in sync.
+const {
+  qaItems,
+  qaLoading,
+  qaError,
+  qaBusy,
+  itemAnswered,
+  fetchQa,
+  submitQuestion,
+  submitAnswer: submitAnswerCore,
+  requestAiAnswer,
+} = useQaAnswers(toRef(props, 'docId'))
 
-const qaItems = ref<QaItem[]>([])
-const qaLoading = ref(false)
-const qaError = ref('')
-const qaBusy = ref(false)
 const expandedItemId = ref<number | null>(null)
 const newQOpen = ref(false)
 const newQTitle = ref('')
@@ -513,10 +518,6 @@ const answerBody = ref('')
 
 // R0001 (AC3): full Q&A modal (show-all), same dialog form as ReviewHistoryDialog.
 const qaHistoryVisible = ref(false)
-
-function itemAnswered(item: QaItem): boolean {
-  return (item.answer_count ?? item.answers?.length ?? 0) > 0
-}
 
 function toggleItem(id: number) {
   expandedItemId.value = expandedItemId.value === id ? null : id
@@ -531,66 +532,15 @@ function openAnswer(id: number) {
   answerBody.value = ''
 }
 
-async function fetchQa() {
-  if (!props.docId) return
-  qaLoading.value = true
-  qaError.value = ''
-  try {
-    const res = await getRequest<any>(`/api/v1/q/${encodeURIComponent(props.docId)}`)
-    qaItems.value = (res.data as any)?.qa?.items ?? []
-  } catch (e: any) {
-    qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
-  } finally {
-    qaLoading.value = false
-  }
-}
-
 async function submitNewQ() {
-  if (!newQBody.value.trim() || qaBusy.value) return
-  qaBusy.value = true
-  try {
-    await postRequest(`/api/v1/q/${encodeURIComponent(props.docId)}/questions`, {
-      asker_kind: 'human',
-      questions: [{ title: newQTitle.value.trim() || null, body: newQBody.value.trim() }],
-    })
+  if (await submitQuestion(newQTitle.value, newQBody.value)) {
     newQTitle.value = ''; newQBody.value = ''; newQOpen.value = false
-    await fetchQa()
-  } catch (e: any) {
-    qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
-  } finally {
-    qaBusy.value = false
   }
 }
 
 async function submitAnswer(itemId: number) {
-  if (!answerBody.value.trim() || qaBusy.value) return
-  qaBusy.value = true
-  try {
-    await postRequest(`/api/v1/q/${encodeURIComponent(props.docId)}/items/${itemId}/answers`, {
-      body: answerBody.value.trim(),
-      author_kind: 'human',
-    })
+  if (await submitAnswerCore(itemId, answerBody.value)) {
     answerOpenId.value = null; answerBody.value = ''
-    await fetchQa()
-  } catch (e: any) {
-    qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
-  } finally {
-    qaBusy.value = false
-  }
-}
-
-// [Request AI answer] — hands the item to an AI worker; the answer lands later as
-// author_kind='ai' (D0005 §3.2). Dispatch wiring is server-side; here we mark it requested.
-async function requestAiAnswer(itemId: number) {
-  if (qaBusy.value) return
-  qaBusy.value = true
-  try {
-    await postRequest(`/api/v1/q/${encodeURIComponent(props.docId)}/items/${itemId}/answers/ai-request`, {})
-    await fetchQa()
-  } catch (e: any) {
-    qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
-  } finally {
-    qaBusy.value = false
   }
 }
 
