@@ -958,6 +958,8 @@ export default {
       carried_over: '会話が長くなったため新しいドキュメントに引き継がれます: {doc}',
       copy_mention: 'メント コピー',
       copy_mention_hint: 'まだリアルタイムチャットではないため、メントをコピーしてAIに直接渡すと、AIがこの会話を読んで返信を残します。',
+      auto_copy: '自動コピー',
+      auto_copy_hint: 'チェックしておくと、メッセージを送るたびにメントが自動的にコピーされます。',
     },
     review_reject_dialog: {
       title: '差し戻し処理',

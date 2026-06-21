@@ -108,7 +108,7 @@
               <ConversationView
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
-                @copy-mention="onConversationCopyMention(tab.id)"
+                @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
               />
             </div>
           </div>
@@ -2351,7 +2351,7 @@ async function onActionBarCreateConversation(tabId: string) {
 // chat-only mention (buildConversationMention) with just: read the conversation, append
 // one AI turn (§6), submit via inbox edit. The AI reads the conversation and appends its
 // reply turn, the same inbox-edit path AI turns already use.
-async function onConversationCopyMention(tabId: string) {
+async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean }) {
   const h = docHeaderRefs[tabId]
   const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   const groupId = exposedValue<string>(h?.groupId) ?? ''
@@ -2376,7 +2376,9 @@ async function onConversationCopyMention(tabId: string) {
     groupName: groupId,
   })
   await doClipboardCopy(mention)
-  showToast(t('main.main_panel.toast_mention_copied'), 'success')
+  // 0085: an auto-copy (fired by every send when the toggle is on) stays silent so it
+  // doesn't spam a success toast each turn; the manual button still confirms with one.
+  if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
   void recordMentionCopy(tabId, 'edit')
 }
 

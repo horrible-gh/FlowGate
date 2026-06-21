@@ -34,6 +34,13 @@
          distinct layers instead of three controls jammed into one strip. -->
     <form class="conv-composer" @submit.prevent="send">
       <div class="conv-assist">
+        <!-- 0085: when "auto-copy" is checked, every successful send also copies the
+             mention so the user no longer has to click "Copy mention" each turn. The
+             checkbox sits to the LEFT of the copy button (per R0001). -->
+        <label class="conv-auto" :title="t('main.conversation_view.auto_copy_hint')">
+          <input type="checkbox" v-model="autoCopy" />
+          {{ t('main.conversation_view.auto_copy') }}
+        </label>
         <!-- Real-time chat isn't wired yet, so the AI's turn is delivered by hand —
              copy a chat-only mention and paste it to the AI worker, which reads this
              conversation and posts its reply. -->
@@ -41,7 +48,7 @@
           type="button"
           class="conv-assist-btn"
           :title="t('main.conversation_view.copy_mention_hint')"
-          @click="$emit('copy-mention')"
+          @click="emit('copy-mention')"
         >
           <i class="fa-regular fa-copy"></i>
           {{ t('main.conversation_view.copy_mention') }}
@@ -90,14 +97,37 @@ const props = defineProps<{
   projectId?: string | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   // TR0044.0010 rev3: ask the parent (MainPanel) to copy an edit-scope mention for
   // this CH doc — manual turn delivery until live chat lands.
-  'copy-mention': []
+  // 0085: the optional payload carries { auto: true } when the copy was triggered
+  // automatically by a send (vs. a manual button click), so the parent can stay quiet.
+  'copy-mention': [opts?: { auto?: boolean }]
 }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
+
+// 0085: "auto-copy mention" toggle. When on, a successful send() also fires the same
+// copy-mention event the manual button does. Persisted as a single global user
+// preference in localStorage (matches the existing UI-toggle persistence pattern), so
+// "check once and it stays on" survives reloads and applies to every chat.
+const AUTO_COPY_KEY = 'flowgate.chat.autoCopyMention'
+function loadAutoCopy(): boolean {
+  try {
+    return localStorage.getItem(AUTO_COPY_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const autoCopy = ref(loadAutoCopy())
+watch(autoCopy, (v) => {
+  try {
+    localStorage.setItem(AUTO_COPY_KEY, v ? '1' : '0')
+  } catch {
+    /* ignore — best-effort persistence */
+  }
+})
 
 const turns = ref<ConvTurn[]>([])
 const draft = ref('')
@@ -229,6 +259,10 @@ async function send(): Promise<void> {
         'info',
       )
     }
+    // 0085: auto-copy the mention only AFTER the turn was accepted (turns refreshed
+    // above), so the worker reads the latest conversation. Reuses the exact same
+    // copy-mention path as the manual button; never fires on a failed send (catch below).
+    if (autoCopy.value) emit('copy-mention', { auto: true })
     void nextTick(() => inputEl.value?.focus())
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
@@ -369,10 +403,28 @@ defineExpose({ load })
   background: var(--bg-card, #fff);
 }
 
-/* Helper row — manual delivery shortcut, kept quiet so it doesn't compete with the input. */
+/* Helper row — manual delivery shortcut, kept quiet so it doesn't compete with the input.
+   0085: holds the auto-copy checkbox immediately to the LEFT of the copy button. */
 .conv-assist {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.conv-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .7rem;
+  color: var(--text-m);
+  cursor: pointer;
+  user-select: none;
+}
+
+.conv-auto input {
+  cursor: pointer;
+  margin: 0;
 }
 
 .conv-assist-btn {

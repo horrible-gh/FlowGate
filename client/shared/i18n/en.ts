@@ -958,6 +958,8 @@
       carried_over: 'The conversation rolled over to a new document: {doc}',
       copy_mention: 'Copy Mention',
       copy_mention_hint: 'Live chat is not wired yet — copy the mention and hand it to the AI worker, which reads this conversation and posts its reply.',
+      auto_copy: 'Auto-copy',
+      auto_copy_hint: 'When checked, the mention is copied automatically every time you send a message.',
     },
     review_reject_dialog: {
       title: 'Reject Document',

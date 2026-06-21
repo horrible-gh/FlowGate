@@ -958,6 +958,8 @@
       carried_over: '대화가 길어져 새 문서로 이어집니다: {doc}',
       copy_mention: '멘트 복사',
       copy_mention_hint: '아직 실시간 채팅이 아니므로, 멘트를 복사해 AI에게 직접 전달하면 AI가 이 대화를 읽고 답신을 남깁니다.',
+      auto_copy: '자동 복사',
+      auto_copy_hint: '체크해 두면 메시지를 보낼 때마다 멘트가 자동으로 복사됩니다.',
     },
     review_reject_dialog: {
       title: '반려 처리',
