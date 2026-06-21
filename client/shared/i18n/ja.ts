@@ -667,6 +667,7 @@ export default {
       module_label: 'モジュール',
       no_module: '（モジュールなし）',
       select_project: 'プロジェクトを選択',
+      use_group_name: 'タイトルにグループ名を入れる',
     },
     new_related_doc_modal: {
       title: '派生ドキュメント追加',
@@ -813,6 +814,7 @@ export default {
       error_reject_failed: '差し戻し処理中にエラーが発生しました。',
       toast_mention_copied: 'メンションがクリップボードにコピーされました。',
       toast_copy_failed: 'コピー失敗',
+      use_group_name: 'タイトルにグループ名を入れる',
       mention_copied_at: 'コピー済み {time}',
       mention_copy_tooltip: "'{label}'を{time}にコピーしました。AIワーカーに貼り付けると次の作業が進みます。",
       mention_kinds: {

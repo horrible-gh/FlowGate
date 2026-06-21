@@ -667,6 +667,7 @@
       module_label: 'Module',
       no_module: '(no module)',
       select_project: 'Select a project',
+      use_group_name: 'Use group name as title',
     },
     new_related_doc_modal: {
       title: 'Add Derived Document',
@@ -813,6 +814,7 @@
       error_reject_failed: 'An error occurred during rejection.',
       toast_mention_copied: 'Mention copied to clipboard.',
       toast_copy_failed: 'Copy failed',
+      use_group_name: 'Use group name as title',
       mention_copied_at: 'Copied {time}',
       mention_copy_tooltip: "Copied the '{label}' at {time}. Paste it to an AI worker to advance the next task.",
       mention_kinds: {

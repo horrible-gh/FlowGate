@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
-import { prependMessageSection } from '../utils/mentionMessages'
+import { prependMessagesSection } from '../utils/mentionMessages'
 
 // Base URL used ONLY to build copy-paste mention text (buildConversationMention /
 // buildMentText). Mentions are consumed by an AI worker on another machine, so the URL
@@ -354,7 +354,7 @@ export function useFlowGateToken() {
     return parts.join('\n')
   }
 
-  async function copyMentToClipboard(token: IssuedToken, selectedDocs?: string[], rejectionContext?: RejectionContext, appendMessage?: string): Promise<boolean> {
+  async function copyMentToClipboard(token: IssuedToken, selectedDocs?: string[], rejectionContext?: RejectionContext, appendMessages?: string[]): Promise<boolean> {
     // Edit case: prepend only the rejection section to token.mention (server 8-section).
     // If token.mention is null, fall back to client-side buildMentText() (includes rejection section).
     let text: string
@@ -364,9 +364,9 @@ export function useFlowGateToken() {
     } else {
       text = token.mention ?? buildMentText(token, selectedDocs ?? token.selected_docs, rejectionContext)
     }
-    // Mention-add (R0001 group 0081): prepend the chosen project message as a labeled
+    // Mention-add (R0001 group 0081): prepend the chosen project message(s) as one labeled
     // section at the top so the AI sees its macros first, not buried below the Reminder.
-    if (appendMessage) text = prependMessageSection(text, appendMessage, t('main.next_action_modal.mm_section_header'))
+    if (appendMessages && appendMessages.length > 0) text = prependMessagesSection(text, appendMessages, t('main.next_action_modal.mm_section_header'))
     if (navigator.clipboard?.writeText) {
       try {
         await navigator.clipboard.writeText(text)

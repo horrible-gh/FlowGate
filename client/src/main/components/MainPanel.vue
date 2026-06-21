@@ -944,7 +944,7 @@ import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
 import MentionMessageDialog from './MentionMessageDialog.vue'
-import { buildCandidateList, prependMessageSection, type MessageEntry } from '../utils/mentionMessages'
+import { buildCandidateList, prependMessagesSection, type MessageEntry } from '../utils/mentionMessages'
 import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
@@ -1987,15 +1987,17 @@ async function onNextActionCopyMention(selectedDocs?: string[]) {
   } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
 }
 
-// Copy a token's mention (optionally appending a chosen project message). Mirrors the
+// Copy a token's mention (optionally prepending chosen project message(s)). Mirrors the
 // copy logic in onNextActionCopyMention; returns whether the clipboard write succeeded.
-async function copyTokenMention(token: IssuedToken, selectedDocs?: string[], appendMessage?: string): Promise<boolean> {
+async function copyTokenMention(token: IssuedToken, selectedDocs?: string[], appendMessages?: string[]): Promise<boolean> {
   if (token.mention) {
-    const text = appendMessage ? prependMessageSection(token.mention, appendMessage, t('main.next_action_modal.mm_section_header')) : token.mention
+    const text = appendMessages && appendMessages.length > 0
+      ? prependMessagesSection(token.mention, appendMessages, t('main.next_action_modal.mm_section_header'))
+      : token.mention
     await doClipboardCopy(text)
     return true
   }
-  return copyMentToClipboard(token, selectedDocs, undefined, appendMessage)
+  return copyMentToClipboard(token, selectedDocs, undefined, appendMessages)
 }
 
 // [Copy mention (add message)] — R0001 group 0004 / L0007 §2.2.
@@ -2067,11 +2069,11 @@ async function onNextActionCopyMentionWithMessage(selectedDocs?: string[]) {
   mmDialogVisible.value = true
 }
 
-async function onMmDialogSelect(message: string) {
+async function onMmDialogSelect(messages: string[]) {
   mmDialogVisible.value = false
   const token = mmDialogToken.value
   if (!token) return
-  const ok = await copyTokenMention(token, mmDialogSelectedDocs.value, message)
+  const ok = await copyTokenMention(token, mmDialogSelectedDocs.value, messages)
   if (ok) {
     showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
     void recordMentionCopy(nextActionModalTabId.value, 'next_step_message')

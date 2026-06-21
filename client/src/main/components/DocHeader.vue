@@ -52,6 +52,15 @@
         <button class="doc-title-btn doc-title-btn--cancel" @click="cancelEditTitle">
           <i class="fa-solid fa-xmark"></i>
         </button>
+        <button
+          v-if="groupTitle"
+          class="doc-title-btn doc-title-btn--group"
+          type="button"
+          :title="t('main.doc_header.use_group_name')"
+          @click="applyGroupNameToTitle"
+        >
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+        </button>
       </template>
       <template v-else>
         <span class="doc-title">{{ doc.title }}</span>
@@ -62,6 +71,15 @@
           @click="startEditTitle"
         >
           <i class="fa-solid fa-pencil"></i>
+        </button>
+        <button
+          v-if="canEditDocument && headerTypeCode !== 'DC' && groupTitle"
+          class="doc-title-btn doc-title-btn--group"
+          type="button"
+          :title="t('main.doc_header.use_group_name')"
+          @click="applyGroupNameToTitle"
+        >
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
         </button>
       </template>
     </div>
@@ -251,6 +269,10 @@ interface DocDetail {
 const doc = ref<DocDetail | null>(null)
 const ownerName = ref<string | null>(null)
 const groupLabel = ref<string | null>(null)
+// Pure group title (no "(#num)" prefix) for the "use group name" title button.
+// Pre-loaded in fetchGroup so it is always available — unlike `groupName`, which only
+// fills when the ⋯ menu opens (loadGroupContext). NR0003 §5.
+const groupTitle = ref('')
 // R0001 group 0015 / NR0003 rev4 — persistent "mention copied" badge. null == not copied
 // (no badge renders; there is no 'before copy' state). Hydrated from server user-state on open,
 // updated live via the fg:mention_copied window bridge when this user copies a mention.
@@ -374,9 +396,11 @@ async function fetchGroup(projectId: string, groupId: string) {
       groupLabel.value = groupNum && found.title
         ? `(#${groupNum}) ${found.title}`
         : found.title ?? groupNum ?? null
+      groupTitle.value = found.title ?? ''
     }
   } catch {
     groupLabel.value = null
+    groupTitle.value = ''
   }
 }
 
@@ -412,6 +436,7 @@ async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolea
     workflowSteps.value = null
     ownerName.value = null
     groupLabel.value = null
+    groupTitle.value = ''
     qAnswerStatus.value = null
     mentionCopy.value = null
     emit('doc-updated', { docId: id })
@@ -545,6 +570,18 @@ function copyMention() {
   }).catch(() => {
     showToast(t('main.doc_header.toast_copy_failed'), 'error')
   })
+}
+
+// R0001 group 0111: fill the title with the group name in one click. If the title is
+// not yet in edit mode, enter it (and focus) so the filled value can be reviewed and
+// saved; if already editing, just replace the in-progress value.
+function applyGroupNameToTitle() {
+  if (!groupTitle.value) return
+  if (!editingTitle.value) {
+    editingTitle.value = true
+    nextTick(() => titleInputRef.value?.focus())
+  }
+  editTitleValue.value = groupTitle.value
 }
 
 function onFileUploaded(_result: any) {
@@ -1192,6 +1229,17 @@ const statusLabel = computed(() => {
   background: var(--surface-h);
   color: var(--text-m);
   border: 1px solid var(--border);
+}
+
+/* "Use group name" title button (group 0111 / R0001): fills the document title with the
+   group name in one click, so it no longer has to be retyped after creation. */
+.doc-title-btn--group {
+  color: var(--primary);
+  border-color: #bfdbfe;
+}
+
+.doc-title-btn--group:hover {
+  background: var(--surface-h);
 }
 
 /* Mention-copied badge (R0001 group 0015 / NR0003 rev4): green "copied" pill in the meta row,
