@@ -50,6 +50,47 @@ INSTRUCTION_AUTO_TYPES = {"N", "T", "TS"}
 CONTINUATION_TO_END = -1
 
 
+# ── Corrupted-label guard (group 0114 B0001 / NR0003) ──────────────────────────────
+# NR0003 root cause: instruction-step labels (N/T/TS) are user/AI submitted verbatim and
+# can arrive already mangled by a lossy submission environment — Korean encoded through an
+# ascii-replace path (Windows cp932 console / encode('ascii', errors='replace')), so each
+# Hangul glyph becomes a single ASCII '?' (0x3F). The server/DB store the value faithfully,
+# so the corruption surfaces in the ContinuousWorkDialog as a run of "?????". Auto-report
+# labels are immune because they come from get_type_name() (a DB lookup), not the payload.
+#
+# We treat a label as corrupted when it is pure ASCII (a real Hangul label is multibyte) and
+# the '?' characters dominate its visible content. When that happens we fall back to the
+# document type's display name — graceful degradation that is always meaningful and never
+# worse than the glyph-less "?????" the user reported. A normal ASCII label that merely ends
+# in a question mark ("Done?") stays untouched because '?' does not dominate.
+_CORRUPT_MIN_MARKS = 2
+_CORRUPT_RATIO = 0.5
+
+
+def _label_is_corrupted(label: Optional[str]) -> bool:
+    """True when ``label`` looks like ascii-replace mojibake (Hangul lost to '?')."""
+    if not label:
+        return False
+    if not label.isascii():
+        return False  # real multibyte text survived — not the ascii-replace signature
+    marks = label.count("?")
+    if marks < _CORRUPT_MIN_MARKS:
+        return False
+    visible = len(label.replace(" ", ""))
+    if visible == 0:
+        return False
+    return marks / visible >= _CORRUPT_RATIO
+
+
+def _safe_label(label: Optional[str], type_: Optional[str], locale: str = "ko") -> str:
+    """Return ``label`` unless it is corrupted, in which case the type display name."""
+    if _label_is_corrupted(label):
+        fallback = get_type_name((type_ or "").upper(), locale)
+        if fallback:
+            return fallback
+    return label or ""
+
+
 def _expand_auto_reports(sequence: list[dict], locale: str = "ko") -> list[dict]:
     """Ensure every instruction step is immediately followed by its report step.
 
@@ -120,7 +161,9 @@ def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
                 sequence_id=seq_id,
                 item_seq=item["id"],
                 type_=item["type"],
-                label=item["label"],
+                # NR0003 §7-2: sanitize a corrupted submission label before it is persisted,
+                # so the recurring "?????" rows (06-11 → 06-19 → 06-22) stop accumulating.
+                label=_safe_label(item["label"], item["type"]),
                 doc_class=doc_class,
                 sort_order=idx,
             )
@@ -723,7 +766,10 @@ def get_workflow_sequence(doc_id: str) -> dict:
                 "id": it["id"],
                 "item_seq": it["item_seq"],
                 "type": it["type"],
-                "label": it["label"],
+                # NR0003 §7-3: rows already corrupted before this fix shipped still live in
+                # workflow_sequence_items; degrade their display to the type name so the dialog
+                # never shows "?????". No DB migration needed — the read path heals the view.
+                "label": _safe_label(it["label"], it["type"]),
                 "doc_class": it["doc_class"],
                 "sort_order": it["sort_order"],
                 "status": it["status"],
@@ -783,7 +829,7 @@ def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
                 sequence_id=seq["id"],
                 item_seq=max_seq + idx + 1,
                 type_=item["type"],
-                label=item["label"],
+                label=_safe_label(item["label"], item["type"]),  # NR0003 §7-2 (edit path)
                 doc_class=doc_class,
                 sort_order=locked_count + idx,
             )
