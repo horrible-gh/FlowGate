@@ -470,101 +470,139 @@ def _active_workflow_rows(project_id: str) -> list[dict]:
     )
 
 
+def _build_active_workflow_item(row: dict, project_id: str) -> dict:
+    """Normalize one active-workflow row into a dashboard item.
+
+    Raises DashboardDataError when the row's source data is internally inconsistent
+    (orphan/empty sequence, missing title, mismatched head document, bad timestamp).
+    Callers decide whether an individual bad row is fatal; list_active_workflows skips
+    it so a single malformed workflow can't take down the whole dashboard (B0001/0122).
+    """
+    requirement_id = row["requirement_doc_id"]
+    group_id = row["group_id"]
+    if row.get("sequence_id") is None:
+        raise DashboardDataError(f"workflow sequence missing: {requirement_id}")
+    if int(row.get("sequence_item_count") or 0) <= 0:
+        raise DashboardDataError(f"workflow sequence empty: {requirement_id}")
+    if not row.get("requirement_title") or not row.get("group_title"):
+        raise DashboardDataError(f"workflow title missing: {requirement_id}")
+
+    total_steps = int(row["sequence_item_count"])
+    completed_steps = min(int(row.get("completed_item_count") or 0), total_steps)
+    requirement_navigation = {
+        "kind": "document",
+        "doc_id": requirement_id,
+        "group_id": group_id,
+    }
+    result_doc_id = row.get("result_doc_id")
+    if row.get("head_item_id") is None:
+        stage = {
+            "state": "pending",
+            "type_code": "AC",
+            "head_doc_id": None,
+            "head_doc_title": None,
+            "head_doc_review_status": None,
+        }
+        navigation = requirement_navigation
+    elif result_doc_id:
+        if (
+            row.get("head_doc_project_id") != project_id
+            or row.get("head_doc_group_id") != group_id
+            or row.get("head_doc_type_code") != row.get("head_type")
+            or not row.get("head_doc_title")
+        ):
+            raise DashboardDataError(f"invalid workflow head document: {result_doc_id}")
+        stage = {
+            "state": "in_progress",
+            "type_code": row["head_type"],
+            "head_doc_id": result_doc_id,
+            "head_doc_title": row.get("head_doc_title"),
+            "head_doc_review_status": row.get("result_doc_review_status"),
+        }
+        navigation = {
+            "kind": "document",
+            "doc_id": result_doc_id,
+            "group_id": group_id,
+        }
+    else:
+        stage = {
+            "state": "pending",
+            "type_code": row["head_type"],
+            "head_doc_id": None,
+            "head_doc_title": None,
+            "head_doc_review_status": None,
+        }
+        navigation = requirement_navigation
+
+    time_values = [
+        row.get("requirement_updated_at"),
+        row.get("sequence_updated_at"),
+        row.get("head_updated_at"),
+    ]
+    if result_doc_id:
+        time_values.append(row.get("head_doc_updated_at"))
+    try:
+        updated_at_dt = max(_parse_time(value) for value in time_values if value)
+    except (TypeError, ValueError) as exc:
+        raise DashboardDataError(
+            f"invalid workflow timestamp: {requirement_id}"
+        ) from exc
+
+    return {
+        "group_id": group_id,
+        "group_title": row["group_title"],
+        "requirement": {
+            "doc_id": requirement_id,
+            "title": row["requirement_title"],
+        },
+        "stage": stage,
+        "progress": {
+            "completed_steps": completed_steps,
+            "total_steps": total_steps,
+            "percent": round((completed_steps / total_steps) * 100),
+        },
+        "updated_at": _utc_iso(updated_at_dt),
+        "navigation": navigation,
+    }
+
+
 def list_active_workflows(project_id: str, limit: int) -> dict:
+    """Active-workflow card data, tolerant of individual malformed rows.
+
+    B0001 (group 0122): the dashboard read path used to be all-or-nothing — a single
+    workflow left in an abnormal state (empty/orphan/zombie sequence, e.g. after the
+    user deletes every step) made the whole summary endpoint return HTTP 500, taking
+    the unrelated "recent activity" card down with it. We now skip the malformed
+    row(s), log them, and render the healthy workflows. `skipped` surfaces how many
+    rows were dropped for observability.
+    """
     rows = _active_workflow_rows(project_id)
     seen_groups: set[str] = set()
     items: list[dict] = []
+    skipped = 0
 
     for row in rows:
-        requirement_id = row["requirement_doc_id"]
         group_id = row["group_id"]
         if group_id in seen_groups:
-            raise DashboardDataError(f"multiple active requirements for group: {group_id}")
+            # Duplicate active requirement for a group is a data anomaly; skip the
+            # extra row rather than 500-ing the entire dashboard.
+            _log.warning(
+                "dashboard: skipping duplicate active requirement group=%s requirement=%s",
+                group_id,
+                row.get("requirement_doc_id"),
+            )
+            skipped += 1
+            continue
         seen_groups.add(group_id)
-        if row.get("sequence_id") is None:
-            raise DashboardDataError(f"workflow sequence missing: {requirement_id}")
-        if int(row.get("sequence_item_count") or 0) <= 0:
-            raise DashboardDataError(f"workflow sequence empty: {requirement_id}")
-        if not row.get("requirement_title") or not row.get("group_title"):
-            raise DashboardDataError(f"workflow title missing: {requirement_id}")
-
-        total_steps = int(row["sequence_item_count"])
-        completed_steps = min(int(row.get("completed_item_count") or 0), total_steps)
-        requirement_navigation = {
-            "kind": "document",
-            "doc_id": requirement_id,
-            "group_id": group_id,
-        }
-        result_doc_id = row.get("result_doc_id")
-        if row.get("head_item_id") is None:
-            stage = {
-                "state": "pending",
-                "type_code": "AC",
-                "head_doc_id": None,
-                "head_doc_title": None,
-                "head_doc_review_status": None,
-            }
-            navigation = requirement_navigation
-        elif result_doc_id:
-            if (
-                row.get("head_doc_project_id") != project_id
-                or row.get("head_doc_group_id") != group_id
-                or row.get("head_doc_type_code") != row.get("head_type")
-                or not row.get("head_doc_title")
-            ):
-                raise DashboardDataError(f"invalid workflow head document: {result_doc_id}")
-            stage = {
-                "state": "in_progress",
-                "type_code": row["head_type"],
-                "head_doc_id": result_doc_id,
-                "head_doc_title": row.get("head_doc_title"),
-                "head_doc_review_status": row.get("result_doc_review_status"),
-            }
-            navigation = {
-                "kind": "document",
-                "doc_id": result_doc_id,
-                "group_id": group_id,
-            }
-        else:
-            stage = {
-                "state": "pending",
-                "type_code": row["head_type"],
-                "head_doc_id": None,
-                "head_doc_title": None,
-                "head_doc_review_status": None,
-            }
-            navigation = requirement_navigation
-
-        time_values = [
-            row.get("requirement_updated_at"),
-            row.get("sequence_updated_at"),
-            row.get("head_updated_at"),
-        ]
-        if result_doc_id:
-            time_values.append(row.get("head_doc_updated_at"))
         try:
-            updated_at_dt = max(_parse_time(value) for value in time_values if value)
-        except (TypeError, ValueError) as exc:
-            raise DashboardDataError(
-                f"invalid workflow timestamp: {requirement_id}"
-            ) from exc
-
-        items.append({
-            "group_id": group_id,
-            "group_title": row["group_title"],
-            "requirement": {
-                "doc_id": requirement_id,
-                "title": row["requirement_title"],
-            },
-            "stage": stage,
-            "progress": {
-                "completed_steps": completed_steps,
-                "total_steps": total_steps,
-                "percent": round((completed_steps / total_steps) * 100),
-            },
-            "updated_at": _utc_iso(updated_at_dt),
-            "navigation": navigation,
-        })
+            items.append(_build_active_workflow_item(row, project_id))
+        except DashboardDataError as exc:
+            _log.warning(
+                "dashboard: skipping malformed active workflow group=%s: %s",
+                group_id,
+                exc,
+            )
+            skipped += 1
 
     items.sort(key=lambda item: item["group_id"])
     items.sort(key=lambda item: _parse_time(item["updated_at"]), reverse=True)
@@ -575,6 +613,7 @@ def list_active_workflows(project_id: str, limit: int) -> dict:
         "total": total,
         "has_more": total > len(page),
         "items": page,
+        "skipped": skipped,
     }
 
 
@@ -585,7 +624,26 @@ def get_dashboard_summary(
 ) -> dict:
     with get_store().transaction():
         recent_activities = list_recent_activities(project_id, activity_limit)
-        active_workflows = list_active_workflows(project_id, workflow_limit)
+        try:
+            active_workflows = list_active_workflows(project_id, workflow_limit)
+        except DashboardDataError as exc:
+            # Defense in depth (B0001/0122): list_active_workflows already skips
+            # individual malformed rows, so reaching here means the aggregation as a
+            # whole failed. Degrade just the workflow card instead of failing the
+            # entire dashboard — the recent-activity card must stay alive.
+            _log.error(
+                "dashboard: active workflow aggregation failed project=%s: %s",
+                project_id,
+                exc,
+            )
+            active_workflows = {
+                "limit": workflow_limit,
+                "total": 0,
+                "has_more": False,
+                "items": [],
+                "skipped": 0,
+                "degraded": True,
+            }
     return {
         "ok": True,
         "project_id": project_id,

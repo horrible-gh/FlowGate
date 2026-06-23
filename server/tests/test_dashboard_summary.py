@@ -285,13 +285,100 @@ def test_summary_excludes_discarded_group_from_active_workflows(dashboard_store)
     assert workflows["items"] == []
 
 
-def test_summary_rejects_active_requirement_without_sequence(dashboard_store):
+def test_summary_skips_active_requirement_without_sequence(dashboard_store):
+    # B0001 (group 0122): a workflow with no sequence row (orphan requirement, e.g.
+    # after "워크플로 전부 삭제") must be SKIPPED rather than raising and 500-ing the
+    # whole dashboard. The read path is partial-failure tolerant now.
     _seed_base(dashboard_store)
     dashboard_store.conn.execute("DELETE FROM workflow_sequences")
     dashboard_store.conn.commit()
 
-    with pytest.raises(dashboard_service.DashboardDataError, match="sequence missing"):
-        dashboard_service.list_active_workflows("flowgate", 10)
+    workflows = dashboard_service.list_active_workflows("flowgate", 10)
+
+    assert workflows["total"] == 0
+    assert workflows["items"] == []
+    assert workflows["skipped"] == 1
+
+
+def test_summary_skips_empty_sequence(dashboard_store):
+    # State B from NR0122 §4: sequence row kept but every step deleted (empty
+    # sequence). Must be skipped, not fatal.
+    _seed_base(dashboard_store)
+    dashboard_store.conn.execute("DELETE FROM workflow_sequence_items")
+    dashboard_store.conn.commit()
+
+    workflows = dashboard_service.list_active_workflows("flowgate", 10)
+
+    assert workflows["total"] == 0
+    assert workflows["skipped"] == 1
+
+
+def test_summary_renders_healthy_workflows_alongside_malformed(dashboard_store):
+    # Core B0001/0122 guarantee: one malformed workflow does not hide the healthy
+    # ones — the dashboard renders the good rows and drops only the bad one.
+    _seed_base(dashboard_store)
+    # Add a second, healthy group with a valid one-step sequence.
+    dashboard_store.conn.executescript(
+        """
+        INSERT INTO groups VALUES ('flowgate.default.0021', 'flowgate', 'Second work', NULL);
+        INSERT INTO documents
+            (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
+        VALUES
+            ('flowgate.default.0021.0001-R', 'flowgate', 'flowgate.default.0021',
+             'R', 'Second requirement', 'wf_in_progress', '2026-06-13T00:00:00Z');
+        INSERT INTO workflow_sequences (doc_id, updated_at)
+        VALUES ('flowgate.default.0021.0001-R', '2026-06-13T00:01:00Z');
+        INSERT INTO workflow_sequence_items
+            (sequence_id, type, sort_order, result_doc_id, updated_at)
+        VALUES (2, 'T', 1, NULL, '2026-06-13T00:00:00Z');
+        """
+    )
+    # Now break the FIRST group's sequence (orphan it).
+    dashboard_store.conn.execute(
+        "DELETE FROM workflow_sequences WHERE doc_id = 'flowgate.default.0020.0001-R'"
+    )
+    dashboard_store.conn.commit()
+
+    workflows = dashboard_service.list_active_workflows("flowgate", 10)
+
+    assert workflows["skipped"] == 1
+    assert workflows["total"] == 1
+    assert workflows["items"][0]["group_id"] == "flowgate.default.0021"
+
+
+def test_summary_survives_malformed_workflow_end_to_end(dashboard_store):
+    # End-to-end: get_dashboard_summary returns 200-shaped data with the recent
+    # activity card intact even though the only workflow is malformed (was a full
+    # 500 before B0001/0122).
+    _seed_base(dashboard_store)
+    dashboard_store.conn.execute("DELETE FROM workflow_sequences")
+    dashboard_store.conn.commit()
+
+    result = dashboard_service.get_dashboard_summary("flowgate", 10, 10)
+
+    assert result["ok"] is True
+    assert result["recent_activities"]["total"] == 4
+    assert result["active_workflows"]["total"] == 0
+    assert result["active_workflows"]["skipped"] == 1
+
+
+def test_summary_degrades_workflow_card_on_unexpected_aggregation_failure(
+    dashboard_store, monkeypatch
+):
+    # Defense in depth: if list_active_workflows itself blows up (not a per-row skip),
+    # the workflow card degrades but recent activities still render.
+    _seed_base(dashboard_store)
+
+    def _boom(*_args, **_kwargs):
+        raise dashboard_service.DashboardDataError("aggregation exploded")
+
+    monkeypatch.setattr(dashboard_service, "list_active_workflows", _boom)
+
+    result = dashboard_service.get_dashboard_summary("flowgate", 10, 10)
+
+    assert result["recent_activities"]["total"] == 4
+    assert result["active_workflows"]["degraded"] is True
+    assert result["active_workflows"]["items"] == []
 
 
 def _client(monkeypatch, service_result=None):
