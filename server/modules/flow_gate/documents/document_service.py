@@ -182,20 +182,27 @@ def delete_document(doc_id: str, actor_user_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
     store = get_store()
-    # Release the FK: set document_id to NULL (history is preserved)
-    store._execute(
-        "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
-        [doc["id"]],
-    )
-    db_docs.delete(doc_id)
-    db_events.create({
-        "event_type": "doc_deleted",
-        "project_id": doc["project_id"],
-        "group_id": doc.get("group_id"),
-        "document_id": None,
-        "actor_user_id": actor_user_id,
-        "from_state": doc["status"],
-    })
+    # Run the whole deletion inside a transaction so it is atomic AND so the SQLite
+    # backend has `PRAGMA foreign_keys = ON` active (connection.transaction() turns it
+    # on only within the transaction context). Outside a transaction the live sqlite
+    # backend leaves FKs OFF, so declared ON DELETE SET NULL / CASCADE actions on the
+    # documents row would silently not fire, leaving orphan workflow_sequences /
+    # dangling result_doc_id references (NR0122 §5 "state C"). (B0001/0122 rec #3)
+    with store.transaction():
+        # Release the FK: set document_id to NULL (history is preserved)
+        store._execute(
+            "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
+            [doc["id"]],
+        )
+        db_docs.delete(doc_id)
+        db_events.create({
+            "event_type": "doc_deleted",
+            "project_id": doc["project_id"],
+            "group_id": doc.get("group_id"),
+            "document_id": None,
+            "actor_user_id": actor_user_id,
+            "from_state": doc["status"],
+        })
 
 
 # ── State machine ─────────────────────────────────────────────────────────────

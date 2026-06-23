@@ -127,18 +127,26 @@ def update(doc_id: str, updates: dict[str, Any]) -> Optional[dict]:
 def delete(doc_id: str) -> None:
     store = get_store()
     doc = get_by_id(doc_id)
-    if doc is not None:
-        # Preserve workflow history while releasing the FK to documents.id. This
-        # mirrors document_service.delete_document and protects internal cleanup
-        # paths that intentionally call the low-level delete helper.
-        try:
-            store._execute(
-                "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
-                [doc["id"]],
-            )
-        except Exception:
-            pass
-    store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
+    # Wrap in a transaction so the SQLite backend has FK enforcement ON for the
+    # DELETE (connection.transaction() enables `PRAGMA foreign_keys = ON`). Outside a
+    # transaction the live sqlite backend leaves FKs OFF, so declared ON DELETE
+    # SET NULL / CASCADE actions would not fire and could orphan dependent rows
+    # (NR0122 §5 / B0001 rec #3). transaction() is reentrant, so callers that already
+    # opened a transaction (e.g. document_service.delete_document) pass straight
+    # through without nesting.
+    with store.transaction():
+        if doc is not None:
+            # Preserve workflow history while releasing the FK to documents.id. This
+            # mirrors document_service.delete_document and protects internal cleanup
+            # paths that intentionally call the low-level delete helper.
+            try:
+                store._execute(
+                    "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
+                    [doc["id"]],
+                )
+            except Exception:
+                pass
+        store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
 
 
 def fetch_recent_group_docs(

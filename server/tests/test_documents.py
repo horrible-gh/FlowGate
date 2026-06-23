@@ -77,16 +77,23 @@ class _MockTxn:
         self._last_cursor = self._conn.execute(sql, params or [])
         self._conn.commit()
 
-    def fetch_one(self) -> dict | None:
+    # connection.py's _fetch_one/_fetch_all call txn.fetchone()/fetchall() (no
+    # underscore) when running inside a transaction. delete() now reads inside the
+    # transaction context, so expose the names the real txn interface uses.
+    def fetchone(self) -> dict | None:
         if self._last_cursor is None:
             return None
         row = self._last_cursor.fetchone()
         return dict(row) if row else None
 
-    def fetch_all(self) -> list[dict]:
+    def fetchall(self) -> list[dict]:
         if self._last_cursor is None:
             return []
         return [dict(r) for r in self._last_cursor.fetchall()]
+
+    # Backwards-compatible aliases (pre-existing test callers).
+    fetch_one = fetchone
+    fetch_all = fetchall
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
