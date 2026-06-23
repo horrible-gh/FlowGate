@@ -881,6 +881,7 @@
       status_revised: 'Revised',
       status_pending_review: 'Pending Review',
       next_doc: 'Complete',
+      recover_hint: 'All workflow steps were deleted. Use [Edit Sequence] to add steps back.',
       final_approval: 'Final Approval',
       btn_approve: 'Approve',
       btn_reject: 'Reject',

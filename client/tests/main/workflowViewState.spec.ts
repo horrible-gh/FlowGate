@@ -292,6 +292,63 @@ describe('resolveWorkflowViewState', () => {
     expect(result.canNextAction).toBe(false)
   })
 
+  // ── 0119 B0001 / NR0009 §6.2/§6.3: decided-but-empty workflow recovery ─────
+  // Server reports headStatus='empty' when a decided workflow's sequence row exists but
+  // has zero items (every step deleted). It must route to mode='workflow-recover' on EVERY
+  // tab — never the phantom mode='next' (R/B) nor mode='sequence-complete' ([완료]) (non-R).
+
+  it('R decided + headStatus=empty → mode=workflow-recover (NOT phantom next), canNextAction=false', () => {
+    const result = s({
+      tabTypeCode: 'R',
+      tabReviewStatus: 'wf_in_progress',
+      headStatus: 'empty',
+      headType: null,
+      workflowSteps: [],
+    })
+    expect(result.mode).toBe('workflow-recover')
+    expect(result.mode).not.toBe('next')
+    expect(result.canNextAction).toBe(false)
+    expect(result.nextStepCode).toBeNull()
+    expect(result.nextStepActive).toBe(false)
+  })
+
+  it('B decided + headStatus=empty → mode=workflow-recover (bug-root parity)', () => {
+    const result = s({
+      tabTypeCode: 'B',
+      tabReviewStatus: 'wf_in_progress',
+      headStatus: 'empty',
+      headType: null,
+      workflowSteps: [],
+    })
+    expect(result.mode).toBe('workflow-recover')
+    expect(result.canNextAction).toBe(false)
+  })
+
+  it('non-R sibling tab + headStatus=empty → mode=workflow-recover (NOT sequence-complete/[완료])', () => {
+    const result = s({
+      tabTypeCode: 'D',
+      tabReviewStatus: 'approved',
+      headStatus: 'empty',
+      headType: null,
+      workflowSteps: [],
+    })
+    expect(result.mode).toBe('workflow-recover')
+    expect(result.mode).not.toBe('sequence-complete')
+    expect(result.canNextAction).toBe(false)
+  })
+
+  it('M tab + headStatus=empty → mode=workflow-recover (guard precedes M branch)', () => {
+    const result = s({
+      tabTypeCode: 'M',
+      headStatus: 'empty',
+      headType: null,
+      nextStepExists: true,
+      workflowSteps: [],
+    })
+    expect(result.mode).toBe('workflow-recover')
+    expect(result.canNextAction).toBe(false)
+  })
+
   // ── D030 §4 #7 — multi-activation (D/P/L/DB + V) preservation ────────────
 
   it('non-R approved + headType=D → highlightDesignSeries=true (multi-activation preserved)', () => {

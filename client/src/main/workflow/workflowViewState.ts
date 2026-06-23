@@ -10,6 +10,11 @@ export type WorkflowViewMode =
   | 'q'
   | 'sequence-complete'
   | 'rejected'
+  // 0119 B0001 (NR0009 §6.2/§6.3): decided workflow whose sequence row exists but has
+  // ZERO items (every step deleted). The action bar offers no forward action and points
+  // the user at the workflow strip's [시퀀스 수정] to re-add steps. Distinct from
+  // 'sequence-complete' ([완료]) — an empty sequence is a recovery state, not a finished one.
+  | 'workflow-recover'
 
 /** D031 §4.3 v2 — per-step visual. Priority: rejected > highlight > current > done > future. */
 export type StepVisual = 'done' | 'highlight' | 'rejected' | 'current' | 'future'
@@ -233,6 +238,18 @@ export function resolveWorkflowViewState(input: WorkflowViewInput): WorkflowView
   const allDoneSS = buildStepStates(input.workflowSteps, null, null, true)
 
   if (!tabTypeCode) return noAction('review', null, { stepStates: [], nextStepIndex: null })
+
+  // ── Decided-but-empty workflow recovery (0119 B0001 / NR0009 §6.2/§6.3) ───
+  // The server reports headStatus='empty' when a decided workflow's sequence row still
+  // exists but every step item was deleted. This is the "결정됨+빈" zombie — NOT a finished
+  // workflow. Intercept BEFORE the R/B and non-R branches so it cannot fall through to the
+  // phantom mode='next' (an R/B head=null "다음 단계" affordance) or to mode='sequence-complete'
+  // ([완료] + group-chain advance) on a sibling tab. The only legitimate workflow terminus is
+  // the AC final-approval gate; an empty sequence routes to recovery instead. The matching
+  // DocWorkflow strip keeps its decidedEmpty hint + [시퀀스 수정] button to re-add steps.
+  if (headStatus === 'empty') {
+    return noAction('workflow-recover', tabTypeCode, allFutureSS)
+  }
 
   // ── Workflow-root tab (R/B) ───────────────────────────────────────────────
   if (tabTypeCode === 'R' || tabTypeCode === 'B') {

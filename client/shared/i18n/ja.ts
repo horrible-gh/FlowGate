@@ -881,6 +881,7 @@ export default {
       status_revised: '修正済み',
       status_pending_review: 'レビュー待ち',
       next_doc: '完了',
+      recover_hint: 'ワークフローの全ステップが削除されました。[シーケンス編集]でステップを追加し直してください。',
       final_approval: '最終承認',
       btn_approve: '承認',
       btn_reject: '差し戻し',

@@ -881,6 +881,7 @@
       status_revised: '수정됨',
       status_pending_review: '검수대기',
       next_doc: '완료',
+      recover_hint: '워크플로의 모든 단계가 삭제되었습니다. [시퀀스 수정]으로 단계를 다시 추가하세요.',
       final_approval: '최종 승인',
       btn_approve: '승인',
       btn_reject: '반려',

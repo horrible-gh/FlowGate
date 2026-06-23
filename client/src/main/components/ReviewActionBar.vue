@@ -159,6 +159,16 @@
 
         <div v-else-if="currentMode === 'sequence-complete'" class="sfb-actions"></div>
 
+        <!-- 0119 B0001 (NR0009 §6.2): decided-but-empty workflow — every step was deleted.
+             No forward action; guide the user to the workflow strip's [시퀀스 수정] to re-add steps.
+             This replaces the phantom [다음 단계] / [완료] that the empty sequence used to surface. -->
+        <div v-else-if="currentMode === 'workflow-recover'" class="sfb-actions">
+          <span class="sfb-hint sfb-hint--recover">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            {{ t('main.review_action_bar.recover_hint') }}
+          </span>
+        </div>
+
         <div v-else-if="currentMode === 'rejected'" class="sfb-actions sfb-actions--rework">
           <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkMentionCopyClick">
             <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
@@ -233,7 +243,7 @@ import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 
-type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected'
+type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
 const props = defineProps<{
   mode?: ActionBarMode
@@ -666,6 +676,14 @@ onBeforeUnmount(() => {
   color: var(--text-m);
   font-size: .82rem;
   font-weight: 600;
+}
+
+/* 0119 B0001: decided-but-empty recovery hint — amber, mirrors DocWorkflow's .wf-empty-recover */
+.sfb-hint--recover {
+  color: #92400e;
+}
+.sfb-hint--recover i {
+  color: var(--warning, #d97706);
 }
 
 .sfb-rework-tool {
