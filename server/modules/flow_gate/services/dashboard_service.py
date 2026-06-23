@@ -19,6 +19,29 @@ _ACTIVITY_EVENT_TYPES = (
     "group_approved",
 )
 
+# Notification feed (🔔) shows a deliberately QUIETER subset than the dashboard recent-activity card.
+# R0001 group 0118 ("쓸모없는 알림기능"): a single document registration decomposes into multiple
+# workflow_events — action_taken/doc_created + state_changed(review_submit) + state_changed(review_approve),
+# plus the parent's child_created / workflow_decide state_changed transitions — and the feed projected
+# EVERY one as its own notification ("등록 1건당 3~5개"). The user judged the feature useless because of
+# this noise. Narrowing the feed to genuinely notable, ~one-per-document events collapses a registration
+# to a single notification while leaving the dashboard card's full activity stream
+# (_ACTIVITY_EVENT_TYPES, via list_recent_activities) completely untouched — the two surfaces are now
+# decoupled.
+#
+# Both doc_created AND action_taken are kept: creation is recorded as exactly ONE of them depending on the
+# path (inbox `new` → action_taken/doc_created; workflow-decision → doc_created; never both — verified
+# against the live event log), so dropping either would zero out creation notifications for one path.
+# The dropped noise is `state_changed` (the per-document review submit/approve micro-transitions and the
+# parent cascade) and `doc_edited` (every self/rework edit). `qna_answered` and `group_approved` are kept
+# as meaningful milestones.
+_NOTIFICATION_EVENT_TYPES = (
+    "doc_created",
+    "action_taken",
+    "qna_answered",
+    "group_approved",
+)
+
 
 # Action-series code for a file-less group-discard record. Source of truth:
 # process_service._GROUP_DISCARD_TYPE. Mirrored here as a literal so the dashboard
@@ -79,8 +102,11 @@ def _fetch_project_groups(project_id: str) -> dict[str, dict]:
     return {row["group_id"]: row for row in rows}
 
 
-def _event_rows(project_id: str) -> list[dict]:
-    placeholders = ",".join("?" for _ in _ACTIVITY_EVENT_TYPES)
+def _event_rows(
+    project_id: str,
+    event_types: tuple[str, ...] = _ACTIVITY_EVENT_TYPES,
+) -> list[dict]:
+    placeholders = ",".join("?" for _ in event_types)
     return get_store()._fetch_all(
         f"""
         SELECT
@@ -98,7 +124,7 @@ def _event_rows(project_id: str) -> list[dict]:
           AND we.event_type IN ({placeholders})
         ORDER BY we.created_at DESC, we.id DESC
         """,
-        [project_id, *_ACTIVITY_EVENT_TYPES],
+        [project_id, *event_types],
     )
 
 
@@ -254,15 +280,21 @@ def _normalize_activity(
     }
 
 
-def _normalized_activities(project_id: str) -> list[dict]:
-    """Return ALL normalized inflow activities for a project, newest first.
+def _normalized_activities(
+    project_id: str,
+    event_types: tuple[str, ...] = _ACTIVITY_EVENT_TYPES,
+) -> list[dict]:
+    """Return normalized inflow activities for a project, newest first.
 
-    Shared by the dashboard recent-activity card (list_recent_activities) and the 🔔 notification
-    feed (get_notification_feed, group 0045). Both read the same workflow_events source — the
-    notification center is "the same data, made persistent and unread-aware" (NR0003 §2), so it must
-    not diverge from the dashboard's normalization.
+    Shared by the dashboard recent-activity card (list_recent_activities, full _ACTIVITY_EVENT_TYPES)
+    and the 🔔 notification feed (get_notification_feed). Group 0045 originally made the feed identical
+    to the dashboard ("the same data, made persistent and unread-aware" — NR0003 §2). Group 0118
+    (R0001 "쓸모없는 알림기능") deliberately decoupled them: the feed now passes the quieter
+    _NOTIFICATION_EVENT_TYPES so a single registration is one notification instead of 3~5, while the
+    dashboard card keeps the full stream. event_types selects which surface this call serves; the
+    normalization itself is identical so the two never diverge in shape.
     """
-    rows = _event_rows(project_id)
+    rows = _event_rows(project_id, event_types)
     metadata_doc_ids: set[str] = set()
     for row in rows:
         metadata, _ = _metadata(row.get("metadata"))
@@ -326,7 +358,7 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
     storage and testable against workflow_events alone.
     """
     with get_store().transaction():
-        items = _normalized_activities(project_id)
+        items = _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
     feed = _page(items, limit)
     return {
         "ok": True,
