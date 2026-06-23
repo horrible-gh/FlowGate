@@ -611,6 +611,14 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 status_code=400,
                 content={"error": "sequence_not_decided", "doc_id": doc_id_val},
             )
+        # 0119 B0001 (NR0003 §6-A): emptying a decided-but-unstarted workflow would
+        # create the unrecoverable zombie sequence — reject like the decide path does.
+        if msg.startswith("invalid_sequence_empty:"):
+            doc_id_val = msg.split(":", 1)[1]
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_sequence_empty", "doc_id": doc_id_val},
+            )
         return JSONResponse(status_code=400, content={"error": msg})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": "internal_error", "detail": str(exc)})

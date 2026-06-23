@@ -61,6 +61,23 @@ def test_auto_complete_fills_instruction_then_stops_at_report(monkeypatch):
     assert created == ["N"]  # only the instruction head was auto-completed
 
 
+def test_auto_complete_does_not_auto_approve_TS(monkeypatch):
+    # group 0121 R0001: TS (테스트시나리오 지시) is intentionally NOT in INSTRUCTION_AUTO_TYPES.
+    # When the head is TS the auto-complete loop must stop immediately (treat it like a report
+    # head) so advance_workflow mints a worker token+mention for it — the AI authors TS itself.
+    assert "TS" not in svc.INSTRUCTION_AUTO_TYPES
+    _patch_perms(monkeypatch)
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("TS", 5))
+    calls = []
+    monkeypatch.setattr(docs_mod, "create_next_approved_core",
+                        lambda **k: calls.append(k) or {"doc_id": "x"})
+    n = svc._auto_complete_instruction_heads(
+        spine_doc={"doc_id": "r", "group_id": "g", "project_id": "p", "module": "default"},
+        seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
+    )
+    assert n == 0 and calls == []  # TS head → nothing auto-created; token issued by caller
+
+
 def test_auto_complete_noop_when_head_already_report(monkeypatch):
     _patch_perms(monkeypatch)
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("NR", 2))
@@ -176,6 +193,33 @@ def test_advance_continuous_skips_instruction_mints_report(monkeypatch):
     assert result["continuous"] is True
     # remaining = target(6) - report head_item_seq(2) + 1 = 5
     assert result["continuation_remaining"] == 5
+
+
+def test_advance_continuous_issues_worker_token_for_TS(monkeypatch):
+    # group 0121 R0001: with TS removed from INSTRUCTION_AUTO_TYPES, a TS head is NOT
+    # auto-completed — advance_workflow mints a worker token+mention for TS itself so the AI
+    # authors the test-scenario directive. No create_next_approved_core call occurs.
+    _patch_perms(monkeypatch)
+    doc = {"doc_id": "flowgate.default.0121.0001-R", "group_id": "flowgate.default.0121",
+           "project_id": "flowgate", "type_code": "R", "seq": 1}
+    _wire_advance_min(monkeypatch, doc)
+
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("TS", 5))
+    calls = []
+    monkeypatch.setattr(docs_mod, "create_next_approved_core",
+                        lambda **k: calls.append(k) or {"doc_id": "x"})
+    mention_kw = {}
+    monkeypatch.setattr(svc.mention_service, "build_mention_from_token_rec",
+                        lambda **k: mention_kw.update(k) or "M")
+
+    result = svc.advance_workflow(
+        doc_id="flowgate.default.0121.0001-R", issued_to="pm-1",
+        api_base_url="http://h/flow_gate/api/v1",
+        continuous=True, continuation_target_seq=6,
+    )
+    assert calls == []  # TS was NOT auto-approved
+    assert mention_kw["head_type"] == "TS"  # worker mention is for TS itself
+    assert result["token"] == "RAW"
 
 
 def test_advance_managed_does_not_auto_complete_instruction(monkeypatch):

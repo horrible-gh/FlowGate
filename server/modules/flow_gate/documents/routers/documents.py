@@ -1209,7 +1209,7 @@ def create_next_approved_core(
     approver_perms: set,
     locale: str = "ko",
 ) -> dict:
-    """Create + approve an instruction document (N | T | TS) for the current head.
+    """Create + approve an instruction document (N | T) for the current head.
 
     Extracted from the ``POST /next-approved`` handler (0048) so the same create-and-approve
     mechanics are reusable off the HTTP path — specifically by the unmanned continuous chain
@@ -1237,8 +1237,9 @@ def create_next_approved_core(
     module = module or "none"
 
     # (G1) Type whitelist — stronger than next-empty's blacklist (P0005 §5).
-    # AC is excluded naturally (AC ∉ {N,T,TS}, D0004 §3-3).
-    if type_code not in {"N", "T", "TS"}:
+    # AC is excluded naturally (AC ∉ {N,T}, D0004 §3-3). TS removed (group 0121 R0001):
+    # a test-scenario directive is token-issued (AI authors it), never auto-approved.
+    if type_code not in {"N", "T"}:
         raise NextApprovedError(422, f"Auto-approved document not allowed for type: {type_code}")
 
     # (G2) Shared guards — replicated from next-empty (documents.py next-empty path)

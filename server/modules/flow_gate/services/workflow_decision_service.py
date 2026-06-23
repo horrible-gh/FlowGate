@@ -29,16 +29,23 @@ from modules.flow_gate.services import mention_service
 AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
 
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
-# Instruction-series steps ("무엇을 하라": N/T/TS) are fillable from a fixed server template
-# and carry no AI deliverable — only their paired report (NR/TR/TSR) does. In the unmanned
+# Instruction-series steps ("무엇을 하라": N/T) are fillable from a fixed server template
+# and carry no AI deliverable — only their paired report (NR/TR) does. In the unmanned
 # continuous chain we therefore auto-create + auto-approve any instruction head server-side
 # (reusing documents.create_next_approved_core, the exact managed "자동승인문서" mechanics)
 # instead of spending an AI worker cycle minting + processing a mention for it. The worker
-# mention is then issued only at the following report head. This removes the ~3 redundant
-# instruction cycles per R→…→TSR lap that caused B0001's "token двойной/two-fold" symptom.
-# Mirrors create_next_approved's whitelist (DS intentionally excluded — it is neither in that
-# whitelist nor in AUTO_REPORT_MAP; deferred to a later T per NR0003 open point).
-INSTRUCTION_AUTO_TYPES = {"N", "T", "TS"}
+# mention is then issued only at the following report head. This removes the redundant
+# instruction cycles per R→…→TR lap that caused B0001's "token двойной/two-fold" symptom.
+#
+# TS (테스트시나리오 지시) is INTENTIONALLY EXCLUDED here (group 0121 R0001): unlike N/T, a
+# test-scenario directive carries meaningful, deliverable content that the AI must author
+# itself, so TS must be token-issued — when the head reaches TS the auto-complete loop stops
+# and advance_workflow mints a worker token+mention for it (the AI writes TS, it is then
+# auto-approved on submit like any non-{M,CH} doc, and the chain proceeds to TSR). Note this
+# differs from AUTO_REPORT_MAP, which still pairs TS→TSR for sequence STRUCTURE (TS remains a
+# decided step whose report is auto-attached) — only the auto-APPROVAL of TS is removed.
+# DS likewise excluded — it is neither here nor in AUTO_REPORT_MAP.
+INSTRUCTION_AUTO_TYPES = {"N", "T"}
 
 # ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
 # A continuous run started BEFORE the workflow is decided ("워크플로 결정부터") cannot name
@@ -814,6 +821,18 @@ def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
     existing = db_wfseq.get_sequence_items(seq["id"])
     locked = [it for it in existing if it.get("result_doc_id") is not None]
     locked_count = len(locked)
+
+    # 0119 B0001 (NR0003 §6-A): refuse an edit that would empty a decided workflow.
+    # When nothing is locked (no done/in_progress step — i.e. the workflow was just
+    # decided and not yet run) and the new pending list is empty, the sequence would
+    # drop to ZERO items: a decided-but-empty "zombie" sequence. That state is
+    # unrecoverable — re-decide is blocked by already_decided (the row still exists),
+    # advance dies with sequence_exhausted (no head), and the workflow strip collapses.
+    # Mirror the decide path, which already rejects an empty sequence (invalid_sequence
+    # 400). A shrink that keeps ≥1 locked step is still allowed: that leaves the realized
+    # steps + the AC gate, which is a valid "stop here" intent.
+    if not new_items and locked_count == 0:
+        raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"
