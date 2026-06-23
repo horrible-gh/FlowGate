@@ -687,7 +687,19 @@ def _parse_doc_workflow(doc: dict) -> dict:
                     out["workflow_head_type"] = "AC"
                     out["workflow_head_status"] = "pending"
         else:
-            out["workflow_head_status"] = "done"
+            # seq_items is empty. Two very different situations collapse here — keep
+            # them apart (0119 B0001 / NR0009 §6.1):
+            #  • _seq_found True  → the sequence ROW exists but every item was deleted
+            #    (a decided workflow emptied of all steps — the B0001 "결정됨+빈" zombie).
+            #    This is NOT a finished workflow: the only legitimate terminal state is the
+            #    AC (final-approval) gate (M042 / group 0104). Reporting 'done' here made the
+            #    strip paint [완료] and let the group chain advance past a broken/empty
+            #    workflow. Report a distinct 'empty' status so the client routes to recovery
+            #    ([시퀀스 수정]) instead of [완료]/auto-advance.
+            #  • _seq_found False → no sequence at all (undecided root, or a non-workflow
+            #    doc with no R parent). Preserve the pre-existing terminal 'done' fallback
+            #    (NR158 — test_n158_non_r_no_seq_items_fallback_done).
+            out["workflow_head_status"] = "empty" if _seq_found else "done"
 
     # Populate workflow_steps and next_step_exists from the already-fetched seq_items.
     if _seq_found:

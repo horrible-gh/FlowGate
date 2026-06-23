@@ -790,3 +790,62 @@ def test_n158_non_r_no_seq_items_fallback_done(monkeypatch):
 
     assert parsed["workflow_head_status"] == "done"
     assert parsed.get("workflow_head_doc_id") is None
+
+
+# ── 0119 B0001 / NR0009 §6.1: decided-but-empty sequence → 'empty', not 'done' ───
+#
+# A decided workflow whose sequence ROW exists but has zero items (every step deleted)
+# must NOT be reported as a finished workflow. Reporting 'done' here let the strip paint
+# [완료] and the group chain advance past an empty/broken workflow, bypassing the AC
+# (final-approval) gate that is the only legitimate terminus. Report a distinct 'empty'
+# status so the client routes to recovery. The case is kept apart from "no sequence at
+# all" (undecided / no R parent), which keeps the existing terminal 'done' fallback.
+
+def test_decided_but_empty_sequence_emits_empty_not_done(monkeypatch):
+    """Sequence row found (_seq_found True) but get_sequence_items returns [] (all steps
+    deleted) → workflow_head_status='empty', NOT 'done'. R viewer, group_head=None."""
+    GROUP_ID = "G001"
+    # Only the decided R exists; its sequence has been emptied of all step items.
+    _list_docs_patch(monkeypatch, {GROUP_ID: [
+        {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
+    ]})
+    _seq_patch(monkeypatch, [], r_doc_id="R001")  # seq row exists, zero items
+
+    parsed = document_routes._parse_doc_workflow({
+        "doc_id": "R001",
+        "type_code": "R",
+        "project_id": "P001",
+        "group_id": GROUP_ID,
+        "doc_review_status": "wf_in_progress",
+        "workflow_steps": None,
+        "rejection_history": None,
+    })
+
+    assert parsed["workflow_head_status"] == "empty"
+    assert parsed.get("workflow_head_doc_id") is None
+    assert parsed.get("workflow_head_type") is None
+
+
+def test_no_sequence_row_empty_seq_items_still_done(monkeypatch):
+    """No sequence row at all (_seq_found False) with empty seq_items → still 'done'
+    (existing undecided / no-R-parent fallback preserved — must NOT regress to 'empty')."""
+    GROUP_ID = "G001"
+    _list_docs_patch(monkeypatch, {GROUP_ID: [
+        {"doc_id": "R001", "type_code": "R", "doc_review_status": "wf_in_progress", "seq": 0},
+    ]})
+    # get_sequence_by_doc_id returns None → _seq_found stays False.
+    monkeypatch.setattr(
+        db_workflow_sequences, "get_sequence_by_doc_id", lambda doc_id: None,
+    )
+
+    parsed = document_routes._parse_doc_workflow({
+        "doc_id": "R001",
+        "type_code": "R",
+        "project_id": "P001",
+        "group_id": GROUP_ID,
+        "doc_review_status": "wf_in_progress",
+        "workflow_steps": None,
+        "rejection_history": None,
+    })
+
+    assert parsed["workflow_head_status"] == "done"
