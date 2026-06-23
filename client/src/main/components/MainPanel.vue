@@ -2250,12 +2250,13 @@ async function onContinuousWarnConfirm() {
 }
 
 // R0001 #2 (0048): action-bar split "create approved doc" — confirm once, then create
-// + approve in one server call (next-approved). Offered only for N/T/TS next steps;
-// approve permission is enforced by the server (403 → error toast).
+// + approve in one server call (next-approved). Offered only for N/T next steps; TS is
+// excluded (group 0121 R0001 — a test-scenario directive is token-issued/AI-authored,
+// never auto-approved). approve permission is enforced by the server (403 → error toast).
 function onActionBarCreateApproved(tabId: string) {
   if (!guardNextActionAvailable(tabId)) return
   const code = (getNextStepCode(tabId) || '').toUpperCase()
-  if (!['N', 'T', 'TS'].includes(code)) {
+  if (!['N', 'T'].includes(code)) {
     showToast(t('main.main_panel.error_approved_doc_not_allowed', { docType: code }), 'warning')
     return
   }

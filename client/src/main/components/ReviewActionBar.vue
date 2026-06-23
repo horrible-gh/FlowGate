@@ -388,10 +388,12 @@ const canShowReviewRequestAction = computed(() =>
 )
 
 // R0001 #2 (0048): "create approved doc" is offered only when the next step is an
-// instruction type (N/T/TS). approve-permission gating is enforced by the server
-// (next-approved → 403); the FE does not hold the granular permission set.
+// instruction type (N/T). TS is excluded (group 0121 R0001 — a test-scenario directive
+// is token-issued/AI-authored, never auto-approved; it falls back to the normal
+// next-action/copy-next-mention token path). approve-permission gating is enforced by the
+// server (next-approved → 403); the FE does not hold the granular permission set.
 const canCreateApproved = computed(() =>
-  ['N', 'T', 'TS'].includes((props.nextStepCode ?? '').toUpperCase()),
+  ['N', 'T'].includes((props.nextStepCode ?? '').toUpperCase()),
 )
 
 // TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action

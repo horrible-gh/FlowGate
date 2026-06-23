@@ -37,10 +37,10 @@ describe('WorkflowDecisionModal static config — R0001 cleanup', () => {
   })
 
   it('③④ presets redefined without V (auto reports added by buildEntries)', () => {
-    // 간소작업 → M T (TR)
-    expect(source).toMatch(/preset_simple',\s*types:\s*\['M',\s*'T'\]/)
-    // 버그수정 → N (NR) T (TR)
-    expect(source).toMatch(/preset_bugfix',\s*types:\s*\['N',\s*'T'\]/)
+    // 간소화 → N (NR) T (TR)  [R0120.0001]
+    expect(source).toMatch(/preset_simple',\s*types:\s*\['N',\s*'T'\]/)
+    // 버그수정 → N (NR) T (TR) TS (TSR)  [R0120.0001]
+    expect(source).toMatch(/preset_bugfix',\s*types:\s*\['N',\s*'T',\s*'TS'\]/)
     // 설계만 → DS D P L DB
     expect(source).toMatch(/preset_design',\s*types:\s*\['DS',\s*'D',\s*'P',\s*'L',\s*'DB'\]/)
     // 표준 풀 사이클 → DS D P L DB T (TR) TS (TSR)

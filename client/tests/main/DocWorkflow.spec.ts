@@ -491,6 +491,31 @@ describe('DocWorkflow — band 가시성 회귀 가드 (T877)', () => {
     })
     expect(wrapper.find('.wf-section').exists()).toBe(false)
   })
+
+  // 0119 B0001 (NR0003 §6-B): decided R/B whose every step was deleted (decided-but-empty).
+  // Previously the section + [Edit] button collapsed, stranding the workflow. Now the
+  // section stays visible with a recovery hint AND the [Edit] button, so steps can be re-added.
+  it('0119-S5: R 결정+빈 시퀀스 (workflowDecided=true, stepStates=[]) → .wf-section + 편집버튼 + 복구 힌트 표시', () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.empty', typeCode: 'R' },
+      workflowDecided: true,
+      stepStates: [],
+    })
+    expect(wrapper.find('.wf-section').exists()).toBe(true)
+    expect(wrapper.find('.wf-edit-btn').exists()).toBe(true)        // recovery affordance
+    expect(wrapper.find('.wf-empty-recover').exists()).toBe(true)   // hint shown
+    expect(wrapper.find('.wf-undecided').exists()).toBe(false)      // NOT the undecided placeholder
+  })
+
+  it('0119-S5b: B 결정+빈 시퀀스 → .wf-section + 복구 힌트 표시 (B 루트도 동일)', () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.emptyb', typeCode: 'B' },
+      workflowDecided: true,
+      stepStates: [],
+    })
+    expect(wrapper.find('.wf-section').exists()).toBe(true)
+    expect(wrapper.find('.wf-empty-recover').exists()).toBe(true)
+  })
 })
 
 // ── T871: verify removal of DocWorkflow highlighting in wf_done state ──

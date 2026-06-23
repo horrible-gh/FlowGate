@@ -1093,6 +1093,7 @@
       error_save: 'Save failed',
       toast_saved: 'Sequence saved.',
       all_done: 'All prior steps are complete. Add new steps below to continue the workflow.',
+      cannot_empty: 'A decided workflow cannot be emptied. Keep at least one step.',
     },
     file_tree_node: {
       open: 'Open',
@@ -1401,6 +1402,7 @@
       title: 'Workflow',
       undecided: 'Undecided',
       edit_btn: 'Edit Sequence',
+      decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
     },
   },
   projects: {

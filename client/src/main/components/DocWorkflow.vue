@@ -1,5 +1,5 @@
 <template>
-  <div v-if="stepStates.length > 0 || (isWorkflowRoot && workflowDecided === false)" class="wf-section">
+  <div v-if="stepStates.length > 0 || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))" class="wf-section">
     <div class="sec-title">
       <i class="fa-solid fa-diagram-next"></i> {{ t('main.doc_workflow.title') }}
       <button
@@ -27,6 +27,17 @@
             <i class="fa-solid fa-circle-question"></i>
             <span class="s-lbl">{{ t('main.doc_workflow.undecided') }}</span>
           </div>
+        </div>
+      </template>
+      <!-- 0119 B0001 (NR0003 §6-B): a decided workflow whose every step was deleted
+           (decided-but-empty). The normal strip would be blank and the section was
+           previously hidden entirely — stranding the [Edit] affordance and leaving the
+           workflow unrecoverable. Show a recovery hint; the [Edit] button above re-adds
+           steps (edit_workflow_pending inserts pending items into the existing sequence). -->
+      <template v-else-if="decidedEmpty">
+        <div class="wf-empty-recover">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <span>{{ t('main.doc_workflow.decided_empty') }}</span>
         </div>
       </template>
       <!-- Normal: v-for over stepStates -->
@@ -78,6 +89,12 @@ const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
 const isWorkflowRoot = computed(() => props.tab.typeCode === 'R' || props.tab.typeCode === 'B')
 
+// 0119 B0001 (NR0003 §6-B): decided workflow root whose steps were all deleted. Used to
+// keep the section + [Edit] button visible (recovery) instead of collapsing to nothing.
+const decidedEmpty = computed(() =>
+  isWorkflowRoot.value && props.workflowDecided === true && props.stepStates.length === 0,
+)
+
 const emit = defineEmits<{
   'sequence-updated': []
   'next-action': []
@@ -87,6 +104,23 @@ const showEditModal = ref(false)
 </script>
 
 <style scoped>
+/* 0119 B0001: decided-but-empty recovery hint */
+.wf-empty-recover {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: .78rem;
+  color: #92400e;
+  background: var(--warning-l, #fffbeb);
+  border: 1px dashed #fde68a;
+  border-radius: var(--r, 8px);
+}
+.wf-empty-recover i {
+  color: var(--warning, #d97706);
+  flex-shrink: 0;
+}
+
 .wf-step.wf-undecided {
   border: 2px dashed var(--border-d, #94a3b8);
   opacity: 1;

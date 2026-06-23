@@ -1093,6 +1093,7 @@ export default {
       error_save: '保存に失敗しました',
       toast_saved: 'シーケンスが保存されました。',
       all_done: '以前のステップはすべて完了しています。下で新しいステップを追加するとワークフローが再開します。',
+      cannot_empty: '決定済みワークフローは空にできません。最低1ステップを残してください。',
     },
     file_tree_node: {
       open: '開く',
@@ -1401,6 +1402,7 @@ export default {
       title: 'ワークフロー',
       undecided: '未決定',
       edit_btn: 'シーケンス編集',
+      decided_empty: 'すべてのステップが削除されました。[シーケンス編集]からステップを再追加してください。',
     },
   },
   projects: {

@@ -295,7 +295,8 @@
             v-if="mode === 'edit' && !loading && !loadError"
             type="button"
             class="btn btn-primary"
-            :disabled="saving"
+            :disabled="saving || wouldEmptyDecided"
+            :title="wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
             @click="save"
           >
             <i class="fa-solid fa-floppy-disk"></i>
@@ -404,8 +405,8 @@ const AUTO_ONLY = [
 
 const PRESETS: Array<{ key: string; types: string[] }> = [
   { key: 'preset_standard', types: ['DS', 'D', 'P', 'L', 'DB', 'T', 'TS'] },
-  { key: 'preset_bugfix',   types: ['N', 'T'] },
-  { key: 'preset_simple',   types: ['M', 'T'] },
+  { key: 'preset_bugfix',   types: ['N', 'T', 'TS'] },
+  { key: 'preset_simple',   types: ['N', 'T'] },
   { key: 'preset_design',   types: ['DS', 'D', 'P', 'L', 'DB'] },
 ]
 
@@ -435,6 +436,15 @@ const manualItems = computed(() => sequence.value.filter(s => !s.isAuto))
 
 const allDone = computed(() =>
   props.mode === 'edit' && lockedItems.value.length > 0 && sequence.value.length === 0 && !loading.value && !loadError.value
+)
+
+// 0119 B0001 (NR0003 §6-A): block a Save that would leave a decided workflow with ZERO
+// items (no locked step + no pending step). That produces the unrecoverable zombie
+// sequence the bug describes. Mirrors the server guard (invalid_sequence_empty) and the
+// create-mode [Confirm] disable (sequence.length === 0). A shrink that keeps ≥1 locked
+// step is still allowed (locked + AC remain).
+const wouldEmptyDecided = computed(() =>
+  props.mode === 'edit' && lockedItems.value.length === 0 && sequence.value.length === 0 && !loading.value && !loadError.value
 )
 
 const typeSeqCounts = computed((): Record<string, number> => {
@@ -724,7 +734,7 @@ async function loadSequence() {
 }
 
 async function save() {
-  if (saving.value) return
+  if (saving.value || wouldEmptyDecided.value) return
   saving.value = true
   try {
     await patchRequest('/api/v1/workflow/sequence', {

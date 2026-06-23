@@ -292,7 +292,7 @@ describe('ReviewActionBar', () => {
     await wrapper.find('.ab-dd-toggle').trigger('click')
     const items = wrapper.findAll('.ab-split-dd .ab-split-item')
     // Order per reviewer (rev3, reversed): 승인 문서 생성 → 빈 문서 생성 → 멘트 복사 → 다음 단계 진행.
-    // create-approved shows because nextStepCode 'T' is in the N/T/TS whitelist.
+    // create-approved shows because nextStepCode 'T' is in the N/T whitelist.
     expect(items.map(i => i.text())).toEqual([
       'Create Approved Doc',
       'Create Empty Doc',
@@ -306,6 +306,28 @@ describe('ReviewActionBar', () => {
     expect(wrapper.emitted('copy-next-mention')).toHaveLength(1)
     // Selecting the item closes the dropdown.
     expect(wrapper.find('.ab-split-dd').exists()).toBe(false)
+  })
+
+  it('R2-3. next step TS → no "Create Approved Doc" item (group 0121 R0001: TS is token-issued)', async () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'test.p.0001.0001-R',
+        docType: 'R',
+        reviewStatus: 'wf_in_progress',
+        mode: 'next',
+        canNextAction: true,
+        nextStepLabel: 'TS',
+        nextStepCode: 'TS',
+      },
+      global: { plugins: [i18n] },
+    })
+    await wrapper.find('.ab-dd-toggle').trigger('click')
+    const labels = wrapper.findAll('.ab-split-dd .ab-split-item').map(i => i.text())
+    // create-approved is gone for TS; the normal token path (copy mention / proceed) remains.
+    expect(labels).not.toContain('Create Approved Doc')
+    expect(labels).toContain('Copy Mention')
+    expect(labels).toContain('Proceed to Next Step')
   })
 
   it('R3. R undecided → [워크플로 결정] button', () => {
