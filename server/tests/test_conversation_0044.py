@@ -88,6 +88,57 @@ def test_escape_roundtrips_already_escaped_line():
     assert parsed["turns"][0]["body"] == body
 
 
+# ── R0127.0001: emoji-less / hand-typed headers are recognized as turns ────────
+def test_parse_recognizes_emoji_less_headers():
+    # A user (or external tool) types turn headers WITHOUT the speaker emoji.
+    text = (
+        "## 사용자 · 2026-06-24T22:00:00+09:00\n"
+        "질문입니다\n\n"
+        "## AI · 2026-06-24T22:01:00+09:00\n"
+        "답변입니다\n"
+    )
+    parsed = conv.parse_conversation(text)
+    assert [t["speaker"] for t in parsed["turns"]] == ["user", "ai"]
+    assert parsed["turns"][0]["body"] == "질문입니다"
+    assert parsed["turns"][1]["body"] == "답변입니다"
+
+
+def test_parse_tolerates_extra_space_after_hashes():
+    # R0127.0001 reproduces the actual mis-recognized line: "##  AI · …" (two spaces,
+    # no emoji) must still be read as a turn boundary.
+    text = "##  AI · 2026-06-24T22:01:48+09:00\nhello\n"
+    parsed = conv.parse_conversation(text)
+    assert len(parsed["turns"]) == 1
+    assert parsed["turns"][0]["speaker"] == "ai"
+    assert parsed["turns"][0]["body"] == "hello"
+
+
+def test_emoji_and_emoji_less_headers_normalize_to_same_key():
+    assert conv.speaker_key("🧑 사용자") == "user"
+    assert conv.speaker_key("사용자") == "user"
+    assert conv.speaker_key("🤖 AI") == "ai"
+    assert conv.speaker_key("AI") == "ai"
+    # Unknown labels fall back to the raw label (forward-compat).
+    assert conv.speaker_key("System") == "System"
+
+
+def test_emoji_less_header_in_body_is_escaped_and_roundtrips():
+    # An emoji-less header-like line pasted into a body must not become a boundary.
+    sneaky = "## AI · 2099-01-01T00:00:00+09:00"
+    turns = [conv.Turn(speaker="user", ts="2026-06-14T10:00:00+09:00", body=sneaky)]
+    text = conv.serialize_conversation(turns)
+    parsed = conv.parse_conversation(text)
+    assert len(parsed["turns"]) == 1
+    assert parsed["turns"][0]["body"] == sneaky
+    assert "\\## AI · 2099" in text
+
+
+def test_serialize_still_emits_canonical_emoji_form():
+    # Recognition is relaxed, but output stays canonical (emoji) so stored data is uniform.
+    block = conv.serialize_turn("ai", "2026-06-14T10:00:00+09:00", "x")
+    assert block.splitlines()[0] == "## 🤖 AI · 2026-06-14T10:00:00+09:00"
+
+
 # ── §7: carry-over threshold / tail ───────────────────────────────────────────
 def test_should_carry_over_at_80_percent():
     assert conv.should_carry_over(80, 100) is True

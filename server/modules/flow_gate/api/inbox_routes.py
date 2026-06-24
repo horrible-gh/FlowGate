@@ -289,6 +289,116 @@ def _content_fingerprint(text: Optional[str]) -> Optional[str]:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _submission_text(doc_path: Optional[str], content: Optional[str]) -> Optional[str]:
+    if doc_path is not None:
+        return pathlib.Path(doc_path).read_text(encoding="utf-8")
+    return content
+
+
+def _doc_id_suffix(doc_id: str) -> str:
+    return doc_id.rsplit(".", 1)[-1] if "." in doc_id else doc_id.rsplit("-", 1)[-1]
+
+
+def _group_short_code(group_id: str) -> str:
+    return group_id.rsplit(".", 1)[-1] if "." in group_id else group_id.rsplit("-", 1)[-1]
+
+
+def _doc_code_alternates(code: str) -> set[str]:
+    code = code.strip()
+    alts = {code}
+    m = re.fullmatch(r"(\d+)-([A-Za-z]+)", code)
+    if m:
+        alts.add(f"{m.group(2)}{m.group(1)}")
+    m = re.fullmatch(r"([A-Za-z]+)(\d+)", code)
+    if m:
+        alts.add(f"{m.group(2)}-{m.group(1)}")
+    return alts
+
+
+def _doc_code_type(code: str) -> Optional[str]:
+    code = code.strip()
+    m = re.fullmatch(r"\d+-([A-Za-z]+)", code)
+    if m:
+        return m.group(1)
+    m = re.fullmatch(r"([A-Za-z]+)\d+", code)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _frontmatter_identity_mismatch(
+    text: Optional[str],
+    *,
+    expected_project: str,
+    expected_module: str,
+    expected_group_id: str,
+    expected_doc_type: str,
+    expected_doc_id: Optional[str] = None,
+    expected_target_id: Optional[str] = None,
+) -> Optional[str]:
+    """Return an identity mismatch description for a submitted frontmatter, if any.
+
+    The duplicate-body guard catches exact body clones. This guard catches the more
+    durable contamination signal: a submitted body whose own YAML frontmatter declares
+    another document's identity. Missing identity fields are left to existing document
+    validation; present conflicting fields are rejected.
+    """
+    if not isinstance(text, str) or not text.lstrip().startswith("---"):
+        return None
+    header, parse_error = _linter.parse_yaml_header(text)
+    if parse_error or not isinstance(header, dict):
+        return None
+
+    mismatches: list[str] = []
+
+    def _present(value: object) -> Optional[str]:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s or s in {"<auto>", "<AUTO>", "<Title here>"}:
+            return None
+        return s
+
+    declared_project = _present(header.get("project"))
+    if declared_project and declared_project != expected_project:
+        mismatches.append(f"project={declared_project!r} expected {expected_project!r}")
+
+    declared_module = _present(header.get("module"))
+    if declared_module and declared_module != expected_module:
+        mismatches.append(f"module={declared_module!r} expected {expected_module!r}")
+
+    for key in ("group_id", "group"):
+        declared_group = _present(header.get(key))
+        if declared_group and declared_group not in {expected_group_id, _group_short_code(expected_group_id)}:
+            mismatches.append(f"{key}={declared_group!r} expected {expected_group_id!r}")
+
+    declared_type = _present(header.get("type"))
+    if declared_type and declared_type != expected_doc_type:
+        mismatches.append(f"type={declared_type!r} expected {expected_doc_type!r}")
+
+    declared_doc_number = _present(header.get("doc_number"))
+    if declared_doc_number:
+        if expected_doc_id:
+            expected_code = _doc_id_suffix(expected_doc_id)
+            if declared_doc_number not in _doc_code_alternates(expected_code):
+                mismatches.append(
+                    f"doc_number={declared_doc_number!r} expected {expected_code!r}"
+                )
+        else:
+            declared_code_type = _doc_code_type(declared_doc_number)
+            if declared_code_type and declared_code_type != expected_doc_type:
+                mismatches.append(
+                    f"doc_number={declared_doc_number!r} has type {declared_code_type!r} "
+                    f"expected {expected_doc_type!r}"
+                )
+
+    declared_target_id = _present(header.get("target_id"))
+    if declared_target_id and expected_target_id and declared_target_id != expected_target_id:
+        mismatches.append(f"target_id={declared_target_id!r} expected {expected_target_id!r}")
+
+    return "; ".join(mismatches) if mismatches else None
+
+
 def _fail(status: int, message: str, help_url: str = "https://example.com/api/v1/help") -> JSONResponse:
     return JSONResponse(
         status_code=status,
@@ -876,7 +986,28 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
         if not os.path.isfile(doc_path):
             return _fail(422, f"doc_path file does not exist: {doc_path}")
 
-    # ── Step 5.5: Duplicate-body guard (B0106 / NR0003) ──────────────────────────
+    # ── Step 5.5: Frontmatter identity + duplicate-body guards ───────────────────
+    body_for_guards: Optional[str] = None
+    try:
+        body_for_guards = _submission_text(doc_path, content)
+        identity_mismatch = _frontmatter_identity_mismatch(
+            body_for_guards,
+            expected_project=project,
+            expected_module=module,
+            expected_group_id=group["group_id"],
+            expected_doc_type=doc_type,
+            expected_target_id=prev_doc_id,
+        )
+        if identity_mismatch is not None:
+            return _fail(
+                409,
+                "Frontmatter identity mismatch: submitted content declares another "
+                f"document identity ({identity_mismatch}). Re-send with this "
+                "document's own content.",
+            )
+    except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
+        body_for_guards = None
+
     # Refuse a substantial body that is byte-identical to an existing document in a
     # *different* group — the submission-layer contamination signature (correct title,
     # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
@@ -886,11 +1017,7 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     # Fail-open on any read/lookup error — the guard must never 500 a real submission.
     fingerprint: Optional[str] = None
     try:
-        body_for_fp = (
-            pathlib.Path(doc_path).read_text(encoding="utf-8")
-            if doc_path is not None
-            else content
-        )
+        body_for_fp = body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
         fingerprint = _content_fingerprint(body_for_fp)
         if fingerprint is not None:
             twin = db_docs.find_by_content_fingerprint(
@@ -914,6 +1041,8 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
     if doc_path is not None:
         new_checks.append("doc_path")
+    if body_for_guards is not None:
+        new_checks.append("frontmatter_identity")
     if fingerprint is not None:
         new_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {
@@ -1378,7 +1507,29 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         if len(content_bytes) > _content_max():
             return _fail(422, f"content size exceeds the limit (max {_content_max()} bytes)")
 
-    # ── Step 5.5: Duplicate-body guard (B0106 / NR0003 → B0107) ──────────────────────
+    # ── Step 5.5: Frontmatter identity + duplicate-body guards ──────────────────────
+    edit_body_for_guards: Optional[str] = None
+    try:
+        edit_body_for_guards = _submission_text(doc_path, content)
+        identity_mismatch = _frontmatter_identity_mismatch(
+            edit_body_for_guards,
+            expected_project=project,
+            expected_module=module,
+            expected_group_id=group["group_id"],
+            expected_doc_type=str(existing_doc.get("type_code") or ""),
+            expected_doc_id=doc_id,
+            expected_target_id=existing_doc.get("target_id") or existing_doc.get("triggered_by"),
+        )
+        if identity_mismatch is not None:
+            return _fail(
+                409,
+                "Frontmatter identity mismatch: submitted content declares another "
+                f"document identity ({identity_mismatch}). Re-send with this "
+                "document's own content.",
+            )
+    except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
+        edit_body_for_guards = None
+
     # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
     # defended `new`, so the same contamination (correct title, stale/reused body from
     # another group) recurred through inbox edit — most often on CH conversations, whose
@@ -1390,9 +1541,9 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
     edit_fingerprint: Optional[str] = None
     try:
         body_for_fp = (
-            pathlib.Path(doc_path).read_text(encoding="utf-8")
-            if doc_path is not None
-            else content
+            edit_body_for_guards
+            if edit_body_for_guards is not None
+            else _submission_text(doc_path, content)
         )
         edit_fingerprint = _content_fingerprint(body_for_fp)
         if edit_fingerprint is not None:
@@ -1421,6 +1572,8 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         edit_checks.append("linked")
     if doc_path is not None:
         edit_checks.append("doc_path")
+    if edit_body_for_guards is not None:
+        edit_checks.append("frontmatter_identity")
     if edit_fingerprint is not None:
         edit_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {

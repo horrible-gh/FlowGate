@@ -35,13 +35,43 @@ AI_SPEAKER = "🤖 AI"
 _SPEAKER_TOKENS: dict[str, str] = {"user": USER_SPEAKER, "ai": AI_SPEAKER}
 _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 
-# Turn header: "## <speaker> · <ISO8601>". The timestamp is a single non-space token
-# (offset-bearing ISO 8601, e.g. 2026-06-13T14:02:11+09:00).
-HEADER_RE = re.compile(r"^## (?P<speaker>🧑 사용자|🤖 AI) · (?P<ts>\S+)\s*$")
+# Speaker label alternation accepted on PARSE (R0127.0001): the leading emoji is
+# OPTIONAL so a turn typed by hand or by an external tool — "## AI · …",
+# "## 사용자 · …" — is still recognized as a chat turn. Serialization always emits
+# the canonical emoji form (USER_SPEAKER/AI_SPEAKER), so stored data stays uniform;
+# only recognition is relaxed (robustness principle: lenient in, strict out).
+_SPEAKER_ALT = r"(?:🧑 )?사용자|(?:🤖 )?AI"
+
+# Leading-emoji prefixes stripped when normalizing a parsed label to a logical key.
+_EMOJI_PREFIXES = ("🧑 ", "🤖 ")
+
+# Turn header: "## <speaker> · <ISO8601>". The "##" may be followed by one or more
+# spaces (a hand-typed "##  AI" double-space still counts). The timestamp is a single
+# non-space token (offset-bearing ISO 8601, e.g. 2026-06-13T14:02:11+09:00).
+HEADER_RE = re.compile(rf"^##\s+(?P<speaker>{_SPEAKER_ALT}) · (?P<ts>\S+)\s*$")
 
 # Header-like line with zero or more leading escape backslashes — used to decide
-# whether a body line must be escaped (and to reverse it on parse).
-_HEADERLIKE_RE = re.compile(r"^\\*## (?:🧑 사용자|🤖 AI) · \S+\s*$")
+# whether a body line must be escaped (and to reverse it on parse). Kept in lockstep
+# with HEADER_RE so the same lines that parse as turns also escape correctly.
+_HEADERLIKE_RE = re.compile(rf"^\\*##\s+(?:{_SPEAKER_ALT}) · \S+\s*$")
+
+
+def speaker_key(label: str) -> str:
+    """Normalize a parsed speaker label to a logical key ("user"/"ai").
+
+    Accepts both the canonical emoji tokens ("🧑 사용자"/"🤖 AI") and their
+    emoji-less forms ("사용자"/"AI"). Unknown labels fall back to the raw label
+    (forward-compat with other speakers), matching the old _TOKEN_TO_KEY behaviour."""
+    s = label
+    for prefix in _EMOJI_PREFIXES:
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    if s == "사용자":
+        return "user"
+    if s == "AI":
+        return "ai"
+    return label
 
 # ── Carry-over (§7) ────────────────────────────────────────────────────────────
 # Fraction of the inbox content cap at which a conversation rolls over to a
@@ -129,7 +159,7 @@ def parse_conversation(content: str) -> ParsedConversation:
         m = HEADER_RE.match(line)
         if m:
             _flush()
-            cur_speaker = _TOKEN_TO_KEY.get(m.group("speaker"), m.group("speaker"))
+            cur_speaker = speaker_key(m.group("speaker"))
             cur_ts = m.group("ts")
             cur_body = []
             started = True

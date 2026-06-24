@@ -1085,7 +1085,13 @@ class TestInboxEditDuplicateBodyGuard:
             })
         return src_id
 
-    def _create_target_doc(self, doc_id: str, stored_path: Path, body: str = "# Original") -> None:
+    def _create_target_doc(
+        self,
+        doc_id: str,
+        stored_path: Path,
+        body: str = "# Original",
+        target_id: str | None = None,
+    ) -> None:
         from modules.flow_gate.db import documents as db_docs
         stored_path.parent.mkdir(parents=True, exist_ok=True)
         stored_path.write_text(body)
@@ -1100,6 +1106,7 @@ class TestInboxEditDuplicateBodyGuard:
             "owner_id": "usr_test_001",
             "file_path": str(stored_path),
             "revision_no": 0,
+            "target_id": target_id,
         })
 
     def _edit(self, tmp_path, doc_id: str, content: str):
@@ -1192,4 +1199,84 @@ class TestInboxEditDuplicateBodyGuard:
         stored = db_docs.get_by_id(doc_id)
         meta = json.loads(stored["meta"]) if stored["meta"] else {}
         assert "content_sha256" not in meta
+
+    def test_new_rejects_foreign_frontmatter_identity_even_for_short_body(self, seed_data, tmp_path):
+        """A copied prefix snapshot may be too short for content_sha256 matching, but its
+        YAML frontmatter still declares the source document identity and must be rejected."""
+        from modules.flow_gate.db import documents as db_docs
+
+        foreign_prefix = (
+            "---\n"
+            "project: mailanchor\n"
+            "module: ui\n"
+            "group_id: mailanchor.ui.0001\n"
+            "doc_number: 0004-CH\n"
+            "type: CH\n"
+            "target_id: mailanchor.ui.0001.0003-CH\n"
+            "title: Source conversation\n"
+            "---\n"
+            "short copied prefix\n"
+        )
+
+        resp = TestInboxDuplicateBodyGuard()._post(
+            tmp_path, "0001", "R0001", "NR7501", foreign_prefix
+        )
+        assert resp.status_code == 409, resp.text
+        assert "Frontmatter identity mismatch" in resp.json()["error_message"]
+        assert db_docs.get_by_id("testprj-__ALL__-0001-NR7501") is None
+
+    def test_edit_rejects_foreign_frontmatter_identity_even_without_fingerprint_match(
+        self, seed_data, tmp_path
+    ):
+        """Regression for group 0128: edit must reject a CH overwrite whose submitted
+        body declares another conversation, even when no source content_sha256 can match."""
+        doc_id = "testprj-__ALL__-0001-CH7502"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_target_doc(
+            doc_id,
+            stored_path,
+            body="# Original conversation",
+            target_id="testprj-__ALL__-0001-R0001",
+        )
+        foreign_prefix = (
+            "---\n"
+            "project: mailanchor\n"
+            "module: ui\n"
+            "group_id: mailanchor.ui.0001\n"
+            "doc_number: 0004-CH\n"
+            "type: CH\n"
+            "target_id: mailanchor.ui.0001.0003-CH\n"
+            "title: Source conversation\n"
+            "---\n"
+            "short copied prefix\n"
+        )
+
+        resp = self._edit(tmp_path, doc_id, foreign_prefix)
+        assert resp.status_code == 409, resp.text
+        assert "Frontmatter identity mismatch" in resp.json()["error_message"]
+        assert stored_path.read_text() == "# Original conversation"
+
+    def test_edit_accepts_matching_frontmatter_identity(self, seed_data, tmp_path):
+        """A matching frontmatter identity is allowed; the guard only blocks conflicts."""
+        doc_id = "testprj-__ALL__-0001-CH7503"
+        self._create_target_doc(
+            doc_id,
+            tmp_path / "docs" / f"{doc_id}_document.md",
+            target_id="testprj-__ALL__-0001-R0001",
+        )
+        own_body = (
+            "---\n"
+            "project: testprj\n"
+            "module: __ALL__\n"
+            "group_id: testprj-__ALL__-0001\n"
+            "doc_number: CH7503\n"
+            "type: CH\n"
+            "target_id: testprj-__ALL__-0001-R0001\n"
+            "title: Target conversation\n"
+            "---\n"
+            "own short body\n"
+        )
+
+        resp = self._edit(tmp_path, doc_id, own_body)
+        assert resp.status_code == 200, resp.text
 
