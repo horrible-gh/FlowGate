@@ -141,9 +141,22 @@ const inputEl = ref<HTMLTextAreaElement | null>(null)
 // everything before the first boundary is the intro (turn 0), and header-like body
 // lines are unescaped. The server is the single source of truth for the format; this
 // only reads it.
-const HEADER_RE = /^## (🧑 사용자|🤖 AI) · (\S+)\s*$/
-const HEADERLIKE_RE = /^\\*## (?:🧑 사용자|🤖 AI) · \S+\s*$/
-const TOKEN_TO_KEY: Record<string, string> = { '🧑 사용자': 'user', '🤖 AI': 'ai' }
+// R0127.0001: the leading emoji is OPTIONAL on parse, so a hand-typed header
+// ("## AI · …", "## 사용자 · …", or "##  AI · …" with extra spaces) is still read as
+// a turn. Kept in lockstep with the server (conversation.py is the source of truth).
+const SPEAKER_ALT = '(?:🧑 )?사용자|(?:🤖 )?AI'
+const HEADER_RE = new RegExp(`^##\\s+(${SPEAKER_ALT}) · (\\S+)\\s*$`)
+const HEADERLIKE_RE = new RegExp(`^\\\\*##\\s+(?:${SPEAKER_ALT}) · \\S+\\s*$`)
+
+function speakerKey(label: string): string {
+  let s = label
+  for (const prefix of ['🧑 ', '🤖 ']) {
+    if (s.startsWith(prefix)) { s = s.slice(prefix.length); break }
+  }
+  if (s === '사용자') return 'user'
+  if (s === 'AI') return 'ai'
+  return label
+}
 
 function unescapeLine(line: string): string {
   if (line.startsWith('\\') && HEADERLIKE_RE.test(line.slice(1))) return line.slice(1)
@@ -169,7 +182,7 @@ function parseConversation(content: string): { intro: string; turns: ConvTurn[] 
     const m = HEADER_RE.exec(line)
     if (m) {
       flush()
-      curSpeaker = TOKEN_TO_KEY[m[1]] ?? m[1]
+      curSpeaker = speakerKey(m[1])
       curTs = m[2]
       curBody = []
       started = true
