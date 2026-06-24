@@ -2698,7 +2698,9 @@ const { activityColor, activityActionLabel, formatDashboardTime } = useActivityF
 function workflowStageLabel(workflow: DashboardWorkflow): string {
   const key = workflow.stage.state === 'pending'
     ? 'main.overview.workflow_pending'
-    : 'main.overview.workflow_in_progress'
+    : workflow.stage.state === 'done'
+      ? 'main.overview.workflow_done'
+      : 'main.overview.workflow_in_progress'
   return t(key, { type: workflow.stage.type_code })
 }
 
@@ -2998,6 +3000,11 @@ watch(textWrapEnabled, (enabled) => {
   color: #1d4ed8;
 }
 
+.workflow-status-badge--done {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .workflow-progress-track {
   display: block;
   height: 6px;
@@ -3234,13 +3241,25 @@ watch(textWrapEnabled, (enabled) => {
 
 .document-editor {
   padding: 0;
-  min-height: 420px;
+  /* The comfortable editor height (was on the textarea as `min-height: 62vh`)
+     lives on the body so the body itself defines the single scroll track. */
+  min-height: 62vh;
   display: flex;
+  /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
+     the inner textarea is the *sole* scroll container. With the height pinned
+     on the textarea (62vh) AND this body scrollable, both scrolled at once →
+     the reported double scrollbar. Clipping here leaves only the textarea. */
+  overflow: hidden;
 }
 
 .document-editor__textarea {
   width: 100%;
-  min-height: 62vh;
+  /* Fill the editor track instead of pinning height to a viewport unit. A vh
+     pin is decoupled from the body track (bounded by `.modal-box max-height:
+     88vh` minus header/footer); when the two mismatch both scroll. min-height:0
+     + stretch makes the textarea exactly fill the body and be the only scroller. */
+  flex: 1 1 auto;
+  min-height: 0;
   resize: none;
   border: 0;
   outline: none;

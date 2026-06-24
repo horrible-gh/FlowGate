@@ -33,7 +33,7 @@ export interface DashboardWorkflow {
   group_title: string
   requirement: { doc_id: string; title: string }
   stage: {
-    state: 'pending' | 'in_progress'
+    state: 'pending' | 'in_progress' | 'done'
     type_code: string
     head_doc_id: string | null
     head_doc_title: string | null
