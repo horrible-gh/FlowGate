@@ -381,6 +381,106 @@ def list_documents(
     })
 
 
+# ── 3-6. GET /search/documents (R0001 Phase 1: global title/doc_id search) ─────
+
+@router.get("/search/documents")
+def search_documents(
+    request: Request,
+    q: str = "",
+    project: Optional[str] = None,
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    err = _validate_limit(limit)
+    if err:
+        return err
+    if offset < 0:
+        return _fail(400, "offset must be >= 0")
+
+    query = (q or "").strip()
+    if not query:
+        return _fail(400, "q is required")
+
+    rows, total = db_docs.search_documents(
+        q=query, project=project, doc_type=type, status=status,
+        limit=limit, offset=offset,
+    )
+    # Attach a brief body preview to every result so the default explorer search
+    # (the one that runs when "내용까지 검색" is off) shows the document's simplified
+    # body — not just its id/title. The body lives on the filesystem; we read only
+    # this page of rows through the same mtime cache the content search uses, so it
+    # stays cheap. This is the group 0123 rev10 fix: prior revisions only added the
+    # body preview on the content endpoint, but the reviewer searches in this default
+    # mode, so the brief body never appeared.
+    from modules.flow_gate.services import content_search_service
+    items = [
+        {
+            "doc_id": r.get("doc_id"),
+            "type": r.get("type_code"),
+            "title": r.get("title"),
+            "status": r.get("status"),
+            "project_id": r.get("project_id"),
+            "group_id": r.get("group_id"),
+            "revision_no": r.get("revision_no", 0),
+            "owner_id": r.get("owner_id"),
+            "created_at": r.get("created_at"),
+            "updated_at": r.get("updated_at"),
+            "snippet": content_search_service.body_preview_for_doc(r),
+        }
+        for r in rows
+    ]
+    return JSONResponse(content={
+        "ok": True, "query": query, "total": total,
+        "offset": offset, "limit": limit, "items": items,
+    })
+
+
+# ── 3-7. GET /search/documents/content (R0001 Phase 2: body full-text search) ─
+
+@router.get("/search/documents/content")
+def search_documents_content(
+    request: Request,
+    q: str = "",
+    project: Optional[str] = None,
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Full document search incl. body text (Phase 2). Same auth/validation/paging
+    as Phase 1; each item adds a ``snippet`` (excerpt for body matches) and
+    ``matched_in`` (body|title|doc_id). Reads bodies from the filesystem via a
+    self-healing mtime cache — no schema/migration, multi-dialect safe."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    err = _validate_limit(limit)
+    if err:
+        return err
+    if offset < 0:
+        return _fail(400, "offset must be >= 0")
+
+    query = (q or "").strip()
+    if not query:
+        return _fail(400, "q is required")
+
+    from modules.flow_gate.services import content_search_service
+
+    items, total = content_search_service.search_document_bodies(
+        q=query, project=project, doc_type=type, status=status,
+        limit=limit, offset=offset,
+    )
+    return JSONResponse(content={
+        "ok": True, "query": query, "scope": "content", "total": total,
+        "offset": offset, "limit": limit, "items": items,
+    })
+
+
 # ── 3-5. GET /list/doc-types ─────────────────────────────────────────────────
 
 @router.get("/list/doc-types")

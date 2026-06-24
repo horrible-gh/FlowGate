@@ -18,6 +18,14 @@ EVT_COMMENT_ADDED = "comment_added"
 EVT_PROMPT_COPIED = "prompt_copied"
 EVT_GROUP_COMPLETION_CANDIDATE = "group_completion_candidate"
 EVT_GROUP_APPROVED = "group_approved"
+# R0001 group 0125 / NR0003: present-tense work-STATE signals. Recorded for the dashboard state
+# board (작업상태 집계), NEVER projected onto the 🔔 notification feed — i.e. these MUST stay out of
+# dashboard_service._NOTIFICATION_EVENT_TYPES. NR0003 권고 4: re-introducing state changes into the
+# past-tense feed would undo the 0118 noise reduction ("상태 변화마다 알림 폭증"). The investigation
+# found "시작"(workflow start) and "연속작업 종료"(continuous-run end) had no backend signal at all;
+# these constants close that gap (NR0003 §발견 3, 권고 1).
+EVT_WORK_STARTED = "work_started"
+EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
 
 
 def log_event(
@@ -131,6 +139,64 @@ def log_group_approved(
         actor_user_id=actor_user_id,
         group_id=group_id,
         metadata={"status": "approved"},
+    )
+
+
+def log_work_started(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    document_id: int,
+    doc_id: str | None = None,
+    group_id: str | None = None,
+) -> dict:
+    """Record an explicit workflow-"start" signal (R0001 group 0125, NR0003 권고 1).
+
+    Emitted when a requirement's workflow is decided and the document flips to
+    doc_review_status='wf_in_progress'. Used only for the state board aggregation
+    (get_work_state_summary); deliberately excluded from the notification feed whitelist.
+    """
+    meta: dict[str, Any] = {"to_state": "wf_in_progress"}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    return log_event(
+        event_type=EVT_WORK_STARTED,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        to_state="wf_in_progress",
+        metadata=meta,
+    )
+
+
+def log_continuous_work_ended(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    document_id: int,
+    doc_id: str | None = None,
+    group_id: str | None = None,
+    target_seq: int | None = None,
+) -> dict:
+    """Record an explicit "continuous-work ended" signal (R0001 group 0125, NR0003 권고 1).
+
+    Emitted when the server-driven continuous (unmanned) self-chain reaches its target and stops.
+    Before this, the system had no signal at all for "어떤 문서가 연속작업을 종료했는지" (NR0003 §발견 3).
+    Used only for the state board aggregation; never added to the notification feed whitelist.
+    """
+    meta: dict[str, Any] = {}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    if target_seq is not None:
+        meta["target_seq"] = target_seq
+    return log_event(
+        event_type=EVT_CONTINUOUS_WORK_ENDED,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata=meta or None,
     )
 
 

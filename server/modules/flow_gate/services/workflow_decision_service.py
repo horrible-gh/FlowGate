@@ -7,6 +7,7 @@ doc_class (R/Q/B) input + response.
 from __future__ import annotations
 
 import json as _json
+import logging
 from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
@@ -27,6 +28,8 @@ from modules.flow_gate.services import mention_service
 # Mirrors the client AUTO_MAP (N→NR, T→TR, TS→TSR). V→VR is intentionally excluded: VR
 # is not a registered document_type, so attaching it would create an unprocessable step.
 AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
+
+_log = logging.getLogger(__name__)
 
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
 # Instruction-series steps ("무엇을 하라": N/T) are fillable from a fixed server template
@@ -182,6 +185,23 @@ def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
             "doc_review_status": "wf_in_progress",
         },
     )
+
+    # R0001 group 0125 / NR0003 권고 1: record an explicit "시작" signal now that the document
+    # entered wf_in_progress. This feeds the dashboard state board only (get_work_state_summary);
+    # it is intentionally NOT a notification-feed event. Never let an event-log failure break the
+    # decision itself — the workflow is already persisted above.
+    try:
+        from modules.flow_gate.workflow import event_logger as _event_logger
+
+        _event_logger.log_work_started(
+            project_id=doc["project_id"],
+            actor_user_id=doc.get("owner_id") or "system",
+            document_id=doc["id"],
+            doc_id=doc_id,
+            group_id=doc.get("group_id"),
+        )
+    except Exception:  # noqa: BLE001 — state-board signal is best-effort, never fatal
+        _log.warning("work_started signal failed for %s", doc_id, exc_info=True)
 
     head = db_wfseq.get_effective_head(seq_id)
     head_out = None

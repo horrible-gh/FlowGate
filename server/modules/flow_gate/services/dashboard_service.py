@@ -512,12 +512,18 @@ def _build_active_workflow_item(row: dict, project_id: str) -> dict:
             or not row.get("head_doc_title")
         ):
             raise DashboardDataError(f"invalid workflow head document: {result_doc_id}")
+        # R0001 group 0125 / NR0003 권고 2: the stage badge previously only ever showed
+        # pending / in_progress, so a finished head step was indistinguishable from a running one
+        # ("완료(done) 표기가 아예 없음"). Surface a 'done' state once the head document is approved
+        # (or itself wf_done) so the active-workflow card can be scanned at a glance.
+        head_status = row.get("result_doc_review_status")
+        head_state = "done" if head_status in ("approved", "wf_done") else "in_progress"
         stage = {
-            "state": "in_progress",
+            "state": head_state,
             "type_code": row["head_type"],
             "head_doc_id": result_doc_id,
             "head_doc_title": row.get("head_doc_title"),
-            "head_doc_review_status": row.get("result_doc_review_status"),
+            "head_doc_review_status": head_status,
         }
         navigation = {
             "kind": "document",
@@ -617,6 +623,76 @@ def list_active_workflows(project_id: str, limit: int) -> dict:
     }
 
 
+def _scalar_count(sql: str, params: list) -> int:
+    """Run a single COUNT(...) query, returning 0 if the (optional) source table is absent.
+
+    The state board aggregates several independent sources (documents, workflow_events,
+    document_mention_copies). Some are optional in lighter deployments/tests, so a missing table
+    degrades that one metric to 0 instead of failing the whole dashboard (B0001/0122 ethos).
+    """
+    try:
+        row = get_store()._fetch_one(sql, params)
+    except Exception:  # noqa: BLE001 — optional source; degrade this metric only
+        _log.warning("work-state count failed: %s", sql.split()[0:6], exc_info=True)
+        return 0
+    if not row:
+        return 0
+    value = next(iter(row.values()))
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_work_state_summary(project_id: str) -> dict:
+    """Present-tense document work-STATE counts for the dashboard state board.
+
+    R0001 group 0125 / NR0003: the 🔔 notification feed is a past-tense event stream, but what
+    R0001 actually wants is "지금 어떤 상태인가" — 작업중·작업완료·복사됨·연속작업 종료 (NR0003 §발견 4).
+    This aggregation answers that as scannable counts and is exposed on the dashboard summary,
+    NOT on the notification feed (NR0003 권고 4 — keep _NOTIFICATION_EVENT_TYPES untouched).
+
+    "복사됨" deliberately UNIFIES the two formerly-separate copy records (NR0003 권고 3): the
+    per-user document_mention_copies state table AND the prompt_copied workflow event, deduped to
+    a distinct-document count so "어떤 문서가 멘트를 복사했는지" is finally scannable in one place.
+    """
+    in_progress = _scalar_count(
+        "SELECT COUNT(*) FROM documents "
+        "WHERE project_id = ? AND doc_review_status = 'wf_in_progress'",
+        [project_id],
+    )
+    done = _scalar_count(
+        "SELECT COUNT(*) FROM documents "
+        "WHERE project_id = ? AND doc_review_status = 'wf_done'",
+        [project_id],
+    )
+    copied = _scalar_count(
+        "SELECT COUNT(*) AS c FROM ("
+        "  SELECT d.doc_id AS doc_id"
+        "    FROM document_mention_copies mc"
+        "    JOIN documents d ON d.doc_id = mc.doc_id"
+        "   WHERE d.project_id = ?"
+        "  UNION"
+        "  SELECT d.doc_id AS doc_id"
+        "    FROM workflow_events we"
+        "    JOIN documents d ON d.id = we.document_id"
+        "   WHERE we.project_id = ? AND we.event_type = 'prompt_copied'"
+        ")",
+        [project_id, project_id],
+    )
+    continuous_ended = _scalar_count(
+        "SELECT COUNT(DISTINCT document_id) FROM workflow_events "
+        "WHERE project_id = ? AND event_type = 'continuous_work_ended'",
+        [project_id],
+    )
+    return {
+        "in_progress": in_progress,
+        "done": done,
+        "copied": copied,
+        "continuous_ended": continuous_ended,
+    }
+
+
 def get_dashboard_summary(
     project_id: str,
     activity_limit: int,
@@ -644,6 +720,17 @@ def get_dashboard_summary(
                 "skipped": 0,
                 "degraded": True,
             }
+        try:
+            work_states = get_work_state_summary(project_id)
+        except Exception:  # noqa: BLE001 — state board is additive, never fatal
+            _log.exception("dashboard: work-state summary failed project=%s", project_id)
+            work_states = {
+                "in_progress": 0,
+                "done": 0,
+                "copied": 0,
+                "continuous_ended": 0,
+                "degraded": True,
+            }
     return {
         "ok": True,
         "project_id": project_id,
@@ -652,4 +739,5 @@ def get_dashboard_summary(
         .replace("+00:00", "Z"),
         "recent_activities": recent_activities,
         "active_workflows": active_workflows,
+        "work_states": work_states,
     }

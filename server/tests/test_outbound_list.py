@@ -331,6 +331,143 @@ def test_list_doc_types_success(seed_data, tmp_path):
     assert any(item["prefix"] == "NR" for item in resp.json()["items"])
 
 
+def test_search_documents_by_title(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=root",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["query"] == "root"
+    assert any(item["doc_id"] == "R0001" for item in data["items"])
+    assert data["total"] >= 1
+
+
+def test_search_documents_by_doc_id(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=r0001",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    assert any(item["doc_id"] == "R0001" for item in resp.json()["items"])
+
+
+def test_search_documents_case_insensitive(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=ROOT",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    assert any(item["doc_id"] == "R0001" for item in resp.json()["items"])
+
+
+def test_search_documents_no_match_empty(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=zzz_no_such_doc_zzz",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["items"] == []
+    assert data["total"] == 0
+
+
+def test_search_documents_type_facet(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=root&type=R",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+    assert any(item["doc_id"] == "R0001" for item in resp.json()["items"])
+
+    resp2 = client.get(
+        "/api/v1/search/documents?q=root&type=NR",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp2.status_code == 200
+    assert all(item["doc_id"] != "R0001" for item in resp2.json()["items"])
+
+
+def test_search_documents_project_facet(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=root&project=testprj",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+    assert any(item["doc_id"] == "R0001" for item in resp.json()["items"])
+
+    resp2 = client.get(
+        "/api/v1/search/documents?q=root&project=OFFPRJ",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["items"] == []
+
+
+def test_search_documents_empty_query_400(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=%20%20",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 400
+
+
+def test_search_documents_missing_query_400(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 400
+
+
+def test_search_documents_no_auth_401(seed_data):
+    client = _build_client()
+
+    resp = client.get("/api/v1/search/documents?q=root")
+
+    assert resp.status_code == 401
+
+
+def test_search_documents_limit_out_of_range_400(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/search/documents?q=root&limit=0",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 400
+
+
 def test_list_no_permission_403(seed_data, tmp_path):
     client = _build_client()
     raw = _issue_bearer(tmp_path)

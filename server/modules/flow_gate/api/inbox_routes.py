@@ -729,6 +729,28 @@ def _continuation_self_chain(
     if completed_seq is not None and completed_seq >= target_seq:
         envelope["continuation_remaining"] = 0
         envelope["continuation_done"] = True
+        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
+        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
+        # never a notification-feed event. Best-effort: a logging failure must not turn the
+        # already-saved continuous run's clean stop into an error.
+        try:
+            from modules.flow_gate.workflow import event_logger as _event_logger
+            ended_doc = db_docs.get_by_id(canonical_doc_id) or {}
+            ended_pk = ended_doc.get("id")
+            if ended_pk is not None:
+                _event_logger.log_continuous_work_ended(
+                    project_id=project,
+                    actor_user_id=actor_user_id,
+                    document_id=ended_pk,
+                    doc_id=canonical_doc_id,
+                    group_id=ended_doc.get("group_id"),
+                    target_seq=target_seq,
+                )
+        except Exception as _sig_exc:  # noqa: BLE001 — best-effort state signal
+            import LogAssist.log as logger
+            logger.warning(
+                f"[inbox] continuous_work_ended signal failed (ignored): {_sig_exc}"
+            )
         return envelope
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the

@@ -348,6 +348,79 @@ def get_documents_filtered(
     )
 
 
+def search_documents(
+    q: str,
+    project: str = None,
+    doc_type: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Title/doc_id text search with optional metadata facets (R0001 Phase 1).
+
+    Multi-dialect safe: uses ``LOWER(col) LIKE ?`` which behaves identically on
+    SQLite / MySQL / PostgreSQL (no FTS syntax → no dialect.py branching needed).
+    Returns ``(rows, total_count)`` where total ignores limit/offset for paging.
+    """
+    clauses: list = []
+    params: list = []
+    if project:
+        clauses.append("project_id = ?")
+        params.append(project)
+    if doc_type:
+        clauses.append("type_code LIKE ?")
+        params.append(f"{doc_type}%")
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if q:
+        clauses.append("(LOWER(title) LIKE ? OR LOWER(doc_id) LIKE ?)")
+        like = f"%{q.lower()}%"
+        params.extend([like, like])
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    store = get_store()
+    total_row = store._fetch_one(
+        f"SELECT COUNT(*) AS cnt FROM documents {where_sql}", params
+    )
+    total = total_row["cnt"] if total_row else 0
+    rows = store._fetch_all(
+        f"SELECT * FROM documents {where_sql}"
+        f" ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+        params + [limit, offset],
+    )
+    return [_normalize_document_row(r) for r in rows], total
+
+
+def list_documents_for_fulltext(
+    project: str = None, doc_type: str = None, status: str = None,
+) -> list[dict]:
+    """Return facet-filtered documents (no text predicate) for body full-text search.
+
+    R0001 Phase 2: the body markdown lives on the filesystem (no ``content`` column),
+    so the content-search service reads each candidate file rather than matching in
+    SQL. This helper applies only the cheap metadata facets (project/type/status, the
+    same prefix-``type_code LIKE`` semantics as the Phase 1 endpoint) to narrow the
+    candidate set the service must read, ordered ``updated_at DESC`` so the service can
+    keep that ordering without re-sorting. Multi-dialect safe (plain equality/LIKE).
+    """
+    clauses: list = []
+    params: list = []
+    if project:
+        clauses.append("project_id = ?")
+        params.append(project)
+    if doc_type:
+        clauses.append("type_code LIKE ?")
+        params.append(f"{doc_type}%")
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = get_store()._fetch_all(
+        f"SELECT * FROM documents {where_sql} ORDER BY updated_at DESC, id DESC", params
+    )
+    return [_normalize_document_row(r) for r in rows]
+
+
 def get_documents_by_status_and_types(status: str, types: tuple) -> list[dict]:
     if not types:
         return []
