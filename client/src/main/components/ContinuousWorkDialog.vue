@@ -46,14 +46,18 @@
             <template v-else>
               <!-- R0001: pick how far to continue. Steps before the current head are 'done'
                    and disabled (no skipping / no mid-start); the run goes from the head to the
-                   checked step inclusive. -->
-              <div class="cwd-section-title">{{ t('main.continuous_work.pick_target') }}</div>
-              <div class="cwd-steps">
+                   checked step inclusive. When everything is already done (allDone) the list is
+                   read-only and just lets the user review what ran. -->
+              <div class="cwd-section-title">
+                {{ allDone ? t('main.continuous_work.all_done_title') : t('main.continuous_work.pick_target') }}
+              </div>
+              <div ref="stepsRef" class="cwd-steps">
                 <button
                   v-for="(item, idx) in items"
                   :key="item.item_seq"
                   type="button"
                   class="cwd-step"
+                  :data-step-idx="idx"
                   :class="{
                     'cwd-step--done': idx < headIdx,
                     'cwd-step--in-range': idx >= headIdx && idx <= selectedIdx,
@@ -88,11 +92,16 @@
                 <i class="fa-solid fa-circle-exclamation"></i>
                 {{ t('main.continuous_work.head_in_progress_note') }}
               </div>
+              <div v-if="allDone" class="cwd-note cwd-note--info">
+                <i class="fa-solid fa-circle-check"></i>
+                {{ t('main.continuous_work.all_done_note') }}
+              </div>
             </template>
 
             <!-- AI review mode (R0001): pause after the first step for a human review + Q&A
-                 instead of auto-chaining all the way. -->
-            <label class="cwd-toggle">
+                 instead of auto-chaining all the way. Hidden when allDone — there is no step
+                 left to run, so the toggle would be meaningless. -->
+            <label v-if="!allDone" class="cwd-toggle">
               <input v-model="reviewMode" type="checkbox" />
               <span class="cwd-toggle-text">
                 <span class="cwd-toggle-title">
@@ -103,9 +112,11 @@
             </label>
 
             <div class="cwd-summary">
-              {{ fromDecision
-                ? t('main.continuous_work.from_decision_summary')
-                : t('main.continuous_work.summary', { count: stepCount, target: targetLabel }) }}
+              {{ allDone
+                ? t('main.continuous_work.all_done_summary')
+                : fromDecision
+                  ? t('main.continuous_work.from_decision_summary')
+                  : t('main.continuous_work.summary', { count: stepCount, target: targetLabel }) }}
             </div>
           </template>
         </div>
@@ -128,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 
@@ -163,11 +174,19 @@ const TARGET_TO_END = -1
 const loading = ref(false)
 const errorKey = ref<string | null>(null)
 const items = ref<SequenceItem[]>([])
+// Scroll container for the step list (capped + overflow-y:auto). Used to bring the current
+// execution point into view (R0001).
+const stepsRef = ref<HTMLElement | null>(null)
 const selectedIdx = ref(-1)
 const reviewMode = ref(false)
 // R0001 "워크플로 결정부터": set when /workflow/sequence reports the sequence is not decided
 // yet. Instead of blocking, the dialog offers to start the run from the workflow decision.
 const fromDecision = ref(false)
+// R0001 (group 0129): set when every step is already done (head=null). The run has nothing
+// left to continue, but the user still opened the dialog to SEE what ran — so we keep showing
+// the step list (read-only, scrolled to the most recent step) instead of blanking it out with
+// a bare "all done" error. Repro: flowgate.default.0094.0001-R = 8 T/TR steps, all done.
+const allDone = ref(false)
 
 // Head = first step that is not yet done. Steps before it are completed and cannot be a
 // target (no skipping / no mid-start, R0001). All-done → no head (headIdx = length).
@@ -198,6 +217,52 @@ function selectTarget(idx: number) {
   selectedIdx.value = idx
 }
 
+// R0001: when a sequence has many completed steps the capped step list shows only the top
+// 'done' rows, leaving the step that is actually running (the head) — or, when everything is
+// done, the most recent step — scrolled out of view. Scroll the list so the current execution
+// point is visible. Done steps above it scroll off the top.
+//
+// Writes scrollTop in LAYOUT coordinates (offsetTop / scrollHeight), NOT getBoundingClientRect.
+// The modal opens with a `transform: scale(.97)` keyframe (.modal-box `mIn`); a rect-difference
+// read taken mid-animation is scaled and lands short, leaving the user parked on the completed
+// steps. offsetTop is the untransformed layout offset relative to `.cwd-steps` (which is
+// position:relative), so it is immune to that animation and is idempotent across re-applies.
+function applyReveal() {
+  const container = stepsRef.value
+  if (!container) return
+  // All steps done (no head): there is nothing to "reveal at the top" — scroll to the very
+  // bottom so the most recently executed step is what the user lands on (R0001:
+  // "스크롤을 가장 하단으로 내려서 어떤 문서가 실행되는지 보이게").
+  if (headIdx.value >= items.value.length) {
+    container.scrollTop = container.scrollHeight
+    return
+  }
+  const row = container.querySelector<HTMLElement>(`[data-step-idx="${headIdx.value}"]`)
+  if (!row) {
+    container.scrollTop = container.scrollHeight
+    return
+  }
+  // Align the head row to the top of the visible area (revealing it + the steps below it),
+  // scoped to this scroll container so it never jumps the surrounding page.
+  container.scrollTop = row.offsetTop
+}
+
+async function revealActiveStep() {
+  await nextTick()
+  // Apply once now (covers the common case + the unit test). Then re-apply on the next animation
+  // frames: on a fresh open the capped list (max-height) may not have overflowed yet when the
+  // first write runs, so scrollTop clamps to 0 and the list stays on the completed steps. Once
+  // layout settles (and the .15s open animation is past) the re-apply makes the scroll stick.
+  // offsetTop-based, so re-applying is idempotent — it never over-scrolls.
+  applyReveal()
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => {
+      applyReveal()
+      requestAnimationFrame(applyReveal)
+    })
+  }
+}
+
 async function loadSequence() {
   loading.value = true
   errorKey.value = null
@@ -205,6 +270,7 @@ async function loadSequence() {
   selectedIdx.value = -1
   reviewMode.value = false
   fromDecision.value = false
+  allDone.value = false
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.docRef })
     const data = res.data as any
@@ -222,10 +288,19 @@ async function loadSequence() {
       // response.
       fromDecision.value = true
     } else if (headIdx.value >= items.value.length) {
-      errorKey.value = 'main.continuous_work.error_all_done'
+      // R0001 (group 0129) repro flowgate.default.0094.0001-R: every step is done. Do NOT
+      // replace the whole dialog with a bare "모든 단계가 이미 완료되었습니다" error that hides
+      // the steps — the user opened this to SEE what ran ("들어가보면 전부 완료된것만 보이잖아").
+      // Keep the (read-only) step list and scroll to the most recent step. [Next] stays
+      // disabled because canProceed is false (no head to continue from).
+      allDone.value = true
+      void revealActiveStep()
     } else {
       // Default to running the whole remaining sequence.
       selectedIdx.value = items.value.length - 1
+      // Bring the current execution point into view instead of leaving the user parked on the
+      // completed steps at the top (R0001).
+      void revealActiveStep()
     }
   } catch (e: any) {
     // Defensive fallback: the shadowed decision_routes handler would return 400
@@ -324,6 +399,9 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: 6px;
+  /* Anchor for child .cwd-step offsetTop so revealActiveStep() can scroll the running step
+     to the top in layout coordinates (immune to the modal's open `scale()` animation). */
+  position: relative;
   /* R0001: when a sequence has many steps the list grew unbounded and pushed the
      review-mode toggle / summary / footer out of view. Cap the list and let it scroll
      on its own so those controls stay visible. Short sequences show no scrollbar. */
