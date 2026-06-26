@@ -9,35 +9,40 @@
     <!-- Expanded body -->
     <div class="doc-info-body">
       <!-- Section 1: document status -->
-      <div class="dip-section">
+      <div class="dip-section" :class="{ collapsed: sectionCollapsed.status }">
         <div class="dip-section-head">
-          <span class="dip-section-title">
+          <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.status" @click="toggleSection('status')">
+            <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
             <i class="fa-solid fa-circle-dot"></i>
             {{ t('main.doc_info_panel.section_status') }}
-          </span>
+          </button>
           <button class="dip-panel-close btn-icon" @click="$emit('toggle')" :title="t('main.doc_info_panel.collapse')">
             <i class="fa-solid fa-chevron-right"></i>
           </button>
         </div>
-        <div :class="['dip-status-badge', statusClass, (nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? 'dip-badge-clickable' : '']" @click="(nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? emit('next-action') : undefined">
-          <i class="fa-solid" :class="statusIcon"></i>
-          {{ statusLabel }}
+        <div class="dip-sec-body">
+          <div :class="['dip-status-badge', statusClass, (nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? 'dip-badge-clickable' : '']" @click="(nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? emit('next-action') : undefined">
+            <i class="fa-solid" :class="statusIcon"></i>
+            {{ statusLabel }}
+          </div>
+          <p class="dip-status-desc">{{ statusDesc }}</p>
         </div>
-        <p class="dip-status-desc">{{ statusDesc }}</p>
       </div>
 
       <!-- Section 2: Q&A (group 0022 D0005 §3.1 — added after removing [Proceed workflow]) -->
-      <div class="dip-section">
+      <div class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
         <div class="dip-section-head">
-          <span class="dip-section-title">
+          <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.qa" @click="toggleSection('qa')">
+            <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
             <i class="fa-solid fa-circle-question"></i>
             {{ t('main.doc_info_panel.section_qa') }}
-          </span>
+          </button>
           <button class="btn-icon dip-qa-add" type="button" @click="toggleNewQ" :title="t('main.doc_info_panel.qa_add')">
             <i class="fa-solid fa-plus"></i>
           </button>
         </div>
 
+        <div class="dip-sec-body">
         <!-- new question inline form ([+ Query]) -->
         <div v-if="newQOpen" class="dip-qa-form">
           <input v-model="newQTitle" class="dip-qa-input" :placeholder="t('main.doc_info_panel.qa_title_ph')" />
@@ -117,14 +122,17 @@
             {{ t('main.doc_info_panel.view_full') }}
           </button>
         </template>
+        </div>
       </div>
 
       <!-- Section 2.5: AI review feedback (latest review plus full history) -->
-      <div v-if="canShowReviewSection" class="dip-section">
-        <div class="dip-section-title">
+      <div v-if="canShowReviewSection" class="dip-section" :class="{ collapsed: sectionCollapsed.ai_review }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.ai_review" @click="toggleSection('ai_review')">
+          <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
           <i class="fa-solid fa-robot"></i>
           {{ t('main.doc_info_panel.section_ai_review') }}
-        </div>
+        </button>
+        <div class="dip-sec-body">
         <template v-if="aiReview">
           <div class="dip-ai-entry">
             <div class="dip-ai-entry-head">
@@ -187,14 +195,17 @@
             <span class="dip-reject-hint">{{ t('main.doc_info_panel.ai_review_hint') }}</span>
           </div>
         </template>
+        </div>
       </div>
 
       <!-- Section 3: rejection reason -->
-      <div v-if="canShowRejectSection" class="dip-section">
-        <div class="dip-section-title">
+      <div v-if="canShowRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.reject }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.reject" @click="toggleSection('reject')">
+          <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
           <i class="fa-solid fa-comment-slash"></i>
           {{ t('main.doc_info_panel.section_reject') }}
-        </div>
+        </button>
+        <div class="dip-sec-body">
         <template v-if="rejectionDisplayReason">
           <div class="dip-reject-quote" :class="{ open: rejectionExpanded }">
             <button
@@ -254,6 +265,7 @@
             <span class="dip-reject-hint">{{ t('main.doc_info_panel.reject_hint') }}</span>
           </div>
         </template>
+        </div>
       </div>
     </div>
 
@@ -272,7 +284,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import QaHistoryDialog from './QaHistoryDialog.vue'
@@ -304,6 +316,22 @@ const emit = defineEmits<{
   'next-action': []
   'open-review-history': []
 }>()
+
+// ── R0001 (group 0126 / C안): section-level accordion ──────────────────────────
+// Each info-panel section (status · Q&A · AI review · rejection) folds independently
+// under its own title caret — the same caret idiom as the left file-tree. This is
+// separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
+// emit) so the two controls don't fight. Sections start expanded.
+type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject'
+const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
+  status: false,
+  qa: false,
+  ai_review: false,
+  reject: false,
+})
+function toggleSection(key: SectionKey) {
+  sectionCollapsed[key] = !sectionCollapsed[key]
+}
 
 function formatRejectionDate(iso: string): string {
   try {
@@ -580,6 +608,36 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
   cursor: default;
   opacity: .72;
 }
+/* R0001 (group 0126 / C안): section-level accordion. The section title becomes a
+   caret toggle — a button reset back to the .dip-section-title look (the typography
+   is restated here because a bare `font: inherit` would lose the .63rem/upper-case
+   title style under scoped-style specificity). The body wrapper hides and the caret
+   rotates -90° when the section is collapsed, mirroring the left file-tree caret. The
+   whole-panel close chevron stays a separate control. */
+.dip-sec-toggle {
+  appearance: none;
+  background: none;
+  border: none;
+  width: 100%;
+  padding: 0;
+  font-family: inherit;
+  font-size: .63rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--text-m);
+  text-align: left;
+  cursor: pointer;
+}
+.dip-sec-toggle:hover { color: var(--text-s); }
+.dip-acc-caret {
+  font-size: .6rem;
+  color: #9aa3af;
+  transition: transform .18s ease;
+}
+.dip-section.collapsed .dip-acc-caret { transform: rotate(-90deg); }
+.dip-section.collapsed .dip-sec-body { display: none; }
+
 /* group 0022 §3.1: Q&A panel (reuses the rejection-box idiom) */
 .dip-section-head { display: flex; align-items: center; justify-content: space-between; }
 .dip-qa-add { color: var(--primary); }
