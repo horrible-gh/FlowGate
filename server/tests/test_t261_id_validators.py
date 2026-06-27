@@ -84,6 +84,9 @@ class TestValidateGroupId:
     def test_specific_module(self):
         assert validate_group_id("myproject.server.0001") == "myproject.server.0001"
 
+    def test_hyphen_module(self):
+        assert validate_group_id("myproject.my-module.0001") == "myproject.my-module.0001"
+
     def test_korean_project(self):
         assert validate_group_id("my-korean-project.none.0042") == "my-korean-project.none.0042"
 
@@ -120,6 +123,10 @@ class TestValidateDocId:
 
     def test_specific_module(self):
         val = "myproject.server.0001.0042-D"
+        assert validate_doc_id(val) == val
+
+    def test_hyphen_module(self):
+        val = "myproject.my-module.0001.0001-NR"
         assert validate_doc_id(val) == val
 
     def test_korean_project(self):
@@ -197,6 +204,20 @@ class TestDocumentRouteValidator:
                 headers={"Authorization": "Bearer tok"},
             )
         assert resp.status_code == 422
+
+
+class TestInboxCanonicalHyphenModuleNormalization:
+    def test_group_name_accepts_hyphen_module(self):
+        from modules.flow_gate.api.inbox_routes import _normalize_group_name
+
+        group_id = "myproject.my-module.0001"
+        assert _normalize_group_name("myproject", "my-module", group_id) == group_id
+
+    def test_doc_id_accepts_hyphen_module(self):
+        from modules.flow_gate.api.inbox_routes import _normalize_doc_id
+
+        doc_id = "myproject.my-module.0001.0001-NR"
+        assert _normalize_doc_id("myproject.my-module.0001", doc_id) == doc_id
 
 
 class TestProjectRouteValidator:

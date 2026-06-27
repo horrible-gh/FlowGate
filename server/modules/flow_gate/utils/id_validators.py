@@ -13,15 +13,16 @@ from __future__ import annotations
 import re
 
 SLUG_CHARS = r'[a-z0-9_\-]+'
+MODULE_CHARS = SLUG_CHARS
 
 PROJECT_ID = re.compile(rf'^{SLUG_CHARS}$')
 
 GROUP_ID = re.compile(
-    rf'^{SLUG_CHARS}\.(?:none|[a-z0-9_]+)\.\d{{4}}$'
+    rf'^{SLUG_CHARS}\.(?:none|{MODULE_CHARS})\.\d{{4}}$'
 )
 
 DOC_ID = re.compile(
-    rf'^{SLUG_CHARS}\.(?:none|[a-z0-9_]+)\.\d{{4}}\.\d{{4}}-[A-Z]+$'
+    rf'^{SLUG_CHARS}\.(?:none|{MODULE_CHARS})\.\d{{4}}\.\d{{4}}-[A-Z]+$'
 )
 
 
