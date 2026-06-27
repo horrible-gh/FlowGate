@@ -1037,6 +1037,33 @@ class TestInboxDuplicateBodyGuard:
         b = self._post(tmp_path, "0002", "R0001", "NR8402", self._SHORT_BODY)
         assert b.status_code == 201, b.text
 
+    def test_new_persists_normalized_fingerprint(self, seed_data, tmp_path):
+        """A substantial new body persists content_sha256_norm alongside the exact hash,
+        so a whitespace-only near-duplicate becomes detectable (NR0003 §5.1c)."""
+        import json
+        from modules.flow_gate.db import documents as db_docs
+        body = self._BIG_BODY + " v-norm-persist"
+        resp = self._post(tmp_path, "0001", "R0001", "NR8501", body)
+        assert resp.status_code == 201, resp.text
+        meta = json.loads(db_docs.get_by_id(resp.json()["doc_id"])["meta"])
+        assert "content_sha256" in meta and "content_sha256_norm" in meta
+
+    def test_cross_group_whitespace_near_duplicate_rejected(self, seed_data, tmp_path):
+        """A clone that differs only by reflow/indentation evades the byte-exact hash but
+        not the normalized one → 409 naming the original (NR0003 §5.1c)."""
+        self._seed_second_group()
+        body = self._BIG_BODY + " v-near-dup"
+        first = self._post(tmp_path, "0001", "R0001", "NR8601", body)
+        assert first.status_code == 201, first.text
+
+        # Reflowed clone: collapse spaces to newlines + add trailing whitespace. The
+        # exact sha differs (no byte match) but the whitespace-normalized form is equal.
+        reflowed = body.replace(" ", "\n  ") + "\n\n"
+        assert reflowed != body
+        second = self._post(tmp_path, "0002", "R0001", "NR8602", reflowed)
+        assert second.status_code == 409, second.text
+        assert first.json()["doc_id"] in second.json()["error_message"]
+
 
 # ── 8. Duplicate-body guard on the EDIT path (NR0003 → B0107) ───────────────
 
@@ -1279,4 +1306,63 @@ class TestInboxEditDuplicateBodyGuard:
 
         resp = self._edit(tmp_path, doc_id, own_body)
         assert resp.status_code == 200, resp.text
+
+
+# ── 9. Cold-start backfill of body fingerprints (NR0003 §5.2) ───────────────
+
+class TestBackfillContentFingerprint:
+    """Documents created before the dup-body guard shipped carry meta=NULL, so the
+    guard can never match a clone of them (the cold-start gap that makes the
+    contamination recur — B0001 "4회차"). The backfill tool computes the same
+    fingerprints the live guard uses and writes them into meta additively.
+    """
+
+    _BIG_BODY = "# Investigation Report\n\n" + ("Root cause analysis line. " * 120)
+    _SHORT_BODY = "조사지시 가 승인되었습니다."
+
+    def _seed_doc(self, doc_id: str, body: str, root, *, meta=None) -> None:
+        from modules.flow_gate.db import documents as db_docs
+        rel = f"docs/{doc_id}.md"
+        abs_path = root / rel
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(body, encoding="utf-8")
+        db_docs.create({
+            "doc_id": doc_id, "project_id": "testprj", "type_code": "NR", "seq": 1,
+            "title": doc_id, "group_id": "testprj-__ALL__-0001", "module": "__ALL__",
+            "owner_id": "usr_test_001", "file_path": rel, "meta": meta,
+        })
+
+    def test_backfill_fills_substantial_skips_short_and_is_idempotent(self, seed_data, tmp_path):
+        import json
+        from modules.flow_gate.db import documents as db_docs
+        from tools import backfill_content_fingerprint as bf
+
+        root = tmp_path / "bf_store"
+        self._seed_doc("testprj-__ALL__-0001-NR9101", self._BIG_BODY, root)
+        self._seed_doc("testprj-__ALL__-0001-NR9102", self._SHORT_BODY, root)
+        # A doc that already has unrelated meta — backfill must preserve it.
+        self._seed_doc(
+            "testprj-__ALL__-0001-NR9103", self._BIG_BODY + " v2", root,
+            meta=json.dumps({"related_doc_ids": ["testprj-__ALL__-0001-R0001"]}),
+        )
+
+        with patch(
+            "modules.flow_gate.storage.paths.get_storage_root", return_value=root,
+        ):
+            stats = bf.backfill(dry_run=False)
+            assert stats["updated"] >= 2 and stats["short"] >= 1
+
+            big = json.loads(db_docs.get_by_id("testprj-__ALL__-0001-NR9101")["meta"])
+            assert "content_sha256" in big and "content_sha256_norm" in big
+
+            short_meta = db_docs.get_by_id("testprj-__ALL__-0001-NR9102")["meta"]
+            assert not short_meta or "content_sha256" not in short_meta
+
+            keep = json.loads(db_docs.get_by_id("testprj-__ALL__-0001-NR9103")["meta"])
+            assert keep["related_doc_ids"] == ["testprj-__ALL__-0001-R0001"]
+            assert "content_sha256" in keep
+
+            # Idempotent: a second pass rewrites nothing for the rows just filled.
+            again = bf.backfill(dry_run=False)
+            assert again["updated"] == 0
 

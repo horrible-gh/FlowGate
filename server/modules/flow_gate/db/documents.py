@@ -50,7 +50,9 @@ def list_documents(
 
 
 def find_by_content_fingerprint(
-    content_sha256: str, exclude_group_id: Optional[str] = None
+    content_sha256: str,
+    exclude_group_id: Optional[str] = None,
+    key: str = "content_sha256",
 ) -> Optional[dict]:
     """Return one document whose body fingerprint matches, optionally excluding a group.
 
@@ -58,14 +60,16 @@ def find_by_content_fingerprint(
     byte-identical to an existing document in a *different* group is the
     submission-layer contamination signature (correct title, stale/reused body).
 
-    The fingerprint is stored inside the meta JSON ("content_sha256") rather than a
-    dedicated column, so this matches a stable substring with LIKE — no schema
-    migration and dialect-portable (the same literal lands in sqlite/mysql/postgres).
-    Returns the earliest-created match so the guard's error names the original.
+    ``key`` selects which fingerprint to match: the default ``content_sha256``
+    (byte-exact) or ``content_sha256_norm`` (whitespace-normalized near-duplicate,
+    NR0003 §5.1c). Both live inside the meta JSON rather than a dedicated column,
+    so this matches a stable substring with LIKE — no schema migration and
+    dialect-portable (the same literal lands in sqlite/mysql/postgres). Returns the
+    earliest-created match so the guard's error names the original.
     """
     if not content_sha256:
         return None
-    needle = f'"content_sha256": "{content_sha256}"'
+    needle = f'"{key}": "{content_sha256}"'
     sql = "SELECT * FROM documents WHERE meta LIKE ?"
     params: list = [f"%{needle}%"]
     if exclude_group_id is not None:

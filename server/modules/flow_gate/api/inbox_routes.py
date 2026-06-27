@@ -289,6 +289,66 @@ def _content_fingerprint(text: Optional[str]) -> Optional[str]:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _normalize_body(text: str) -> str:
+    """Whitespace-insensitive canonical form for near-duplicate detection.
+
+    Collapses every run of whitespace (spaces, tabs, newlines) to a single space
+    and strips the ends. The byte-exact guard (`content_sha256`) misses a clone
+    that only differs by reflow / indentation / trailing-newline churn — the
+    natural next evasion once exact-match is enforced (NR0003 §5.1c). Normalizing
+    away whitespace catches those while staying conservative: it does not touch
+    word characters, so two genuinely different reports never collide.
+    """
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _content_fingerprints(text: Optional[str]) -> dict:
+    """Both body fingerprints for a substantial body, else an empty dict.
+
+    Returns ``{"content_sha256": <exact>, "content_sha256_norm": <normalized>}``
+    so the duplicate-body guard can match either a byte-exact clone or a
+    whitespace-only near-duplicate (NR0003 §5.1c). The two keys are always
+    present together or not at all, gated by the same `_dup_min_chars` threshold
+    that exempts short approval stubs / boilerplate.
+    """
+    exact = _content_fingerprint(text)
+    if exact is None or not isinstance(text, str):
+        return {}
+    return {
+        "content_sha256": exact,
+        "content_sha256_norm": hashlib.sha256(
+            _normalize_body(text).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _find_body_twin(
+    fingerprints: dict, *, exclude_group_id: Optional[str]
+) -> Optional[dict]:
+    """Existing doc whose body matches by exact OR normalized fingerprint, else None.
+
+    Exact match is tried first (names the true byte-identical original); the
+    normalized match is the near-duplicate backstop. Both stay cross-group only
+    (`exclude_group_id`) — the observed contamination signature is cross-group,
+    and legitimate large bodies do recur within a single group's own thread.
+    """
+    if not fingerprints:
+        return None
+    exact = fingerprints.get("content_sha256")
+    if exact:
+        twin = db_docs.find_by_content_fingerprint(exact, exclude_group_id=exclude_group_id)
+        if twin is not None:
+            return twin
+    norm = fingerprints.get("content_sha256_norm")
+    if norm:
+        twin = db_docs.find_by_content_fingerprint(
+            norm, exclude_group_id=exclude_group_id, key="content_sha256_norm"
+        )
+        if twin is not None:
+            return twin
+    return None
+
+
 def _submission_text(doc_path: Optional[str], content: Optional[str]) -> Optional[str]:
     if doc_path is not None:
         return pathlib.Path(doc_path).read_text(encoding="utf-8")
@@ -1015,24 +1075,21 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     # (L0007: failures never reach the dry-run path). fingerprint is reused at Step 7
     # to persist the body's hash into meta, making the guard effective going forward.
     # Fail-open on any read/lookup error — the guard must never 500 a real submission.
-    fingerprint: Optional[str] = None
+    fingerprints: dict = {}
     try:
         body_for_fp = body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
-        fingerprint = _content_fingerprint(body_for_fp)
-        if fingerprint is not None:
-            twin = db_docs.find_by_content_fingerprint(
-                fingerprint, exclude_group_id=group["group_id"]
+        fingerprints = _content_fingerprints(body_for_fp)
+        twin = _find_body_twin(fingerprints, exclude_group_id=group["group_id"])
+        if twin is not None:
+            return _fail(
+                409,
+                "Duplicate body: this content matches "
+                f"{twin['doc_id']} in another group. The submitted body looks like "
+                "stale/reused content (correct title, wrong body). Re-send with this "
+                "document's own content.",
             )
-            if twin is not None:
-                return _fail(
-                    409,
-                    "Duplicate body: this content is byte-identical to "
-                    f"{twin['doc_id']} in another group. The submitted body looks like "
-                    "stale/reused content (correct title, wrong body). Re-send with this "
-                    "document's own content.",
-                )
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real submission
-        fingerprint = None  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
+        fingerprints = {}  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
 
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
@@ -1043,7 +1100,7 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
         new_checks.append("doc_path")
     if body_for_guards is not None:
         new_checks.append("frontmatter_identity")
-    if fingerprint is not None:
+    if fingerprints:
         new_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {
         "action": "new",
@@ -1102,8 +1159,8 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     meta_payload: dict = {}
     if related_doc_ids:
         meta_payload["related_doc_ids"] = related_doc_ids
-    if fingerprint is not None:
-        meta_payload["content_sha256"] = fingerprint
+    if fingerprints:
+        meta_payload.update(fingerprints)
     meta_value = json.dumps(meta_payload) if meta_payload else None
     try:
         db_docs.create({
@@ -1538,28 +1595,25 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
     # excluded, so an edit that legitimately keeps or extends its own body is never
     # blocked. The fingerprint is reused at Step 7.1 to (re)persist meta.content_sha256.
     # Fail-open on any read/lookup error — the guard must never 500 a real edit.
-    edit_fingerprint: Optional[str] = None
+    edit_fingerprints: dict = {}
     try:
         body_for_fp = (
             edit_body_for_guards
             if edit_body_for_guards is not None
             else _submission_text(doc_path, content)
         )
-        edit_fingerprint = _content_fingerprint(body_for_fp)
-        if edit_fingerprint is not None:
-            twin = db_docs.find_by_content_fingerprint(
-                edit_fingerprint, exclude_group_id=group["group_id"]
+        edit_fingerprints = _content_fingerprints(body_for_fp)
+        twin = _find_body_twin(edit_fingerprints, exclude_group_id=group["group_id"])
+        if twin is not None:
+            return _fail(
+                409,
+                "Duplicate body: this content matches "
+                f"{twin['doc_id']} in another group. The submitted body looks like "
+                "stale/reused content (correct title, wrong body). Re-send with this "
+                "document's own content.",
             )
-            if twin is not None:
-                return _fail(
-                    409,
-                    "Duplicate body: this content is byte-identical to "
-                    f"{twin['doc_id']} in another group. The submitted body looks like "
-                    "stale/reused content (correct title, wrong body). Re-send with this "
-                    "document's own content.",
-                )
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real edit
-        edit_fingerprint = None  # unreadable doc_path / lookup error → skip; edit still proceeds
+        edit_fingerprints = {}  # unreadable doc_path / lookup error → skip; edit still proceeds
 
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
     # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
@@ -1574,7 +1628,7 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         edit_checks.append("doc_path")
     if edit_body_for_guards is not None:
         edit_checks.append("frontmatter_identity")
-    if edit_fingerprint is not None:
+    if edit_fingerprints:
         edit_checks.append("dup_body")
     dry_resp = _maybe_dry_run(body, token_rec, {
         "action": "edit",
@@ -1666,10 +1720,11 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
         _meta_obj = json.loads(_existing_meta) if _existing_meta else {}
         if not isinstance(_meta_obj, dict):
             _meta_obj = {}
-        if edit_fingerprint is not None:
-            _meta_obj["content_sha256"] = edit_fingerprint
+        if edit_fingerprints:
+            _meta_obj.update(edit_fingerprints)
         else:
             _meta_obj.pop("content_sha256", None)
+            _meta_obj.pop("content_sha256_norm", None)
         db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
     except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
         import LogAssist.log as logger
