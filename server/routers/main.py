@@ -143,6 +143,15 @@ if _os.path.isdir(_CLIENT_DIST):
 
     _CTX = CONTEXT.strip("/")
 
+    # The HTML entry shells (index/main/settings.html) are NOT content-hashed, so a
+    # browser that heuristically caches them keeps loading an OLD shell that still
+    # references a pre-rebuild `main-<oldhash>.js` — the app renders entirely from
+    # cache and a fresh `run.bat` rebuild never reaches the screen (group 0126: the
+    # accordion was built into dist but the cached shell hid it). Force the shells to
+    # revalidate every load; the hashed /assets/* stay immutably cacheable.
+    def _html(path: str) -> FileResponse:
+        return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _serve_client(full_path: str):
         # Never shadow the API surface; let those 404 as JSON.
@@ -152,14 +161,17 @@ if _os.path.isdir(_CLIENT_DIST):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
         # Real file on disk (favicon, etc.; /assets handled by the mount above).
+        # An HTML shell requested by its real name must still revalidate.
         candidate = _os.path.join(_CLIENT_DIST, full_path)
         if full_path and _os.path.isfile(candidate):
+            if candidate.endswith(".html"):
+                return _html(candidate)
             return FileResponse(candidate)
 
         # Multi-page history fallback (mirrors vite.config multiPageHistoryFallback).
         if full_path == "main" or full_path.startswith("main/"):
-            return FileResponse(_os.path.join(_CLIENT_DIST, "main.html"))
+            return _html(_os.path.join(_CLIENT_DIST, "main.html"))
         if full_path == "settings" or full_path.startswith("settings/"):
-            return FileResponse(_os.path.join(_CLIENT_DIST, "settings.html"))
-        return FileResponse(_os.path.join(_CLIENT_DIST, "index.html"))
+            return _html(_os.path.join(_CLIENT_DIST, "settings.html"))
+        return _html(_os.path.join(_CLIENT_DIST, "index.html"))
 
