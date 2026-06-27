@@ -130,7 +130,7 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     expect(wrapper.find('.dip-reject-empty').exists()).toBe(true)
   })
 
-  it('renders question items with answered/answering badge', async () => {
+  it('renders question cards; answered card carries the answered-card accent (group 0126 / C안)', async () => {
     getRequest.mockResolvedValue({
       data: { qa: { items: [
         { id: 1, seq: 1, title: 'Palette', body: 'A or B?', asker_kind: 'human', answer_count: 1,
@@ -140,10 +140,88 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     })
     const wrapper = mountPanel()
     await flushPromises()
-    const items = wrapper.findAll('.dip-qa-item')
-    expect(items.length).toBe(2)
-    expect(items[0].find('.q-state-badge').classes()).toContain('done')
-    expect(items[1].find('.q-state-badge').classes()).toContain('pending')
+    const cards = wrapper.findAll('.dip-qa-card')
+    expect(cards.length).toBe(2)
+    expect(cards[0].classes()).toContain('answered-card') // has an answer
+    expect(cards[1].classes()).not.toContain('answered-card') // still unanswered
+    // headline unanswered-count badge reflects the single open query
+    expect(wrapper.find('.dip-qa-count').text()).toContain('1')
+  })
+
+  it('card exposes only [답변], which opens the full-view dialog focused on that query', async () => {
+    getRequest.mockResolvedValue({
+      data: { qa: { items: [
+        { id: 5, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
+      ] } },
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'QaHistoryDialog' })
+    expect(dialog.props('visible')).toBe(false)
+
+    const buttons = wrapper.findAll('.dip-qa-card-actions .mini-action')
+    expect(buttons.length).toBe(1)
+    expect(buttons[0].text()).toContain(i18n.global.t('main.doc_info_panel.qa_answer'))
+
+    await buttons[0].trigger('click')
+    expect(dialog.props('visible')).toBe(true)
+    expect(dialog.props('focusId')).toBe(5)
+    expect(dialog.props('startAnswer')).toBe(true)
+  })
+
+  it('card [답변] opens the full-view dialog with the answer form requested', async () => {
+    getRequest.mockResolvedValue({
+      data: { qa: { items: [
+        { id: 6, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
+      ] } },
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'QaHistoryDialog' })
+    await wrapper.find('.dip-qa-card-actions .mini-action.primary').trigger('click')
+    expect(dialog.props('visible')).toBe(true)
+    expect(dialog.props('focusId')).toBe(6)
+    expect(dialog.props('startAnswer')).toBe(true)
+  })
+
+  it('headline keeps [전체보기], which opens the full-view dialog (no query focused)', async () => {
+    getRequest.mockResolvedValue({
+      data: { qa: { items: [
+        { id: 7, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
+      ] } },
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    const fullView = wrapper.find('.dip-qa-fullview')
+    expect(fullView.exists()).toBe(true)
+    expect(fullView.text()).toContain(i18n.global.t('main.doc_info_panel.qa_view_full'))
+
+    const dialog = wrapper.findComponent({ name: 'QaHistoryDialog' })
+    await fullView.trigger('click')
+    expect(dialog.props('visible')).toBe(true)
+    expect(dialog.props('focusId')).toBe(null)
+    expect(dialog.props('startAnswer')).toBe(false)
+  })
+
+  it('[전체보기] and [+] share the matched headline button family (.dip-qa-act)', async () => {
+    getRequest.mockResolvedValue({
+      data: { qa: { items: [
+        { id: 8, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
+      ] } },
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('.dip-qa-fullview').classes()).toContain('dip-qa-act')
+    expect(wrapper.find('.dip-qa-add').classes()).toContain('dip-qa-act')
+  })
+
+  it('[전체보기] is hidden when there are no queries (nothing to view)', async () => {
+    getRequest.mockResolvedValue({ data: { qa: { items: [] } } })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('.dip-qa-fullview').exists()).toBe(false)
+    // the [+] add button is always available
+    expect(wrapper.find('.dip-qa-add').exists()).toBe(true)
   })
 
   it('[+ 질의] toggles the new-question form', async () => {
@@ -169,27 +247,10 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     expect(getRequest.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('answering an item POSTs author_kind=human; AI request hits ai-request', async () => {
-    getRequest.mockResolvedValue({
-      data: { qa: { items: [
-        { id: 7, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
-      ] } },
-    })
-    const wrapper = mountPanel()
-    await flushPromises()
-    await wrapper.find('.dip-qa-item-head').trigger('click')   // expand
-    // human answer
-    await wrapper.find('.dip-qa-actions .btn-outline').trigger('click') // [답변 작성]
-    await wrapper.find('.dip-qa-form .dip-qa-textarea').setValue('the answer')
-    await wrapper.find('.dip-qa-form .btn-primary').trigger('click')
-    await flushPromises()
-    expect(postRequest).toHaveBeenCalledWith(
-      '/api/v1/q/p.none.0001.0001-D/items/7/answers',
-      expect.objectContaining({ author_kind: 'human', body: 'the answer' }),
-    )
-  })
-
-  it('[AI에게 답변 요청] POSTs to the ai-request endpoint', async () => {
+  // group 0126 / C안: answering moved out of the panel into the full-view dialog
+  // (QaHistoryDialog), where the answer POST + AI-request behaviour is covered by
+  // QaHistoryDialog.answer.spec.ts. The panel now only opens that dialog (above).
+  it.skip('answering an item POSTs author_kind=human; AI request hits ai-request', async () => {
     getRequest.mockResolvedValue({
       data: { qa: { items: [
         { id: 9, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
@@ -197,7 +258,6 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     })
     const wrapper = mountPanel()
     await flushPromises()
-    await wrapper.find('.dip-qa-item-head').trigger('click')
     const actionBtns = wrapper.findAll('.dip-qa-actions .btn-outline')
     await actionBtns[1].trigger('click') // [AI에게 답변 요청]
     await flushPromises()

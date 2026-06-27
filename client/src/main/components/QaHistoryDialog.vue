@@ -25,7 +25,13 @@
           <div v-if="items.length === 0" class="qhd-empty">{{ t('main.qa_history.empty') }}</div>
 
           <ul v-else class="qhd-list">
-            <li v-for="item in items" :key="item.id" class="qhd-entry">
+            <li
+              v-for="item in items"
+              :key="item.id"
+              class="qhd-entry"
+              :class="{ answered: answered(item) }"
+              :ref="(el) => setEntryRef(item.id, el)"
+            >
               <div class="qhd-head">
                 <span class="qhd-badge" :class="answered(item) ? 'done' : 'pending'">
                   {{ answered(item) ? t('main.doc_info_panel.qa_answered') : t('main.doc_info_panel.qa_answering') }}
@@ -94,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
 
@@ -105,11 +111,17 @@ const props = withDefaults(defineProps<{
   // becomes answer-capable. Omitting them keeps the dialog read-only (back-compat).
   docId?: string
   busy?: boolean
+  // group 0126 / C안: the panel cards open this dialog focused on one query — [Open]
+  // scrolls it into view, [Answer] also opens its inline answer form.
+  focusId?: number | null
+  startAnswer?: boolean
   submitAnswer?: (itemId: number, body: string) => Promise<boolean>
   requestAiAnswer?: (itemId: number) => Promise<boolean>
 }>(), {
   docId: '',
   busy: false,
+  focusId: null,
+  startAnswer: false,
   submitAnswer: undefined,
   requestAiAnswer: undefined,
 })
@@ -120,6 +132,15 @@ const { t } = useI18n()
 
 const answerOpenId = ref<number | null>(null)
 const answerBody = ref('')
+
+// group 0126 / C안: per-entry element refs so an opened-with-focus query can be
+// scrolled into view (the panel cards open this dialog targeting one query).
+const entryRefs = ref<Record<number, HTMLElement>>({})
+function setEntryRef(id: number, el: Element | null | { $el?: Element }) {
+  const node = (el && '$el' in el ? el.$el : el) as HTMLElement | null
+  if (node) entryRefs.value[id] = node
+  else delete entryRefs.value[id]
+}
 
 function answered(item: QaItem): boolean {
   return (item.answer_count ?? item.answers?.length ?? 0) > 0
@@ -146,8 +167,20 @@ async function onRequestAi(itemId: number) {
   await props.requestAiAnswer(itemId)
 }
 
-// Reset any open answer form when the dialog is closed so it reopens clean.
-watch(() => props.visible, (v) => { if (!v) closeAnswer() })
+// Reset any open answer form when the dialog is closed so it reopens clean. When opened
+// with a focus target (group 0126 / C안), scroll it into view and — for [Answer] — open
+// its inline answer form so the user lands directly on the compose box.
+watch(() => props.visible, async (v) => {
+  if (!v) { closeAnswer(); return }
+  const target = props.focusId
+  if (target == null) return
+  if (props.startAnswer && props.docId && !answered(props.items.find((q) => q.id === target) ?? ({} as QaItem))) {
+    openAnswer(target)
+  }
+  await nextTick()
+  const node = entryRefs.value[target]
+  if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+})
 
 function onClose() {
   emit('update:visible', false)
@@ -160,7 +193,13 @@ function onClose() {
 .qhd-desc { font-size: .78rem; color: var(--text-m); margin-bottom: 12px; }
 .qhd-empty { padding: 24px; text-align: center; color: var(--text-m); font-size: .85rem; }
 .qhd-list { display: flex; flex-direction: column; gap: 12px; }
-.qhd-entry { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+/* group 0126 / C안: full-view entries use the prototype's amber query card; an answered
+   query switches its accent to green. */
+.qhd-entry {
+  border: 1px solid var(--border); border-left: 3px solid #f59e0b;
+  border-radius: 8px; padding: 10px 12px; background: #fffdfa;
+}
+.qhd-entry.answered { border-left-color: #22c55e; background: #f7fdf9; }
 .qhd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .qhd-badge { display: inline-flex; align-items: center; font-size: .62rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
 .qhd-badge.done { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }

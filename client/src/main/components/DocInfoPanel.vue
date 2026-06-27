@@ -29,17 +29,26 @@
         </div>
       </div>
 
-      <!-- Section 2: Q&A (group 0022 D0005 §3.1 — added after removing [Proceed workflow]) -->
+      <!-- Section 2: Q&A (group 0126). The side panel keeps each query compact and only
+           exposes the answer action per card; the full text/answer form opens in the
+           dialog so long queries never stretch the panel. -->
       <div class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
-        <div class="dip-section-head">
+        <div class="dip-qa-headline">
           <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.qa" @click="toggleSection('qa')">
             <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
-            <i class="fa-solid fa-circle-question"></i>
+            <i class="fa-solid fa-comments"></i>
             {{ t('main.doc_info_panel.section_qa') }}
           </button>
-          <button class="btn-icon dip-qa-add" type="button" @click="toggleNewQ" :title="t('main.doc_info_panel.qa_add')">
-            <i class="fa-solid fa-plus"></i>
-          </button>
+          <div class="dip-qa-head-actions">
+            <span v-if="qaUnansweredCount > 0" class="dip-qa-count">{{ t('main.doc_info_panel.qa_unanswered_count', { n: qaUnansweredCount }) }}</span>
+            <button v-if="qaItems.length > 0" class="dip-qa-act dip-qa-fullview" type="button" @click="openQaFull(null, false)" :title="t('main.doc_info_panel.qa_view_full')">
+              <i class="fa-solid fa-expand"></i>
+              {{ t('main.doc_info_panel.qa_view_full') }}
+            </button>
+            <button class="dip-qa-act dip-qa-act--icon dip-qa-add" type="button" @click="toggleNewQ" :title="t('main.doc_info_panel.qa_add')">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
         </div>
 
         <div class="dip-sec-body">
@@ -60,67 +69,21 @@
             <i class="fa-regular fa-circle-question"></i>
             <span>{{ t('main.doc_info_panel.qa_empty') }}</span>
           </div>
-          <div v-for="item in qaItems" :key="item.id" class="dip-qa-item" :class="{ open: expandedItemId === item.id }">
-            <button type="button" class="dip-qa-item-head" @click="toggleItem(item.id)">
-              <span class="q-state-badge" :class="itemAnswered(item) ? 'done' : 'pending'" style="font-size:.6rem; padding:1px 7px;">
-                {{ itemAnswered(item) ? t('main.doc_info_panel.qa_answered') : t('main.doc_info_panel.qa_answering') }}
-              </span>
-              <span class="dip-qa-item-title">Q{{ item.seq }} · {{ item.title || item.body }}</span>
-              <i class="fa-solid fa-chevron-down dip-qa-chevron"></i>
-            </button>
-            <div v-if="expandedItemId === item.id" class="dip-qa-item-body">
-              <div class="dip-qa-meta">
-                <i :class="item.asker_kind === 'ai' ? 'fa-solid fa-robot' : 'fa-solid fa-user'"></i>
-                {{ item.asker_kind === 'ai' ? t('main.doc_info_panel.qa_by_ai') : t('main.doc_info_panel.qa_by_human') }}
-              </div>
-              <!-- R0001 (rev1): the question body is shown directly when the item is
-                   expanded — a single disclosure (the item head) rather than a nested
-                   fold, so reading a query no longer needs a second click. The body is
-                   still height-capped with an internal scroll so a long question never
-                   stretches the side panel (AC1/AC2/AC4). -->
-              <div class="dip-qa-fold">
-                <div class="dip-qa-fold-head">
-                  <span class="dip-qa-fold-label">{{ t('main.doc_info_panel.qa_question') }}</span>
-                </div>
-                <div class="dip-qa-fold-body">{{ item.body }}</div>
-              </div>
-              <template v-if="(item.answers?.length ?? 0) > 0">
-                <div
-                  v-for="(a, ai) in item.answers"
-                  :key="ai"
-                  class="dip-qa-fold dip-qa-fold--answer"
-                >
-                  <div class="dip-qa-fold-head">
-                    <span class="dip-qa-fold-label">
-                      <i :class="a.author_kind === 'ai' ? 'fa-solid fa-robot' : 'fa-solid fa-user'" class="dip-qa-answer-icon"></i>
-                      {{ t('main.doc_info_panel.qa_answer') }}
-                    </span>
-                  </div>
-                  <div class="dip-qa-fold-body">{{ a.body }}</div>
-                </div>
-              </template>
-              <div v-if="answerOpenId === item.id" class="dip-qa-form">
-                <textarea v-model="answerBody" class="dip-qa-textarea" rows="3" :placeholder="t('main.doc_info_panel.qa_answer_ph')"></textarea>
-                <div class="dip-qa-form-actions">
-                  <button class="btn btn-sm btn-outline" type="button" @click="answerOpenId = null">{{ t('common.cancel') }}</button>
-                  <button class="btn btn-sm btn-primary" type="button" :disabled="!answerBody.trim() || qaBusy" @click="submitAnswer(item.id)">{{ t('main.doc_info_panel.qa_answer_submit') }}</button>
-                </div>
-              </div>
-              <div v-else class="dip-qa-actions">
-                <button class="btn btn-sm btn-outline" type="button" @click="openAnswer(item.id)">{{ t('main.doc_info_panel.qa_answer_write') }}</button>
-                <button class="btn btn-sm btn-outline" type="button" :disabled="qaBusy" @click="requestAiAnswer(item.id)">
-                  <i class="fa-solid fa-robot"></i> {{ t('main.doc_info_panel.qa_answer_ai') }}
-                </button>
-              </div>
+          <div
+            v-for="item in qaItems"
+            :key="item.id"
+            class="dip-qa-card"
+            :class="{ 'answered-card': itemAnswered(item) }"
+          >
+            <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
+            <p class="dip-qa-card-body">{{ item.body }}</p>
+            <div class="dip-qa-card-actions">
+              <button class="mini-action primary" type="button" @click="openQaFull(item.id, true)">
+                <i class="fa-solid fa-reply"></i>
+                {{ t('main.doc_info_panel.qa_answer') }}
+              </button>
             </div>
           </div>
-          <!-- R0001 (AC3): full Q&A in a modal (same dialog form as the AI review/
-               rejection show-all) so the entire query/answer text is reachable without
-               stretching the side panel. -->
-          <button v-if="qaItems.length > 0" class="dip-ai-history-link" type="button" @click="qaHistoryVisible = true">
-            <i class="fa-solid fa-up-right-from-square"></i>
-            {{ t('main.doc_info_panel.view_full') }}
-          </button>
         </template>
         </div>
       </div>
@@ -277,6 +240,8 @@
       :items="qaItems"
       :doc-id="props.docId"
       :busy="qaBusy"
+      :focus-id="qaFocusId"
+      :start-answer="qaStartAnswer"
       :submit-answer="submitAnswerCore"
       :request-ai-answer="requestAiAnswer"
     />
@@ -537,27 +502,29 @@ const {
   requestAiAnswer,
 } = useQaAnswers(toRef(props, 'docId'))
 
-const expandedItemId = ref<number | null>(null)
 const newQOpen = ref(false)
 const newQTitle = ref('')
 const newQBody = ref('')
-const answerOpenId = ref<number | null>(null)
-const answerBody = ref('')
 
-// R0001 (AC3): full Q&A modal (show-all), same dialog form as ReviewHistoryDialog.
+// group 0126 / C안: unanswered count shown on the Q&A headline badge (matches the
+// prototype's "미응답 N" pill — and the same count the header counter would show).
+const qaUnansweredCount = computed(() => qaItems.value.filter((it) => !itemAnswered(it)).length)
+
+// group 0126 / C안 + T0013: full Q&A modal (show-all / 전체보기). The headline
+// [전체보기] opens it unfocused; each card's [답변] opens it focused on that query
+// with the answer form started (cards expose only [답변] per T0013).
 const qaHistoryVisible = ref(false)
-
-function toggleItem(id: number) {
-  expandedItemId.value = expandedItemId.value === id ? null : id
-  answerOpenId.value = null
+const qaFocusId = ref<number | null>(null)
+const qaStartAnswer = ref(false)
+function openQaFull(focusId: number | null = null, startAnswer = false) {
+  qaFocusId.value = focusId
+  qaStartAnswer.value = startAnswer
+  qaHistoryVisible.value = true
 }
+
 function toggleNewQ() {
   newQOpen.value = !newQOpen.value
   if (!newQOpen.value) { newQTitle.value = ''; newQBody.value = '' }
-}
-function openAnswer(id: number) {
-  answerOpenId.value = id
-  answerBody.value = ''
 }
 
 async function submitNewQ() {
@@ -566,15 +533,9 @@ async function submitNewQ() {
   }
 }
 
-async function submitAnswer(itemId: number) {
-  if (await submitAnswerCore(itemId, answerBody.value)) {
-    answerOpenId.value = null; answerBody.value = ''
-  }
-}
-
 watch(
   () => props.docId,
-  () => { expandedItemId.value = null; newQOpen.value = false; answerOpenId.value = null; qaHistoryVisible.value = false; fetchQa() },
+  () => { newQOpen.value = false; qaHistoryVisible.value = false; fetchQa() },
   { immediate: true },
 )
 
@@ -655,6 +616,58 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
 }
 .dip-qa-textarea { resize: vertical; }
 .dip-qa-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* group 0126: prototype card layout for the Q&A section. The headline carries a
+   caret-title toggle plus an unanswered-count pill and a compact [+ add] button; the
+   body lists amber cards (title + 2-line preview + Answer only). */
+.dip-qa-headline {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.dip-qa-headline .dip-sec-toggle { width: auto; flex: 1; min-width: 0; }
+.dip-qa-head-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.dip-qa-count {
+  padding: 2px 7px; border: 1px solid #fde68a; border-radius: 999px;
+  color: #92400e; background: #fef3c7; font-size: .66rem; font-weight: 800;
+  white-space: nowrap;
+}
+/* group 0126 T0013: the headline keeps BOTH [전체보기] and [+] (the instruction asked
+   to align their styling, not remove either). They share one amber button family so
+   they read as a matched pair next to the unanswered-count pill — same 24px height,
+   border, radius and palette; [전체보기] carries an icon + label, [+] is the square
+   icon-only variant. */
+.dip-qa-act {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 24px; padding: 0 9px;
+  border: 1px solid #fcd34d; border-radius: var(--r, 6px);
+  color: #92400e; background: #fff7ed;
+  font-family: inherit; font-size: .66rem; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+}
+.dip-qa-act:hover { background: #fef3c7; }
+.dip-qa-act--icon { width: 24px; padding: 0; font-size: .74rem; }
+.dip-qa-card {
+  padding: 10px 11px; border: 1px solid #fde68a; border-left: 3px solid #f59e0b;
+  border-radius: var(--r, 6px); background: #fffbeb;
+}
+.dip-qa-card + .dip-qa-card { margin-top: 8px; }
+.dip-qa-card-title {
+  display: block; overflow: hidden; margin-bottom: 4px;
+  color: #78350f; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap;
+}
+.dip-qa-card-body {
+  display: -webkit-box; overflow: hidden; margin: 0;
+  color: #6b4f1d; font-size: .72rem; line-height: 1.45;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.dip-qa-card-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.dip-qa-card.answered-card { opacity: .6; border-left-color: #86efac; }
+.mini-action {
+  padding: 3px 7px; border: 1px solid #fcd34d; border-radius: var(--r, 6px);
+  color: #92400e; background: #fff7ed; font-size: .66rem; font-weight: 700; cursor: pointer;
+}
+.mini-action:hover { filter: brightness(.97); }
+.mini-action.primary { color: #fff; border-color: #d97706; background: #d97706; }
 .dip-qa-item {
   border: 1px solid var(--border); border-radius: 6px;
   margin-bottom: 6px; overflow: hidden; background: #fff;
