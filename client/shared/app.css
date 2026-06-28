@@ -313,6 +313,11 @@ ul, ol { list-style: none; }
 .doc-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .doc-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-size: .75rem; font-weight: 600; color: white; }
 .doc-id-badge { font-family: 'JetBrains Mono', monospace; font-size: .78rem; padding: 3px 8px; border-radius: var(--r-sm); background: var(--bg); border: 1px solid var(--border); color: var(--text-s); }
+button.doc-id-badge { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; line-height: inherit; transition: background .12s, border-color .12s, color .12s; }
+button.doc-id-badge:hover { background: var(--hover, var(--info-l)); border-color: var(--info); color: var(--info); }
+button.doc-id-badge:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.doc-id-copy-icon { font-size: .7rem; opacity: .55; }
+button.doc-id-badge:hover .doc-id-copy-icon { opacity: 1; }
 .doc-status  { padding: 3px 10px; border-radius: 20px; font-size: .72rem; font-weight: 600; }
 .s-open     { background: var(--info-l); color: var(--info); }
 .s-pending  { background: var(--warning-l); color: var(--warning); }

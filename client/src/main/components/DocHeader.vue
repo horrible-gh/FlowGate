@@ -17,7 +17,16 @@
       >
         <i class="fa-solid fa-right-left"></i> {{ convertTargetType }}
       </button>
-      <span class="doc-id-badge">{{ docFullPath }}</span>
+      <!-- R0001 group 0132: click the document-ID badge to copy the canonical doc ID. -->
+      <button
+        type="button"
+        class="doc-id-badge"
+        :title="t('main.doc_header.copy_doc_id_title')"
+        @click.stop="copyDocId"
+      >
+        {{ docFullPath }}
+        <i class="fa-solid fa-copy doc-id-copy-icon"></i>
+      </button>
       <span class="doc-status" :class="statusCls">{{ statusLabel }}</span>
       <!-- Mention-copied badge (R0001 group 0015 / NR0003 rev4): shown ONLY when this user has
            copied the document's mention. Absence == not copied; there is no 'before copy' state. -->
@@ -572,6 +581,17 @@ function copyMention() {
   })
 }
 
+// R0001 group 0132: copy just the canonical document ID (the badge text) to the clipboard.
+function copyDocId() {
+  const docId = docFullPath.value
+  if (!docId) return
+  navigator.clipboard.writeText(docId).then(() => {
+    showToast(t('main.doc_header.toast_doc_id_copied'), 'success')
+  }).catch(() => {
+    showToast(t('main.doc_header.toast_copy_failed'), 'error')
+  })
+}
+
 // R0001 group 0111: fill the title with the group name in one click. If the title is
 // not yet in edit mode, enter it (and focus) so the filled value can be reviewed and
 // saved; if already editing, just replace the in-progress value.
@@ -1112,6 +1132,8 @@ defineExpose({
   applyReviewTransition,
   onWorkflowConfirmed,
   copyMention,
+  copyDocId,
+  docFullPath,
   showUploadModal,
   showRelatedDocModal,
   showWorkflowDecisionModal,

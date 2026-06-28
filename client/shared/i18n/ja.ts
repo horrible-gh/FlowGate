@@ -832,6 +832,8 @@ export default {
       error_reject_failed: '差し戻し処理中にエラーが発生しました。',
       toast_mention_copied: 'メンションがクリップボードにコピーされました。',
       toast_copy_failed: 'コピー失敗',
+      toast_doc_id_copied: 'ドキュメントIDがクリップボードにコピーされました。',
+      copy_doc_id_title: 'ドキュメントIDをコピー',
       use_group_name: 'タイトルにグループ名を入れる',
       mention_copied_at: 'コピー済み {time}',
       mention_copy_tooltip: "'{label}'を{time}にコピーしました。AIワーカーに貼り付けると次の作業が進みます。",

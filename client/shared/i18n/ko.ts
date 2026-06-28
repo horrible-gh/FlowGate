@@ -832,6 +832,8 @@
       error_reject_failed: '반려 처리 중 오류가 발생했습니다.',
       toast_mention_copied: '멘트가 클립보드에 복사되었습니다.',
       toast_copy_failed: '복사 실패',
+      toast_doc_id_copied: '문서 ID가 클립보드에 복사되었습니다.',
+      copy_doc_id_title: '문서 ID 복사',
       use_group_name: '제목에 그룹명 넣기',
       mention_copied_at: '복사함 {time}',
       mention_copy_tooltip: "'{label}'을(를) {time}에 복사했습니다. AI 워커에게 붙여넣으면 다음 작업이 진행됩니다.",
