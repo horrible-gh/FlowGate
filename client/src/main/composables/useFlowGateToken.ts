@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
 import { prependMessagesSection } from '../utils/mentionMessages'
+import { copyToClipboard } from '../utils/clipboard'
 
 // Base URL used ONLY to build copy-paste mention text (buildConversationMention /
 // buildMentText). Mentions are consumed by an AI worker on another machine, so the URL
@@ -354,7 +355,11 @@ export function useFlowGateToken() {
     return parts.join('\n')
   }
 
-  async function copyMentToClipboard(token: IssuedToken, selectedDocs?: string[], rejectionContext?: RejectionContext, appendMessages?: string[]): Promise<boolean> {
+  // Build the final mention string from a token (pure — no clipboard/network side effects).
+  // Exposed so callers can compute the text INSIDE a deferred-copy producer, keeping the
+  // clipboard write inside the click's user activation (B0001 / group 0133 — see
+  // utils/clipboard.ts). Mirrors the prior in-line logic of copyMentToClipboard exactly.
+  function composeMention(token: IssuedToken, selectedDocs?: string[], rejectionContext?: RejectionContext, appendMessages?: string[]): string {
     // Edit case: prepend only the rejection section to token.mention (server 8-section).
     // If token.mention is null, fall back to client-side buildMentText() (includes rejection section).
     let text: string
@@ -367,27 +372,15 @@ export function useFlowGateToken() {
     // Mention-add (R0001 group 0081): prepend the chosen project message(s) as one labeled
     // section at the top so the AI sees its macros first, not buried below the Reminder.
     if (appendMessages && appendMessages.length > 0) text = prependMessagesSection(text, appendMessages, t('main.next_action_modal.mm_section_header'))
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text)
-        return true
-      } catch {
-        /* fall through to legacy */
-      }
-    }
-    // Legacy fallback for browsers without Clipboard API
-    try {
-      const el = document.createElement('textarea')
-      el.value = text
-      el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'
-      document.body.appendChild(el)
-      el.select()
-      const ok = document.execCommand('copy')
-      document.body.removeChild(el)
-      return ok
-    } catch {
-      return false
-    }
+    return text
+  }
+
+  async function copyMentToClipboard(token: IssuedToken, selectedDocs?: string[], rejectionContext?: RejectionContext, appendMessages?: string[]): Promise<boolean> {
+    const text = composeMention(token, selectedDocs, rejectionContext, appendMessages)
+    // Honest write (B0001): returns false if the clipboard was not actually set, so callers
+    // warn instead of falsely toasting success. Note this path still awaits the token before
+    // writing; activation-sensitive call sites should use copyToClipboardDeferred(composeMention).
+    return copyToClipboard(text)
   }
 
   return {
@@ -395,6 +388,7 @@ export function useFlowGateToken() {
     issueToken,
     requestReview,
     requestWorkflowDecision,
+    composeMention,
     copyMentToClipboard,
   }
 }

@@ -928,7 +928,7 @@ import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
-import { useMentionCopy } from '../composables/useMentionCopy'
+import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
 import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
@@ -944,7 +944,8 @@ import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
 import MentionMessageDialog from './MentionMessageDialog.vue'
-import { buildCandidateList, prependMessagesSection, type MessageEntry } from '../utils/mentionMessages'
+import { buildCandidateList, type MessageEntry } from '../utils/mentionMessages'
+import { copyToClipboard, copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
 import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
@@ -960,7 +961,7 @@ const {
   issueToken,
   requestReview,
   requestWorkflowDecision,
-  copyMentToClipboard,
+  composeMention,
 } = useFlowGateToken()
 // R0001 group 0015 / NR0003 rev4 — record a successful mention copy as server user-state so the
 // document header badge persists. Best-effort (never blocks the copy the user already made).
@@ -1269,25 +1270,28 @@ async function onEditMentCopy(tab: Tab) {
     return
   }
   const gParts = splitGroupId(groupId as string)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? (groupId as string),
-    doc_ref: tab.id,
-    action_scope: 'edit',
-  })
-  if (!token) return
-  if (token.mention) {
-    await doClipboardCopy(token.mention)
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(tab.id, 'edit')
-    return
-  }
-  const ok = await copyMentToClipboard(token)
-  if (ok) {
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(tab.id, 'edit')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  // B0001: issue the token INSIDE the deferred producer so the clipboard write stays within
+  // the click's user activation (the prior code awaited the token first, letting it lapse).
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueToken({
+        project,
+        ...(gParts?.module != null ? { module: gParts.module } : {}),
+        group: gParts?.groupCode ?? (groupId as string),
+        doc_ref: tab.id,
+        action_scope: 'edit',
+      })
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    },
+    {
+      tabId: tab.id,
+      kind: 'edit',
+      successToast: t('main.main_panel.toast_mention_copied'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 async function onEditInvokeCommand(tab: Tab) {
@@ -1730,9 +1734,13 @@ async function onRejectDialogSaveReason(reason: string) {
 async function onRejectDialogCopyMention(reason: string) {
   const docName = rejectDialogDocName.value
   const text = t('main.main_panel.reject_mention_template', { docName, reason })
-  await doClipboardCopy(text)
-  showToast(t('main.main_panel.toast_reject_mention_copied'), 'success')
-  void recordMentionCopy(rejectDialogTabId.value, 'reject')
+  // Text is ready synchronously here (no token round-trip), but still report honestly so a
+  // focus/permission failure warns instead of falsely claiming success (B0001).
+  const ok = await doClipboardCopy(text)
+  if (ok) {
+    showToast(t('main.main_panel.toast_reject_mention_copied'), 'success')
+    void recordMentionCopy(rejectDialogTabId.value, 'reject')
+  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
 }
 
 function onRejectDialogClosed() {
@@ -1750,13 +1758,20 @@ type ReviewActionPayload = {
 }
 
 async function onWorkflowDecisionCopyMention(payload: ReviewActionPayload) {
-  const token = await requestWorkflowDecision(payload.docId)
-  if (!token) return
-  const ok = await copyMentToClipboard(token)
-  if (ok) {
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(payload.docId, 'workflow_decision')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await requestWorkflowDecision(payload.docId)
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    },
+    {
+      tabId: payload.docId,
+      kind: 'workflow_decision',
+      successToast: t('main.main_panel.toast_mention_copied'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 async function onWorkflowDecisionInvokeCommand(payload: ReviewActionPayload) {
@@ -1777,26 +1792,33 @@ async function onReviewReworkCopyMention(payload: ReviewActionPayload) {
     return
   }
   const gParts = splitGroupId(groupId)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? groupId,
-    doc_ref: payload.docRef,
-    action_scope: 'edit',
-  })
-  if (!token) return
-  const h = docHeaderRefs[payload.docId]
-  const history: RejectionHistoryItem[] = exposedValue<RejectionHistoryItem[]>(h?.rejectionHistory) ?? []
-  const lastReason = exposedValue<string>(h?.rejectionReason) ?? null
-  const rejectionContext: RejectionContext | undefined =
-    history.length > 0 || lastReason
-      ? { history, last: lastReason }
-      : undefined
-  const ok = await copyMentToClipboard(token, undefined, rejectionContext)
-  if (ok) {
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(payload.docId, 'rework')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueToken({
+        project,
+        ...(gParts?.module != null ? { module: gParts.module } : {}),
+        group: gParts?.groupCode ?? groupId,
+        doc_ref: payload.docRef,
+        action_scope: 'edit',
+      })
+      if (!token) throw new ClipboardAbort()
+      const h = docHeaderRefs[payload.docId]
+      const history: RejectionHistoryItem[] = exposedValue<RejectionHistoryItem[]>(h?.rejectionHistory) ?? []
+      const lastReason = exposedValue<string>(h?.rejectionReason) ?? null
+      const rejectionContext: RejectionContext | undefined =
+        history.length > 0 || lastReason
+          ? { history, last: lastReason }
+          : undefined
+      return composeMention(token, undefined, rejectionContext)
+    },
+    {
+      tabId: payload.docId,
+      kind: 'rework',
+      successToast: t('main.main_panel.toast_mention_copied'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 async function onReviewInvokeCommand(payload: ReviewActionPayload) {
@@ -1826,18 +1848,32 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
   // VR stage: server assembles and copies a correction label including the preceding V report path
   const headType = exposedValue<string | null>(docHeaderRefs[payload.docId]?.workflowHeadType)
   if (headType === 'VR') {
-    try {
-      const res = await getRequest<any>(`/api/v1/documents/prompt?doc_id=${encodeURIComponent(payload.docId)}`)
-      const text = res?.data?.prompt_text ?? ''
-      if (text) {
-        await doClipboardCopy(text)
-        showToast(t('main.main_panel.toast_vr_mention_copied'), 'success')
-        void recordMentionCopy(payload.docId, 'vr_correction')
-      } else {
-        showToast(t('main.main_panel.error_vr_mention_failed'), 'warning')
+    let fetchFailed = false
+    let emptyPrompt = false
+    const ok = await copyToClipboardDeferred(async () => {
+      let text = ''
+      try {
+        const res = await getRequest<any>(`/api/v1/documents/prompt?doc_id=${encodeURIComponent(payload.docId)}`)
+        text = res?.data?.prompt_text ?? ''
+      } catch {
+        fetchFailed = true
+        throw new ClipboardAbort()
       }
-    } catch {
+      if (!text) {
+        emptyPrompt = true
+        throw new ClipboardAbort()
+      }
+      return text
+    })
+    if (fetchFailed) {
       showToast(t('main.main_panel.error_vr_mention_fetch_failed'), 'danger')
+    } else if (emptyPrompt) {
+      showToast(t('main.main_panel.error_vr_mention_failed'), 'warning')
+    } else if (ok) {
+      showToast(t('main.main_panel.toast_vr_mention_copied'), 'success')
+      void recordMentionCopy(payload.docId, 'vr_correction')
+    } else {
+      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
     }
     return
   }
@@ -1848,14 +1884,23 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
   // below, which are CREATE-NEXT handoffs valid only once the doc is approved.
   const reviewStatus = exposedValue<string | null>(docHeaderRefs[payload.docId]?.docReviewStatus)
   if (reviewStatus == null || reviewStatus === 'pending_review' || reviewStatus === 'revised') {
-    const token = await requestReview({ doc_id: payload.docId })
-    if (!token) return
-    if (token.mention) {
-      await doClipboardCopy(token.mention)
+    let token: IssuedToken | null = null
+    let noMention = false
+    const ok = await copyToClipboardDeferred(async () => {
+      token = await requestReview({ doc_id: payload.docId })
+      if (!token) throw new ClipboardAbort()
+      if (!token.mention) {
+        noMention = true
+        throw new ClipboardAbort()
+      }
+      return token.mention
+    })
+    if (token == null) return
+    if (noMention || !ok) {
+      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+    } else {
       showToast(t('main.main_panel.toast_mention_copied'), 'success')
       void recordMentionCopy(payload.docId, 'review')
-    } else {
-      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
     }
     return
   }
@@ -1879,25 +1924,26 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
     return
   }
   const gParts = splitGroupId(groupId)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? groupId,
-    doc_ref: payload.docRef,
-    action_scope: 'new',
-  })
-  if (!token) return
-  if (token.mention) {
-    await doClipboardCopy(token.mention)
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(payload.docId, 'next_step')
-    return
-  }
-  const ok = await copyMentToClipboard(token)
-  if (ok) {
-    showToast(t('main.main_panel.toast_mention_copied'), 'success')
-    void recordMentionCopy(payload.docId, 'next_step')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueToken({
+        project,
+        ...(gParts?.module != null ? { module: gParts.module } : {}),
+        group: gParts?.groupCode ?? groupId,
+        doc_ref: payload.docRef,
+        action_scope: 'new',
+      })
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    },
+    {
+      tabId: payload.docId,
+      kind: 'next_step',
+      successToast: t('main.main_panel.toast_mention_copied'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 function onDesignHandoffCopyMention(_payload: { types: string[]; mode: string }) {
@@ -1965,39 +2011,36 @@ async function onNextActionCopyMention(selectedDocs?: string[]) {
     return
   }
   const gParts = splitGroupId(groupId as string)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? (groupId as string),
-    doc_ref: docRef,
-    action_scope: 'new',
-    selected_docs: selectedDocs,
-  })
-  if (!token) return
-  if (token.mention) {
-    await doClipboardCopy(token.mention)
-    showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
-    void recordMentionCopy(tabId, 'next_step')
-    return
-  }
-  const ok = await copyMentToClipboard(token, selectedDocs)
-  if (ok) {
-    showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
-    void recordMentionCopy(tabId, 'next_step')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueToken({
+        project,
+        ...(gParts?.module != null ? { module: gParts.module } : {}),
+        group: gParts?.groupCode ?? (groupId as string),
+        doc_ref: docRef,
+        action_scope: 'new',
+        selected_docs: selectedDocs,
+      })
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token, selectedDocs)
+    },
+    {
+      tabId,
+      kind: 'next_step',
+      successToast: t('main.next_action_modal.copy_mention_toast'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 // Copy a token's mention (optionally prepending chosen project message(s)). Mirrors the
 // copy logic in onNextActionCopyMention; returns whether the clipboard write succeeded.
 async function copyTokenMention(token: IssuedToken, selectedDocs?: string[], appendMessages?: string[]): Promise<boolean> {
-  if (token.mention) {
-    const text = appendMessages && appendMessages.length > 0
-      ? prependMessagesSection(token.mention, appendMessages, t('main.next_action_modal.mm_section_header'))
-      : token.mention
-    await doClipboardCopy(text)
-    return true
-  }
-  return copyMentToClipboard(token, selectedDocs, undefined, appendMessages)
+  // Token is already in hand here (issued when the dialog opened), so the text is built
+  // synchronously; an honest write reports real success/failure (B0001). composeMention
+  // handles both the server-mention and the legacy null-mention fallback, plus appendMessages.
+  return doClipboardCopy(composeMention(token, selectedDocs, undefined, appendMessages))
 }
 
 // [Copy mention (add message)] — R0001 group 0004 / L0007 §2.2.
@@ -2210,43 +2253,49 @@ async function onContinuousWarnConfirm() {
   // worker decides the sequence, and the server self-chains the rest from the decide
   // response. The decision mention carries the same delegation/unmanned block.
   if (continuousFromDecision.value) {
-    const token = await requestWorkflowDecision(docRef, {
-      continuous: true,
-      continuationReviewMode: continuousReviewMode.value,
-    })
-    if (!token) return
-    if (token.mention) {
-      await doClipboardCopy(token.mention)
-      showToast(t('main.continuous_work.toast_started'), 'success')
-      void recordMentionCopy(continuousTabId.value, 'continuous')
-    } else {
-      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
-    }
+    let token: IssuedToken | null = null
+    await copyMentionDeferred(
+      async () => {
+        token = await requestWorkflowDecision(docRef, {
+          continuous: true,
+          continuationReviewMode: continuousReviewMode.value,
+        })
+        if (!token) throw new ClipboardAbort()
+        return composeMention(token)
+      },
+      {
+        tabId: continuousTabId.value,
+        kind: 'continuous',
+        successToast: t('main.continuous_work.toast_started'),
+        aborted: () => token == null,
+      },
+    )
     return
   }
   const gParts = splitGroupId(groupId)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? groupId,
-    doc_ref: docRef,
-    action_scope: 'new',
-    continuous: true,
-    continuationTargetSeq: targetSeq,
-    continuationReviewMode: continuousReviewMode.value,
-  })
-  if (!token) return
-  if (token.mention) {
-    await doClipboardCopy(token.mention)
-    showToast(t('main.continuous_work.toast_started'), 'success')
-    void recordMentionCopy(continuousTabId.value, 'continuous')
-    return
-  }
-  const ok = await copyMentToClipboard(token)
-  if (ok) {
-    showToast(t('main.continuous_work.toast_started'), 'success')
-    void recordMentionCopy(continuousTabId.value, 'continuous')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueToken({
+        project,
+        ...(gParts?.module != null ? { module: gParts.module } : {}),
+        group: gParts?.groupCode ?? groupId,
+        doc_ref: docRef,
+        action_scope: 'new',
+        continuous: true,
+        continuationTargetSeq: targetSeq,
+        continuationReviewMode: continuousReviewMode.value,
+      })
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    },
+    {
+      tabId: continuousTabId.value,
+      kind: 'continuous',
+      successToast: t('main.continuous_work.toast_started'),
+      aborted: () => token == null,
+    },
+  )
 }
 
 // R0001 #2 (0048): action-bar split "create approved doc" — confirm once, then create
@@ -2363,40 +2412,69 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     return
   }
   const gParts = splitGroupId(groupId)
-  const token = await issueToken({
-    project,
-    ...(gParts?.module != null ? { module: gParts.module } : {}),
-    group: gParts?.groupCode ?? groupId,
-    doc_ref: tabId,
-    action_scope: 'edit',
+  // High-frequency path (auto-copies on every send), so the activation-preserving deferred
+  // write matters most here (B0001). Token issuance happens inside the producer.
+  let token: IssuedToken | null = null
+  const ok = await copyToClipboardDeferred(async () => {
+    token = await issueToken({
+      project,
+      ...(gParts?.module != null ? { module: gParts.module } : {}),
+      group: gParts?.groupCode ?? groupId,
+      doc_ref: tabId,
+      action_scope: 'edit',
+    })
+    if (!token) throw new ClipboardAbort()
+    return buildConversationMention({
+      rawToken: token.raw_token,
+      docId: tabId,
+      project,
+      module: gParts?.module ?? null,
+      groupName: groupId,
+    })
   })
-  if (!token) return
-  const mention = buildConversationMention({
-    rawToken: token.raw_token,
-    docId: tabId,
-    project,
-    module: gParts?.module ?? null,
-    groupName: groupId,
-  })
-  await doClipboardCopy(mention)
-  // 0085: an auto-copy (fired by every send when the toggle is on) stays silent so it
-  // doesn't spam a success toast each turn; the manual button still confirms with one.
-  if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
-  void recordMentionCopy(tabId, 'edit')
+  if (token == null) return
+  if (ok) {
+    // 0085: an auto-copy (fired by every send when the toggle is on) stays silent so it
+    // doesn't spam a success toast each turn; the manual button still confirms with one.
+    if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
+    void recordMentionCopy(tabId, 'edit')
+  } else if (!opts?.auto) {
+    showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  }
 }
 
-async function doClipboardCopy(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    const el = document.createElement('textarea')
-    el.value = text
-    el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'
-    document.body.appendChild(el)
-    el.select()
-    document.execCommand('copy')
-    document.body.removeChild(el)
+// Honest clipboard write of a ready string (B0001 / group 0133). Returns whether the
+// clipboard was actually set so the caller can toast success vs. warning — the prior version
+// swallowed failures and every caller falsely claimed success, so an intermittently-failed
+// write left the user pasting stale/empty clipboard content ("truncated"/"blank"/"nothing").
+function doClipboardCopy(text: string): Promise<boolean> {
+  return copyToClipboard(text)
+}
+
+// Centralized mention copy that preserves the click's user activation across an async text
+// producer (e.g. one that issues a token over the network) — the B0001 root cause was awaiting
+// the token BEFORE the clipboard write, letting the activation lapse. The producer may throw
+// ClipboardAbort to bail silently (e.g. token issuance failed and already toasted); pass
+// `aborted()` so we can distinguish that from a genuine clipboard failure.
+async function copyMentionDeferred(
+  produce: () => Promise<string>,
+  opts: {
+    tabId: string | null | undefined
+    kind: MentionKind
+    successToast: string
+    failToast?: string
+    aborted?: () => boolean
+  },
+): Promise<boolean> {
+  const ok = await copyToClipboardDeferred(produce)
+  if (opts.aborted?.()) return false
+  if (ok) {
+    showToast(opts.successToast, 'success')
+    void recordMentionCopy(opts.tabId, opts.kind)
+  } else {
+    showToast(opts.failToast ?? t('main.main_panel.toast_clipboard_not_supported'), 'warning')
   }
+  return ok
 }
 
 function openFullView(tab: Tab) {

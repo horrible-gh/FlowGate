@@ -40,6 +40,7 @@ vi.mock('@main/composables/useFlowGateToken', () => ({
     issueToken: vi.fn(),
     requestReview: vi.fn(),
     requestWorkflowDecision,
+    composeMention: (token: any) => token?.mention ?? '',
     copyMentToClipboard,
   }),
   splitGroupId: (gid: string) => ({ groupCode: gid }),
@@ -76,10 +77,20 @@ function mountPanel() {
   })
 }
 
+const writeText = vi.fn().mockResolvedValue(undefined)
+
 beforeEach(() => {
   setActivePinia(createPinia())
   requestWorkflowDecision.mockClear()
   copyMentToClipboard.mockClear()
+  writeText.mockClear()
+  // B0001: the handler now writes the composed mention to the clipboard directly (via the
+  // activation-preserving deferred path), not through copyMentToClipboard. jsdom has no
+  // ClipboardItem, so the deferred helper degrades to awaiting the text and calling writeText.
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true,
+  })
 })
 
 describe('MainPanel workflow decision worker actions', () => {
@@ -89,9 +100,7 @@ describe('MainPanel workflow decision worker actions', () => {
     await (wrapper.vm as any).onWorkflowDecisionCopyMention(payload)
 
     expect(requestWorkflowDecision).toHaveBeenCalledWith(payload.docId)
-    expect(copyMentToClipboard).toHaveBeenCalledWith(
-      expect.objectContaining({ action_scope: 'workflow_decide' }),
-    )
+    expect(writeText).toHaveBeenCalledWith('workflow decision mention')
   })
 
   it('opens the command selector with the dedicated worker environment', async () => {
