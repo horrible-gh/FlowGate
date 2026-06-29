@@ -97,6 +97,9 @@ describe('DocHeader document-ID copy', () => {
   it('toasts an error when the clipboard write fails', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('denied'))
     vi.stubGlobal('navigator', { clipboard: { writeText } })
+    // No execCommand fallback available either → copyToClipboard returns false.
+    const execCommand = vi.fn().mockReturnValue(false)
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true })
 
     const wrapper = mountHeader()
     await flushPromises()
@@ -107,6 +110,33 @@ describe('DocHeader document-ID copy', () => {
     expect(showToast).toHaveBeenCalledWith(
       i18n.global.t('main.doc_header.toast_copy_failed'),
       'error',
+    )
+    vi.unstubAllGlobals()
+    wrapper.unmount()
+  })
+
+  // B0001 group 0134 (load-bearing regression guard): on plain HTTP / LAN-IP origins the page is
+  // a NON-secure context, so `navigator.clipboard` is undefined. The old raw
+  // `navigator.clipboard.writeText(...)` threw a synchronous TypeError that the .then().catch()
+  // chain never caught → silent no-copy, no toast. The fix routes through copyToClipboard(),
+  // which must fall back to execCommand('copy') and still report success.
+  it('falls back to execCommand and succeeds when navigator.clipboard is unavailable (non-secure context)', async () => {
+    // navigator present but WITHOUT a clipboard object — exactly what a browser exposes over
+    // http://<lan-ip>:port. Must not throw, must not silently no-op.
+    vi.stubGlobal('navigator', {})
+    const execCommand = vi.fn().mockReturnValue(true)
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true })
+
+    const wrapper = mountHeader()
+    await flushPromises()
+
+    await wrapper.find('button.doc-id-badge').trigger('click')
+    await flushPromises()
+
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.doc_header.toast_doc_id_copied'),
+      'success',
     )
     vi.unstubAllGlobals()
     wrapper.unmount()

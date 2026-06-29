@@ -209,6 +209,7 @@ import CreateEditGroupModal from './CreateEditGroupModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from './common/useToast'
 import { MENTION_COPIED_EVENT, type MentionCopiedDetail } from '../composables/useMentionCopy'
+import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
@@ -565,31 +566,39 @@ const canEditDocument = computed(() => {
 // bar stuck. Removed to kill the confusion; the live action paths now go through
 // applyReviewTransition() below, which mirrors the workflow-decision path.
 
-function copyMention() {
+async function copyMention() {
   if (!doc.value) return
-  
+
   const typeName = docTypeStore.getLabel(props.tab.typeCode ?? '')
   const docId = doc.value.doc_id
   const title = doc.value.title
-  
+
   const text = `[${typeName}] ${docId} — ${title}\nID: ${docId}`
-  
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(t('main.doc_header.toast_mention_copied'), 'success')
-  }).catch(() => {
-    showToast(t('main.doc_header.toast_copy_failed'), 'error')
-  })
+
+  // B0001 group 0134: same non-secure-context defect as copyDocId — go through copyToClipboard()
+  // (guarded async API + execCommand fallback) instead of the raw navigator.clipboard call.
+  const ok = await copyToClipboard(text)
+  showToast(
+    ok ? t('main.doc_header.toast_mention_copied') : t('main.doc_header.toast_copy_failed'),
+    ok ? 'success' : 'error',
+  )
 }
 
 // R0001 group 0132: copy just the canonical document ID (the badge text) to the clipboard.
-function copyDocId() {
+// B0001 group 0134: route through copyToClipboard() instead of the raw navigator.clipboard API.
+// FlowGate is served over plain HTTP on LAN IPs (http://192.168.0.250:8089), a NON-secure
+// context where `navigator.clipboard` is `undefined` — the old raw call threw a synchronous
+// TypeError that the .then().catch() chain never caught, so the copy silently no-op'd with no
+// toast. copyToClipboard() guards the async API and falls back to execCommand('copy') (which
+// works in non-secure contexts), returning an honest boolean we branch the toast on.
+async function copyDocId() {
   const docId = docFullPath.value
   if (!docId) return
-  navigator.clipboard.writeText(docId).then(() => {
-    showToast(t('main.doc_header.toast_doc_id_copied'), 'success')
-  }).catch(() => {
-    showToast(t('main.doc_header.toast_copy_failed'), 'error')
-  })
+  const ok = await copyToClipboard(docId)
+  showToast(
+    ok ? t('main.doc_header.toast_doc_id_copied') : t('main.doc_header.toast_copy_failed'),
+    ok ? 'success' : 'error',
+  )
 }
 
 // R0001 group 0111: fill the title with the group name in one click. If the title is
