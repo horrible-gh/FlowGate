@@ -204,4 +204,10 @@ def _serialize_item(item: dict) -> dict:
         "doc_class": item.get("doc_class"),
         "sort_order": item.get("sort_order"),
         "status":    _derive_status(item.get("result_doc_id"), item.get("result_doc_review_status")),
+        # 0018 R0001 — workflow-strip time-machine: expose the slot's realised document
+        # so the FE can map a clicked strip cell to its rollback target with slot identity
+        # (repeated types resolve correctly). result_doc_id = the document that filled this
+        # slot; result_seq = that document's documents.seq, i.e. the reopen target_seq.
+        "result_doc_id": item.get("result_doc_id"),
+        "result_seq":    item.get("result_seq"),
     }
