@@ -518,6 +518,114 @@ describe('DocWorkflow — band 가시성 회귀 가드 (T877)', () => {
   })
 })
 
+// ── 0018 R0001: workflow-strip time-machine — completed step cells are clickable ──
+//
+// R0001 extends the time-machine (roll back to an earlier step) from the AC-reject-only
+// trigger to every completed ('done') step icon in the workflow strip. DocWorkflow makes
+// done cells clickable and emits `time-machine` with { index, code }; head/future cells
+// keep their existing (or absent) behaviour.
+
+describe('DocWorkflow — 완료 단계 클릭 타임머신 (0018 R0001)', () => {
+  function mountComp(overrides: Record<string, unknown> = {}) {
+    return mount(DocWorkflow, {
+      props: {
+        tab: { id: 'test.doc', typeCode: 'R' },
+        workflowDecided: true,
+        stepStates: [] as StepState[],
+        ...overrides,
+      } as any,
+      global: {
+        plugins: [i18n],
+        stubs: { WorkflowDecisionModal: true },
+      },
+    })
+  }
+
+  it('TM1: 완료(done) 단계 클릭 → time-machine { index, code } emit, next-action 미발생', async () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.ds', typeCode: 'T' },
+      workflowDecided: true,
+      stepStates: [
+        ss('R', 'done'),
+        ss('DS', 'done'),
+        ss('D', 'done'),
+        ss('T', 'current'),
+        ss('AC', 'future'),
+      ],
+      canNextAction: false,
+    })
+    const steps = wrapper.findAll('.wf-step')
+    // done cells expose the clickable affordance
+    expect(steps[1].classes()).toContain('wf-done-clickable')
+    await steps[1].trigger('click') // DS (done, index 1)
+    const emitted = wrapper.emitted('time-machine')
+    expect(emitted).toBeTruthy()
+    expect(emitted!.length).toBe(1)
+    expect(emitted![0][0]).toEqual({ index: 1, code: 'DS' })
+    // a rollback is not a forward action
+    expect(wrapper.emitted('next-action')).toBeFalsy()
+  })
+
+  it('TM2: index/code가 클릭한 셀과 정확히 일치 (반복 타입 슬롯 식별)', async () => {
+    // A design series where D repeats — the emitted index disambiguates the slot.
+    const wrapper = mountComp({
+      tab: { id: 'test.r', typeCode: 'R' },
+      workflowDecided: true,
+      stepStates: [
+        ss('R', 'done'),
+        ss('D', 'done'),   // index 1 — first D
+        ss('T', 'done'),
+        ss('D', 'done'),   // index 3 — second D
+        ss('AC', 'current'),
+      ],
+      canNextAction: false,
+    })
+    const steps = wrapper.findAll('.wf-step')
+    await steps[3].trigger('click') // second D
+    const emitted = wrapper.emitted('time-machine')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual({ index: 3, code: 'D' })
+  })
+
+  it('TM3: future 단계 클릭 → time-machine / next-action 모두 미발생', async () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.r', typeCode: 'R' },
+      workflowDecided: true,
+      stepStates: [
+        ss('R', 'done'),
+        ss('DS', 'current'),
+        ss('D', 'future'),
+        ss('AC', 'future'),
+      ],
+      canNextAction: false,
+    })
+    const steps = wrapper.findAll('.wf-step')
+    expect(steps[2].classes()).not.toContain('wf-done-clickable')
+    await steps[2].trigger('click') // D (future)
+    await steps[3].trigger('click') // AC (future)
+    expect(wrapper.emitted('time-machine')).toBeFalsy()
+    expect(wrapper.emitted('next-action')).toBeFalsy()
+  })
+
+  it('TM4: head(current+canNextAction) 클릭 → next-action만, time-machine 미발생', async () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.r', typeCode: 'R' },
+      workflowDecided: true,
+      stepStates: [
+        ss('R', 'done'),
+        ss('DS', 'current'),
+        ss('D', 'future'),
+        ss('AC', 'future'),
+      ],
+      canNextAction: true,
+    })
+    const steps = wrapper.findAll('.wf-step')
+    await steps[1].trigger('click') // head
+    expect(wrapper.emitted('next-action')).toBeTruthy()
+    expect(wrapper.emitted('time-machine')).toBeFalsy()
+  })
+})
+
 // ── T871: verify removal of DocWorkflow highlighting in wf_done state ──
 //
 // wf_done makes resolveWorkflowViewState emit mode='info', canNextAction=false,

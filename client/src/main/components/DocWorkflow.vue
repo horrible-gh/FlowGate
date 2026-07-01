@@ -45,8 +45,13 @@
         <div v-for="(s, idx) in stepStates" :key="s.code + idx" class="wf-unit">
           <div
             class="wf-step"
-            :class="[s.className, (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '']"
-            @click="(s.visual === 'highlight' || s.visual === 'current') && canNextAction ? emit('next-action') : undefined"
+            :class="[
+              s.className,
+              (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
+              s.visual === 'done' ? 'wf-done-clickable' : '',
+            ]"
+            :title="s.visual === 'done' ? t('main.doc_workflow.time_machine_hint') : undefined"
+            @click="onStepClick(s, idx)"
           >
             <i :class="s.iconClass"></i>
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>
@@ -98,7 +103,23 @@ const decidedEmpty = computed(() =>
 const emit = defineEmits<{
   'sequence-updated': []
   'next-action': []
+  // 0018 R0001 — workflow-strip time-machine: a completed ('done') step cell was clicked.
+  // Emits the strip index + step type code so the parent can resolve the slot's realised
+  // document (by slot identity) and reopen the workflow there.
+  'time-machine': [payload: { index: number; code: string }]
 }>()
+
+// 0018 R0001 — head step keeps its "proceed to next step" action; a completed (done) step
+// opens the time-machine (roll back to that step); future steps are inert.
+function onStepClick(s: StepState, idx: number) {
+  if ((s.visual === 'highlight' || s.visual === 'current') && props.canNextAction) {
+    emit('next-action')
+    return
+  }
+  if (s.visual === 'done') {
+    emit('time-machine', { index: idx, code: s.code })
+  }
+}
 
 const showEditModal = ref(false)
 </script>
@@ -151,6 +172,15 @@ const showEditModal = ref(false)
 }
 .wf-step.wf-current-clickable:hover {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, .3);
+}
+
+/* 0018 R0001 — completed step is clickable to time-travel (roll the workflow back to it).
+   Warning-tinted focus ring on hover signals the destructive (cascade) rollback intent. */
+.wf-step.wf-done-clickable {
+  cursor: pointer;
+}
+.wf-step.wf-done-clickable:hover {
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, .3);
 }
 
 .wf-edit-btn {
