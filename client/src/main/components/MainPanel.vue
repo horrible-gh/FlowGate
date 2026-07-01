@@ -49,6 +49,7 @@
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
             @sequence-updated="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
             @next-action="onProceedNextStep(tab.id)"
+            @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
           />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
@@ -847,6 +848,7 @@
       :visible="timeMachineVisible"
       :steps="timeMachineSteps"
       :loading="timeMachineLoading"
+      :preselect-doc-id="timeMachinePreselectDocId"
       @confirm="onTimeMachineConfirm"
       @update:visible="(v: boolean) => { timeMachineVisible = v }"
     />
@@ -927,6 +929,7 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
+import { resolveClickedSlot, isRollbackTarget, type SequenceSlot } from '../workflow/timeMachineSlot'
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
@@ -1179,6 +1182,8 @@ const timeMachineVisible = ref(false)
 const timeMachineDocId = ref('')
 const timeMachineSteps = ref<TimeMachineStep[]>([])
 const timeMachineLoading = ref(false)
+// 0018 R0001 — strip-click time-machine pre-selects the clicked step's doc in the picker.
+const timeMachinePreselectDocId = ref<string | null>(null)
 
 const DESIGN_TYPES = new Set(['D', 'P', 'L', 'DB'])
 
@@ -1650,6 +1655,7 @@ async function openTimeMachine(acTabId: string) {
   }
   timeMachineDocId.value = acTabId
   timeMachineSteps.value = []
+  timeMachinePreselectDocId.value = null  // AC reject opens the picker with no pre-selection
   timeMachineLoading.value = true
   timeMachineVisible.value = true
   try {
@@ -1679,6 +1685,51 @@ async function openTimeMachine(acTabId: string) {
   }
 }
 
+// 0018 R0001 — workflow-strip time-machine. A completed step cell was clicked; roll the
+// workflow back to that step. Reuses the AC dialog + reopen endpoint. The clicked slot is
+// resolved by slot identity (index, then type-occurrence fallback) so repeated types
+// (e.g. a design series appearing twice) roll back the correct cell — NR0003 §3/§5.2.
+async function onWorkflowStepTimeMachine(tabId: string, payload: { index: number; code: string }) {
+  const h = docHeaderRefs[tabId]
+  // The sequence lives on the root workflow doc (R/B). Child docs expose it via parentRDocId;
+  // an R/B tab is its own root.
+  const rootDocId = exposedValue<string>(h?.parentRDocId) ?? tabId
+  if (!rootDocId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  let items: SequenceSlot[] = []
+  try {
+    const res = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(rootDocId)}/sequence`)
+    items = Array.isArray(res.data?.sequence) ? res.data.sequence : []
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(detail, 'danger')
+    return
+  }
+  const clicked = resolveClickedSlot(getWorkflowViewState(tabId).stepStates, items, payload)
+  if (!isRollbackTarget(clicked)) {
+    // Structural/auto-complete step, or a slot with no realised reviewable document.
+    showToast(t('main.time_machine.not_rollbackable'), 'danger')
+    return
+  }
+  // Picker lists every realised, reviewable slot (sorted by the rolled-back document's seq);
+  // pre-select the clicked one so [되돌리기] targets it (still changeable in the list).
+  timeMachineSteps.value = items
+    .filter((it) => isRollbackTarget(it))
+    .sort((a, b) => (a.result_seq ?? 0) - (b.result_seq ?? 0))
+    .map((it) => ({
+      docId: it.result_doc_id as string,
+      seq: it.result_seq ?? 0,
+      typeCode: (it.type as string) ?? null,
+      title: (it.label as string) ?? null,
+    }))
+  timeMachineDocId.value = rootDocId  // reopen resolves project/group from this (non-AC → tab kept)
+  timeMachinePreselectDocId.value = clicked!.result_doc_id ?? null
+  timeMachineLoading.value = false
+  timeMachineVisible.value = true
+}
+
 // Reopen the workflow at the chosen step: every step doc with seq >= target_seq
 // is reset to pending_review (docs preserved), the AC doc is deleted, and R
 // returns to wf_in_progress. Jump to the rolled-back step so the user can revise.
@@ -1691,8 +1742,10 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
       target_seq: payload.seq,
     })
     timeMachineVisible.value = false
-    // The AC doc is deleted by reopen — close its (now stale) tab.
-    tabsStore.closeTab(acDocId)
+    // Only the ephemeral AC doc is deleted by reopen — close its (now stale) tab. A
+    // strip-triggered reopen originates from the root R (or a child), which reopen keeps,
+    // so its tab must NOT be closed (0018 R0001).
+    if (getTabTypeCode(acDocId) === 'AC') tabsStore.closeTab(acDocId)
     for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
     tabsStore.openTab({
       id: payload.docId,

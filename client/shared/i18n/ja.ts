@@ -892,6 +892,7 @@ export default {
       desc: '戻すステップを選択してください。そのステップ以降のすべてのステップがレビュー待ちに戻ります。ドキュメントは保持されます。',
       loading: 'ステップを読み込み中…',
       empty: '差し戻せるワークフローステップがありません。',
+      not_rollbackable: 'このステップには差し戻せません。',
       cascade_note: '{step} ステップとそれ以降のすべてのステップが無効化されます。ドキュメント自体は保持されます。',
       confirm: '差し戻す',
       reopening: '差し戻し中…',
@@ -1430,6 +1431,7 @@ export default {
       undecided: '未決定',
       edit_btn: 'シーケンス編集',
       decided_empty: 'すべてのステップが削除されました。[シーケンス編集]からステップを再追加してください。',
+      time_machine_hint: 'このステップに差し戻す',
     },
   },
   projects: {

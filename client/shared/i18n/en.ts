@@ -892,6 +892,7 @@
       desc: 'Pick the step to roll back to. That step and every step after it return to pending review; documents are preserved.',
       loading: 'Loading steps…',
       empty: 'No workflow steps to roll back to.',
+      not_rollbackable: 'This step cannot be rolled back to.',
       cascade_note: 'The {step} step and all steps after it will be invalidated. The documents themselves are kept.',
       confirm: 'Reopen',
       reopening: 'Reopening…',
@@ -1430,6 +1431,7 @@
       undecided: 'Undecided',
       edit_btn: 'Edit Sequence',
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
+      time_machine_hint: 'Roll back to this step',
     },
   },
   projects: {

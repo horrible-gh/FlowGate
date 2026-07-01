@@ -93,6 +93,9 @@ const props = defineProps<{
   visible: boolean
   steps: TimeMachineStep[]
   loading?: boolean
+  /** 0018 R0001 — when opened from a workflow-strip step click, pre-select that step's
+   *  document so the confirm targets the clicked step (still changeable in the picker). */
+  preselectDocId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -116,7 +119,8 @@ watch(
   () => props.visible,
   (v) => {
     if (v) {
-      selectedDocId.value = null
+      // 0018 R0001 — honour a strip-click pre-selection; AC-reject opens with none (null).
+      selectedDocId.value = props.preselectDocId ?? null
       submitting.value = false
       nextTick(() => overlayRef.value?.focus())
     }
