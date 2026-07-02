@@ -35,11 +35,20 @@ _ACTIVITY_EVENT_TYPES = (
 # The dropped noise is `state_changed` (the per-document review submit/approve micro-transitions and the
 # parent cascade) and `doc_edited` (every self/rework edit). `qna_answered` and `group_approved` are kept
 # as meaningful milestones.
+#
+# R0001 group 0135 / N0008: `continuous_work_ended` is now ALSO promoted — but ONLY this single terminal
+# event. It fires exactly once, when an unmanned continuous (self-chaining) run reaches its target and
+# stops (inbox_routes._continuation_self_chain), so it does NOT reintroduce the 0118 per-step noise: a
+# 10-step chain still emits ~10 doc_created rows PLUS one terminal "연속작업 완료" row that reads
+# differently from the intermediate inflow. Single-mode work has no such event and is unaffected. The
+# present-tense `work_started` and the raw `state_changed` micro-transitions stay OUT (0118 / group 0125
+# NR0003 권고 4 invariant): promoting a per-transition state signal is what caused the "알림 폭증".
 _NOTIFICATION_EVENT_TYPES = (
     "doc_created",
     "action_taken",
     "qna_answered",
     "group_approved",
+    "continuous_work_ended",
 )
 
 
@@ -147,7 +156,80 @@ def _document_dto(doc: dict | None) -> dict | None:
         "doc_id": doc["doc_id"],
         "type_code": doc.get("type_code"),
         "title": doc.get("title"),
+        # R0001 group 0135 / N0008 (시안 3): populated by _attach_review_signals after the item list is
+        # built. `verdict` is the latest AI review verdict (pass|issues|hold|null), `finding_count` the
+        # number of AI findings, `status` the doc_review_status. The 🔔 feed uses these to paint the
+        # trust colour (🟢🟡🔴) and AI badge on each row so "완료로 떴지만 사실 확인 필요"(AI issues)
+        # is flagged in-list — the source is the same document_reviews the triage cockpit reads
+        # (NR0009 §발견 5). Left as null when the document has no review yet.
+        "review": None,
     }
+
+
+def _finding_count(findings: Any) -> int:
+    """Number of AI findings recorded on a review (findings is a JSON-array string)."""
+    if not findings:
+        return 0
+    try:
+        data = json.loads(findings) if isinstance(findings, str) else findings
+    except (ValueError, TypeError):
+        return 0
+    return len(data) if isinstance(data, list) else 0
+
+
+def _attach_review_signals(items: list[dict]) -> None:
+    """Enrich each item's document DTO with its AI verdict + review status (시안 3 trust colours).
+
+    R0001 group 0135 / N0008: the live-feed mockup paints every completed row with a trust colour
+    (🟢 pass / 🟡 hold / 🔴 issues) and an AI badge so the user can see "됐다는데 사실 확인 필요" without
+    opening the document. The signals already exist — latest `document_reviews.verdict` + `doc_review_status`
+    (NR0009 §발견 5, same source as the triage cockpit) — so this is a read-only projection: no new column,
+    no migration. Defensive by design: a minimal store without a document_reviews table (or a fresh install
+    before the first review) simply yields null verdicts and the rows render neutral.
+    """
+    doc_ids = {
+        item["document"]["doc_id"]
+        for item in items
+        if item.get("document")
+    }
+    if not doc_ids:
+        return
+    store = get_store()
+    ordered = sorted(doc_ids)
+    placeholders = ",".join("?" for _ in ordered)
+
+    statuses: dict[str, Any] = {}
+    try:
+        for row in store._fetch_all(
+            f"SELECT doc_id, doc_review_status FROM documents WHERE doc_id IN ({placeholders})",
+            ordered,
+        ):
+            statuses[row["doc_id"]] = row.get("doc_review_status")
+    except Exception:  # pragma: no cover - defensive against minimal/legacy stores
+        _log.debug("feed review-status enrichment skipped", exc_info=True)
+
+    verdicts: dict[str, dict] = {}
+    try:
+        for row in store._fetch_all(
+            f"SELECT doc_id, verdict, findings FROM document_reviews "
+            f"WHERE doc_id IN ({placeholders}) ORDER BY created_at DESC, id DESC",
+            ordered,
+        ):
+            verdicts.setdefault(row["doc_id"], row)  # newest-first → first seen is latest
+    except Exception:  # pragma: no cover - table absent in minimal test stores / fresh installs
+        _log.debug("feed review-verdict enrichment skipped", exc_info=True)
+
+    for item in items:
+        doc = item.get("document")
+        if not doc:
+            continue
+        doc_id = doc["doc_id"]
+        review = verdicts.get(doc_id)
+        doc["review"] = {
+            "status": statuses.get(doc_id),
+            "verdict": review.get("verdict") if review else None,
+            "finding_count": _finding_count(review.get("findings")) if review else 0,
+        }
 
 
 def _transition(row: dict, *, strip_review_prefix: bool = False) -> dict:
@@ -201,6 +283,18 @@ def _normalize_activity(
         doc = None
         if row.get("from_state") is not None or row.get("to_state") is not None:
             transition = _transition(row)
+    elif event_type == "continuous_work_ended":
+        # R0001 group 0135 / N0008: the ONE terminal signal of an unmanned continuous run,
+        # surfaced as a distinct "연속작업 완료" notification so the final completion reads
+        # differently from the per-step doc_created inflow. `doc` is the joined terminal
+        # document (event carries document_id → joined_doc); navigation points at it so the
+        # user lands on the last document of the finished chain. Only this terminal event is
+        # promoted — intermediate state_changed stays excluded (0118 noise invariant).
+        activity_type = "continuous_work_completed"
+        if not doc:
+            metadata_doc_id = metadata.get("doc_id")
+            if metadata_doc_id:
+                doc = documents.get(str(metadata_doc_id))
     elif event_type == "state_changed":
         action = str(metadata.get("action") or "")
         is_question_answer = (
@@ -309,6 +403,7 @@ def _normalized_activities(
         for row in rows
         if (item := _normalize_activity(row, project_id, documents, groups)) is not None
     ]
+    _attach_review_signals(items)
     items.sort(key=lambda item: (_parse_time(item["occurred_at"]), item["event_id"]), reverse=True)
     return items
 

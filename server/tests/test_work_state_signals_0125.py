@@ -2,7 +2,9 @@
 
 Covers the four NR0003 follow-up recommendations implemented as this work order's deliverable:
   1. New explicit backend signals work_started / continuous_work_ended exist.
-  4. They are NEVER part of the notification-feed whitelist (no 0118 noise regression).
+  4. work_started is NEVER part of the notification-feed whitelist (no 0118 noise regression);
+     continuous_work_ended WAS excluded too, until R0001 group 0135 / N0008 promoted just that one
+     terminal event so an unmanned run's final completion reads as a distinct "연속작업 완료" alarm.
   2. The active-workflow stage badge can report a 'done' state.
   2/3. get_work_state_summary aggregates 작업중·작업완료·복사됨(통합)·연속작업종료 as scannable counts.
 """
@@ -137,14 +139,17 @@ def test_new_signal_constants_defined():
     assert event_logger.EVT_CONTINUOUS_WORK_ENDED == "continuous_work_ended"
 
 
-def test_new_signals_excluded_from_notification_whitelist():
-    # NR0003 권고 4: state signals must never leak into the past-tense feed (0118 noise regression).
+def test_work_started_excluded_but_terminal_completion_promoted():
+    # NR0003 권고 4: per-transition / present-tense state signals must never leak into the past-tense
+    # feed (0118 noise regression). work_started is a per-start present-tense signal → stays out.
     assert event_logger.EVT_WORK_STARTED not in dashboard_service._NOTIFICATION_EVENT_TYPES
+    # R0001 group 0135 / N0008: the ONE terminal completion signal IS now promoted to the feed — it
+    # fires exactly once per unmanned run, so it gives a distinct "연속작업 완료" alarm without the 폭증.
     assert (
         event_logger.EVT_CONTINUOUS_WORK_ENDED
-        not in dashboard_service._NOTIFICATION_EVENT_TYPES
+        in dashboard_service._NOTIFICATION_EVENT_TYPES
     )
-    # ...and they are not even in the broader recent-activity stream.
+    # Neither is added to the broader dashboard recent-activity stream (the two surfaces stay decoupled).
     assert event_logger.EVT_WORK_STARTED not in dashboard_service._ACTIVITY_EVENT_TYPES
     assert (
         event_logger.EVT_CONTINUOUS_WORK_ENDED
@@ -152,15 +157,17 @@ def test_new_signals_excluded_from_notification_whitelist():
     )
 
 
-def test_signals_do_not_appear_in_notification_feed(store):
+def test_work_started_absent_but_terminal_completion_present_in_feed(store):
     r_pk = _doc_pk(store, "flowgate.default.0125.0001-R")
     _add_event(store, "work_started", r_pk, "2026-06-24T01:00:00Z")
     _add_event(store, "continuous_work_ended", r_pk, "2026-06-24T01:05:00Z")
 
     feed = dashboard_service.get_notification_feed("flowgate", None, 50)
-    event_types = {item.get("event_type") for item in feed["recent_activities"]["items"]}
-    assert "work_started" not in event_types
-    assert "continuous_work_ended" not in event_types
+    activity_types = {item.get("activity_type") for item in feed["recent_activities"]["items"]}
+    # work_started (present-tense start) is dropped by the whitelist entirely...
+    assert "work_started" not in activity_types
+    # ...while the terminal completion surfaces as the distinct N0008 "연속작업 완료" activity.
+    assert "continuous_work_completed" in activity_types
 
 
 # ── NR0003 권고 2 & 3: state-board aggregation counts ────────────────────────────────

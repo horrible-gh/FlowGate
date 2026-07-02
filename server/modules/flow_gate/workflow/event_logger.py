@@ -18,12 +18,18 @@ EVT_COMMENT_ADDED = "comment_added"
 EVT_PROMPT_COPIED = "prompt_copied"
 EVT_GROUP_COMPLETION_CANDIDATE = "group_completion_candidate"
 EVT_GROUP_APPROVED = "group_approved"
-# R0001 group 0125 / NR0003: present-tense work-STATE signals. Recorded for the dashboard state
-# board (작업상태 집계), NEVER projected onto the 🔔 notification feed — i.e. these MUST stay out of
-# dashboard_service._NOTIFICATION_EVENT_TYPES. NR0003 권고 4: re-introducing state changes into the
+# R0001 group 0125 / NR0003: present-tense work-STATE signals. Originally recorded for the dashboard
+# state board (작업상태 집계) only. NR0003 권고 4: re-introducing per-transition state changes into the
 # past-tense feed would undo the 0118 noise reduction ("상태 변화마다 알림 폭증"). The investigation
 # found "시작"(workflow start) and "연속작업 종료"(continuous-run end) had no backend signal at all;
 # these constants close that gap (NR0003 §발견 3, 권고 1).
+#
+# EVT_WORK_STARTED — still state-board ONLY; MUST stay out of _NOTIFICATION_EVENT_TYPES (it is a
+#   present-tense per-start signal; promoting it revives the 폭증).
+# EVT_CONTINUOUS_WORK_ENDED — R0001 group 0135 / N0008: now ALSO on the notification feed. Unlike a
+#   per-transition state change it fires exactly ONCE per unmanned run (at the target-reached stop),
+#   so promoting just this terminal event gives a distinct "연속작업 완료" alarm without the 폭증.
+#   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_WORK_STARTED = "work_started"
 EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
 
