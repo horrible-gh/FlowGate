@@ -23,7 +23,18 @@ export interface DashboardActivity {
   occurred_at: string
   actor: { user_id: string; username: string } | null
   group: { group_id: string; title: string } | null
-  document: { doc_id: string; type_code: string; title: string } | null
+  document: {
+    doc_id: string
+    type_code: string
+    title: string
+    // R0001 group 0135 / N0008 (시안 3): AI review signals for the trust colour + badge on the feed row.
+    // null when the document has no review yet; verdict is the latest AI verdict.
+    review?: {
+      status: string | null
+      verdict: 'pass' | 'issues' | 'hold' | null
+      finding_count: number
+    } | null
+  } | null
   transition: { from_state: string | null; to_state: string | null } | null
   navigation: DashboardNavigation
 }

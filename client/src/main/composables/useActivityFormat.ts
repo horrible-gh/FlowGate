@@ -11,6 +11,18 @@ const ACTIVITY_COLORS: Record<string, string> = {
   workflow_state_changed: '#7c3aed',
   question_answered: '#0891b2',
   group_approved: '#16a34a',
+  // R0001 group 0135 / N0008: the terminal "연속작업 완료" alarm — a distinct emerald so the
+  // once-per-run completion stands out from the per-step document_created (blue) inflow.
+  continuous_work_completed: '#059669',
+}
+
+// R0001 group 0135 / N0008 (시안 3): map an AI review verdict to a trust tone so a completed feed row
+// warns "됐다는데 사실 확인 필요" by colour. 🟢 pass = safe to skip / 🟡 hold = caution / 🔴 issues = check.
+export type ReviewTone = 'ok' | 'caution' | 'danger'
+const VERDICT_TONES: Record<string, ReviewTone> = {
+  pass: 'ok',
+  hold: 'caution',
+  issues: 'danger',
 }
 
 export function useActivityFormat() {
@@ -18,6 +30,22 @@ export function useActivityFormat() {
 
   function activityColor(activityType: string): string {
     return ACTIVITY_COLORS[activityType] ?? '#94a3b8'
+  }
+
+  // Trust tone for a feed row from its document's latest AI verdict (null when unreviewed).
+  function reviewTone(item: DashboardActivity): ReviewTone | null {
+    const verdict = item.document?.review?.verdict
+    return verdict ? VERDICT_TONES[verdict] ?? null : null
+  }
+
+  // Localized AI verdict badge label, e.g. "issues 2" / "hold" / "pass". Null when unreviewed.
+  function reviewBadge(item: DashboardActivity): string | null {
+    const review = item.document?.review
+    if (!review?.verdict) return null
+    const base = t(`main.notif_center.ai_verdict_${review.verdict}`)
+    return review.verdict === 'issues' && review.finding_count > 0
+      ? `${base} ${review.finding_count}`
+      : base
   }
 
   function activityActionLabel(item: DashboardActivity): string {
@@ -42,5 +70,5 @@ export function useActivityFormat() {
     }).format(timestamp)
   }
 
-  return { activityColor, activityActionLabel, formatDashboardTime }
+  return { activityColor, activityActionLabel, formatDashboardTime, reviewTone, reviewBadge }
 }
