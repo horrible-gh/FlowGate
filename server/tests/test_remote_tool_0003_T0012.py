@@ -122,6 +122,11 @@ def env(tmp_path, monkeypatch):
         "VALUES (?,?,1,?,?)",
         [PROJECT_ID, PROJECT_NAME, now_iso(), now_iso()],
     )
+    store._execute(
+        "INSERT INTO users(user_id,username,email,password,is_active,is_admin,created_at,updated_at) "
+        "VALUES (?,?,?,?,1,0,?,?)",
+        ["worker-user", "worker-user", "worker@example.test", "x", now_iso(), now_iso()],
+    )
     db_projects.upsert_settings(PROJECT_ID, {"branch": "main"})
 
     class Ctx:
@@ -148,6 +153,33 @@ def env(tmp_path, monkeypatch):
                 scopes,
             )
             return "grant_test_1"
+
+        def make_worker_token(self, token: str, *, token_id="tok_worker_1", action_scope="edit"):
+            from datetime import datetime, timezone, timedelta
+            from modules.flow_gate.services import token_service
+            _pid, pepper = token_service._active_pepper()
+            token_hash = token_service._hash_token(token, pepper)
+            now = datetime.now(timezone.utc)
+            self.store._execute(
+                "INSERT INTO tokens "
+                "(token_id, hash, pepper_id, project, group_id, doc_ref, action_scope, "
+                "issued_to, created_at, expires_at, scratch_dir) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    token_id,
+                    token_hash,
+                    _pid,
+                    PROJECT_ID,
+                    None,
+                    None,
+                    action_scope,
+                    "worker-user",
+                    now.isoformat(timespec="seconds"),
+                    (now + timedelta(hours=1)).isoformat(timespec="seconds"),
+                    None,
+                ],
+            )
+            return token_id
 
         def oplogs(self):
             return self.store._fetch_all(
@@ -183,6 +215,80 @@ def test_invalid_token_401(env):
     status, payload = _call("read", {"path": "app/main.py"}, token="wrong-token")
     assert status == 401
     assert env.oplogs() == []
+
+
+def test_worker_token_lazily_gets_remote_grant(env):
+    worker_token = "raw-worker-token-0136"
+    env.make_worker_token(worker_token, action_scope="edit")
+
+    status, payload = _call(
+        "write",
+        {"path": "docs/from-worker.md", "content": "hello", "mode": "create"},
+        token=worker_token,
+    )
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert (env.src / "docs" / "from-worker.md").read_text(encoding="utf-8") == "hello"
+    grant = env.store._fetch_one(
+        "SELECT * FROM remote_tool_grant WHERE grant_id = ?",
+        ["worker_tok_worker_1"],
+    )
+    assert grant is not None
+    scopes = {
+        row["scope"]
+        for row in env.store._fetch_all(
+            "SELECT scope FROM remote_tool_grant_scope WHERE grant_id = ?",
+            ["worker_tok_worker_1"],
+        )
+    }
+    assert scopes == {"read", "write", "grep", "remove"}
+
+
+def test_worker_remote_grant_expires_when_backing_token_consumed(env):
+    worker_token = "raw-worker-token-consumed-0136"
+    token_id = env.make_worker_token(worker_token, token_id="tok_worker_consumed", action_scope="edit")
+    status, _ = _call("read", {"path": "app/main.py"}, token=worker_token)
+    assert status == 200
+
+    from modules.flow_gate.db import tokens as db_tokens
+    db_tokens.consume(token_id)
+
+    status, payload = _call("read", {"path": "app/main.py"}, token=worker_token)
+    assert status == 401
+    assert payload["error"]["code"] == "unauthorized"
+
+
+def test_next_step_worker_token_gets_crud_for_task_report_head(env, monkeypatch):
+    from modules.flow_gate.services import remote_tool_service
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "TR")
+    worker_token = "raw-next-token-0136"
+    env.make_worker_token(worker_token, token_id="tok_next_tr", action_scope="new")
+
+    status, payload = _call(
+        "write",
+        {"path": "docs/tr-head.md", "content": "ok", "mode": "create"},
+        token=worker_token,
+    )
+
+    assert status == 200
+    assert payload["ok"] is True
+
+
+def test_next_step_worker_token_is_read_only_for_investigation_head(env, monkeypatch):
+    from modules.flow_gate.services import remote_tool_service
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "NR")
+    worker_token = "raw-next-token-readonly-0136"
+    env.make_worker_token(worker_token, token_id="tok_next_nr", action_scope="new")
+
+    status, payload = _call(
+        "write",
+        {"path": "docs/should-not-write.md", "content": "no", "mode": "create"},
+        token=worker_token,
+    )
+
+    assert status == 403
+    assert payload["error"]["code"] == "forbidden"
 
 
 def test_revoked_grant_401(env):
