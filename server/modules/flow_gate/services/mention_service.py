@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # investigation document were implementing code on their own. The mention must
 # state the scope boundary explicitly; implementation belongs in a T (work-instruction) doc.
 _INVESTIGATION_ONLY_TYPES = {"N", "NR"}
+_REMOTE_MUTATING_WORK_TYPES = {"T", "TR"}
 
 
 # ── API base path (including CONTEXT) ────────────────────────────────────────
@@ -67,6 +68,53 @@ _DRYRUN_HINT = (
 def _section(header: str, body: str) -> str:
     """P005 §3-1 format: '## header\\n---\\nbody'."""
     return f"## {header}\n---\n{body}"
+
+
+def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> str:
+    """Return the remote project-source API guide for worker mentions.
+
+    T/TR workers receive full source CRUD. Other document types receive read/search
+    guidance only, so investigation/review/design mentions do not contradict their
+    scope boundary by advertising mutating source operations.
+    """
+    if not raw_token:
+        return ""
+
+    def _json(data: dict) -> str:
+        return json.dumps(data, ensure_ascii=False, indent=2)
+
+    mutating = step_type in _REMOTE_MUTATING_WORK_TYPES
+    lines = [
+        "Use these endpoints when you need to inspect or change the remote project's source tree.",
+        "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        f"Read file: POST {base}/remote/read",
+        _json({"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"}),
+        "",
+        f"Search text: POST {base}/remote/grep",
+        _json({"pattern": "TODO", "path": "", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
+        "",
+        f"List files: POST {base}/remote/glob",
+        _json({"path": "", "pattern": "**/*.py"}),
+    ]
+    if mutating:
+        lines.extend([
+            "",
+            f"Create or replace file: POST {base}/remote/write",
+            _json({"path": "app/main.py", "content": "<complete file content>", "mode": "create|overwrite|append", "encoding": "utf-8"}),
+            "",
+            f"Delete file: POST {base}/remote/remove",
+            _json({"path": "app/obsolete.py"}),
+            "",
+            "After write/remove succeeds, summarize the changed source files in the task report.",
+        ])
+    else:
+        lines.extend([
+            "",
+            "This document type is read/search only for source access. Do not call write/remove in this step.",
+        ])
+    return _section("Remote project source CRUD", "\n".join(lines))
 
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
@@ -773,6 +821,8 @@ def build_mention(
             )
             template_section = ""
 
+    source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
+
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
         _section("Document information", s1_body),
@@ -787,6 +837,8 @@ def build_mention(
         sections.append(scope_section)
     if template_section:
         sections.append(template_section)
+    if source_crud_section:
+        sections.append(source_crud_section)
     sections.append(_section("Reference documents", s3_body))
     if review_section:
         sections.append(review_section)

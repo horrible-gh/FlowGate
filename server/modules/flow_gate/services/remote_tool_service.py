@@ -29,9 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import remote_tool_grants as db_grants
 from modules.flow_gate.db import remote_tool_op_log as db_oplog
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import tokens as db_tokens
+from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import token_service
 from modules.flow_gate.storage.paths import src_root
@@ -44,6 +47,8 @@ from modules.flow_gate.storage.safe_path import (
 # ── Constants ────────────────────────────────────────────────────────────────
 
 OPS = ("read", "write", "grep", "glob", "remove")
+_WORKER_GRANT_PREFIX = "worker_"
+_MUTATING_WORK_TYPES = {"T", "TR"}
 
 # operation → required scope (P0005 §3.2 / L0006 §3.2 / DB0007 §5). glob shares the grep scope.
 OP_SCOPE = {
@@ -106,8 +111,10 @@ def _authenticate(raw_token: Optional[str]) -> Optional[dict]:
     candidate_hash = token_service._hash_token(raw_token, pepper)
     grant = db_grants.get_by_token_hash(candidate_hash)
     if grant is None:
-        return None
+        return _worker_grant_from_flowgate_token(raw_token)
     if not token_service._verify_hash(grant["token_hash"], candidate_hash):
+        return None
+    if not _worker_grant_still_valid(grant):
         return None
     if grant.get("status") != "active":
         return None
@@ -122,6 +129,126 @@ def _authenticate(raw_token: Optional[str]) -> Optional[dict]:
         except ValueError:
             return None
     return grant
+
+
+def _worker_grant_still_valid(grant: dict) -> bool:
+    """Worker-token grants are valid only while the backing inbox token is active."""
+    grant_id = str(grant.get("grant_id") or "")
+    if not grant_id.startswith(_WORKER_GRANT_PREFIX):
+        return True
+    token_id = grant_id[len(_WORKER_GRANT_PREFIX):]
+    token_rec = db_tokens.get_by_id(token_id)
+    if not token_rec:
+        return False
+    if token_rec.get("revoked_at") or token_rec.get("consumed_at"):
+        return False
+    expires_at = token_rec.get("expires_at")
+    if not expires_at:
+        return False
+    try:
+        exp = datetime.fromisoformat(expires_at)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        return exp >= datetime.now(timezone.utc)
+    except ValueError:
+        return False
+
+
+def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict]:
+    """Create a remote-tool grant lazily for a normal FlowGate worker token.
+
+    Copy mentions hand workers a single Bearer token for document reads and inbox
+    submission. The remote source API stores its own grant rows for auditing, so
+    the first remote call creates a grant tied to that worker token. The grant id
+    embeds the token id, and _worker_grant_still_valid keeps it from outliving the
+    backing token after inbox consumption or revocation.
+    """
+    if not raw_token:
+        return None
+    try:
+        token_rec = token_service.verify(raw_token)
+    except Exception:
+        return None
+
+    token_id = token_rec.get("token_id")
+    token_hash = token_rec.get("hash")
+    project = token_rec.get("project")
+    if not token_id or not token_hash or not project:
+        return None
+
+    grant_id = f"{_WORKER_GRANT_PREFIX}{token_id}"
+    existing = db_grants.get_by_id(grant_id)
+    if existing:
+        return existing if _worker_grant_still_valid(existing) else None
+
+    scopes = _scopes_for_worker_token(token_rec)
+    if not scopes:
+        return None
+
+    group_id = token_rec.get("group_id") or ""
+    parts = group_id.split(".", 2)
+    module = parts[1] if len(parts) == 3 else "default"
+    try:
+        return db_grants.create(
+            {
+                "grant_id": grant_id,
+                "token_hash": token_hash,
+                "project": project,
+                "module": module,
+                "report_doc_id": None,
+                "session_id": token_rec.get("issued_to"),
+                "status": "active",
+                "issued_at": token_rec.get("created_at"),
+                "expires_at": token_rec.get("expires_at"),
+            },
+            scopes,
+        )
+    except Exception:
+        # Another request may have created it concurrently, or storage may reject it.
+        existing = db_grants.get_by_id(grant_id)
+        return existing if existing and _worker_grant_still_valid(existing) else None
+
+
+def _scopes_for_worker_token(token_rec: dict) -> list[str]:
+    """Map a document worker token to remote source scopes.
+
+    Implementation work (T/TR) receives full CRUD. Investigation/review/design
+    handoffs receive read/search only so their source-access instructions cannot
+    silently override the document-level "do not modify source" scope.
+    """
+    action_scope = token_rec.get("action_scope")
+    if action_scope in {"review", "workflow_decide"}:
+        return ["read", "grep"]
+    if action_scope == "edit":
+        return ["read", "write", "grep", "remove"]
+    if action_scope != "new":
+        return []
+
+    step_type = _worker_token_step_type(token_rec)
+    if step_type in _MUTATING_WORK_TYPES:
+        return ["read", "write", "grep", "remove"]
+    return ["read", "grep"]
+
+
+def _worker_token_step_type(token_rec: dict) -> Optional[str]:
+    """Resolve the workflow head type for a next-step worker token."""
+    doc_ref = token_rec.get("doc_ref")
+    if not doc_ref:
+        return None
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            seq = db_wfseq.get_sequence_by_doc_id(doc_ref)
+        if seq is not None:
+            head = db_wfseq.get_effective_head(seq["id"])
+            if head and head.get("type"):
+                return str(head["type"])
+        doc = db_documents.get_by_id(doc_ref)
+        if doc and doc.get("type_code"):
+            return str(doc["type_code"])
+    except Exception:
+        return None
+    return None
 
 
 # ── ③ Path safety / ④ request validity ───────────────────────────────────────
