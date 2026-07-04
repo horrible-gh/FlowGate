@@ -313,3 +313,87 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
     assert restored["return_point_cleared"] is True
     assert phantom not in restored["restored"]
     assert restored["restored"] == [docs[s] for s in (2, 5, 6, 7, 8, 9, 10, 11)]
+
+
+def test_mid_flight_rewind_records_no_return_point(rt_store):
+    """0142 T0013 — a return point is the completed workflow you walk 'home' to. Rewinding a
+    workflow that was NOT wf_done (a step still pending) must record NO return point: otherwise a
+    later restore reaching front would declare the root wf_done over a step that was never approved,
+    seeding the snapshot-pollution loop."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_return_points as db_rp
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    ids = _seed_base_group(rt_store, "mid")
+    # Make the workflow mid-flight: the P step is the pending head and the root is NOT done.
+    db_docs.update(ids["P"], {"doc_review_status": "pending_review"})
+    db_docs.update(ids["AC"], {"doc_review_status": "pending_review"})
+    db_docs.update(ids["R"], {"doc_review_status": "wf_in_progress"})
+
+    reopened = doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
+        {"user_id": ids["user_id"]},
+    )
+
+    assert reopened["return_point"]["exists"] is False
+    assert db_rp.get_by_group(ids["group_id"]) is None
+
+
+def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):
+    """0142 T0013 — reached_front must finalize (root→wf_done, clear the return point) ONLY when
+    every snapshot doc is actually approved. A pre-existing polluted return point whose prev_status
+    was itself pending_review must NOT be cleared into a wf_done-over-pending state, which is what
+    laundered the pollution forward and made restore a permanent no-op."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_return_points as db_rp
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    ids = _seed_base_group(rt_store, "poll")
+    doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
+        {"user_id": ids["user_id"]},
+    )
+    rp = db_rp.get_by_group(ids["group_id"])
+    assert rp is not None
+    # Simulate a legacy-polluted snapshot: the L step's recorded baseline is pending_review, so
+    # "restoring" it is a no-op that leaves L pending even after a full walk to front.
+    from modules.flow_gate.db.connection import get_store
+    get_store()._execute(
+        "UPDATE workflow_return_point_docs SET prev_status = 'pending_review' "
+        "WHERE return_point_id = ? AND doc_id = ?",
+        [rp["id"], ids["L"]],
+    )
+
+    restored = doc_routes.restore_workflow(
+        doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
+        {"user_id": ids["user_id"]},
+    )
+
+    # The walk reaches front, but L is still pending → do NOT finalize.
+    assert restored["reached_front"] is True
+    assert restored["return_point_cleared"] is False
+    assert db_docs.get_by_id(ids["L"])["doc_review_status"] == "pending_review"
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] != "wf_done"
+    # The return point survives so the tangle can still be repaired, not laundered away.
+    assert db_rp.get_by_group(ids["group_id"]) is not None
+
+
+def test_reopen_logs_an_audit_event(rt_store):
+    """0142 T0013 — the rewind side previously wrote no workflow event, leaving a return point (and
+    its later restore) with no audit trail. reopen must now log a workflow_reopen event."""
+    from modules.flow_gate.db import workflow_events as db_events
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    ids = _seed_base_group(rt_store, "audit")
+    doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
+        {"user_id": ids["user_id"]},
+    )
+
+    events = db_events.list_by_group(ids["group_id"]) if hasattr(db_events, "list_by_group") else None
+    if events is None:
+        from modules.flow_gate.db.connection import get_store
+        events = get_store()._fetch_all(
+            "SELECT event_type FROM workflow_events WHERE group_id = ?", [ids["group_id"]],
+        )
+    assert any((e.get("event_type") == "workflow_reopen") for e in events)
