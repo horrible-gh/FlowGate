@@ -28,6 +28,7 @@
       @click="layoutStore.toggleSidebar"
     />
     <MainPanel
+      :overview-refresh-token="overviewRefreshToken"
       @create-requirement="openRequirementModal"
       @related-doc-created="handleRelatedDocCreated"
       @refresh-overview="manualRefresh"
@@ -70,6 +71,7 @@ const shellStyle = computed(() => ({
 const showRequirementModal = ref(false)
 const initialRequirementGroupId = ref<string | null>(null)
 const explorerRefreshKey = ref(0)
+const overviewRefreshToken = ref(0)
 
 function refreshAll() {
   const pid = projectStore.currentProjectId
@@ -87,6 +89,7 @@ function manualRefresh() {
   explorerStore.invalidateProject(pid)
   explorerRefreshKey.value += 1
   dashboardStore.invalidate(pid, true)
+  overviewRefreshToken.value += 1
 }
 
 useFlowGateSse(refreshAll)

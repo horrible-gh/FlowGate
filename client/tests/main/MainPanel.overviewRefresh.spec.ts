@@ -5,9 +5,13 @@ import i18n from '@shared/i18n'
 import MainPanel from '@main/components/MainPanel.vue'
 import { useProjectStore } from '@main/stores/project'
 
+const { getRequest } = vi.hoisted(() => ({
+  getRequest: vi.fn().mockResolvedValue({ data: {} }),
+}))
+
 vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
-  getRequest: vi.fn().mockResolvedValue({ data: {} }),
+  getRequest,
   patchRequest: vi.fn(),
   postRequest: vi.fn(),
 }))
@@ -30,8 +34,9 @@ vi.mock('@main/composables/useFlowGateToken', () => ({
   splitGroupId: (gid: string) => ({ groupCode: gid }),
 }))
 
-function mountPanel() {
+function mountPanel(props: Record<string, unknown> = {}) {
   return shallowMount(MainPanel, {
+    props,
     global: {
       plugins: [i18n],
       stubs: {
@@ -56,6 +61,7 @@ function mountPanel() {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  getRequest.mockClear()
 })
 
 describe('MainPanel overview refresh button', () => {
@@ -85,5 +91,19 @@ describe('MainPanel overview refresh button', () => {
     const btn = wrapper.find('.overview-refresh')
     expect(btn.exists()).toBe(true)
     expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('refetches open queries when the overview refresh token changes', async () => {
+    const projectStore = useProjectStore()
+    projectStore.currentProjectId = 'proj-1'
+
+    const wrapper = mountPanel({ overviewRefreshToken: 0 })
+    await flushPromises()
+    getRequest.mockClear()
+
+    await wrapper.setProps({ overviewRefreshToken: 1 })
+    await flushPromises()
+
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/q', { project_id: 'proj-1' })
   })
 })

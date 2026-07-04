@@ -958,6 +958,11 @@ import DocInfoPanel from './DocInfoPanel.vue'
 import ConversationView from './ConversationView.vue'
 
 const { t, locale } = useI18n()
+const props = withDefaults(defineProps<{
+  overviewRefreshToken?: number
+}>(), {
+  overviewRefreshToken: 0,
+})
 const docTypeStore = useDocTypeStore()
 const { showToast } = useToast()
 const {
@@ -2873,6 +2878,10 @@ watch(() => projectStore.currentProjectId, (projectId) => {
   fetchQList()
   if (projectId) void dashboardStore.fetchSummary(projectId)
 }, { immediate: true })
+
+watch(() => props.overviewRefreshToken, () => {
+  if (projectStore.currentProjectId) void fetchQList()
+})
 
 watch(showQuickOpen, async (val) => {
   if (val) {
