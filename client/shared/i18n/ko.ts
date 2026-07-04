@@ -907,9 +907,15 @@
       confirm: '되돌리기',
       reopening: '되돌리는 중…',
       toast_reopened: '워크플로를 되돌렸습니다.',
-      restore_done: '{count}단계를 원위치로 복귀했습니다.',
-      restore_stopped: '{count}단계 복귀 후 {doc}에서 멈췄습니다.',
-      restore_noop: '복귀할 단계가 없습니다.',
+      // 앞으로(복귀) 실행 전 확인 다이얼로그 — 되돌리기와 대칭.
+      return_confirm_title: '이 단계로 되돌리기',
+      return_confirm_message: '{doc} 단계로 워크플로를 되돌립니다. 여기까지 손대지 않은 단계는 재검토 없이 이전 승인 상태로 복원되고, 내용이 바뀐 첫 문서에서 멈춥니다. 진행할까요?',
+      return_confirm_ok: '되돌리기',
+      // 결과 토스트 — 단계 수가 아니라 도착한 문서를 기준으로 안내.
+      restore_done_full: '워크플로를 원래 자리({doc})까지 되돌렸습니다.',
+      restore_done_partial: '{doc} 단계까지 되돌렸습니다.',
+      restore_stopped: '{doc}에서 바뀐 내용이 있어 멈췄습니다. 이 문서를 확인해 주세요.',
+      restore_noop: '되돌릴 단계가 없습니다.',
     },
     review_action_bar: {
       status_revised: '수정됨',

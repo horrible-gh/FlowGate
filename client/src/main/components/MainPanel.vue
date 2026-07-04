@@ -855,6 +855,16 @@
       @update:visible="(v: boolean) => { timeMachineVisible = v }"
     />
 
+    <!-- 0142 rework — forward-restore confirm (symmetric with the backward dialog above). -->
+    <ConfirmModal
+      v-model:visible="returnConfirmVisible"
+      :title="t('main.time_machine.return_confirm_title')"
+      :message="returnConfirmMessage"
+      :confirm-label="t('main.time_machine.return_confirm_ok')"
+      @confirm="doWorkflowStepReturn"
+      @cancel="pendingReturn = null"
+    />
+
     <ReviewHistoryDialog
       :visible="reviewHistoryVisible"
       :reviews="reviewHistoryReviews"
@@ -1201,6 +1211,23 @@ const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
 // strip cell to its seq for the reverse time-machine highlight/click (getReturnTargets).
 const returnSequences = reactive<Record<string, SequenceSlot[]>>({})
 const returnPointRestoring = ref(false)
+// 0142 rework — a click on a return-target cell no longer restores instantly. It opens a
+// confirm dialog (symmetric with the backward time-machine's dialog); this holds the pending
+// restore until the user confirms. Cleared on confirm/cancel.
+const returnConfirmVisible = ref(false)
+const pendingReturn = ref<{
+  tabId: string
+  docId: string
+  destinationSeq: number
+  destinationDocId: string
+  destinationLabel: string | null
+  destinationType: string | null
+} | null>(null)
+const returnConfirmMessage = computed(() =>
+  pendingReturn.value
+    ? t('main.time_machine.return_confirm_message', { doc: shortDocCode(pendingReturn.value.destinationDocId) })
+    : '',
+)
 
 const DESIGN_TYPES = new Set(['D', 'P', 'L', 'DB'])
 
@@ -1851,6 +1878,15 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
 // onWorkflowStepTimeMachine: resolve the clicked slot by identity (index, then type-occurrence
 // fallback) so repeated types return to the correct cell, restore every untouched step up to
 // it, then open that step so the user actually lands there ("go there").
+// Short "0011-TR" code from a full doc_id, for user-facing messages that name the step.
+function shortDocCode(docId: string): string {
+  return docId.split('.').pop() ?? docId
+}
+
+// 0142 rework — complaint #1: the backward time-machine confirms via a dialog before rolling
+// back, but the forward restore fired the moment a cell was clicked ("너무 확확 돌아간다").
+// This now only RESOLVES the click and opens a confirm dialog; the actual restore runs in
+// doWorkflowStepReturn once the user confirms — symmetric with the backward direction.
 async function onWorkflowStepReturn(tabId: string, payload: { index: number; code: string }) {
   if (returnPointRestoring.value) return
   const docId = returnPointDocId(tabId)
@@ -1874,8 +1910,24 @@ async function onWorkflowStepReturn(tabId: string, payload: { index: number; cod
     showToast(t('main.time_machine.not_rollbackable'), 'danger')
     return
   }
-  const destinationSeq = clicked!.result_seq as number
-  const destinationDocId = clicked!.result_doc_id as string
+  pendingReturn.value = {
+    tabId,
+    docId,
+    destinationSeq: clicked!.result_seq as number,
+    destinationDocId: clicked!.result_doc_id as string,
+    destinationLabel: (clicked!.label as string) ?? null,
+    destinationType: (clicked!.type as string) ?? null,
+  }
+  returnConfirmVisible.value = true
+}
+
+// Confirmed forward restore: re-approve untouched steps up to the chosen one, stop at the
+// first changed document, then land the user on the step they returned to.
+async function doWorkflowStepReturn() {
+  const pending = pendingReturn.value
+  pendingReturn.value = null
+  if (!pending || returnPointRestoring.value) return
+  const { tabId, docId, destinationSeq, destinationDocId, destinationLabel, destinationType } = pending
 
   returnPointRestoring.value = true
   try {
@@ -1887,11 +1939,14 @@ async function onWorkflowStepReturn(tabId: string, payload: { index: number; cod
     for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
     await refreshReturnPoint(tabId)
     const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
+    // Messages name the document reached, not a raw step count (complaint #3).
     if (data.stopped_doc_id) {
       // Hit an edited step before reaching the clicked target — stop there, keep the return point.
-      showToast(t('main.time_machine.restore_stopped', { count: restoredCount, doc: data.stopped_doc_id }), 'warning')
-    } else if (restoredCount > 0 || data.reached_front) {
-      showToast(t('main.time_machine.restore_done', { count: restoredCount }), 'success')
+      showToast(t('main.time_machine.restore_stopped', { doc: shortDocCode(data.stopped_doc_id) }), 'warning')
+    } else if (data.reached_front) {
+      showToast(t('main.time_machine.restore_done_full', { doc: shortDocCode(destinationDocId) }), 'success')
+    } else if (restoredCount > 0) {
+      showToast(t('main.time_machine.restore_done_partial', { doc: shortDocCode(destinationDocId) }), 'success')
     } else {
       showToast(t('main.time_machine.restore_noop'), 'warning')
     }
@@ -1900,10 +1955,10 @@ async function onWorkflowStepReturn(tabId: string, payload: { index: number; cod
     if (landing) {
       tabsStore.openTab({
         id: landing,
-        title: (clicked!.label as string) ? `${landing} — ${clicked!.label as string}` : landing,
+        title: destinationLabel ? `${landing} — ${destinationLabel}` : landing,
         path: '',
         type: 'md',
-        typeCode: (clicked!.type as string) ?? undefined,
+        typeCode: destinationType ?? undefined,
       })
     }
   } catch (e: any) {

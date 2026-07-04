@@ -228,3 +228,88 @@ def test_restore_stops_at_first_changed_document_and_keeps_return_point(rt_store
     assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
     assert db_docs.get_by_id(ids["P"])["doc_review_status"] == "pending_review"
     assert db_rp.get_by_group(ids["group_id"]) is not None
+
+
+def _seed_group_with_phantom(storage_root: Path, suffix: str) -> dict:
+    """Replica of live group flowgate.default.0094: a T/TR continuous-work chain wired into
+    a workflow sequence, PLUS a phantom TR (an abandoned/superseded revision) that shares the
+    group's seq space but never filled a sequence slot. The reverse time-machine must ignore
+    the phantom entirely (0142 rework — it previously got swept into the rewind, inflating the
+    restorable count and getting reset to pending_review spuriously)."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import projects, users
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.storage import paths as storage_paths
+
+    project_id = "rtp" + suffix
+    group_id = "rtp.default.0094" + suffix
+    user_id = "usrp" + suffix
+    projects.create({"project_id": project_id, "project_name": "RT phantom"})
+    users.create({"user_id": user_id, "username": "up" + suffix,
+                  "email": f"up{suffix}@t.com", "password": "h"})
+    db_groups.create({"group_id": group_id, "project_id": project_id,
+                      "module": "default", "title": "0094"})
+
+    created: dict[int, str] = {}
+    # (seq, type, wired_into_sequence?) — seq 3 TR is the phantom (NOT wired).
+    rows = [(1, "R", False), (2, "T", True), (3, "TR", False),
+            (5, "TR", True), (6, "T", True), (7, "TR", True),
+            (8, "T", True), (9, "TR", True), (10, "T", True), (11, "TR", True)]
+    for seq, tc, _ in rows:
+        doc_code = f"{seq:04d}-{tc}"
+        doc_id = f"{group_id}.{doc_code}"
+        review = "wf_done" if tc == "R" else "approved"
+        path = storage_paths.document_path(
+            project_id=project_id, group_code=group_id, doc_code=doc_code,
+            filename="document.md", module="default")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"---\ntitle: {tc}{seq}\n---\n# {tc}{seq}\n", encoding="utf-8")
+        db_docs.create({"doc_id": doc_id, "project_id": project_id, "type_code": tc,
+                        "seq": seq, "title": f"{tc}{seq}", "group_id": group_id,
+                        "module": "default", "owner_id": user_id,
+                        "file_path": storage_paths.to_storage_relative(path, project_id)})
+        db_docs.update(doc_id, {"doc_review_status": review})
+        created[seq] = doc_id
+
+    root_id = created[1]
+    db_wfseq.insert_sequence(root_id)
+    seq_hdr = db_wfseq.get_sequence_by_doc_id(root_id)
+    step_seqs = [2, 5, 6, 7, 8, 9, 10, 11]
+    for sort_order, s in enumerate(step_seqs):
+        tc = "T" if created[s].endswith("-T") else "TR"
+        db_wfseq.insert_sequence_item(seq_hdr["id"], sort_order + 1, tc, f"{tc}{s}", "R", sort_order)
+    for item in db_wfseq.get_sequence_items(seq_hdr["id"]):
+        db_wfseq.set_item_result_doc_id(item["id"], created[step_seqs[item["sort_order"]]])
+    return {"project_id": project_id, "group_id": group_id, "user_id": user_id, "docs": created}
+
+
+def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
+    """0142 rework — the group-0094 boundary bug: a phantom doc (0003-TR) that is not part of
+    the workflow sequence must not be rewound, snapshotted, or counted. The restore count must
+    match the 8 real steps, never 9."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    ids = _seed_group_with_phantom(rt_store, "x")
+    docs = ids["docs"]
+    phantom = docs[3]  # 0003-TR
+
+    reopened = doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=docs[2], target_seq=2),
+        {"user_id": ids["user_id"]})
+
+    # 8 real steps, not 9 — the phantom is excluded from the snapshot.
+    assert reopened["return_point"]["restorable_count"] == 8
+    assert phantom not in reopened["reopened"]
+    # The phantom keeps its approval; it was never a rewindable step.
+    assert db_docs.get_by_id(phantom)["doc_review_status"] == "approved"
+
+    # A full restore walks exactly the 8 real steps in seq order (phantom absent).
+    restored = doc_routes.restore_workflow(
+        doc_routes._RestoreBody(doc_id=docs[1], destination_seq=None),
+        {"user_id": ids["user_id"]})
+    assert restored["reached_front"] is True
+    assert restored["return_point_cleared"] is True
+    assert phantom not in restored["restored"]
+    assert restored["restored"] == [docs[s] for s in (2, 5, 6, 7, 8, 9, 10, 11)]

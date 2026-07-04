@@ -1610,6 +1610,29 @@ def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
     return roots[0] if roots else None
 
 
+def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
+    """The doc_ids that actually fill this group's workflow-sequence slots.
+
+    A "workflow step" is a document wired into the sequence (its result_doc_id) — NOT
+    merely any document that shares the group's seq space. Groups accumulate phantom
+    documents (superseded revisions, abandoned TRs) whose type is a normal workflow type
+    but that never filled a slot; a raw ``seq >= target`` filter sweeps those in and
+    corrupts the rewind + return-point (0142 rework: live group 0094 had an abandoned
+    0003-TR that inflated restore counts and got reset spuriously).
+
+    Returns the membership set when the group has a decided sequence, or ``None`` when no
+    sequence is decided (caller falls back to the legacy type+seq filter).
+    """
+    if root_doc is None:
+        return None
+    from modules.flow_gate.db import workflow_sequences as _db_wfseq
+    seq = _db_wfseq.get_sequence_by_doc_id(root_doc["doc_id"])
+    if seq is None:
+        return None
+    items = _db_wfseq.get_sequence_items(seq["id"])
+    return {it["result_doc_id"] for it in items if it.get("result_doc_id")}
+
+
 def _return_point_payload(group_id: str) -> dict:
     from modules.flow_gate.db import workflow_return_points as _db_rp
 
@@ -1626,7 +1649,7 @@ def _return_point_payload(group_id: str) -> dict:
         }
 
     front_doc = _db_rp.get_front_doc(group_id, int(rp["front_seq"]))
-    current_min = _db_rp.current_pending_min_seq(group_id, _RETURN_POINT_NON_RESTORE_TYPES)
+    current_min = _db_rp.current_pending_min_seq(rp["id"])
     return {
         "exists": True,
         "front_seq": rp["front_seq"],
@@ -1739,11 +1762,19 @@ def reopen_workflow(
 
     with get_store().transaction():
         group_docs = _db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
-        snapshot_docs = [
-            c for c in group_docs
-            if c.get("type_code") not in _RETURN_POINT_NON_RESTORE_TYPES
-            and (c.get("seq") or 0) >= body.target_seq
-        ]
+        # Only documents wired into the workflow sequence are rewindable steps. Phantom docs
+        # (superseded/abandoned revisions sharing the group's seq space) must NOT be swept in
+        # by the raw seq threshold — 0142 rework. Falls back to type+seq when no sequence.
+        step_ids = _workflow_step_doc_ids(_group_workflow_root_doc(doc))
+
+        def _is_rewindable_step(c: dict) -> bool:
+            if c.get("type_code") in _RETURN_POINT_NON_RESTORE_TYPES:
+                return False
+            if step_ids is not None and c["doc_id"] not in step_ids:
+                return False
+            return (c.get("seq") or 0) >= body.target_seq
+
+        snapshot_docs = [c for c in group_docs if _is_rewindable_step(c)]
         _record_return_point(group_id, snapshot_docs)
 
         reopened: list = []
@@ -1757,7 +1788,7 @@ def reopen_workflow(
             # un-clearable head, so they are never rolled back (A).
             if tc in WORKFLOW_ROOT_TYPES or tc == "Q" or tc in AUTO_COMPLETE_TYPES:
                 continue
-            if (c.get("seq") or 0) >= body.target_seq:
+            if _is_rewindable_step(c):
                 _db_docs.update(c["doc_id"], {"doc_review_status": "pending_review"})
                 reopened.append(c["doc_id"])
 
@@ -1821,7 +1852,7 @@ def restore_workflow(
             }
 
         front_seq = int(rp["front_seq"])
-        current_min = _db_rp.current_pending_min_seq(group_id, _RETURN_POINT_NON_RESTORE_TYPES)
+        current_min = _db_rp.current_pending_min_seq(rp["id"])
         lower_bound = current_min if current_min is not None else front_seq
         destination = body.destination_seq if body.destination_seq is not None else front_seq
         destination = max(lower_bound, min(int(destination), front_seq))

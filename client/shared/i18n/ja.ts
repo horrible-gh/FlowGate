@@ -907,9 +907,15 @@ export default {
       confirm: '差し戻す',
       reopening: '差し戻し中…',
       toast_reopened: 'ワークフローを差し戻しました。',
-      restore_done: '{count}ステップを元の位置に復帰しました。',
-      restore_stopped: '{count}ステップ復帰後、{doc} で停止しました。',
-      restore_noop: '復帰できるステップがありません。',
+      // 前方（復帰）実行前の確認ダイアログ — 差し戻しと対称。
+      return_confirm_title: 'このステップに戻す',
+      return_confirm_message: '{doc} までワークフローを前方へ戻します。そこまでの手を加えていないステップは再レビューなしで以前の承認状態に復元され、内容が変わった最初の文書で停止します。実行しますか？',
+      return_confirm_ok: '戻す',
+      // 結果トースト — ステップ数ではなく到達した文書を基準に案内。
+      restore_done_full: 'ワークフローを元の位置（{doc}）まで戻しました。',
+      restore_done_partial: '{doc} まで戻しました。',
+      restore_stopped: '{doc} で内容が変わっているため停止しました。この文書を確認してください。',
+      restore_noop: '戻せるステップがありません。',
     },
     review_action_bar: {
       status_revised: '修正済み',

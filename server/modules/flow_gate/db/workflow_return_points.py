@@ -76,13 +76,16 @@ def count_docs(return_point_id: int) -> int:
     return int(row.get("count") or 0) if row else 0
 
 
-def current_pending_min_seq(group_id: str, excluded_types: tuple[str, ...]) -> Optional[int]:
-    placeholders = ",".join(["?"] * len(excluded_types))
+def current_pending_min_seq(return_point_id: int) -> Optional[int]:
+    """Lowest seq still pending among THIS return point's snapshot docs (= the current
+    workflow head within the rewound range). Scoped to the return point's own docs so
+    unrelated pending documents in the group (phantoms / other work) can't skew it —
+    0142 rework."""
     row = get_store()._fetch_one(
-        "SELECT MIN(seq) AS min_seq FROM documents "
-        "WHERE group_id = ? AND doc_review_status = 'pending_review' "
-        f"AND type_code NOT IN ({placeholders})",
-        [group_id, *excluded_types],
+        "SELECT MIN(d.seq) AS min_seq FROM workflow_return_point_docs s "
+        "JOIN documents d ON d.doc_id = s.doc_id "
+        "WHERE s.return_point_id = ? AND d.doc_review_status = 'pending_review'",
+        [return_point_id],
     )
     if row is None or row.get("min_seq") is None:
         return None
