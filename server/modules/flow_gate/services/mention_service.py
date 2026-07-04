@@ -33,6 +33,7 @@ from typing import Optional
 
 from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
+from modules.flow_gate.settings import source_mode_service
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,14 @@ def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> st
             "This document type is read/search only for source access. Do not call write/remove in this step.",
         ])
     return _section("Remote project source CRUD", "\n".join(lines))
+
+
+def _include_remote_source_crud(project: str) -> bool:
+    try:
+        return source_mode_service.include_remote_api_section(project)
+    except Exception:
+        logger.warning("source mode resolution failed; falling back to remote mode", exc_info=True)
+        return True
 
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
@@ -858,7 +867,9 @@ def build_mention(
             )
             template_section = ""
 
-    source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
+    source_crud_section = ""
+    if _include_remote_source_crud(project):
+        source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [

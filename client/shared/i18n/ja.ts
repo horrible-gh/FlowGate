@@ -158,6 +158,11 @@ export default {
         confirm: 'ストレージパスの変更により既存のファイル位置が変更されます。続行しますか？',
         confirm_title: 'ストレージパス変更確認',
       },
+      source_mode: {
+        label: 'ローカル/リモートモード',
+        default_mode: 'グローバル既定モード',
+        default_desc: 'リモートモードではワーカーメンションにリモートソースCRUD案内を含め、ローカルモードでは省略します。',
+      },
       log: {
         label: 'ログ',
         retention: 'ログ保持期間（日）',
@@ -256,6 +261,10 @@ export default {
     storage_root: 'ストレージルートパス',
     log_level: 'ログ出力レベル',
     log_retention: 'ログ保持期間（日）',
+    source_mode: {
+      local: 'ローカル',
+      remote: 'リモート',
+    },
     users: {
       title: 'ユーザー管理',
       new_user: '+ 新規ユーザー',
@@ -325,6 +334,15 @@ export default {
       numbering: '採番設定',
       messages: 'メッセージ管理',
       group_management: 'グループ管理',
+      source_mode: {
+        tab: 'モード',
+        title: 'ローカル/リモートモード',
+        effective: '現在の有効モード',
+        override: 'プロジェクト上書き',
+        follow_global: 'グローバルに従う',
+        global_current: 'グローバル: {mode}',
+        hint: 'グローバルに従う場合はシステム既定モードを使用します。',
+      },
       messages_view: {
         description: 'プロジェクトごとによく使う案内文を登録し、メンションコピー時に一緒に貼り付けられます。',
         btn_add: 'メッセージ追加',

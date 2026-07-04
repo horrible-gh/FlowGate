@@ -158,6 +158,11 @@
         confirm: '스토리지 경로 변경 시 기존 파일 위치가 변경됩니다. 계속하시겠습니까?',
         confirm_title: '스토리지 경로 변경 확인',
       },
+      source_mode: {
+        label: '로컬/원격 모드',
+        default_mode: '전역 기본 모드',
+        default_desc: '원격 모드는 작업 멘트에 원격 소스 CRUD 안내를 포함하고, 로컬 모드는 해당 안내를 생략합니다.',
+      },
       log: {
         label: '로그',
         retention: '로그 보관 기간 (일)',
@@ -256,6 +261,10 @@
     storage_root: '스토리지 루트 경로',
     log_level: '로그 출력 레벨',
     log_retention: '로그 보존 기간 (일)',
+    source_mode: {
+      local: '로컬',
+      remote: '원격',
+    },
     users: {
       title: '사용자 관리',
       new_user: '+ 새 사용자',
@@ -325,6 +334,15 @@
       numbering: '채번 설정',
       messages: '메세지 관리',
       group_management: '그룹 관리',
+      source_mode: {
+        tab: '모드',
+        title: '로컬/원격 모드',
+        effective: '현재 유효 모드',
+        override: '프로젝트 재정의',
+        follow_global: '전역 따름',
+        global_current: '전역: {mode}',
+        hint: '전역 따름을 선택하면 시스템 기본 모드를 사용합니다.',
+      },
       messages_view: {
         description: '프로젝트별로 자주 쓰는 안내 문구를 등록해, 멘트 복사 시 함께 붙여넣을 수 있습니다.',
         btn_add: '메세지 추가',

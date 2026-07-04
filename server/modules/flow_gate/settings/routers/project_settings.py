@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
@@ -40,6 +41,7 @@ from modules.flow_gate.settings.project_settings_service import (
     update_template,
     verify_numbering,
 )
+from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate import template_provision as _tp
 from modules.flow_gate.db import projects as projects_db
 from modules.flow_gate.db import messages as messages_db
@@ -525,6 +527,63 @@ class ProjectSettingsPatch(BaseModel):
     digits_sub_group: int | None = None
     digits_type: int | None = None
     storage_root_override: str | None = None
+    source_mode_override: str | None = None
+
+
+class GlobalSourceModeBody(BaseModel):
+    mode: str
+
+
+class ProjectSourceModeBody(BaseModel):
+    override: str | None = None
+
+
+def _source_mode_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"ok": False, "error": {"code": code, "message": message}},
+    )
+
+
+@router.get("/settings/mode")
+def get_global_source_mode(user=Depends(require_permission("system.settings.manage"))):
+    return {"ok": True, "scope": "global", "mode": source_mode_service.get_global_mode()}
+
+
+@router.put("/settings/mode")
+def put_global_source_mode(
+    body: GlobalSourceModeBody,
+    user=Depends(require_permission("system.settings.manage")),
+):
+    try:
+        return source_mode_service.set_global_mode(body.mode, updated_by=user.get("user_id"))
+    except ValueError as exc:
+        return _source_mode_error(422, "invalid_request", str(exc))
+
+
+@router.get("/settings/project/{project_id}/mode")
+def get_project_source_mode(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return source_mode_service.get_project_mode(project_id)
+    except LookupError as exc:
+        return _source_mode_error(404, "not_found", str(exc))
+
+
+@router.put("/settings/project/{project_id}/mode")
+def put_project_source_mode(
+    project_id: str,
+    body: ProjectSourceModeBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return source_mode_service.set_project_mode(project_id, body.override)
+    except LookupError as exc:
+        return _source_mode_error(404, "not_found", str(exc))
+    except ValueError as exc:
+        return _source_mode_error(422, "invalid_request", str(exc))
 
 
 @router.patch("/projects/{project_id}/settings")
@@ -535,7 +594,10 @@ def patch_settings(
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
     updates = body.model_dump(exclude_unset=True)
-    return update_project_settings(project_id, updates)
+    try:
+        return update_project_settings(project_id, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/projects/{project_id}/numbering/impact")

@@ -158,6 +158,11 @@
         confirm: 'Changing the storage path will relocate existing files. Continue?',
         confirm_title: 'Confirm Storage Path Change',
       },
+      source_mode: {
+        label: 'Local/Remote Mode',
+        default_mode: 'Global default mode',
+        default_desc: 'Remote mode includes the remote source CRUD guide in worker mentions; local mode omits it.',
+      },
       log: {
         label: 'Log',
         retention: 'Log Retention (days)',
@@ -256,6 +261,10 @@
     storage_root: 'Storage Root Path',
     log_level: 'Log Output Level',
     log_retention: 'Log Retention (days)',
+    source_mode: {
+      local: 'Local',
+      remote: 'Remote',
+    },
     users: {
       title: 'User Management',
       new_user: '+ New User',
@@ -325,6 +334,15 @@
       numbering: 'Numbering',
       messages: 'Messages',
       group_management: 'Group Management',
+      source_mode: {
+        tab: 'Mode',
+        title: 'Local/Remote Mode',
+        effective: 'Effective mode',
+        override: 'Project override',
+        follow_global: 'Follow global',
+        global_current: 'Global: {mode}',
+        hint: 'Follow global uses the system default mode.',
+      },
       messages_view: {
         description: 'Register frequently used notes per project so they can be appended when copying a mention.',
         btn_add: 'Add Message',

@@ -110,16 +110,18 @@ def upsert_settings(project_id: str, data: dict[str, Any]) -> dict:
     store._execute(
         "INSERT INTO project_settings "
         "(project_id, group_structure, digits_group, digits_sub_group, digits_type, "
-        "storage_root_override, branch, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "storage_root_override, branch, source_mode_override, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(project_id) DO UPDATE SET "
         "group_structure=excluded.group_structure, digits_group=excluded.digits_group, "
         "digits_sub_group=excluded.digits_sub_group, digits_type=excluded.digits_type, "
         "storage_root_override=excluded.storage_root_override, branch=excluded.branch, "
+        "source_mode_override=excluded.source_mode_override, "
         "updated_at=excluded.updated_at",
         [
             project_id, data.get("group_structure", 2), data.get("digits_group", 4),
             data.get("digits_sub_group", 3), data.get("digits_type", 4),
-            data.get("storage_root_override"), data.get("branch", "main"), now,
+            data.get("storage_root_override"), data.get("branch", "main"),
+            data.get("source_mode_override"), now,
         ],
     )
     return get_settings(project_id)  # type: ignore[return-value]

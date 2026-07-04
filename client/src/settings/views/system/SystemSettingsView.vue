@@ -40,6 +40,27 @@
       </div>
     </div>
 
+    <!-- Source mode -->
+    <div class="card mb-4">
+      <div class="card-hd">
+        <span class="card-title"><i class="fa-solid fa-plug" style="color:#0891b2;"></i> {{ $t('settings.system.source_mode.label') }}</span>
+      </div>
+      <div class="card-bd pad">
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-name">{{ $t('settings.system.source_mode.default_mode') }}</div>
+            <div class="setting-desc">{{ $t('settings.system.source_mode.default_desc') }}</div>
+          </div>
+          <div class="setting-ctrl">
+            <select class="form-ctrl" v-model="sourceMode" style="min-width:160px;">
+              <option value="local">{{ $t('settings.source_mode.local') }}</option>
+              <option value="remote">{{ $t('settings.source_mode.remote') }}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Log -->
     <div class="card mb-4">
       <div class="card-hd">
@@ -201,6 +222,7 @@ const rateLimitUpload = ref(20);
 const corsOrigin = ref('http://localhost:3000');
 const totpEnabled = ref(true);
 const tokenBlacklist = ref(true);
+const sourceMode = ref('remote');
 
 onMounted(async () => {
   try {
@@ -224,6 +246,7 @@ function applySystemSettingsToForm() {
   corsOrigin.value = s.systemSettings.cors_origin ?? 'http://localhost:3000';
   totpEnabled.value = s.systemSettings.totp !== 'false';
   tokenBlacklist.value = s.systemSettings.token_blacklist !== 'false';
+  sourceMode.value = s.systemSettings.source_mode === 'local' ? 'local' : 'remote';
 }
 
 function saveStorage() {
@@ -290,6 +313,7 @@ function buildSystemPatch() {
     cors_origin: corsOrigin.value,
     totp: totpEnabled.value ? 'true' : 'false',
     token_blacklist: tokenBlacklist.value ? 'true' : 'false',
+    source_mode: sourceMode.value,
   };
 }
 

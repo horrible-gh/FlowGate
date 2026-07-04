@@ -26,6 +26,7 @@ ALLOWLIST: set[str] = {
     "cors_origin",
     "totp",
     "token_blacklist",
+    "source_mode",
 }
 
 _VALUE_TYPES: dict[str, str] = {
@@ -44,6 +45,7 @@ _VALUE_TYPES: dict[str, str] = {
     "cors_origin": "string",
     "totp": "boolean",
     "token_blacklist": "boolean",
+    "source_mode": "string",
 }
 
 
@@ -99,6 +101,9 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
     invalid = set(updates.keys()) - ALLOWLIST
     if invalid:
         raise ValueError(f"Disallowed setting key(s): {', '.join(sorted(invalid))}")
+    mode = updates.get("source_mode")
+    if mode is not None and mode not in {"local", "remote"}:
+        raise ValueError("mode must be one of: local, remote")
 
     results = []
     for key, val in updates.items():

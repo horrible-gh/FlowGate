@@ -247,8 +247,18 @@ def get_project_settings(project_id: str) -> dict | None:
 
 
 def update_project_settings(project_id: str, data: dict) -> dict:
-    allowed = {"group_structure", "digits_group", "digits_sub_group", "digits_type", "storage_root_override"}
+    allowed = {
+        "group_structure",
+        "digits_group",
+        "digits_sub_group",
+        "digits_type",
+        "storage_root_override",
+        "source_mode_override",
+    }
     updates = {k: v for k, v in data.items() if k in allowed}
+    mode = updates.get("source_mode_override")
+    if mode is not None and mode not in {"local", "remote"}:
+        raise ValueError("source_mode_override must be one of: local, remote, null")
     current = _proj.get_settings(project_id) or {}
     merged = {**current, **updates, "project_id": project_id}
     return _proj.upsert_settings(project_id, merged)
