@@ -38,7 +38,7 @@ def set_value(
         "VALUES (?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(setting_key) DO UPDATE SET "
         "setting_value=excluded.setting_value, value_type=excluded.value_type, "
-        "description=COALESCE(excluded.description, description), "
+        "description=COALESCE(excluded.description, system_settings.description), "
         "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
         [setting_key, setting_value, value_type, description, now, updated_by],
     )

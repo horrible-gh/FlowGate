@@ -113,6 +113,48 @@ def test_conditional_where_dropped_for_mysql():
     assert "WHERE projects.is_active = 0" in pg
 
 
+# ── system_settings upsert: table-qualified existing-row reference (0148) ────────
+# Regression for B0001/NR0003: the ON CONFLICT DO UPDATE set clause reads the
+# existing row's `description` inside COALESCE(excluded.description, <existing>).
+# PostgreSQL rejects an *unqualified* `description` there as AmbiguousColumn
+# (target table vs. the `excluded` pseudo-table) → 500 on PATCH /system/settings.
+# The fix qualifies it as `system_settings.description`; this test locks that in
+# across all three dialects (the SQLite suite alone never exercises PostgreSQL).
+SYSTEM_SETTINGS_UPSERT = (
+    "INSERT INTO system_settings "
+    "(setting_key, setting_value, value_type, description, updated_at, updated_by) "
+    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(setting_key) DO UPDATE SET "
+    "setting_value=excluded.setting_value, value_type=excluded.value_type, "
+    "description=COALESCE(excluded.description, system_settings.description), "
+    "updated_at=excluded.updated_at, updated_by=excluded.updated_by"
+)
+
+
+def test_system_settings_upsert_postgres_qualifies_existing_description():
+    out = translate(SYSTEM_SETTINGS_UPSERT, POSTGRESQL)
+    # ON CONFLICT/excluded stay PostgreSQL-native; the existing-row reference must
+    # remain table-qualified so it is unambiguous against `excluded`.
+    assert "COALESCE(excluded.description, system_settings.description)" in out
+    # The bug shape — an unqualified trailing `description` inside the COALESCE —
+    # must never reappear.
+    assert "COALESCE(excluded.description, description)" not in out
+    assert out.count("%s") == 6
+
+
+def test_system_settings_upsert_mysql_rewrites_existing_description():
+    out = translate(SYSTEM_SETTINGS_UPSERT, MYSQL)
+    assert "ON DUPLICATE KEY UPDATE" in out
+    assert "excluded." not in out
+    assert "system_settings." not in out
+    # excluded.col → VALUES(col); system_settings.description → bare description.
+    assert "description=COALESCE(VALUES(description), description)" in out
+    assert out.count("%s") == 6
+
+
+def test_system_settings_upsert_sqlite_noop():
+    assert translate(SYSTEM_SETTINGS_UPSERT, SQLITE) == SYSTEM_SETTINGS_UPSERT
+
+
 # ── ON CONFLICT DO NOTHING ──────────────────────────────────────────────────────
 
 DO_NOTHING = (
