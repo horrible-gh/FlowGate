@@ -907,6 +907,11 @@
       confirm: 'Reopen',
       reopening: 'Reopening…',
       toast_reopened: 'Workflow reopened.',
+      restore_action: 'Restore to Return Point',
+      restore_running: 'Restoring…',
+      restore_done: 'Restored {count} steps to the return point.',
+      restore_stopped: 'Restored {count} steps and stopped at {doc}.',
+      restore_noop: 'No steps to restore.',
     },
     review_action_bar: {
       status_revised: 'Revised',

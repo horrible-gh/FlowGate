@@ -636,6 +636,21 @@
       </div>
     </div>
 
+    <div
+      v-if="activeTabId != null && canShowReturnPointRestore(activeTabId)"
+      class="return-point-bar"
+    >
+      <button
+        class="btn btn-primary btn-sm"
+        type="button"
+        :disabled="returnPointRestoring"
+        @click="onRestoreReturnPoint(activeTabId)"
+      >
+        <i class="fa-solid fa-forward"></i>
+        {{ returnPointRestoring ? t('main.time_machine.restore_running') : t('main.time_machine.restore_action') }}
+      </button>
+    </div>
+
     <ReviewActionBar
       v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
       :mode="getActionBarMode(activeTabId)!"
@@ -1168,6 +1183,16 @@ interface TimeMachineStep {
   typeCode: string | null
   title: string | null
 }
+
+interface ReturnPointInfo {
+  exists: boolean
+  front_seq: number | null
+  front_label: string | null
+  restorable_count: number
+  current_min_seq: number | null
+  destination_default: number | null
+  destination_min: number | null
+}
 // Full AI review/rejection history modal (variant C), opened from "view full history" in the right panel.
 const reviewHistoryVisible = ref(false)
 const reviewHistoryReviews = ref<AiReview[]>([])
@@ -1184,6 +1209,8 @@ const timeMachineSteps = ref<TimeMachineStep[]>([])
 const timeMachineLoading = ref(false)
 // 0018 R0001 — strip-click time-machine pre-selects the clicked step's doc in the picker.
 const timeMachinePreselectDocId = ref<string | null>(null)
+const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
+const returnPointRestoring = ref(false)
 
 const DESIGN_TYPES = new Set(['D', 'P', 'L', 'DB'])
 
@@ -1399,6 +1426,46 @@ function getTabTypeCode(tabId: string | null | undefined): string | null {
   const tab = tabs.value.find(t => t.id === tabId)
   return tab?.typeCode ?? exposedValue<string | null>(docHeaderRefs[tabId]?.docTypeCode)
 }
+
+function returnPointDocId(tabId: string): string {
+  return exposedValue<string>(docHeaderRefs[tabId]?.parentRDocId) ?? tabId
+}
+
+function canShowReturnPointRestore(tabId: string): boolean {
+  const rp = returnPoints[returnPointDocId(tabId)]
+  if (!rp?.exists || rp.front_seq == null) return false
+  if (rp.current_min_seq == null) return false
+  return rp.current_min_seq < rp.front_seq
+}
+
+async function refreshReturnPoint(tabId: string) {
+  const docId = returnPointDocId(tabId)
+  if (!docId || !getTabTypeCode(tabId)) return
+  try {
+    const res = await getRequest<{ return_point?: ReturnPointInfo }>(
+      `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point`,
+    )
+    returnPoints[docId] = res.data?.return_point ?? {
+      exists: false,
+      front_seq: null,
+      front_label: null,
+      restorable_count: 0,
+      current_min_seq: null,
+      destination_default: null,
+      destination_min: null,
+    }
+  } catch {
+    delete returnPoints[docId]
+  }
+}
+
+watch(
+  () => [activeTabId.value, headerRevision.value] as const,
+  ([tabId]) => {
+    if (tabId) void refreshReturnPoint(tabId)
+  },
+  { immediate: true },
+)
 
 // Used by the file-less final-approval panel to show its completed state.
 function isCompletedDoc(tabId: string): boolean {
@@ -1758,6 +1825,34 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
     showToast(detail, 'danger')
+  }
+}
+
+async function onRestoreReturnPoint(tabId: string) {
+  const docId = returnPointDocId(tabId)
+  if (!docId) return
+  returnPointRestoring.value = true
+  try {
+    const res = await postRequest<any>(`/api/v1/documents/workflow/restore`, {
+      doc_id: docId,
+      destination_seq: null,
+    })
+    const data = res.data ?? {}
+    for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
+    await refreshReturnPoint(tabId)
+    const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
+    if (data.reached_front) {
+      showToast(t('main.time_machine.restore_done', { count: restoredCount }), 'success')
+    } else if (data.stopped_doc_id) {
+      showToast(t('main.time_machine.restore_stopped', { count: restoredCount, doc: data.stopped_doc_id }), 'warning')
+    } else {
+      showToast(t('main.time_machine.restore_noop'), 'warning')
+    }
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(detail, 'danger')
+  } finally {
+    returnPointRestoring.value = false
   }
 }
 
@@ -2916,6 +3011,18 @@ watch(textWrapEnabled, (enabled) => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.return-point-bar {
+  position: sticky;
+  bottom: 58px;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg, #ffffff) 88%, transparent);
+  border-top: 1px solid var(--border, #e5e7eb);
+  backdrop-filter: blur(8px);
 }
 
 .dashboard-row {

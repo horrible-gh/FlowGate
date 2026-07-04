@@ -15,6 +15,7 @@ RBAC: assumes rbac.decorators.require_permission.
 from __future__ import annotations
 
 import json as _json
+import hashlib as _hashlib
 import logging as _logging
 import re as _re
 from pathlib import Path
@@ -1514,6 +1515,81 @@ class _ReopenBody(BaseModel):
     target_seq: int
 
 
+class _RestoreBody(BaseModel):
+    doc_id: str
+    destination_seq: Optional[int] = None
+
+
+_RETURN_POINT_NON_RESTORE_TYPES = tuple(sorted(WORKFLOW_ROOT_TYPES | {"Q", "AC"} | AUTO_COMPLETE_TYPES))
+_FINGERPRINT_IGNORED_FRONTMATTER = {
+    "doc_review_status",
+    "updated_at",
+    "created_at",
+    "revision_no",
+}
+
+
+def _normalise_markdown_for_fingerprint(content: str) -> bytes:
+    text = content.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    if lines and lines[0].strip() == "---":
+        end_idx = None
+        for idx in range(1, len(lines)):
+            if lines[idx].strip() == "---":
+                end_idx = idx
+                break
+        if end_idx is not None:
+            frontmatter = []
+            for line in lines[1:end_idx]:
+                key = line.split(":", 1)[0].strip().lower()
+                if key in _FINGERPRINT_IGNORED_FRONTMATTER:
+                    continue
+                frontmatter.append(line)
+            lines = ["---", *frontmatter, "---", *lines[end_idx + 1:]]
+            text = "\n".join(lines)
+    return (text.rstrip() + "\n").encode("utf-8")
+
+
+def _content_fingerprint(doc: dict) -> str | None:
+    try:
+        path = _document_file_path(doc)
+        if not path.is_file():
+            return None
+        raw = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return _hashlib.sha256(_normalise_markdown_for_fingerprint(raw)).hexdigest()
+
+
+def _record_return_point(group_id: str, docs: list[dict]) -> dict | None:
+    from modules.flow_gate.db import workflow_return_points as _db_rp
+
+    affected = [
+        d for d in docs
+        if d.get("type_code") not in _RETURN_POINT_NON_RESTORE_TYPES
+        and (d.get("seq") or 0) > 0
+    ]
+    if not affected:
+        return None
+
+    front_seq = max(int(d.get("seq") or 0) for d in affected)
+    rp = _db_rp.ensure(group_id, front_seq)
+    for d in affected:
+        fingerprint = _content_fingerprint(d)
+        if fingerprint is None:
+            # Conservative sentinel: later restore will stop at this document because
+            # no real SHA-256 content digest can equal this value.
+            fingerprint = "!" * 64
+        _db_rp.add_doc_if_absent(
+            return_point_id=rp["id"],
+            doc_id=d["doc_id"],
+            seq=int(d.get("seq") or 0),
+            prev_status=d.get("doc_review_status") or "approved",
+            fingerprint=fingerprint,
+        )
+    return _db_rp.get_by_group(group_id)
+
+
 def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
     from modules.flow_gate.db import documents as _db_docs
     if doc.get("type_code") in WORKFLOW_ROOT_TYPES:
@@ -1532,6 +1608,34 @@ def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
             limit=1,
         )
     return roots[0] if roots else None
+
+
+def _return_point_payload(group_id: str) -> dict:
+    from modules.flow_gate.db import workflow_return_points as _db_rp
+
+    rp = _db_rp.get_by_group(group_id)
+    if rp is None:
+        return {
+            "exists": False,
+            "front_seq": None,
+            "front_label": None,
+            "restorable_count": 0,
+            "current_min_seq": None,
+            "destination_default": None,
+            "destination_min": None,
+        }
+
+    front_doc = _db_rp.get_front_doc(group_id, int(rp["front_seq"]))
+    current_min = _db_rp.current_pending_min_seq(group_id, _RETURN_POINT_NON_RESTORE_TYPES)
+    return {
+        "exists": True,
+        "front_seq": rp["front_seq"],
+        "front_label": (front_doc or {}).get("title") or (front_doc or {}).get("type_code"),
+        "restorable_count": _db_rp.count_docs(rp["id"]),
+        "current_min_seq": current_min,
+        "destination_default": rp["front_seq"],
+        "destination_min": current_min,
+    }
 
 
 @router.post("/workflow/final-approval", status_code=201)
@@ -1631,27 +1735,148 @@ def reopen_workflow(
     if not project_id or not group_id:
         raise HTTPException(status_code=400, detail="Document has no project/group")
 
-    group_docs = _db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
-    reopened: list = []
-    for c in group_docs:
-        tc = c.get("type_code")
-        if tc == "AC":
-            _db_docs.delete(c["doc_id"])   # ephemeral final-approval doc
-            continue
-        # R/Q are structural; auto-complete types (memos) are notes with no review
-        # action — resetting them to pending_review would strand them as an
-        # un-clearable head, so they are never rolled back (A).
-        if tc in WORKFLOW_ROOT_TYPES or tc == "Q" or tc in AUTO_COMPLETE_TYPES:
-            continue
-        if (c.get("seq") or 0) >= body.target_seq:
-            _db_docs.update(c["doc_id"], {"doc_review_status": "pending_review"})
-            reopened.append(c["doc_id"])
+    from modules.flow_gate.db.connection import get_store
 
-    root_doc = _group_workflow_root_doc(doc)
-    if root_doc is not None and root_doc.get("doc_review_status") == "wf_done":
-        _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_in_progress"})
+    with get_store().transaction():
+        group_docs = _db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
+        snapshot_docs = [
+            c for c in group_docs
+            if c.get("type_code") not in _RETURN_POINT_NON_RESTORE_TYPES
+            and (c.get("seq") or 0) >= body.target_seq
+        ]
+        _record_return_point(group_id, snapshot_docs)
 
-    return {"ok": True, "reopened": reopened}
+        reopened: list = []
+        for c in group_docs:
+            tc = c.get("type_code")
+            if tc == "AC":
+                _db_docs.delete(c["doc_id"])   # ephemeral final-approval doc
+                continue
+            # R/Q are structural; auto-complete types (memos) are notes with no review
+            # action — resetting them to pending_review would strand them as an
+            # un-clearable head, so they are never rolled back (A).
+            if tc in WORKFLOW_ROOT_TYPES or tc == "Q" or tc in AUTO_COMPLETE_TYPES:
+                continue
+            if (c.get("seq") or 0) >= body.target_seq:
+                _db_docs.update(c["doc_id"], {"doc_review_status": "pending_review"})
+                reopened.append(c["doc_id"])
+
+        root_doc = _group_workflow_root_doc(doc)
+        if root_doc is not None and root_doc.get("doc_review_status") == "wf_done":
+            _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_in_progress"})
+
+        return {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
+
+
+@router.get("/workflow/{doc_id}/return-point")
+@require_permission("perm_document_read")
+def get_workflow_return_point(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    from modules.flow_gate.db import documents as _db_docs
+
+    doc = _db_docs.get_by_id(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    group_id = doc.get("group_id")
+    if not group_id:
+        raise HTTPException(status_code=400, detail="Document has no group")
+    return {"ok": True, "return_point": _return_point_payload(group_id)}
+
+
+@router.post("/workflow/restore")
+@require_permission("perm_document_update")
+def restore_workflow(
+    body: _RestoreBody,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Reverse time-machine restore: re-approve unchanged rollback steps."""
+    from modules.flow_gate.db import documents as _db_docs
+    from modules.flow_gate.db import workflow_return_points as _db_rp
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.workflow import event_logger as _event_logger
+
+    doc = _db_docs.get_by_id(body.doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    group_id = doc.get("group_id")
+    project_id = doc.get("project_id")
+    if not project_id or not group_id:
+        raise HTTPException(status_code=400, detail="Document has no project/group")
+
+    with get_store().transaction():
+        rp = _db_rp.get_by_group(group_id)
+        root_doc = _group_workflow_root_doc(doc)
+        root_status = (root_doc or doc).get("doc_review_status") or "wf_in_progress"
+        if rp is None:
+            return {
+                "ok": True,
+                "restored": [],
+                "stopped_at": None,
+                "stopped_doc_id": None,
+                "reached_front": False,
+                "root_status": root_status,
+                "return_point_cleared": False,
+            }
+
+        front_seq = int(rp["front_seq"])
+        current_min = _db_rp.current_pending_min_seq(group_id, _RETURN_POINT_NON_RESTORE_TYPES)
+        lower_bound = current_min if current_min is not None else front_seq
+        destination = body.destination_seq if body.destination_seq is not None else front_seq
+        destination = max(lower_bound, min(int(destination), front_seq))
+
+        restored: list[str] = []
+        stopped_at: int | None = None
+        stopped_doc_id: str | None = None
+        for candidate in _db_rp.list_candidates(rp["id"], destination):
+            fingerprint = _content_fingerprint(candidate)
+            if fingerprint is None or fingerprint != candidate.get("fingerprint"):
+                stopped_at = int(candidate.get("seq") or 0)
+                stopped_doc_id = candidate.get("doc_id")
+                break
+            restore_status = candidate.get("prev_status") or "approved"
+            _db_docs.update(candidate["doc_id"], {"doc_review_status": restore_status})
+            restored.append(candidate["doc_id"])
+
+        reached_front = stopped_at is None and destination == front_seq
+        return_point_cleared = False
+        if reached_front:
+            if root_doc is not None and root_doc.get("doc_review_status") == "wf_in_progress":
+                _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
+                root_doc = _db_docs.get_by_id(root_doc["doc_id"])
+            _db_rp.delete(rp["id"])
+            return_point_cleared = True
+
+        final_root = root_doc or _group_workflow_root_doc(doc) or doc
+        root_status = final_root.get("doc_review_status") or root_status
+        try:
+            _event_logger.log_event(
+                event_type="reverse_time_machine",
+                project_id=project_id,
+                actor_user_id=current_user["user_id"],
+                group_id=group_id,
+                document_id=final_root.get("id"),
+                metadata={
+                    "restored": restored,
+                    "stopped_at": stopped_at,
+                    "destination_seq": destination,
+                    "front_seq": front_seq,
+                    "return_point_cleared": return_point_cleared,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - best-effort event trail
+            _log.warning("[workflow restore] event logging failed: %s", exc, exc_info=True)
+
+        return {
+            "ok": True,
+            "restored": restored,
+            "stopped_at": stopped_at,
+            "stopped_doc_id": stopped_doc_id,
+            "reached_front": reached_front,
+            "root_status": root_status,
+            "return_point_cleared": return_point_cleared,
+        }
 
 
 def _create_next_empty_document_for_auto_draft(

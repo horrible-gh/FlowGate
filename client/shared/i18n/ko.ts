@@ -907,6 +907,11 @@
       confirm: '되돌리기',
       reopening: '되돌리는 중…',
       toast_reopened: '워크플로를 되돌렸습니다.',
+      restore_action: '원위치로 복귀',
+      restore_running: '복귀 중…',
+      restore_done: '{count}단계를 원위치로 복귀했습니다.',
+      restore_stopped: '{count}단계 복귀 후 {doc}에서 멈췄습니다.',
+      restore_noop: '복귀할 단계가 없습니다.',
     },
     review_action_bar: {
       status_revised: '수정됨',
