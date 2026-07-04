@@ -369,6 +369,8 @@ _DOC_REFERENCE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("document_revisions", "doc_id"),
     ("document_revisions", "linked_doc_id"),
     ("tokens", "doc_ref"),
+    ("test_runs", "doc_id"),
+    ("test_runs", "tsr_doc_id"),
     ("workflow_sequences", "doc_id"),
     ("workflow_sequence_items", "result_doc_id"),
     ("remote_tool_grant", "report_doc_id"),

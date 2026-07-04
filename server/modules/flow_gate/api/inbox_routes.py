@@ -625,8 +625,67 @@ async def inbox(request: Request):
         return await _handle_new(request, raw, body)
     elif action == "review":
         return await _handle_review(request, raw, body)
+    elif action == "test_run":
+        return await _handle_test_run(request, raw, body)
     else:
         return await _handle_edit(request, raw, body)
+
+
+async def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONResponse:
+    """Start a TS test run through a test_run-scoped worker token."""
+    from modules.flow_gate.services import test_run_service
+
+    project = body.get("project")
+    doc_id = body.get("doc_id") or body.get("doc_ref") or body.get("target_id")
+    if not project:
+        return _fail(400, "Required field missing: project")
+    if not doc_id:
+        return _fail(400, "Required field missing: doc_id")
+
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        return _fail(exc.status_code, str(exc.detail))
+
+    if token_rec.get("action_scope") != "test_run":
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if token_rec.get("project") != project or token_rec.get("doc_ref") != doc_id:
+        return _fail(403, "Context binding mismatch. Use the correct token.")
+    if not has_permission(token_rec["issued_to"], project, "perm_test_run"):
+        return _fail(403, "Permission denied: perm_test_run required")
+
+    doc = db_docs.get_by_id(str(doc_id))
+    if doc is None:
+        return _fail(404, f"Document {doc_id} does not exist")
+
+    dry_resp = _maybe_dry_run(
+        body,
+        token_rec,
+        {
+            "action": "test_run",
+            "doc_id": doc_id,
+            "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
+        },
+    )
+    if dry_resp is not None:
+        return dry_resp
+
+    try:
+        result = test_run_service.validate_and_create_run(
+            doc_id=str(doc_id),
+            runner_id=token_rec["issued_to"],
+            triggered_via="token",
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"error_message": str(exc.detail)}
+        return JSONResponse(status_code=exc.status_code, content=detail)
+
+    token_service.consume(
+        token_id=token_rec["token_id"],
+        project_id=project,
+        doc_id=str(doc_id),
+    )
+    return JSONResponse(status_code=202, content=result)
 
 
 async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse:
