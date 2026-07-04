@@ -56,6 +56,7 @@ _NOTIFICATION_EVENT_TYPES = (
 # process_service._GROUP_DISCARD_TYPE. Mirrored here as a literal so the dashboard
 # query has no import coupling to process_service (heavy module / circular risk).
 _GROUP_DISCARD_TYPE = "DC"
+_WORKFLOW_ROOT_TYPES = ("R", "B")
 
 
 class DashboardDataError(RuntimeError):
@@ -109,6 +110,24 @@ def _fetch_project_groups(project_id: str) -> dict[str, dict]:
         [project_id],
     )
     return {row["group_id"]: row for row in rows}
+
+
+def _fetch_terminal_group_ids(project_id: str) -> set[str]:
+    """Groups that have left active work: final-approved AC or discarded DC."""
+    rows = get_store()._fetch_all(
+        """
+        SELECT DISTINCT group_id
+        FROM documents
+        WHERE project_id = ?
+          AND group_id IS NOT NULL
+          AND (
+                (type_code IN (?, ?) AND doc_review_status = 'wf_done')
+             OR type_code = ?
+          )
+        """,
+        [project_id, *_WORKFLOW_ROOT_TYPES, _GROUP_DISCARD_TYPE],
+    )
+    return {row["group_id"] for row in rows if row.get("group_id")}
 
 
 def _event_rows(
@@ -408,6 +427,33 @@ def _normalized_activities(
     return items
 
 
+def _activity_group_id(item: dict) -> str | None:
+    group = item.get("group")
+    if group and group.get("group_id"):
+        return str(group["group_id"])
+    navigation = item.get("navigation") or {}
+    if navigation.get("group_id"):
+        return str(navigation["group_id"])
+    return None
+
+
+def _without_terminal_group_items(project_id: str, items: list[dict]) -> list[dict]:
+    """Drop final-approved/discarded groups from the notification feed.
+
+    The explorer and active-workflow card already treat R/B `wf_done` and DC groups as terminal.
+    Notification rows need the same boundary so old inflow and stale AI `issues` verdicts do not keep
+    completed groups in the unread/attention surfaces.
+    """
+    terminal_group_ids = _fetch_terminal_group_ids(project_id)
+    if not terminal_group_ids:
+        return items
+    return [
+        item
+        for item in items
+        if (group_id := _activity_group_id(item)) not in terminal_group_ids
+    ]
+
+
 def _page(items: list[dict], limit: int) -> dict:
     page = items[:limit]
     return {
@@ -454,6 +500,7 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
     """
     with get_store().transaction():
         items = _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
+        items = _without_terminal_group_items(project_id, items)
     feed = _page(items, limit)
     return {
         "ok": True,
