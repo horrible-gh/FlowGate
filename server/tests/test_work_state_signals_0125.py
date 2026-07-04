@@ -95,6 +95,7 @@ def store(monkeypatch):
         );
 
         INSERT INTO groups VALUES ('flowgate.default.0125', 'flowgate', 'State board', NULL);
+        INSERT INTO groups VALUES ('flowgate.default.0125.done', 'flowgate', 'Finished state board', NULL);
         INSERT INTO users VALUES ('u1', 'developer');
         INSERT INTO documents
             (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
@@ -103,7 +104,7 @@ def store(monkeypatch):
              'R', 'Requirement', 'wf_in_progress', '2026-06-24T00:00:00Z'),
             ('flowgate.default.0125.0004-T', 'flowgate', 'flowgate.default.0125',
              'T', 'Work order', 'approved', '2026-06-24T00:01:00Z'),
-            ('flowgate.default.0125.0010-R', 'flowgate', 'flowgate.default.0125',
+            ('flowgate.default.0125.0010-R', 'flowgate', 'flowgate.default.0125.done',
              'R', 'Finished requirement', 'wf_done', '2026-06-24T00:02:00Z'),
             ('flowgate.other.0001-R', 'other', 'g.other',
              'R', 'Other project', 'wf_in_progress', '2026-06-24T00:03:00Z');

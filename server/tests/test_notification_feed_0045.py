@@ -106,6 +106,58 @@ def test_feed_excludes_registration_noise(feed_store):
     assert "document_edited" not in types
 
 
+def test_feed_excludes_final_approved_group(feed_store):
+    """Completed groups must not keep unread/attention notification rows alive."""
+    feed_store.conn.execute(
+        """
+        INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
+        VALUES ('flowgate.default.0045.0001-R', 'flowgate', 'flowgate.default.0045',
+                'R', 'Requirement', 'wf_done', '2026-06-12T00:05:00Z')
+        """
+    )
+    feed_store.conn.commit()
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["unread_count"] == 0
+    assert result["recent_activities"]["total"] == 0
+    assert result["recent_activities"]["items"] == []
+
+
+def test_feed_excludes_discarded_group(feed_store):
+    """A DC discard record is also terminal for the notification feed."""
+    feed_store.conn.execute(
+        """
+        INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
+        VALUES ('flowgate.default.0045.0005-DC', 'flowgate', 'flowgate.default.0045',
+                'DC', 'Group Discard', NULL, '2026-06-12T00:05:00Z')
+        """
+    )
+    feed_store.conn.commit()
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["unread_count"] == 0
+    assert result["recent_activities"]["total"] == 0
+    assert result["recent_activities"]["items"] == []
+
+
+def test_dashboard_card_keeps_terminal_group_history(feed_store):
+    """The terminal filter is notification-only; dashboard recent activity remains an audit stream."""
+    feed_store.conn.execute(
+        """
+        INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
+        VALUES ('flowgate.default.0045.0001-R', 'flowgate', 'flowgate.default.0045',
+                'R', 'Requirement', 'wf_done', '2026-06-12T00:05:00Z')
+        """
+    )
+    feed_store.conn.commit()
+
+    result = dashboard_service.list_recent_activities("flowgate", 50)
+
+    assert result["total"] == 4
+
+
 def test_dashboard_card_still_shows_full_stream(feed_store):
     """Decoupling guard: the dashboard recent-activity card keeps the full event stream."""
     result = dashboard_service.list_recent_activities("flowgate", 50)

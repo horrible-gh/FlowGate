@@ -190,6 +190,22 @@ def test_feed_rows_carry_ai_review_signals(chain_store):
     assert by_doc["flowgate.default.0135.0009-NR"]["finding_count"] == 0
 
 
+def test_final_approved_group_suppresses_terminal_issues_row(chain_store):
+    # Once the owning R workflow is wf_done, the notification center must stop surfacing the group's
+    # stale unread/attention rows, including terminal docs whose latest AI verdict is `issues`.
+    chain_store.conn.execute(
+        "INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at) "
+        "VALUES ('flowgate.default.0135.0001-R', 'flowgate', 'flowgate.default.0135', "
+        "'R', 'Requirement', 'wf_done', '2026-07-02T00:07:00Z')"
+    )
+    chain_store.conn.commit()
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["unread_count"] == 0
+    assert result["recent_activities"]["items"] == []
+
+
 def test_review_enrichment_degrades_without_reviews_table(chain_store):
     # Defensive: a minimal/legacy store lacking document_reviews must not crash the feed — rows just
     # render neutral (verdict null). Drop the table and confirm the feed still assembles.
