@@ -907,6 +907,9 @@ export default {
       confirm: '差し戻す',
       reopening: '差し戻し中…',
       toast_reopened: 'ワークフローを差し戻しました。',
+      restore_done: '{count}ステップを元の位置に復帰しました。',
+      restore_stopped: '{count}ステップ復帰後、{doc} で停止しました。',
+      restore_noop: '復帰できるステップがありません。',
     },
     review_action_bar: {
       status_revised: '修正済み',
@@ -1442,6 +1445,7 @@ export default {
       edit_btn: 'シーケンス編集',
       decided_empty: 'すべてのステップが削除されました。[シーケンス編集]からステップを再追加してください。',
       time_machine_hint: 'このステップに差し戻す',
+      time_machine_return_hint: 'このステップに復帰（元の位置へ）',
     },
   },
   projects: {

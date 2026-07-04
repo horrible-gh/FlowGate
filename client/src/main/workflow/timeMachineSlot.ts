@@ -61,3 +61,31 @@ export function isRollbackTarget(slot: SequenceSlot | null): boolean {
     && slot.result_seq != null
     && !NON_ROLLBACK_TYPES.includes(slot.type ?? '')
 }
+
+// 0142 R0001 — reverse time-machine (return point). After a rewind the workflow head sits at
+// an earlier step; the steps that were rewound past it are the "return targets". They render
+// AHEAD of the head in the same strip and — mirroring the backward time-machine — become
+// hover-clickable so one click rolls the workflow FORWARD to that step (restoring the
+// untouched steps in between without re-approval).
+//
+// A strip cell is a return target when its resolved slot is a valid rollback target whose
+// realised seq sits above the current head (currentMinSeq, exclusive — you are already there)
+// and at or below the return-point front (frontSeq, inclusive — the original position). The
+// resolution reuses resolveClickedSlot so the highlighted cells and the click that restores
+// them can never diverge (the same repeated-type / divergent-ordering handling applies).
+export function returnTargetIndices(
+  stripCells: StripCell[],
+  items: SequenceSlot[],
+  currentMinSeq: number | null,
+  frontSeq: number | null,
+): number[] {
+  if (currentMinSeq == null || frontSeq == null || currentMinSeq >= frontSeq) return []
+  const out: number[] = []
+  for (let i = 0; i < stripCells.length; i++) {
+    const slot = resolveClickedSlot(stripCells, items, { index: i, code: stripCells[i].code })
+    if (!isRollbackTarget(slot)) continue
+    const seq = slot!.result_seq as number
+    if (seq > currentMinSeq && seq <= frontSeq) out.push(i)
+  }
+  return out
+}

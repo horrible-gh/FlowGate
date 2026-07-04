@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   resolveClickedSlot,
   isRollbackTarget,
+  returnTargetIndices,
   type SequenceSlot,
   type StripCell,
 } from '@main/workflow/timeMachineSlot'
@@ -75,5 +76,42 @@ describe('isRollbackTarget — reopen eligibility', () => {
     expect(isRollbackTarget({ type: 'T', result_doc_id: null, result_seq: null })).toBe(false)
     expect(isRollbackTarget({ type: 'T', result_doc_id: 't1', result_seq: null })).toBe(false)
     expect(isRollbackTarget(null)).toBe(false)
+  })
+})
+
+describe('returnTargetIndices — 0142 R0001 reverse time-machine targets', () => {
+  // Workflow rewound to D (head at seq 3): L/P/T were rewound past it and are the return
+  // targets; front = T (seq 6). R/D (behind head) and AC (structural) are never targets.
+  const strip = cells('R', 'D', 'L', 'P', 'T', 'AC')
+  const items: SequenceSlot[] = [
+    { type: 'R', result_doc_id: 'r1', result_seq: 1 },
+    { type: 'D', result_doc_id: 'd1', result_seq: 3 },
+    { type: 'L', result_doc_id: 'l1', result_seq: 4 },
+    { type: 'P', result_doc_id: 'p1', result_seq: 5 },
+    { type: 'T', result_doc_id: 't1', result_seq: 6 },
+    { type: 'AC', result_doc_id: null, result_seq: null },
+  ]
+
+  it('marks the rewound cells ahead of the head up to the front', () => {
+    // current head = D (seq 3), front = T (seq 6) → L, P, T are return targets (indices 2,3,4).
+    expect(returnTargetIndices(strip, items, 3, 6)).toEqual([2, 3, 4])
+  })
+
+  it('excludes the head itself and structural cells (R/AC)', () => {
+    const targets = returnTargetIndices(strip, items, 3, 6)
+    expect(targets).not.toContain(0) // R (structural, behind head)
+    expect(targets).not.toContain(1) // D (the head, seq == currentMin)
+    expect(targets).not.toContain(5) // AC (structural, no realised doc)
+  })
+
+  it('narrows as the head advances (partial restore already applied)', () => {
+    // After restoring L, head advances to P (seq 5); only T (index 4) remains a target.
+    expect(returnTargetIndices(strip, items, 5, 6)).toEqual([4])
+  })
+
+  it('returns empty when there is no return region (head at/after front)', () => {
+    expect(returnTargetIndices(strip, items, 6, 6)).toEqual([])
+    expect(returnTargetIndices(strip, items, null, 6)).toEqual([])
+    expect(returnTargetIndices(strip, items, 3, null)).toEqual([])
   })
 })

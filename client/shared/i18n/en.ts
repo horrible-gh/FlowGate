@@ -907,8 +907,6 @@
       confirm: 'Reopen',
       reopening: 'Reopening…',
       toast_reopened: 'Workflow reopened.',
-      restore_action: 'Restore to Return Point',
-      restore_running: 'Restoring…',
       restore_done: 'Restored {count} steps to the return point.',
       restore_stopped: 'Restored {count} steps and stopped at {doc}.',
       restore_noop: 'No steps to restore.',
@@ -1447,6 +1445,7 @@
       edit_btn: 'Edit Sequence',
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
       time_machine_hint: 'Roll back to this step',
+      time_machine_return_hint: 'Return to this step (original position)',
     },
   },
   projects: {

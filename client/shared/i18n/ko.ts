@@ -907,8 +907,6 @@
       confirm: '되돌리기',
       reopening: '되돌리는 중…',
       toast_reopened: '워크플로를 되돌렸습니다.',
-      restore_action: '원위치로 복귀',
-      restore_running: '복귀 중…',
       restore_done: '{count}단계를 원위치로 복귀했습니다.',
       restore_stopped: '{count}단계 복귀 후 {doc}에서 멈췄습니다.',
       restore_noop: '복귀할 단계가 없습니다.',
@@ -1447,6 +1445,7 @@
       edit_btn: '시퀀스 수정',
       decided_empty: '모든 단계가 삭제되었습니다. [시퀀스 수정]으로 단계를 다시 추가하세요.',
       time_machine_hint: '이 단계로 되돌리기',
+      time_machine_return_hint: '이 단계로 복귀 (원위치로)',
     },
   },
   projects: {

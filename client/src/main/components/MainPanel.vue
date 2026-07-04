@@ -47,9 +47,11 @@
             :parent-r-doc-id="exposedValue(docHeaderRefs[tab.id]?.parentRDocId) ?? null"
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
+            :return-targets="getReturnTargets(tab.id)"
             @sequence-updated="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
+            @return-to="onWorkflowStepReturn(tab.id, $event)"
           />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
@@ -636,21 +638,6 @@
       </div>
     </div>
 
-    <div
-      v-if="activeTabId != null && canShowReturnPointRestore(activeTabId)"
-      class="return-point-bar"
-    >
-      <button
-        class="btn btn-primary btn-sm"
-        type="button"
-        :disabled="returnPointRestoring"
-        @click="onRestoreReturnPoint(activeTabId)"
-      >
-        <i class="fa-solid fa-forward"></i>
-        {{ returnPointRestoring ? t('main.time_machine.restore_running') : t('main.time_machine.restore_action') }}
-      </button>
-    </div>
-
     <ReviewActionBar
       v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
       :mode="getActionBarMode(activeTabId)!"
@@ -944,7 +931,7 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
-import { resolveClickedSlot, isRollbackTarget, type SequenceSlot } from '../workflow/timeMachineSlot'
+import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type SequenceSlot } from '../workflow/timeMachineSlot'
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
@@ -1210,6 +1197,9 @@ const timeMachineLoading = ref(false)
 // 0018 R0001 — strip-click time-machine pre-selects the clicked step's doc in the picker.
 const timeMachinePreselectDocId = ref<string | null>(null)
 const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
+// 0142 R0001 — cached workflow sequence per return-point root, used to map a rewound step's
+// strip cell to its seq for the reverse time-machine highlight/click (getReturnTargets).
+const returnSequences = reactive<Record<string, SequenceSlot[]>>({})
 const returnPointRestoring = ref(false)
 
 const DESIGN_TYPES = new Set(['D', 'P', 'L', 'DB'])
@@ -1431,11 +1421,25 @@ function returnPointDocId(tabId: string): string {
   return exposedValue<string>(docHeaderRefs[tabId]?.parentRDocId) ?? tabId
 }
 
-function canShowReturnPointRestore(tabId: string): boolean {
-  const rp = returnPoints[returnPointDocId(tabId)]
-  if (!rp?.exists || rp.front_seq == null) return false
-  if (rp.current_min_seq == null) return false
-  return rp.current_min_seq < rp.front_seq
+function hasReturnRegion(rp: ReturnPointInfo | undefined): rp is ReturnPointInfo {
+  return !!rp?.exists
+    && rp.front_seq != null
+    && rp.current_min_seq != null
+    && rp.current_min_seq < rp.front_seq
+}
+
+// 0142 R0001 — reverse time-machine strip integration. Instead of a stand-alone "return"
+// button, the rewound steps light up IN the workflow strip (green, hover-clickable) exactly
+// like the backward time-machine's done cells. This resolves which strip indices are those
+// return targets, reusing the cached sequence so the highlight matches what a click restores.
+function getReturnTargets(tabId: string): number[] {
+  const docId = returnPointDocId(tabId)
+  const rp = returnPoints[docId]
+  if (!hasReturnRegion(rp)) return []
+  const items = returnSequences[docId]
+  if (!items || items.length === 0) return []
+  const cells = getWorkflowViewState(tabId).stepStates
+  return returnTargetIndices(cells, items, rp.current_min_seq, rp.front_seq)
 }
 
 async function refreshReturnPoint(tabId: string) {
@@ -1445,7 +1449,7 @@ async function refreshReturnPoint(tabId: string) {
     const res = await getRequest<{ return_point?: ReturnPointInfo }>(
       `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point`,
     )
-    returnPoints[docId] = res.data?.return_point ?? {
+    const rp = res.data?.return_point ?? {
       exists: false,
       front_seq: null,
       front_label: null,
@@ -1454,8 +1458,22 @@ async function refreshReturnPoint(tabId: string) {
       destination_default: null,
       destination_min: null,
     }
+    returnPoints[docId] = rp
+    // Fetch the sequence only when there is an actual return region to light up, so the strip
+    // can map each rewound step's seq to its cell (getReturnTargets). No region → drop the cache.
+    if (hasReturnRegion(rp)) {
+      try {
+        const seqRes = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+        returnSequences[docId] = Array.isArray(seqRes.data?.sequence) ? seqRes.data.sequence : []
+      } catch {
+        delete returnSequences[docId]
+      }
+    } else {
+      delete returnSequences[docId]
+    }
   } catch {
     delete returnPoints[docId]
+    delete returnSequences[docId]
   }
 }
 
@@ -1828,25 +1846,65 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
   }
 }
 
-async function onRestoreReturnPoint(tabId: string) {
+// 0142 R0001 — reverse time-machine. A return-target cell (a rewound step ahead of the head)
+// was clicked in the workflow strip; roll the workflow FORWARD to it. This mirrors
+// onWorkflowStepTimeMachine: resolve the clicked slot by identity (index, then type-occurrence
+// fallback) so repeated types return to the correct cell, restore every untouched step up to
+// it, then open that step so the user actually lands there ("go there").
+async function onWorkflowStepReturn(tabId: string, payload: { index: number; code: string }) {
+  if (returnPointRestoring.value) return
   const docId = returnPointDocId(tabId)
-  if (!docId) return
+  if (!docId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  // Reuse the cached sequence populated alongside the return point; fall back to a fresh fetch.
+  let items: SequenceSlot[] = returnSequences[docId] ?? []
+  if (items.length === 0) {
+    try {
+      const res = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+      items = Array.isArray(res.data?.sequence) ? res.data.sequence : []
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? String(e), 'danger')
+      return
+    }
+  }
+  const clicked = resolveClickedSlot(getWorkflowViewState(tabId).stepStates, items, payload)
+  if (!isRollbackTarget(clicked) || clicked!.result_seq == null) {
+    showToast(t('main.time_machine.not_rollbackable'), 'danger')
+    return
+  }
+  const destinationSeq = clicked!.result_seq as number
+  const destinationDocId = clicked!.result_doc_id as string
+
   returnPointRestoring.value = true
   try {
     const res = await postRequest<any>(`/api/v1/documents/workflow/restore`, {
       doc_id: docId,
-      destination_seq: null,
+      destination_seq: destinationSeq,
     })
     const data = res.data ?? {}
     for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
     await refreshReturnPoint(tabId)
     const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
-    if (data.reached_front) {
-      showToast(t('main.time_machine.restore_done', { count: restoredCount }), 'success')
-    } else if (data.stopped_doc_id) {
+    if (data.stopped_doc_id) {
+      // Hit an edited step before reaching the clicked target — stop there, keep the return point.
       showToast(t('main.time_machine.restore_stopped', { count: restoredCount, doc: data.stopped_doc_id }), 'warning')
+    } else if (restoredCount > 0 || data.reached_front) {
+      showToast(t('main.time_machine.restore_done', { count: restoredCount }), 'success')
     } else {
       showToast(t('main.time_machine.restore_noop'), 'warning')
+    }
+    // "그쪽으로 갈수 있게" — land the user on the step they returned to.
+    const landing = data.stopped_doc_id ?? destinationDocId
+    if (landing) {
+      tabsStore.openTab({
+        id: landing,
+        title: (clicked!.label as string) ? `${landing} — ${clicked!.label as string}` : landing,
+        path: '',
+        type: 'md',
+        typeCode: (clicked!.type as string) ?? undefined,
+      })
     }
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
@@ -3011,18 +3069,6 @@ watch(textWrapEnabled, (enabled) => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.return-point-bar {
-  position: sticky;
-  bottom: 58px;
-  z-index: 20;
-  display: flex;
-  justify-content: center;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--bg, #ffffff) 88%, transparent);
-  border-top: 1px solid var(--border, #e5e7eb);
-  backdrop-filter: blur(8px);
 }
 
 .dashboard-row {
