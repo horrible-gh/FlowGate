@@ -1561,16 +1561,36 @@ def _content_fingerprint(doc: dict) -> str | None:
     return _hashlib.sha256(_normalise_markdown_for_fingerprint(raw)).hexdigest()
 
 
-def _record_return_point(group_id: str, docs: list[dict]) -> dict | None:
+def _record_return_point(
+    group_id: str, docs: list[dict], *, root_was_done: bool,
+) -> dict | None:
     from modules.flow_gate.db import workflow_return_points as _db_rp
 
+    # A return point is the completed workflow you can walk "home" to. It is meaningful ONLY when
+    # the rewind is leaving a genuinely completed (wf_done) workflow: reaching front later declares
+    # the root wf_done, so if the workflow was mid-flight (a step never approved) that would be a
+    # lie. Create one only when root_was_done; a pre-existing return point is always extended (a
+    # nested rewind to an earlier step), preserving the completed baseline the first rewind captured.
+    existing = _db_rp.get_by_group(group_id)
+    if existing is None and not root_was_done:
+        return None
+
+    # The return point is the APPROVED baseline you are rewinding away from — the "home"
+    # position a later restore walks back to. Only genuinely-approved steps belong in it.
+    # Snapshotting a step that is currently pending_review (a step left pending by an earlier
+    # cycle) would record prev_status=pending_review and later "restore" it to pending — a no-op
+    # that also lets reached_front lie about wf_done. That laundered a pending status into the next
+    # cycle's "original" state, and once tangled every restore became a permanent no-op. Recording
+    # only approved steps closes the laundering at the source; docs already in the return point are
+    # preserved by add_doc_if_absent, so nested rewinds keep the true approved baseline (0142 T0013).
     affected = [
         d for d in docs
         if d.get("type_code") not in _RETURN_POINT_NON_RESTORE_TYPES
         and (d.get("seq") or 0) > 0
+        and (d.get("doc_review_status") or "approved") == "approved"
     ]
     if not affected:
-        return None
+        return existing
 
     front_seq = max(int(d.get("seq") or 0) for d in affected)
     rp = _db_rp.ensure(group_id, front_seq)
@@ -1765,7 +1785,8 @@ def reopen_workflow(
         # Only documents wired into the workflow sequence are rewindable steps. Phantom docs
         # (superseded/abandoned revisions sharing the group's seq space) must NOT be swept in
         # by the raw seq threshold — 0142 rework. Falls back to type+seq when no sequence.
-        step_ids = _workflow_step_doc_ids(_group_workflow_root_doc(doc))
+        root_doc = _group_workflow_root_doc(doc)
+        step_ids = _workflow_step_doc_ids(root_doc)
 
         def _is_rewindable_step(c: dict) -> bool:
             if c.get("type_code") in _RETURN_POINT_NON_RESTORE_TYPES:
@@ -1774,8 +1795,11 @@ def reopen_workflow(
                 return False
             return (c.get("seq") or 0) >= body.target_seq
 
+        # Capture completion state BEFORE any rollback: only a wf_done workflow has a "home" to
+        # restore to (see _record_return_point). root_doc is read here, pre-mutation.
+        root_was_done = root_doc is not None and root_doc.get("doc_review_status") == "wf_done"
         snapshot_docs = [c for c in group_docs if _is_rewindable_step(c)]
-        _record_return_point(group_id, snapshot_docs)
+        _record_return_point(group_id, snapshot_docs, root_was_done=root_was_done)
 
         reopened: list = []
         for c in group_docs:
@@ -1792,9 +1816,28 @@ def reopen_workflow(
                 _db_docs.update(c["doc_id"], {"doc_review_status": "pending_review"})
                 reopened.append(c["doc_id"])
 
-        root_doc = _group_workflow_root_doc(doc)
-        if root_doc is not None and root_doc.get("doc_review_status") == "wf_done":
+        if root_was_done and root_doc is not None:
             _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_in_progress"})
+
+        # Audit trail: the rewind side previously logged nothing, so a return point could appear
+        # (and its restore fire) with no record of what created it — a gap when reconstructing a
+        # tangled workflow. Mirror the restore event so both directions leave a trace (0142 T0013).
+        from modules.flow_gate.workflow import event_logger as _event_logger
+        try:
+            _event_logger.log_event(
+                event_type="workflow_reopen",
+                project_id=project_id,
+                actor_user_id=current_user["user_id"],
+                group_id=group_id,
+                document_id=(root_doc or doc).get("id"),
+                metadata={
+                    "reopened": reopened,
+                    "target_seq": body.target_seq,
+                    "return_point": _return_point_payload(group_id),
+                },
+            )
+        except Exception as exc:  # pragma: no cover - best-effort event trail
+            _log.warning("[workflow reopen] event logging failed: %s", exc, exc_info=True)
 
         return {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
 
@@ -1873,11 +1916,18 @@ def restore_workflow(
         reached_front = stopped_at is None and destination == front_seq
         return_point_cleared = False
         if reached_front:
-            if root_doc is not None and root_doc.get("doc_review_status") == "wf_in_progress":
-                _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
-                root_doc = _db_docs.get_by_id(root_doc["doc_id"])
-            _db_rp.delete(rp["id"])
-            return_point_cleared = True
+            # Finalize (root → wf_done, clear the return point) ONLY when the restore actually
+            # reconstructed the approved baseline. If any snapshot doc is still pending_review
+            # — a pre-existing polluted return point whose prev_status was itself pending — keep
+            # the return point and leave the root untouched rather than declaring the workflow
+            # done over a pending step and laundering the pollution on the next rewind (0142 T0013).
+            still_pending = _db_rp.current_pending_min_seq(rp["id"])
+            if still_pending is None:
+                if root_doc is not None and root_doc.get("doc_review_status") == "wf_in_progress":
+                    _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
+                    root_doc = _db_docs.get_by_id(root_doc["doc_id"])
+                _db_rp.delete(rp["id"])
+                return_point_cleared = True
 
         final_root = root_doc or _group_workflow_root_doc(doc) or doc
         root_status = final_root.get("doc_review_status") or root_status
