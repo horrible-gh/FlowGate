@@ -1991,6 +1991,15 @@ def _load_ai_reviews(doc_id: str) -> tuple[Optional[dict], list[dict]]:
     return (shaped[0] if shaped else None), shaped
 
 
+def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
+    try:
+        from modules.flow_gate.services import test_run_service as _test_run_service
+
+        return _test_run_service.load_test_run_embed(doc_id)
+    except Exception:
+        return None, []
+
+
 @router.get("/{doc_id}")
 @require_permission("perm_document_read")
 def get_document(
@@ -2004,6 +2013,7 @@ def get_document(
     out = _parse_doc_workflow(doc)
     # AI review results (document_reviews child records), variant C: latest review plus full history.
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
+    out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
     return out
 
 

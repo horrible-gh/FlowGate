@@ -485,6 +485,36 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
     "en": "<response to each rejection reason: describe how each one was addressed>",
 }
 
+# TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
+# it remotely from the project source root. Without this block the worker receives a
+# generic new-document mention and the TS it writes fails parse_test_plan
+# (no_test_cases / invalid_case_block). The three H2 headers are Korean literals
+# because test_run_service.parse_test_plan matches them verbatim, regardless of locale.
+_TS_AUTHORING_TYPES = {"TS"}
+
+
+def _ts_authoring_section() -> str:
+    body = (
+        "Write this TS as an executable spec. FlowGate runs it remotely from the project\n"
+        "source root — do NOT assume any locally-running service. Use three H2 sections in\n"
+        "this order:\n\n"
+        "## 테스트 준비        (optional; runs first, in order)\n"
+        "- cmd: <shell command, single line>            # setup step\n"
+        "- 기동: <server start command, backgrounded>   # long-lived service\n"
+        "- 대기: {PORT}                                  # wait until 127.0.0.1:{PORT} accepts\n\n"
+        "## 테스트 케이스       (required; at least one case)\n"
+        "### TC-1: <title>\n"
+        "- cmd: <single-line command; PASS iff exit code 0>\n"
+        "- 기대: <expected behavior, human-readable>\n\n"
+        "## 테스트 정리        (optional; always runs, even on failure)\n"
+        "- cmd: <cleanup command>\n\n"
+        "Placeholders — {PORT}: port FlowGate allocates (also env FLOWGATE_TEST_PORT);\n"
+        "{SCRATCH}: per-run scratch dir, deleted afterward (env FLOWGATE_TEST_SCRATCH).\n"
+        "Commit the actual test code to the repo in this step (no auto-generation).\n"
+        "Limits: at most 50 cases, 20 setup/teardown steps, 5 services. Verdict is exit-0 only."
+    )
+    return _section("Test scenario authoring (TS)", body)
+
 
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
@@ -644,6 +674,13 @@ def build_mention(
             f"({_WORK_INSTRUCTION_LABEL[template_provision.normalize_locale(locale)]}) "
             "document.",
         )
+
+    # ── TS authoring guidance ────────────────────────────────────────────────
+    # A worker whose head/target is a TS must be told the 3-section case-block grammar
+    # and {PORT}/{SCRATCH} conventions, else the TS it writes cannot be parsed/run.
+    ts_authoring_section = ""
+    if scope_type in _TS_AUTHORING_TYPES:
+        ts_authoring_section = _ts_authoring_section()
 
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
@@ -835,6 +872,8 @@ def build_mention(
     ]
     if scope_section:
         sections.append(scope_section)
+    if ts_authoring_section:
+        sections.append(ts_authoring_section)
     if template_section:
         sections.append(template_section)
     if source_crud_section:
