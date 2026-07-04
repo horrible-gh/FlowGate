@@ -94,8 +94,17 @@ def list_open_items(project_id: Optional[str] = None) -> list[dict]:
 
     project_id=None → all projects; otherwise scoped to that project.
     Each row: {doc_id, seq, title, type_code}. type_code is the host document's
-    type (so the dashboard can open the real document, not a Q-tree viewer) and
-    may be NULL if the document row is missing.
+    type (so the dashboard can open the real document, not a Q-tree viewer).
+
+    Exclusions mirror the dashboard's terminal-group definition
+    (services.dashboard_service._fetch_terminal_group_ids): a question is dropped
+    when its GROUP has completed its workflow — i.e. the group's root R/B document
+    reached doc_review_status='wf_done', or the group carries a DC discard record —
+    or when the group is manually closed (status CLOSED/DISCARDED, closed_at set,
+    or deleted_at set). Keying the wf_done exclusion off the group root rather than
+    the individual host document is what suppresses questions that live on a
+    non-root child doc (e.g. a T/N whose review is merely 'approved') inside an
+    already-completed group (B0001).
     """
     store = get_store()
     return store._fetch_all(

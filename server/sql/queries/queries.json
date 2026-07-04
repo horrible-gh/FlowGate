@@ -101,7 +101,7 @@
         "get_next_q_number": "SELECT COUNT(*) as count FROM questions WHERE q_id LIKE 'Q%'",
         "get_container_by_doc": "SELECT * FROM questions WHERE doc_id = ?",
         "insert_container_for_doc": "INSERT INTO questions (q_id, doc_id, project_id, title, created_by, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-        "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN documents d ON d.doc_id = q.doc_id WHERE qi.answer_count = 0 AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) ORDER BY q.updated_at DESC"
+        "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id JOIN documents d ON d.doc_id = q.doc_id LEFT JOIN groups g ON g.group_id = d.group_id WHERE qi.answer_count = 0 AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) AND COALESCE(d.doc_review_status, '') <> 'wf_done' AND COALESCE(UPPER(g.status), '') NOT IN ('CLOSED', 'DISCARDED') AND g.closed_at IS NULL AND g.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM documents rd WHERE rd.group_id = d.group_id AND ((rd.type_code IN ('R', 'B') AND rd.doc_review_status = 'wf_done') OR rd.type_code = 'DC')) ORDER BY q.updated_at DESC"
     },
     "question_items": {
         "insert_question_item": "INSERT INTO question_items (question_id, seq, title, body, asker_kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
