@@ -907,6 +907,15 @@
       confirm: 'Reopen',
       reopening: 'Reopening…',
       toast_reopened: 'Workflow reopened.',
+      // Confirm dialog shown before returning forward — mirrors the rollback dialog.
+      return_confirm_title: 'Return to this step',
+      return_confirm_message: 'Return the workflow forward to {doc}. Untouched steps up to there are restored to their previous approval without re-review, stopping at the first document whose content changed. Proceed?',
+      return_confirm_ok: 'Return',
+      // Result toasts — anchored on the document reached, not a raw step count.
+      restore_done_full: 'Workflow returned to where it was ({doc}).',
+      restore_done_partial: 'Returned up to {doc}.',
+      restore_stopped: 'Stopped at {doc} — its content changed. Please review it.',
+      restore_noop: 'Nothing to return.',
     },
     review_action_bar: {
       status_revised: 'Revised',
@@ -1442,6 +1451,7 @@
       edit_btn: 'Edit Sequence',
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
       time_machine_hint: 'Roll back to this step',
+      time_machine_return_hint: 'Return to this step (original position)',
     },
   },
   projects: {

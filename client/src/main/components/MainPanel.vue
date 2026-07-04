@@ -47,9 +47,11 @@
             :parent-r-doc-id="exposedValue(docHeaderRefs[tab.id]?.parentRDocId) ?? null"
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
+            :return-targets="getReturnTargets(tab.id)"
             @sequence-updated="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
+            @return-to="onWorkflowStepReturn(tab.id, $event)"
           />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
@@ -853,6 +855,16 @@
       @update:visible="(v: boolean) => { timeMachineVisible = v }"
     />
 
+    <!-- 0142 rework — forward-restore confirm (symmetric with the backward dialog above). -->
+    <ConfirmModal
+      v-model:visible="returnConfirmVisible"
+      :title="t('main.time_machine.return_confirm_title')"
+      :message="returnConfirmMessage"
+      :confirm-label="t('main.time_machine.return_confirm_ok')"
+      @confirm="doWorkflowStepReturn"
+      @cancel="pendingReturn = null"
+    />
+
     <ReviewHistoryDialog
       :visible="reviewHistoryVisible"
       :reviews="reviewHistoryReviews"
@@ -929,7 +941,7 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
-import { resolveClickedSlot, isRollbackTarget, type SequenceSlot } from '../workflow/timeMachineSlot'
+import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type SequenceSlot } from '../workflow/timeMachineSlot'
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
@@ -1173,6 +1185,16 @@ interface TimeMachineStep {
   typeCode: string | null
   title: string | null
 }
+
+interface ReturnPointInfo {
+  exists: boolean
+  front_seq: number | null
+  front_label: string | null
+  restorable_count: number
+  current_min_seq: number | null
+  destination_default: number | null
+  destination_min: number | null
+}
 // Full AI review/rejection history modal (variant C), opened from "view full history" in the right panel.
 const reviewHistoryVisible = ref(false)
 const reviewHistoryReviews = ref<AiReview[]>([])
@@ -1189,6 +1211,28 @@ const timeMachineSteps = ref<TimeMachineStep[]>([])
 const timeMachineLoading = ref(false)
 // 0018 R0001 — strip-click time-machine pre-selects the clicked step's doc in the picker.
 const timeMachinePreselectDocId = ref<string | null>(null)
+const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
+// 0142 R0001 — cached workflow sequence per return-point root, used to map a rewound step's
+// strip cell to its seq for the reverse time-machine highlight/click (getReturnTargets).
+const returnSequences = reactive<Record<string, SequenceSlot[]>>({})
+const returnPointRestoring = ref(false)
+// 0142 rework — a click on a return-target cell no longer restores instantly. It opens a
+// confirm dialog (symmetric with the backward time-machine's dialog); this holds the pending
+// restore until the user confirms. Cleared on confirm/cancel.
+const returnConfirmVisible = ref(false)
+const pendingReturn = ref<{
+  tabId: string
+  docId: string
+  destinationSeq: number
+  destinationDocId: string
+  destinationLabel: string | null
+  destinationType: string | null
+} | null>(null)
+const returnConfirmMessage = computed(() =>
+  pendingReturn.value
+    ? t('main.time_machine.return_confirm_message', { doc: shortDocCode(pendingReturn.value.destinationDocId) })
+    : '',
+)
 
 const DESIGN_TYPES = new Set(['D', 'P', 'L', 'DB'])
 
@@ -1404,6 +1448,74 @@ function getTabTypeCode(tabId: string | null | undefined): string | null {
   const tab = tabs.value.find(t => t.id === tabId)
   return tab?.typeCode ?? exposedValue<string | null>(docHeaderRefs[tabId]?.docTypeCode)
 }
+
+function returnPointDocId(tabId: string): string {
+  return exposedValue<string>(docHeaderRefs[tabId]?.parentRDocId) ?? tabId
+}
+
+function hasReturnRegion(rp: ReturnPointInfo | undefined): rp is ReturnPointInfo {
+  return !!rp?.exists
+    && rp.front_seq != null
+    && rp.current_min_seq != null
+    && rp.current_min_seq < rp.front_seq
+}
+
+// 0142 R0001 — reverse time-machine strip integration. Instead of a stand-alone "return"
+// button, the rewound steps light up IN the workflow strip (green, hover-clickable) exactly
+// like the backward time-machine's done cells. This resolves which strip indices are those
+// return targets, reusing the cached sequence so the highlight matches what a click restores.
+function getReturnTargets(tabId: string): number[] {
+  const docId = returnPointDocId(tabId)
+  const rp = returnPoints[docId]
+  if (!hasReturnRegion(rp)) return []
+  const items = returnSequences[docId]
+  if (!items || items.length === 0) return []
+  const cells = getWorkflowViewState(tabId).stepStates
+  return returnTargetIndices(cells, items, rp.current_min_seq, rp.front_seq)
+}
+
+async function refreshReturnPoint(tabId: string) {
+  const docId = returnPointDocId(tabId)
+  if (!docId || !getTabTypeCode(tabId)) return
+  try {
+    const res = await getRequest<{ return_point?: ReturnPointInfo }>(
+      `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point`,
+    )
+    const rp = res.data?.return_point ?? {
+      exists: false,
+      front_seq: null,
+      front_label: null,
+      restorable_count: 0,
+      current_min_seq: null,
+      destination_default: null,
+      destination_min: null,
+    }
+    returnPoints[docId] = rp
+    // Fetch the sequence only when there is an actual return region to light up, so the strip
+    // can map each rewound step's seq to its cell (getReturnTargets). No region → drop the cache.
+    if (hasReturnRegion(rp)) {
+      try {
+        const seqRes = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+        returnSequences[docId] = Array.isArray(seqRes.data?.sequence) ? seqRes.data.sequence : []
+      } catch {
+        delete returnSequences[docId]
+      }
+    } else {
+      delete returnSequences[docId]
+    }
+  } catch {
+    delete returnPoints[docId]
+    delete returnSequences[docId]
+  }
+}
+
+watch(
+  () => [activeTabId.value, headerRevision.value] as const,
+  ([tabId]) => {
+    if (tabId) void refreshReturnPoint(tabId)
+  },
+  { immediate: true },
+)
 
 // Used by the file-less final-approval panel to show its completed state.
 function isCompletedDoc(tabId: string): boolean {
@@ -1763,6 +1875,102 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
     showToast(detail, 'danger')
+  }
+}
+
+// 0142 R0001 — reverse time-machine. A return-target cell (a rewound step ahead of the head)
+// was clicked in the workflow strip; roll the workflow FORWARD to it. This mirrors
+// onWorkflowStepTimeMachine: resolve the clicked slot by identity (index, then type-occurrence
+// fallback) so repeated types return to the correct cell, restore every untouched step up to
+// it, then open that step so the user actually lands there ("go there").
+// Short "0011-TR" code from a full doc_id, for user-facing messages that name the step.
+function shortDocCode(docId: string): string {
+  return docId.split('.').pop() ?? docId
+}
+
+// 0142 rework — complaint #1: the backward time-machine confirms via a dialog before rolling
+// back, but the forward restore fired the moment a cell was clicked ("너무 확확 돌아간다").
+// This now only RESOLVES the click and opens a confirm dialog; the actual restore runs in
+// doWorkflowStepReturn once the user confirms — symmetric with the backward direction.
+async function onWorkflowStepReturn(tabId: string, payload: { index: number; code: string }) {
+  if (returnPointRestoring.value) return
+  const docId = returnPointDocId(tabId)
+  if (!docId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  // Reuse the cached sequence populated alongside the return point; fall back to a fresh fetch.
+  let items: SequenceSlot[] = returnSequences[docId] ?? []
+  if (items.length === 0) {
+    try {
+      const res = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+      items = Array.isArray(res.data?.sequence) ? res.data.sequence : []
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? String(e), 'danger')
+      return
+    }
+  }
+  const clicked = resolveClickedSlot(getWorkflowViewState(tabId).stepStates, items, payload)
+  if (!isRollbackTarget(clicked) || clicked!.result_seq == null) {
+    showToast(t('main.time_machine.not_rollbackable'), 'danger')
+    return
+  }
+  pendingReturn.value = {
+    tabId,
+    docId,
+    destinationSeq: clicked!.result_seq as number,
+    destinationDocId: clicked!.result_doc_id as string,
+    destinationLabel: (clicked!.label as string) ?? null,
+    destinationType: (clicked!.type as string) ?? null,
+  }
+  returnConfirmVisible.value = true
+}
+
+// Confirmed forward restore: re-approve untouched steps up to the chosen one, stop at the
+// first changed document, then land the user on the step they returned to.
+async function doWorkflowStepReturn() {
+  const pending = pendingReturn.value
+  pendingReturn.value = null
+  if (!pending || returnPointRestoring.value) return
+  const { tabId, docId, destinationSeq, destinationDocId, destinationLabel, destinationType } = pending
+
+  returnPointRestoring.value = true
+  try {
+    const res = await postRequest<any>(`/api/v1/documents/workflow/restore`, {
+      doc_id: docId,
+      destination_seq: destinationSeq,
+    })
+    const data = res.data ?? {}
+    for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
+    await refreshReturnPoint(tabId)
+    const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
+    // Messages name the document reached, not a raw step count (complaint #3).
+    if (data.stopped_doc_id) {
+      // Hit an edited step before reaching the clicked target — stop there, keep the return point.
+      showToast(t('main.time_machine.restore_stopped', { doc: shortDocCode(data.stopped_doc_id) }), 'warning')
+    } else if (data.reached_front) {
+      showToast(t('main.time_machine.restore_done_full', { doc: shortDocCode(destinationDocId) }), 'success')
+    } else if (restoredCount > 0) {
+      showToast(t('main.time_machine.restore_done_partial', { doc: shortDocCode(destinationDocId) }), 'success')
+    } else {
+      showToast(t('main.time_machine.restore_noop'), 'warning')
+    }
+    // "그쪽으로 갈수 있게" — land the user on the step they returned to.
+    const landing = data.stopped_doc_id ?? destinationDocId
+    if (landing) {
+      tabsStore.openTab({
+        id: landing,
+        title: destinationLabel ? `${landing} — ${destinationLabel}` : landing,
+        path: '',
+        type: 'md',
+        typeCode: destinationType ?? undefined,
+      })
+    }
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(detail, 'danger')
+  } finally {
+    returnPointRestoring.value = false
   }
 }
 

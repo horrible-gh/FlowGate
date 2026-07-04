@@ -121,7 +121,10 @@ class FlowGateStore:
         txn = getattr(_tx_local, "txn", None)
         if txn:
             txn.execute(sql, params or [])
-            row = txn.fetchone()
+            if hasattr(txn, "fetchone"):
+                row = txn.fetchone()
+            else:
+                row = txn.fetch_one()
         elif hasattr(self._db, "fetch_one"):
             row = self._db.fetch_one(sql, params or [])
         else:
@@ -136,7 +139,10 @@ class FlowGateStore:
         txn = getattr(_tx_local, "txn", None)
         if txn:
             txn.execute(sql, params or [])
-            rows = txn.fetchall()
+            if hasattr(txn, "fetchall"):
+                rows = txn.fetchall()
+            else:
+                rows = txn.fetch_all()
         elif hasattr(self._db, "fetch_all"):
             rows = self._db.fetch_all(sql, params or [])
         else:

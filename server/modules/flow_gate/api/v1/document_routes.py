@@ -83,6 +83,15 @@ def _load_reviews(doc_id: str) -> tuple[Optional[dict], list[dict]]:
     return (history[0] if history else None), history
 
 
+def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
+    try:
+        from modules.flow_gate.services import test_run_service
+
+        return test_run_service.load_test_run_embed(doc_id)
+    except Exception:
+        return None, []
+
+
 _LEGACY_PROJECT_RE = _re.compile(r"^[a-z0-9_\-\u3131-\u318E\uAC00-\uD7A3]+$")
 _LEGACY_GROUP_SEQ_RE = _re.compile(r"^\d{4}$")
 _LEGACY_DOC_CODE_RE = _re.compile(r"^[A-Z]+\d{4}$")
@@ -201,6 +210,8 @@ def get_document_by_path(
     qa_pairs = get_answers_for_document(doc_id)
     if qa_pairs:
         resp["answers"] = qa_pairs
+    resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
+    resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
     return JSONResponse(content=resp)
 
 
@@ -313,4 +324,5 @@ def get_document(request: Request, doc_id: str):
     if qa_pairs:
         resp["answers"] = qa_pairs
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
+    resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
     return JSONResponse(content=resp)

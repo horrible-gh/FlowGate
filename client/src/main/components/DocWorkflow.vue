@@ -49,8 +49,9 @@
               s.className,
               (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
               s.visual === 'done' ? 'wf-done-clickable' : '',
+              isReturnTarget(idx) ? 'wf-return-clickable' : '',
             ]"
-            :title="s.visual === 'done' ? t('main.doc_workflow.time_machine_hint') : undefined"
+            :title="stepHint(s, idx)"
             @click="onStepClick(s, idx)"
           >
             <i :class="s.iconClass"></i>
@@ -88,6 +89,10 @@ const props = defineProps<{
   stepStates: StepState[]
   /** workflowViewState output: whether "proceed to next step" action is available (enables click). */
   canNextAction?: boolean
+  /** 0142 R0001 — reverse time-machine: strip indices that are "return targets". These are the
+   *  rewound steps sitting AHEAD of the current head; hovering makes them clickable to roll the
+   *  workflow forward (restore) to that step. Empty/absent when no active return point. */
+  returnTargets?: number[]
 }>()
 
 const { t } = useI18n()
@@ -107,13 +112,35 @@ const emit = defineEmits<{
   // Emits the strip index + step type code so the parent can resolve the slot's realised
   // document (by slot identity) and reopen the workflow there.
   'time-machine': [payload: { index: number; code: string }]
+  // 0142 R0001 — reverse time-machine: a return-target cell (a rewound step ahead of the head)
+  // was clicked. Emits the same index+code so the parent restores the workflow forward to that
+  // step and navigates there. Mirror of 'time-machine' in the opposite direction.
+  'return-to': [payload: { index: number; code: string }]
 }>()
 
-// 0018 R0001 — head step keeps its "proceed to next step" action; a completed (done) step
-// opens the time-machine (roll back to that step); future steps are inert.
+// 0142 R0001 — a strip cell is a return target when the parent lists its index in returnTargets.
+function isReturnTarget(idx: number): boolean {
+  return props.returnTargets?.includes(idx) ?? false
+}
+
+// Hover tooltip: a rewound step ahead of the head hints "return here"; a completed step behind
+// the head hints "roll back here". (A cell is only ever one of the two.)
+function stepHint(s: StepState, idx: number): string | undefined {
+  if (isReturnTarget(idx)) return t('main.doc_workflow.time_machine_return_hint')
+  if (s.visual === 'done') return t('main.doc_workflow.time_machine_hint')
+  return undefined
+}
+
+// 0018 R0001 / 0142 R0001 — head step keeps its "proceed to next step" action; a completed
+// (done) step behind the head opens the time-machine (roll back); a return-target step ahead of
+// the head restores forward (reverse time-machine); other future steps are inert.
 function onStepClick(s: StepState, idx: number) {
   if ((s.visual === 'highlight' || s.visual === 'current') && props.canNextAction) {
     emit('next-action')
+    return
+  }
+  if (isReturnTarget(idx)) {
+    emit('return-to', { index: idx, code: s.code })
     return
   }
   if (s.visual === 'done') {
@@ -181,6 +208,25 @@ const showEditModal = ref(false)
 }
 .wf-step.wf-done-clickable:hover {
   box-shadow: 0 0 0 3px rgba(217, 119, 6, .3);
+}
+
+/* 0142 R0001 — reverse time-machine: a rewound step AHEAD of the head is clickable to return
+   forward (restore) to it. It renders as a normal (grey/future) cell until hovered; the green
+   focus ring + forward cursor signal the non-destructive "go back to where I was" intent,
+   deliberately mirroring the amber backward ring above so the two directions read as one strip. */
+.wf-step.wf-return-clickable {
+  cursor: pointer;
+  border-style: dashed;
+  border-color: var(--success, #16a34a);
+  color: var(--success, #16a34a);
+  opacity: 1;
+}
+.wf-step.wf-return-clickable i {
+  color: var(--success, #16a34a);
+}
+.wf-step.wf-return-clickable:hover {
+  background: var(--success-l, #f0fdf4);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .3);
 }
 
 .wf-edit-btn {

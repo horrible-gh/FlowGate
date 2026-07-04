@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # investigation document were implementing code on their own. The mention must
 # state the scope boundary explicitly; implementation belongs in a T (work-instruction) doc.
 _INVESTIGATION_ONLY_TYPES = {"N", "NR"}
+_REMOTE_MUTATING_WORK_TYPES = {"T", "TR"}
 
 
 # ── API base path (including CONTEXT) ────────────────────────────────────────
@@ -67,6 +68,53 @@ _DRYRUN_HINT = (
 def _section(header: str, body: str) -> str:
     """P005 §3-1 format: '## header\\n---\\nbody'."""
     return f"## {header}\n---\n{body}"
+
+
+def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> str:
+    """Return the remote project-source API guide for worker mentions.
+
+    T/TR workers receive full source CRUD. Other document types receive read/search
+    guidance only, so investigation/review/design mentions do not contradict their
+    scope boundary by advertising mutating source operations.
+    """
+    if not raw_token:
+        return ""
+
+    def _json(data: dict) -> str:
+        return json.dumps(data, ensure_ascii=False, indent=2)
+
+    mutating = step_type in _REMOTE_MUTATING_WORK_TYPES
+    lines = [
+        "Use these endpoints when you need to inspect or change the remote project's source tree.",
+        "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        f"Read file: POST {base}/remote/read",
+        _json({"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"}),
+        "",
+        f"Search text: POST {base}/remote/grep",
+        _json({"pattern": "TODO", "path": "", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
+        "",
+        f"List files: POST {base}/remote/glob",
+        _json({"path": "", "pattern": "**/*.py"}),
+    ]
+    if mutating:
+        lines.extend([
+            "",
+            f"Create or replace file: POST {base}/remote/write",
+            _json({"path": "app/main.py", "content": "<complete file content>", "mode": "create|overwrite|append", "encoding": "utf-8"}),
+            "",
+            f"Delete file: POST {base}/remote/remove",
+            _json({"path": "app/obsolete.py"}),
+            "",
+            "After write/remove succeeds, summarize the changed source files in the task report.",
+        ])
+    else:
+        lines.extend([
+            "",
+            "This document type is read/search only for source access. Do not call write/remove in this step.",
+        ])
+    return _section("Remote project source CRUD", "\n".join(lines))
 
 
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
@@ -437,6 +485,36 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
     "en": "<response to each rejection reason: describe how each one was addressed>",
 }
 
+# TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
+# it remotely from the project source root. Without this block the worker receives a
+# generic new-document mention and the TS it writes fails parse_test_plan
+# (no_test_cases / invalid_case_block). The three H2 headers are Korean literals
+# because test_run_service.parse_test_plan matches them verbatim, regardless of locale.
+_TS_AUTHORING_TYPES = {"TS"}
+
+
+def _ts_authoring_section() -> str:
+    body = (
+        "Write this TS as an executable spec. FlowGate runs it remotely from the project\n"
+        "source root — do NOT assume any locally-running service. Use three H2 sections in\n"
+        "this order:\n\n"
+        "## 테스트 준비        (optional; runs first, in order)\n"
+        "- cmd: <shell command, single line>            # setup step\n"
+        "- 기동: <server start command, backgrounded>   # long-lived service\n"
+        "- 대기: {PORT}                                  # wait until 127.0.0.1:{PORT} accepts\n\n"
+        "## 테스트 케이스       (required; at least one case)\n"
+        "### TC-1: <title>\n"
+        "- cmd: <single-line command; PASS iff exit code 0>\n"
+        "- 기대: <expected behavior, human-readable>\n\n"
+        "## 테스트 정리        (optional; always runs, even on failure)\n"
+        "- cmd: <cleanup command>\n\n"
+        "Placeholders — {PORT}: port FlowGate allocates (also env FLOWGATE_TEST_PORT);\n"
+        "{SCRATCH}: per-run scratch dir, deleted afterward (env FLOWGATE_TEST_SCRATCH).\n"
+        "Commit the actual test code to the repo in this step (no auto-generation).\n"
+        "Limits: at most 50 cases, 20 setup/teardown steps, 5 services. Verdict is exit-0 only."
+    )
+    return _section("Test scenario authoring (TS)", body)
+
 
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
@@ -596,6 +674,13 @@ def build_mention(
             f"({_WORK_INSTRUCTION_LABEL[template_provision.normalize_locale(locale)]}) "
             "document.",
         )
+
+    # ── TS authoring guidance ────────────────────────────────────────────────
+    # A worker whose head/target is a TS must be told the 3-section case-block grammar
+    # and {PORT}/{SCRATCH} conventions, else the TS it writes cannot be parsed/run.
+    ts_authoring_section = ""
+    if scope_type in _TS_AUTHORING_TYPES:
+        ts_authoring_section = _ts_authoring_section()
 
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
@@ -773,6 +858,8 @@ def build_mention(
             )
             template_section = ""
 
+    source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
+
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
         _section("Document information", s1_body),
@@ -785,8 +872,12 @@ def build_mention(
     ]
     if scope_section:
         sections.append(scope_section)
+    if ts_authoring_section:
+        sections.append(ts_authoring_section)
     if template_section:
         sections.append(template_section)
+    if source_crud_section:
+        sections.append(source_crud_section)
     sections.append(_section("Reference documents", s3_body))
     if review_section:
         sections.append(review_section)
