@@ -10,8 +10,7 @@
     <div class="card mb-4">
       <div class="card-hd"><span class="card-title">{{ $t('settings.project.path_settings_view.card_title_11') }}</span></div>
       <div class="card-bd pad">
-        <div class="code-block">{{ $t('settings.project.path_settings_view.text_14') }}
-{{ $t('settings.project.path_settings_view.text_15') }}</div>
+        <div class="code-block path-structure">{{ pathStructurePreview }}</div>
       </div>
     </div>
 
@@ -73,13 +72,13 @@
             </tr>
             <tr>
               <td><span class="badge badge-gray">{{ $t('settings.project.path_settings_view.text_76_badge') }}</span></td>
-              <td><span class="mono" style="font-size:.75rem;">{{ (storageMode === 'custom' ? form.storage_root_override : systemDefault) }}/{{ settings.currentProjectId }}/documents/</span></td>
+              <td><span class="mono" style="font-size:.75rem;">{{ documentRootPreview }}</span></td>
               <td class="text-s text-sm">{{ $t('settings.project.path_settings_view.text_77') }}</td>
               <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><i class="fa-solid fa-pen"></i></button></div></td>
             </tr>
             <tr>
               <td><span class="badge badge-gray">{{ $t('settings.project.path_settings_view.text_82_badge') }}</span></td>
-              <td><span class="mono" style="font-size:.75rem;">{{ (storageMode === 'custom' ? form.storage_root_override : systemDefault) }}/{{ settings.currentProjectId }}/src/</span></td>
+              <td><span class="mono" style="font-size:.75rem;">{{ sourceRootPreview }}</span></td>
               <td class="text-s text-sm">{{ $t('settings.project.path_settings_view.text_83') }}</td>
               <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><i class="fa-solid fa-pen"></i></button></div></td>
             </tr>
@@ -149,6 +148,40 @@ const currentProjectName = computed(() => {
   const p = settings.projects.find(p => p.project_id === settings.currentProjectId);
   return p?.project_name || '';
 });
+const currentBranch = computed(() => 'main');
+const effectiveRoot = computed(() => {
+  const raw = storageMode.value === 'custom' ? form.value.storage_root_override : systemDefault.value;
+  return String(raw || '').replace(/[\\/]+$/, '');
+});
+const sourceProjectName = computed(() => currentProjectName.value || settings.currentProjectId || '');
+const documentRootPreview = computed(() => joinPath(
+  effectiveRoot.value,
+  'documents',
+  settings.currentProjectId || '<project>',
+  currentBranch.value,
+));
+const sourceRootPreview = computed(() => joinPath(
+  effectiveRoot.value,
+  'src',
+  sourceProjectName.value || '<projectName>',
+  currentBranch.value,
+));
+const pathStructurePreview = computed(() => [
+  `${documentRootPreview.value}/`,
+  '  <module>/<group>/<doc_number>_<filename>',
+  `${sourceRootPreview.value}/`,
+].join('\n'));
+
+function joinPath(...parts) {
+  return parts
+    .filter((part) => part !== null && part !== undefined && String(part) !== '')
+    .map((part, idx) => {
+      const value = String(part).replace(/\\/g, '/');
+      if (idx === 0) return value.replace(/\/+$/, '');
+      return value.replace(/^\/+|\/+$/g, '');
+    })
+    .join('/');
+}
 
 function normalizeProjectSettings(payload) {
   return payload?.data || payload || {};
@@ -271,5 +304,10 @@ onMounted(fetchProjectSettings);
 .modal-fade-enter-from,
 .modal-fade-leave-to {
   opacity: 0;
+}
+
+.path-structure {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

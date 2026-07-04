@@ -42,10 +42,8 @@ import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useSettingsStore } from '../../stores/settings.js';
-import DocumentTypesView from './DocumentTypesView.vue';
 import PathSettingsView from './PathSettingsView.vue';
 import NumberingSettingsView from './NumberingSettingsView.vue';
-import TemplatesView from './TemplatesView.vue';
 import MessagesView from './MessagesView.vue';
 
 const { t } = useI18n();
@@ -54,23 +52,22 @@ const route = useRoute();
 const router = useRouter();
 
 const tabs = computed(() => [
-  { id: 'doctypes', label: t('settings.project.types'), icon: 'fa-tags', component: DocumentTypesView },
   { id: 'paths', label: t('settings.project.path'), icon: 'fa-folder-tree', component: PathSettingsView },
   { id: 'numbering', label: t('settings.project.project_settings_view.text_56'), icon: 'fa-hashtag', component: NumberingSettingsView },
-  { id: 'groups', label: t('projects.form_structure'), icon: 'fa-layer-group', component: TemplatesView },
   { id: 'messages', label: t('settings.project.messages'), icon: 'fa-comment-dots', component: MessagesView },
 ]);
 
-const validTabIds = new Set(['doctypes', 'paths', 'numbering', 'groups', 'messages']);
-const activeTab = ref(validTabIds.has(route.query.tab) ? route.query.tab : 'doctypes');
-const activeComponent = computed(() => tabs.value.find((tab) => tab.id === activeTab.value)?.component || DocumentTypesView);
+const validTabIds = new Set(['paths', 'numbering', 'messages']);
+const defaultTab = 'paths';
+const activeTab = ref(validTabIds.has(route.query.tab) ? route.query.tab : defaultTab);
+const activeComponent = computed(() => tabs.value.find((tab) => tab.id === activeTab.value)?.component || PathSettingsView);
 
 function selectTab(tabId) {
   activeTab.value = tabId;
-  router.replace({ path: '/settings/project', query: tabId === 'doctypes' ? {} : { tab: tabId } });
+  router.replace({ path: '/settings/project', query: tabId === defaultTab ? {} : { tab: tabId } });
 }
 
 watch(() => route.query.tab, (tabId) => {
-  activeTab.value = validTabIds.has(tabId) ? tabId : 'doctypes';
+  activeTab.value = validTabIds.has(tabId) ? tabId : defaultTab;
 });
 </script>

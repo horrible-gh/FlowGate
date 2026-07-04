@@ -68,8 +68,7 @@ describe('NumberingSettingsView', () => {
 
     const inputs = wrapper.findAll('input[type="number"]');
     await inputs[0].setValue(5);
-    await inputs[1].setValue(2);
-    await inputs[2].setValue(3);
+    await inputs[1].setValue(3);
 
     const saveBtn = wrapper.findAll('button').find((button) => button.text().includes(i18n.global.t('common.save')));
     expect(saveBtn).toBeTruthy();
@@ -77,9 +76,18 @@ describe('NumberingSettingsView', () => {
 
     expect(patchRequest).toHaveBeenCalledWith('/api/v1/projects/proj_001/settings', {
       digits_group: 5,
-      digits_sub_group: 2,
       digits_type: 3,
     });
+  });
+
+  it('does not render subgroup digit or numbering structure controls', async () => {
+    const wrapper = createWrapper();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(wrapper.findAll('input[type="number"]')).toHaveLength(2);
+    expect(wrapper.findAll('input[type="radio"]')).toHaveLength(0);
+    expect(wrapper.text()).not.toContain(i18n.global.t('settings.project.numbering_settings_view.label_28'));
+    expect(wrapper.text()).not.toContain(i18n.global.t('settings.project.numbering_settings_view.text_40'));
   });
 
   it('resets settings by refetching from the server', async () => {
