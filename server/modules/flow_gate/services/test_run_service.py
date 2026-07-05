@@ -301,6 +301,23 @@ def validate_and_create_run(
             doc_review_status=doc.get("doc_review_status"),
         )
 
+    # Fail fast at admission: without a source mirror the async worker can only
+    # die with src_root_missing, which surfaces late and pathless (0152 outage).
+    src_root_path = storage_paths.resolve_project_src_root(
+        doc.get("project_id"), doc.get("branch") or "main"
+    )
+    if src_root_path is None or not src_root_path.is_dir():
+        raise _http_error(
+            422,
+            "src_root_missing",
+            doc_id=doc_id,
+            detail=(
+                f"project source mirror not found at {src_root_path}"
+                if src_root_path is not None
+                else "project row or project_name missing for src_root resolution"
+            ),
+        )
+
     content = _read_doc_content(doc)
     try:
         plan = parse_test_plan(content)
@@ -504,10 +521,16 @@ def execute_run(run: dict) -> None:
         )
         return
 
-    root = storage_paths.src_root(
-        doc.get("project_id") or "", doc.get("branch") or "main"
+    root = storage_paths.resolve_project_src_root(
+        doc.get("project_id"), doc.get("branch") or "main"
     )
-    if not root.is_dir():
+    if root is None or not root.is_dir():
+        logger.warning(
+            "test-run %s: src_root missing (project_id=%s resolved=%s)",
+            run["run_id"],
+            doc.get("project_id"),
+            root,
+        )
         db_test_runs.finish_run(
             run_id=run["run_id"],
             status="failed",

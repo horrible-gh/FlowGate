@@ -115,6 +115,44 @@ def src_root(project_name: str, branch: str = 'main') -> Path:
     return get_storage_root() / 'src' / project_name / branch
 
 
+def resolve_project_src_root(
+    project_id: Optional[str],
+    fallback_branch: str = "main",
+) -> Optional[Path]:
+    """Resolve a project's source mirror root from its *project_id*.
+
+    ``src_root()`` takes the human-facing project_name, so callers holding only
+    a project_id must translate through the projects table and take the branch
+    from project settings (falling back to *fallback_branch*). Passing a
+    project_id straight into ``src_root()`` resolves a nonexistent directory
+    whenever project_id != project_name (the 0152 test-runner outage).
+    Returns None when the project row or its name is missing.
+    """
+    if not project_id:
+        return None
+    try:
+        from modules.flow_gate.db import projects as _proj  # lazy — import cycle
+    except Exception:
+        return None
+    try:
+        row = _proj.get_by_id(project_id)
+    except Exception:
+        return None
+    project_name = (row.get("project_name") or "").strip() if row else ""
+    if not project_name:
+        return None
+    branch = (fallback_branch or "main").strip() or "main"
+    try:
+        settings = _proj.get_settings(project_id)
+    except Exception:
+        settings = None
+    if settings:
+        configured = (settings.get("branch") or "").strip()
+        if configured:
+            branch = configured
+    return src_root(project_name, branch).resolve()
+
+
 def project_root(
     project_id: str,
     storage_root: Optional[Path] = None,
