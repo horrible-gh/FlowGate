@@ -3596,11 +3596,22 @@ watch(textWrapEnabled, (enabled) => {
   width: min(1120px, 94vw);
 }
 
+/* The modal box is capped at min(860px, 88vh) while any vh-based minimum on
+   the body keeps growing with the viewport — past ~1210px tall the body
+   outgrows the box and shoves the footer through the `overflow: hidden`
+   clip line, further down the taller the screen gets. Header/footer must be
+   reserved unconditionally and the body may only take what is left. */
+.document-modal--edit .modal-hd,
+.document-modal--edit .modal-ft {
+  flex: 0 0 auto;
+}
+
 .document-editor {
   padding: 0;
-  /* The comfortable editor height (was on the textarea as `min-height: 62vh`)
-     lives on the body so the body itself defines the single scroll track. */
-  min-height: 62vh;
+  /* No vh floor here: `flex: 1 1 auto` + `min-height: 0` sizes the body to
+     exactly the box height minus header/footer, at every viewport height. */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
      the inner textarea is the *sole* scroll container. With the height pinned
