@@ -34,6 +34,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# git — required by the project git integration (0115 L0006 E1): connection
+# tests, group worktrees, and merge/push finalize all shell out to git.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # Python dependencies (separate layer so source edits don't re-install deps).
 COPY server/requirements.txt ./server/requirements.txt
 RUN pip install --upgrade pip \

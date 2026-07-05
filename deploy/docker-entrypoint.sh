@@ -60,6 +60,15 @@ if [ -z "${FLOWGATE_TOKEN_PEPPER_ACTIVE_ID:-}" ]; then
     persist FLOWGATE_TOKEN_PEPPER_ACTIVE_ID "v1"
     echo "[entrypoint] generated a new token pepper (persisted to the data volume)"
 fi
+
+# Git credential encryption key (0115 L0006 E5) — base64 32-byte AES key;
+# stored git tokens become unreadable if it changes, so persist it once.
+if [ -z "${FLOWGATE_GIT_ENCRYPT_KEY:-}" ]; then
+    FLOWGATE_GIT_ENCRYPT_KEY="$(python -c 'import os,base64; print(base64.b64encode(os.urandom(32)).decode())')"
+    export FLOWGATE_GIT_ENCRYPT_KEY
+    persist FLOWGATE_GIT_ENCRYPT_KEY "$FLOWGATE_GIT_ENCRYPT_KEY"
+    echo "[entrypoint] generated a new git credential key (persisted to the data volume)"
+fi
 [ -f "$SECRETS_FILE" ] && chmod 600 "$SECRETS_FILE" 2>/dev/null || true
 
 # ── DB selection ─────────────────────────────────────────────────────────────
