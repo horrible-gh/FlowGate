@@ -598,7 +598,11 @@ def execute_run(run: dict) -> None:
             case_failed=0,
             error=setup_error or "setup_failed",
         )
-        _emit_finished(doc, db_test_runs.get_run(run["run_id"]) or run, None)
+        finished_run = db_test_runs.get_run(run["run_id"]) or run
+        _emit_finished(doc, finished_run, None)
+        # R0001 group 0154 / NR0004 Gap A: setup-stage failure is the most common silent stop (e.g. the
+        # TC-1 reused-.venv/pytest case) — surface it too. Best-effort; never affects the verdict.
+        _maybe_notify_chain_failure(doc, finished_run)
         return
 
     passed = sum(1 for case in final_cases if case.get("result") == "pass")
@@ -630,7 +634,13 @@ def execute_run(run: dict) -> None:
         case_failed=failed,
         tsr_doc_id=tsr_doc_id,
     )
-    _emit_finished(doc, db_test_runs.get_run(run["run_id"]) or run, tsr_doc_id)
+    finished_run = db_test_runs.get_run(run["run_id"]) or run
+    _emit_finished(doc, finished_run, tsr_doc_id)
+    if status == "failed":
+        # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
+        # hand on — surface it once so the unmanned chain no longer goes silent (was: only an ephemeral
+        # SSE broadcast, no persistent/discoverable signal). Best-effort; never affects the verdict.
+        _maybe_notify_chain_failure(doc, finished_run)
 
 
 def _execute_setup(
@@ -1258,6 +1268,52 @@ def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
         logger.warning(
             "chain TSR auto-approve failed for %s (TSR left submitted)",
             tsr_doc_id, exc_info=True,
+        )
+
+
+
+def _maybe_notify_chain_failure(doc: dict, run: dict) -> None:
+    """Emit the one terminal "연속작업 실패" signal for an unmanned-chain test_run that went RED.
+
+    R0001 group 0154 / NR0004 Gap A: a failed chain run assembles no TSR (tsr_doc_id stays null) and the
+    chain stops with nothing to hand on — but until now that stop produced no persistent, discoverable
+    signal at all (only a transient SSE `test_run_finished` broadcast), so the unmanned chain went
+    silent and nobody knew until the run record was opened by hand (NR0004 §2.4). This records a single
+    workflow_event that the dashboard promotes to the 🔔 feed as the failure counterpart of
+    continuous_work_ended.
+
+    Gated exactly like _maybe_chain_auto_approve_tsr: only the continuation-carrying token minted by
+    advance_workflow's TSR-head wiring counts as an unmanned chain (a manned test-run-request token
+    leaves continuation_target_seq NULL — that human is already watching, so no feed row is added).
+    Best-effort: any failure here is swallowed and must never affect the run verdict.
+    """
+    try:
+        from modules.flow_gate.db import tokens as db_tokens
+        from modules.flow_gate.workflow import event_logger
+
+        token_rec = db_tokens.get_latest_consumed_by_scope_doc_ref(
+            "test_run", doc["doc_id"]
+        )
+        if token_rec is None or token_rec.get("continuation_target_seq") is None:
+            return  # manned delegation (or UI) run — human keeps watch, no unmanned-chain alarm
+        actor_user_id = token_rec.get("issued_to") or "system"
+        doc_row = db_docs.get_by_id(doc["doc_id"]) or {}
+        event_logger.log_continuous_work_failed(
+            project_id=doc.get("project_id"),
+            actor_user_id=actor_user_id,
+            document_id=doc_row.get("id"),
+            doc_id=doc["doc_id"],
+            group_id=doc.get("group_id"),
+            run_id=run.get("run_id"),
+            case_passed=run.get("case_passed"),
+            case_failed=run.get("case_failed"),
+            error=run.get("error"),
+            target_seq=token_rec.get("continuation_target_seq"),
+        )
+    except Exception:
+        logger.warning(
+            "continuous_work_failed signal failed for run %s (ignored)",
+            run.get("run_id"), exc_info=True,
         )
 
 

@@ -49,6 +49,7 @@ _NOTIFICATION_EVENT_TYPES = (
     "qna_answered",
     "group_approved",
     "continuous_work_ended",
+    "continuous_work_failed",
 )
 
 
@@ -310,6 +311,17 @@ def _normalize_activity(
         # user lands on the last document of the finished chain. Only this terminal event is
         # promoted — intermediate state_changed stays excluded (0118 noise invariant).
         activity_type = "continuous_work_completed"
+        if not doc:
+            metadata_doc_id = metadata.get("doc_id")
+            if metadata_doc_id:
+                doc = documents.get(str(metadata_doc_id))
+    elif event_type == "continuous_work_failed":
+        # R0001 group 0154 / NR0004 Gap A: failure-path counterpart of continuous_work_ended. An
+        # unmanned chain whose server-side test_run went RED assembles no TSR and stops silently; this
+        # is the ONE terminal signal of that stop, surfaced as a distinct "연속작업 실패" notification
+        # pointing at the TS document that failed so the user lands on it. Fires once per failed run —
+        # same once-per-terminal-event discipline as the completion signal, no 0118 per-step noise.
+        activity_type = "continuous_work_failed"
         if not doc:
             metadata_doc_id = metadata.get("doc_id")
             if metadata_doc_id:
