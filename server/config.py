@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     FLOWGATE_TOKEN_PEPPER_V1: str | None = None
     FLOWGATE_INBOX_CONTENT_MAX: int = 10485760  # 10 MB default
 
+    # Git integration (0115 L0006 §2.3) — base64-encoded 32-byte AES key for the
+    # project git credential store. Provisioned by the docker entrypoint (or the
+    # storage-root key-file fallback); _PREV enables rotation-time decryption.
+    FLOWGATE_GIT_ENCRYPT_KEY: str | None = None
+    FLOWGATE_GIT_ENCRYPT_KEY_PREV: str | None = None
+
     @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
     @classmethod
     def _blank_int_uses_default(cls, v):

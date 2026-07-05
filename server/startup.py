@@ -23,7 +23,18 @@ def preload_singletons():
         logger.warning(f"[startup] test-run worker bootstrap failed: {exc}")
 
 
+def recover_git_sessions():
+    """0115 L0006 E8: restore/clean merge-conflict sessions and stale git locks."""
+    try:
+        from modules.flow_gate.services import git_service
+
+        git_service.startup_recovery()
+    except Exception as exc:
+        logger.warning(f"[startup] git session recovery failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
     preload_singletons()
+    recover_git_sessions()
