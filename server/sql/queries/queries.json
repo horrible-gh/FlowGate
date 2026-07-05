@@ -154,5 +154,13 @@
         "insert_message": "INSERT INTO project_messages (project, doc_type, message, updated_at) VALUES (?, ?, ?, ?)",
         "update_message": "UPDATE project_messages SET doc_type = ?, message = ?, updated_at = ? WHERE id = ?",
         "delete_message": "DELETE FROM project_messages WHERE id = ?"
+    },
+    "test_commands": {
+        "list_active": "SELECT id, project, command, description, origin, status, last_success_at, created_at, updated_at FROM project_test_commands WHERE project = ? AND status = 'active' ORDER BY CASE WHEN last_success_at IS NULL THEN 1 ELSE 0 END ASC, last_success_at DESC, id ASC",
+        "count_active": "SELECT COUNT(*) AS cnt FROM project_test_commands WHERE project = ? AND status = 'active'",
+        "get_by_id": "SELECT id, project, command, description, origin, status, last_success_at, created_at, updated_at FROM project_test_commands WHERE project = ? AND id = ?",
+        "find_by_command": "SELECT id, project, command, description, origin, status, last_success_at, created_at, updated_at FROM project_test_commands WHERE project = ? AND command = ?",
+        "insert": "INSERT INTO project_test_commands (project, command, description, origin, status, last_success_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_row": "UPDATE project_test_commands SET command = ?, description = ?, origin = ?, status = ?, last_success_at = ?, updated_at = ? WHERE project = ? AND id = ?"
     }
 }

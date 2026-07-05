@@ -22,7 +22,7 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.numbering import id_formatter, numbering_service
 from modules.flow_gate.rbac.permission_service import has_permission
-from modules.flow_gate.services import token_service
+from modules.flow_gate.services import token_service, test_command_service
 from modules.flow_gate.storage import paths as storage_paths
 
 logger = logging.getLogger(__name__)
@@ -588,6 +588,17 @@ def execute_run(run: dict) -> None:
             tsr_doc_id = assemble_tsr(doc, db_test_runs.get_run(run["run_id"]) or run, all_final_items)
         except Exception as exc:
             logger.warning("TSR assembly failed for %s: %s", run["run_id"], exc, exc_info=True)
+        # flowgate.default.0152: reflect this passed run's setup/case commands into the project's
+        # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
+        # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
+        try:
+            test_command_service.reflect_from_passed_run(
+                doc, db_test_runs.list_cases(run["run_id"])
+            )
+        except Exception as exc:
+            logger.warning(
+                "test-command reflect failed for %s: %s", run["run_id"], exc, exc_info=True
+            )
 
     db_test_runs.finish_run(
         run_id=run["run_id"],

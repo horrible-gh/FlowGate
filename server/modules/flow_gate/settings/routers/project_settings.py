@@ -48,6 +48,7 @@ from modules.flow_gate.db import messages as messages_db
 from modules.flow_gate.utils.slug import project_name_to_slug
 from modules.flow_gate.utils.id_validators import validate_project_id
 from modules.flow_gate.storage.migration import apply_storage_change
+from modules.flow_gate.services import test_command_service
 
 router = APIRouter(tags=["ProjectSettings"])
 
@@ -323,6 +324,79 @@ def delete_message_endpoint(
 ):
     if not messages_db.delete(message_id):
         raise HTTPException(status_code=404, detail="Message not found")
+    return {"detail": "deleted"}
+
+
+# -----------------------------------------------------------------------------
+# Project test commands (flowgate.default.0152; R0001->D0002->P0003->L0004->T0005).
+# Settings > Project > "Test commands" CRUD. Reuses the project.settings.* RBAC keys
+# (P section auth). A user DELETE never physically deletes — the service flips the row to
+# status='suppressed' (a tombstone). Auto-reflection from passed remote runs and the TS-mention
+# "Verified test commands" block read the same store (test_command_service).
+# -----------------------------------------------------------------------------
+
+@router.get("/projects/{project_id}/test-commands")
+def list_test_commands(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    return {"data": test_command_service.list_for_view(project_id)}
+
+
+class TestCommandCreate(BaseModel):
+    command: str | None = None
+    description: str | None = None
+
+
+@router.post("/projects/{project_id}/test-commands", status_code=201)
+def create_test_command(
+    project_id: str,
+    body: TestCommandCreate,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return test_command_service.create_manual(
+            project_id, body.command or "", body.description or ""
+        )
+    except test_command_service.TestCommandConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except test_command_service.TestCommandValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+class TestCommandPatch(BaseModel):
+    command: str | None = None
+    description: str | None = None
+
+
+@router.patch("/projects/{project_id}/test-commands/{command_id}")
+def update_test_command(
+    project_id: str,
+    command_id: int,
+    body: TestCommandPatch,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        row = test_command_service.patch(
+            project_id, command_id, body.model_dump(exclude_unset=True)
+        )
+    except test_command_service.TestCommandConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except test_command_service.TestCommandValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Test command not found")
+    return row
+
+
+@router.delete("/projects/{project_id}/test-commands/{command_id}")
+def delete_test_command(
+    project_id: str,
+    command_id: int,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    if not test_command_service.delete(project_id, command_id):
+        raise HTTPException(status_code=404, detail="Test command not found")
     return {"detail": "deleted"}
 
 
