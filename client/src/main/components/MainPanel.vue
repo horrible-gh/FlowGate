@@ -928,7 +928,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { getRequest, patchRequest, postRequest } from '@shared/api'
-import { useTabsStore, type Tab } from '../stores/tabs'
+import { useTabsStore, isFileTab, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import {
@@ -1722,6 +1722,15 @@ function getActionBarMode(tabId: string) {
   // documents of a disposed group"). The flag refreshes via the SSE group_disposed → silent doc refetch,
   // so the bar disappears immediately rather than after F5.
   if (exposedValue(docHeaderRefs[tabId]?.groupDisposed) === true) return null
+  // Group 0137 (R0001/NR0003): a file tab (a source file opened from the explorer)
+  // carries projectId but never a typeCode, so getWorkflowViewInput yields tabTypeCode=null
+  // and workflowViewState falls into the doc-loading placeholder (mode='review'). That
+  // placeholder is meant only for a doc tab whose header has not arrived yet; a file tab has
+  // no workflow at all, so it must show NO action bar. Guard on POSITIVE file-tab identity
+  // (isFileTab: projectId present + no typeCode), never bare typeCode==null, so a still-loading
+  // doc tab keeps its placeholder bar (feedback_actionbar_always_shows).
+  const tab = tabs.value.find((t) => t.id === tabId)
+  if (tab && isFileTab(tab)) return null
   return getWorkflowViewState(tabId).mode
 }
 

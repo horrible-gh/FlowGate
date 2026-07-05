@@ -54,7 +54,7 @@ function hasText(value: string | null | undefined): value is string {
   return value != null && value !== ''
 }
 
-function isFileTab(tab: Tab): boolean {
+export function isFileTab(tab: Tab): boolean {
   return tab.projectId != null && !hasText(tab.typeCode)
 }
 

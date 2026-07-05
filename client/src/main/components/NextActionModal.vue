@@ -341,17 +341,44 @@ async function fetchModules() {
   }
 }
 
+// The groups endpoint is paginated and caps `limit` at 200 (server default 100).
+// A module with >100 groups therefore returns only its first page, which (a) drops
+// the current document's group from the list when it sorts past the first page —
+// so `preferredGroupId` fails to match and the modal falls back to the first group —
+// and (b) hides those groups from the picker entirely. Fetch every page so the full
+// group set is present regardless of count (bug 0145.0001-B). Using limit=200 alone
+// would only push the failure to 200 groups, so we loop until `total` is covered.
+const GROUPS_PAGE_SIZE = 200          // server max per request
+const GROUPS_MAX_PAGES = 100          // safety cap: 200 * 100 = 20k groups
+
+async function fetchAllGroups(moduleId: string): Promise<GroupItem[]> {
+  const all: GroupItem[] = []
+  let offset = 0
+  let total = Number.POSITIVE_INFINITY
+  for (let page = 0; page < GROUPS_MAX_PAGES && all.length < total; page++) {
+    const res = await getRequest<any>(`/api/v1/modules/${encodeURIComponent(moduleId)}/groups`, {
+      project_id: props.projectId,
+      limit: GROUPS_PAGE_SIZE,
+      offset,
+    })
+    const data = res.data as any
+    const items = (data?.groups ?? data?.items ?? []) as GroupItem[]
+    all.push(...items)
+    total = typeof data?.total === 'number' ? data.total : all.length
+    // Stop if the server returned a short/empty page (guards against a bad total).
+    if (items.length === 0 || items.length < GROUPS_PAGE_SIZE) break
+    offset += items.length
+  }
+  return all
+}
+
 async function fetchGroups(moduleId: string, preferredGroupId?: string) {
   if (!props.projectId || !moduleId) return
   groupsLoading.value = true
   groups.value = []
   docs.value = []
   try {
-    const res = await getRequest<any>(`/api/v1/modules/${encodeURIComponent(moduleId)}/groups`, {
-      project_id: props.projectId,
-    })
-    const data = res.data as any
-    groups.value = data?.groups ?? data?.items ?? []
+    groups.value = await fetchAllGroups(moduleId)
     if (groups.value.length > 0) {
       // Prefer the head document's group; fall back to first group
       const matched = preferredGroupId
