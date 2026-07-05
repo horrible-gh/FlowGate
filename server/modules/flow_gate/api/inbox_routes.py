@@ -618,8 +618,11 @@ async def inbox(request: Request):
         return _fail(400, "Request body is not valid JSON")
 
     action = body.get("action", "")
-    if action not in ("new", "edit", "review"):
-        return _fail(400, "action must be new, edit, or review")
+    # "test_run" was dispatched below but missing from this allowlist, so the inbox
+    # rejected every action:test_run POST with 400 before reaching _handle_test_run
+    # (group 0150 NR0003 §4 — the chain entrance was dead code).
+    if action not in ("new", "edit", "review", "test_run"):
+        return _fail(400, "action must be new, edit, review, or test_run")
 
     if action == "new":
         return await _handle_new(request, raw, body)
@@ -651,7 +654,10 @@ async def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSON
         return _fail(403, "Context binding mismatch. Use the correct token.")
     if token_rec.get("project") != project or token_rec.get("doc_ref") != doc_id:
         return _fail(403, "Context binding mismatch. Use the correct token.")
-    if not has_permission(token_rec["issued_to"], project, "perm_test_run"):
+    # Same semantics as the UI routes (is_admin bypass OR RBAC): a raw has_permission
+    # here re-created the 0086 trap — live RBAC tables are unpopulated, so the admin
+    # issuer's chain token 403'd at the very entrance it was minted for (group 0150).
+    if not test_run_service.token_can_run_tests(token_rec["issued_to"], project):
         return _fail(403, "Permission denied: perm_test_run required")
 
     doc = db_docs.get_by_id(str(doc_id))
@@ -685,6 +691,26 @@ async def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSON
         project_id=project,
         doc_id=str(doc_id),
     )
+    # Unmanned-chain hand-off (group 0150): a continuation-carrying test_run token was
+    # minted by advance_workflow's TSR-head wiring, not the manned test-run-request path.
+    # The run is async, so no next token can ride on this 202 — the worker's part of the
+    # chain ends at this POST. Server side takes over: all-green auto-assembles the TSR
+    # and passes the gate itself (test_run_service._maybe_chain_auto_approve_tsr); on
+    # failure the chain pauses for a human. Say so explicitly instead of leaving the
+    # chain dangling on a bare run receipt.
+    if token_rec.get("continuation_target_seq") is not None:
+        result = {
+            **result,
+            "continuation": True,
+            "continuation_async": True,
+            "continuation_target_seq": token_rec.get("continuation_target_seq"),
+            "message": (
+                f"{result.get('message', '')} Continuous chain hand-off complete: FlowGate "
+                "now executes the TS server-side. On all-green the TSR is auto-assembled "
+                "and auto-approved; on failure the chain pauses for a human. Do NOT write "
+                "the TSR yourself — your chain step ends here."
+            ).strip(),
+        }
     return JSONResponse(status_code=202, content=result)
 
 

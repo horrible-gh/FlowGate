@@ -122,6 +122,7 @@ def test_migration_052_adds_test_run_schema_and_scope(all_migrations_db):
 
 def test_inbox_test_run_dry_run(monkeypatch):
     from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import test_run_service
 
     monkeypatch.setattr(
         inbox_routes.token_service,
@@ -135,7 +136,7 @@ def test_inbox_test_run_dry_run(monkeypatch):
             "dry_run_count": 0,
         },
     )
-    monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
+    monkeypatch.setattr(test_run_service, "token_can_run_tests", lambda *_a, **_k: True)
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",
@@ -181,7 +182,7 @@ def test_inbox_test_run_accepts_and_consumes(monkeypatch):
             "dry_run_count": 0,
         },
     )
-    monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
+    monkeypatch.setattr(test_run_service, "token_can_run_tests", lambda *_a, **_k: True)
     monkeypatch.setattr(
         inbox_routes.db_docs,
         "get_by_id",

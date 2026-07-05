@@ -347,7 +347,19 @@ def issue_test_run_request(
     doc_id: str,
     issued_to: str,
     api_base_url: str,
+    continuation_target_seq: Optional[int] = None,
+    continuation_review_mode: bool = False,
+    locale: Optional[str] = None,
+    continuous: bool = False,
 ) -> dict:
+    """Issue a test_run-scoped token + execution mention for an approved TS.
+
+    Two callers (P0005 §3's two entrances): the manned delegation route
+    (POST /documents/test-run-request — ordinary token, continuation fields NULL) and
+    the unmanned chain (advance_workflow's TSR-head wiring, group 0150 — the token
+    inherits the chain's continuation fields, and those persisted fields are how
+    _maybe_chain_auto_approve_tsr later recognizes a chain run).
+    """
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
         raise LookupError(f"doc_not_found:{doc_id}")
@@ -360,11 +372,16 @@ def issue_test_run_request(
         action_scope="test_run",
         doc_ref=doc_id,
         issued_to=issued_to,
+        continuation_target_seq=continuation_target_seq if continuous else None,
+        continuation_review_mode=bool(continuous and continuation_review_mode),
+        continuation_locale=locale if continuous else None,
     )
     mention = _build_test_run_mention(
         doc=doc,
         api_base_url=api_base_url,
         raw_token=issue["raw_token"],
+        continuous=continuous,
+        locale=locale,
     )
     return {
         "doc_ref": doc_id,
@@ -378,7 +395,28 @@ def issue_test_run_request(
     }
 
 
-def _build_test_run_mention(*, doc: dict, api_base_url: str, raw_token: str) -> str:
+def _build_test_run_mention(
+    *,
+    doc: dict,
+    api_base_url: str,
+    raw_token: str,
+    continuous: bool = False,
+    locale: Optional[str] = None,
+) -> str:
+    continuous_block = ""
+    hand_off_note = ""
+    if continuous:
+        # Reuse the exact unmanned-chain directive every other chain mention carries so
+        # the worker reads an identical framing on the test-run hop (group 0150).
+        from modules.flow_gate.services.mention_service import _CONTINUOUS_TEXT
+
+        chain_text = _CONTINUOUS_TEXT.get(locale or "ko", _CONTINUOUS_TEXT["ko"])
+        continuous_block = f"## Continuous work\n---\n{chain_text}\n\n"
+        hand_off_note = (
+            "\nThis POST is your LAST step on this chain: FlowGate executes the TS "
+            "server-side, and on all-green it auto-assembles AND auto-approves the TSR. "
+            "Do NOT write the TSR yourself. If the run fails, a human resumes the chain.\n"
+        )
     return (
         "## Document information\n"
         "---\n"
@@ -387,9 +425,11 @@ def _build_test_run_mention(*, doc: dict, api_base_url: str, raw_token: str) -> 
         f"group: {doc.get('group_id')}\n"
         "type: TS\n"
         f"title: {doc.get('title') or ''}\n\n"
+        f"{continuous_block}"
         "## Test execution request\n"
         "---\n"
-        "Run the approved TS document through FlowGate. Do not edit the document in this step.\n\n"
+        "Run the approved TS document through FlowGate. Do not edit the document in this step.\n"
+        f"{hand_off_note}\n"
         "## Reference document\n"
         "---\n"
         f"GET {api_base_url}/document/{doc['doc_id']}\n\n"
@@ -1111,6 +1151,80 @@ def _register_tsr_workflow_result(doc: dict, tsr_doc_id: str, path: Path) -> Non
         )
     except Exception:
         logger.warning("TSR workflow registration failed for %s", tsr_doc_id, exc_info=True)
+    _maybe_chain_auto_approve_tsr(doc, tsr_doc_id)
+
+
+def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
+    """Unmanned-chain gate passage for an auto-assembled TSR (group 0150).
+
+    L0006 (0138) deliberately left the TSR gate to "사람 또는 무인체인 승인 절차"; this is
+    the latter. Chain detection is the consumed test_run token for this TS: only the
+    token minted by advance_workflow's TSR-head wiring carries continuation_target_seq
+    (the manned test-run-request token leaves it NULL, so manned delegation keeps its
+    human approval gate). Approval uses the token issuer's REAL resolved permissions —
+    the same resolver as the inbox self-chain (approve is never bypassed, P0005 §4);
+    lacking document.approve degrades to a submitted TSR, never an error.
+    """
+    try:
+        from modules.flow_gate.db import tokens as db_tokens
+
+        token_rec = db_tokens.get_latest_consumed_by_scope_doc_ref(
+            "test_run", doc["doc_id"]
+        )
+        if token_rec is None or token_rec.get("continuation_target_seq") is None:
+            return  # manned delegation (or UI) run — human keeps the TSR gate
+        actor_user_id = token_rec.get("issued_to") or "system"
+
+        from modules.flow_gate.db import users as db_users
+        from modules.flow_gate.workflow.routers.workflow import (
+            _get_user_permissions as _resolve_user_permissions,
+        )
+
+        actor_user = db_users.get_by_id(actor_user_id) or {
+            "user_id": actor_user_id, "is_admin": 0,
+        }
+        approver_perms = _resolve_user_permissions(actor_user)
+        if "document.approve" not in approver_perms:
+            logger.warning(
+                "chain TSR auto-approve skipped for %s: issuer %s lacks document.approve",
+                tsr_doc_id, actor_user_id,
+            )
+            return
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+
+        transition_document_review(
+            doc_id=tsr_doc_id,
+            action="approve",
+            actor_user_id=actor_user_id,
+            user_permissions=approver_perms,
+        )
+        # The worker loop cannot be resumed from an async run (no channel for a next
+        # token), so the chain ends here by design — record the explicit end signal
+        # (group 0125). Best-effort: a logging failure must not undo the approval.
+        try:
+            from modules.flow_gate.workflow import event_logger
+
+            tsr_doc = db_docs.get_by_id(tsr_doc_id) or {}
+            tsr_pk = tsr_doc.get("id")
+            if tsr_pk is not None:
+                event_logger.log_continuous_work_ended(
+                    project_id=doc.get("project_id"),
+                    actor_user_id=actor_user_id,
+                    document_id=tsr_pk,
+                    doc_id=tsr_doc_id,
+                    group_id=doc.get("group_id"),
+                    target_seq=token_rec.get("continuation_target_seq"),
+                )
+        except Exception:
+            logger.warning(
+                "continuous_work_ended signal failed for %s (ignored)",
+                tsr_doc_id, exc_info=True,
+            )
+    except Exception:
+        logger.warning(
+            "chain TSR auto-approve failed for %s (TSR left submitted)",
+            tsr_doc_id, exc_info=True,
+        )
 
 
 def _emit_started(doc: dict, run: dict) -> None:
@@ -1220,6 +1334,19 @@ def _broadcast(event_type: str, doc: dict, payload: dict) -> None:
 
 def user_can_run_tests(user_id: str, project_id: str, is_admin: bool = False) -> bool:
     return bool(is_admin) or has_permission(user_id, project_id, "perm_test_run")
+
+
+def token_can_run_tests(user_id: str, project_id: str) -> bool:
+    """perm_test_run gate for worker-token callers (inbox action:test_run).
+
+    Same semantics as the UI routes' user_can_run_tests — is_admin bypass first. The
+    inbox handler previously called has_permission alone, which re-created the 0086
+    unpopulated-RBAC trap for admin-issued chain tokens (group 0150).
+    """
+    from modules.flow_gate.db import users as db_users
+
+    user = db_users.get_by_id(user_id) or {}
+    return user_can_run_tests(user_id, project_id, bool(user.get("is_admin")))
 
 
 class TestRunWorker:

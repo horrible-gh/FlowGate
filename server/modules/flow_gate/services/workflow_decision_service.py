@@ -424,6 +424,56 @@ def advance_workflow(
     doc_class = _resolve_doc_class(doc)
     project_id: str = doc.get("project_id") or ""
 
+    # ── Unmanned chain × TSR head → server-run test hand-off (group 0150) ──────────────
+    # In a continuous chain the TSR is not hand-written: after its TS is approved, the
+    # worker's next step is to REQUEST the run (inbox action:test_run) and FlowGate
+    # executes the TS and auto-assembles the TSR on all-green (0138 P0005 §3 / 0139 P0002).
+    # So the token minted for the chain here must inherit the test_run scope (R0001 group
+    # 0150: "체인에 발급되는 토큰에 그 스코프를 물려주는 연결") instead of a 'new' token that
+    # would ask the worker to write the TSR by hand. Managed advance (continuous=False) is
+    # untouched — the FE drives runs via POST /documents/test-run(-request) explicitly.
+    if continuous and head_type.upper() == "TSR":
+        pred_doc_id = db_wfseq.get_predecessor_result_doc_id(seq["id"], head.get("id"))
+        pred_doc = db_documents.get_by_id(pred_doc_id) if pred_doc_id else None
+        if (
+            pred_doc is not None
+            and (pred_doc.get("type_code") or "").upper() == "TS"
+            and pred_doc.get("doc_review_status") == "approved"
+        ):
+            from modules.flow_gate.services import test_run_service
+
+            head_item_seq = head.get("item_seq")
+            remaining: Optional[int] = None
+            if continuation_target_seq is not None and head_item_seq is not None:
+                remaining = max(0, continuation_target_seq - head_item_seq + 1)
+            issue = test_run_service.issue_test_run_request(
+                doc_id=pred_doc_id,
+                issued_to=issued_to,
+                api_base_url=api_base_url,
+                continuation_target_seq=continuation_target_seq,
+                continuation_review_mode=continuation_review_mode,
+                locale=locale,
+                continuous=True,
+            )
+            return {
+                "doc_ref": issue["doc_ref"],
+                "action_scope": "test_run",
+                "group_id": issue["group_id"],
+                "doc_class": doc_class,
+                "token": issue["token"],
+                "token_id": issue["token_id"],
+                "expires_at": issue["expires_at"],
+                "scratch_dir": issue["scratch_dir"],
+                "mention": issue["mention"] or "",
+                "continuous": True,
+                "continuation_target_seq": continuation_target_seq,
+                "continuation_review_mode": bool(continuation_review_mode),
+                "continuation_remaining": remaining,
+                "head_item_seq": head_item_seq,
+            }
+        # No approved TS predecessor behind this TSR head → fall through to the ordinary
+        # 'new' hand-off (the worker writes the TSR from context — pre-0150 behavior).
+
     # Continuation metadata rides on the next token only in continuous mode; otherwise
     # the token is an ordinary single-step token (NULL/0 columns — migration 050).
     issue_result = token_service.issue(

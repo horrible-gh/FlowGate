@@ -98,6 +98,22 @@ def count_by_date_prefix(date_str: str) -> int:
     return row["cnt"] if row else 0
 
 
+def get_latest_consumed_by_scope_doc_ref(action_scope: str, doc_ref: str) -> Optional[dict]:
+    """Latest consumed token for (action_scope, doc_ref).
+
+    Chain detection for server-run tests (group 0150): a consumed test_run token whose
+    continuation_target_seq is non-NULL marks its run as an unmanned-chain run, which is
+    what authorizes the auto-assembled TSR's auto-approve. Persisted on the token row, so
+    the signal survives a server restart between run start and TSR assembly.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM tokens WHERE doc_ref = ? AND action_scope = ? "
+        "AND consumed_at IS NOT NULL "
+        "ORDER BY consumed_at DESC, token_id DESC LIMIT 1",
+        [doc_ref, action_scope],
+    )
+
+
 def get_unconsumed_by_doc_ref(doc_ref: str) -> Optional[dict]:
     """Return an active next-document token for the given doc_ref (Q149 guard)."""
     # Bind the current time as a JST ISO string (same format as the stored
