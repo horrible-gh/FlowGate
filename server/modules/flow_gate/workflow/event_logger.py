@@ -32,6 +32,15 @@ EVT_GROUP_APPROVED = "group_approved"
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_WORK_STARTED = "work_started"
 EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
+# EVT_CONTINUOUS_WORK_FAILED — R0001 group 0154 / NR0004 Gap A: the failure-path counterpart of
+#   CONTINUOUS_WORK_ENDED. When an unmanned chain's server-side test_run finishes RED, no TSR is
+#   assembled (tsr_doc_id stays null) and the chain stops with NO persistent signal of any kind — only
+#   a transient SSE `test_run_finished` broadcast — so the chain went silent and nobody knew until the
+#   run record was opened by hand (NR0004 §2.4, the exact "테스트레포트에서 멈춤" R0001 reported). Like
+#   ENDED it fires exactly ONCE per unmanned run (at the failed-run stop), so promoting just this
+#   terminal event yields a distinct "연속작업 실패" alarm without reviving the 0118 per-step 폭증.
+#   See dashboard_service._NOTIFICATION_EVENT_TYPES.
+EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
 
 
 def log_event(
@@ -198,6 +207,50 @@ def log_continuous_work_ended(
         meta["target_seq"] = target_seq
     return log_event(
         event_type=EVT_CONTINUOUS_WORK_ENDED,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata=meta or None,
+    )
+
+
+def log_continuous_work_failed(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    document_id: int | None,
+    doc_id: str | None = None,
+    group_id: str | None = None,
+    run_id: str | None = None,
+    case_passed: int | None = None,
+    case_failed: int | None = None,
+    error: str | None = None,
+    target_seq: int | None = None,
+) -> dict:
+    """Record an explicit "continuous-work failed/paused" signal (R0001 group 0154, NR0004 Gap A).
+
+    Emitted when a server-driven continuous (unmanned) run's test_run finishes RED: no TSR is assembled
+    and the chain has nothing to hand to the next step, so it stops for a human. Before this, that stop
+    produced no persistent signal at all — only a transient SSE `test_run_finished` broadcast — so the
+    unmanned chain went silent (NR0004 §2.4). Fires once per failed run; promoted to the notification
+    feed as the "연속작업 실패" counterpart of continuous_work_ended.
+    """
+    meta: dict[str, Any] = {}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    if run_id:
+        meta["run_id"] = run_id
+    if case_passed is not None:
+        meta["case_passed"] = case_passed
+    if case_failed is not None:
+        meta["case_failed"] = case_failed
+    if error:
+        meta["error"] = error
+    if target_seq is not None:
+        meta["target_seq"] = target_seq
+    return log_event(
+        event_type=EVT_CONTINUOUS_WORK_FAILED,
         project_id=project_id,
         actor_user_id=actor_user_id,
         group_id=group_id,
