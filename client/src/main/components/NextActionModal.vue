@@ -102,23 +102,28 @@
                 <!-- Left: group list -->
                 <div class="nad-group-panel">
                   <div class="nad-panel-hd">{{ t('main.next_action_modal.group_panel') }}</div>
-                  <div class="nad-group-list">
+                  <div class="nad-group-list" ref="groupListEl" @scroll="onGroupListScroll">
                     <div v-if="groupsLoading" class="nad-doc-empty">
                       <i class="fa-solid fa-spinner fa-spin"></i>
                     </div>
                     <div v-else-if="groups.length === 0 && !groupsLoading" class="nad-doc-empty">
                       {{ t('main.next_action_modal.no_groups') }}
                     </div>
-                    <div
-                      v-for="grp in groups"
-                      :key="grp.group_id"
-                      class="nad-group-item"
-                      :class="{ active: currentGroup === grp.group_id }"
-                      @click="selectGroup(grp.group_id)"
-                    >
-                      <span class="nad-group-id">{{ shortId(grp.group_id) }}</span>
-                      <span class="nad-group-name">{{ grp.title || shortId(grp.group_id) }}</span>
-                    </div>
+                    <template v-else>
+                      <div
+                        v-for="grp in groups"
+                        :key="grp.group_id"
+                        class="nad-group-item"
+                        :class="{ active: currentGroup === grp.group_id }"
+                        @click="selectGroup(grp.group_id)"
+                      >
+                        <span class="nad-group-id">{{ shortId(grp.group_id) }}</span>
+                        <span class="nad-group-name">{{ grp.title || shortId(grp.group_id) }}</span>
+                      </div>
+                      <div v-if="groupsLoadingMore" class="nad-group-more">
+                        <i class="fa-solid fa-spinner fa-spin"></i>
+                      </div>
+                    </template>
                   </div>
                 </div>
 
@@ -216,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -260,6 +265,9 @@ const modulesError  = ref(false)
 
 const groups        = ref<GroupItem[]>([])
 const groupsLoading = ref(false)
+const groupsLoadingMore = ref(false)     // appending the next page via infinite scroll
+const groupsTotal   = ref(0)             // server-reported total group count for this module
+const groupListEl   = ref<HTMLElement | null>(null)
 
 const docs          = ref<DocItem[]>([])
 const docsLoading   = ref(false)
@@ -341,44 +349,65 @@ async function fetchModules() {
   }
 }
 
-// The groups endpoint is paginated and caps `limit` at 200 (server default 100).
-// A module with >100 groups therefore returns only its first page, which (a) drops
-// the current document's group from the list when it sorts past the first page —
-// so `preferredGroupId` fails to match and the modal falls back to the first group —
-// and (b) hides those groups from the picker entirely. Fetch every page so the full
-// group set is present regardless of count (bug 0145.0001-B). Using limit=200 alone
-// would only push the failure to 200 groups, so we loop until `total` is covered.
+// The groups endpoint is paginated (server caps `limit` at 200, default 100). A
+// module with >100 groups returns only its first page, which (a) drops the current
+// document's group from the list when it sorts past the first page — so
+// `preferredGroupId` fails to match and the modal falls back to the first group —
+// and (b) hides those groups from the picker (bug 0145.0001-B).
+//
+// TR0005 rev1 — reviewer feedback: do NOT eagerly pull every page. A 1000-group
+// module must not fetch/render 1000 rows on open. Instead:
+//   1. load the first page, then load further pages ONLY until the preferred
+//      (current document's) group appears, then stop — so the current group can be
+//      pre-selected without walking the whole module;
+//   2. the left panel lazily loads the next page as the user scrolls (infinite
+//      scroll), so only what is actually viewed gets fetched/rendered;
+//   3. after selecting the current group, scroll it into view so the cursor
+//      visibly moves to it instead of sitting at the top of the list.
 const GROUPS_PAGE_SIZE = 200          // server max per request
-const GROUPS_MAX_PAGES = 100          // safety cap: 200 * 100 = 20k groups
 
-async function fetchAllGroups(moduleId: string): Promise<GroupItem[]> {
-  const all: GroupItem[] = []
-  let offset = 0
-  let total = Number.POSITIVE_INFINITY
-  for (let page = 0; page < GROUPS_MAX_PAGES && all.length < total; page++) {
-    const res = await getRequest<any>(`/api/v1/modules/${encodeURIComponent(moduleId)}/groups`, {
-      project_id: props.projectId,
-      limit: GROUPS_PAGE_SIZE,
-      offset,
-    })
-    const data = res.data as any
-    const items = (data?.groups ?? data?.items ?? []) as GroupItem[]
-    all.push(...items)
-    total = typeof data?.total === 'number' ? data.total : all.length
-    // Stop if the server returned a short/empty page (guards against a bad total).
-    if (items.length === 0 || items.length < GROUPS_PAGE_SIZE) break
-    offset += items.length
-  }
-  return all
+async function fetchGroupPage(
+  moduleId: string,
+  offset: number,
+): Promise<{ items: GroupItem[]; total: number }> {
+  const res = await getRequest<any>(`/api/v1/modules/${encodeURIComponent(moduleId)}/groups`, {
+    project_id: props.projectId,
+    limit: GROUPS_PAGE_SIZE,
+    offset,
+  })
+  const data = res.data as any
+  const items = (data?.groups ?? data?.items ?? []) as GroupItem[]
+  const total = typeof data?.total === 'number' ? data.total : offset + items.length
+  return { items, total }
 }
 
 async function fetchGroups(moduleId: string, preferredGroupId?: string) {
   if (!props.projectId || !moduleId) return
   groupsLoading.value = true
+  groupsLoadingMore.value = false
   groups.value = []
+  groupsTotal.value = 0
   docs.value = []
   try {
-    groups.value = await fetchAllGroups(moduleId)
+    // First page only.
+    const first = await fetchGroupPage(moduleId, 0)
+    groups.value = first.items
+    groupsTotal.value = first.total
+
+    // Load further pages ONLY until the preferred group is present. Stops as soon
+    // as it is found (bounded by total) — it does not walk the entire module.
+    if (preferredGroupId) {
+      while (
+        groups.value.length < groupsTotal.value &&
+        !groups.value.some(g => g.group_id === preferredGroupId)
+      ) {
+        const next = await fetchGroupPage(moduleId, groups.value.length)
+        if (next.items.length === 0) break
+        groups.value = [...groups.value, ...next.items]
+        groupsTotal.value = next.total
+      }
+    }
+
     if (groups.value.length > 0) {
       // Prefer the head document's group; fall back to first group
       const matched = preferredGroupId
@@ -389,9 +418,56 @@ async function fetchGroups(moduleId: string, preferredGroupId?: string) {
     }
   } catch {
     groups.value = []
+    groupsTotal.value = 0
   } finally {
     groupsLoading.value = false
   }
+  // The list is now rendered (groupsLoading is false). Move the visible cursor to
+  // the selected group so it appears highlighted in the viewport (reviewer #2).
+  if (currentGroup.value) {
+    await nextTick()
+    scrollActiveGroupIntoView()
+  }
+}
+
+// Infinite scroll: pull the next page when the user nears the bottom of the group
+// list, so a large module loads incrementally instead of all at once.
+async function loadMoreGroups() {
+  if (groupsLoadingMore.value || groupsLoading.value) return
+  if (groups.value.length >= groupsTotal.value) return
+  groupsLoadingMore.value = true
+  try {
+    const next = await fetchGroupPage(currentModule.value, groups.value.length)
+    if (next.items.length > 0) {
+      const seen = new Set(groups.value.map(g => g.group_id))
+      groups.value = [...groups.value, ...next.items.filter(g => !seen.has(g.group_id))]
+    }
+    groupsTotal.value = next.total
+  } catch {
+    // Non-fatal: keep the groups already loaded.
+  } finally {
+    groupsLoadingMore.value = false
+  }
+}
+
+function onGroupListScroll(e: Event) {
+  const el = e.target as HTMLElement
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+    void loadMoreGroups()
+  }
+}
+
+// Scroll the active group row toward the middle of the list viewport. Contained to
+// the list (never scrolls the modal/page) and independent of offsetParent via rects.
+function scrollActiveGroupIntoView() {
+  const list = groupListEl.value
+  if (!list) return
+  const active = list.querySelector('.nad-group-item.active') as HTMLElement | null
+  if (!active) return
+  const listRect = list.getBoundingClientRect()
+  const itemRect = active.getBoundingClientRect()
+  const delta = (itemRect.top - listRect.top) - (list.clientHeight - active.clientHeight) / 2
+  list.scrollTop = Math.max(0, list.scrollTop + delta)
 }
 
 async function fetchDocs(groupId: string, moduleId: string) {
@@ -886,6 +962,12 @@ watch(
   background: var(--primary-l);
   color: var(--primary);
   font-weight: 600;
+}
+.nad-group-more {
+  padding: 10px;
+  text-align: center;
+  font-size: .75rem;
+  color: var(--text-m);
 }
 .nad-group-id {
   font-family: 'JetBrains Mono', monospace;
