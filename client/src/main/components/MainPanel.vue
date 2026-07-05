@@ -53,6 +53,12 @@
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
             @return-to="onWorkflowStepReturn(tab.id, $event)"
           />
+          <!-- 0115: git finalize panel — self-hiding unless the group has a git
+               worktree (status !== 'none'); shown on workflow roots only. -->
+          <GitFinalizePanel
+            v-if="tab.typeCode === 'R' || tab.typeCode === 'B'"
+            :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
+          />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
                the tree the tab type resolves to 'unsupported' (no md), which would
@@ -928,7 +934,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { getRequest, patchRequest, postRequest } from '@shared/api'
-import { useTabsStore, isFileTab, type Tab } from '../stores/tabs'
+import { useTabsStore, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import {
@@ -949,6 +955,7 @@ import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'
 import DocWorkflow from './DocWorkflow.vue'
+import GitFinalizePanel from './GitFinalizePanel.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
 import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
@@ -1722,15 +1729,6 @@ function getActionBarMode(tabId: string) {
   // documents of a disposed group"). The flag refreshes via the SSE group_disposed → silent doc refetch,
   // so the bar disappears immediately rather than after F5.
   if (exposedValue(docHeaderRefs[tabId]?.groupDisposed) === true) return null
-  // Group 0137 (R0001/NR0003): a file tab (a source file opened from the explorer)
-  // carries projectId but never a typeCode, so getWorkflowViewInput yields tabTypeCode=null
-  // and workflowViewState falls into the doc-loading placeholder (mode='review'). That
-  // placeholder is meant only for a doc tab whose header has not arrived yet; a file tab has
-  // no workflow at all, so it must show NO action bar. Guard on POSITIVE file-tab identity
-  // (isFileTab: projectId present + no typeCode), never bare typeCode==null, so a still-loading
-  // doc tab keeps its placeholder bar (feedback_actionbar_always_shows).
-  const tab = tabs.value.find((t) => t.id === tabId)
-  if (tab && isFileTab(tab)) return null
   return getWorkflowViewState(tabId).mode
 }
 
@@ -3596,22 +3594,11 @@ watch(textWrapEnabled, (enabled) => {
   width: min(1120px, 94vw);
 }
 
-/* The modal box is capped at min(860px, 88vh) while any vh-based minimum on
-   the body keeps growing with the viewport — past ~1210px tall the body
-   outgrows the box and shoves the footer through the `overflow: hidden`
-   clip line, further down the taller the screen gets. Header/footer must be
-   reserved unconditionally and the body may only take what is left. */
-.document-modal--edit .modal-hd,
-.document-modal--edit .modal-ft {
-  flex: 0 0 auto;
-}
-
 .document-editor {
   padding: 0;
-  /* No vh floor here: `flex: 1 1 auto` + `min-height: 0` sizes the body to
-     exactly the box height minus header/footer, at every viewport height. */
-  flex: 1 1 auto;
-  min-height: 0;
+  /* The comfortable editor height (was on the textarea as `min-height: 62vh`)
+     lives on the body so the body itself defines the single scroll track. */
+  min-height: 62vh;
   display: flex;
   /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
      the inner textarea is the *sole* scroll container. With the height pinned
