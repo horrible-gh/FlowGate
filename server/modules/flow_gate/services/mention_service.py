@@ -34,6 +34,7 @@ from typing import Optional
 from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.settings import source_mode_service
+from modules.flow_gate.services import test_command_service
 
 logger = logging.getLogger(__name__)
 
@@ -520,7 +521,20 @@ def _ts_authoring_section() -> str:
         "Placeholders — {PORT}: port FlowGate allocates (also env FLOWGATE_TEST_PORT);\n"
         "{SCRATCH}: per-run scratch dir, deleted afterward (env FLOWGATE_TEST_SCRATCH).\n"
         "Commit the actual test code to the repo in this step (no auto-generation).\n"
-        "Limits: at most 50 cases, 20 setup/teardown steps, 5 services. Verdict is exit-0 only."
+        "Limits: at most 50 cases, 20 setup/teardown steps, 5 services. Verdict is exit-0 only.\n\n"
+        "Framework-agnostic: the ONLY verdict is the process exit code (0 = pass). Any\n"
+        "runner works — pytest, `npm test`, `npx vitest run`, `go test`, `cargo test`, a bare\n"
+        "shell script. This is NOT Python-only; pick whatever matches the code under test.\n\n"
+        "Because cmd runs at the SOURCE ROOT, cd into the subproject first. Example — the\n"
+        "frontend Vitest suite (lives in client/, config at client/vitest.config.ts):\n\n"
+        "## 테스트 준비\n"
+        "- cmd: cd client && npm install          # installs vitest; use install, NOT `npm ci` (esbuild lock)\n"
+        "## 테스트 케이스\n"
+        "### TC-1: frontend unit suite is green\n"
+        "- cmd: cd client && npm test             # == `vitest run`; PASS iff exit 0\n"
+        "- 기대: all Vitest specs pass (exit 0)\n\n"
+        "Node/npm must be on the FlowGate host PATH for JS runners; a fresh source tree has\n"
+        "no node_modules, so the install setup step above is required."
     )
     return _section("Test scenario authoring (TS)", body)
 
@@ -885,6 +899,18 @@ def build_mention(
         sections.append(scope_section)
     if ts_authoring_section:
         sections.append(ts_authoring_section)
+        # flowgate.default.0152: right after the TS authoring guide, list this project's
+        # verified test commands so the worker prefers known-good commands over guessing.
+        # Omitted when the project has none (build_* returns ""); never breaks mention build.
+        try:
+            verified_commands_body = test_command_service.build_verified_commands_block(project)
+        except Exception:
+            logger.warning("verified test-command block failed", exc_info=True)
+            verified_commands_body = ""
+        if verified_commands_body:
+            sections.append(
+                _section(f"Verified test commands (project: {project})", verified_commands_body)
+            )
     if template_section:
         sections.append(template_section)
     if source_crud_section:
@@ -1114,216 +1140,4 @@ def build_workflow_decision_mention(
     # the same doc_ref the workflow_decide token is minted with, which the Q endpoint
     # accepts (NR0003 §타당성 검증).
     # Continuous (group 0086): this is the first link of an unmanned chain, so the guide
-    # is REPLACED by the delegation/unmanned block — the worker decides autonomously and
-    # never stops to ask (consistent with build_mention's continuous branch).
-    if continuous:
-        clarification_body = _continuous_guide_body(locale, review_mode=continuous_review_mode)
-    else:
-        clarification_body = _clarification_guide_body(base, doc_id, raw_token, locale)
-    sections = [
-        _section("Document information", s1_body),
-        _section("Clarification guide", clarification_body),
-        _section("Workflow decision instructions", s2_body),
-        _section("Reference documents", s3_body),
-    ]
-
-    if group_recent_docs:
-        lines = [
-            f"Recent documents in group (relative to {short_id}, {len(group_recent_docs)} items):"
-        ]
-        oldest_id = doc_id
-        for item in group_recent_docs:
-            item_seq = item.get("seq")
-            item_type = item.get("doc_type", "")
-            item_short = (
-                f"{item_type}{item_seq:04d}" if item_seq else item.get("doc_id", "")
-            )
-            item_label = get_type_name(item_type, locale) if item_type else ""
-            lines.append(
-                f"- {item_short}  [{item_type}] {item_label}  "
-                f"{item.get('title', '')} ({item.get('status', '')})"
-            )
-            oldest_id = item.get("doc_id", item_short)
-        lines.extend([
-            "",
-            "To browse earlier documents:",
-            f"GET {base}/list/groups/{group_id}/documents?before={oldest_id}&limit=5",
-        ])
-        sections.append(_section("Recent documents in group", "\n".join(lines)))
-
-    decision_body = {
-        "doc_id": doc_id,
-        "doc_class": "R",
-        "sequence": [
-            {"id": 1, "type": "<TYPE_CODE>", "label": "<STEP_LABEL>"},
-        ],
-    }
-    s5_body = (
-        f"Submit the workflow decision: POST {base}/workflow/decide\n"
-        f"Authorization: Bearer {raw_token}\n\n"
-        f"{json.dumps(decision_body, ensure_ascii=False, indent=2)}"
-    )
-    sections.extend([
-        _section("Workflow decision submission", s5_body),
-        _section("doc_type guide", f"GET {base}/help/doc_type"),
-    ])
-    if continuous:
-        sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=continuous_review_mode)))
-    else:
-        # Group 0110 B0001/NR0003: recency repeat of the no-choices / Q-registration guard
-        # at the bottom of this (long) prompt, matching build_mention/build_review_mention.
-        sections.append(_section("Reminder", _no_choices_reminder(base, doc_id, locale)))
-    return "\n\n".join(sections)
-
-
-# ── Review-request mention builder ────────────────────────────────────────────
-# Distinct genre from build_mention: build_mention hands off CREATING the next
-# document (action:new + next_type); this asks a worker to REVIEW an existing
-# document and submit a verdict (inbox action:review). No sequence/next_type is
-# resolved — the target IS the document, so this works for any non-R doc.
-
-def build_review_mention(
-    *,
-    token_rec: dict,
-    target_doc: dict,
-    api_base_url: str,
-    raw_token: str = "",
-    group_recent_docs: Optional[list] = None,
-    ref_doc_ids: Optional[list] = None,
-    locale: str = "ko",
-) -> Optional[str]:
-    """Build a "please review this document" mention.
-
-    token_rec fields: project, group_id, scratch_dir
-    target_doc fields: doc_id, type_code, seq, title, module, project_id
-
-    The token must be bound to doc_ref=target_doc.doc_id so inbox _handle_review
-    accepts the verdict submission.
-    """
-    project = token_rec.get("project", "")
-    group_id_full = token_rec.get("group_id", "")
-    scratch_dir = token_rec.get("scratch_dir", "")
-
-    parts = group_id_full.split(".", 2) if group_id_full else []
-    if len(parts) == 3:
-        _proj, module, group = parts
-    else:
-        module = target_doc.get("module", "none")
-        group = group_id_full
-
-    doc_type = target_doc.get("type_code", "")
-    seq = target_doc.get("seq", 0)
-    short_id = f"{doc_type}{seq:04d}" if seq else target_doc.get("doc_id", "")
-    canonical_id = target_doc.get("doc_id", "")
-    title = target_doc.get("title", "")
-
-    base = _api_base(api_base_url)
-
-    # ── Section 1: document information (the doc under review) ────────────────
-    s1_body = (
-        f"project: {project}\n"
-        f"module: {module}\n"
-        f"group: {group}\n"
-        f"type: {doc_type}\n"
-        f"type_detail: {get_type_name(doc_type, locale)}\n"
-        f"doc_number: {short_id}\n"
-        f"title: {title}"
-    )
-
-    # ── Section 2: review instructions ───────────────────────────────────────
-    s2_body = (
-        f"Review the target document ({canonical_id}). Read it, evaluate it against its\n"
-        "requirements and pass criteria, then submit a verdict (see below).\n"
-        "Do NOT modify the document — a review is a child record attached to it; the\n"
-        "approve/reject decision is made by a human afterward."
-    )
-
-    # ── Section 3: reference documents (target first, then extras) ───────────
-    s3_lines = [f"{canonical_id}: GET {base}/document/{canonical_id}"]
-    if ref_doc_ids:
-        for d in ref_doc_ids:
-            if d == canonical_id:
-                continue
-            s3_lines.append(f"{d}: GET {base}/document/{d}")
-    s3_body = (
-        f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n"
-        + "\n".join(s3_lines)
-    )
-
-    # ── Section 4: recent documents in the group (omit when there are 0) ─────
-    s4_section = ""
-    if group_recent_docs:
-        count = len(group_recent_docs)
-        lines_doc = [f"Recent documents in group (relative to {short_id}, {count} items):"]
-        oldest_canonical_id = ""
-        for item in group_recent_docs:
-            iseq = item.get("seq")
-            isid = f"{item['doc_type']}{iseq:04d}" if iseq else item.get("doc_id", "")
-            ilabel = get_type_name(item.get("doc_type", ""), locale) if item.get("doc_type") else ""
-            lines_doc.append(
-                f"- {isid}  [{item.get('doc_type', '')}] {ilabel}  {item.get('title', '')} ({item.get('status', '')})"
-            )
-            oldest_canonical_id = item.get("doc_id", isid)
-        nav_gid = group_id_full or f"{project}-{module}-{group}"
-        lines_doc.append("")
-        lines_doc.append("To browse earlier documents:")
-        lines_doc.append(
-            f"GET {base}/list/groups/{nav_gid}/documents?before={oldest_canonical_id}&limit=5"
-        )
-        s4_section = _section("Recent documents in group", "\n".join(lines_doc))
-
-    # ── Section 5: review submission (inbox action:review) ────────────────────
-    post_body = {
-        "action": "review",
-        "project": project,
-        "doc_id": canonical_id,
-        "verdict": "pass | issues | hold",
-        "findings": [{"locus": "<where in the doc>", "note": "<what is wrong / to improve>"}],
-        "comment": "<optional overall comment>",
-    }
-    post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
-    s5_body = (
-        f"Submit your review: POST {base}/inbox\n"
-        f"Authorization: Bearer {raw_token}\n"
-        "\n"
-        f"{post_json}\n"
-        "\n"
-        f"{_DRYRUN_HINT}"
-    )
-
-    # ── Section 6: scratch directory ─────────────────────────────────────────
-    # Disabled: remote HTTP consumers cannot access the server host's local paths. Restore when a command-invocation mode is introduced.
-    # s6_body = scratch_dir
-
-    # ── Section 7: verdict guide (inline — no help endpoint for verdicts) ────
-    s7_body = (
-        "verdict values:\n"
-        "- pass   : meets requirements, no blocking issues\n"
-        "- issues : defects found; list each one in findings (locus + note)\n"
-        "- hold   : cannot decide yet (missing context / blocked)\n"
-        "\n"
-        "findings is a list of {locus, note}. The server counts them — do not write counts yourself."
-    )
-
-    # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
-    # The review token is bound to the target document, so anchor the embedded query
-    # POST at canonical_id. See _clarification_guide_body (B0001 / NR0003).
-    s8_body = _clarification_guide_body(base, canonical_id, raw_token, locale)
-
-    sections = [
-        _section("Document information", s1_body),
-        # R0001/T0004: hoist the clarification guide (with the no-choices guard)
-        # directly under the document-identity header so it is actually read.
-        _section("Clarification guide", s8_body),
-        _section("Review instructions", s2_body),
-        _section("Reference documents", s3_body),
-    ]
-    if s4_section:
-        sections.append(s4_section)
-    sections.append(_section("Review submission", s5_body))
-    # sections.append(_section("Scratch directory", s6_body))  # disabled (see §6 above)
-    sections.append(_section("Verdict guide", s7_body))
-    # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
-    sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
-
-    return "\n\n".join(sections)
+    # is REPLACED by the delegation/unmanned block — the worker decides autonomous
