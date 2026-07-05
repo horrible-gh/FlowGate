@@ -118,6 +118,7 @@ def src_root(project_name: str, branch: str = 'main') -> Path:
 def resolve_project_src_root(
     project_id: Optional[str],
     fallback_branch: str = "main",
+    group_id: Optional[str] = None,
 ) -> Optional[Path]:
     """Resolve a project's source mirror root from its *project_id*.
 
@@ -127,9 +128,23 @@ def resolve_project_src_root(
     project_id straight into ``src_root()`` resolves a nonexistent directory
     whenever project_id != project_name (the 0152 test-runner outage).
     Returns None when the project row or its name is missing.
+
+    0115: when *group_id* is given and the project is git-integrated with a
+    registered worktree for that group, the group worktree path wins (L0006
+    §2.2). Every other case — no group, no config, disabled, missing worktree —
+    falls back to the ordinary project-branch folder below (fallback first).
     """
     if not project_id:
         return None
+    if group_id:
+        try:
+            from modules.flow_gate.services import git_service  # lazy — import cycle
+
+            wt = git_service.effective_src_root(project_id, group_id)
+            if wt is not None:
+                return wt
+        except Exception:
+            pass  # worktree resolution must never break the fallback path
     try:
         from modules.flow_gate.db import projects as _proj  # lazy — import cycle
     except Exception:

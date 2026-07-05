@@ -203,6 +203,23 @@ def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
     except Exception:  # noqa: BLE001 — state-board signal is best-effort, never fatal
         _log.warning("work_started signal failed for %s", doc_id, exc_info=True)
 
+    # 0115 H1: a git-integrated project gets its group branch + worktree provisioned
+    # right after the decision is recorded (L0006 §2.4). Runs on a background thread
+    # (a first-time clone is network-bound) and reports via git_worktree_ready/failed
+    # SSE; H2 (worker-token grant creation) re-guarantees it before any source access.
+    # Non-integrated projects: ensure_worktree is a strict no-op.
+    try:
+        if doc.get("project_id") and doc.get("group_id"):
+            from modules.flow_gate.services import git_service as _git_service
+
+            _git_service.ensure_worktree_async(
+                doc["project_id"],
+                doc.get("module") or "default",
+                doc["group_id"],
+            )
+    except Exception:  # noqa: BLE001 — provisioning must never break the decision
+        _log.warning("git worktree hook failed for %s", doc_id, exc_info=True)
+
     head = db_wfseq.get_effective_head(seq_id)
     head_out = None
     if head:

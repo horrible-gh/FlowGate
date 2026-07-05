@@ -26,23 +26,22 @@ _MAX_TOTAL_BYTES = 500 * 1024 * 1024  # 500 MB
 
 # ── Internal Utilities ───────────────────────────────────────────────────────
 
-def _get_src_root(project_id: str):
-    """Returns normalized absolute src_root path for the given project_id."""
-    from modules.flow_gate.storage.paths import src_root
-    from modules.flow_gate.db import projects as _proj
+def _get_src_root(project_id: str, group_id: str | None = None):
+    """Returns normalized absolute src_root path for the given project_id.
 
-    row = _proj.get_by_id(project_id)
-    project_name = (row.get("project_name") or "").strip() if row else ""
-    settings = _proj.get_settings(project_id)
-    branch = (settings.get("branch") or "main").strip() if settings else "main"
+    0115: delegates to the shared resolver (storage.paths) so an optional
+    group_id routes to the group's git worktree when one is registered; the
+    group-less call keeps the pre-0115 project-branch behavior unchanged.
+    """
+    from modules.flow_gate.storage.paths import resolve_project_src_root
 
-    if not project_name:
+    root = resolve_project_src_root(project_id, group_id=group_id)
+    if root is None:
         raise HTTPException(
             status_code=404,
             detail={"error": {"code": "PROJECT_NOT_FOUND", "message": "Project not found"}},
         )
-
-    return src_root(project_name, branch).resolve()
+    return root
 
 
 def _is_valid_relative_path(path: str) -> bool:
@@ -163,8 +162,10 @@ async def upload_files(request: Request, project_id: str):
             content={"error": {"code": "INVALID_PARAM", "message": "target_path is invalid"}},
         )
 
-    # Resolve project src_root
-    src_root_path = _get_src_root(project_id)
+    # Resolve project src_root (0115: an optional group_id form field targets the
+    # group's git worktree; absent → unchanged project-branch upload behavior).
+    group_id = str(form.get("group_id") or "").strip() or None
+    src_root_path = _get_src_root(project_id, group_id)
     root_str = str(src_root_path)
 
     uploaded = []

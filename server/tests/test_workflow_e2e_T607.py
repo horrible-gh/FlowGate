@@ -16,7 +16,8 @@ Guards:
   feedback_actionbar_always_shows — empty actionbar = regression
   feedback_actionbar_d030_guard    — D030 §4.1 row #7 at execution level
   feedback_worker_no_extra_conditions — test-only scope; no production code edits
-  WORKER_GUARD rule 3: no git state change
+  WORKER_GUARD rule 3: workers never change the SERVER repository's git state directly
+  (0115 E14 redefinition: git operations are owned by the server git hooks/finalize service)
 
 Dependencies: T604, T605, T606, T624, T625 (all applied).
 """

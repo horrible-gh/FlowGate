@@ -17,7 +17,8 @@ Guards:
   feedback_actionbar_d030_guard — D030 §4.1 row #7 (reviewStatus=approved → [next-step]) pass
   NR143 §0 — no direct writer added to transition_document_review()
   feedback_worker_no_extra_conditions
-  WORKER_GUARD rule 3: no git state change
+  WORKER_GUARD rule 3: workers never change the SERVER repository's git state directly
+  (0115 E14 redefinition: git operations are owned by the server git hooks/finalize service)
 """
 from __future__ import annotations
 

@@ -14,7 +14,9 @@ Guards:
   feedback_actionbar_always_shows — empty actionbar = regression
   feedback_actionbar_d030_guard    — based on the D030 §4 matrix
   feedback_worker_no_extra_conditions — test-only scope; no production code changes
-  WORKER_GUARD rule 3              — no git state change
+  WORKER_GUARD rule 3              — workers never change the SERVER repository's git state
+                                     directly (0115 E14: git operations are owned by the server
+                                     git hooks/finalize service, not by workers)
 """
 from __future__ import annotations
 

@@ -54,12 +54,13 @@ def create(data: dict[str, Any], scopes: list[str]) -> dict:
     with store.transaction():
         store._execute(
             "INSERT INTO remote_tool_grant "
-            "(grant_id, token_hash, project, module, report_doc_id, session_id, "
+            "(grant_id, token_hash, project, module, group_id, report_doc_id, session_id, "
             "status, issued_at, expires_at, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 data["grant_id"], data["token_hash"], data["project"],
-                data["module"], data.get("report_doc_id"), data.get("session_id"),
+                data["module"], data.get("group_id"),
+                data.get("report_doc_id"), data.get("session_id"),
                 data.get("status", "active"),
                 data.get("issued_at", now), data.get("expires_at"),
                 now, now,

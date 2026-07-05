@@ -189,12 +189,16 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
     parts = group_id.split(".", 2)
     module = parts[1] if len(parts) == 3 else "default"
     try:
-        return db_grants.create(
+        grant = db_grants.create(
             {
                 "grant_id": grant_id,
                 "token_hash": token_hash,
                 "project": project,
                 "module": module,
+                # 0115 G1: carry the FULL group id so source resolution can route
+                # this worker to its group worktree (L0006 §2.2). Legacy grants
+                # keep NULL and fall back to the project branch (L0006 §4.1).
+                "group_id": group_id or None,
                 "report_doc_id": None,
                 "session_id": token_rec.get("issued_to"),
                 "status": "active",
@@ -207,6 +211,19 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
         # Another request may have created it concurrently, or storage may reject it.
         existing = db_grants.get_by_id(grant_id)
         return existing if existing and _worker_grant_still_valid(existing) else None
+
+    # 0115 H2: mutating (T/TR) workers get their group worktree (re)guaranteed at
+    # the _MUTATING_WORK_TYPES judgement point — the backstop for a failed or
+    # restarted H1 (decide-time) provisioning. Idempotent and never raises; on
+    # failure source access simply keeps resolving to the fallback branch folder.
+    if group_id and "write" in scopes:
+        try:
+            from modules.flow_gate.services import git_service  # lazy — import cycle
+
+            git_service.ensure_worktree(project, module, group_id)
+        except Exception:
+            pass
+    return grant
 
 
 def _scopes_for_worker_token(token_rec: dict) -> list[str]:
@@ -347,10 +364,23 @@ def _validate_encoding(body: dict) -> None:
 def _resolve_src_root(grant: dict) -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
-    project_name from the grant's project_id, branch from project_settings
-    (NR0009 §8.3). Mirrors file_transfer_routes._get_src_root.
+    0115: a grant that carries a group_id is routed to that group's git worktree
+    when the project is git-integrated and the worktree is registered (L0006
+    §2.2). Everything else — no group on the grant (legacy rows), no config,
+    disabled integration, missing worktree — falls back to the ordinary
+    project-branch folder exactly as before (fallback-first principle).
     """
     project_id = grant.get("project")
+    group_id = grant.get("group_id")
+    if group_id:
+        try:
+            from modules.flow_gate.services import git_service  # lazy — import cycle
+
+            wt = git_service.effective_src_root(project_id, group_id)
+            if wt is not None:
+                return wt
+        except Exception:
+            pass  # resolution problems must never break the fallback path
     row = db_projects.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
     if not project_name:
