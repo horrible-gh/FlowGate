@@ -17,7 +17,14 @@ WorkingDirectory=__ROOT__/server
 # against Restart=always. '-lc' uses a login shell so node/npm from the user's
 # profile (nvm, /usr/local/bin) are on PATH (systemd's default PATH lacks them).
 ExecStartPre=-/bin/bash -lc '__ROOT__/client/build.sh'
-ExecStart=__ROOT__/.venv/bin/python __ROOT__/server/stg.py
+# Start the server through the SAME login shell as the build step. This is what
+# fixes B0001: the FlowGate process (and therefore the test-run runner, which
+# copies this process's os.environ) inherits the user's full profile PATH, so
+# node/npm/npx and any other runtime declared in the profile resolve without
+# hand-planting per-executable symlinks in /usr/local/bin every time the test
+# language changes. 'exec' is required so python replaces bash and keeps the
+# PID that Type=simple tracks for signalling/Restart.
+ExecStart=/bin/bash -lc 'exec __ROOT__/.venv/bin/python __ROOT__/server/stg.py'
 Restart=always
 RestartSec=3
 
