@@ -14,6 +14,11 @@ const ACTIVITY_COLORS: Record<string, string> = {
   // R0001 group 0135 / N0008: the terminal "연속작업 완료" alarm — a distinct emerald so the
   // once-per-run completion stands out from the per-step document_created (blue) inflow.
   continuous_work_completed: '#059669',
+  // flowgate.default.0157: test-run auto-recovery loop signals. `test_run_repair` = amber (a
+  // retry is in flight, informational), `test_run_repair_exhausted` = red (the attempt cap was
+  // hit — the one case the user must intervene, so it reads as urgent as a failure).
+  test_run_repair: '#d97706',
+  test_run_repair_exhausted: '#dc2626',
 }
 
 // R0001 group 0135 / N0008 (시안 3): map an AI review verdict to a trust tone so a completed feed row
