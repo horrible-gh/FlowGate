@@ -35,6 +35,7 @@ from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
+from modules.flow_gate.services import engine_recipe_service
 
 logger = logging.getLogger(__name__)
 
@@ -911,6 +912,16 @@ def build_mention(
             sections.append(
                 _section(f"Verified test commands (project: {project})", verified_commands_body)
             )
+        # flowgate.default.0157: the engine-recipe help pointer, right after the verified commands.
+        # Always emitted when the TS authoring guide is present — even with zero recipes — so the first
+        # help call teaches the registry (L §2-7). No per-language rules (0156.0002-CH). Never breaks build.
+        try:
+            engine_recipes_body = engine_recipe_service.build_engine_recipes_block(base)
+        except Exception:
+            logger.warning("engine recipes block failed", exc_info=True)
+            engine_recipes_body = ""
+        if engine_recipes_body:
+            sections.append(_section("Engine recipes (environment setup)", engine_recipes_body))
     if template_section:
         sections.append(template_section)
     if source_crud_section:

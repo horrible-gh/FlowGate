@@ -22,7 +22,11 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.numbering import id_formatter, numbering_service
 from modules.flow_gate.rbac.permission_service import has_permission
-from modules.flow_gate.services import token_service, test_command_service
+from modules.flow_gate.services import (
+    token_service,
+    test_command_service,
+    engine_recipe_service,
+)
 from modules.flow_gate.storage import paths as storage_paths
 
 logger = logging.getLogger(__name__)
@@ -600,9 +604,15 @@ def execute_run(run: dict) -> None:
         )
         finished_run = db_test_runs.get_run(run["run_id"]) or run
         _emit_finished(doc, finished_run, None)
-        # R0001 group 0154 / NR0004 Gap A: setup-stage failure is the most common silent stop (e.g. the
-        # TC-1 reused-.venv/pytest case) — surface it too. Best-effort; never affects the verdict.
-        _maybe_notify_chain_failure(doc, finished_run)
+        # flowgate.default.0157: a setup failure is the canonical INFRA case — try the auto-recovery loop
+        # first. If it re-fires (or escalates at the cap) it owns the signal, so suppress the generic
+        # "chain failed" alarm; otherwise fall through to it. Best-effort; never affects the verdict.
+        recovery = engine_recipe_service.handle_run_failure(
+            doc, finished_run, db_test_runs.list_cases(run["run_id"])
+        )
+        if recovery not in ("repair", "escalated"):
+            # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
+            _maybe_notify_chain_failure(doc, finished_run)
         return
 
     passed = sum(1 for case in final_cases if case.get("result") == "pass")
@@ -619,8 +629,12 @@ def execute_run(run: dict) -> None:
         # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
         # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
         try:
-            test_command_service.reflect_from_passed_run(
-                doc, db_test_runs.list_cases(run["run_id"])
+            passed_items = db_test_runs.list_cases(run["run_id"])
+            test_command_service.reflect_from_passed_run(doc, passed_items)
+            # flowgate.default.0157: also reflect this run's setup/run command into the GLOBAL engine
+            # recipe (auto-learn, L §2-4). Self-isolating like the 0152 reflect — never affects verdict.
+            engine_recipe_service.reflect_from_passed_run(
+                doc, db_test_runs.get_run(run["run_id"]) or run, passed_items
             )
         except Exception as exc:
             logger.warning(
@@ -637,10 +651,17 @@ def execute_run(run: dict) -> None:
     finished_run = db_test_runs.get_run(run["run_id"]) or run
     _emit_finished(doc, finished_run, tsr_doc_id)
     if status == "failed":
-        # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
-        # hand on — surface it once so the unmanned chain no longer goes silent (was: only an ephemeral
-        # SSE broadcast, no persistent/discoverable signal). Best-effort; never affects the verdict.
-        _maybe_notify_chain_failure(doc, finished_run)
+        # flowgate.default.0157: route the failure through the auto-recovery loop first. An INFRA
+        # failure (env/tooling) is re-fired or escalated and owns its own signal; a real RED (CODE)
+        # returns "code" and falls through to the chain-failed alarm + existing rework chain.
+        recovery = engine_recipe_service.handle_run_failure(
+            doc, finished_run, db_test_runs.list_cases(run["run_id"])
+        )
+        if recovery not in ("repair", "escalated"):
+            # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
+            # hand on — surface it once so the unmanned chain no longer goes silent (was: only an
+            # ephemeral SSE broadcast). Best-effort; never affects the verdict.
+            _maybe_notify_chain_failure(doc, finished_run)
 
 
 def _execute_setup(

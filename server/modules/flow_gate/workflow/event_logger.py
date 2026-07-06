@@ -41,6 +41,16 @@ EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
 #   terminal event yields a distinct "연속작업 실패" alarm without reviving the 0118 per-step 폭증.
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
+# EVT_TEST_RUN_REPAIR / EVT_TEST_RUN_REPAIR_EXHAUSTED — flowgate.default.0157 (R0001→…→T0006): the
+#   test-run auto-recovery loop (engine_recipe_service.handle_run_failure). When an unmanned chain's
+#   server-side test_run dies on an ENVIRONMENT failure (setup/tool/PATH — the test never ran), the
+#   system re-fires it up to MAX_REPAIR_ATTEMPTS with a fresh repair token instead of stopping. Each
+#   attempt records a REPAIR event carrying the repair token + fix mention; hitting the cap records one
+#   EXHAUSTED escalation with the attempt history — the single case where the user must step in. Both
+#   are on the notification feed (dashboard_service._NOTIFICATION_EVENT_TYPES): bounded to at most
+#   MAX_REPAIR_ATTEMPTS repair rows + one exhausted row per doc, so no 0118 per-step 폭증.
+EVT_TEST_RUN_REPAIR = "test_run_repair"
+EVT_TEST_RUN_REPAIR_EXHAUSTED = "test_run_repair_exhausted"
 
 
 def log_event(
@@ -256,6 +266,81 @@ def log_continuous_work_failed(
         group_id=group_id,
         document_id=document_id,
         metadata=meta or None,
+    )
+
+
+def log_test_run_repair(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    document_id: int | None,
+    doc_id: str | None = None,
+    group_id: str | None = None,
+    run_id: str | None = None,
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+    engine: str | None = None,
+    error: str | None = None,
+    token: str | None = None,
+    mention: str | None = None,
+) -> dict:
+    """Record one test-run auto-recovery repair delivery (flowgate.default.0157, L §2-6).
+
+    Emitted when an unmanned chain's test_run failed for an ENVIRONMENT reason and the loop re-fires it.
+    Carries the fresh repair token + fix mention so a worker (or the user) can re-fire from the feed.
+    Fires at most MAX_REPAIR_ATTEMPTS times per doc.
+    """
+    meta: dict[str, Any] = {}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    if run_id:
+        meta["run_id"] = run_id
+    if attempt is not None:
+        meta["attempt"] = attempt
+    if max_attempts is not None:
+        meta["max_attempts"] = max_attempts
+    if engine:
+        meta["engine"] = engine
+    if error:
+        meta["error"] = error
+    if token:
+        meta["token"] = token
+    if mention:
+        meta["mention"] = mention
+    return log_event(
+        event_type=EVT_TEST_RUN_REPAIR,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata=meta or None,
+    )
+
+
+def log_test_run_repair_exhausted(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    document_id: int | None,
+    doc_id: str | None = None,
+    group_id: str | None = None,
+    attempts: list[dict] | None = None,
+) -> dict:
+    """Record the test-run repair-exhausted escalation (flowgate.default.0157, L §2-6 / P §상한 도달).
+
+    Emitted once when a doc hits MAX_REPAIR_ATTEMPTS consecutive environment failures — the auto-recovery
+    loop stops re-firing and hands the attempt history to the user. The one case a human must intervene.
+    """
+    meta: dict[str, Any] = {"attempts": attempts or []}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    return log_event(
+        event_type=EVT_TEST_RUN_REPAIR_EXHAUSTED,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata=meta,
     )
 
 

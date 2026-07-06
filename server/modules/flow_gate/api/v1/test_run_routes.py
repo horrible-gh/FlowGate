@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.services import test_run_service
+from modules.flow_gate.services import token_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.rbac.permission_service import has_permission
 
@@ -29,20 +30,33 @@ def post_test_run(body: TestRunBody, request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
-    if not auth.get("_is_user_jwt"):
-        return JSONResponse(status_code=403, content={"error": "user_session_required"})
     doc = db_docs.get_by_id(body.doc_id)
     if doc is None:
         return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": body.doc_id})
-    if not test_run_service.user_can_run_tests(
-        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
-    ):
-        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    if auth.get("_is_user_jwt"):
+        # UI / human-session run — the existing permission gate.
+        if not test_run_service.user_can_run_tests(
+            auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
+        ):
+            return JSONResponse(status_code=403, content={"error": "permission_denied"})
+        triggered_via = "ui"
+    elif auth.get("action_scope") == "test_run" and auth.get("doc_ref") == body.doc_id:
+        # flowgate.default.0157 (P §수리 후 재발사): an auto-recovery repair token bound to THIS doc
+        # opens the user_session wall so the unmanned chain re-fires itself without a human. Single-use
+        # — consume it here so it cannot be replayed. The consumed token still carries the chain's
+        # continuation fields, so a passing re-run auto-approves the TSR (_maybe_chain_auto_approve_tsr).
+        try:
+            token_service.consume(auth["token_id"], doc.get("project_id") or "", body.doc_id)
+        except Exception:
+            pass
+        triggered_via = "repair_token"
+    else:
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
     try:
         result = test_run_service.validate_and_create_run(
             doc_id=body.doc_id,
-            runner_id=auth["issued_to"],
-            triggered_via="ui",
+            runner_id=auth.get("issued_to") or "system",
+            triggered_via=triggered_via,
         )
     except Exception as exc:
         if hasattr(exc, "status_code"):

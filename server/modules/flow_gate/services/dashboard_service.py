@@ -50,6 +50,11 @@ _NOTIFICATION_EVENT_TYPES = (
     "group_approved",
     "continuous_work_ended",
     "continuous_work_failed",
+    # flowgate.default.0157: the test-run auto-recovery loop signals. `test_run_repair` fires at most
+    # MAX_REPAIR_ATTEMPTS times per doc (an INFRA failure being re-fired); `test_run_repair_exhausted`
+    # fires once at the cap — the single case the user must intervene. Both bounded → no 0118 폭증.
+    "test_run_repair",
+    "test_run_repair_exhausted",
 )
 
 
@@ -322,6 +327,22 @@ def _normalize_activity(
         # pointing at the TS document that failed so the user lands on it. Fires once per failed run —
         # same once-per-terminal-event discipline as the completion signal, no 0118 per-step noise.
         activity_type = "continuous_work_failed"
+        if not doc:
+            metadata_doc_id = metadata.get("doc_id")
+            if metadata_doc_id:
+                doc = documents.get(str(metadata_doc_id))
+    elif event_type == "test_run_repair":
+        # flowgate.default.0157: the auto-recovery loop re-fired an INFRA-failed test run. Surfaced so
+        # the user can see the retry; points at the TS document under repair. Bounded per doc.
+        activity_type = "test_run_repair"
+        if not doc:
+            metadata_doc_id = metadata.get("doc_id")
+            if metadata_doc_id:
+                doc = documents.get(str(metadata_doc_id))
+    elif event_type == "test_run_repair_exhausted":
+        # flowgate.default.0157: the loop hit the attempt cap and stopped — the one case the user must
+        # intervene. Points at the TS document; the attempt history rides in the event metadata.
+        activity_type = "test_run_repair_exhausted"
         if not doc:
             metadata_doc_id = metadata.get("doc_id")
             if metadata_doc_id:

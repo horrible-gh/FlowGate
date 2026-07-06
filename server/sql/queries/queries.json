@@ -155,6 +155,15 @@
         "update_message": "UPDATE project_messages SET doc_type = ?, message = ?, updated_at = ? WHERE id = ?",
         "delete_message": "DELETE FROM project_messages WHERE id = ?"
     },
+    "engine_recipes": {
+        "list_active": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE status = 'active' ORDER BY engine ASC LIMIT 50",
+        "count_active": "SELECT COUNT(*) AS cnt FROM engine_recipes WHERE status = 'active'",
+        "get_by_id": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE id = ?",
+        "get_active_by_engine": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE status = 'active' AND engine = ?",
+        "find_by_engine": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE engine = ?",
+        "insert": "INSERT INTO engine_recipes (engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "update_row": "UPDATE engine_recipes SET label = ?, setup = ?, run_example = ?, notes = ?, origin = ?, status = ?, last_success_run_id = ?, last_success_at = ?, updated_by = ?, updated_at = ? WHERE id = ?"
+    },
     "test_commands": {
         "list_active": "SELECT id, project, command, description, origin, status, last_success_at, created_at, updated_at FROM project_test_commands WHERE project = ? AND status = 'active' ORDER BY CASE WHEN last_success_at IS NULL THEN 1 ELSE 0 END ASC, last_success_at DESC, id ASC",
         "count_active": "SELECT COUNT(*) AS cnt FROM project_test_commands WHERE project = ? AND status = 'active'",
