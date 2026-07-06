@@ -831,6 +831,8 @@ export default {
       document_created: '文書が登録されました: {doc}',
       document_updated: '文書が更新されました: {doc}',
       document_content_refresh_failed: '更新された文書の最新内容の読み込みに失敗しました。',
+      test_run_failed: 'テスト失敗: {doc} ({failed}/{total} ケース)',
+      test_run_failed_nocount: 'テスト失敗: {doc}',
     },
     notif_center: {
       title: '通知',

@@ -831,6 +831,8 @@
       document_created: '문서가 등록되었습니다: {doc}',
       document_updated: '문서가 수정되었습니다: {doc}',
       document_content_refresh_failed: '수정된 문서의 최신 내용을 불러오지 못했습니다.',
+      test_run_failed: '테스트 실패: {doc} ({failed}/{total} 케이스)',
+      test_run_failed_nocount: '테스트 실패: {doc}',
     },
     notif_center: {
       title: '알림',

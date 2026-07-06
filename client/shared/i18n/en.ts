@@ -831,6 +831,8 @@
       document_created: 'Document registered: {doc}',
       document_updated: 'Document updated: {doc}',
       document_content_refresh_failed: 'Failed to load the latest content of the updated document.',
+      test_run_failed: 'Test failed: {doc} ({failed}/{total} cases)',
+      test_run_failed_nocount: 'Test failed: {doc}',
     },
     notif_center: {
       title: 'Notifications',
