@@ -4,6 +4,9 @@ Bridges FlowGate projects and remote Git repositories:
 
   - per-project config + reversibly-encrypted credentials (L0006 §2.3)
   - connection test (ls-remote, L0006 §2.5)
+  - base-slot provisioning: clone into an empty slot, or LOSSLESS adopt of an
+    occupied slot + last-attempt ledger + manual trigger
+    (flowgate.default.0161 — D0003/P0004/L0005)
   - per-group branch/worktree provisioning (L0006 §2.1·§2.4; hooks H1/H2)
   - effective source-root resolution for workers (L0006 §2.2 — fallback first:
     a non-integrated project NEVER changes behavior)
@@ -18,6 +21,7 @@ is scrubbed before storage/return.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -35,7 +39,8 @@ from Crypto.Cipher import AES as _AES
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import projects as db_projects
-from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db import system_settings as db_settings
+from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
 _log = logging.getLogger(__name__)
@@ -54,6 +59,12 @@ SECRET_ENV_KEY = "FLOWGATE_GIT_ENCRYPT_KEY"
 SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
 AUTO_COMMIT_MSG = "flowgate: work of {group_id}"
 MERGE_COMMIT_MSG = "flowgate: merge {branch} into {base_branch} ({group_id})"
+ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
+# Present while an adopt is unfinished — the slot never reports "checkout"
+# until the marker is removed (L0005 §2.1·§2.3, 0161).
+ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
+# Per-project last-attempt ledger in the generic system_settings KV (no DDL).
+ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
 ACTION_VALUES = ("merge", "push", "wait")
 
@@ -527,7 +538,334 @@ def _ref_exists(repo: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
-def ensure_worktree(project_id: str, module: str, group_id: str) -> str:
+# ── Base-slot provisioning: lossless adopt + attempt ledger (0161 L0005) ─────
+
+def _judge_base_slot(base_root: Path, base_branch: str) -> str:
+    """'empty' | 'occupied' | 'checkout' — L0005 §2.1.
+
+    Completion criterion: refs/heads/{base_branch} exists AND no pending-adopt
+    marker. Partial debris (.git without the branch, or a leftover marker)
+    reports 'occupied' so a re-run resumes the adopt sequence.
+    """
+    try:
+        if not base_root.exists() or not any(base_root.iterdir()):
+            return "empty"
+    except OSError:
+        return "empty"
+    if (base_root / ADOPT_PENDING_MARKER).exists():
+        return "occupied"
+    if (base_root / ".git").exists():
+        if not git_available():
+            return "checkout"  # informational approximation; execution paths fail precisely
+        proc = _run_git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{base_branch}"],
+            cwd=base_root,
+        )
+        if proc.returncode == 0:
+            return "checkout"
+    return "occupied"
+
+
+def _record_attempt(
+    project_id: str,
+    result: str,
+    reason: Optional[str],
+    trigger: str,
+    mode: str,
+    *,
+    snapshot_commit: Optional[str] = None,
+    snapshot_at: Optional[str] = None,
+) -> None:
+    """Best-effort per-project last-attempt ledger (L0005 §2.5 — KV, no DDL).
+
+    Reasons derived from git stderr arrive here already _scrub-masked (the
+    runner scrubs before returning) — the plaintext secret never lands in the DB.
+    """
+    record = {
+        "result": result,
+        "reason": reason,
+        "trigger": trigger,
+        "at": now_iso(),
+        "mode": mode,
+        "snapshot_commit": snapshot_commit,
+        "snapshot_at": snapshot_at,
+    }
+    try:
+        db_settings.set_value(
+            ATTEMPT_RECORD_KEY.format(project_id=project_id),
+            json.dumps(record, ensure_ascii=False),
+            value_type="json",
+            description="git provision last attempt",
+        )
+    except Exception:
+        _log.warning("git provision attempt record failed for %s", project_id, exc_info=True)
+
+
+def _load_attempt_record(project_id: str) -> Optional[dict]:
+    try:
+        row = db_settings.get(ATTEMPT_RECORD_KEY.format(project_id=project_id))
+        if row is None or not row.get("setting_value"):
+            return None
+        record = json.loads(row["setting_value"])
+        return record if isinstance(record, dict) else None
+    except Exception:
+        # Broken JSON behaves like "no record" (DB0006 §5); next attempt overwrites.
+        _log.warning("git provision attempt record unreadable for %s", project_id, exc_info=True)
+        return None
+
+
+def _provision_failed(proc: subprocess.CompletedProcess) -> dict:
+    return {
+        "status": "failed", "reason": _last_line(proc.stderr),
+        "snapshot_commit": None, "snapshot_at": None,
+    }
+
+
+def _adopt(
+    base_root: Path,
+    base_branch: str,
+    repo_url: str,
+    username: Optional[str],
+    secret: str,
+    project_id: str,
+) -> dict:
+    """Turn an occupied slot into a repository WITHOUT touching any existing
+    file (L0005 §2.3). Every step is check-then-act, so a run interrupted at
+    any point (auth failure, timeout) resumes to completion on the next call.
+    Forced-checkout class commands (checkout -f / reset --hard / clean / stash)
+    are banned on this path by design (DS0002).
+    """
+    # 1. repository skeleton — working files untouched
+    if not (base_root / ".git").exists():
+        proc = _run_git(["init"], cwd=base_root)
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+    marker = base_root / ADOPT_PENDING_MARKER
+    try:
+        marker.touch()
+    except OSError as exc:
+        return {"status": "failed", "reason": f"adopt marker unwritable: {exc}",
+                "snapshot_commit": None, "snapshot_at": None}
+
+    # 2. remote wiring (re-entry: sync the URL only)
+    proc = _run_git(["remote", "get-url", "origin"], cwd=base_root)
+    if proc.returncode != 0:
+        proc = _run_git(["remote", "add", "origin", repo_url], cwd=base_root)
+    elif (proc.stdout or "").strip() != repo_url:
+        proc = _run_git(["remote", "set-url", "origin", repo_url], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+
+    # 3. fetch — the most likely failure point; debris stays for re-entry
+    proc = _run_git(
+        ["fetch", "origin"],
+        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+    )
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+
+    # 4. establish the base branch without a checkout (working tree untouched)
+    proc = _run_git(["symbolic-ref", "HEAD", f"refs/heads/{base_branch}"], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+    if _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+        # --mixed moves the branch ref and index only; files stay byte-identical
+        proc = _run_git(
+            ["reset", "--mixed", f"refs/remotes/origin/{base_branch}"], cwd=base_root
+        )
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+    # else: remote has no base branch (empty repository) — the branch stays
+    # unborn and the snapshot below becomes its first commit.
+
+    # 5. absorb the local↔remote difference
+    return _absorb_snapshot(base_root, base_branch, project_id)
+
+
+def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict:
+    """Commit the local↔remote difference on the base branch (L0005 §2.4).
+
+    After the mixed reset the working tree is the local original and the index
+    is the remote tree. Remote-only files show as worktree deletions and MUST
+    be restored first — otherwise the snapshot would record them as deletions
+    and a later finalize push would erase them remotely.
+    """
+    proc = _run_git(["status", "--porcelain", "-z"], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+    for entry in (proc.stdout or "").split("\0"):
+        if len(entry) >= 4 and entry[1] == "D" and entry[2] == " ":
+            restore = _run_git(["checkout", "--", entry[3:]], cwd=base_root)
+            if restore.returncode != 0:
+                # e.g. path-type conflict — stop with all data intact (no auto-fix)
+                return _provision_failed(restore)
+
+    snapshot_commit: Optional[str] = None
+    snapshot_at: Optional[str] = None
+    proc = _run_git(["status", "--porcelain"], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+    if (proc.stdout or "").strip():
+        proc = _run_git(["add", "-A"], cwd=base_root)  # .gitignore is honored
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+        msg = ADOPT_SNAPSHOT_MSG.format(base_branch=base_branch, project_id=project_id)
+        proc = _run_git([*_GIT_IDENT, "commit", "-m", msg], cwd=base_root)
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+        head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
+        snapshot_commit = (head.stdout or "").strip() or None
+        snapshot_at = now_iso()
+
+    # completion — removing the marker must be the LAST step
+    try:
+        (base_root / ADOPT_PENDING_MARKER).unlink(missing_ok=True)
+    except OSError as exc:
+        return {"status": "failed", "reason": f"adopt marker not removable: {exc}",
+                "snapshot_commit": snapshot_commit, "snapshot_at": snapshot_at}
+    return {"status": "ok", "reason": None,
+            "snapshot_commit": snapshot_commit, "snapshot_at": snapshot_at}
+
+
+def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigger: str) -> dict:
+    """Judge the base slot and establish it (none / clone / adopt) — L0005 §2.2.
+
+    The caller must hold the project git mutex (hook path already does; the
+    manual path acquires it in provision_base).
+    """
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = src_root(project_name, base_branch)
+    state = _judge_base_slot(base_root, base_branch)
+    if state == "checkout":
+        # idempotent pass-through — the ledger is NOT updated (P0004 scenario 4)
+        return {"status": "ok", "mode": "none", "reason": None,
+                "snapshot_commit": None, "snapshot_at": None}
+
+    mode = "clone" if state == "empty" else "adopt"
+    try:
+        secret = _load_secret_for(cfg) or ""
+    except GitServiceError as exc:
+        result = {"status": "failed", "mode": mode, "reason": exc.code,
+                  "snapshot_commit": None, "snapshot_at": None}
+        _record_attempt(project_id, "failed", exc.code, trigger, mode)
+        return result
+    username = cfg.get("username")
+    repo_url = (cfg.get("repo_url") or "").strip()
+
+    if state == "empty":
+        base_root.parent.mkdir(parents=True, exist_ok=True)
+        proc = _run_git(
+            ["clone", "--branch", base_branch, repo_url, str(base_root)],
+            timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+        )
+        if proc.returncode == 0:
+            result = {"status": "ok", "reason": None,
+                      "snapshot_commit": None, "snapshot_at": None}
+        else:
+            result = _provision_failed(proc)
+    else:  # occupied — pre-existing files or partial debris: lossless adopt
+        result = _adopt(base_root, base_branch, repo_url, username, secret, project_id)
+
+    result["mode"] = mode
+    _record_attempt(
+        project_id, result["status"], result["reason"], trigger, mode,
+        snapshot_commit=result["snapshot_commit"], snapshot_at=result["snapshot_at"],
+    )
+    return result
+
+
+def provision_base(project_id: str, trigger: str) -> dict:
+    """Single provisioning entry shared by hooks and the manual API (L0005 §2.2).
+
+    Returns {status, mode, reason, snapshot_commit, snapshot_at}. Provisioning
+    failures are reported results, not exceptions (never-raises contract).
+    """
+    def _blocked(reason: str) -> dict:
+        _record_attempt(project_id, "failed", reason, trigger, "none")
+        return {"status": "failed", "mode": "none", "reason": reason,
+                "snapshot_commit": None, "snapshot_at": None}
+
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        # not recorded; the manual route pre-blocks with 409 not_enabled
+        return {"status": "skipped", "mode": "none", "reason": None,
+                "snapshot_commit": None, "snapshot_at": None}
+    project_name = _project_name(project_id)
+    if not project_name:
+        return _blocked("project_name missing")
+    if not git_available():
+        return _blocked("git_unavailable")
+
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        return _blocked("git_busy")
+    try:
+        return _provision_base_locked(cfg, project_id, project_name, trigger)
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def provision_view(project_id: str) -> dict:
+    """Status object for GET …/git/provision (P0004) — read-only, no network git."""
+    if db_projects.get_by_id(project_id) is None:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        return {"configured": False, "enabled": False, "base_branch": None,
+                "base_path_state": "empty", "base_checkout_exists": False,
+                "adopt_snapshot": None, "last_attempt": None}
+
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    project_name = _project_name(project_id)
+    base_root = src_root(project_name, base_branch) if project_name else None
+    state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
+
+    record = _load_attempt_record(project_id)
+    snapshot = None
+    if record and record.get("snapshot_commit"):
+        snapshot = {"commit": record["snapshot_commit"],
+                    "committed_at": record.get("snapshot_at")}
+        if base_root and (base_root / ".git").exists() and git_available():
+            proc = _run_git(
+                ["merge-base", "--is-ancestor", record["snapshot_commit"],
+                 f"refs/remotes/origin/{base_branch}"],
+                cwd=base_root,
+            )
+            if proc.returncode == 0:
+                snapshot = None  # already reached the remote — hide it
+            # exit 1 (not yet pushed) or indeterminate: keep the recorded value
+
+    last_attempt = None
+    if record is not None:
+        last_attempt = {"result": record.get("result"), "reason": record.get("reason"),
+                        "trigger": record.get("trigger"), "at": record.get("at")}
+    return {"configured": True, "enabled": True, "base_branch": base_branch,
+            "base_path_state": state, "base_checkout_exists": state == "checkout",
+            "adopt_snapshot": snapshot, "last_attempt": last_attempt}
+
+
+def provision_manual(project_id: str) -> dict:
+    """POST …/git/provision — synchronous manual run (P0004 scenarios 2~8)."""
+    if db_projects.get_by_id(project_id) is None:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        raise GitServiceError(
+            409, "not_enabled",
+            f"git integration is not enabled for project '{project_id}'",
+        )
+    result = provision_base(project_id, "manual")
+    return {"ok": True, "result": {
+        "status": result["status"],
+        "mode": result["mode"],
+        "reason": result["reason"],
+        "provision": provision_view(project_id),
+    }}
+
+
+def ensure_worktree(
+    project_id: str, module: str, group_id: str, trigger: str = "remote_access"
+) -> str:
     """Create/guarantee the group's branch + worktree. Idempotent; never raises.
 
     Returns 'skipped' | 'ok' | 'failed'. A failure only emits git_worktree_failed —
@@ -539,6 +877,7 @@ def ensure_worktree(project_id: str, module: str, group_id: str) -> str:
             return "skipped"  # non-integrated project: strictly no-op
         project_name = _project_name(project_id)
         if not project_name:
+            _record_attempt(project_id, "failed", "project_name missing", trigger, "none")
             _emit_worktree_failed(project_id, group_id, None, "project_name missing")
             return "failed"
         try:
@@ -547,15 +886,17 @@ def ensure_worktree(project_id: str, module: str, group_id: str) -> str:
             _emit_worktree_failed(project_id, group_id, None, exc.code)  # E9
             return "failed"
         if not git_available():
+            _record_attempt(project_id, "failed", "git_unavailable", trigger, "none")
             _emit_worktree_failed(project_id, group_id, branch, "git_unavailable")  # E1
             return "failed"
 
         holder = f"op:{uuid.uuid4()}"
         if not _acquire_lock(project_id, holder):
+            _record_attempt(project_id, "failed", "git_busy", trigger, "none")
             _emit_worktree_failed(project_id, group_id, branch, "git_busy")  # E11
             return "failed"
         try:
-            return _ensure_worktree_locked(cfg, project_id, project_name, group_id, branch)
+            return _ensure_worktree_locked(cfg, project_id, project_name, group_id, branch, trigger)
         finally:
             db_git.release_lock(project_id, holder)
     except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
@@ -568,28 +909,21 @@ def ensure_worktree(project_id: str, module: str, group_id: str) -> str:
 
 
 def _ensure_worktree_locked(
-    cfg: dict, project_id: str, project_name: str, group_id: str, branch: str
+    cfg: dict, project_id: str, project_name: str, group_id: str, branch: str,
+    trigger: str = "remote_access",
 ) -> str:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     base_root = src_root(project_name, base_branch)
     wt_path = src_root(project_name, branch)
     username = cfg.get("username")
     secret = _load_secret_for(cfg) or ""
-    repo_url = (cfg.get("repo_url") or "").strip()
 
-    # Base checkout: clone once if the branch slot is not yet a git checkout.
-    if not (base_root / ".git").exists():
-        if base_root.exists() and any(base_root.iterdir()):
-            _emit_worktree_failed(project_id, group_id, branch, "base_path_occupied")  # E7 analogue
-            return "failed"
-        base_root.parent.mkdir(parents=True, exist_ok=True)
-        proc = _run_git(
-            ["clone", "--branch", base_branch, repo_url, str(base_root)],
-            timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-        )
-        if proc.returncode != 0:
-            _emit_worktree_failed(project_id, group_id, branch, proc.stderr.strip())
-            return "failed"
+    # Base checkout: clone (empty slot) or lossless adopt (occupied slot) —
+    # 0161 replaces the old clone-only path that died with E7 base_path_occupied.
+    provision = _provision_base_locked(cfg, project_id, project_name, trigger)
+    if provision["status"] == "failed":
+        _emit_worktree_failed(project_id, group_id, branch, provision["reason"] or "git_error")
+        return "failed"
 
     # Idempotence: ledger says the worktree exists and the directory is present.
     state = db_git.get_state(group_id)
@@ -678,7 +1012,9 @@ def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
     import threading
 
     threading.Thread(
-        target=ensure_worktree, args=(project_id, module, group_id), daemon=True
+        target=ensure_worktree,
+        args=(project_id, module, group_id, "workflow_decide"),
+        daemon=True,
     ).start()
 
 

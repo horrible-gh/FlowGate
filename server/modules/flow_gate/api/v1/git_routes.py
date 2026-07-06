@@ -2,6 +2,7 @@
 
 GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
+GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
@@ -111,6 +112,32 @@ def test_git_connection(
         override = body.model_dump(exclude_unset=True) if body is not None else {}
         result = git_service.test_connection(project_id, override)
         return {"ok": True, "result": result}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Base provisioning status / manual trigger (0161 P0004) ──────────────────
+
+@router.get("/projects/{project_id}/git/provision")
+def get_git_provision(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return {"ok": True, "provision": git_service.provision_view(project_id)}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/provision")
+def post_git_provision(
+    project_id: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    # Synchronous by design (P0004): clone/fetch runs under GIT_NET_TIMEOUT_SEC;
+    # a provisioning failure is a 200 with result.status="failed", not an error.
+    try:
+        return git_service.provision_manual(project_id)
     except GitServiceError as exc:
         return _guard(exc)
 
