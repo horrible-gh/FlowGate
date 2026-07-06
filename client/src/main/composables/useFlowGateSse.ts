@@ -302,6 +302,32 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    source.addEventListener('test_run_finished', (e: Event) => {
+      // Global test-failure toast (R0001 group 0155 / NR0005 §HOW-4 second signal).
+      // The in-context TestFailStrip only surfaces a failure while its own TS document
+      // is the active tab, so a run that fails while the user is looking at a *different*
+      // document — or none at all — went completely unseen: exactly R0001's "a plain
+      // 'test failed' notice won't get looked at" worry. This momentary toast fires
+      // regardless of which tab is open, giving the persistent strip a transient
+      // companion signal (the dual-signal design of NR0005). Only failures toast;
+      // a passing run is the happy path and stays silent. The paired group_view_refresh
+      // (broadcast alongside by _emit_finished) already drives the explorer/open-doc
+      // resync, so this handler raises the toast only — no duplicate refresh here.
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const p = data.payload ?? {}
+        if (p.status !== 'failed') return
+        const doc = p.doc_id ?? data.doc_id ?? ''
+        const failed = p.case_failed
+        const total = p.case_total
+        const msg =
+          failed != null && total != null
+            ? t('main.notifications.test_run_failed', { doc, failed, total })
+            : t('main.notifications.test_run_failed_nocount', { doc })
+        showToast(msg, 'error')
+      } catch { /* ignore parse errors */ }
+    })
+
     source.addEventListener('notification_new_action_candidate', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
