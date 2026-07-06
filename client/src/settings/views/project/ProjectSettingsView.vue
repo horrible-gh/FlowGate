@@ -46,6 +46,7 @@ import PathSettingsView from './PathSettingsView.vue';
 import NumberingSettingsView from './NumberingSettingsView.vue';
 import MessagesView from './MessagesView.vue';
 import SourceModeSettingsView from './SourceModeSettingsView.vue';
+import TestRecipesView from './TestRecipesView.vue';
 import GitSettingsView from './GitSettingsView.vue';
 
 const { t } = useI18n();
@@ -56,12 +57,13 @@ const router = useRouter();
 const tabs = computed(() => [
   { id: 'paths', label: t('settings.project.path'), icon: 'fa-folder-tree', component: PathSettingsView },
   { id: 'source-mode', label: t('settings.project.source_mode.tab'), icon: 'fa-plug', component: SourceModeSettingsView },
+  { id: 'test-recipes', label: t('settings.project.test_recipes.tab'), icon: 'fa-flask-vial', component: TestRecipesView },
   { id: 'numbering', label: t('settings.project.project_settings_view.text_56'), icon: 'fa-hashtag', component: NumberingSettingsView },
   { id: 'messages', label: t('settings.project.messages'), icon: 'fa-comment-dots', component: MessagesView },
   { id: 'git', label: t('settings.project.git.tab'), icon: 'fa-code-branch', component: GitSettingsView },
 ]);
 
-const validTabIds = new Set(['paths', 'source-mode', 'numbering', 'messages', 'git']);
+const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git']);
 const defaultTab = 'paths';
 const activeTab = ref(validTabIds.has(route.query.tab) ? route.query.tab : defaultTab);
 const activeComponent = computed(() => tabs.value.find((tab) => tab.id === activeTab.value)?.component || PathSettingsView);
