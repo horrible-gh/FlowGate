@@ -315,17 +315,18 @@ def test_phantom_non_sequence_doc_is_excluded_from_rewind_and_restore(rt_store):
     assert restored["restored"] == [docs[s] for s in (2, 5, 6, 7, 8, 9, 10, 11)]
 
 
-def test_mid_flight_rewind_records_no_return_point(rt_store):
-    """0142 T0013 — a return point is the completed workflow you walk 'home' to. Rewinding a
-    workflow that was NOT wf_done (a step still pending) must record NO return point: otherwise a
-    later restore reaching front would declare the root wf_done over a step that was never approved,
-    seeding the snapshot-pollution loop."""
+def test_mid_flight_rewind_records_return_point_and_restores_in_progress(rt_store):
+    """0158 gate relaxation (fixes B0001) — a workflow rewound while still mid-flight (wf_in_progress,
+    a step pending) now records a return point over its approved baseline, so the reverse time machine
+    is available. Restoring to front re-declares the root wf_in_progress (its pre-rewind status), never
+    a false wf_done, and a step that was genuinely pending stays pending. This is the case the old
+    wf_done-only gate suppressed, hiding the reverse time machine from every in-progress workflow."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_return_points as db_rp
     from modules.flow_gate.documents.routers import documents as doc_routes
 
     ids = _seed_base_group(rt_store, "mid")
-    # Make the workflow mid-flight: the P step is the pending head and the root is NOT done.
+    # Make the workflow mid-flight: the P step is a pending head and the root is NOT done.
     db_docs.update(ids["P"], {"doc_review_status": "pending_review"})
     db_docs.update(ids["AC"], {"doc_review_status": "pending_review"})
     db_docs.update(ids["R"], {"doc_review_status": "wf_in_progress"})
@@ -335,8 +336,69 @@ def test_mid_flight_rewind_records_no_return_point(rt_store):
         {"user_id": ids["user_id"]},
     )
 
-    assert reopened["return_point"]["exists"] is False
+    # A return point IS now recorded over the approved baseline (D, L, T). The pending P step is not
+    # snapshotted (only approved steps belong in the baseline), and front_seq is the last approved
+    # step (T@8), not the pending AC.
+    assert reopened["return_point"]["exists"] is True
+    assert reopened["return_point"]["front_seq"] == 8
+    assert reopened["return_point"]["restorable_count"] == 3
+    rp = db_rp.get_by_group(ids["group_id"])
+    assert rp is not None
+    assert rp["root_prev_status"] == "wf_in_progress"
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
+
+    restored = doc_routes.restore_workflow(
+        doc_routes._RestoreBody(doc_id=ids["R"], destination_seq=None),
+        {"user_id": ids["user_id"]},
+    )
+
+    # The walk reaches front and clears the point, but the root is restored to wf_in_progress
+    # (honest re-declaration), NOT wf_done — the workflow was never complete.
+    assert restored["reached_front"] is True
+    assert restored["return_point_cleared"] is True
+    assert restored["restored"] == [ids["D"], ids["L"], ids["T"]]
+    assert restored["root_status"] == "wf_in_progress"
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
+    # The genuinely-pending P step (never in the baseline) stays pending.
+    assert db_docs.get_by_id(ids["P"])["doc_review_status"] == "pending_review"
     assert db_rp.get_by_group(ids["group_id"]) is None
+
+
+def test_stale_return_point_is_discarded_on_fresh_rewind(rt_store):
+    """0158 — a return point left behind after the worker redid the rewound steps forward (re-approved
+    them through the pipeline instead of using restore) no longer describes an active rewind. A new
+    rewind must discard that stale point and capture a fresh baseline, never extend the old one (which
+    would keep an outdated snapshot and a stale root_prev_status)."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_return_points as db_rp
+    from modules.flow_gate.documents.routers import documents as doc_routes
+
+    ids = _seed_base_group(rt_store, "stale")
+    # First rewind to seq 4 → snapshot D, L, P, T (4 steps).
+    doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ids["T"], target_seq=4),
+        {"user_id": ids["user_id"]},
+    )
+    first = db_rp.get_by_group(ids["group_id"])
+    assert first is not None
+    assert db_rp.count_docs(first["id"]) == 4
+
+    # Worker redoes the work forward: re-approve every rewound step through the pipeline (no restore).
+    for tc in ("D", "L", "P", "T"):
+        db_docs.update(ids[tc], {"doc_review_status": "approved"})
+    # The point is now stale: none of its snapshot docs are pending.
+    assert db_rp.current_pending_min_seq(first["id"]) is None
+
+    # A fresh rewind to seq 5 discards the stale point and captures a new baseline (L, P, T = 3 steps),
+    # never extending the old 4-step snapshot.
+    reopened = doc_routes.reopen_workflow(
+        doc_routes._ReopenBody(doc_id=ids["T"], target_seq=5),
+        {"user_id": ids["user_id"]},
+    )
+    assert reopened["return_point"]["restorable_count"] == 3
+    fresh = db_rp.get_by_group(ids["group_id"])
+    assert fresh is not None
+    assert db_rp.count_docs(fresh["id"]) == 3
 
 
 def test_restore_keeps_return_point_when_a_step_stays_pending(rt_store):

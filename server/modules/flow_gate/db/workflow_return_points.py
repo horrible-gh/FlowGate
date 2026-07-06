@@ -13,13 +13,14 @@ def get_by_group(group_id: str) -> Optional[dict]:
     )
 
 
-def create(group_id: str, front_seq: int) -> dict:
+def create(group_id: str, front_seq: int, root_prev_status: Optional[str] = None) -> dict:
     now = now_iso()
     store = get_store()
     store._execute(
-        "INSERT INTO workflow_return_points(group_id, front_seq, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?)",
-        [group_id, front_seq, now, now],
+        "INSERT INTO workflow_return_points"
+        "(group_id, front_seq, root_prev_status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [group_id, front_seq, root_prev_status, now, now],
     )
     row = get_by_group(group_id)
     if row is None:
@@ -27,10 +28,15 @@ def create(group_id: str, front_seq: int) -> dict:
     return row
 
 
-def ensure(group_id: str, front_seq: int) -> dict:
+def ensure(group_id: str, front_seq: int, root_prev_status: Optional[str] = None) -> dict:
     existing = get_by_group(group_id)
     if existing is None:
-        return create(group_id, front_seq)
+        return create(group_id, front_seq, root_prev_status)
+    # A pre-existing return point is only extended (a nested rewind to an earlier step): bump
+    # front_seq upward if needed, but never touch root_prev_status. The "home" root status is the
+    # one captured when the workflow first left its original state; a nested rewind must preserve
+    # it, not overwrite it with the mid-rewind (wf_in_progress) status. Callers that want a fresh
+    # capture delete the stale return point first (0158 gate relaxation).
     store = get_store()
     store._execute(
         "UPDATE workflow_return_points "
