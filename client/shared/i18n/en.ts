@@ -939,6 +939,18 @@
       toast_converted: 'Document type converted.',
       toast_convert_failed: 'Failed to convert document type.',
     },
+    test_fail_strip: {
+      summary: 'Tests {failed}/{total} failed',
+      log: 'Log',
+      rerun: 'Re-run',
+      toggle_aria: 'Expand/collapse the failing test case list',
+      unnamed_case: '(unnamed case)',
+      no_case_detail: 'No per-case detail available.',
+      rerun_started: 'Test re-run started.',
+      rerun_denied: 'You do not have permission to run tests.',
+      rerun_in_progress: 'A test run is already in progress.',
+      rerun_failed: 'Failed to start the test re-run.',
+    },
     final_approval: {
       panel_title: 'Final Approval',
       panel_desc: 'This is the final approval step. Approve to complete the workflow, or reject to roll back to an earlier step.',

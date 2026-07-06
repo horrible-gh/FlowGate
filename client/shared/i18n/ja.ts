@@ -939,6 +939,18 @@ export default {
       toast_converted: '文書タイプを変換しました。',
       toast_convert_failed: '文書タイプの変換に失敗しました。',
     },
+    test_fail_strip: {
+      summary: 'テスト {failed}/{total} 失敗',
+      log: 'ログ',
+      rerun: '再実行',
+      toggle_aria: '失敗したテストケース一覧の展開/折りたたみ',
+      unnamed_case: '(名称なしケース)',
+      no_case_detail: '個別ケースの詳細はありません。',
+      rerun_started: 'テストの再実行を開始しました。',
+      rerun_denied: 'テストを実行する権限がありません。',
+      rerun_in_progress: 'すでに実行中のテストがあります。',
+      rerun_failed: 'テストの再実行を開始できませんでした。',
+    },
     final_approval: {
       panel_title: '最終承認',
       panel_desc: '最終承認のステップです。承認するとワークフローが完了し、却下すると前のステップに戻します。',

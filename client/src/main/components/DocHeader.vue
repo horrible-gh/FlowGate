@@ -215,6 +215,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
+import type { TestRun } from '../types/testRun'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 
 const props = defineProps<{ tab: Tab }>()
@@ -273,6 +274,7 @@ interface DocDetail {
   workflow_head_doc_review_status?: string | null
   workflow_head_doc_title?: string | null
   workflow_head_doc_number?: string | null
+  test_run?: TestRun | null
   next_step_exists?: boolean
 }
 
@@ -1084,6 +1086,9 @@ const rejectionBannerText = computed(() => {
 })
 const aiReview = computed(() => doc.value?.ai_review ?? null)
 const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
+// 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
+// every non-failing doc, since the embed only binds to a doc that has a bound run.
+const testRun = computed(() => doc.value?.test_run ?? null)
 
 const docClass = computed((): string => {
   const tc = doc.value?.type_code ?? props.tab.typeCode ?? 'R'
@@ -1137,6 +1142,7 @@ defineExpose({
   rejectionHistory,
   aiReview,
   aiReviewHistory,
+  testRun,
   fetchDoc,
   applyReviewTransition,
   onWorkflowConfirmed,

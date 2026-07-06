@@ -939,6 +939,18 @@
       toast_converted: '문서 타입이 전환되었습니다.',
       toast_convert_failed: '문서 타입 전환에 실패했습니다.',
     },
+    test_fail_strip: {
+      summary: '테스트 {failed}/{total} 실패',
+      log: '로그',
+      rerun: '재실행',
+      toggle_aria: '실패한 테스트 케이스 목록 펼치기/접기',
+      unnamed_case: '(이름 없는 케이스)',
+      no_case_detail: '개별 케이스 상세가 없습니다.',
+      rerun_started: '테스트 재실행을 시작했습니다.',
+      rerun_denied: '테스트를 실행할 권한이 없습니다.',
+      rerun_in_progress: '이미 실행 중인 테스트가 있습니다.',
+      rerun_failed: '테스트 재실행을 시작하지 못했습니다.',
+    },
     final_approval: {
       panel_title: '최종 승인',
       panel_desc: '최종 승인 단계입니다. 승인하면 워크플로가 완료되고, 반려하면 이전 단계로 되돌립니다.',
