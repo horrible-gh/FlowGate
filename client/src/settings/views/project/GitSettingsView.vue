@@ -89,6 +89,46 @@
       </div>
     </div>
 
+    <div class="card mb-4">
+      <div class="card-hd">
+        <span class="card-title">{{ $t('settings.project.git.provision_title') }}</span>
+      </div>
+      <div class="card-bd pad">
+        <template v-if="provision && provision.configured && provision.enabled">
+          <div class="provision-row">
+            <span class="provision-label">{{ $t('settings.project.git.provision_checkout') }}</span>
+            <span>
+              {{ provision.base_checkout_exists
+                ? $t('settings.project.git.provision_checkout_ready', { branch: provision.base_branch || 'main' })
+                : $t('settings.project.git.provision_checkout_missing') }}
+            </span>
+          </div>
+          <div class="provision-row">
+            <span class="provision-label">{{ $t('settings.project.git.provision_last_attempt') }}</span>
+            <span v-if="!provision.last_attempt">{{ $t('settings.project.git.provision_attempt_none') }}</span>
+            <span v-else :class="provision.last_attempt.result === 'failed' ? 'git-error-text' : ''">
+              {{ lastAttemptText }}
+            </span>
+          </div>
+          <div v-if="provision.adopt_snapshot" class="provision-row">
+            <span class="provision-label">{{ $t('settings.project.git.provision_snapshot') }}</span>
+            <span>{{ $t('settings.project.git.provision_snapshot_note', { commit: provision.adopt_snapshot.commit }) }}</span>
+          </div>
+          <div style="margin-top:10px;">
+            <button class="btn btn-secondary" :disabled="busy" @click="provisionNow">
+              <i class="fa-solid fa-download"></i>
+              {{ busyProvision ? $t('settings.project.git.provision_running') : $t('settings.project.git.provision_run') }}
+            </button>
+          </div>
+          <p class="form-hint" style="margin-top:10px;">
+            <i class="fa-solid fa-circle-info"></i>
+            {{ $t('settings.project.git.provision_note') }}
+          </p>
+        </template>
+        <p v-else class="form-hint">{{ $t('settings.project.git.provision_disabled_hint') }}</p>
+      </div>
+    </div>
+
     <div class="flex" style="justify-content:space-between; gap:10px;">
       <button
         v-if="configured"
@@ -134,6 +174,8 @@ const urlError = ref('');
 const busy = ref(false);
 const busyTest = ref(false);
 const testResult = ref(null);
+const provision = ref(null);
+const busyProvision = ref(false);
 
 const form = ref({
   repo_url: '',
@@ -150,6 +192,27 @@ const secretPlaceholder = computed(() =>
 const testOk = computed(
   () => !!(testResult.value && testResult.value.reachable && testResult.value.authenticated),
 );
+const lastAttemptText = computed(() => {
+  const a = provision.value?.last_attempt;
+  if (!a) return '';
+  let head = a.result === 'ok'
+    ? t('settings.project.git.provision_attempt_ok')
+    : t('settings.project.git.provision_attempt_failed');
+  if (a.result !== 'ok' && a.reason) head += ` — ${a.reason}`;
+  const parts = [head];
+  if (a.at) {
+    const at = new Date(a.at);
+    if (!Number.isNaN(at.getTime())) parts.push(at.toLocaleString());
+  }
+  const triggerKey = {
+    manual: 'provision_trigger_manual',
+    workflow_decide: 'provision_trigger_workflow_decide',
+    remote_access: 'provision_trigger_remote_access',
+  }[a.trigger];
+  if (triggerKey) parts.push(t(`settings.project.git.${triggerKey}`));
+  return parts.join(' · ');
+});
+
 const testMessage = computed(() => {
   const r = testResult.value;
   if (!r) return '';
@@ -208,6 +271,46 @@ async function fetchConfig() {
   }
 }
 
+async function fetchProvision() {
+  if (!projectId.value) return;
+  try {
+    const { data } = await getRequest(`/api/v1/projects/${projectId.value}/git/provision`);
+    provision.value = data.ok === false ? null : data.provision;
+  } catch (e) {
+    provision.value = null;
+  }
+}
+
+async function provisionNow() {
+  if (!projectId.value) return;
+  busy.value = true;
+  busyProvision.value = true;
+  try {
+    const { data } = await postRequest(`/api/v1/projects/${projectId.value}/git/provision`, {});
+    if (data.ok === false) {
+      showToast(data.error?.message || t('settings.project.git.provision_failed'), 'danger');
+    } else {
+      const r = data.result || {};
+      if (r.provision) provision.value = r.provision;
+      if (r.status === 'ok' && r.mode === 'none') {
+        showToast(t('settings.project.git.provision_already'), 'info');
+      } else if (r.status === 'ok') {
+        showToast(t('settings.project.git.provision_done'), 'success');
+      } else if (r.reason === 'git_busy') {
+        showToast(t('settings.project.git.provision_busy'), 'warning');
+      } else {
+        showToast(t('settings.project.git.provision_failed'), 'danger');
+      }
+    }
+  } catch (e) {
+    const msg = e?.response?.data?.error?.message;
+    showToast(msg || t('settings.project.git.provision_failed'), 'danger');
+  } finally {
+    busy.value = false;
+    busyProvision.value = false;
+  }
+}
+
 function secretForSubmit() {
   if (clearSecret.value) return '';
   if (secretInput.value) return secretInput.value;
@@ -230,6 +333,7 @@ async function save() {
     } else {
       applyConfig(data.config);
       showToast(t('settings.project.git.saved'), 'success');
+      fetchProvision(); // enabling/disabling changes the provisioning panel
     }
   } catch (e) {
     const msg = e?.response?.data?.error?.message;
@@ -280,6 +384,7 @@ async function disconnect() {
     await deleteRequest(`/api/v1/projects/${projectId.value}/git/config`);
     resetForm();
     showToast(t('settings.project.git.disconnected'), 'success');
+    fetchProvision();
   } catch (e) {
     showToast(t('common.toast.settings_save_failed'), 'danger');
   } finally {
@@ -292,8 +397,13 @@ function onClearSecret() {
   secretInput.value = '';
 }
 
-onMounted(fetchConfig);
-watch(projectId, fetchConfig);
+function refreshAll() {
+  fetchConfig();
+  fetchProvision();
+}
+
+onMounted(refreshAll);
+watch(projectId, refreshAll);
 </script>
 
 <style scoped>
@@ -320,6 +430,18 @@ watch(projectId, fetchConfig);
 }
 .badge-gray {
   background: var(--bg-m, #f1f5f9);
+  color: var(--text-m, #64748b);
+}
+.provision-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 0.85rem;
+}
+.provision-label {
+  flex: 0 0 auto;
+  min-width: 140px;
   color: var(--text-m, #64748b);
 }
 </style>
