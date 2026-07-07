@@ -299,13 +299,14 @@ def validate_and_create_run(
         )
     review_status = doc.get("doc_review_status")
     if review_status != "approved":
-        # Re-run affordance (0163 / B0001): an approved TS that has actually run moves to
-        # doc_review_status="pending_review" (its result awaits review) and is never approved
-        # again. The fail-strip re-run button targets exactly that state, so a prior run bound
-        # to this doc re-opens the gate — approval was already cleared once when the run was first
-        # admitted. Every other non-approved state (draft/rejected/…) still 409s. The group_disposed
-        # (above) and run_in_progress (below) guards are unaffected.
-        rerun_ok = review_status == "pending_review" and bool(
+        # Re-run affordance (0163 / B0001, extended by 0169): an approved TS that has
+        # actually run moves to doc_review_status="pending_review" while its result awaits
+        # review. If that result is rejected and the author revises the TS, the status becomes
+        # "revised" and must remain re-runnable so the fixed command can produce fresh results.
+        # A prior run bound to this doc proves approval was already cleared once when the first
+        # run was admitted. Every other non-approved state (draft/rejected/…) still 409s. The
+        # group_disposed (above) and run_in_progress (below) guards are unaffected.
+        rerun_ok = review_status in {"pending_review", "revised"} and bool(
             db_test_runs.list_by_doc(doc_id)
         )
         if not rerun_ok:

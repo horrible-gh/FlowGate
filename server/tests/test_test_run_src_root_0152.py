@@ -134,3 +134,106 @@ def test_validate_and_create_run_rejects_missing_src_root_at_admission(monkeypat
         assert exc.detail["error"] == "src_root_missing"
     else:
         raise AssertionError("expected 422 src_root_missing")
+
+def test_validate_and_create_run_allows_revised_with_prior_run(monkeypatch, tmp_path):
+    from modules.flow_gate.services import test_run_service
+
+    src_root = tmp_path / "src"
+    src_root.mkdir()
+    doc = {
+        "doc_id": "doc-1",
+        "project_id": "flowgate",
+        "branch": "main",
+        "group_id": "flowgate.default.0169",
+        "type_code": "TS",
+        "doc_review_status": "revised",
+        "revision_no": 2,
+    }
+    monkeypatch.setattr(test_run_service.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(
+        test_run_service.process_service, "is_group_disposed", lambda _g: False
+    )
+    monkeypatch.setattr(
+        test_run_service.db_test_runs,
+        "list_by_doc",
+        lambda _doc_id: [{"run_id": "trun_prior"}],
+    )
+    monkeypatch.setattr(
+        test_run_service.storage_paths,
+        "resolve_project_src_root",
+        lambda *_a, **_k: src_root,
+    )
+    monkeypatch.setattr(
+        test_run_service,
+        "_read_doc_content",
+        lambda _doc: "\n".join(
+            [
+                "## 테스트 케이스",
+                "",
+                "### TC-1: smoke",
+                "- cmd: `python --version`",
+                "- 기대: exits 0",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        test_run_service.db_test_runs, "get_running_by_doc", lambda _doc_id: None
+    )
+    inserted: dict = {}
+
+    def insert_run(**kwargs):
+        inserted.update(kwargs)
+        return {
+            "run_id": "trun_new",
+            "doc_id": kwargs["doc_id"],
+            "revision_no": kwargs["revision_no"],
+            "status": "running",
+            "case_total": len(kwargs["cases"]),
+            "setup_total": 0,
+            "teardown_total": 0,
+            "started_at": "2026-07-07T00:00:00+09:00",
+        }
+
+    monkeypatch.setattr(test_run_service.db_test_runs, "insert_run", insert_run)
+    monkeypatch.setattr(test_run_service, "_emit_started", lambda *_a, **_k: None)
+
+    result = test_run_service.validate_and_create_run(
+        doc_id="doc-1", runner_id="usr", triggered_via="ui"
+    )
+
+    assert result["ok"] is True
+    assert result["run_id"] == "trun_new"
+    assert inserted["revision_no"] == 2
+    assert inserted["cases"][0]["case_no"] == "TC-1"
+
+
+def test_validate_and_create_run_rejects_revised_without_prior_run(monkeypatch):
+    from modules.flow_gate.services import test_run_service
+
+    monkeypatch.setattr(
+        test_run_service.db_docs,
+        "get_by_id",
+        lambda _id: {
+            "doc_id": _id,
+            "project_id": "flowgate",
+            "branch": "main",
+            "group_id": "flowgate.default.0169",
+            "type_code": "TS",
+            "doc_review_status": "revised",
+        },
+    )
+    monkeypatch.setattr(
+        test_run_service.process_service, "is_group_disposed", lambda _g: False
+    )
+    monkeypatch.setattr(test_run_service.db_test_runs, "list_by_doc", lambda _doc_id: [])
+
+    try:
+        test_run_service.validate_and_create_run(
+            doc_id="doc-1", runner_id="usr", triggered_via="ui"
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert exc.detail["error"] == "doc_not_approved"
+        assert exc.detail["doc_review_status"] == "revised"
+    else:
+        raise AssertionError("expected 409 doc_not_approved")
