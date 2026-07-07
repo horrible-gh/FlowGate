@@ -1605,7 +1605,10 @@ def project_git_status(project_id: str) -> dict:
     ]
     pending = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
-         "status": r.get("status"), "default_action": default_action}
+         "status": r.get("status"), "default_action": default_action,
+         # 0165 T0004: merge_id lets the header panel resolve conflicts inline
+         # (no need to open the group's R document / GitFinalizePanel).
+         "merge_id": r.get("merge_id")}
         for r in rows if r.get("status") in PENDING_STATUSES
     ]
     ahead, behind = _base_ahead_behind(base_root, base_branch)
