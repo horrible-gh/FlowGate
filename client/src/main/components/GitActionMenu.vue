@@ -1,16 +1,21 @@
 <template>
   <!-- flowgate.default.0162 §3.3 — "안전망" action-bar Git button + badge.
        Renders only for a git-integrated current project; a quiet icon when there
-       is no finalize backlog, a pending-count badge when there is. The badge is a
-       work counter that only clears by real processing (no read-to-dismiss). -->
+       is no finalize backlog, a labelled attention button + pending-count badge
+       when there is (0165 T0004: discoverability). The badge is a work counter
+       that only clears by real processing (no read-to-dismiss). -->
   <div v-if="status && status.enabled" class="git-menu-wrap">
     <button
       class="hdr-btn git-menu-btn"
+      :class="{ 'git-menu-attn': status.pending_count > 0 }"
       type="button"
       :title="t('main.git_menu.tooltip')"
       @click.stop="toggleDropdown"
     >
       <i class="fa-solid fa-code-branch"></i>
+      <span v-if="status.pending_count > 0" class="git-menu-label">
+        {{ t('main.git_menu.label') }}
+      </span>
       <span
         v-if="status.pending_count > 0"
         class="git-menu-badge"
@@ -28,10 +33,18 @@
         <span class="git-menu-gid">{{ p.group_id }}</span>
         <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
         <span class="git-menu-spacer"></span>
+        <!-- conflict: send to the status panel, which now resolves inline -->
         <button
+          v-if="p.status === 'conflict'"
+          class="btn btn-sm btn-danger-ol"
+          @click="openPanel"
+        >
+          <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.git_status.resolve_inline') }}
+        </button>
+        <button
+          v-else
           class="btn btn-sm btn-primary"
-          :disabled="busy || p.status === 'conflict'"
-          :title="p.status === 'conflict' ? t('main.git_status.conflict_open_hint') : ''"
+          :disabled="busy"
           @click="execute(p)"
         >
           <i class="fa-solid fa-play"></i> {{ t('main.git_finalize.execute') }}
@@ -164,9 +177,9 @@ async function execute(item: Pending) {
     } else {
       const r = data.result
       if (r?.status === 'conflict') {
-        // Conflicts are not resolved inline — guide to the group's finalize panel.
+        // Conflicts are now resolved inline in the status panel (0165 T0004).
         showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
-        openGroup(item.group_id)
+        openPanel()
       } else if (r?.status === 'merged') {
         showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
       } else if (r?.status === 'pushed') {
@@ -229,6 +242,16 @@ watch(projectId, fetchStatus)
 }
 .git-menu-btn {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.git-menu-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.git-menu-attn {
+  color: var(--danger, #dc2626);
 }
 .git-menu-badge {
   position: absolute;
@@ -312,6 +335,14 @@ watch(projectId, fetchStatus)
 .btn-sm {
   padding: 3px 9px;
   font-size: 0.75rem;
+}
+.btn-danger-ol {
+  background: #fff;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+.btn-danger-ol:hover {
+  background: #fef2f2;
 }
 .badge-red {
   background: #fef2f2;

@@ -1,6 +1,9 @@
 <template>
   <!-- flowgate.default.0162 §2·§3 — project Git control panel ("관제소"). Renders
-       only for git-integrated projects; hidden entirely otherwise. -->
+       only for git-integrated projects; hidden entirely otherwise.
+       0165 T0004: the pending list now finalizes any group without opening its R
+       document — per-row action selection (merge / push / wait) and inline
+       conflict resolution live here, so the header panel is self-sufficient. -->
   <div v-if="status && status.enabled" class="card git-status-card">
     <div class="card-hd">
       <span class="card-title">
@@ -22,7 +25,7 @@
       </button>
     </div>
     <div class="card-bd pad">
-      <!-- Finalize-pending list (each item executes or opens) -->
+      <!-- Finalize-pending list (each item finalizes inline, or opens the group) -->
       <div class="git-status-sect">
         <p class="git-status-sub">
           {{ t('main.git_status.pending_header') }} ({{ status.pending_count }})
@@ -31,20 +34,80 @@
           {{ t('main.git_status.no_pending') }}
         </p>
         <div v-for="p in status.pending" :key="p.group_id" class="git-status-row">
-          <span class="git-status-gid">{{ p.group_id }}</span>
-          <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
-          <span class="git-status-spacer"></span>
-          <button
-            class="btn btn-sm btn-primary"
-            :disabled="busy || p.status === 'conflict'"
-            :title="p.status === 'conflict' ? t('main.git_status.conflict_open_hint') : ''"
-            @click="execute(p)"
-          >
-            <i class="fa-solid fa-play"></i> {{ t('main.git_finalize.execute') }}
-          </button>
-          <button class="btn btn-sm btn-secondary" @click="emit('open-group', p.group_id)">
-            <i class="fa-solid fa-arrow-up-right-from-square"></i> {{ t('main.git_status.open') }}
-          </button>
+          <div class="git-status-row-main">
+            <span class="git-status-gid">{{ p.group_id }}</span>
+            <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
+            <span class="git-status-spacer"></span>
+
+            <!-- conflict: toggle the inline resolution editor (no R document) -->
+            <button
+              v-if="p.status === 'conflict'"
+              class="btn btn-sm btn-danger-ol"
+              :disabled="busy"
+              @click="toggleResolve(p)"
+            >
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              {{ t('main.git_status.resolve_inline') }}
+            </button>
+
+            <!-- actionable: pick merge / push / wait, then run -->
+            <template v-else>
+              <label class="git-action-lbl">{{ t('main.git_status.action_label') }}</label>
+              <select
+                class="git-action-sel"
+                :value="actionOf(p)"
+                :disabled="busy"
+                @change="setAction(p.group_id, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="c in ACTIONS" :key="c" :value="c">{{ actionLabel(c) }}</option>
+              </select>
+              <button class="btn btn-sm btn-primary" :disabled="busy" @click="execute(p)">
+                <i class="fa-solid fa-play"></i> {{ t('main.git_finalize.execute') }}
+              </button>
+            </template>
+
+            <button class="btn btn-sm btn-secondary" @click="emit('open-group', p.group_id)">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i> {{ t('main.git_status.open') }}
+            </button>
+          </div>
+
+          <!-- Inline conflict resolution editor (ported from GitFinalizePanel, P0005 §6).
+               Opens only for the expanded conflict row; edits the merged files and
+               submits resolve/abort against the same backend endpoints. -->
+          <div v-if="expanded === p.group_id && p.status === 'conflict'" class="git-status-conflict">
+            <p class="git-fin-conflict-msg">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              {{ t('main.git_finalize.conflict_msg', { n: conflictFiles.length }) }}
+            </p>
+            <p v-if="!conflictFiles.length" class="git-status-empty">
+              {{ t('main.git_finalize.conflict_count', { n: 0 }) }}
+            </p>
+            <div v-for="f in conflictFiles" :key="f.path" class="git-conflict-file">
+              <div class="git-conflict-path">
+                <i class="fa-solid fa-file-code"></i> {{ f.path }}
+                <span class="git-conflict-count">{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
+              </div>
+              <textarea
+                v-model="f.edited"
+                class="git-conflict-editor"
+                spellcheck="false"
+                rows="12"
+              ></textarea>
+            </div>
+            <p v-if="conflictError" class="git-fin-conflict-msg">{{ conflictError }}</p>
+            <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:8px;">
+              <button class="btn btn-sm btn-secondary" :disabled="busy" @click="abortInline(p)">
+                <i class="fa-solid fa-ban"></i> {{ t('main.git_finalize.abort') }}
+              </button>
+              <button
+                class="btn btn-sm btn-primary"
+                :disabled="busy || !conflictFiles.length"
+                @click="submitResolveInline(p)"
+              >
+                <i class="fa-solid fa-check"></i> {{ t('main.git_finalize.resolve_submit') }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -88,6 +151,10 @@ const emit = defineEmits<{ 'open-group': [groupId: string] }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 
+// Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
+// the i18n static-reference scanner sees the backtick keys, not a computed one.
+const ACTIONS = ['merge', 'push', 'wait'] as const
+
 interface Slot {
   group_id: string
   branch: string | null
@@ -99,6 +166,7 @@ interface Pending {
   branch: string | null
   status: string
   default_action: string
+  merge_id: number | null
 }
 interface GitStatus {
   enabled: boolean
@@ -113,6 +181,13 @@ interface GitStatus {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
+
+// Per-row chosen action (overrides default_action); keyed by group_id.
+const chosen = ref<Record<string, string>>({})
+// Currently expanded conflict row + its fetched files.
+const expanded = ref<string | null>(null)
+const conflictFiles = ref<Array<{ path: string; conflict_count: number; edited: string }>>([])
+const conflictError = ref('')
 
 const aheadBehindText = computed(() => {
   const s = status.value
@@ -136,6 +211,15 @@ function statusBadgeClass(s: string): string {
       return 'badge-yellow'
   }
 }
+function actionLabel(c: string): string {
+  return t(`main.git_finalize.action.${c}`)
+}
+function actionOf(p: Pending): string {
+  return chosen.value[p.group_id] || p.default_action || 'wait'
+}
+function setAction(groupId: string, value: string) {
+  chosen.value = { ...chosen.value, [groupId]: value }
+}
 
 async function fetchStatus() {
   if (!props.projectId) {
@@ -147,6 +231,13 @@ async function fetchStatus() {
       `/api/v1/projects/${props.projectId}/git/status`,
     )
     status.value = data.status
+    // Drop an expanded conflict editor whose row no longer reports a conflict.
+    if (expanded.value) {
+      const still = data.status.pending.find(
+        (p) => p.group_id === expanded.value && p.status === 'conflict',
+      )
+      if (!still) collapseResolve()
+    }
   } catch {
     status.value = null // 403/404 — panel stays hidden
   }
@@ -158,7 +249,7 @@ async function execute(item: Pending) {
   try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${item.group_id}/git/finalize`,
-      { action: item.default_action },
+      { action: actionOf(item) },
     )
     if (data.ok === false) {
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
@@ -166,7 +257,10 @@ async function execute(item: Pending) {
       const r = data.result
       if (r?.status === 'conflict') {
         showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
-        emit('open-group', item.group_id) // conflicts are resolved in the finalize panel
+        // Resolve right here instead of routing to the R document.
+        await fetchStatus()
+        await openResolve(item.group_id)
+        return
       } else if (r?.status === 'merged') {
         showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
       } else if (r?.status === 'pushed') {
@@ -175,6 +269,88 @@ async function execute(item: Pending) {
         showToast(t('main.git_finalize.waiting_toast'), 'success')
       }
     }
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+// ── Inline conflict resolution (endpoints already exist, P0005 §6) ────────────
+
+function collapseResolve() {
+  expanded.value = null
+  conflictFiles.value = []
+  conflictError.value = ''
+}
+
+async function toggleResolve(p: Pending) {
+  if (expanded.value === p.group_id) {
+    collapseResolve()
+    return
+  }
+  await openResolve(p.group_id)
+}
+
+async function openResolve(groupId: string) {
+  const p = status.value?.pending.find((x) => x.group_id === groupId)
+  if (!p || p.merge_id == null) {
+    // No merge session id — fall back to the full finalize panel.
+    emit('open-group', groupId)
+    return
+  }
+  expanded.value = groupId
+  conflictError.value = ''
+  conflictFiles.value = []
+  try {
+    const { data } = await getRequest<{
+      ok: boolean
+      files: Array<{ path: string; content: string; conflict_count: number }>
+    }>(`/api/v1/groups/${groupId}/git/merge/${p.merge_id}/conflicts`)
+    conflictFiles.value = (data.files || []).map((f) => ({
+      path: f.path,
+      conflict_count: f.conflict_count,
+      edited: f.content,
+    }))
+  } catch (e: any) {
+    conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+  }
+}
+
+async function submitResolveInline(p: Pending) {
+  if (p.merge_id == null || busy.value) return
+  busy.value = true
+  conflictError.value = ''
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/resolve`,
+      {
+        files: conflictFiles.value.map((f) => ({ path: f.path, content: f.edited })),
+        complete: true,
+      },
+    )
+    if (data.ok === false) {
+      conflictError.value = data.error?.message || t('main.git_finalize.failed')
+    } else if (data.result?.status === 'merged') {
+      showToast(t('main.git_finalize.merged_toast', { commit: data.result.merge_commit || '' }), 'success')
+      collapseResolve()
+    }
+  } catch (e: any) {
+    conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+async function abortInline(p: Pending) {
+  if (p.merge_id == null || busy.value) return
+  busy.value = true
+  try {
+    await postRequest(`/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/abort`, {})
+    showToast(t('main.git_finalize.aborted_toast'), 'success')
+    collapseResolve()
   } catch (e: any) {
     showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
@@ -247,7 +423,10 @@ onUnmounted(() => {
   }
 })
 
-watch(() => props.projectId, fetchStatus)
+watch(() => props.projectId, () => {
+  collapseResolve()
+  fetchStatus()
+})
 
 defineExpose({ fetchStatus })
 </script>
@@ -306,11 +485,13 @@ defineExpose({ fetchStatus })
   margin: 0;
 }
 .git-status-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border, #eef2f6);
+}
+.git-status-row-main {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border, #eef2f6);
 }
 .git-status-gid {
   font-size: 0.8rem;
@@ -318,6 +499,60 @@ defineExpose({ fetchStatus })
 }
 .git-status-spacer {
   flex: 1 1 auto;
+}
+.git-action-lbl {
+  font-size: 0.72rem;
+  color: var(--text-m);
+}
+.git-action-sel {
+  font-size: 0.75rem;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text, #0f172a);
+}
+.git-status-conflict {
+  margin: 8px 0 4px;
+  padding: 10px;
+  border: 1px solid #fecaca;
+  border-radius: var(--r, 8px);
+  background: #fef2f2;
+}
+.git-fin-conflict-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #b91c1c;
+  margin: 0 0 8px;
+}
+.git-conflict-file {
+  margin-bottom: 10px;
+}
+.git-conflict-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-family: var(--mono, ui-monospace, monospace);
+  margin-bottom: 4px;
+}
+.git-conflict-count {
+  font-size: 0.7rem;
+  color: var(--text-m);
+}
+.git-conflict-editor {
+  width: 100%;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--r, 8px);
+  padding: 8px;
+  background: var(--bg, #fff);
+  color: var(--text, #0f172a);
+  resize: vertical;
 }
 .git-status-slot {
   display: flex;
@@ -341,6 +576,14 @@ defineExpose({ fetchStatus })
 .btn-sm {
   padding: 3px 9px;
   font-size: 0.75rem;
+}
+.btn-danger-ol {
+  background: #fff;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+.btn-danger-ol:hover {
+  background: #fef2f2;
 }
 .badge-red {
   background: #fef2f2;

@@ -34,6 +34,19 @@
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :doc-id="tab.id"
           />
+          <!-- 0166: manual test-run entry point — self-hides unless the viewed doc is a
+               runnable TS (approved, or pending_review with a prior run — the backend
+               admission gate mirrored). Complements TestFailStrip, which only ever
+               renders after a failed run and thus cannot offer the FIRST run. -->
+          <TestRunStrip
+            :type-code="tab.typeCode ?? null"
+            :review-status="exposedValue(docHeaderRefs[tab.id]?.docReviewStatus) ?? null"
+            :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
+            :group-disposed="exposedValue(docHeaderRefs[tab.id]?.groupDisposed) === true"
+            :doc-loaded="exposedValue(docHeaderRefs[tab.id]?.docLoaded) === true"
+            :doc-id="tab.id"
+            @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
+          />
           <!-- CH (conversation) is a normal workflow node: it shows the standard document
                header AND the workflow strip, exactly like every other doc. The chat surface
                (bubbles + composer + mention-copy) renders below in its own card. TR0044.0010 rev6
@@ -963,6 +976,7 @@ import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'
 import TestFailStrip from './TestFailStrip.vue'
+import TestRunStrip from './TestRunStrip.vue'
 import DocWorkflow from './DocWorkflow.vue'
 import GitFinalizePanel from './GitFinalizePanel.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
