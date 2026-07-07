@@ -71,8 +71,9 @@ describe('TestRunStrip', () => {
     expect(mountStrip({ reviewStatus: 'rejected' }).find('.run-strip').exists()).toBe(false)
     expect(mountStrip({ docLoaded: false }).find('.run-strip').exists()).toBe(false)
     expect(mountStrip({ groupDisposed: true }).find('.run-strip').exists()).toBe(false)
-    // pending_review WITHOUT run history is not re-runnable (backend 409s) → hidden.
+    // pending_review/revised WITHOUT run history is not re-runnable (backend 409s) -> hidden.
     expect(mountStrip({ reviewStatus: 'pending_review' }).find('.run-strip').exists()).toBe(false)
+    expect(mountStrip({ reviewStatus: 'revised' }).find('.run-strip').exists()).toBe(false)
   })
 
   it('offers a re-run for pending_review with a prior passed run (0163 relaxation)', () => {
@@ -83,6 +84,16 @@ describe('TestRunStrip', () => {
     expect(wrapper.find('.run-strip').exists()).toBe(true)
     expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.rerun'))
     expect(wrapper.text()).toContain('trun_1')
+  })
+
+  it('offers a re-run for revised with a prior passed run (0169 follow-up)', () => {
+    const wrapper = mountStrip({
+      reviewStatus: 'revised',
+      testRun: { run_id: 'trun_2', status: 'passed', case_passed: 3, case_total: 3 },
+    })
+    expect(wrapper.find('.run-strip').exists()).toBe(true)
+    expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.rerun'))
+    expect(wrapper.text()).toContain('trun_2')
   })
 
   it('hides itself when the latest run failed — TestFailStrip owns that state', () => {

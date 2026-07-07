@@ -4,7 +4,7 @@
        after a run has already failed — so an approved TS had no first-run entry point at
        all. This strip is that entry point. It self-hides unless the viewed doc is a TS
        whose state would pass the backend admission gate (validate_and_create_run):
-       approved, or pending_review with a prior run bound (the 0163 re-run relaxation).
+       approved, or pending_review/revised with a prior run bound (the 0163/0169 re-run relaxation).
        The failed state stays owned by TestFailStrip to avoid a duplicate re-run button. -->
   <div v-if="visible" class="run-strip" :class="{ 'run-strip--running': isRunning }">
     <i
@@ -78,7 +78,7 @@ const isRunning = computed(() => props.testRun?.status === 'running')
 const hasRunHistory = computed(() => props.testRun != null)
 
 // Mirror of the backend admission gate (test_run_service.validate_and_create_run):
-// TS + approved, or TS + pending_review with a run already bound (0163). A running run
+// TS + approved, or TS + pending_review/revised with a run already bound (0163/0169). A running run
 // keeps the strip visible as launch feedback regardless of review status; a failed run
 // hides it because TestFailStrip already renders the re-run affordance for that state.
 const visible = computed(() => {
@@ -88,7 +88,7 @@ const visible = computed(() => {
   if (status === 'failed') return false
   if (status === 'running') return true
   if (props.reviewStatus === 'approved') return true
-  return props.reviewStatus === 'pending_review' && props.testRun != null
+  return (props.reviewStatus === 'pending_review' || props.reviewStatus === 'revised') && props.testRun != null
 })
 
 const label = computed(() => {
