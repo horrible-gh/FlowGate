@@ -4,6 +4,7 @@ import SettingsLayout from '../views/SettingsLayout.vue';
 import SystemSettingsView from '../views/system/SystemSettingsView.vue';
 import EnvVariablesView from '../views/system/EnvVariablesView.vue';
 import CommandsView from '../views/system/CommandsView.vue';
+import AiSettingsView from '../views/system/AiSettingsView.vue';
 import UsersView from '../views/users/UsersView.vue';
 import ProjectSettingsView from '../views/project/ProjectSettingsView.vue';
 import ProjectsView from '../views/projects/ProjectsView.vue';
@@ -19,6 +20,7 @@ const routes = [
       { path: 'system', component: SystemSettingsView, meta: { permission: 'system.settings.manage' } },
       { path: 'system/env-vars', component: EnvVariablesView, meta: { permission: 'project.settings.read' } },
       { path: 'system/commands', component: CommandsView, meta: { permission: 'project.settings.read' } },
+      { path: 'system/ai', component: AiSettingsView, meta: { permission: 'system.settings.manage' } },
       { path: 'projects', component: ProjectsView, meta: { permission: 'system.settings.manage' } },
       { path: 'users', component: UsersView, meta: { permission: 'system.user.read' } },
       { path: 'project/types', redirect: { path: '/settings/project' } },

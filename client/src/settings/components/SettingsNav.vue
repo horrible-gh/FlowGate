@@ -11,6 +11,9 @@
       <RouterLink to="/settings/system/commands" class="nav-item" active-class="active">
         <i class="fa-solid fa-terminal"></i> {{ t('settings.system.commands.title') }}
       </RouterLink>
+      <RouterLink to="/settings/system/ai" class="nav-item" active-class="active">
+        <i class="fa-solid fa-robot"></i> {{ t('settings.system.ai.title') }}
+      </RouterLink>
       <RouterLink to="/settings/projects" class="nav-item" active-class="active">
         <i class="fa-solid fa-table-cells-large"></i> {{ t('main.nav.project_list') }}
       </RouterLink>

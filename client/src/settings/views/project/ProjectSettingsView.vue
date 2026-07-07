@@ -48,6 +48,7 @@ import MessagesView from './MessagesView.vue';
 import SourceModeSettingsView from './SourceModeSettingsView.vue';
 import TestRecipesView from './TestRecipesView.vue';
 import GitSettingsView from './GitSettingsView.vue';
+import AiProjectSettingsView from './AiProjectSettingsView.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -61,9 +62,10 @@ const tabs = computed(() => [
   { id: 'numbering', label: t('settings.project.project_settings_view.text_56'), icon: 'fa-hashtag', component: NumberingSettingsView },
   { id: 'messages', label: t('settings.project.messages'), icon: 'fa-comment-dots', component: MessagesView },
   { id: 'git', label: t('settings.project.git.tab'), icon: 'fa-code-branch', component: GitSettingsView },
+  { id: 'ai', label: t('settings.project.ai.tab'), icon: 'fa-robot', component: AiProjectSettingsView },
 ]);
 
-const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git']);
+const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git', 'ai']);
 const defaultTab = 'paths';
 const activeTab = ref(validTabIds.has(route.query.tab) ? route.query.tab : defaultTab);
 const activeComponent = computed(() => tabs.value.find((tab) => tab.id === activeTab.value)?.component || PathSettingsView);
