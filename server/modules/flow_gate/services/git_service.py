@@ -67,6 +67,12 @@ ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
 ACTION_VALUES = ("merge", "push", "wait")
+# flowgate.default.0162 L §1 — group git status subsets.
+PENDING_STATUSES = ("awaiting_choice", "waiting", "conflict")  # "finalize pending"
+SLOT_STATUSES = ("none", "awaiting_choice", "merging", "conflict", "waiting")  # not terminal
+# "merging" is a transient state: recorded, but its transition is not broadcast
+# (it would flicker the badge n→n-1→n before the terminal event lands, L §2.3).
+TRANSIENT_STATUSES = ("merging",)
 
 # Identity for commits the SERVER makes (auto-commit / merge commits). Without
 # an explicit identity `git commit` fails on hosts with no global user config.
@@ -325,6 +331,44 @@ def _emit(event_type: str, project: str, group_id: Optional[str], payload: dict)
         ))
     except Exception:
         _log.warning("git SSE emit failed (%s)", event_type, exc_info=True)
+
+
+# ── Pending-set broadcast (flowgate.default.0162 L §2.3) ─────────────────────
+
+def _count_pending(project_id: str) -> int:
+    """Project-wide "finalize pending" count, recomputed from the ledger.
+
+    Never stored (DB0005) — a denormalized counter would drift on a missed
+    emit; recompute is index-covered (idx_group_git_state_project).
+    """
+    rows = db_git.list_states_of_project(project_id)
+    return sum(1 for r in rows if (r.get("status") in PENDING_STATUSES))
+
+
+def _emit_pending_changed(project_id: str, group_id: str, new_status: str) -> None:
+    _emit("git_pending_changed", project_id, group_id, {
+        "project": project_id,
+        "group_id": group_id,
+        "status": new_status,
+        "pending_count": _count_pending(project_id),
+    })
+
+
+def _set_status(
+    group_id: str,
+    status: str,
+    *,
+    merge_id: Optional[int] = None,
+    merge_commit: Optional[str] = None,
+) -> None:
+    """Record a group's git status AND broadcast git_pending_changed (L §2.3).
+
+    Single convergence point so no transition can silently skip the badge
+    update. The transient "merging" state is recorded but not broadcast.
+    """
+    db_git.set_status(group_id, status, merge_id=merge_id, merge_commit=merge_commit)
+    if status not in TRANSIENT_STATUSES:
+        _emit_pending_changed(_project_of_group(group_id), group_id, status)
 
 
 # ── Project lock (L0006 §2.8) ────────────────────────────────────────────────
@@ -1083,7 +1127,7 @@ def get_finalize_state(group_id: str) -> dict:
     # Lazy none→awaiting_choice transition (L0006 §3): the workflow module never
     # calls into git; the first state query after wf_done realizes the transition.
     if status == "none" and _group_root_wf_done(group_id):
-        db_git.set_status(group_id, "awaiting_choice")
+        _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
@@ -1149,7 +1193,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
     # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
     status = (state.get("status") or "none")
     if status == "none" and _group_root_wf_done(group_id):
-        db_git.set_status(group_id, "awaiting_choice")
+        _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
     if status in ("merged", "pushed"):
         raise GitServiceError(409, "invalid_state", "already finalized")
@@ -1164,7 +1208,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
         raise GitServiceError(409, "invalid_state", f"finalize not available in state '{status}'")
 
     if action == "wait":
-        db_git.set_status(group_id, "waiting")
+        _set_status(group_id, "waiting")
         return _finalize_result(group_id, project_id, "wait", "waiting")
 
     if not git_available():
@@ -1207,7 +1251,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
             raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
 
         if action == "push":
-            db_git.set_status(group_id, "pushed")
+            _set_status(group_id, "pushed")
             return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
 
         # action == "merge"
@@ -1229,7 +1273,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
                     500, "base_diverged",
                     "base checkout has local-only commits and cannot fast-forward",
                 )
-        db_git.set_status(group_id, "merging")
+        _set_status(group_id, "merging")
         msg = MERGE_COMMIT_MSG.format(branch=branch, base_branch=base_branch, group_id=group_id)
         proc = _run_git([*_GIT_IDENT, "merge", "--no-ff", "-m", msg, branch], cwd=base_root)
         if proc.returncode == 0:
@@ -1240,11 +1284,11 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
             if push.returncode != 0:
                 # E6 — atomicity: never report merged unless the push landed.
                 _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
-                db_git.set_status(group_id, "waiting")
+                _set_status(group_id, "waiting")
                 raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
             head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
-            db_git.set_status(group_id, "merged", merge_commit=merge_commit)
+            _set_status(group_id, "merged", merge_commit=merge_commit)
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id,
                 "action": "merge", "status": "merged", "merge_commit": merge_commit,
@@ -1263,10 +1307,10 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
         files = [l.strip() for l in (files_proc.stdout or "").splitlines() if l.strip()]
         if not files:
             _run_git(["merge", "--abort"], cwd=base_root)
-            db_git.set_status(group_id, "waiting")
+            _set_status(group_id, "waiting")
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
         merge_id = db_git.create_session(group_id, files)
-        db_git.set_status(group_id, "conflict", merge_id=merge_id)
+        _set_status(group_id, "conflict", merge_id=merge_id)
         db_git.transfer_lock(project_id, holder, f"merge:{merge_id}")
         transferred = True
         _emit("git_merge_conflict", project_id, group_id, {
@@ -1421,14 +1465,14 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
         # E6 — roll the merge commit back; the session ends and the group re-chooses.
         _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
         db_git.close_session(merge_id, "aborted")
-        db_git.set_status(group_id, "waiting")
+        _set_status(group_id, "waiting")
         db_git.release_lock(project_id, f"merge:{merge_id}")
         raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
 
     head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
     merge_commit = (head.stdout or "").strip() or None
     db_git.close_session(merge_id, "done")
-    db_git.set_status(group_id, "merged", merge_commit=merge_commit)
+    _set_status(group_id, "merged", merge_commit=merge_commit)
     db_git.release_lock(project_id, f"merge:{merge_id}")
     _emit("git_finalize_done", project_id, group_id, {
         "project": project_id, "group_id": group_id,
@@ -1447,7 +1491,7 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
     _session, _cfg, project_id, base_root = _session_context(group_id, merge_id)
     _run_git(["merge", "--abort"], cwd=base_root)
     db_git.close_session(merge_id, "aborted")
-    db_git.set_status(group_id, "waiting")
+    _set_status(group_id, "waiting")
     db_git.release_lock(project_id, f"merge:{merge_id}")
     return {"ok": True, "result": {"status": "waiting"}}
 
@@ -1479,7 +1523,7 @@ def startup_recovery() -> None:
                         db_git.try_acquire_lock(project_id, holder)
                 else:
                     db_git.close_session(merge_id, "aborted")
-                    db_git.set_status(group_id, "waiting")
+                    _set_status(group_id, "waiting")
                     db_git.release_lock(project_id, holder)
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
@@ -1490,3 +1534,225 @@ def startup_recovery() -> None:
     except Exception:
         # Table may not exist yet (pre-migration boot) — recovery is best-effort.
         _log.info("git startup recovery skipped", exc_info=True)
+
+
+# ── Project git status aggregation (flowgate.default.0162 P §2 / L §2.2) ──────
+
+def _base_ahead_behind(
+    base_root: Optional[Path], base_branch: str
+) -> tuple[Optional[int], Optional[int]]:
+    """(ahead, behind) of the base checkout vs origin/{base}, from the last
+    fetch — no network git (P §2-1). Both None when origin/{base} is absent
+    (never fetched), git is unavailable, or the base checkout is missing:
+    "unmeasured" is distinct from "in sync" (L §5)."""
+    if base_root is None or not git_available():
+        return None, None
+    if not (base_root / ".git").exists():
+        return None, None
+    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+        return None, None
+    proc = _run_git(
+        ["rev-list", "--left-right", "--count", f"origin/{base_branch}...{base_branch}"],
+        cwd=base_root,
+    )
+    if proc.returncode != 0:
+        return None, None
+    m = re.match(r"^\s*(\d+)\s+(\d+)\s*$", proc.stdout or "")
+    if not m:
+        return None, None
+    behind, ahead = int(m.group(1)), int(m.group(2))
+    return ahead, behind
+
+
+def project_git_status(project_id: str) -> dict:
+    """GET …/projects/{id}/git/status — status + finalize-pending list + count.
+
+    Local repository only (no network git). Realizes the lazy none→
+    awaiting_choice transition for wf_done groups at aggregation time (L §2.2).
+    """
+    if db_projects.get_by_id(project_id) is None:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        return {"ok": True, "status": {
+            "enabled": False, "base_branch": None, "base_path_state": "empty",
+            "ahead_count": None, "behind_count": None,
+            "slots": [], "pending": [], "pending_count": 0,
+        }}
+
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    default_action = cfg.get("default_finalize_action") or "wait"
+    project_name = _project_name(project_id)
+    base_root = src_root(project_name, base_branch) if project_name else None
+
+    rows = db_git.list_states_of_project(project_id)
+    for row in rows:
+        if (row.get("status") or "none") == "none" and _group_root_wf_done(row["group_id"]):
+            try:
+                _set_status(row["group_id"], "awaiting_choice")
+                row["status"] = "awaiting_choice"
+            except Exception:
+                # One broken group must not sink the whole aggregation
+                # (0115 batch-fetch exception-isolation lesson, L §5).
+                _log.warning(
+                    "lazy git transition failed for %s", row.get("group_id"), exc_info=True
+                )
+
+    slots = [
+        {"group_id": r["group_id"], "branch": r.get("branch"),
+         "status": r.get("status"), "merge_id": r.get("merge_id")}
+        for r in rows if r.get("status") in SLOT_STATUSES
+    ]
+    pending = [
+        {"group_id": r["group_id"], "branch": r.get("branch"),
+         "status": r.get("status"), "default_action": default_action}
+        for r in rows if r.get("status") in PENDING_STATUSES
+    ]
+    ahead, behind = _base_ahead_behind(base_root, base_branch)
+    base_path_state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
+    return {"ok": True, "status": {
+        "enabled": True, "base_branch": base_branch,
+        "base_path_state": base_path_state,
+        "ahead_count": ahead, "behind_count": behind,
+        "slots": slots, "pending": pending, "pending_count": len(pending),
+    }}
+
+
+# ── Manual recovery operations (flowgate.default.0162 P §3 / L §2.4) ──────────
+
+def _require_enabled_config(project_id: str) -> dict:
+    if db_projects.get_by_id(project_id) is None:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        raise GitServiceError(
+            409, "invalid_state", f"git integration is not enabled for project '{project_id}'"
+        )
+    return cfg
+
+
+def manual_fetch(project_id: str) -> dict:
+    """POST …/projects/{id}/git/fetch — recovery fetch of the base checkout."""
+    cfg = _require_enabled_config(project_id)
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    project_name = _project_name(project_id)
+    base_root = src_root(project_name, base_branch) if project_name else None
+    if base_root is None or _judge_base_slot(base_root, base_branch) != "checkout":
+        raise GitServiceError(
+            409, "invalid_state", "base checkout is not available for fetch"
+        )
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        proc = _run_git(
+            ["fetch", "origin"],
+            cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        )
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        ahead, behind = _base_ahead_behind(base_root, base_branch)
+        return {"ok": True, "result": {
+            "fetched": True, "base_branch": base_branch,
+            "ahead_count": ahead, "behind_count": behind,
+        }}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def manual_push(project_id: str, branch: Optional[str]) -> dict:
+    """POST …/projects/{id}/git/push — recovery re-push of an accumulated branch.
+
+    ``branch`` must EXACTLY match the base branch or one of this project's
+    registered slot branches (no prefix/pattern matching, L §2.4). Terminal
+    (merged/pushed) slots are allowed — a re-push is a recovery operation."""
+    cfg = _require_enabled_config(project_id)
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    branch = (branch or base_branch).strip() or base_branch
+    project_name = _project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+
+    allowed = {base_branch}
+    for r in db_git.list_states_of_project(project_id):
+        if r.get("branch"):
+            allowed.add(r["branch"])
+    if branch not in allowed:
+        raise GitServiceError(
+            422, "invalid_request",
+            f"branch '{branch}' is not the base branch or a group slot of project '{project_id}'",
+        )
+    cwd = src_root(project_name, branch)
+    if not cwd.is_dir():
+        raise GitServiceError(
+            409, "invalid_state", f"checkout for branch '{branch}' is missing"
+        )
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        proc = _run_git(
+            ["push", "origin", branch],
+            cwd=cwd, timeout=GIT_NET_TIMEOUT_SEC,
+            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        )
+        if proc.returncode != 0:
+            raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
+        return {"ok": True, "result": {"pushed": True, "branch": branch}}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+# ── Approval-ride-along git action (flowgate.default.0162 P §1 / L §2.1) ──────
+
+def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:
+    """Validate a git_action carried on an AC approval BEFORE the approval runs
+    (L §2.1 step 1 / §4.2). Returns the group_id; raises GitServiceError(422)
+    on any violation so the caller skips the approval entirely (P §1-7)."""
+    invalid = GitServiceError(
+        422, "invalid_request",
+        "git_action is only accepted on AC documents of a git-active group",
+    )
+    if git_action not in ACTION_VALUES:
+        raise invalid
+    doc = doc or {}
+    if doc.get("type_code") != "AC":
+        raise invalid
+    group_id = doc.get("group_id") or ""
+    project_id = _project_of_group(group_id)
+    cfg = db_git.get_config(project_id)
+    state = db_git.get_state(group_id)
+    if (
+        cfg is None or not cfg.get("enabled")
+        or state is None or not state.get("worktree_registered")
+    ):
+        raise invalid
+    return group_id
+
+
+def run_approve_git_action(group_id: str, git_action: str) -> dict:
+    """Post-approval git finalize (L §2.1 step 3). NEVER raises — a git failure
+    is reported as {ok: false, error} while the approval itself stands (D §3.1).
+    A merge conflict is a successful {ok: true, result: {status: "conflict"}}."""
+    try:
+        outcome = finalize(group_id, git_action)
+        return {"ok": True, "result": outcome["result"]}
+    except GitServiceError as exc:
+        return {"ok": False, "error": {"code": exc.code, "message": exc.message}}

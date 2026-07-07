@@ -132,6 +132,20 @@ def list_states_by_status(statuses: list[str]) -> list[dict]:
     )
 
 
+def list_states_of_project(project_id: str) -> list[dict]:
+    """Registered worktree ledger rows for one project (flowgate.default.0162 L §2.2).
+
+    Scoped by project_id (``list_states_by_status`` spans every project and is
+    unsuitable for per-project aggregation / pending_count). Covered by
+    idx_group_git_state_project(project_id, status) — no schema change (DB0005).
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM group_git_state "
+        "WHERE project_id = ? AND worktree_registered = 1",
+        [project_id],
+    )
+
+
 # ── git_merge_session (+ files) ───────────────────────────────────────────────
 
 def create_session(group_id: str, files: list[str]) -> int:

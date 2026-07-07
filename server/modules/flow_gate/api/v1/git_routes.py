@@ -3,6 +3,9 @@
 GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
+GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
+POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
+POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
@@ -138,6 +141,50 @@ def post_git_provision(
     # a provisioning failure is a 200 with result.status="failed", not an error.
     try:
         return git_service.provision_manual(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Project git status + manual recovery (0162 P §2·§3) ─────────────────────
+
+@router.get("/projects/{project_id}/git/status")
+def get_git_status(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Aggregate status + finalize-pending list + count (control panel + badge)."""
+    try:
+        return git_service.project_git_status(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/fetch")
+def post_git_fetch(
+    project_id: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Recovery fetch of the base checkout (P §3-1)."""
+    try:
+        return git_service.manual_fetch(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class GitPushBody(BaseModel):
+    # base branch (default) or a group slot branch — exact match only (L §2.4).
+    branch: str | None = None
+
+
+@router.post("/projects/{project_id}/git/push")
+def post_git_push(
+    project_id: str,
+    body: GitPushBody | None = None,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Recovery re-push of an accumulated base/slot branch (P §3-2)."""
+    try:
+        return git_service.manual_push(project_id, body.branch if body else None)
     except GitServiceError as exc:
         return _guard(exc)
 

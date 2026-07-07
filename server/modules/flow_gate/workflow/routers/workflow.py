@@ -17,6 +17,7 @@ import json
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
@@ -24,6 +25,8 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate import process_service
+from modules.flow_gate.services import git_service
+from modules.flow_gate.services.git_service import GitServiceError
 
 from ..pipeline_service import (
     PermissionError as WFPermissionError,
@@ -139,6 +142,9 @@ class RejectionReasonRequest(BaseModel):
 class DocumentBodyRequest(BaseModel):
     doc_id: str
     comment: Optional[str] = None
+    # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
+    # Only honored on approve of a git-active group's AC document.
+    git_action: Optional[str] = None
 
 
 class RejectionReasonBodyRequest(BaseModel):
@@ -338,13 +344,43 @@ async def document_review_transition_rpc(
     action: str,
     body: DocumentBodyRequest,
     current_user: dict = Depends(get_current_user),
-) -> dict[str, Any]:
-    return await document_review_transition_endpoint(
+):
+    # flowgate.default.0162 §1 — an optional git_action rides along on the AC
+    # final approval. The pre-check runs BEFORE the approval so a violation
+    # rejects WITHOUT approving (L §2.1 step 1 / §4.2). The git finalize runs
+    # AFTER the approval commits and NEVER turns a git failure into an approval
+    # failure (D §3.1) — git failures surface as {git: {ok: false}} at HTTP 200.
+    git_action = body.git_action
+    group_id: Optional[str] = None
+    if git_action is not None:
+        if action != "approve":
+            return JSONResponse(
+                status_code=422,
+                content={"ok": False, "error": {
+                    "code": "invalid_request",
+                    "message": "git_action is only accepted on an approve transition",
+                }},
+            )
+        try:
+            group_id = git_service.precheck_approve_git_action(
+                db_docs.get_by_id(body.doc_id), git_action
+            )
+        except GitServiceError as exc:
+            return JSONResponse(
+                status_code=exc.status,
+                content={"ok": False, "error": {"code": exc.code, "message": exc.message}},
+            )
+
+    response = await document_review_transition_endpoint(
         body.doc_id,
         action,
         DocumentTransitionRequest(comment=body.comment),
         current_user,
     )
+
+    if git_action is not None and group_id:
+        response["git"] = git_service.run_approve_git_action(group_id, git_action)
+    return response
 
 
 @router.post("/documents/workflow/finalize")

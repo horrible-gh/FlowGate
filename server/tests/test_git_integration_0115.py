@@ -739,3 +739,180 @@ class TestProvision0161:
         assert (base / "keep.txt").read_text(encoding="utf-8") == "keep me\n"
         assert svc._judge_base_slot(base, "main") == "checkout"
         svc.delete_config("retryprj")
+
+
+# ── flowgate.default.0162: group git actions (status / fetch / push / approve) ─
+
+class TestStatus0162NoGit:
+    """Aggregation + precheck paths that need no git binary."""
+
+    def test_disabled_project(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        out = svc.project_git_status("plainprj")["status"]
+        assert out["enabled"] is False
+        assert out["pending_count"] == 0
+        assert out["slots"] == [] and out["pending"] == []
+        assert out["base_branch"] is None
+
+    def test_unknown_project_404(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.project_git_status("ghost")
+        assert exc.value.status == 404
+
+    def test_precheck_rejections(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        # bad action value
+        with pytest.raises(svc.GitServiceError) as e1:
+            svc.precheck_approve_git_action(
+                {"type_code": "AC", "group_id": "plainprj.default.0001"}, "frobnicate"
+            )
+        assert e1.value.status == 422
+        # non-AC document
+        with pytest.raises(svc.GitServiceError) as e2:
+            svc.precheck_approve_git_action(
+                {"type_code": "D", "group_id": "plainprj.default.0001"}, "merge"
+            )
+        assert e2.value.status == 422
+        # AC but the group has no git config / worktree
+        with pytest.raises(svc.GitServiceError) as e3:
+            svc.precheck_approve_git_action(
+                {"type_code": "AC", "group_id": "plainprj.default.0001"}, "merge"
+            )
+        assert e3.value.status == 422
+
+    def test_run_action_never_raises(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        # finalize on a non-integrated group raises 409 internally; the approve
+        # wrapper must swallow it into {ok: false} (D §3.1 — approval stands).
+        out = svc.run_approve_git_action("plainprj.default.0001", "merge")
+        assert out["ok"] is False
+        assert out["error"]["code"]
+
+
+@pytest.fixture(scope="class")
+def act_origin(seed):
+    """A dedicated bare origin + enabled project for the 0162 surface."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "gitactprj", "project_name": "GitActProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0162-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("gitactprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("gitactprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestGitActions0162:
+    def test_status_aggregation_and_pending(self, act_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        g_wait = "gitactprj.default.0201"
+        g_conf = "gitactprj.default.0202"
+        g_done = "gitactprj.default.0203"
+        for g in (g_wait, g_conf, g_done):
+            assert svc.ensure_worktree("gitactprj", "default", g) == "ok"
+
+        db_git.set_status(g_wait, "waiting")
+        db_git.set_status(g_conf, "conflict", merge_id=None)
+        db_git.set_status(g_done, "merged", merge_commit="deadbee")
+
+        out = svc.project_git_status("gitactprj")["status"]
+        assert out["enabled"] is True
+        assert out["base_branch"] == "main"
+        assert out["base_path_state"] == "checkout"
+        # fresh clone: base == origin/main
+        assert out["ahead_count"] == 0 and out["behind_count"] == 0
+
+        slot_ids = {s["group_id"] for s in out["slots"]}
+        pend_ids = {p["group_id"] for p in out["pending"]}
+        assert {g_wait, g_conf} <= slot_ids
+        assert g_done not in slot_ids            # terminal excluded from slots
+        assert pend_ids == {g_wait, g_conf} & pend_ids
+        assert g_wait in pend_ids and g_conf in pend_ids
+        assert g_done not in pend_ids
+        assert out["pending_count"] == len(out["pending"])
+        # every pending item carries the project's default action
+        assert all(p["default_action"] == "merge" for p in out["pending"])
+
+    def test_manual_fetch_reports_behind(self, act_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        # origin main advances via the seed worktree
+        seedwt = act_origin["seedwt"]
+        (seedwt / "moved.txt").write_text("x\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "advance"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        out = svc.manual_fetch("gitactprj")["result"]
+        assert out["fetched"] is True
+        assert out["base_branch"] == "main"
+        assert out["behind_count"] >= 1
+        assert out["ahead_count"] == 0
+
+    def test_manual_push_allowed_and_rejected(self, act_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        # A registered slot branch is an allowed push target (recovery re-push).
+        # (Pushing base 'main' here would be a legitimate non-fast-forward after
+        # the fetch test advanced origin — slot push avoids that coupling.)
+        slot = "gitactprj_default_0201"
+        out = svc.manual_push("gitactprj", slot)["result"]
+        assert out["pushed"] is True and out["branch"] == slot
+        heads = _git(["ls-remote", "--heads", str(act_origin["bare"])])
+        assert slot in heads
+
+        # A branch that is neither base nor a slot is rejected before any git.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.manual_push("gitactprj", "release-nope")
+        assert exc.value.status == 422
+        assert exc.value.code == "invalid_request"
+
+    def test_approve_action_wait_then_merge(self, act_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitactprj.default.0204"
+        assert svc.ensure_worktree("gitactprj", "default", group) == "ok"
+        from modules.flow_gate.storage.paths import src_root
+        wt = src_root("GitActProj", "gitactprj_default_0204")
+        (wt / "work.txt").write_text("group work\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        # precheck passes for an AC doc of this git-active group
+        gid = svc.precheck_approve_git_action(
+            {"type_code": "AC", "group_id": group}, "wait"
+        )
+        assert gid == group
+
+        waited = svc.run_approve_git_action(group, "wait")
+        assert waited["ok"] is True and waited["result"]["status"] == "waiting"
+
+        merged = svc.run_approve_git_action(group, "merge")
+        assert merged["ok"] is True and merged["result"]["status"] == "merged"
+        files = _git(["ls-tree", "--name-only", "main"], cwd=act_origin["bare"]).split()
+        assert "work.txt" in files

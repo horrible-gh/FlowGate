@@ -297,13 +297,24 @@ def validate_and_create_run(
             doc_id=doc_id,
             detail="document type is not TS",
         )
-    if doc.get("doc_review_status") != "approved":
-        raise _http_error(
-            409,
-            "doc_not_approved",
-            doc_id=doc_id,
-            doc_review_status=doc.get("doc_review_status"),
+    review_status = doc.get("doc_review_status")
+    if review_status != "approved":
+        # Re-run affordance (0163 / B0001): an approved TS that has actually run moves to
+        # doc_review_status="pending_review" (its result awaits review) and is never approved
+        # again. The fail-strip re-run button targets exactly that state, so a prior run bound
+        # to this doc re-opens the gate — approval was already cleared once when the run was first
+        # admitted. Every other non-approved state (draft/rejected/…) still 409s. The group_disposed
+        # (above) and run_in_progress (below) guards are unaffected.
+        rerun_ok = review_status == "pending_review" and bool(
+            db_test_runs.list_by_doc(doc_id)
         )
+        if not rerun_ok:
+            raise _http_error(
+                409,
+                "doc_not_approved",
+                doc_id=doc_id,
+                doc_review_status=review_status,
+            )
 
     # Fail fast at admission: without a source mirror the async worker can only
     # die with src_root_missing, which surfaces late and pathless (0152 outage).
@@ -518,6 +529,35 @@ def load_test_run_embed(doc_id: str) -> tuple[Optional[dict], list[dict]]:
 
 
 def execute_run(run: dict) -> None:
+    # Safety net (0163 / B0001 family): the inner executor finalizes the run row on every
+    # *expected* path (setup_failed / passed / failed), but an unexpected exception anywhere
+    # in it — or in port allocation / scratch setup before its try-block — would otherwise leave
+    # the row at status="running". The live worker cannot reap that (only startup's
+    # mark_orphaned_running clears it), so the doc would be pinned by run_in_progress and every
+    # future re-run would 409 — the exact "re-run impossible" symptom this group fixes. Guarantee
+    # the row is terminalized, then re-raise so the worker loop still logs the failure as before.
+    try:
+        _execute_run_inner(run)
+    except Exception:
+        try:
+            current = db_test_runs.get_run(run["run_id"])
+            if current and current.get("status") == "running":
+                db_test_runs.finish_run(
+                    run_id=run["run_id"], status="failed", error="internal_error"
+                )
+                doc = db_docs.get_by_id(run["doc_id"])
+                if doc is not None:
+                    _emit_finished(doc, db_test_runs.get_run(run["run_id"]) or run, None)
+        except Exception:
+            logger.warning(
+                "execute_run safety-net finalize failed for %s",
+                run.get("run_id"),
+                exc_info=True,
+            )
+        raise
+
+
+def _execute_run_inner(run: dict) -> None:
     doc = db_docs.get_by_id(run["doc_id"])
     if doc is None:
         db_test_runs.finish_run(
