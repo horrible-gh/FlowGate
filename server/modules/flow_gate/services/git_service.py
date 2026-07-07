@@ -1179,8 +1179,15 @@ def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:
     return cfg, state, project_id, base_root, wt_path
 
 
-def _dirty(repo: Path) -> bool:
-    proc = _run_git(["status", "--porcelain"], cwd=repo)
+def _dirty(repo: Path, include_untracked: bool = True) -> bool:
+    args = ["status", "--porcelain"]
+    if not include_untracked:
+        # E3 guard scope: untracked build artifacts (e.g. __pycache__/*.pyc,
+        # .pytest_cache) in the server's base checkout are NOT "local
+        # modifications" — only changes to tracked files require operator
+        # intervention. See NR flowgate.default.0165.0009.
+        args.append("--untracked-files=no")
+    proc = _run_git(args, cwd=repo)
     return bool((proc.stdout or "").strip()) if proc.returncode == 0 else False
 
 
@@ -1255,7 +1262,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
             return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
 
         # action == "merge"
-        if _dirty(base_root):
+        if _dirty(base_root, include_untracked=False):
             raise GitServiceError(  # E3 — never auto-stash the server's own checkout
                 500, "base_dirty",
                 "base checkout has local modifications; operator intervention required",
