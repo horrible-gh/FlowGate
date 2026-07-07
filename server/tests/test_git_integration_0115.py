@@ -512,6 +512,10 @@ class TestGitEndToEnd:
             ["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]
         ).split()
         assert "work.txt" in files
+        # B flowgate.default.0172.0001-B: a merge lands the work in default but
+        # must NOT publish the intermediate work branch to origin.
+        heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
+        assert "refs/heads/gitprj_default_0100" not in heads
         # re-finalize is rejected (already finalized)
         with pytest.raises(svc.GitServiceError) as exc:
             svc.finalize(self.GROUP, "merge")

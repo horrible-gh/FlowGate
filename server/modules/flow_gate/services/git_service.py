@@ -1281,8 +1281,8 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
 
-        # Absorb leftover worker changes, then preserve the work branch remotely
-        # (both merge and push start here — L0006 §2.6).
+        # Absorb leftover worker changes into the work branch. Both merge and
+        # push need the latest worker edits committed first.
         if _dirty(wt_path):
             proc = _run_git(["add", "-A"], cwd=wt_path)
             if proc.returncode == 0:
@@ -1292,14 +1292,22 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
                 )
             if proc.returncode != 0:
                 raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-        proc = _run_git(
-            ["push", "origin", branch],
-            cwd=wt_path, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-        )
-        if proc.returncode != 0:
-            raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
 
+        # Publish the work branch to origin ONLY for a bare push. A merge lands
+        # the worker's commits into base/default locally (the work branch is a
+        # worktree of the same repository, reachable by the base merge without a
+        # remote round-trip) and pushes only base; the intermediate work branch
+        # is never published to origin on a merge.
+        # B flowgate.default.0172.0001-B: the user pressed no push, yet the work
+        # branch appeared on the remote and default moved. Only the final merge
+        # into default is intended to reach origin.
         if action == "push":
+            proc = _run_git(
+                ["push", "origin", branch],
+                cwd=wt_path, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+            )
+            if proc.returncode != 0:
+                raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
             _set_status(group_id, "pushed")
             return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
 
