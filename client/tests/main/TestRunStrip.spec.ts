@@ -1,0 +1,183 @@
+// Group 0166: manual test-run entry point for an approved TS (NR0003 — the only
+// prior caller of POST /documents/test-run was the failure strip, which cannot
+// offer the FIRST run). Covers the visibility gate (mirror of the backend
+// admission gate), the run launch, the error mapping, and the AI delegation copy.
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import i18n from '@shared/i18n'
+
+const postRequest = vi.fn()
+vi.mock('@shared/api', () => ({
+  postRequest: (...args: unknown[]) => postRequest(...args),
+}))
+
+const showToast = vi.fn()
+vi.mock('@main/components/common/useToast', () => ({
+  useToast: () => ({ showToast }),
+}))
+
+// jsdom has no ClipboardItem/execCommand — replace the deferred-copy primitive with
+// a faithful stub that resolves the producer (as the real fallback path does).
+const copiedTexts: string[] = []
+let clipboardResult = true
+vi.mock('@main/utils/clipboard', () => ({
+  ClipboardAbort: class ClipboardAbort extends Error {},
+  copyToClipboardDeferred: async (produce: () => Promise<string>) => {
+    try {
+      copiedTexts.push(await produce())
+    } catch {
+      return false
+    }
+    return clipboardResult
+  },
+}))
+
+import TestRunStrip from '@main/components/TestRunStrip.vue'
+
+function mountStrip(props: Record<string, unknown> = {}) {
+  return mount(TestRunStrip, {
+    props: {
+      typeCode: 'TS',
+      reviewStatus: 'approved',
+      testRun: null,
+      groupDisposed: false,
+      docLoaded: true,
+      docId: 'proj.mod.0001.0005-TS',
+      ...props,
+    },
+    global: { plugins: [i18n] },
+  })
+}
+
+beforeEach(() => {
+  postRequest.mockReset()
+  showToast.mockReset()
+  copiedTexts.length = 0
+  clipboardResult = true
+  i18n.global.locale.value = 'en'
+})
+
+describe('TestRunStrip', () => {
+  it('renders the first-run entry point for an approved TS with no run history', () => {
+    const wrapper = mountStrip()
+    expect(wrapper.find('.run-strip').exists()).toBe(true)
+    expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.run'))
+    expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.ready'))
+  })
+
+  it('stays hidden for non-TS docs, unapproved TS, unloaded docs, and disposed groups', () => {
+    expect(mountStrip({ typeCode: 'TR' }).find('.run-strip').exists()).toBe(false)
+    expect(mountStrip({ reviewStatus: 'draft' }).find('.run-strip').exists()).toBe(false)
+    expect(mountStrip({ reviewStatus: 'rejected' }).find('.run-strip').exists()).toBe(false)
+    expect(mountStrip({ docLoaded: false }).find('.run-strip').exists()).toBe(false)
+    expect(mountStrip({ groupDisposed: true }).find('.run-strip').exists()).toBe(false)
+    // pending_review WITHOUT run history is not re-runnable (backend 409s) → hidden.
+    expect(mountStrip({ reviewStatus: 'pending_review' }).find('.run-strip').exists()).toBe(false)
+  })
+
+  it('offers a re-run for pending_review with a prior passed run (0163 relaxation)', () => {
+    const wrapper = mountStrip({
+      reviewStatus: 'pending_review',
+      testRun: { run_id: 'trun_1', status: 'passed', case_passed: 3, case_total: 3 },
+    })
+    expect(wrapper.find('.run-strip').exists()).toBe(true)
+    expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.rerun'))
+    expect(wrapper.text()).toContain('trun_1')
+  })
+
+  it('hides itself when the latest run failed — TestFailStrip owns that state', () => {
+    const wrapper = mountStrip({
+      reviewStatus: 'pending_review',
+      testRun: { run_id: 'trun_1', status: 'failed' },
+    })
+    expect(wrapper.find('.run-strip').exists()).toBe(false)
+  })
+
+  it('shows a running indicator without action buttons while a run is in progress', () => {
+    const wrapper = mountStrip({
+      reviewStatus: 'pending_review',
+      testRun: { run_id: 'trun_2', status: 'running' },
+    })
+    expect(wrapper.find('.run-strip').exists()).toBe(true)
+    expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.running'))
+    expect(wrapper.find('.run-strip-btn').exists()).toBe(false)
+  })
+
+  it('POSTs /documents/test-run on run click, toasts, and emits run-started', async () => {
+    postRequest.mockResolvedValue({ data: { ok: true, run_id: 'trun_3' } })
+    const wrapper = mountStrip()
+    await wrapper.find('.run-strip-btn--run').trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/documents/test-run', {
+      doc_id: 'proj.mod.0001.0005-TS',
+    })
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.test_run_strip.run_started'),
+      'info',
+    )
+    expect(wrapper.emitted('run-started')).toHaveLength(1)
+  })
+
+  it('maps backend admission errors to their dedicated messages', async () => {
+    for (const [code, key] of [
+      ['doc_not_approved', 'err_not_approved'],
+      ['run_in_progress', 'err_in_progress'],
+      ['permission_denied', 'err_denied'],
+      ['group_disposed', 'err_disposed'],
+      ['src_root_missing', 'err_src_missing'],
+      ['no_test_cases', 'err_no_cases'],
+      ['something_else', 'err_failed'],
+    ] as const) {
+      postRequest.mockRejectedValueOnce({ response: { data: { error: code } } })
+      showToast.mockClear()
+      const wrapper = mountStrip()
+      await wrapper.find('.run-strip-btn--run').trigger('click')
+      await flushPromises()
+      expect(showToast).toHaveBeenCalledWith(
+        i18n.global.t(`main.test_run_strip.${key}`),
+        'error',
+      )
+      expect(wrapper.emitted('run-started')).toBeUndefined()
+    }
+  })
+
+  it('delegate click issues a test-run-request and copies the mention', async () => {
+    postRequest.mockResolvedValue({ data: { mention: 'MENTION TEXT + token' } })
+    const wrapper = mountStrip()
+    const buttons = wrapper.findAll('.run-strip-btn')
+    await buttons[0].trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/documents/test-run-request', {
+      doc_id: 'proj.mod.0001.0005-TS',
+    })
+    expect(copiedTexts).toEqual(['MENTION TEXT + token'])
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.test_run_strip.delegate_copied'),
+      'info',
+    )
+  })
+
+  it('delegate API failure toasts the mapped error and skips the copy-failed toast', async () => {
+    postRequest.mockRejectedValue({ response: { data: { error: 'permission_denied' } } })
+    const wrapper = mountStrip()
+    await wrapper.findAll('.run-strip-btn')[0].trigger('click')
+    await flushPromises()
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.test_run_strip.err_denied'),
+      'error',
+    )
+  })
+
+  it('delegate clipboard failure (API ok) toasts the copy-failed message', async () => {
+    postRequest.mockResolvedValue({ data: { mention: 'MENTION' } })
+    clipboardResult = false
+    const wrapper = mountStrip()
+    await wrapper.findAll('.run-strip-btn')[0].trigger('click')
+    await flushPromises()
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.test_run_strip.delegate_copy_failed'),
+      'error',
+    )
+  })
+})
