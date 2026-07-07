@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   common: {
     ok: 'OK',
     cancel: 'Cancel',
@@ -1001,6 +1001,8 @@
       rerun_denied: 'You do not have permission to run tests.',
       rerun_in_progress: 'A test run is already in progress.',
       rerun_failed: 'Failed to start the test re-run.',
+      rerun_not_approved: 'This test document is not in a re-runnable state.',
+      rerun_disposed: 'The group has been discarded; tests cannot be run.',
     },
     final_approval: {
       panel_title: 'Final Approval',
@@ -1603,6 +1605,32 @@
       conflict_toast: '{n} conflict(s) — resolution required',
       aborted_toast: 'Merge aborted; switched to waiting',
       failed: 'Git finalize failed',
+      approve_heading: 'Git finalize — branch: {branch}',
+      approve_message: 'This approval completes the group workflow. Choose how to finalize Git below.',
+      approve_confirm: 'Approve & run',
+    },
+    git_status: {
+      title: 'Git status',
+      base_label: 'base',
+      unmeasured: 'Not measured against remote (fetch needed)',
+      fetch: 'Fetch from remote',
+      pending_header: 'Finalize pending',
+      no_pending: 'Nothing is waiting to be finalized.',
+      conflict_open_hint: 'Resolve conflicts in the finalize panel',
+      open: 'Open',
+      slots_header: 'Active branch slots',
+      empty_slots: 'No branch slots are registered.',
+      recovery_header: 'Recovery',
+      push: 'Re-push',
+      fetch_done: 'Refreshed against remote — behind {behind}',
+      push_done: '{branch} pushed',
+      failed: 'The git operation failed',
+    },
+    git_menu: {
+      tooltip: 'Git finalize',
+      title: 'Git finalize pending',
+      empty: 'Nothing is waiting to be finalized.',
+      open_status: 'Open Git status',
     },
   },
   projects: {
@@ -1666,5 +1694,6 @@
     sub: 'Project Status & Recent Activity',
   },
 } as const
+
 
 

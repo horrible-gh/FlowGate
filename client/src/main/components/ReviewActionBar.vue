@@ -217,13 +217,34 @@
       </template>
     </div>
 
-    <!-- Approve confirm dialog -->
+    <!-- Approve confirm dialog. flowgate.default.0162 §3.1 "본선": when this approval
+         completes a git-active group's workflow (an AC doc with a finalizable slot),
+         the git finalize choice rides inside the same dialog and is applied right
+         after the approval commits (git failure never reverts the approval). -->
     <ConfirmModal
       v-model:visible="showApproveConfirm"
       :title="t('main.review_action_bar.approve_confirm_title')"
-      :message="t('main.review_action_bar.approve_confirm_message')"
+      :message="showGitFinalizeBlock ? t('main.git_finalize.approve_message') : t('main.review_action_bar.approve_confirm_message')"
+      :confirm-label="showGitFinalizeBlock ? t('main.git_finalize.approve_confirm') : undefined"
       @confirm="doApprove"
-    />
+    >
+      <div v-if="showGitFinalizeBlock && gitFin" class="ab-git-fin">
+        <p class="ab-git-fin-hd">
+          <i class="fa-solid fa-code-branch"></i>
+          {{ t('main.git_finalize.approve_heading', { branch: gitFin.branch || '-' }) }}
+        </p>
+        <label
+          v-for="c in gitFin.choices"
+          :key="c"
+          class="ab-git-choice"
+          :class="{ sel: gitChoice === c }"
+        >
+          <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitChoice" />
+          <span class="ab-git-choice-label">{{ gitActionLabel(c) }}</span>
+          <span class="ab-git-choice-desc">{{ gitActionDesc(c) }}</span>
+        </label>
+      </div>
+    </ConfirmModal>
 
     <!-- Revision complete confirm dialog -->
     <ConfirmModal
@@ -236,9 +257,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -298,6 +319,59 @@ const showMarkRevisedConfirm = ref(false)
 const dropdownOpen = ref(false)
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
+
+// flowgate.default.0162 §3.1 "본선": git finalize state for an AC final-approval doc.
+// Fetched from the same per-group endpoint the GitFinalizePanel uses, so the choice
+// block, its default, and the pre-check on the server all read one source of truth.
+interface GitFinState {
+  branch: string | null
+  status: string
+  default_action: string | null
+  choices: string[]
+}
+const gitFin = ref<GitFinState | null>(null)
+const gitChoice = ref<string>('')
+const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
+// Show the choice only for an AC doc whose group slot is still actionable —
+// awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
+// merging, and conflict slots are excluded so a re-viewed AC never surfaces a
+// stale choice; this mirrors the GitFinalizePanel radio gating exactly.
+const showGitFinalizeBlock = computed(
+  () =>
+    isAcDoc.value &&
+    !!gitFin.value &&
+    (gitFin.value.status === 'awaiting_choice' || gitFin.value.status === 'waiting') &&
+    (gitFin.value.choices?.length ?? 0) > 0,
+)
+
+async function fetchGitFin() {
+  if (!isAcDoc.value || !props.groupId) {
+    gitFin.value = null
+    return
+  }
+  try {
+    const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
+      `/api/v1/groups/${props.groupId}/git/finalize`,
+    )
+    gitFin.value = data.state
+    gitChoice.value = data.state.default_action || 'wait'
+  } catch {
+    gitFin.value = null // 403/404/500 — no git block, plain approve
+  }
+}
+
+// Dynamic keys are resolved with template literals in script rather than string
+// concatenation in the template, so the i18n locale spec's static-reference scan
+// does not extract the bare prefix as a missing key. Mirrors GitFinalizePanel.
+function gitActionLabel(c: string): string {
+  return t(`main.git_finalize.action.${c}`)
+}
+function gitActionDesc(c: string): string {
+  return t(`main.git_finalize.action_desc.${c}`)
+}
+
+watch([() => props.docId, () => props.groupId, isAcDoc], fetchGitFin, { immediate: true })
+
 const currentMode = computed(() => props.mode ?? 'review')
 const normalizedStatus = computed(() => props.reviewStatus || 'pending_review')
 const isRootDecided = computed(() =>
@@ -461,10 +535,29 @@ async function doApprove() {
   if (approving.value) return
   approving.value = true
   try {
+    // §3.1: the git finalize choice rides on the approve request only when the
+    // choice block is showing (AC + git-active + finalizable). The server pre-checks
+    // it before approving and runs the finalize after — a git failure surfaces as
+    // { git: { ok: false } } at HTTP 200 without reverting the approval.
+    const body: Record<string, unknown> = { doc_id: props.docId, comment: null }
+    if (showGitFinalizeBlock.value && gitChoice.value) {
+      body.git_action = gitChoice.value
+    }
     const res = await postRequest<any>(
       `/api/v1/documents/review_transitions/approve`,
-      { doc_id: props.docId, comment: null },
+      body,
     )
+    const git = (res.data as any)?.git
+    if (git && git.ok === false) {
+      // Approval stood; only the git post-step failed — say so, don't block.
+      showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
+    } else if (git?.result?.status === 'conflict') {
+      showToast(t('main.git_finalize.conflict_toast', { n: (git.result.conflict_files || []).length }), 'warning')
+    } else if (git?.result?.status === 'merged') {
+      showToast(t('main.git_finalize.merged_toast', { commit: git.result.merge_commit || '' }), 'success')
+    } else if (git?.result?.status === 'pushed') {
+      showToast(t('main.git_finalize.pushed_toast'), 'success')
+    }
     // Pass the server-confirmed status up so DocHeader can optimistically flip the
     // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
@@ -776,4 +869,48 @@ onBeforeUnmount(() => {
   color: var(--primary, #2563eb);
   font-weight: 600;
 }
+
+/* flowgate.default.0162 §3.1 — git finalize choice inside the AC approve confirm. */
+.ab-git-fin {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ab-git-fin-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text, #1e293b);
+}
+.ab-git-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--r, 8px);
+  cursor: pointer;
+}
+.ab-git-choice.sel {
+  border-color: var(--primary);
+  background: var(--primary-l, #eff6ff);
+}
+.ab-git-choice input {
+  display: none;
+}
+.ab-git-choice-label {
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.ab-git-choice-desc {
+  font-size: 0.72rem;
+  color: var(--text-m);
+}
 </style>
+

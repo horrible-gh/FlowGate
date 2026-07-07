@@ -14,6 +14,9 @@
         </div>
         <div class="modal-bd">
           <p class="confirm-msg">{{ message }}</p>
+          <!-- Optional extra content (e.g. flowgate.default.0162 §3.1 — the git
+               finalize choice block shown inside the AC final-approval confirm). -->
+          <slot />
         </div>
         <div class="modal-ft">
           <button type="button" class="btn btn-secondary" @click="onCancel">
@@ -67,3 +70,4 @@ function onCancel() {
   margin: 0;
 }
 </style>
+

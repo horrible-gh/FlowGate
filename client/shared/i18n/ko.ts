@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   common: {
     ok: '확인',
     cancel: '취소',
@@ -1001,6 +1001,8 @@
       rerun_denied: '테스트를 실행할 권한이 없습니다.',
       rerun_in_progress: '이미 실행 중인 테스트가 있습니다.',
       rerun_failed: '테스트 재실행을 시작하지 못했습니다.',
+      rerun_not_approved: '이 테스트 문서는 재실행할 수 있는 상태가 아닙니다.',
+      rerun_disposed: '그룹이 폐기되어 테스트를 실행할 수 없습니다.',
     },
     final_approval: {
       panel_title: '최종 승인',
@@ -1603,6 +1605,32 @@
       conflict_toast: '충돌 {n}건 — 해소가 필요합니다',
       aborted_toast: '머지를 중단했습니다. 대기 상태로 전환됨',
       failed: 'Git 반영 처리에 실패했습니다',
+      approve_heading: 'Git 마무리 — 브랜치: {branch}',
+      approve_message: '이 승인으로 그룹 워크플로가 완료됩니다. 아래에서 Git 마무리 방식을 선택하세요.',
+      approve_confirm: '승인 및 실행',
+    },
+    git_status: {
+      title: 'Git 현황',
+      base_label: 'base',
+      unmeasured: '원격 대비 미측정 (fetch 필요)',
+      fetch: '원격 가져오기 (fetch)',
+      pending_header: '마무리 대기',
+      no_pending: '마무리 대기 중인 항목이 없습니다.',
+      conflict_open_hint: '충돌은 마무리 패널에서 해소하세요',
+      open: '열기',
+      slots_header: '활성 브랜치 슬롯',
+      empty_slots: '등록된 브랜치 슬롯이 없습니다.',
+      recovery_header: '복구',
+      push: '재푸시',
+      fetch_done: '원격 기준 갱신 완료 — 뒤처짐 {behind}',
+      push_done: '{branch} 푸시 완료',
+      failed: 'Git 조작에 실패했습니다',
+    },
+    git_menu: {
+      tooltip: 'Git 마무리',
+      title: 'Git 마무리 대기',
+      empty: '마무리 대기 중인 항목이 없습니다.',
+      open_status: 'Git 현황 열기',
     },
   },
   projects: {
@@ -1666,4 +1694,5 @@
     sub: '프로젝트 현황 및 최근 활동',
   },
 } as const
+
 

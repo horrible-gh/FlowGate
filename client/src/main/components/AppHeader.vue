@@ -39,6 +39,12 @@
 
       <div class="hdr-div"></div>
 
+      <!-- ⑂ Git action menu (flowgate.default.0162 §3.3 "안전망") — self-hides unless
+           the current project is git-integrated; carries the finalize-backlog badge. -->
+      <GitActionMenu />
+
+      <div class="hdr-div"></div>
+
       <!-- 🔔 Notification center (R0001 group 0045 / NR0003 option A) -->
       <NotificationCenter />
 
@@ -70,6 +76,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import ProjectSelector from './ProjectSelector.vue'
 import NotificationCenter from './NotificationCenter.vue'
+import GitActionMenu from './GitActionMenu.vue'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { serverLogout } from '@shared/api'
@@ -149,3 +156,4 @@ async function logout() {
   }
 }
 </script>
+

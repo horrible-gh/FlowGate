@@ -1001,6 +1001,8 @@ export default {
       rerun_denied: 'テストを実行する権限がありません。',
       rerun_in_progress: 'すでに実行中のテストがあります。',
       rerun_failed: 'テストの再実行を開始できませんでした。',
+      rerun_not_approved: 'このテスト文書は再実行できる状態ではありません。',
+      rerun_disposed: 'グループが廃棄されているため、テストを実行できません。',
     },
     final_approval: {
       panel_title: '最終承認',
@@ -1603,6 +1605,32 @@ export default {
       conflict_toast: '競合{n}件 — 解消が必要です',
       aborted_toast: 'マージを中止しました。保留に切り替えました',
       failed: 'Git反映処理に失敗しました',
+      approve_heading: 'Git反映 — ブランチ: {branch}',
+      approve_message: 'この承認でグループのワークフローが完了します。下でGit反映の方法を選択してください。',
+      approve_confirm: '承認して実行',
+    },
+    git_status: {
+      title: 'Git 状況',
+      base_label: 'base',
+      unmeasured: 'リモート未計測（fetch が必要）',
+      fetch: 'リモートから取得 (fetch)',
+      pending_header: '仕上げ待ち',
+      no_pending: '仕上げ待ちの項目はありません。',
+      conflict_open_hint: 'コンフリクトは仕上げパネルで解消してください',
+      open: '開く',
+      slots_header: 'アクティブなブランチスロット',
+      empty_slots: '登録されたブランチスロットはありません。',
+      recovery_header: '復旧',
+      push: '再プッシュ',
+      fetch_done: 'リモート基準で更新完了 — 遅れ {behind}',
+      push_done: '{branch} をプッシュしました',
+      failed: 'Git 操作に失敗しました',
+    },
+    git_menu: {
+      tooltip: 'Git反映',
+      title: 'Git反映待ち',
+      empty: '仕上げ待ちの項目はありません。',
+      open_status: 'Git 状況を開く',
     },
   },
   projects: {
@@ -1666,3 +1694,4 @@ export default {
     sub: 'プロジェクト状況と最近のアクティビティ',
   },
 } as const
+

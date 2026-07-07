@@ -328,6 +328,29 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    source.addEventListener('git_pending_changed', (e: Event) => {
+      // Git finalize-pending set changed (flowgate.default.0162 §4-3). The
+      // payload carries the server-recomputed absolute pending_count — the
+      // action-bar badge and the Git status panel assign it directly and never
+      // increment locally (L §2.3). Silent by design: the badge is a work
+      // counter, not a toast. Re-broadcast as a window event those components
+      // subscribe to, mirroring the fg:q_registered pattern above.
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const p = data.payload ?? {}
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fg:git_pending_changed', {
+            detail: {
+              project: p.project ?? data.project ?? null,
+              group_id: p.group_id ?? data.group_id ?? null,
+              status: p.status ?? null,
+              pending_count: p.pending_count ?? null,
+            },
+          }))
+        }
+      } catch { /* ignore parse errors */ }
+    })
+
     source.addEventListener('notification_new_action_candidate', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

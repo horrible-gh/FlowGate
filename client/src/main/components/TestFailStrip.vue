@@ -119,7 +119,11 @@ async function onRerun() {
         ? t('main.test_fail_strip.rerun_denied')
         : code === 'run_in_progress'
           ? t('main.test_fail_strip.rerun_in_progress')
-          : t('main.test_fail_strip.rerun_failed')
+          : code === 'doc_not_approved'
+            ? t('main.test_fail_strip.rerun_not_approved')
+            : code === 'group_disposed'
+              ? t('main.test_fail_strip.rerun_disposed')
+              : t('main.test_fail_strip.rerun_failed')
     showToast(msg, 'error')
   } finally {
     rerunning.value = false
