@@ -37,7 +37,9 @@ from typing import Optional
 
 from Crypto.Cipher import AES as _AES
 
+from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import git_integration as db_git
+from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import system_settings as db_settings
 from modules.flow_gate.db.connection import get_store, now_iso
@@ -58,6 +60,7 @@ MASK_MIN_LEN = 9
 SECRET_ENV_KEY = "FLOWGATE_GIT_ENCRYPT_KEY"
 SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
 AUTO_COMMIT_MSG = "flowgate: work of {group_id}"
+AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
 MERGE_COMMIT_MSG = "flowgate: merge {branch} into {base_branch} ({group_id})"
 ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
 # Present while an adopt is unfinished — the slot never reports "checkout"
@@ -223,6 +226,45 @@ def _module_of(group_id: str) -> str:
 
 def _project_of_group(group_id: str) -> str:
     return (group_id or "").split(".", 1)[0]
+
+
+def _one_line_subject(text: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def build_auto_commit_message(group_id: str) -> str:
+    """Generate the finalize auto-commit subject from group metadata.
+
+    Falls back to the legacy message whenever metadata is incomplete or cannot be
+    read, so finalize never fails because of commit-message generation.
+    """
+    fallback = AUTO_COMMIT_MSG.format(group_id=group_id)
+    try:
+        group = db_groups.get_group(group_id)
+        title = _one_line_subject(group.get("title") if group else None)
+        if not title:
+            return fallback
+
+        docs = db_documents.get_documents_by_group_id(group_id)
+        root_type: Optional[str] = None
+        has_design_doc = False
+        for doc in docs:
+            doc_type = (doc.get("type_code") or doc.get("type") or "").upper()
+            if doc_type in AUTO_COMMIT_DESIGN_TYPES:
+                has_design_doc = True
+            if root_type is None and doc_type in ("B", "R"):
+                root_type = doc_type
+
+        if root_type == "B":
+            commit_type = "fix"
+        elif root_type == "R":
+            commit_type = "feat" if has_design_doc else "chore"
+        else:
+            return fallback
+        return f"{commit_type}({group_id}): {title}"
+    except Exception:
+        _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
+        return fallback
 
 
 # ── Git runner ────────────────────────────────────────────────────────────────
@@ -1245,7 +1287,7 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
             proc = _run_git(["add", "-A"], cwd=wt_path)
             if proc.returncode == 0:
                 proc = _run_git(
-                    [*_GIT_IDENT, "commit", "-m", AUTO_COMMIT_MSG.format(group_id=group_id)],
+                    [*_GIT_IDENT, "commit", "-m", build_auto_commit_message(group_id)],
                     cwd=wt_path,
                 )
             if proc.returncode != 0:

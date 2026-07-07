@@ -177,6 +177,65 @@ class TestBranchName:
             svc.sanitize_branch("a..b")  # git refname escape sequences stay banned
 
 
+
+class TestAutoCommitMessage:
+    def _create_group(self, group_id: str, title: str, doc_types: list[str]) -> None:
+        from modules.flow_gate.db import documents
+        from modules.flow_gate.db import groups
+
+        groups.create({
+            "group_id": group_id,
+            "project_id": "gitprj",
+            "module": "default",
+            "title": title,
+        })
+        for seq, doc_type in enumerate(doc_types, start=1):
+            documents.create({
+                "doc_id": f"{group_id}.{seq:04d}-{doc_type}",
+                "project_id": "gitprj",
+                "module": "default",
+                "group_id": group_id,
+                "type_code": doc_type,
+                "seq": seq,
+                "title": title if seq == 1 else doc_type,
+            })
+
+    def test_requirement_with_design_doc_is_feat(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        group_id = "gitprj.default.0168"
+        self._create_group(group_id, "깃 커밋 메세지", ["R", "D"])
+
+        assert svc.build_auto_commit_message(group_id) == (
+            "feat(gitprj.default.0168): 깃 커밋 메세지"
+        )
+
+    def test_bug_root_is_fix_even_with_design_doc(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        group_id = "gitprj.default.0169"
+        self._create_group(group_id, "로그인 오류 수정", ["B", "D"])
+
+        assert svc.build_auto_commit_message(group_id) == (
+            "fix(gitprj.default.0169): 로그인 오류 수정"
+        )
+
+    def test_requirement_without_design_doc_is_chore(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        group_id = "gitprj.default.0170"
+        self._create_group(group_id, "문서 정리", ["R", "TR"])
+
+        assert svc.build_auto_commit_message(group_id) == (
+            "chore(gitprj.default.0170): 문서 정리"
+        )
+
+    def test_missing_metadata_uses_legacy_fallback(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        assert svc.build_auto_commit_message("gitprj.default.9999") == (
+            "flowgate: work of gitprj.default.9999"
+        )
 # ── secret handling (L0006 §2.3) ─────────────────────────────────────────────
 
 class TestSecrets:
