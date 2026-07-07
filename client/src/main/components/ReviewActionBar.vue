@@ -370,6 +370,22 @@ function gitActionDesc(c: string): string {
   return t(`main.git_finalize.action_desc.${c}`)
 }
 
+function dispatchGitStatusEvent(git: any) {
+  if (!git || typeof window === 'undefined') return
+  const status = git?.result?.status ?? null
+  const eventName =
+    git.ok === false || status === 'conflict' || status === 'waiting'
+      ? 'fg:git_status_open'
+      : 'fg:git_status_refresh'
+  window.dispatchEvent(new CustomEvent(eventName, {
+    detail: {
+      project: props.projectId || null,
+      group_id: props.groupId || null,
+      status,
+    },
+  }))
+}
+
 watch([() => props.docId, () => props.groupId, isAcDoc], fetchGitFin, { immediate: true })
 
 const currentMode = computed(() => props.mode ?? 'review')
@@ -557,7 +573,10 @@ async function doApprove() {
       showToast(t('main.git_finalize.merged_toast', { commit: git.result.merge_commit || '' }), 'success')
     } else if (git?.result?.status === 'pushed') {
       showToast(t('main.git_finalize.pushed_toast'), 'success')
+    } else if (git?.result?.status === 'waiting') {
+      showToast(t('main.git_finalize.waiting_toast'), 'success')
     }
+    dispatchGitStatusEvent(git)
     // Pass the server-confirmed status up so DocHeader can optimistically flip the
     // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data

@@ -1,12 +1,33 @@
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import ReviewActionBar from '@main/components/ReviewActionBar.vue'
 
+const { getRequest, postRequest } = vi.hoisted(() => ({
+  getRequest: vi.fn(),
+  postRequest: vi.fn(),
+}))
+
+vi.mock('@shared/api', () => ({
+  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  getRequest,
+  postRequest,
+}))
+
+vi.mock('@main/components/common/useToast', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}))
+
 beforeEach(() => {
   setActivePinia(createPinia())
   i18n.global.locale.value = 'en'
+  getRequest.mockReset()
+  postRequest.mockReset()
+  getRequest.mockResolvedValue({
+    data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } },
+  })
+  postRequest.mockResolvedValue({ data: { document: { doc_review_status: 'approved' } } })
 })
 
 describe('ReviewActionBar', () => {
@@ -576,5 +597,82 @@ describe('ReviewActionBar', () => {
     expect(navBtn.text()).toContain(i18n.global.t('main.review_action_bar.btn_go_to_head', { doc: '0005-D' }))
     expect(wrapper.text()).not.toContain('Approve')
     expect(wrapper.text()).not.toContain('Reject')
+  })
+  it('AC approval with a git conflict opens the Git status panel event path', async () => {
+    postRequest.mockResolvedValueOnce({
+      data: {
+        document: { doc_review_status: 'approved' },
+        git: { ok: true, result: { status: 'conflict', conflict_files: ['client/a.ts'] } },
+      },
+    })
+    const events: any[] = []
+    const onOpen = (e: Event) => events.push((e as CustomEvent).detail)
+    window.addEventListener('fg:git_status_open', onOpen)
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'flowgate.default.0170.0005-AC',
+        projectId: 'flowgate',
+        groupId: 'flowgate.default.0170',
+        docRef: 'flowgate.default.0170.0005-AC',
+        docType: 'AC',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+      },
+      global: { plugins: [i18n] },
+    })
+
+    try {
+      await (wrapper.vm as any).doApprove()
+      await flushPromises()
+      expect(events).toEqual([
+        { project: 'flowgate', group_id: 'flowgate.default.0170', status: 'conflict' },
+      ])
+      expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+    } finally {
+      window.removeEventListener('fg:git_status_open', onOpen)
+      wrapper.unmount()
+    }
+  })
+
+  it('AC approval with terminal git result refreshes the Git button without opening the panel', async () => {
+    postRequest.mockResolvedValueOnce({
+      data: {
+        document: { doc_review_status: 'approved' },
+        git: { ok: true, result: { status: 'merged', merge_commit: 'abc123' } },
+      },
+    })
+    const refreshEvents: any[] = []
+    const openEvents: any[] = []
+    const onRefresh = (e: Event) => refreshEvents.push((e as CustomEvent).detail)
+    const onOpen = (e: Event) => openEvents.push((e as CustomEvent).detail)
+    window.addEventListener('fg:git_status_refresh', onRefresh)
+    window.addEventListener('fg:git_status_open', onOpen)
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'flowgate.default.0170.0005-AC',
+        projectId: 'flowgate',
+        groupId: 'flowgate.default.0170',
+        docRef: 'flowgate.default.0170.0005-AC',
+        docType: 'AC',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+      },
+      global: { plugins: [i18n] },
+    })
+
+    try {
+      await (wrapper.vm as any).doApprove()
+      await flushPromises()
+      expect(refreshEvents).toEqual([
+        { project: 'flowgate', group_id: 'flowgate.default.0170', status: 'merged' },
+      ])
+      expect(openEvents).toEqual([])
+    } finally {
+      window.removeEventListener('fg:git_status_refresh', onRefresh)
+      window.removeEventListener('fg:git_status_open', onOpen)
+      wrapper.unmount()
+    }
   })
 })

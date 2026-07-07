@@ -401,25 +401,36 @@ async function doPush(branch: string | null) {
   }
 }
 
-// Live badge/list sync: the SSE bridge re-broadcasts git_pending_changed as a
-// window event carrying the server-recomputed pending_count (L §2.3). We refetch
-// the whole panel (absolute-value convergence, no local increment).
-function onPendingChanged(e: Event) {
+function matchesProject(e: Event): boolean {
   const detail = (e as CustomEvent).detail || {}
-  if (!detail.project || detail.project === props.projectId) {
-    fetchStatus()
-  }
+  const eventProject = detail.project || detail.project_id
+  return !eventProject || eventProject === props.projectId
+}
+
+// Live badge/list sync: the SSE bridge re-broadcasts git_pending_changed as a
+// window event carrying the server-recomputed pending_count (L §2.3). Local approval
+// flows also dispatch deterministic refresh/open events.
+function onPendingChanged(e: Event) {
+  if (matchesProject(e)) fetchStatus()
+}
+
+function onStatusRefresh(e: Event) {
+  if (matchesProject(e)) fetchStatus()
 }
 
 onMounted(() => {
   fetchStatus()
   if (typeof window !== 'undefined') {
     window.addEventListener('fg:git_pending_changed', onPendingChanged)
+    window.addEventListener('fg:git_status_refresh', onStatusRefresh)
+    window.addEventListener('fg:git_status_open', onStatusRefresh)
   }
 })
 onUnmounted(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('fg:git_pending_changed', onPendingChanged)
+    window.removeEventListener('fg:git_status_refresh', onStatusRefresh)
+    window.removeEventListener('fg:git_status_open', onStatusRefresh)
   }
 })
 

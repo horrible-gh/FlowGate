@@ -205,13 +205,26 @@ function openPanel() {
   panelOpen.value = true
 }
 
-// Live badge sync: the SSE bridge re-broadcasts git_pending_changed as a window
-// event; refetch the whole status (absolute-value convergence, no local delta).
-function onPendingChanged(e: Event) {
+function matchesProject(e: Event): boolean {
   const detail = (e as CustomEvent).detail || {}
-  if (!detail.project || detail.project === projectId.value) {
-    fetchStatus()
-  }
+  const eventProject = detail.project || detail.project_id
+  return !eventProject || eventProject === projectId.value
+}
+
+// Live badge sync: the SSE bridge re-broadcasts git_pending_changed as a window
+// event; local approval flows also dispatch deterministic refresh/open events.
+function onPendingChanged(e: Event) {
+  if (matchesProject(e)) fetchStatus()
+}
+
+function onStatusRefresh(e: Event) {
+  if (matchesProject(e)) fetchStatus()
+}
+
+async function onStatusOpen(e: Event) {
+  if (!matchesProject(e)) return
+  await fetchStatus()
+  openPanel()
 }
 
 function onOutsideClick() {
@@ -222,12 +235,16 @@ onMounted(() => {
   fetchStatus()
   if (typeof window !== 'undefined') {
     window.addEventListener('fg:git_pending_changed', onPendingChanged)
+    window.addEventListener('fg:git_status_refresh', onStatusRefresh)
+    window.addEventListener('fg:git_status_open', onStatusOpen)
     window.addEventListener('click', onOutsideClick)
   }
 })
 onUnmounted(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('fg:git_pending_changed', onPendingChanged)
+    window.removeEventListener('fg:git_status_refresh', onStatusRefresh)
+    window.removeEventListener('fg:git_status_open', onStatusOpen)
     window.removeEventListener('click', onOutsideClick)
   }
 })
