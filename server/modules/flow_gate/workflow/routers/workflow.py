@@ -438,6 +438,9 @@ async def finalize_workflow_endpoint(
         return {"document": root_doc}  # idempotent
 
     updated = db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
+    # 0177 NR0016 §3: same eager realization as the AC-approve cascade — emit the
+    # git_pending_changed SSE at final-approval time. Never raises.
+    git_service.realize_wf_done_transition(group_id)
     return {"document": updated or root_doc}
 
 
@@ -562,6 +565,10 @@ async def document_review_transition_endpoint(
                 roots.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
                 if roots:
                     db_docs.update(roots[0]["doc_id"], {"doc_review_status": "wf_done"})
+                    # 0177 NR0016 §3: realize the git none→awaiting_choice transition
+                    # NOW so the header badge SSE (git_pending_changed) fires at
+                    # approval time instead of on the next status query. Never raises.
+                    git_service.realize_wf_done_transition(group_id)
         except Exception:
             pass
 

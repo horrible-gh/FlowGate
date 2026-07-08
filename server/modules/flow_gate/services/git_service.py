@@ -1307,6 +1307,30 @@ def _group_root_wf_done(group_id: str) -> bool:
     return row is not None
 
 
+def realize_wf_done_transition(group_id: str) -> None:
+    """Eagerly realize the lazy none→awaiting_choice transition at final-approval
+    time (0177 NR0016 §3). The lazy design (L0006 §3) only realizes on the NEXT
+    status query, so a plain AC approval emitted no git_pending_changed and the
+    header badge stayed stale until a reload. Called from the approval paths
+    right after the workflow root flips to wf_done; never raises — a git hiccup
+    must not disturb the approval that already stood."""
+    try:
+        project_id = _project_of_group(group_id)
+        cfg = db_git.get_config(project_id)
+        state = db_git.get_state(group_id)
+        if (
+            cfg is None or not cfg.get("enabled")
+            or state is None or not state.get("worktree_registered")
+        ):
+            return
+        if (state.get("status") or "none") == "none" and _group_root_wf_done(group_id):
+            _set_status(group_id, "awaiting_choice")
+    except Exception:
+        _log.warning(
+            "wf_done git transition realization failed for %s", group_id, exc_info=True
+        )
+
+
 def get_finalize_state(group_id: str) -> dict:
     project_id = _project_of_group(group_id)
     cfg = db_git.get_config(project_id)
