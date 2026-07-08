@@ -225,12 +225,16 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import { useExplorerStore } from '../stores/explorer'
+import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 
 const props = defineProps<{ groupId: string }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const explorerStore = useExplorerStore()
+const projectStore = useProjectStore()
 
 const MAX_CHUNK_VIEW_CHARS = 500000
 const MAX_MARKER_REPORT = 5
@@ -616,11 +620,24 @@ async function runFinalize() {
   try {
     const payload: { action: string; commit_message?: string } = { action: chosen.value }
     if (showCommitInput.value) payload.commit_message = commitMessage.value.trim()
+    await postFinalize(payload, false)
+  } finally {
+    busy.value = false
+    await fetchState()
+  }
+}
+
+async function postFinalize(
+  payload: { action: string; commit_message?: string },
+  retried: boolean,
+): Promise<void> {
+  try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${props.groupId}/git/finalize`,
       payload,
     )
     if (data.ok === false) {
+      if (!retried && (await autoCommitBaseDirty(data.error))) return postFinalize(payload, true)
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
     } else {
       const r = data.result
@@ -636,10 +653,30 @@ async function runFinalize() {
       }
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
-  } finally {
-    busy.value = false
-    await fetchState()
+    const err = e?.response?.data?.error
+    if (!retried && (await autoCommitBaseDirty(err))) return postFinalize(payload, true)
+    showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+  }
+}
+
+// 0177 follow-up (0007-CH): mirror GitActionMenu — a merge that bounces off the
+// E3 base_dirty 409 auto-commits the base checkout (blank message → server §2.2
+// default) and retries once with the original payload, instead of dead-ending.
+async function autoCommitBaseDirty(err: any): Promise<boolean> {
+  const projectId = projectStore.currentProjectId
+  if (err?.code !== 'base_dirty' || !projectId) return false
+  showToast(t('main.git_finalize.base_dirty_auto'), 'info')
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${projectId}/git/base-commit`,
+      {},
+    )
+    if (data.ok === false) return false
+    const remaining: string[] = Array.isArray(data.result?.remaining) ? data.result.remaining : []
+    explorerStore.setBaseDirtyFiles(projectId, remaining)
+    return remaining.length === 0
+  } catch {
+    return false
   }
 }
 

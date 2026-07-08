@@ -89,6 +89,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
@@ -96,6 +97,7 @@ import GitStatusPanel from './GitStatusPanel.vue'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
 
@@ -168,11 +170,21 @@ async function execute(item: Pending) {
   if (busy.value) return
   busy.value = true
   try {
+    await runFinalize(item, false)
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+async function runFinalize(item: Pending, retried: boolean): Promise<void> {
+  try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${item.group_id}/git/finalize`,
       { action: item.default_action },
     )
     if (data.ok === false) {
+      if (!retried && (await autoCommitBaseDirty(data.error))) return runFinalize(item, true)
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
     } else {
       const r = data.result
@@ -189,10 +201,31 @@ async function execute(item: Pending) {
       }
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
-  } finally {
-    busy.value = false
-    await fetchStatus()
+    const err = e?.response?.data?.error
+    if (!retried && (await autoCommitBaseDirty(err))) return runFinalize(item, true)
+    showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+  }
+}
+
+// 0177 follow-up (0007-CH): [execute] must clear the E3 base_dirty 409 itself
+// instead of dead-ending in a toast — auto-commit the base checkout (blank
+// message → the server derives the §2.2 default) and retry the finalize once.
+// Returns true only when the base came out clean; on any failure the caller
+// falls through to the ordinary error toast.
+async function autoCommitBaseDirty(err: any): Promise<boolean> {
+  if (err?.code !== 'base_dirty' || !projectId.value) return false
+  showToast(t('main.git_finalize.base_dirty_auto'), 'info')
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${projectId.value}/git/base-commit`,
+      {},
+    )
+    if (data.ok === false) return false
+    const remaining: string[] = Array.isArray(data.result?.remaining) ? data.result.remaining : []
+    explorerStore.setBaseDirtyFiles(projectId.value, remaining)
+    return remaining.length === 0
+  } catch {
+    return false
   }
 }
 
