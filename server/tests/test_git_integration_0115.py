@@ -230,11 +230,11 @@ class TestAutoCommitMessage:
             "chore(gitprj.default.0170): 문서 정리"
         )
 
-    def test_missing_metadata_uses_legacy_fallback(self, seed):
+    def test_missing_metadata_uses_conventional_fallback(self, seed):
         from modules.flow_gate.services import git_service as svc
 
         assert svc.build_auto_commit_message("gitprj.default.9999") == (
-            "flowgate: work of gitprj.default.9999"
+            "chore(gitprj.default.9999): group work"
         )
 # ── secret handling (L0006 §2.3) ─────────────────────────────────────────────
 
@@ -503,10 +503,12 @@ class TestGitEndToEnd:
         assert state["status"] == "waiting"
         assert state["choices"] == ["merge", "push", "wait"]
 
-        out = svc.finalize(self.GROUP, "merge")
+        subject = "fix(git_service): use confirmed merge subject"
+        out = svc.finalize(self.GROUP, "merge", commit_message=subject)
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
         assert out["result"]["merge_commit"]
+        assert _git(["log", "-1", "--format=%s", "main"], cwd=origin_repo["bare"]).strip() == subject
         # origin main actually contains the group's work
         files = _git(
             ["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]

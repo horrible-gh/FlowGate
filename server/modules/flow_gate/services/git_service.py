@@ -59,11 +59,10 @@ MASK_KEEP_SUFFIX = 4
 MASK_MIN_LEN = 9
 SECRET_ENV_KEY = "FLOWGATE_GIT_ENCRYPT_KEY"
 SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
-AUTO_COMMIT_MSG = "flowgate: work of {group_id}"
+AUTO_COMMIT_MSG = "chore({group_id}): group work"
 AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
-MERGE_COMMIT_MSG = "flowgate: merge {branch} into {base_branch} ({group_id})"
 # ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
-# The finalize absorb-commit subject is resolved through a fallback chain:
+# Finalize-generated commit subjects are resolved through a fallback chain:
 # approved-TR draft → ASCII group title → translated title → fixed English phrase.
 COMMIT_SUBJECT_MAX = 200               # normalized subject max length (L0004 §1)
 TRANSLATE_TIMEOUT_SEC = 3              # translate HTTP timeout (connect+read)
@@ -293,8 +292,8 @@ def derive_commit_type(group_id: str) -> Optional[str]:
 def build_auto_commit_message(group_id: str) -> str:
     """Generate the finalize auto-commit subject from group metadata.
 
-    Falls back to the legacy message whenever metadata is incomplete or cannot be
-    read, so finalize never fails because of commit-message generation.
+    Falls back to a conventional chore subject whenever metadata is incomplete or
+    cannot be read, so finalize never fails because of commit-message generation.
     """
     fallback = AUTO_COMMIT_MSG.format(group_id=group_id)
     try:
@@ -302,9 +301,7 @@ def build_auto_commit_message(group_id: str) -> str:
         title = _one_line_subject(group.get("title") if group else None)
         if not title:
             return fallback
-        commit_type = derive_commit_type(group_id)
-        if commit_type is None:
-            return fallback
+        commit_type = derive_commit_type(group_id) or "chore"
         return f"{commit_type}({group_id}): {title}"
     except Exception:
         _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
@@ -369,9 +366,9 @@ def resolve_commit_message(group_id: str) -> tuple[str, str]:
     Fallback chain: approved-TR draft (tr_draft) → ASCII title (auto_title) →
     translated title (translated) → fixed English phrase (fallback). Side-effect
     free; called by both the GET state query and POST finalize. Wrapped so an
-    unexpected error still yields the legacy fallback (finalize never breaks).
+    unexpected error still yields a conventional fallback (finalize never breaks).
     """
-    legacy = (AUTO_COMMIT_MSG.format(group_id=group_id), "fallback")
+    fallback = (AUTO_COMMIT_MSG.format(group_id=group_id), "fallback")
     try:
         # 1) latest approved-TR commit-message draft
         draft = db_documents.get_latest_tr_commit_message(group_id, DRAFT_ACCEPT_STATUSES)
@@ -384,9 +381,9 @@ def resolve_commit_message(group_id: str) -> tuple[str, str]:
         project_id = _project_of_group(group_id)
         group = db_groups.get_group(group_id)
         title = normalize_subject(group.get("title") if group else None)
-        ctype = derive_commit_type(group_id)
+        ctype = derive_commit_type(group_id) or "chore"
 
-        if title and ctype:
+        if title:
             # 2) ASCII title → existing auto-generation rule
             if _is_ascii(title):
                 subject = f"{ctype}({group_id}): {title}"
@@ -401,12 +398,10 @@ def resolve_commit_message(group_id: str) -> tuple[str, str]:
                         return (subject, "translated")
 
         # 4) fixed English phrase
-        if ctype:
-            return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype, group_id=group_id), "fallback")
-        return legacy
+        return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype, group_id=group_id), "fallback")
     except Exception:
         _log.warning("commit message resolution failed for %s", group_id, exc_info=True)
-        return legacy
+        return fallback
 
 
 # ── Git runner ────────────────────────────────────────────────────────────────
@@ -1533,6 +1528,13 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         username = cfg.get("username")
         secret = _load_secret_for(cfg) or ""
+        resolved_subject: Optional[str] = None
+
+        def finalize_subject() -> str:
+            nonlocal resolved_subject
+            if resolved_subject is None:
+                resolved_subject = provided_subject or resolve_commit_message(group_id)[0]
+            return resolved_subject
 
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
@@ -1543,7 +1545,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # (flowgate.default.0173 L0004 §2.6). Resolve lazily so a clean worktree
         # never triggers a translate round-trip.
         if _dirty(wt_path):
-            absorb_subject = provided_subject or resolve_commit_message(group_id)[0]
+            absorb_subject = finalize_subject()
             proc = _run_git(["add", "-A"], cwd=wt_path)
             if proc.returncode == 0:
                 proc = _run_git(
@@ -1597,8 +1599,10 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     "base checkout has local-only commits and cannot fast-forward",
                 )
         _set_status(group_id, "merging")
-        msg = MERGE_COMMIT_MSG.format(branch=branch, base_branch=base_branch, group_id=group_id)
-        proc = _run_git([*_GIT_IDENT, "merge", "--no-ff", "-m", msg, branch], cwd=base_root)
+        proc = _run_git(
+            [*_GIT_IDENT, "merge", "--no-ff", "-m", finalize_subject(), branch],
+            cwd=base_root,
+        )
         if proc.returncode == 0:
             push = _run_git(
                 ["push", "origin", base_branch],
@@ -1772,11 +1776,11 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
             },
         }
 
-    state = db_git.get_state(group_id) or {}
-    branch = state.get("branch") or ""
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    msg = MERGE_COMMIT_MSG.format(branch=branch, base_branch=base_branch, group_id=group_id)
-    proc = _run_git([*_GIT_IDENT, "commit", "-m", msg], cwd=base_root)
+    proc = _run_git(
+        [*_GIT_IDENT, "commit", "-m", resolve_commit_message(group_id)[0]],
+        cwd=base_root,
+    )
     if proc.returncode != 0:
         raise GitServiceError(500, "git_error", _last_line(proc.stderr))
     push = _run_git(
