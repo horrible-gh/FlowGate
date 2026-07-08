@@ -55,6 +55,11 @@ export const useExplorerStore = defineStore('explorer', () => {
   const selectedFileNodeId = ref<string | null>(null)
   const selectedGroupNodeId = ref<string | null>(null)
   const pendingSelectFilePath = ref<string | null>(null)
+  // flowgate.default.0177 L0002 §2.6-a: per-project set of base-checkout files
+  // with uncommitted (tracked) changes — drives the "modified" badge in the file
+  // tree. Refreshed by its four triggers: git/status fetch, src-content save
+  // response, base-commit/base-revert response, finalize base_dirty 409.
+  const baseDirtyFiles = ref<Record<string, string[]>>({})
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
@@ -123,6 +128,19 @@ export const useExplorerStore = defineStore('explorer', () => {
     return groupTreeCache.value[cacheKey(pid)]
   }
 
+  function setBaseDirtyFiles(pid: string, files: string[]) {
+    baseDirtyFiles.value = {
+      ...baseDirtyFiles.value,
+      [pid]: files.map((f) => f.replace(/\\/g, '/')),
+    }
+  }
+
+  function isBaseDirtyPath(pid: string, path: string): boolean {
+    const files = baseDirtyFiles.value[pid]
+    if (!files || !files.length) return false
+    return files.includes(path.replace(/\\/g, '/'))
+  }
+
   function setWorkflowNodeState(docId: string, state: WorkflowNodeState) {
     workflowNodeStates.value[docId] = state
   }
@@ -136,6 +154,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     fileTreeCache, groupTreeCache, workflowNodeStates,
     selectedFileNodeId, selectedGroupNodeId, pendingSelectFilePath,
     loadingFile, loadingGroup, fileError, groupError,
+    baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
     setWorkflowNodeState, clearWorkflowNodeState,

@@ -1368,6 +1368,7 @@ export default {
       toast_upload_too_large: '전체 크기 초과',
       toast_upload_forbidden: '권한이 없습니다.',
       toast_upload_failed: '업로드 실패',
+      modified_badge: '수정됨',
     },
     create_file_folder_modal: {
       title_folder: '새 폴더 만들기',
@@ -1759,6 +1760,12 @@ export default {
       fetch_done: '원격 기준 갱신 완료 — 뒤처짐 {behind}',
       push_done: '{branch} 푸시 완료',
       failed: 'Git 조작에 실패했습니다',
+      base_commit_btn: '커밋',
+      base_commit_merge_btn: '커밋 후 머지',
+      base_merge_now_btn: '머지 진행',
+      base_revert_btn: '되돌리기',
+      base_commit_done: 'base 편집을 커밋했습니다 ({commit})',
+      base_revert_done: '{file} 을(를) 되돌렸습니다',
     },
     git_menu: {
       tooltip: 'Git 마무리',

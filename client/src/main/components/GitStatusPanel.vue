@@ -24,21 +24,52 @@
         <i class="fa-solid fa-cloud-arrow-down"></i>
       </button>
     </div>
-    <!-- flowgate.default.0176 T0010 §b — base_dirty finalize block, surfaced as a
-         persistent actionable banner instead of a bare 500 in the console. -->
-    <div v-if="baseDirtyError" class="git-base-dirty-alert" role="alert">
+    <!-- flowgate.default.0177 L0002 §2.6-b·c — base-checkout edits pending commit.
+         The 0176 passive banner became an actionable section: per-file revert, an
+         editable commit subject (seeded with the §2.2 default), and — when a merge
+         finalize was parked on the base_dirty 409 — commit-then-merge in one go. -->
+    <div v-if="showBaseDirtySection" class="git-base-dirty-alert" role="alert">
       <i class="fa-solid fa-triangle-exclamation"></i>
       <div class="git-base-dirty-alert__body">
         <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
-        <div v-if="baseDirtyError.files.length" class="git-base-dirty-alert__files">
-          {{ t('main.git_finalize.base_dirty_files', { files: baseDirtyError.files.join(', ') }) }}
+        <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
+          <span class="git-base-dirty-filerow__path">{{ f }}</span>
+          <button
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="busy"
+            @click="doBaseRevert(f)"
+          >
+            <i class="fa-solid fa-rotate-left"></i> {{ t('main.git_status.base_revert_btn') }}
+          </button>
+        </div>
+        <div v-if="baseDirtyFiles.length" class="git-base-commit-row">
+          <input
+            class="form-ctrl git-commit-msg-input"
+            type="text"
+            maxlength="200"
+            :value="baseCommitMsg"
+            :placeholder="baseCommitSuggested"
+            @input="onBaseCommitInput(($event.target as HTMLInputElement).value)"
+          />
+          <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="doBaseCommit">
+            <i class="fa-solid fa-check"></i>
+            {{ pendingFinalize ? t('main.git_status.base_commit_merge_btn') : t('main.git_status.base_commit_btn') }}
+          </button>
+        </div>
+        <!-- everything reverted while a merge was parked → proceed without a commit -->
+        <div v-else-if="pendingFinalize" class="git-base-commit-row">
+          <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="resumePendingFinalize">
+            <i class="fa-solid fa-play"></i> {{ t('main.git_status.base_merge_now_btn') }}
+          </button>
         </div>
       </div>
       <button
+        v-if="pendingFinalize"
         class="git-base-dirty-alert__close"
         type="button"
         :title="t('common.close')"
-        @click="baseDirtyError = null"
+        @click="pendingFinalize = null"
       >
         <i class="fa-solid fa-xmark"></i>
       </button>
@@ -200,6 +231,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import { useExplorerStore } from '../stores/explorer'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
@@ -240,6 +272,8 @@ interface GitStatus {
   base_path_state: string
   ahead_count: number | null
   behind_count: number | null
+  // 0177 L0002 §2.1: base-checkout dirty set (tracked files only)
+  base_dirty?: { dirty: boolean; files: string[] }
   slots: Slot[]
   pending: Pending[]
   pending_count: number
@@ -247,10 +281,44 @@ interface GitStatus {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
-// flowgate.default.0176 T0010 §b: set when a merge finalize is blocked by the E3
-// base_dirty guard. Rendered as a persistent, actionable banner (which files are
-// dirty + what to do) instead of a 3s toast that reads as an "unknown error".
-const baseDirtyError = ref<{ files: string[] } | null>(null)
+const explorerStore = useExplorerStore()
+
+// ── Base-checkout commit / revert (0177 L0002 §2.6-b·c) ──────────────────────
+
+// A merge finalize that bounced off the E3 base_dirty 409 parks here; after the
+// user commits (or reverts everything) it is re-posted with the ORIGINAL action
+// and absorb commit_message. Cleared on any finalize success or explicit close.
+const pendingFinalize = ref<{
+  groupId: string
+  payload: { action: string; commit_message?: string }
+} | null>(null)
+
+const baseDirtyFiles = computed(() => status.value?.base_dirty?.files ?? [])
+const showBaseDirtySection = computed(
+  () => baseDirtyFiles.value.length > 0 || !!pendingFinalize.value,
+)
+
+// Mirrors git_service.default_base_commit_message (L0002 §2.2): what the user
+// sees seeded is exactly what the server derives from a blank message.
+const COMMIT_SUBJECT_MAX = 200
+function defaultBaseCommitMessage(files: string[]): string {
+  if (!files.length) return ''
+  const joined = 'fix: ' + files.join(', ')
+  if (joined.length <= COMMIT_SUBJECT_MAX) return joined
+  return `fix: ${files[0]} 외 ${files.length - 1}건`.slice(0, COMMIT_SUBJECT_MAX)
+}
+
+const baseCommitSuggested = computed(() => defaultBaseCommitMessage(baseDirtyFiles.value))
+const baseCommitMsg = ref('')
+const baseCommitEdited = ref(false)
+function onBaseCommitInput(value: string) {
+  baseCommitMsg.value = value
+  baseCommitEdited.value = true
+}
+// Keep the seed following the live file list until the user takes over.
+watch(baseCommitSuggested, (suggested) => {
+  if (!baseCommitEdited.value) baseCommitMsg.value = suggested
+})
 
 // Per-row chosen action (overrides default_action); keyed by group_id.
 const chosen = ref<Record<string, string>>({})
@@ -369,6 +437,9 @@ async function fetchStatus() {
       `/api/v1/projects/${props.projectId}/git/status`,
     )
     status.value = data.status
+    // 0177 §2.6-a badge trigger 1/4: every status fetch refreshes the file-tree
+    // "modified" badges from the aggregated dirty set.
+    explorerStore.setBaseDirtyFiles(props.projectId, data.status.base_dirty?.files ?? [])
     // Drop an expanded conflict editor whose row no longer reports a conflict.
     if (expanded.value) {
       const still = data.status.pending.find(
@@ -384,63 +455,152 @@ async function fetchStatus() {
 
 async function execute(item: Pending) {
   if (busy.value) return
+  const action = actionOf(item)
+  // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
+  // omit the field so git_service resolves the subject on the unmanned path.
+  const payload: { action: string; commit_message?: string } = { action }
+  if (action !== 'wait') {
+    const msg = (commitDrafts.value[item.group_id]?.message || '').trim()
+    if (msg) payload.commit_message = msg
+  }
   busy.value = true
   try {
-    const action = actionOf(item)
-    // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
-    // omit the field so git_service resolves the subject on the unmanned path.
-    const payload: { action: string; commit_message?: string } = { action }
-    if (action !== 'wait') {
-      const msg = (commitDrafts.value[item.group_id]?.message || '').trim()
-      if (msg) payload.commit_message = msg
-    }
-    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
-      `/api/v1/groups/${item.group_id}/git/finalize`,
-      payload,
-    )
-    if (data.ok === false) {
-      if (!handleBaseDirty(data.error)) {
-        showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
-      }
-    } else {
-      baseDirtyError.value = null // a finalize got through — base is clean now
-      const r = data.result
-      if (r?.status === 'conflict') {
-        showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
-        // Resolve right here instead of routing to the R document.
-        await fetchStatus()
-        await openResolve(item.group_id)
-        return
-      } else if (r?.status === 'merged') {
-        showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
-      } else if (r?.status === 'pushed') {
-        showToast(t('main.git_finalize.pushed_toast'), 'success')
-      } else if (r?.status === 'waiting') {
-        showToast(t('main.git_finalize.waiting_toast'), 'success')
-      }
-    }
-  } catch (e: any) {
-    const err = e?.response?.data?.error
-    if (!handleBaseDirty(err)) {
-      showToast(err?.message || t('main.git_finalize.failed'), 'danger')
-    }
+    await runFinalize(item.group_id, payload)
   } finally {
     busy.value = false
     await fetchStatus()
   }
 }
 
-// flowgate.default.0176 T0010 §b: the E3 base_dirty guard (HTTP 500 + structured
-// body {code:'base_dirty', details:{files:[...]}}) is not a crash — it means the
-// project's base checkout has uncommitted edits (typically from the file editor)
-// that block merge finalize for EVERY group. Surface it as a persistent,
-// actionable banner naming the files. Returns true when it handled the error.
-function handleBaseDirty(err: any): boolean {
+// One finalize round-trip with the shared outcome handling; both the pending-row
+// [execute] and the base-dirty [commit-then-merge]/[merge now] paths land here.
+async function runFinalize(groupId: string, payload: { action: string; commit_message?: string }) {
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/groups/${groupId}/git/finalize`,
+      payload,
+    )
+    if (data.ok === false) {
+      if (!handleBaseDirty(groupId, payload, data.error)) {
+        showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+      }
+      return
+    }
+    pendingFinalize.value = null // a finalize got through — nothing parked anymore
+    const r = data.result
+    if (r?.status === 'conflict') {
+      showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
+      // Resolve right here instead of routing to the R document.
+      await fetchStatus()
+      await openResolve(groupId)
+    } else if (r?.status === 'merged') {
+      showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
+    } else if (r?.status === 'pushed') {
+      showToast(t('main.git_finalize.pushed_toast'), 'success')
+    } else if (r?.status === 'waiting') {
+      showToast(t('main.git_finalize.waiting_toast'), 'success')
+    }
+  } catch (e: any) {
+    const err = e?.response?.data?.error
+    if (!handleBaseDirty(groupId, payload, err)) {
+      showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+    }
+  }
+}
+
+// 0177 L0002 §2.6-c (evolved from the 0176 passive banner): the E3 base_dirty
+// guard (now HTTP 409 + {code:'base_dirty', details:{files:[...]}}) means the
+// base checkout has uncommitted edits blocking merge finalize for EVERY group.
+// Park the attempted finalize and open the actionable commit/revert section —
+// after a commit (or reverting everything) the merge re-runs with the original
+// action and commit_message. Returns true when it handled the error.
+function handleBaseDirty(
+  groupId: string,
+  payload: { action: string; commit_message?: string },
+  err: any,
+): boolean {
   if (err?.code !== 'base_dirty') return false
-  const files = err.details?.files
-  baseDirtyError.value = { files: Array.isArray(files) ? files : [] }
+  pendingFinalize.value = { groupId, payload }
+  const files = Array.isArray(err.details?.files) ? err.details.files : []
+  // Badge trigger 4/4 + immediate section render (fetchStatus follows anyway).
+  if (status.value) status.value.base_dirty = { dirty: files.length > 0, files }
+  explorerStore.setBaseDirtyFiles(props.projectId, files)
   showToast(t('main.git_finalize.base_dirty_toast'), 'danger')
   return true
+}
+
+async function doBaseCommit() {
+  if (busy.value || !props.projectId) return
+  busy.value = true
+  try {
+    const msg = baseCommitMsg.value.trim()
+    // Blank → omit; the server derives the identical §2.2 default itself.
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${props.projectId}/git/base-commit`,
+      msg ? { message: msg } : {},
+    )
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      return
+    }
+    const r = data.result
+    const remaining: string[] = Array.isArray(r?.remaining) ? r.remaining : []
+    if (status.value) status.value.base_dirty = { dirty: remaining.length > 0, files: remaining }
+    explorerStore.setBaseDirtyFiles(props.projectId, remaining) // badge trigger 3/4
+    if (r?.committed) {
+      showToast(t('main.git_status.base_commit_done', { commit: r.commit || '' }), 'success')
+    }
+    baseCommitMsg.value = ''
+    baseCommitEdited.value = false
+    // Commit-then-merge: the parked finalize resumes as soon as the base is clean
+    // (an idempotent {committed:false} race result resumes just the same).
+    if (pendingFinalize.value && remaining.length === 0) {
+      const { groupId, payload } = pendingFinalize.value
+      await runFinalize(groupId, payload)
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+async function doBaseRevert(file: string) {
+  if (busy.value || !props.projectId) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${props.projectId}/git/base-revert`,
+      { files: [file] },
+    )
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      return
+    }
+    const remaining: string[] = Array.isArray(data.result?.remaining) ? data.result.remaining : []
+    if (status.value) status.value.base_dirty = { dirty: remaining.length > 0, files: remaining }
+    explorerStore.setBaseDirtyFiles(props.projectId, remaining) // badge trigger 3/4
+    showToast(t('main.git_status.base_revert_done', { file }), 'success')
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+// §2.6-c: everything was reverted while a merge sat parked — run it commit-free.
+async function resumePendingFinalize() {
+  if (busy.value || !pendingFinalize.value) return
+  const { groupId, payload } = pendingFinalize.value
+  busy.value = true
+  try {
+    await runFinalize(groupId, payload)
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
 }
 
 // ── Inline conflict resolution (endpoints already exist, P0005 §6) ────────────
@@ -811,7 +971,7 @@ defineExpose({ fetchStatus })
   margin: 4px 0 0;
 }
 
-/* flowgate.default.0176 T0010 §b — base_dirty finalize-block banner. */
+/* flowgate.default.0176 T0010 §b banner → 0177 L0002 §2.6 actionable section. */
 .git-base-dirty-alert {
   display: flex;
   align-items: flex-start;
@@ -836,12 +996,33 @@ defineExpose({ fetchStatus })
 .git-base-dirty-alert__msg {
   color: var(--text, inherit);
 }
-.git-base-dirty-alert__files {
-  margin-top: 4px;
+.git-base-dirty-filerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.git-base-dirty-filerow__path {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-mono, monospace);
   font-size: 0.74rem;
   color: var(--text-m);
   word-break: break-all;
+}
+.git-base-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.git-base-commit-row .git-commit-msg-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.git-base-commit-row .btn {
+  flex: none;
+  white-space: nowrap;
 }
 .git-base-dirty-alert__close {
   flex: none;

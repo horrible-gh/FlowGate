@@ -21,6 +21,8 @@
       </span>
       <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
       <span class="tree-lbl">{{ node.label }}</span>
+      <!-- flowgate.default.0177 L0002 §2.6-a: uncommitted base-checkout edit -->
+      <span v-if="isBaseDirty" class="tree-dirty-badge">{{ t('main.file_tree_node.modified_badge') }}</span>
       <span v-if="downloading" class="tree-loading"><i class="fa-solid fa-spinner fa-spin"></i></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
@@ -126,6 +128,12 @@ const children = computed(() =>
 )
 
 const isSelected = computed(() => explorerStore.selectedFileNodeId === props.node.id)
+
+// flowgate.default.0177 L0002 §2.6-a: this file has an uncommitted edit sitting
+// in the project's base checkout (blocks merge finalize until commit/revert).
+const isBaseDirty = computed(
+  () => props.node.type === 'file' && explorerStore.isBaseDirtyPath(props.projectId, props.node.path),
+)
 
 const iconFA = computed(() => {
   if (props.node.type === 'folder') {
@@ -306,3 +314,19 @@ async function onNodeFolderSelected(e: Event) {
   input.value = ''
 }
 </script>
+
+<style scoped>
+/* flowgate.default.0177 §2.6-a — uncommitted base-checkout edit badge */
+.tree-dirty-badge {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.5;
+  border-radius: 999px;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+}
+</style>

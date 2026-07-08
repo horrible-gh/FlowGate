@@ -1368,6 +1368,7 @@ export default {
       toast_upload_too_large: '合計サイズ超過',
       toast_upload_forbidden: 'アクセスが拒否されました。',
       toast_upload_failed: 'アップロードに失敗しました',
+      modified_badge: '変更あり',
     },
     create_file_folder_modal: {
       title_folder: '新しいフォルダを作成',
@@ -1759,6 +1760,12 @@ export default {
       fetch_done: 'リモート基準で更新完了 — 遅れ {behind}',
       push_done: '{branch} をプッシュしました',
       failed: 'Git 操作に失敗しました',
+      base_commit_btn: 'コミット',
+      base_commit_merge_btn: 'コミットしてマージ',
+      base_merge_now_btn: 'マージを実行',
+      base_revert_btn: '元に戻す',
+      base_commit_done: 'base の編集をコミットしました ({commit})',
+      base_revert_done: '{file} を元に戻しました',
     },
     git_menu: {
       tooltip: 'Git反映',

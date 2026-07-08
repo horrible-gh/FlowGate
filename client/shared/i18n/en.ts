@@ -1368,6 +1368,7 @@ export default {
       toast_upload_too_large: 'Total size exceeded',
       toast_upload_forbidden: 'Access denied.',
       toast_upload_failed: 'Upload failed',
+      modified_badge: 'Modified',
     },
     create_file_folder_modal: {
       title_folder: 'New Folder',
@@ -1759,6 +1760,12 @@ export default {
       fetch_done: 'Refreshed against remote — behind {behind}',
       push_done: '{branch} pushed',
       failed: 'The git operation failed',
+      base_commit_btn: 'Commit',
+      base_commit_merge_btn: 'Commit, then merge',
+      base_merge_now_btn: 'Proceed with merge',
+      base_revert_btn: 'Revert',
+      base_commit_done: 'Committed the base edits ({commit})',
+      base_revert_done: 'Reverted {file}',
     },
     git_menu: {
       tooltip: 'Git finalize',

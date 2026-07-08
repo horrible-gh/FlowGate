@@ -2867,6 +2867,14 @@ async function saveEditContent() {
       const url = `/api/v1/projects/${encodeURIComponent(editTab.value.projectId)}/files/src-content?path=${encodeURIComponent(getTabSourcePath(editTab.value))}`
       const resp = await api.patch(url, { content })
       baseGit = resp?.data?.base_git ?? null
+      // 0177 L0002 §2.6-a badge trigger 2/4: the save response carries the fresh
+      // base-checkout dirty set — feed the file-tree "modified" badges directly.
+      if (baseGit) {
+        explorerStore.setBaseDirtyFiles(
+          editTab.value.projectId,
+          Array.isArray(baseGit.files) ? baseGit.files : [],
+        )
+      }
     } else {
       throw new Error(t('main.main_panel.error_info_unavailable'))
     }
