@@ -1742,6 +1742,12 @@ export default {
       base_dirty_auto: 'base チェックアウトの未コミット変更を自動コミットして続行します…',
       base_dirty_files: '未コミットのファイル: {files}',
       base_dirty_toast: 'base チェックアウトに未コミットの変更があります — finalize の前にヘッダーの Git パネルでコミットまたは取り消してください。',
+      base_dirty_dialog_title: '未コミット変更の処理',
+      base_dirty_dialog_body: 'base チェックアウトに未コミットの変更があるため、マージを進められません。コミットしてマージするか、取り消してマージするかを選択してください。',
+      base_dirty_commit_merge: 'コミットしてマージ',
+      base_dirty_revert_merge: '取り消してマージ',
+      base_dirty_revert_note: '取り消すと、以下のファイルの未コミット変更は失われます。',
+      base_dirty_still: 'まだ未コミットの変更が残っています。もう一度選択してください。',
     },
     git_status: {
       title: 'Git 状況',

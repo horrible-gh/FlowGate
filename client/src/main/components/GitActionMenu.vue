@@ -82,6 +82,10 @@
         </div>
       </div>
     </teleport>
+
+    <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
+         (no silent auto-commit) before the finalize retries. -->
+    <GitBaseDirtyDialog ref="baseDirtyDialog" />
   </div>
 </template>
 
@@ -89,15 +93,14 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
-import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
 import GitStatusPanel from './GitStatusPanel.vue'
+import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 
 const { t } = useI18n()
 const { showToast } = useToast()
-const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
 
@@ -119,6 +122,7 @@ const status = ref<GitStatus | null>(null)
 const busy = ref(false)
 const dropdownOpen = ref(false)
 const panelOpen = ref(false)
+const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
 
 function statusLabel(s: string): string {
   return t(`main.git_finalize.status.${s}`)
@@ -184,7 +188,7 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
       { action: item.default_action },
     )
     if (data.ok === false) {
-      if (!retried && (await autoCommitBaseDirty(data.error))) return runFinalize(item, true)
+      if (!retried && (await handleBaseDirty(data.error))) return runFinalize(item, true)
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
     } else {
       const r = data.result
@@ -202,31 +206,21 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
     }
   } catch (e: any) {
     const err = e?.response?.data?.error
-    if (!retried && (await autoCommitBaseDirty(err))) return runFinalize(item, true)
+    if (!retried && (await handleBaseDirty(err))) return runFinalize(item, true)
     showToast(err?.message || t('main.git_finalize.failed'), 'danger')
   }
 }
 
-// 0177 follow-up (0007-CH): [execute] must clear the E3 base_dirty 409 itself
-// instead of dead-ending in a toast — auto-commit the base checkout (blank
-// message → the server derives the §2.2 default) and retry the finalize once.
-// Returns true only when the base came out clean; on any failure the caller
-// falls through to the ordinary error toast.
-async function autoCommitBaseDirty(err: any): Promise<boolean> {
-  if (err?.code !== 'base_dirty' || !projectId.value) return false
-  showToast(t('main.git_finalize.base_dirty_auto'), 'info')
-  try {
-    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
-      `/api/v1/projects/${projectId.value}/git/base-commit`,
-      {},
-    )
-    if (data.ok === false) return false
-    const remaining: string[] = Array.isArray(data.result?.remaining) ? data.result.remaining : []
-    explorerStore.setBaseDirtyFiles(projectId.value, remaining)
-    return remaining.length === 0
-  } catch {
-    return false
-  }
+// 0177 0007-CH: the E3 base_dirty 409 is NOT auto-resolved — commit (keep) and
+// revert (discard) are opposite outcomes only the operator may pick. Open the
+// choice dialog; it commits or reverts the base checkout (and syncs the tree
+// badges), then returns 'proceed' once the base is clean so [execute] retries
+// the original finalize, or 'cancel' with no error toast.
+async function handleBaseDirty(err: any): Promise<boolean> {
+  if (err?.code !== 'base_dirty' || !projectId.value || !baseDirtyDialog.value) return false
+  const files = Array.isArray(err.details?.files) ? err.details.files : []
+  const outcome = await baseDirtyDialog.value.resolve(projectId.value, files)
+  return outcome === 'proceed'
 }
 
 function toggleDropdown() {

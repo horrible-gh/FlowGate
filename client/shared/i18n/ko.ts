@@ -1742,6 +1742,12 @@ export default {
       base_dirty_auto: 'base 체크아웃의 미커밋 변경을 자동 커밋한 뒤 계속합니다…',
       base_dirty_files: '미커밋 파일: {files}',
       base_dirty_toast: 'base 체크아웃에 미커밋 변경이 있습니다 — finalize 전에 헤더 Git 패널에서 커밋 또는 되돌리십시오.',
+      base_dirty_dialog_title: '미커밋 변경 처리',
+      base_dirty_dialog_body: 'base 체크아웃에 커밋되지 않은 변경이 있어 머지를 진행할 수 없습니다. 이 변경을 커밋한 뒤 머지할지, 되돌린 뒤 머지할지 선택하세요.',
+      base_dirty_commit_merge: '커밋 후 머지',
+      base_dirty_revert_merge: '되돌리고 머지',
+      base_dirty_revert_note: '되돌리면 아래 파일의 미커밋 변경이 사라집니다.',
+      base_dirty_still: '아직 미커밋 변경이 남아 있습니다. 다시 선택하세요.',
     },
     git_status: {
       title: 'Git 현황',

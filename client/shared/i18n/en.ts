@@ -1742,6 +1742,12 @@ export default {
       base_dirty_auto: 'Auto-committing the uncommitted base changes, then continuing…',
       base_dirty_files: 'Uncommitted files: {files}',
       base_dirty_toast: 'Base checkout has uncommitted changes — commit or revert them in the header Git panel before finalizing.',
+      base_dirty_dialog_title: 'Uncommitted base changes',
+      base_dirty_dialog_body: 'The base checkout has uncommitted changes, so the merge cannot proceed. Choose whether to commit them and merge, or revert them and merge.',
+      base_dirty_commit_merge: 'Commit & merge',
+      base_dirty_revert_merge: 'Revert & merge',
+      base_dirty_revert_note: 'Reverting discards the uncommitted changes in the files below.',
+      base_dirty_still: 'Some uncommitted changes remain — choose again.',
     },
     git_status: {
       title: 'Git status',
