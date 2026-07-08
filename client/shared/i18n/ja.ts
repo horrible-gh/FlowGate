@@ -1737,7 +1737,7 @@ export default {
       approve_heading: 'Git反映 - ブランチ: {branch}',
       approve_message: 'この承認でグループのワークフローが完了します。下でGit反映の方法を選択してください。',
       approve_confirm: '承認して実行',
-      base_dirty_after_save: '保存しました。このファイルは共有の base チェックアウト上にあり、未コミットの変更が発生しました — ヘッダーの Git パネルでコミットまたは取り消すまで、このプロジェクトの全グループの merge finalize がブロックされます。',
+      base_dirty_after_save: '保存しました — base チェックアウトに未コミットの変更があります。ヘッダーの Git パネルでコミットまたは取り消してください。',
       base_dirty_alert: 'merge finalize がブロックされています: base チェックアウトに未コミットの変更があります（多くはファイルエディタ由来）。この Git パネルでコミットまたは取り消してから、再度 finalize してください。',
       base_dirty_auto: 'base チェックアウトの未コミット変更を自動コミットして続行します…',
       base_dirty_files: '未コミットのファイル: {files}',

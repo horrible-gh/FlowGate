@@ -1737,7 +1737,7 @@ export default {
       approve_heading: 'Git finalize - branch: {branch}',
       approve_message: 'This approval completes the group workflow. Choose how to finalize Git below.',
       approve_confirm: 'Approve & run',
-      base_dirty_after_save: 'Saved. This file lives in the shared base checkout, which now has uncommitted changes — merge finalize is blocked for EVERY group of this project until you commit or revert them in the header Git panel.',
+      base_dirty_after_save: 'Saved — the base checkout now has uncommitted changes. Commit or revert them in the header Git panel.',
       base_dirty_alert: 'Merge finalize is blocked: the base checkout has uncommitted changes (usually from the file editor). Commit or revert them in this Git panel, then finalize again.',
       base_dirty_auto: 'Auto-committing the uncommitted base changes, then continuing…',
       base_dirty_files: 'Uncommitted files: {files}',
