@@ -1739,6 +1739,7 @@ export default {
       approve_confirm: '承認して実行',
       base_dirty_after_save: '保存しました。このファイルは共有の base チェックアウト上にあり、未コミットの変更が発生しました — ヘッダーの Git パネルでコミットまたは取り消すまで、このプロジェクトの全グループの merge finalize がブロックされます。',
       base_dirty_alert: 'merge finalize がブロックされています: base チェックアウトに未コミットの変更があります（多くはファイルエディタ由来）。この Git パネルでコミットまたは取り消してから、再度 finalize してください。',
+      base_dirty_auto: 'base チェックアウトの未コミット変更を自動コミットして続行します…',
       base_dirty_files: '未コミットのファイル: {files}',
       base_dirty_toast: 'base チェックアウトに未コミットの変更があります — finalize の前にヘッダーの Git パネルでコミットまたは取り消してください。',
     },

@@ -1739,6 +1739,7 @@ export default {
       approve_confirm: 'Approve & run',
       base_dirty_after_save: 'Saved. This file lives in the shared base checkout, which now has uncommitted changes — merge finalize is blocked for EVERY group of this project until you commit or revert them in the header Git panel.',
       base_dirty_alert: 'Merge finalize is blocked: the base checkout has uncommitted changes (usually from the file editor). Commit or revert them in this Git panel, then finalize again.',
+      base_dirty_auto: 'Auto-committing the uncommitted base changes, then continuing…',
       base_dirty_files: 'Uncommitted files: {files}',
       base_dirty_toast: 'Base checkout has uncommitted changes — commit or revert them in the header Git panel before finalizing.',
     },

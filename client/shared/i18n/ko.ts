@@ -1739,6 +1739,7 @@ export default {
       approve_confirm: '승인 및 실행',
       base_dirty_after_save: '저장되었습니다. 이 파일은 공유 base 체크아웃에 있어 지금 미커밋 변경이 생겼습니다 — 헤더 Git 패널에서 커밋 또는 되돌리기 전까지 이 프로젝트의 모든 그룹 merge finalize가 차단됩니다.',
       base_dirty_alert: 'merge finalize가 차단되었습니다: base 체크아웃에 미커밋 변경이 있습니다(대개 파일 편집기에서 발생). 이 Git 패널에서 커밋 또는 되돌린 뒤 다시 finalize 하십시오.',
+      base_dirty_auto: 'base 체크아웃의 미커밋 변경을 자동 커밋한 뒤 계속합니다…',
       base_dirty_files: '미커밋 파일: {files}',
       base_dirty_toast: 'base 체크아웃에 미커밋 변경이 있습니다 — finalize 전에 헤더 Git 패널에서 커밋 또는 되돌리십시오.',
     },
