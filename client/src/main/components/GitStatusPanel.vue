@@ -71,6 +71,37 @@
             </button>
           </div>
 
+          <!-- Commit-subject confirmation for merge/push (0173 parity, B0001 F1): the
+               header control panel now lets the user review/edit the absorb-commit
+               subject without opening the R document. Blank = server auto-resolves. -->
+          <div v-if="p.status !== 'conflict' && actionOf(p) !== 'wait'" class="git-status-commit">
+            <div class="git-commit-msg-hd">
+              <label class="git-commit-msg-label" :for="`gsc-${p.group_id}`">
+                {{ t('main.git_finalize.commit_message_label') }}
+              </label>
+              <span v-if="commitSourceLabel(p.group_id)" class="badge git-commit-src-badge">
+                {{ commitSourceLabel(p.group_id) }}
+              </span>
+            </div>
+            <input
+              :id="`gsc-${p.group_id}`"
+              class="form-ctrl git-commit-msg-input"
+              type="text"
+              :value="commitDrafts[p.group_id]?.message || ''"
+              :placeholder="commitDrafts[p.group_id]?.suggested || ''"
+              maxlength="200"
+              @input="setCommitMsg(p.group_id, ($event.target as HTMLInputElement).value)"
+            />
+            <p class="git-commit-msg-hint">
+              {{ t('main.git_finalize.commit_message_hint') }}
+              <a
+                v-if="commitBlank(p.group_id) && commitDrafts[p.group_id]?.suggested"
+                href="#"
+                @click.prevent="restoreCommit(p.group_id)"
+              >{{ t('main.git_finalize.commit_message_restore') }}</a>
+            </p>
+          </div>
+
           <!-- Inline conflict resolution editor (ported from GitFinalizePanel, P0005 §6).
                Opens only for the expanded conflict row; edits the merged files and
                submits resolve/abort against the same backend endpoints. -->
@@ -95,13 +126,19 @@
               ></textarea>
             </div>
             <p v-if="conflictError" class="git-fin-conflict-msg">{{ conflictError }}</p>
+            <!-- Residual-marker guard (B0001 F2): the document-path panel gates submit
+                 on markers being gone; mirror it here so the header resolver does not
+                 post <<<<<<< />>>>>>>> content only to bounce off the backend 422. -->
+            <p v-if="conflictFiles.length && !inlineResolved" class="git-status-marker-hint">
+              <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.git_finalize.submit_disabled_hint') }}
+            </p>
             <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:8px;">
               <button class="btn btn-sm btn-secondary" :disabled="busy" @click="abortInline(p)">
                 <i class="fa-solid fa-ban"></i> {{ t('main.git_finalize.abort') }}
               </button>
               <button
                 class="btn btn-sm btn-primary"
-                :disabled="busy || !conflictFiles.length"
+                :disabled="busy || !conflictFiles.length || !inlineResolved"
                 @click="submitResolveInline(p)"
               >
                 <i class="fa-solid fa-check"></i> {{ t('main.git_finalize.resolve_submit') }}
@@ -155,6 +192,16 @@ const { showToast } = useToast()
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
 const ACTIONS = ['merge', 'push', 'wait'] as const
 
+// Conflict-marker detection for the inline resolve guard (B0001 F2), mirroring
+// GitFinalizePanel: a bare "=======" is not counted (doubles as a Markdown rule).
+const MARKER_OPEN_RE = /^<{7}( |$)/
+const MARKER_CLOSE_RE = /^>{7}( |$)/
+function hasConflictMarkers(text: string): boolean {
+  return text
+    .split(/\r\n|\n|\r/)
+    .some((l) => MARKER_OPEN_RE.test(l) || MARKER_CLOSE_RE.test(l))
+}
+
 interface Slot {
   group_id: string
   branch: string | null
@@ -189,6 +236,22 @@ const expanded = ref<string | null>(null)
 const conflictFiles = ref<Array<{ path: string; conflict_count: number; edited: string }>>([])
 const conflictError = ref('')
 
+// Per-group commit-subject draft (B0001 F1). Lazily hydrated from the group's
+// finalize state (state.commit_message) the first time its row shows merge/push;
+// `message` is what we POST (blank → omitted so the server auto-resolves).
+interface CommitDraft {
+  message: string
+  suggested: string
+  source: string | null
+  loading: boolean
+  loaded: boolean
+}
+const commitDrafts = ref<Record<string, CommitDraft>>({})
+
+const inlineResolved = computed(
+  () => conflictFiles.value.length > 0 && conflictFiles.value.every((f) => !hasConflictMarkers(f.edited)),
+)
+
 const aheadBehindText = computed(() => {
   const s = status.value
   if (!s || s.ahead_count == null || s.behind_count == null) {
@@ -219,6 +282,58 @@ function actionOf(p: Pending): string {
 }
 function setAction(groupId: string, value: string) {
   chosen.value = { ...chosen.value, [groupId]: value }
+  if (value !== 'wait') ensureCommitDraft(groupId)
+}
+
+// ── Commit-subject draft (B0001 F1) ───────────────────────────────────────────
+
+function setDraft(groupId: string, patch: Partial<CommitDraft>) {
+  const cur = commitDrafts.value[groupId] || {
+    message: '', suggested: '', source: null, loading: false, loaded: false,
+  }
+  commitDrafts.value = { ...commitDrafts.value, [groupId]: { ...cur, ...patch } }
+}
+function setCommitMsg(groupId: string, value: string) {
+  setDraft(groupId, { message: value })
+}
+function restoreCommit(groupId: string) {
+  setDraft(groupId, { message: commitDrafts.value[groupId]?.suggested || '' })
+}
+function commitBlank(groupId: string): boolean {
+  return !(commitDrafts.value[groupId]?.message || '').trim()
+}
+function commitSourceLabel(groupId: string): string {
+  const s = commitDrafts.value[groupId]?.source
+  return s ? t(`main.git_finalize.commit_source.${s}`) : ''
+}
+async function ensureCommitDraft(groupId: string) {
+  const cur = commitDrafts.value[groupId]
+  if (cur && (cur.loaded || cur.loading)) return
+  setDraft(groupId, { loading: true })
+  try {
+    const { data } = await getRequest<{
+      ok: boolean
+      state: { commit_message?: { suggested: string; source: string } | null }
+    }>(`/api/v1/groups/${groupId}/git/finalize`)
+    const cm = data.state?.commit_message
+    setDraft(groupId, {
+      message: cm?.suggested || '',
+      suggested: cm?.suggested || '',
+      source: cm?.source || null,
+      loading: false,
+      loaded: true,
+    })
+  } catch {
+    // Suggestion unavailable — keep an empty draft; blank simply omits the field
+    // on submit and the server resolves the subject itself.
+    setDraft(groupId, { loading: false, loaded: true })
+  }
+}
+// Hydrate drafts for every actionable merge/push row (once each; guarded by flags).
+function syncCommitDrafts() {
+  for (const p of status.value?.pending || []) {
+    if (p.status !== 'conflict' && actionOf(p) !== 'wait') ensureCommitDraft(p.group_id)
+  }
 }
 
 async function fetchStatus() {
@@ -238,6 +353,7 @@ async function fetchStatus() {
       )
       if (!still) collapseResolve()
     }
+    syncCommitDrafts()
   } catch {
     status.value = null // 403/404 — panel stays hidden
   }
@@ -247,9 +363,17 @@ async function execute(item: Pending) {
   if (busy.value) return
   busy.value = true
   try {
+    const action = actionOf(item)
+    // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
+    // omit the field so git_service resolves the subject on the unmanned path.
+    const payload: { action: string; commit_message?: string } = { action }
+    if (action !== 'wait') {
+      const msg = (commitDrafts.value[item.group_id]?.message || '').trim()
+      if (msg) payload.commit_message = msg
+    }
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${item.group_id}/git/finalize`,
-      { action: actionOf(item) },
+      payload,
     )
     if (data.ok === false) {
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
@@ -599,5 +723,49 @@ defineExpose({ fetchStatus })
 .badge-red {
   background: #fef2f2;
   color: #b91c1c;
+}
+.git-status-commit {
+  margin: 6px 0 2px;
+  padding-left: 2px;
+}
+.git-commit-msg-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.git-commit-msg-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-m);
+}
+.git-commit-src-badge {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-size: 0.66rem;
+}
+.git-commit-msg-input {
+  width: 100%;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.76rem;
+  padding: 4px 7px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text, #0f172a);
+}
+.git-commit-msg-hint {
+  font-size: 0.7rem;
+  color: var(--text-m);
+  margin: 4px 0 0;
+}
+.git-status-marker-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  color: #b45309;
+  margin: 4px 0 0;
 }
 </style>
