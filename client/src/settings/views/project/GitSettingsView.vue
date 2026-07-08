@@ -74,6 +74,18 @@
           </div>
 
           <div class="form-group">
+            <label class="form-label">{{ $t('settings.project.git.translate_url') }}</label>
+            <input
+              class="form-ctrl"
+              v-model="form.translate_url"
+              type="text"
+              placeholder="http://192.168.0.250:5000"
+              style="max-width:360px;"
+            />
+            <p class="form-hint">{{ $t('settings.project.git.translate_url_hint') }}</p>
+          </div>
+
+          <div class="form-group">
             <label class="form-label" style="display:flex; align-items:center; gap:8px;">
               <input type="checkbox" v-model="form.enabled" />
               {{ $t('settings.project.git.enable') }}
@@ -237,6 +249,7 @@ function applyConfig(cfg) {
     base_branch: cfg.base_branch || 'main',
     default_finalize_action: cfg.default_finalize_action || 'wait',
     enabled: !!cfg.enabled,
+    translate_url: cfg.translate_url || '',
   };
   secretInput.value = '';
   clearSecret.value = false;
@@ -255,6 +268,7 @@ function resetForm() {
     base_branch: 'main',
     default_finalize_action: 'wait',
     enabled: false,
+    translate_url: '',
   };
 }
 

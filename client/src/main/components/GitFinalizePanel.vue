@@ -26,8 +26,30 @@
             <span class="git-choice-desc">{{ actionDesc(c) }}</span>
           </label>
         </div>
+        <div v-if="showCommitInput" class="git-commit-msg">
+          <div class="git-commit-msg-hd">
+            <label class="git-commit-msg-label" for="git-commit-subject">
+              {{ t('main.git_finalize.commit_message_label') }}
+            </label>
+            <span v-if="commitSourceLabel" class="badge git-commit-src-badge">{{ commitSourceLabel }}</span>
+          </div>
+          <input
+            id="git-commit-subject"
+            class="form-ctrl git-commit-msg-input"
+            type="text"
+            v-model="commitMessage"
+            :placeholder="commitSuggested"
+            maxlength="200"
+          />
+          <p class="git-commit-msg-hint">
+            {{ t('main.git_finalize.commit_message_hint') }}
+            <a v-if="commitMessageBlank && commitSuggested" href="#" @click.prevent="restoreSuggested">
+              {{ t('main.git_finalize.commit_message_restore') }}
+            </a>
+          </p>
+        </div>
         <div class="flex" style="justify-content:flex-end; margin-top:10px;">
-          <button class="btn btn-primary" :disabled="busy || !chosen" @click="runFinalize">
+          <button class="btn btn-primary" :disabled="runDisabled" @click="runFinalize">
             <i class="fa-solid fa-play"></i>
             {{ busy ? t('main.git_finalize.running') : t('main.git_finalize.execute') }}
           </button>
@@ -246,6 +268,11 @@ interface ConflictFileState {
   notice: string
 }
 
+interface GitCommitMessage {
+  suggested: string
+  source: string
+}
+
 interface GitFinState {
   group_id: string
   branch: string | null
@@ -256,11 +283,15 @@ interface GitFinState {
   ahead_count: number | null
   behind_count: number | null
   merge_id: number | null
+  commit_message?: GitCommitMessage | null
 }
 
 const state = ref<GitFinState | null>(null)
 const chosen = ref<string>('')
 const busy = ref(false)
+const commitMessage = ref('')
+const commitSuggested = ref('')
+const commitSource = ref<string | null>(null)
 const mergeCommit = ref<string | null>(null)
 const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
@@ -287,6 +318,17 @@ const aheadBehindText = computed(() => {
   if (!s || s.ahead_count == null || s.behind_count == null) return ''
   return t('main.git_finalize.ahead_behind', { ahead: s.ahead_count, behind: s.behind_count })
 })
+const showCommitInput = computed(() => chosen.value === 'merge' || chosen.value === 'push')
+const commitMessageBlank = computed(() => !commitMessage.value.trim())
+const commitSourceLabel = computed(() =>
+  commitSource.value ? t(`main.git_finalize.commit_source.${commitSource.value}`) : '',
+)
+const runDisabled = computed(
+  () => busy.value || !chosen.value || (showCommitInput.value && commitMessageBlank.value),
+)
+function restoreSuggested() {
+  commitMessage.value = commitSuggested.value
+}
 const selectedConflictFile = computed(() => conflictFiles.value[selectedConflictIndex.value] || null)
 const resolvedFileCount = computed(() => conflictFiles.value.filter(isFileResolved).length)
 const allConflictsResolved = computed(
@@ -519,6 +561,10 @@ async function fetchState() {
     )
     state.value = data.state
     chosen.value = data.state.default_action || 'wait'
+    const cm = data.state.commit_message
+    commitSuggested.value = cm?.suggested || ''
+    commitSource.value = cm?.source || null
+    commitMessage.value = cm?.suggested || ''
     if (data.state.status === 'conflict' && data.state.merge_id != null) {
       await fetchConflicts(data.state.merge_id)
     } else {
@@ -565,11 +611,14 @@ function closeConflictDialog() {
 
 async function runFinalize() {
   if (!props.groupId || !chosen.value) return
+  if (showCommitInput.value && commitMessageBlank.value) return
   busy.value = true
   try {
+    const payload: { action: string; commit_message?: string } = { action: chosen.value }
+    if (showCommitInput.value) payload.commit_message = commitMessage.value.trim()
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${props.groupId}/git/finalize`,
-      { action: chosen.value },
+      payload,
     )
     if (data.ok === false) {
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
@@ -720,6 +769,35 @@ defineExpose({ fetchState })
 .git-choice-desc {
   font-size: 0.72rem;
   color: var(--text-m);
+}
+.git-commit-msg {
+  margin-top: 12px;
+}
+.git-commit-msg-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.git-commit-msg-label {
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.git-commit-src-badge {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-size: 0.68rem;
+}
+.git-commit-msg-input {
+  width: 100%;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+.git-commit-msg-hint {
+  font-size: 0.72rem;
+  color: var(--text-m);
+  margin: 5px 0 0;
 }
 .git-fin-done {
   display: flex;

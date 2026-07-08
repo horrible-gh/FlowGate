@@ -34,6 +34,22 @@
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :doc-id="tab.id"
           />
+          <!-- 0174 (NR0003): first-run entry point. TestRunStrip carries the run/delegate
+               logic + i18n + unit test built for 0166, but it was never mounted in any real
+               view — an orphan component, so an approved-yet-never-run TS still showed no run
+               button (the "dead entrance" regression). Mount it here, right after TestFailStrip:
+               the two are mutually exclusive (latest run failed -> Fail strip owns re-run; any
+               other admissible state -> Run strip). Same testRun source as the fail strip;
+               run-started re-fetches the doc so the embedded run/SSE state refreshes. -->
+          <TestRunStrip
+            :type-code="getTabTypeCode(tab.id)"
+            :review-status="exposedValue(docHeaderRefs[tab.id]?.docReviewStatus) ?? null"
+            :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
+            :group-disposed="exposedValue(docHeaderRefs[tab.id]?.groupDisposed) ?? false"
+            :doc-loaded="exposedValue(docHeaderRefs[tab.id]?.docLoaded) ?? false"
+            :doc-id="tab.id"
+            @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
+          />
           <!-- CH (conversation) is a normal workflow node: it shows the standard document
                header AND the workflow strip, exactly like every other doc. The chat surface
                (bubbles + composer + mention-copy) renders below in its own card. TR0044.0010 rev6
@@ -963,6 +979,7 @@ import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'
 import TestFailStrip from './TestFailStrip.vue'
+import TestRunStrip from './TestRunStrip.vue'
 import DocWorkflow from './DocWorkflow.vue'
 import GitFinalizePanel from './GitFinalizePanel.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
