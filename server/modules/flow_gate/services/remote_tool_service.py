@@ -128,16 +128,28 @@ def _authenticate(raw_token: Optional[str]) -> Optional[dict]:
                 return None
         except ValueError:
             return None
+    if _is_worker_grant(grant) and not _reconcile_worker_grant_scopes(grant):
+        return None
     return grant
+
+
+def _is_worker_grant(grant: dict) -> bool:
+    return str(grant.get("grant_id") or "").startswith(_WORKER_GRANT_PREFIX)
+
+
+def _worker_token_for_grant(grant: dict) -> Optional[dict]:
+    grant_id = str(grant.get("grant_id") or "")
+    if not grant_id.startswith(_WORKER_GRANT_PREFIX):
+        return None
+    token_id = grant_id[len(_WORKER_GRANT_PREFIX):]
+    return db_tokens.get_by_id(token_id)
 
 
 def _worker_grant_still_valid(grant: dict) -> bool:
     """Worker-token grants are valid only while the backing inbox token is active."""
-    grant_id = str(grant.get("grant_id") or "")
-    if not grant_id.startswith(_WORKER_GRANT_PREFIX):
+    if not _is_worker_grant(grant):
         return True
-    token_id = grant_id[len(_WORKER_GRANT_PREFIX):]
-    token_rec = db_tokens.get_by_id(token_id)
+    token_rec = _worker_token_for_grant(grant)
     if not token_rec:
         return False
     if token_rec.get("revoked_at") or token_rec.get("consumed_at"):
@@ -152,6 +164,23 @@ def _worker_grant_still_valid(grant: dict) -> bool:
         return exp >= datetime.now(timezone.utc)
     except ValueError:
         return False
+
+
+def _reconcile_worker_grant_scopes(grant: dict) -> bool:
+    """Keep an existing lazy worker grant aligned with the current token type policy."""
+    token_rec = _worker_token_for_grant(grant)
+    if not token_rec:
+        return False
+    scopes = _scopes_for_worker_token(token_rec)
+    if not scopes:
+        return False
+    grant_id = str(grant.get("grant_id") or "")
+    try:
+        if db_grants.get_scopes(grant_id) != set(scopes):
+            db_grants.replace_scopes(grant_id, scopes)
+    except Exception:
+        return False
+    return True
 
 
 def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict]:
@@ -179,7 +208,9 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
     grant_id = f"{_WORKER_GRANT_PREFIX}{token_id}"
     existing = db_grants.get_by_id(grant_id)
     if existing:
-        return existing if _worker_grant_still_valid(existing) else None
+        if not _worker_grant_still_valid(existing):
+            return None
+        return existing if _reconcile_worker_grant_scopes(existing) else None
 
     scopes = _scopes_for_worker_token(token_rec)
     if not scopes:
@@ -210,7 +241,9 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
     except Exception:
         # Another request may have created it concurrently, or storage may reject it.
         existing = db_grants.get_by_id(grant_id)
-        return existing if existing and _worker_grant_still_valid(existing) else None
+        if not existing or not _worker_grant_still_valid(existing):
+            return None
+        return existing if _reconcile_worker_grant_scopes(existing) else None
 
     # 0115 H2: mutating (T/TR) workers get their group worktree (re)guaranteed at
     # the _MUTATING_WORK_TYPES judgement point — the backstop for a failed or
@@ -236,9 +269,7 @@ def _scopes_for_worker_token(token_rec: dict) -> list[str]:
     action_scope = token_rec.get("action_scope")
     if action_scope in {"review", "workflow_decide"}:
         return ["read", "grep"]
-    if action_scope == "edit":
-        return ["read", "write", "grep", "remove"]
-    if action_scope != "new":
+    if action_scope not in {"new", "edit"}:
         return []
 
     step_type = _worker_token_step_type(token_rec)

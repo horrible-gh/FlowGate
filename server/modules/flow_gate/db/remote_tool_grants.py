@@ -74,6 +74,28 @@ def create(data: dict[str, Any], scopes: list[str]) -> dict:
     return get_by_id(data["grant_id"])  # type: ignore[return-value]
 
 
+def replace_scopes(grant_id: str, scopes: list[str]) -> None:
+    """Replace a grant's scope set atomically."""
+    clean_scopes = []
+    for s in scopes:
+        if s not in VALID_SCOPES:
+            raise ValueError(f"invalid scope: {s!r} (allowed: {VALID_SCOPES})")
+        if s not in clean_scopes:
+            clean_scopes.append(s)
+
+    store = get_store()
+    with store.transaction():
+        store._execute("DELETE FROM remote_tool_grant_scope WHERE grant_id = ?", [grant_id])
+        for scope in clean_scopes:
+            store._execute(
+                "INSERT INTO remote_tool_grant_scope (grant_id, scope) VALUES (?, ?)",
+                [grant_id, scope],
+            )
+        store._execute(
+            "UPDATE remote_tool_grant SET updated_at = ? WHERE grant_id = ?",
+            [now_iso(), grant_id],
+        )
+
 def revoke(grant_id: str) -> None:
     """Mark a grant revoked (flip status instead of deleting the row to preserve the audit trail, DB0007 §8)."""
     store = get_store()

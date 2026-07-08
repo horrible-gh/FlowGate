@@ -217,7 +217,9 @@ def test_invalid_token_401(env):
     assert env.oplogs() == []
 
 
-def test_worker_token_lazily_gets_remote_grant(env):
+def test_worker_token_lazily_gets_remote_grant(env, monkeypatch):
+    from modules.flow_gate.services import remote_tool_service
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "TR")
     worker_token = "raw-worker-token-0136"
     env.make_worker_token(worker_token, action_scope="edit")
 
@@ -290,6 +292,80 @@ def test_next_step_worker_token_is_read_only_for_investigation_head(env, monkeyp
     assert status == 403
     assert payload["error"]["code"] == "forbidden"
 
+
+def test_edit_worker_token_is_read_only_for_non_task_head(env, monkeypatch):
+    from modules.flow_gate.services import remote_tool_service
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "CH")
+    worker_token = "raw-edit-token-readonly-0179"
+    env.make_worker_token(worker_token, token_id="tok_edit_ch", action_scope="edit")
+
+    status, payload = _call(
+        "write",
+        {"path": "docs/should-not-write-edit.md", "content": "no", "mode": "create"},
+        token=worker_token,
+    )
+
+    assert status == 403
+    assert payload["error"]["code"] == "forbidden"
+    assert not (env.src / "docs" / "should-not-write-edit.md").exists()
+
+    status, payload = _call("remove", {"path": "docs/readme.md"}, token=worker_token)
+    assert status == 403
+    assert payload["error"]["code"] == "forbidden"
+    assert (env.src / "docs" / "readme.md").exists()
+
+    status, payload = _call("read", {"path": "app/main.py"}, token=worker_token)
+    assert status == 200
+    assert payload["ok"] is True
+
+    scopes = {
+        row["scope"]
+        for row in env.store._fetch_all(
+            "SELECT scope FROM remote_tool_grant_scope WHERE grant_id = ?",
+            ["worker_tok_edit_ch"],
+        )
+    }
+    assert scopes == {"read", "grep"}
+
+
+def test_existing_worker_grant_scopes_are_reconciled_for_non_task_edit(env, monkeypatch):
+    from modules.flow_gate.db import remote_tool_grants as db_grants
+    from modules.flow_gate.services import remote_tool_service, token_service
+
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "CH")
+    worker_token = "raw-existing-edit-token-0179"
+    env.make_worker_token(worker_token, token_id="tok_existing_edit_ch", action_scope="edit")
+
+    _pid, pepper = token_service._active_pepper()
+    token_hash = token_service._hash_token(worker_token, pepper)
+    db_grants.create(
+        {
+            "grant_id": "worker_tok_existing_edit_ch",
+            "token_hash": token_hash,
+            "project": PROJECT_ID,
+            "module": "default",
+            "status": "active",
+        },
+        ["read", "write", "grep", "remove"],
+    )
+
+    status, payload = _call(
+        "write",
+        {"path": "docs/stale-grant-write.md", "content": "no", "mode": "create"},
+        token=worker_token,
+    )
+
+    assert status == 403
+    assert payload["error"]["code"] == "forbidden"
+    assert not (env.src / "docs" / "stale-grant-write.md").exists()
+    scopes = {
+        row["scope"]
+        for row in env.store._fetch_all(
+            "SELECT scope FROM remote_tool_grant_scope WHERE grant_id = ?",
+            ["worker_tok_existing_edit_ch"],
+        )
+    }
+    assert scopes == {"read", "grep"}
 
 def test_revoked_grant_401(env):
     env.make_grant(["read"], status="revoked")
