@@ -88,7 +88,16 @@ async def update_src_file_content(
         raise HTTPException(status_code=404, detail="Not found")
 
     full_path.write_text(body.content, encoding="utf-8")
-    return {"path": path, "content_length": len(body.content)}
+
+    # flowgate.default.0176 T0010 §a: this write lands directly in the project's
+    # base checkout (an intended admin edit — the write path is NOT changed). That
+    # leaves the base dirty, which blocks merge finalize for EVERY group of this
+    # project via the E3 guard (NR flowgate.default.0176.0009). Return the base git
+    # status so the editor can warn the operator immediately, rather than the
+    # contamination staying invisible until a later finalize returns a bare 500.
+    from modules.flow_gate.services import git_service
+    base_git = git_service.base_checkout_dirty_status(project_id)
+    return {"path": path, "content_length": len(body.content), "base_git": base_git}
 
 
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)

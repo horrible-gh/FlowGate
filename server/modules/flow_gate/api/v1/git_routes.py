@@ -32,15 +32,20 @@ from modules.flow_gate.services.git_service import GitServiceError
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
 
-def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+def _error_response(status_code: int, code: str, message: str, details: Optional[dict] = None) -> JSONResponse:
+    error: dict = {"code": code, "message": message}
+    # Structured payload (e.g. base_dirty's file list) surfaced verbatim so the FE
+    # can render an actionable, user-visible error (flowgate.default.0176 T0010 §b).
+    if details:
+        error["details"] = details
     return JSONResponse(
         status_code=status_code,
-        content={"ok": False, "error": {"code": code, "message": message}},
+        content={"ok": False, "error": error},
     )
 
 
 def _guard(exc: GitServiceError) -> JSONResponse:
-    return _error_response(exc.status, exc.code, exc.message)
+    return _error_response(exc.status, exc.code, exc.message, getattr(exc, "details", None))
 
 
 def _check_group_permission(user: dict, group_id: str, permission: str) -> Optional[JSONResponse]:

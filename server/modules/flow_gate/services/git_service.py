@@ -102,11 +102,14 @@ _GIT_IDENT = ["-c", "user.name=FlowGate", "-c", "user.email=flowgate@localhost"]
 class GitServiceError(Exception):
     """Carries (http_status, error_code, message) to the router envelope."""
 
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, details: Optional[dict] = None):
         super().__init__(f"{code}: {message}")
         self.status = status
         self.code = code
         self.message = message
+        # Optional structured payload surfaced verbatim in the router envelope
+        # (e.g. the base_dirty file list — flowgate.default.0176 T0010 §b).
+        self.details = details or {}
 
 
 # ── Master key / encryption / masking (L0006 §2.3 — TOTP precedent) ─────────
@@ -1386,6 +1389,67 @@ def _dirty(repo: Path, include_untracked: bool = True) -> bool:
     return bool((proc.stdout or "").strip()) if proc.returncode == 0 else False
 
 
+def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
+    """The changed paths behind `_dirty()` — same scope, but the actual file list.
+
+    Used to tell the operator *which* files leave the base checkout dirty so the
+    E3 finalize block and the file-editor save warning name them instead of a bare
+    500 (flowgate.default.0176 T0010). Parses `git status --porcelain` v1: the
+    2-char status code occupies cols 0-1, the path starts at col 3; a rename is
+    rendered `old -> new`, so keep the destination.
+    """
+    args = ["status", "--porcelain"]
+    if not include_untracked:
+        args.append("--untracked-files=no")
+    proc = _run_git(args, cwd=repo)
+    if proc.returncode != 0:
+        return []
+    files: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        entry = line[3:].strip() if len(line) > 3 else line.strip()
+        if not entry:
+            continue
+        if " -> " in entry:
+            entry = entry.split(" -> ", 1)[1].strip()
+        # porcelain may quote paths with unusual chars; strip surrounding quotes.
+        if len(entry) >= 2 and entry[0] == '"' and entry[-1] == '"':
+            entry = entry[1:-1]
+        files.append(entry)
+    return files
+
+
+def base_checkout_dirty_status(project_id: str) -> dict:
+    """Lightweight base-checkout dirty status for the file-editor save response
+    (flowgate.default.0176 T0010 §a).
+
+    A src-content save writes straight into the base checkout by design (an admin
+    edit), which leaves the base dirty and — via the E3 guard — blocks merge
+    finalize for EVERY group of the project. The editor calls this right after a
+    save so the contamination is visible immediately instead of surfacing later as
+    a bare finalize 500. Scope matches the guard exactly: tracked-file changes only
+    (`include_untracked=False`).
+
+    Never raises: the file write already succeeded, so a git-disabled project, a
+    missing base checkout, or any git failure all yield a benign
+    {"enabled": ..., "dirty": False, "files": []} — status is advisory and must not
+    turn a saved file into an error.
+    """
+    try:
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return {"enabled": False, "dirty": False, "files": []}
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        project_name = _project_name(project_id)
+        base_root = src_root(project_name, base_branch) if project_name else None
+        if base_root is None or not Path(base_root).is_dir():
+            return {"enabled": True, "dirty": False, "files": []}
+        files = _dirty_files(base_root, include_untracked=False)
+        return {"enabled": True, "dirty": bool(files), "files": files}
+    except Exception:
+        _log.warning("base_checkout_dirty_status failed for %s", project_id, exc_info=True)
+        return {"enabled": False, "dirty": False, "files": []}
+
+
 def finalize(group_id: str, action: Optional[str], commit_message: Optional[str] = None) -> dict:
     cfg, state, project_id, base_root, wt_path = _finalize_context(group_id)
     action = action or cfg.get("default_finalize_action") or "wait"
@@ -1480,9 +1544,13 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
 
         # action == "merge"
         if _dirty(base_root, include_untracked=False):
-            raise GitServiceError(  # E3 — never auto-stash the server's own checkout
+            # E3 — never auto-stash the server's own checkout. Name the dirty files
+            # so the FE can tell the operator exactly what to commit or revert in
+            # the header Git panel instead of showing a bare 500 (T0010 §b).
+            raise GitServiceError(
                 500, "base_dirty",
                 "base checkout has local modifications; operator intervention required",
+                details={"files": _dirty_files(base_root, include_untracked=False)},
             )
         proc = _run_git(
             ["fetch", "origin"],
@@ -1982,4 +2050,9 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
         outcome = finalize(group_id, git_action)
         return {"ok": True, "result": outcome["result"]}
     except GitServiceError as exc:
-        return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+        # Carry the structured details (e.g. base_dirty's file list) so the approve
+        # path can surface an actionable error too, not just a bare message (T0010 §b).
+        error = {"code": exc.code, "message": exc.message}
+        if getattr(exc, "details", None):
+            error["details"] = exc.details
+        return {"ok": False, "error": error}
