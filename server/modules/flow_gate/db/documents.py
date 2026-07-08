@@ -89,7 +89,7 @@ def create(data: dict[str, Any]) -> dict:
         "tv_type", "pass_criteria", "worker_tier",
         "target_id", "triggered_by", "superseded_by",
         "previous_tv", "previous_t", "previous_ds",
-        "created_at", "meta", "updated_at",
+        "created_at", "meta", "updated_at", "commit_message",
     ]
     fp = data.get("file_path")
     derived_filename = data.get("filename") or (os.path.basename(fp) if fp else None)
@@ -104,6 +104,7 @@ def create(data: dict[str, Any]) -> dict:
         data.get("target_id"), data.get("triggered_by"), data.get("superseded_by"),
         data.get("previous_tv"), data.get("previous_t"), data.get("previous_ds"),
         data.get("created_at", now), data.get("meta"), data.get("updated_at", now),
+        data.get("commit_message"),
     ]
     placeholders = ", ".join(["?"] * len(cols))
     store._execute(
@@ -294,6 +295,28 @@ def get_documents_by_group_id(
         params,
     )
     return [_normalize_document_row(r) for r in rows]
+
+
+def get_latest_tr_commit_message(group_id: str, statuses: tuple) -> Optional[str]:
+    """Commit-message draft of the most recent accepted TR in a group.
+
+    flowgate.default.0173 L0004 §2.4 rank 1: the resolver's top fallback. Only TRs
+    whose doc_review_status is in ``statuses`` (approved / wf_done) qualify; the
+    latest by created_at, doc_id-desc tiebreak, with a non-empty draft wins.
+    Returns None when there is no qualifying draft.
+    """
+    if not group_id or not statuses:
+        return None
+    placeholders = ",".join(["?"] * len(statuses))
+    row = get_store()._fetch_one(
+        f"SELECT commit_message FROM documents "
+        f"WHERE group_id = ? AND type_code = 'TR' "
+        f"AND doc_review_status IN ({placeholders}) "
+        f"AND commit_message IS NOT NULL AND commit_message != '' "
+        f"ORDER BY created_at DESC, doc_id DESC LIMIT 1",
+        [group_id, *statuses],
+    )
+    return row.get("commit_message") if row else None
 
 
 def get_documents_by_target_id(

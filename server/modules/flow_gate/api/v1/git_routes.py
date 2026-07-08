@@ -72,6 +72,9 @@ class GitConfigPut(BaseModel):
     base_branch: str | None = None
     default_finalize_action: str | None = None
     enabled: bool = False
+    # LibreTranslate base URL for commit-subject translation (0173 P0003 §4-1).
+    # Omitted = keep stored; "" = clear (disable). exclude_unset preserves "omitted".
+    translate_url: str | None = None
 
 
 @router.put("/projects/{project_id}/git/config")
@@ -204,6 +207,9 @@ def get_group_finalize_state(group_id: str, user=Depends(get_current_user)):
 
 class FinalizeBody(BaseModel):
     action: str | None = None  # default = the project's configured default
+    # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
+    # → the server resolves it (unmanned path); >200 chars (normalized) → 422.
+    commit_message: str | None = None
 
 
 @router.post("/groups/{group_id}/git/finalize")
@@ -216,7 +222,11 @@ def post_group_finalize(
     if denied:
         return denied
     try:
-        return git_service.finalize(group_id, body.action if body else None)
+        return git_service.finalize(
+            group_id,
+            body.action if body else None,
+            body.commit_message if body else None,
+        )
     except GitServiceError as exc:
         return _guard(exc)
 

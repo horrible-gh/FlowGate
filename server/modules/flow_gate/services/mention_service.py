@@ -812,13 +812,29 @@ def build_mention(
             post_body["prev_doc_id"] = prev_doc_id_value
         post_body["title"] = "<Fill this in>"
         post_body["content"] = "<Fill this in>"
+        # TR commit-message draft (flowgate.default.0173 D0002 §2 / P0003 §1): the TR
+        # worker understands the work in English, so it supplies the commit subject at
+        # report time. Optional and TR-only; the server ignores it for other types.
+        if str(doc_type_value).upper() == "TR":
+            post_body["commit_message"] = (
+                "<Optional. English one-line commit subject summarizing this group's "
+                "work, e.g. feat(<group_id>): capture commit subject at TR time>"
+            )
 
     post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
+    commit_hint = ""
+    if not is_edit and str(head_type or "").upper() == "TR":
+        commit_hint = (
+            "\nThe optional `commit_message` is an English one-line commit subject "
+            "(<=200 chars) that becomes the finalize commit for this group. Write it "
+            "in the Conventional Commits form and in English; omit it if unsure.\n"
+        )
     s5_body = (
         f"Artifact registration: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
         f"\n"
         f"{post_json}\n"
+        f"{commit_hint}"
         f"\n"
         f"{_DRYRUN_HINT}"
     )

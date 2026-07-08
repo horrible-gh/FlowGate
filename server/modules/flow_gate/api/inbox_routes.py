@@ -1080,6 +1080,12 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     content: Optional[str] = body.get("content")
     related_doc_ids = body.get("related_doc_ids")
     title_override: Optional[str] = body.get("title")
+    # Commit-message draft (flowgate.default.0173 P0003 §1): only meaningful for TR;
+    # ignored for other doc types (forward-compat with old instructions). Normalized
+    # here; length is validated in Step 5 (before the dry-run short-circuit).
+    commit_message_draft: Optional[str] = None
+    if doc_type.upper() == "TR":
+        commit_message_draft = re.sub(r"\s+", " ", str(body.get("commit_message") or "")).strip() or None
 
     # NOTE (group 0022 §7.4): the Q document path is retired. Q is an inactive doc type
     # (migration 040) so _is_valid_doc_type blocks new Q docs at Step 5; AI queries are now
@@ -1176,6 +1182,12 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real submission
         fingerprints = {}  # unreadable doc_path / lookup error → skip; Step 6 still proceeds
 
+    # Commit-message draft length guard (flowgate.default.0173 P0003 §1-3): a
+    # validation failure, so it returns before the dry-run short-circuit and before
+    # any side effect (no document, no token consumed) — exactly like the checks above.
+    if commit_message_draft is not None and len(commit_message_draft) > 200:
+        return _fail(422, "commit_message must be a single line of at most 200 characters.")
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
     # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
@@ -1187,6 +1199,8 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
         new_checks.append("frontmatter_identity")
     if fingerprints:
         new_checks.append("dup_body")
+    if commit_message_draft is not None:
+        new_checks.append("commit_message")
     dry_resp = _maybe_dry_run(body, token_rec, {
         "action": "new",
         "doc_id": None,
@@ -1264,6 +1278,7 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
             "created_at": now,
             "updated_at": now,
             "meta": meta_value,
+            "commit_message": commit_message_draft,
         })
         # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
         # worker attaches low-confidence points as queries on that document

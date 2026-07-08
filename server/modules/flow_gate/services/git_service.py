@@ -62,6 +62,23 @@ SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
 AUTO_COMMIT_MSG = "flowgate: work of {group_id}"
 AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
 MERGE_COMMIT_MSG = "flowgate: merge {branch} into {base_branch} ({group_id})"
+# ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
+# The finalize absorb-commit subject is resolved through a fallback chain:
+# approved-TR draft → ASCII group title → translated title → fixed English phrase.
+COMMIT_SUBJECT_MAX = 200               # normalized subject max length (L0004 §1)
+TRANSLATE_TIMEOUT_SEC = 3              # translate HTTP timeout (connect+read)
+TRANSLATE_SOURCE = "auto"              # auto-detect source language (CH 0168.0008)
+TRANSLATE_TARGET = "en"
+# TR doc_review_status set whose commit_message draft is accepted (L0004 §1).
+DRAFT_ACCEPT_STATUSES = ("approved", "wf_done")
+FIXED_FALLBACK_SUBJECT = "{commit_type}({group_id}): group work"   # L0004 §1 (D0002 §3-4)
+# Known machine-translation hallucinations / web boilerplate (lowercased, punctuation
+# stripped, exact match) that must never become a commit subject (CH 0168.0008).
+BOILERPLATE_BLACKLIST = frozenset({
+    "log in", "login", "sign in", "sign up", "sign out", "skip to content",
+    "home", "menu", "search", "about", "contact", "register", "submit",
+    "copyright", "all rights reserved", "read more", "learn more",
+})
 ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
 # Present while an adopt is unfinished — the slot never reports "checkout"
 # until the marker is removed (L0005 §2.1·§2.3, 0161).
@@ -232,6 +249,39 @@ def _one_line_subject(text: Optional[str]) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
+# normalize_subject (L0004 §2.1): collapse newlines/tabs/runs of whitespace to a
+# single space and trim — the one canonical subject cleaner for every path.
+normalize_subject = _one_line_subject
+
+
+def _is_ascii(text: str) -> bool:
+    return all(ord(ch) < 128 for ch in text)
+
+
+def derive_commit_type(group_id: str) -> Optional[str]:
+    """Conventional-commit type for a group (L0004 §2.3), or None when undecidable.
+
+    B-rooted → fix; R-rooted → feat when a design doc exists else chore.
+    """
+    try:
+        docs = db_documents.get_documents_by_group_id(group_id)
+    except Exception:
+        return None
+    root_type: Optional[str] = None
+    has_design_doc = False
+    for doc in docs:
+        doc_type = (doc.get("type_code") or doc.get("type") or "").upper()
+        if doc_type in AUTO_COMMIT_DESIGN_TYPES:
+            has_design_doc = True
+        if root_type is None and doc_type in ("B", "R"):
+            root_type = doc_type
+    if root_type == "B":
+        return "fix"
+    if root_type == "R":
+        return "feat" if has_design_doc else "chore"
+    return None
+
+
 def build_auto_commit_message(group_id: str) -> str:
     """Generate the finalize auto-commit subject from group metadata.
 
@@ -244,27 +294,111 @@ def build_auto_commit_message(group_id: str) -> str:
         title = _one_line_subject(group.get("title") if group else None)
         if not title:
             return fallback
-
-        docs = db_documents.get_documents_by_group_id(group_id)
-        root_type: Optional[str] = None
-        has_design_doc = False
-        for doc in docs:
-            doc_type = (doc.get("type_code") or doc.get("type") or "").upper()
-            if doc_type in AUTO_COMMIT_DESIGN_TYPES:
-                has_design_doc = True
-            if root_type is None and doc_type in ("B", "R"):
-                root_type = doc_type
-
-        if root_type == "B":
-            commit_type = "fix"
-        elif root_type == "R":
-            commit_type = "feat" if has_design_doc else "chore"
-        else:
+        commit_type = derive_commit_type(group_id)
+        if commit_type is None:
             return fallback
         return f"{commit_type}({group_id}): {title}"
     except Exception:
         _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
         return fallback
+
+
+def _translate_guard(text: str, source_title: str) -> bool:
+    """Reject empty / non-English / echoed / boilerplate translations (L0004 §2.5).
+
+    A blacklist, not a whitelist — full hallucination detection is impossible; the
+    user confirmation step is the final defense.
+    """
+    if not text:
+        return False
+    if not _is_ascii(text):
+        return False
+    if not any(ch.isalpha() for ch in text):
+        return False
+    if text.lower() == (source_title or "").lower():
+        return False
+    stripped = text.strip(" .,!?:;\"'").strip()
+    if stripped.lower() in BOILERPLATE_BLACKLIST:
+        return False
+    return True
+
+
+def _try_translate(project_id: str, title: str) -> Optional[str]:
+    """Translate a group title to an English subject fragment, or None on any failure.
+
+    Never raises: translation is best-effort and must not fail finalize (L0004 §5).
+    """
+    try:
+        cfg = db_git.get_config(project_id)
+        url = ((cfg or {}).get("translate_url") or "").strip()
+        if not url:
+            return None                       # unset = disabled (normal path, no log)
+        import requests  # lazy: keeps the module import light
+        resp = requests.post(
+            url.rstrip("/") + "/translate",
+            json={
+                "q": title, "source": TRANSLATE_SOURCE,
+                "target": TRANSLATE_TARGET, "format": "text",
+            },
+            timeout=TRANSLATE_TIMEOUT_SEC,
+        )
+        if resp.status_code != 200:
+            _log.warning("translate server returned %s for %s", resp.status_code, project_id)
+            return None
+        translated = normalize_subject(resp.json().get("translatedText"))
+        if _translate_guard(translated, title):
+            return translated
+        _log.info("translate result rejected by guard: %r", translated)
+        return None
+    except Exception:
+        _log.warning("translate call failed for %s", project_id, exc_info=True)
+        return None
+
+
+def resolve_commit_message(group_id: str) -> tuple[str, str]:
+    """Resolve the suggested finalize commit subject and its source (L0004 §2.4).
+
+    Fallback chain: approved-TR draft (tr_draft) → ASCII title (auto_title) →
+    translated title (translated) → fixed English phrase (fallback). Side-effect
+    free; called by both the GET state query and POST finalize. Wrapped so an
+    unexpected error still yields the legacy fallback (finalize never breaks).
+    """
+    legacy = (AUTO_COMMIT_MSG.format(group_id=group_id), "fallback")
+    try:
+        # 1) latest approved-TR commit-message draft
+        draft = db_documents.get_latest_tr_commit_message(group_id, DRAFT_ACCEPT_STATUSES)
+        if draft:
+            subject = normalize_subject(draft)
+            if 0 < len(subject) <= COMMIT_SUBJECT_MAX:
+                return (subject, "tr_draft")
+            # abnormal stored value (empty / oversized) → silently fall through
+
+        project_id = _project_of_group(group_id)
+        group = db_groups.get_group(group_id)
+        title = normalize_subject(group.get("title") if group else None)
+        ctype = derive_commit_type(group_id)
+
+        if title and ctype:
+            # 2) ASCII title → existing auto-generation rule
+            if _is_ascii(title):
+                subject = f"{ctype}({group_id}): {title}"
+                if len(subject) <= COMMIT_SUBJECT_MAX:
+                    return (subject, "auto_title")
+            else:
+                # 3) non-ASCII title → translate
+                translated = _try_translate(project_id, title)
+                if translated:
+                    subject = f"{ctype}({group_id}): {translated}"
+                    if len(subject) <= COMMIT_SUBJECT_MAX:
+                        return (subject, "translated")
+
+        # 4) fixed English phrase
+        if ctype:
+            return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype, group_id=group_id), "fallback")
+        return legacy
+    except Exception:
+        _log.warning("commit message resolution failed for %s", group_id, exc_info=True)
+        return legacy
 
 
 # ── Git runner ────────────────────────────────────────────────────────────────
@@ -469,6 +603,7 @@ def _config_view(row: dict) -> dict:
         "base_branch": row.get("base_branch") or "main",
         "default_finalize_action": row.get("default_finalize_action") or "wait",
         "enabled": bool(row.get("enabled")),
+        "translate_url": row.get("translate_url") or None,
         "updated_at": row.get("updated_at"),
     }
 
@@ -502,6 +637,14 @@ def save_config(project_id: str, body: dict) -> dict:
     else:
         secret_enc = encrypt_secret(str(secret))
 
+    # translate_url (P0003 §4-1): field omitted → keep stored value; sent → trim,
+    # empty string stored as NULL (= disabled). Same exclude_unset "keep" protocol
+    # as secret above.
+    if "translate_url" in body:
+        translate_url = (body.get("translate_url") or "").strip() or None
+    else:
+        translate_url = existing.get("translate_url") if existing else None
+
     row = db_git.upsert_config(project_id, {
         "repo_url": (body.get("repo_url") or "").strip(),
         "provider": provider,
@@ -510,6 +653,7 @@ def save_config(project_id: str, body: dict) -> dict:
         "base_branch": (body.get("base_branch") or "main").strip() or "main",
         "default_finalize_action": action,
         "enabled": bool(body.get("enabled")),
+        "translate_url": translate_url,
     })
     return {"ok": True, "configured": True, "config": _config_view(row)}
 
@@ -1188,6 +1332,14 @@ def get_finalize_state(group_id: str) -> dict:
                 if m:
                     behind, ahead = int(m.group(1)), int(m.group(2))
 
+    # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
+    # while the group awaits a commit-producing choice; null otherwise.
+    if status in ("awaiting_choice", "waiting"):
+        subject, source = resolve_commit_message(group_id)
+        commit_message: Optional[dict] = {"suggested": subject, "source": source}
+    else:
+        commit_message = None
+
     return {"ok": True, "state": {
         "group_id": group_id,
         "branch": branch,
@@ -1198,6 +1350,7 @@ def get_finalize_state(group_id: str) -> dict:
         "ahead_count": ahead,
         "behind_count": behind,
         "merge_id": state.get("merge_id"),
+        "commit_message": commit_message,
     }}
 
 
@@ -1233,11 +1386,21 @@ def _dirty(repo: Path, include_untracked: bool = True) -> bool:
     return bool((proc.stdout or "").strip()) if proc.returncode == 0 else False
 
 
-def finalize(group_id: str, action: Optional[str]) -> dict:
+def finalize(group_id: str, action: Optional[str], commit_message: Optional[str] = None) -> dict:
     cfg, state, project_id, base_root, wt_path = _finalize_context(group_id)
     action = action or cfg.get("default_finalize_action") or "wait"
     if action not in ACTION_VALUES:
         raise GitServiceError(422, "invalid_request", f"invalid action: {action!r}")
+
+    # Confirmed commit subject (flowgate.default.0173 P0003 §3): normalize+validate
+    # BEFORE any state transition or lock acquisition (422 has no side effects). A
+    # blank/omitted value means the unmanned path — resolve it just before use.
+    provided_subject = normalize_subject(commit_message)
+    if len(provided_subject) > COMMIT_SUBJECT_MAX:
+        raise GitServiceError(
+            422, "invalid_request",
+            "commit_message must be a single line of at most 200 characters.",
+        )
 
     # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
     status = (state.get("status") or "none")
@@ -1282,12 +1445,16 @@ def finalize(group_id: str, action: Optional[str]) -> dict:
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
 
         # Absorb leftover worker changes into the work branch. Both merge and
-        # push need the latest worker edits committed first.
+        # push need the latest worker edits committed first. The subject is the
+        # user-confirmed message, or the resolver result on the unmanned path
+        # (flowgate.default.0173 L0004 §2.6). Resolve lazily so a clean worktree
+        # never triggers a translate round-trip.
         if _dirty(wt_path):
+            absorb_subject = provided_subject or resolve_commit_message(group_id)[0]
             proc = _run_git(["add", "-A"], cwd=wt_path)
             if proc.returncode == 0:
                 proc = _run_git(
-                    [*_GIT_IDENT, "commit", "-m", build_auto_commit_message(group_id)],
+                    [*_GIT_IDENT, "commit", "-m", absorb_subject],
                     cwd=wt_path,
                 )
             if proc.returncode != 0:
