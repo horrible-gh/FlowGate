@@ -20,9 +20,15 @@
         <span v-if="node.type === 'folder'">▶</span>
       </span>
       <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
-      <span class="tree-lbl">{{ node.label }}</span>
-      <!-- flowgate.default.0177 L0002 §2.6-a: uncommitted base-checkout edit -->
-      <span v-if="isBaseDirty" class="tree-dirty-badge">{{ t('main.file_tree_node.modified_badge') }}</span>
+      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isBaseDirty }">{{ node.label }}</span>
+      <!-- flowgate.default.0177 L0002 §2.6-a · NR0016 §2: uncommitted base-checkout
+           edit — VSCode-style marker (tinted filename + trailing "M"), not a text badge -->
+      <span
+        v-if="isBaseDirty"
+        class="tree-dirty-mark"
+        :title="t('main.file_tree_node.modified_badge')"
+        :aria-label="t('main.file_tree_node.modified_badge')"
+      >M</span>
       <span v-if="downloading" class="tree-loading"><i class="fa-solid fa-spinner fa-spin"></i></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
@@ -316,17 +322,18 @@ async function onNodeFolderSelected(e: Event) {
 </script>
 
 <style scoped>
-/* flowgate.default.0177 §2.6-a — uncommitted base-checkout edit badge */
-.tree-dirty-badge {
+/* flowgate.default.0177 §2.6-a · NR0016 §2 — uncommitted base-checkout edit,
+   VSCode-style: the filename itself takes the modified tint and a bare "M"
+   letter trails it (no localized text pill). */
+.tree-lbl--dirty {
+  color: #b45309;
+}
+.tree-dirty-mark {
   flex: none;
   margin-left: 6px;
-  padding: 0 6px;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 700;
   line-height: 1.5;
-  border-radius: 999px;
   color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
 }
 </style>

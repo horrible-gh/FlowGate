@@ -582,7 +582,23 @@ async function doApprove() {
     } else if (git?.result?.status === 'waiting') {
       showToast(t('main.git_finalize.waiting_toast'), 'success')
     }
-    dispatchGitStatusEvent(git)
+    if (git) {
+      dispatchGitStatusEvent(git)
+    } else if (isAcDoc.value && typeof window !== 'undefined') {
+      // 0177 NR0016 §3 (client fallback): a plain final approval carries no git
+      // payload — the choice block is hidden while the slot is still 'none', so
+      // no git_action rode along — yet the approval just made this group
+      // finalize-pending. Poke the header menu; its fetchStatus hits
+      // project_git_status, which realizes the lazy none→awaiting_choice
+      // transition and broadcasts git_pending_changed for everyone else.
+      window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+        detail: {
+          project: props.projectId || null,
+          group_id: props.groupId || null,
+          status: null,
+        },
+      }))
+    }
     // Pass the server-confirmed status up so DocHeader can optimistically flip the
     // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data

@@ -790,19 +790,6 @@
               spellcheck="false"
             />
           </div>
-          <!-- flowgate.default.0176 T0010 §a: a source-file save writes straight
-               into the base checkout, leaving it dirty and blocking merge finalize
-               for every group of this project. Warn persistently and point to the
-               header Git panel rather than a 3s toast. -->
-          <div v-if="baseDirtyNotice" class="edit-base-dirty-warn" role="alert">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            <div class="edit-base-dirty-warn__body">
-              <div>{{ t('main.git_finalize.base_dirty_after_save') }}</div>
-              <div v-if="baseDirtyNotice.files.length" class="edit-base-dirty-warn__files">
-                {{ t('main.git_finalize.base_dirty_files', { files: baseDirtyNotice.files.join(', ') }) }}
-              </div>
-            </div>
-          </div>
           <div class="modal-ft">
             <button type="button" class="btn btn-secondary" :disabled="editSaving" @click="closeEditModal">
               {{ t('common.cancel') }}
@@ -1149,10 +1136,6 @@ const editBody = ref('')
 const editLoading = ref(false)
 const editSaving = ref(false)
 const editError = ref('')
-// flowgate.default.0176 T0010 §a: set when a source-file save leaves the project's
-// base checkout dirty (blocking merge finalize for every group). Keeps the edit
-// modal open with a persistent warning instead of a 3s toast that would vanish.
-const baseDirtyNotice = ref<{ files: string[] } | null>(null)
 const headerEditModeVisible = ref(false)
 const editFullContent = ref('')
 const nextActionModalVisible = ref(false)
@@ -2843,14 +2826,12 @@ function closeEditModal() {
   editFrontmatter.value = ''
   editBody.value = ''
   editError.value = ''
-  baseDirtyNotice.value = null
   headerEditModeVisible.value = false
 }
 async function saveEditContent() {
   if (!editTab.value || editSaving.value) return
   editSaving.value = true
   editError.value = ''
-  baseDirtyNotice.value = null
   const content = headerEditModeVisible.value
     ? editFullContent.value
     : (editFrontmatter.value ? editFrontmatter.value + '\n' + editBody.value : editBody.value)
@@ -2880,18 +2861,18 @@ async function saveEditContent() {
     }
     await mdViewerRefs[editTab.value.id]?.loadContent?.()
     await textViewerRefs[editTab.value.id]?.loadContent?.()
-    showToast(t('main.document_preview.save_success'), 'success')
-    editSaving.value = false
-    // The write always succeeds; but if it left the base checkout dirty, keep the
-    // modal open with a persistent warning (§a) — merge finalize is now blocked
-    // for EVERY group of this project until the operator commits/reverts in the
-    // header Git panel. Otherwise close as usual.
+    // 0177 NR0016 §1: a successful save always closes the modal — a source-file
+    // save on the base checkout is dirty by definition, so the former keep-open
+    // warning (0176 T0010 §a) held the dialog hostage on every save. The tree
+    // "M" markers (fed above) and the header Git panel carry the persistent
+    // state; one concise toast is the only inline signal.
     if (baseGit?.dirty) {
-      baseDirtyNotice.value = { files: Array.isArray(baseGit.files) ? baseGit.files : [] }
       showToast(t('main.git_finalize.base_dirty_after_save'), 'warning')
     } else {
-      closeEditModal()
+      showToast(t('main.document_preview.save_success'), 'success')
     }
+    editSaving.value = false
+    closeEditModal()
   } catch (e: any) {
     editError.value = e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.save_failed')
     showToast(editError.value, 'danger')
@@ -3707,33 +3688,6 @@ watch(textWrapEnabled, (enabled) => {
 
 .document-editor__state--error {
   color: var(--danger);
-}
-
-/* flowgate.default.0176 T0010 §a — base-checkout dirty warning in the edit modal. */
-.edit-base-dirty-warn {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0 16px 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--warning, #d97706);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--warning, #d97706) 12%, transparent);
-  color: var(--text, inherit);
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-.edit-base-dirty-warn > i {
-  color: var(--warning, #d97706);
-  margin-top: 2px;
-  flex: none;
-}
-.edit-base-dirty-warn__files {
-  margin-top: 4px;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.76rem;
-  color: var(--text-m);
-  word-break: break-all;
 }
 
 .edit-dropdown-wrap {
