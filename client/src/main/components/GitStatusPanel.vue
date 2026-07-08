@@ -24,6 +24,25 @@
         <i class="fa-solid fa-cloud-arrow-down"></i>
       </button>
     </div>
+    <!-- flowgate.default.0176 T0010 §b — base_dirty finalize block, surfaced as a
+         persistent actionable banner instead of a bare 500 in the console. -->
+    <div v-if="baseDirtyError" class="git-base-dirty-alert" role="alert">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      <div class="git-base-dirty-alert__body">
+        <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
+        <div v-if="baseDirtyError.files.length" class="git-base-dirty-alert__files">
+          {{ t('main.git_finalize.base_dirty_files', { files: baseDirtyError.files.join(', ') }) }}
+        </div>
+      </div>
+      <button
+        class="git-base-dirty-alert__close"
+        type="button"
+        :title="t('common.close')"
+        @click="baseDirtyError = null"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
     <div class="card-bd pad">
       <!-- Finalize-pending list (each item finalizes inline, or opens the group) -->
       <div class="git-status-sect">
@@ -228,6 +247,10 @@ interface GitStatus {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
+// flowgate.default.0176 T0010 §b: set when a merge finalize is blocked by the E3
+// base_dirty guard. Rendered as a persistent, actionable banner (which files are
+// dirty + what to do) instead of a 3s toast that reads as an "unknown error".
+const baseDirtyError = ref<{ files: string[] } | null>(null)
 
 // Per-row chosen action (overrides default_action); keyed by group_id.
 const chosen = ref<Record<string, string>>({})
@@ -376,8 +399,11 @@ async function execute(item: Pending) {
       payload,
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+      if (!handleBaseDirty(data.error)) {
+        showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+      }
     } else {
+      baseDirtyError.value = null // a finalize got through — base is clean now
       const r = data.result
       if (r?.status === 'conflict') {
         showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
@@ -394,11 +420,27 @@ async function execute(item: Pending) {
       }
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    const err = e?.response?.data?.error
+    if (!handleBaseDirty(err)) {
+      showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+    }
   } finally {
     busy.value = false
     await fetchStatus()
   }
+}
+
+// flowgate.default.0176 T0010 §b: the E3 base_dirty guard (HTTP 500 + structured
+// body {code:'base_dirty', details:{files:[...]}}) is not a crash — it means the
+// project's base checkout has uncommitted edits (typically from the file editor)
+// that block merge finalize for EVERY group. Surface it as a persistent,
+// actionable banner naming the files. Returns true when it handled the error.
+function handleBaseDirty(err: any): boolean {
+  if (err?.code !== 'base_dirty') return false
+  const files = err.details?.files
+  baseDirtyError.value = { files: Array.isArray(files) ? files : [] }
+  showToast(t('main.git_finalize.base_dirty_toast'), 'danger')
+  return true
 }
 
 // ── Inline conflict resolution (endpoints already exist, P0005 §6) ────────────
@@ -767,5 +809,50 @@ defineExpose({ fetchStatus })
   font-size: 0.74rem;
   color: #b45309;
   margin: 4px 0 0;
+}
+
+/* flowgate.default.0176 T0010 §b — base_dirty finalize-block banner. */
+.git-base-dirty-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 16px 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #dc2626) 10%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.git-base-dirty-alert > i {
+  color: var(--danger, #dc2626);
+  margin-top: 2px;
+  flex: none;
+}
+.git-base-dirty-alert__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.git-base-dirty-alert__msg {
+  color: var(--text, inherit);
+}
+.git-base-dirty-alert__files {
+  margin-top: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+  color: var(--text-m);
+  word-break: break-all;
+}
+.git-base-dirty-alert__close {
+  flex: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-m);
+  padding: 0 2px;
+  line-height: 1;
+}
+.git-base-dirty-alert__close:hover {
+  color: var(--text);
 }
 </style>

@@ -566,7 +566,13 @@ async function doApprove() {
     const git = (res.data as any)?.git
     if (git && git.ok === false) {
       // Approval stood; only the git post-step failed — say so, don't block.
-      showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
+      // base_dirty (E3) is actionable: name the guidance and let dispatchGitStatusEvent
+      // open the header Git panel where the files are listed (T0010 §b).
+      if (git.error?.code === 'base_dirty') {
+        showToast(t('main.git_finalize.base_dirty_toast'), 'warning')
+      } else {
+        showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
+      }
     } else if (git?.result?.status === 'conflict') {
       showToast(t('main.git_finalize.conflict_toast', { n: (git.result.conflict_files || []).length }), 'warning')
     } else if (git?.result?.status === 'merged') {
