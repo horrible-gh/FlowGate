@@ -6,6 +6,8 @@ GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
+POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
+POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
@@ -193,6 +195,43 @@ def post_git_push(
     """Recovery re-push of an accumulated base/slot branch (P §3-2)."""
     try:
         return git_service.manual_push(project_id, body.branch if body else None)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class BaseCommitBody(BaseModel):
+    # Commit subject; blank/omitted → the server derives "fix: <files>" itself
+    # (0177 L0002 §2.2 — the same rule the FE uses to seed its input).
+    message: str | None = None
+
+
+@router.post("/projects/{project_id}/git/base-commit")
+def post_git_base_commit(
+    project_id: str,
+    body: BaseCommitBody | None = None,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Explicit commit of the base checkout's dirty tracked files (0177 L0002 §2.3)."""
+    try:
+        return git_service.base_commit(project_id, body.message if body else None)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class BaseRevertBody(BaseModel):
+    # Base-checkout-relative paths to restore to HEAD (1+ required).
+    files: list[str] = []
+
+
+@router.post("/projects/{project_id}/git/base-revert")
+def post_git_base_revert(
+    project_id: str,
+    body: BaseRevertBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Per-file restore of the base checkout to HEAD (0177 L0002 §2.4)."""
+    try:
+        return git_service.base_revert(project_id, body.files)
     except GitServiceError as exc:
         return _guard(exc)
 

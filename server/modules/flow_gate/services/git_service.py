@@ -79,6 +79,11 @@ BOILERPLATE_BLACKLIST = frozenset({
     "home", "menu", "search", "about", "contact", "register", "submit",
     "copyright", "all rights reserved", "read more", "learn more",
 })
+# ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
+# Default subject for an explicit base-checkout commit: "fix: a.py, b.py", or the
+# abbreviated "fix: a.py 외 N건" when the joined list overflows COMMIT_SUBJECT_MAX.
+BASE_COMMIT_MSG_PREFIX = "fix: "
+BASE_COMMIT_MSG_JOINER = ", "
 ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
 # Present while an adopt is unfinished — the slot never reports "checkout"
 # until the marker is removed (L0005 §2.1·§2.3, 0161).
@@ -1547,8 +1552,10 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             # E3 — never auto-stash the server's own checkout. Name the dirty files
             # so the FE can tell the operator exactly what to commit or revert in
             # the header Git panel instead of showing a bare 500 (T0010 §b).
+            # 409, not 500 (0177 L0002 §2.5): a user-resolvable precondition, in
+            # line with the invalid_state/git_busy family; code+details unchanged.
             raise GitServiceError(
-                500, "base_dirty",
+                409, "base_dirty",
                 "base checkout has local modifications; operator intervention required",
                 details={"files": _dirty_files(base_root, include_untracked=False)},
             )
@@ -1905,10 +1912,24 @@ def project_git_status(project_id: str) -> dict:
     ]
     ahead, behind = _base_ahead_behind(base_root, base_branch)
     base_path_state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
+    # 0177 L0002 §2.1: base-checkout dirty set (tracked files only) so the header
+    # panel can offer commit/revert BEFORE a merge bounces off the E3 guard.
+    # Never-raise, matching base_checkout_dirty_status: a missing checkout or any
+    # git failure reads as clean — the field is advisory display state.
+    try:
+        base_dirty_files = (
+            _dirty_files(base_root, include_untracked=False)
+            if base_root is not None and (base_root / ".git").exists() and git_available()
+            else []
+        )
+    except Exception:
+        _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
+        base_dirty_files = []
     return {"ok": True, "status": {
         "enabled": True, "base_branch": base_branch,
         "base_path_state": base_path_state,
         "ahead_count": ahead, "behind_count": behind,
+        "base_dirty": {"dirty": bool(base_dirty_files), "files": base_dirty_files},
         "slots": slots, "pending": pending, "pending_count": len(pending),
     }}
 
@@ -2011,6 +2032,161 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
         if proc.returncode != 0:
             raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
         return {"ok": True, "result": {"pushed": True, "branch": branch}}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+# ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
+# A src-content save writes straight into the base checkout (an admin edit),
+# leaving it dirty and tripping the E3 merge guard for EVERY group of the
+# project. These operations are the sanctioned way OUT of that state: an
+# explicit, visible commit onto the base branch (no push — the next merge
+# finalize carries it), or a per-file restore to HEAD. Scope always matches the
+# E3 guard exactly: tracked-file changes only.
+
+def default_base_commit_message(files: list[str]) -> str:
+    """Deterministic default subject for a base-checkout commit (L0002 §2.2).
+
+    "fix: a.py, b.py"; when the joined list overflows COMMIT_SUBJECT_MAX the
+    abbreviated "fix: a.py 외 N건" is used (hard-cut as a last resort so the
+    result is always a valid subject). The FE seeds its input with the same
+    rule, so either side may materialize the message with identical output.
+    """
+    subject = BASE_COMMIT_MSG_PREFIX + BASE_COMMIT_MSG_JOINER.join(files)
+    if len(subject) <= COMMIT_SUBJECT_MAX:
+        return subject
+    subject = f"{BASE_COMMIT_MSG_PREFIX}{files[0]} 외 {len(files) - 1}건"
+    return subject[:COMMIT_SUBJECT_MAX]
+
+
+def _merge_in_progress(base_root: Path) -> bool:
+    """True while a conflict session holds the base checkout mid-merge — commit
+    and revert must not touch that intermediate state (resolve/abort only)."""
+    return (base_root / ".git" / "MERGE_HEAD").exists()
+
+
+def _require_base_checkout(project_id: str) -> tuple[dict, Path]:
+    """(cfg, base_root) for base-commit/-revert, or 404/409 per the shared rules."""
+    cfg = _require_enabled_config(project_id)
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    project_name = _project_name(project_id)
+    base_root = src_root(project_name, base_branch) if project_name else None
+    if base_root is None or _judge_base_slot(base_root, base_branch) != "checkout":
+        raise GitServiceError(
+            409, "invalid_state", "base checkout is not available"
+        )
+    return cfg, base_root
+
+
+def base_commit(project_id: str, message: Optional[str]) -> dict:
+    """POST …/projects/{id}/git/base-commit — commit ALL dirty tracked files of
+    the base checkout (L0002 §2.3). No partial commit; per-file granularity is
+    the revert operation. No push: the local commit rides on the next merge
+    finalize's base push (ff-only against origin stays a no-op while origin/base
+    remains an ancestor). An empty dirty set is an idempotent success so the
+    FE's commit-then-merge retry never turns a lost race into an error.
+    """
+    _, base_root = _require_base_checkout(project_id)
+    subject = normalize_subject(message)
+    if len(subject) > COMMIT_SUBJECT_MAX:
+        raise GitServiceError(
+            422, "invalid_request",
+            "message must be a single line of at most 200 characters.",
+        )
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        if _merge_in_progress(base_root):
+            raise GitServiceError(
+                409, "invalid_state", "a merge is in progress; resolve or abort it first"
+            )
+        files = _dirty_files(base_root, include_untracked=False)
+        if not files:
+            return {"ok": True, "result": {
+                "committed": False, "commit": None, "subject": None,
+                "files": [], "remaining": [],
+            }}
+        if not subject:
+            subject = default_base_commit_message(files)
+        # `add -u` = stage tracked changes only (mod/delete), never untracked
+        # build artifacts — the exact E3/_dirty_files scope.
+        proc = _run_git(["add", "-u"], cwd=base_root)
+        if proc.returncode == 0:
+            proc = _run_git([*_GIT_IDENT, "commit", "-m", subject], cwd=base_root)
+        if proc.returncode != 0:
+            # The checkout stays dirty (staged-but-uncommitted is still porcelain
+            # output), so the E3 guard keeps holding and a retry re-stages.
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
+        return {"ok": True, "result": {
+            "committed": True,
+            "commit": (head.stdout or "").strip() or None,
+            "subject": subject,
+            "files": files,
+            "remaining": _dirty_files(base_root, include_untracked=False),
+        }}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def base_revert(project_id: str, files: list[str]) -> dict:
+    """POST …/projects/{id}/git/base-revert — restore the named files of the
+    base checkout to HEAD (worktree + index; undoes edits and deletions alike,
+    L0002 §2.4). Per-file results; a file that is not dirty reports "not_dirty"
+    and counts as success (idempotent against races and double clicks).
+    """
+    _, base_root = _require_base_checkout(project_id)
+    cleaned = [str(f or "").strip() for f in (files or [])]
+    cleaned = [f for f in cleaned if f]
+    if not cleaned:
+        raise GitServiceError(422, "invalid_request", "files must name at least one path")
+    for f in cleaned:
+        # Reject absolute paths and parent traversal BEFORE the lock — the
+        # operation must never reach outside the base checkout.
+        norm = f.replace("\\", "/")
+        if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+            raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        if _merge_in_progress(base_root):
+            raise GitServiceError(
+                409, "invalid_state", "a merge is in progress; resolve or abort it first"
+            )
+        dirty = set(_dirty_files(base_root, include_untracked=False))
+        results: list[dict] = []
+        for f in cleaned:
+            if f not in dirty:
+                results.append({"path": f, "result": "not_dirty"})
+                continue
+            # checkout HEAD -- <path> restores worktree AND index from HEAD; the
+            # path travels as a literal argv element (no shell), matching the
+            # unquoted porcelain form _dirty_files produced.
+            proc = _run_git(["checkout", "HEAD", "--", f], cwd=base_root)
+            results.append({"path": f, "result": "reverted" if proc.returncode == 0 else "error"})
+        remaining = _dirty_files(base_root, include_untracked=False)
+        return {
+            "ok": all(r["result"] != "error" for r in results),
+            "result": {"results": results, "remaining": remaining},
+        }
     finally:
         db_git.release_lock(project_id, holder)
 

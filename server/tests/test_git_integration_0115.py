@@ -979,3 +979,196 @@ class TestGitActions0162:
         assert merged["ok"] is True and merged["result"]["status"] == "merged"
         files = _git(["ls-tree", "--name-only", "main"], cwd=act_origin["bare"]).split()
         assert "work.txt" in files
+
+
+# ── flowgate.default.0177: base-checkout commit / revert + E3 409 (L0002) ────
+
+class TestDefaultBaseCommitMessage0177:
+    """§2.2 — deterministic default subject; no git needed."""
+
+    def test_plain_join(self):
+        from modules.flow_gate.services import git_service as svc
+
+        assert svc.default_base_commit_message(["a.py"]) == "fix: a.py"
+        assert svc.default_base_commit_message(["a.py", "b/c.txt"]) == "fix: a.py, b/c.txt"
+
+    def test_overflow_abbreviates(self):
+        from modules.flow_gate.services import git_service as svc
+
+        files = [f"dir/deep/path/file_{i:03}.py" for i in range(30)]
+        msg = svc.default_base_commit_message(files)
+        assert msg == f"fix: {files[0]} 외 29건"
+        assert len(msg) <= svc.COMMIT_SUBJECT_MAX
+
+    def test_extreme_path_hard_cut(self):
+        from modules.flow_gate.services import git_service as svc
+
+        files = ["x" * 400, "y.py"]
+        msg = svc.default_base_commit_message(files)
+        assert len(msg) == svc.COMMIT_SUBJECT_MAX
+        assert msg.startswith("fix: xxx")
+
+
+@pytest.fixture(scope="class")
+def base_origin(seed):
+    """A dedicated bare origin + enabled project with a provisioned base checkout."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "baseprj", "project_name": "BaseProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0177-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    (seedwt / "a.txt").write_text("alpha\n", encoding="utf-8")
+    (seedwt / "b.txt").write_text("beta\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("baseprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    out = svc.provision_base("baseprj", "manual")
+    assert out["status"] == "ok"
+    base = src_root("BaseProj", "main")
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp, "base": base}
+    svc.delete_config("baseprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestBaseCommitRevert0177:
+    def test_status_clean_and_commit_idempotent(self, base_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        out = svc.project_git_status("baseprj")["status"]
+        assert out["base_dirty"] == {"dirty": False, "files": []}
+        # dirty 0개인데 base-commit → 멱등 성공 (§5 경합 케이스)
+        out = svc.base_commit("baseprj", None)["result"]
+        assert out["committed"] is False
+        assert out["files"] == [] and out["remaining"] == []
+
+    def test_dirty_listed_then_revert_then_commit(self, base_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        base = base_origin["base"]
+        (base / "a.txt").write_text("edited alpha\n", encoding="utf-8")
+        (base / "b.txt").unlink()  # a deletion is a tracked change too
+        (base / "junk.tmp").write_text("untracked\n", encoding="utf-8")
+
+        out = svc.project_git_status("baseprj")["status"]
+        assert out["base_dirty"]["dirty"] is True
+        # untracked artifacts never appear (E3 scope)
+        assert sorted(out["base_dirty"]["files"]) == ["a.txt", "b.txt"]
+
+        # per-file revert restores a deletion from HEAD; a.txt stays dirty
+        rev = svc.base_revert("baseprj", ["b.txt"])
+        assert rev["ok"] is True
+        assert rev["result"]["results"] == [{"path": "b.txt", "result": "reverted"}]
+        assert rev["result"]["remaining"] == ["a.txt"]
+        assert (base / "b.txt").read_text(encoding="utf-8") == "beta\n"
+
+        # blank message → server derives the default subject (§2.2/§2.3)
+        out = svc.base_commit("baseprj", "")["result"]
+        assert out["committed"] is True
+        assert out["subject"] == "fix: a.txt"
+        assert out["files"] == ["a.txt"] and out["remaining"] == []
+        assert out["commit"]
+        # committed but NOT pushed: base is ahead of origin by exactly 1
+        st = svc.project_git_status("baseprj")["status"]
+        assert st["base_dirty"] == {"dirty": False, "files": []}
+        assert st["ahead_count"] == 1 and st["behind_count"] == 0
+        log = _git(["log", "-1", "--pretty=%s"], cwd=base)
+        assert log.strip() == "fix: a.txt"
+
+    def test_revert_not_dirty_and_validation(self, base_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        # not-dirty target is an idempotent success item (§5)
+        rev = svc.base_revert("baseprj", ["a.txt"])
+        assert rev["ok"] is True
+        assert rev["result"]["results"] == [{"path": "a.txt", "result": "not_dirty"}]
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_revert("baseprj", [])
+        assert exc.value.status == 422
+        for bad in ["/etc/passwd", "../outside.txt", "a/../../b"]:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.base_revert("baseprj", [bad])
+            assert exc.value.status == 422
+
+    def test_commit_message_too_long_422(self, base_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_commit("baseprj", "x" * 201)
+        assert exc.value.status == 422
+
+    def test_merge_session_guard(self, base_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        marker = base_origin["base"] / ".git" / "MERGE_HEAD"
+        marker.write_text("0" * 40 + "\n", encoding="utf-8")
+        try:
+            with pytest.raises(svc.GitServiceError) as e1:
+                svc.base_commit("baseprj", None)
+            assert e1.value.status == 409 and e1.value.code == "invalid_state"
+            with pytest.raises(svc.GitServiceError) as e2:
+                svc.base_revert("baseprj", ["a.txt"])
+            assert e2.value.status == 409 and e2.value.code == "invalid_state"
+        finally:
+            marker.unlink()
+
+    def test_lock_busy_409(self, base_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        assert db_git.try_acquire_lock("baseprj", "op:elsewhere") is True
+        try:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.base_commit("baseprj", None)
+            assert exc.value.status == 409 and exc.value.code == "git_busy"
+        finally:
+            db_git.release_lock("baseprj", "op:elsewhere")
+
+    def test_e3_409_then_commit_then_merge(self, base_origin):
+        """The confirmed flow (§2.6-c): merge → 409 base_dirty(files) →
+        base-commit → retry merge succeeds, and the base-commit rides along."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "baseprj.default.0301"
+        assert svc.ensure_worktree("baseprj", "default", group) == "ok"
+        wt = src_root("BaseProj", "baseprj_default_0301")
+        (wt / "work.txt").write_text("group work\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        base = base_origin["base"]
+        (base / "a.txt").write_text("hotfixed alpha\n", encoding="utf-8")
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group, "merge")
+        assert exc.value.status == 409          # was 500 before 0177 (L0002 §2.5)
+        assert exc.value.code == "base_dirty"
+        assert exc.value.details == {"files": ["a.txt"]}
+
+        out = svc.base_commit("baseprj", None)["result"]
+        assert out["committed"] is True and out["remaining"] == []
+
+        # the local base commit does not block the retry (ff-only stays a no-op)
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "merged"
+        # origin main now holds the group work AND the explicit base commit
+        files = _git(["ls-tree", "--name-only", "main"], cwd=base_origin["bare"]).split()
+        assert "work.txt" in files
+        assert _git(["show", "main:a.txt"], cwd=base_origin["bare"]) == "hotfixed alpha\n"
