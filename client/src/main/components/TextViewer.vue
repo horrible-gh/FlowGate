@@ -4,7 +4,9 @@
     <div v-else-if="error" class="text-viewer__state text-viewer__state--error">
       <span>{{ t('main.error.file_load_failed') }}</span>
     </div>
+    <div v-else-if="binaryFile" class="text-viewer__state">{{ t('main.explorer.binary_file') }}</div>
     <div v-else class="text-viewer__code-wrap" :class="{ 'text-viewer__code-wrap--wrap': wrapLines }">
+      <div v-if="truncated" class="text-viewer__truncated">{{ t('main.explorer.truncated_file') }}</div>
       <div v-for="(line, idx) in highlightedLines" :key="idx" class="text-viewer__line-row">
         <span class="text-viewer__line-num" aria-hidden="true">{{ idx + 1 }}</span>
         <code class="text-viewer__line-code" v-html="line || '&nbsp;'"></code>
@@ -17,6 +19,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api from '@shared/api'
+import { useExplorerStore } from '../stores/explorer'
 
 import hljs from 'highlight.js/lib/core'
 import 'highlight.js/styles/github.css'
@@ -83,13 +86,20 @@ const props = defineProps<{
   path: string
   projectId: string | null | undefined
   wrapLines?: boolean
+  // 0186 P0005 — when set, read the file from this group branch's Git objects
+  // (checkout-free, read-only) with gitCommit pinning the point-in-time.
+  gitGroupId?: string | null
+  gitCommit?: string | null
 }>()
 
 const { t } = useI18n()
+const explorerStore = useExplorerStore()
 
 const content = ref('')
 const loading = ref(false)
 const error = ref(false)
+const binaryFile = ref(false)
+const truncated = ref(false)
 
 function getLanguage(filePath: string): string | null {
   const basename = (filePath.split('/').pop()?.split('\\').pop() ?? '').toLowerCase()
@@ -135,10 +145,19 @@ async function loadContent() {
   if (!props.path || !props.projectId) return
   loading.value = true
   error.value = false
+  binaryFile.value = false
+  truncated.value = false
   try {
-    const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(props.path)}`
-    const res = await api.get<string>(url, { responseType: 'text' })
-    content.value = res.data ?? ''
+    if (props.gitGroupId) {
+      const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, props.path)
+      binaryFile.value = data.binary
+      truncated.value = data.truncated
+      content.value = data.binary ? '' : (data.content ?? '')
+    } else {
+      const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(props.path)}`
+      const res = await api.get<string>(url, { responseType: 'text' })
+      content.value = res.data ?? ''
+    }
   } catch {
     error.value = true
     content.value = ''
@@ -147,7 +166,7 @@ async function loadContent() {
   }
 }
 
-watch(() => [props.path, props.projectId], loadContent, { immediate: true })
+watch(() => [props.path, props.projectId, props.gitGroupId, props.gitCommit], loadContent, { immediate: true })
 
 defineExpose({ loadContent })
 </script>
@@ -182,6 +201,15 @@ defineExpose({ loadContent })
 
 .text-viewer::-webkit-scrollbar-corner {
   background: #e2e8f0;
+}
+
+.text-viewer__truncated {
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 4px;
 }
 
 .text-viewer__state {

@@ -682,6 +682,13 @@ export default {
       search_clear: '검색 지우기',
       search_content_label: '내용까지 검색',
       search_no_results: '일치하는 문서가 없습니다.',
+      group_select: '브랜치',
+      base_branch: '기준 브랜치 ({branch})',
+      readonly_badge: '그룹 {group} 브랜치 열람 중 · 읽기 전용',
+      binary_file: '바이너리 파일 — 미리보기를 제공하지 않습니다.',
+      truncated_file: '파일이 커서 앞부분만 표시합니다.',
+      git_ahead: '기준 브랜치보다 {n}커밋 앞섬',
+      git_awaiting: '마무리 대기',
     },
     tabs: {
       new: '+ 새 탭',

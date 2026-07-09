@@ -12,6 +12,11 @@ export interface Tab {
   modifiedAt?: string | null
   readonly?: boolean
   projectId?: string | null
+  // 0186 P0005 — when set, the file tab reads from a group branch's Git objects
+  // (checkout-free, read-only) instead of the base checkout. gitCommit pins the
+  // read so the viewer content matches the tree snapshot the file was opened from.
+  gitGroupId?: string | null
+  gitCommit?: string | null
 }
 
 function getUserId(): string {
@@ -93,6 +98,9 @@ export const useTabsStore = defineStore('tabs', () => {
         existing.type = tab.type
         existing.mdPath = tab.mdPath
         existing.projectId = tab.projectId
+        existing.gitGroupId = tab.gitGroupId ?? null
+        existing.gitCommit = tab.gitCommit ?? null
+        existing.readonly = tab.readonly
       } else if (isFileTab(existing)) {
         // Keep file-tab identity; ignore doc-tab metadata from mismatched opens.
       } else {

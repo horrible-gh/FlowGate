@@ -3,6 +3,16 @@
     <div class="sdb-ph">
       <span class="sdb-ph-title">{{ t('main.explorer.files') }}</span>
       <div class="sdb-ph-acts">
+        <select
+          v-if="groupSlots.length"
+          v-model="selectedGroup"
+          class="fx-group-select"
+          :aria-label="t('main.explorer.group_select')"
+          @change="onGroupChange"
+        >
+          <option :value="null">{{ t('main.explorer.base_branch', { branch: baseBranch }) }}</option>
+          <option v-for="s in groupSlots" :key="s.group_id" :value="s.group_id">{{ groupLabel(s) }}</option>
+        </select>
         <button class="sdb-act-btn" :aria-label="t('main.explorer.retry')" @click="reload">
           <i class="fa-solid fa-rotate-right"></i>
         </button>
@@ -16,6 +26,15 @@
       </div>
     </div>
     <template v-if="!collapsed">
+      <div v-if="selectedGroup" class="fx-readonly-badge">
+        <i class="fa-solid fa-eye"></i>
+        <span>{{ t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
+        <span
+          v-if="groupGitState && groupGitState.ahead_count > 0"
+          class="fx-git-badge"
+        >{{ t('main.explorer.git_ahead', { n: groupGitState.ahead_count })
+          }}<template v-if="groupGitState.status === 'awaiting_choice'"> · {{ t('main.explorer.git_awaiting') }}</template></span>
+      </div>
       <div class="sdb-scroll">
         <div v-if="loading" class="sdb-state">⏳ ...</div>
         <div v-else-if="error" class="sdb-state sdb-state--error">
@@ -46,6 +65,7 @@
                 :node="node"
                 :all-nodes="nodes"
                 :project-id="projectId ?? ''"
+                :readonly="!!selectedGroup"
                 @open="openFile"
                 @tree-changed="reload"
               />
@@ -120,6 +140,63 @@ const rootFileInputRef = ref<HTMLInputElement | null>(null)
 const rootFolderInputRef = ref<HTMLInputElement | null>(null)
 const rootDragOver = ref(false)
 
+// ── Group-branch (checkout-free) explorer (0186 P0005) ───────────────────────
+// selectedGroup = null → base checkout (existing behaviour); a group_id → that
+// group's branch is read straight from Git objects (read-only, no checkout switch).
+const baseBranch = computed(() => projectStore.currentBranch || 'main')
+const groupSlots = ref<Array<{ group_id: string; branch: string; status: string }>>([])
+// selectedGroup restores from the store so an SSE-driven explorer remount
+// (group_view_refresh → refreshAll bumps explorerRefreshKey) keeps the group
+// tree in view instead of silently reverting to base (L0006 §2.4, 0186 finding 3).
+// A genuine project switch clears it (watch guard + loadGroupSlots safety net).
+const selectedGroup = ref<string | null>(explorerStore.activeGroupBranch)
+const groupCommit = ref<string | null>(null)
+// P0005 §9 — group Git status badge (reuses the finalize GET, no new field).
+const groupGitState = ref<{ ahead_count: number; status: string } | null>(null)
+
+function shortGroup(gid: string): string {
+  return gid.split('.').pop() ?? gid
+}
+
+function groupLabel(s: { group_id: string; status: string }): string {
+  const n = shortGroup(s.group_id)
+  return s.status && s.status !== 'none' ? `${n} (${s.status})` : n
+}
+
+async function loadGroupSlots(pid: string) {
+  try {
+    const res = await api.get(`/api/v1/projects/${encodeURIComponent(pid)}/git/status`)
+    const status = (res.data as any)?.status
+    groupSlots.value = Array.isArray(status?.slots) ? status.slots : []
+  } catch {
+    groupSlots.value = []
+  }
+  if (selectedGroup.value && !groupSlots.value.some((s) => s.group_id === selectedGroup.value)) {
+    selectedGroup.value = null
+  }
+}
+
+// P0005 §9 — fetch the group's finalize state for the header status badge
+// ("N commits ahead of base · finalize pending"). Reuses the existing finalize
+// GET; failure is non-fatal (the badge simply hides).
+async function loadGroupGitBadge(gid: string) {
+  try {
+    const res = await api.get(`/api/v1/groups/${encodeURIComponent(gid)}/git/finalize`)
+    const st = (res.data as any)?.state
+    groupGitState.value = st
+      ? { ahead_count: Number(st.ahead_count ?? 0), status: String(st.status ?? 'none') }
+      : null
+  } catch {
+    groupGitState.value = null
+  }
+}
+
+async function onGroupChange() {
+  explorerStore.activeGroupBranch = selectedGroup.value
+  explorerStore.selectedFileNodeId = null
+  await reload()
+}
+
 onMounted(() => {
   if (rootFolderInputRef.value) {
     rootFolderInputRef.value.setAttribute('webkitdirectory', '')
@@ -139,12 +216,22 @@ async function reload() {
   if (!silent) loading.value = true
   error.value = false
   try {
-    nodes.value = await explorerStore.fetchFileTree(props.projectId, true)
-    if (explorerStore.pendingSelectFilePath) {
-      const target = normPath(explorerStore.pendingSelectFilePath)
-      const found = nodes.value.find((n) => n.type === 'file' && normPath(n.path) === target)
-      if (found) explorerStore.selectedFileNodeId = found.id
-      explorerStore.pendingSelectFilePath = null
+    if (selectedGroup.value) {
+      const r = await explorerStore.fetchGroupBranchTree(props.projectId, selectedGroup.value)
+      nodes.value = r.nodes
+      groupCommit.value = r.commit
+      await loadGroupGitBadge(selectedGroup.value)
+    } else {
+      groupCommit.value = null
+      groupGitState.value = null
+      nodes.value = await explorerStore.fetchFileTree(props.projectId, true)
+      // pendingSelectFilePath is only produced by base-checkout edits/creates.
+      if (explorerStore.pendingSelectFilePath) {
+        const target = normPath(explorerStore.pendingSelectFilePath)
+        const found = nodes.value.find((n) => n.type === 'file' && normPath(n.path) === target)
+        if (found) explorerStore.selectedFileNodeId = found.id
+        explorerStore.pendingSelectFilePath = null
+      }
     }
   } catch {
     error.value = true
@@ -179,6 +266,22 @@ async function openFile(node: FileNode) {
   const projectId = props.projectId
   if (!projectId) return
   let type: 'md' | 'text' | 'too_large' = isMarkdownFile(node.path) ? 'md' : 'text'
+  // Group-branch read (checkout-free, read-only): the viewer loads content from
+  // the blob endpoint (pinned to the tree commit) and handles binary/oversize.
+  if (selectedGroup.value) {
+    tabsStore.openTab({
+      id: `git:${selectedGroup.value}:${node.id}`,
+      title: node.label,
+      path: node.path,
+      type,
+      mdPath: type === 'md' ? node.path : null,
+      projectId,
+      gitGroupId: selectedGroup.value,
+      gitCommit: groupCommit.value,
+      readonly: true,
+    })
+    return
+  }
   try {
     const url = `/api/v1/projects/${encodeURIComponent(projectId)}/files/src-content?path=${encodeURIComponent(node.path)}`
     const res = await api.head(url)
@@ -200,6 +303,7 @@ async function openFile(node: FileNode) {
 }
 
 function onRootContextMenu(e: MouseEvent) {
+  if (selectedGroup.value) return // read-only group view: no root mutations
   rootCtxX.value = e.clientX
   rootCtxY.value = e.clientY
   showRootCtx.value = true
@@ -231,6 +335,7 @@ function onRootCreated(payload: { name: string; type: 'file' | 'folder' }) {
 
 // ── Root drag and drop ───────────────────────────────────────────────────────
 function onRootDragOver() {
+  if (selectedGroup.value) return
   rootDragOver.value = true
 }
 
@@ -243,6 +348,7 @@ function onRootDragLeave(e: DragEvent) {
 
 async function onRootDrop(e: DragEvent) {
   rootDragOver.value = false
+  if (selectedGroup.value) return
   if (!props.projectId || !e.dataTransfer?.items) return
   const files = await collectDropFiles(e.dataTransfer.items)
   await uploadFiles(props.projectId, '', files, reload)
@@ -285,12 +391,35 @@ async function onRootFolderSelected(e: Event) {
   input.value = ''
 }
 
-watch(() => props.projectId, async (pid) => {
-  if (!pid) { nodes.value = []; return }
+watch(() => props.projectId, async (pid, prevPid) => {
+  // A genuine in-place project switch drops any group selection — group branches
+  // are project-scoped. A remount with the same project (fresh instance from the
+  // SSE-driven explorerRefreshKey bump → prevPid === undefined) instead PRESERVES
+  // the active group so a group_view_refresh re-renders the (freshly fetched)
+  // group tree rather than falling back to base (0186 finding 3). loadGroupSlots
+  // is the safety net: on any project change the stale group_id is absent from the
+  // new project's slots and is cleared there.
+  if (prevPid !== undefined && prevPid !== pid) {
+    selectedGroup.value = null
+    explorerStore.activeGroupBranch = null
+  }
+  groupCommit.value = null
+  groupGitState.value = null
+  if (!pid) { nodes.value = []; groupSlots.value = []; return }
   loading.value = true
   error.value = false
   try {
-    nodes.value = await explorerStore.fetchFileTree(pid)
+    await loadGroupSlots(pid)
+    if (selectedGroup.value) {
+      explorerStore.activeGroupBranch = selectedGroup.value
+      const r = await explorerStore.fetchGroupBranchTree(pid, selectedGroup.value)
+      nodes.value = r.nodes
+      groupCommit.value = r.commit
+      await loadGroupGitBadge(selectedGroup.value)
+    } else {
+      explorerStore.activeGroupBranch = null
+      nodes.value = await explorerStore.fetchFileTree(pid)
+    }
   } catch {
     error.value = true
   } finally {
@@ -303,5 +432,36 @@ watch(() => props.projectId, async (pid) => {
 .tree-lbl--project {
   color: rgba(255, 255, 255, 0.85);
   font-weight: 600;
+}
+
+.fx-group-select {
+  max-width: 130px;
+  font-size: 0.72rem;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.fx-readonly-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.fx-git-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.3);
 }
 </style>

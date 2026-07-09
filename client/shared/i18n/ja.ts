@@ -682,6 +682,13 @@ export default {
       search_clear: '検索をクリア',
       search_content_label: '本文も検索',
       search_no_results: '一致するドキュメントがありません。',
+      group_select: 'ブランチ',
+      base_branch: '基準ブランチ ({branch})',
+      readonly_badge: 'グループ {group} ブランチを閲覧中 · 読み取り専用',
+      binary_file: 'バイナリファイル — プレビューできません。',
+      truncated_file: 'ファイルが大きいため、先頭のみ表示しています。',
+      git_ahead: '基準ブランチより {n} コミット先行',
+      git_awaiting: '仕上げ待ち',
     },
     tabs: {
       new: '+ 新しいタブ',

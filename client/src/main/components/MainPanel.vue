@@ -223,6 +223,8 @@
                 :path="tab.mdPath ?? tab.path"
                 :doc-id="tab.typeCode ? tab.id : null"
                 :project-id="tab.projectId ?? null"
+                :git-group-id="tab.gitGroupId ?? null"
+                :git-commit="tab.gitCommit ?? null"
               />
             </div>
             </template>
@@ -252,6 +254,8 @@
                 :path="tab.path"
                 :project-id="tab.projectId ?? null"
                 :wrap-lines="textWrapEnabled"
+                :git-group-id="tab.gitGroupId ?? null"
+                :git-commit="tab.gitCommit ?? null"
               />
             </div>
           </div>
@@ -744,12 +748,16 @@
               :path="fullViewTab.path"
               :project-id="fullViewTab.projectId ?? null"
               :wrap-lines="textWrapEnabled"
+              :git-group-id="fullViewTab.gitGroupId ?? null"
+              :git-commit="fullViewTab.gitCommit ?? null"
             />
             <MdViewer
               v-else
               :path="fullViewTab.mdPath ?? fullViewTab.path"
               :doc-id="fullViewTab.typeCode ? fullViewTab.id : null"
               :project-id="fullViewTab.projectId ?? null"
+              :git-group-id="fullViewTab.gitGroupId ?? null"
+              :git-commit="fullViewTab.gitCommit ?? null"
             />
           </div>
         </div>

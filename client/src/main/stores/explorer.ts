@@ -18,6 +18,19 @@ export interface FileNode {
   permissions: string[]
 }
 
+// 0186 P0005 §3 — group-branch blob read (checkout-free). Mirrors read_group_blob.
+export interface GroupBlobData {
+  group_id: string
+  branch: string
+  commit: string
+  path: string
+  size: number
+  binary: boolean
+  truncated: boolean
+  encoding: string | null
+  content: string | null
+}
+
 export interface GroupNode {
   id: string
   parent_id: string | null
@@ -60,6 +73,13 @@ export const useExplorerStore = defineStore('explorer', () => {
   // tree. Refreshed by its four triggers: git/status fetch, src-content save
   // response, base-commit/base-revert response, finalize base_dirty 409.
   const baseDirtyFiles = ref<Record<string, string[]>>({})
+  // 0186 L0006 §2.4 — checkout-free group-branch explorer caches, keyed by the
+  // branch HEAD commit so a branch advance auto-invalidates the stale snapshot.
+  // activeGroupBranch: currently viewed group_id in the file explorer (null = base).
+  const activeGroupBranch = ref<string | null>(null)
+  const groupBranchCommit = ref<Record<string, string>>({})       // `${pid}:${gid}` -> commit
+  const groupBranchTreeCache = ref<Record<string, FileNode[]>>({}) // `${pid}:${gid}:${commit}` -> nodes
+  const groupBlobCache = ref<Record<string, GroupBlobData>>({})    // `${pid}:${gid}:${commit}:${path}` -> blob
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
@@ -118,6 +138,86 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(groupTreeCache.value)) {
       if (key === pid || key.startsWith(`${pid}:`)) delete groupTreeCache.value[key]
     }
+    for (const key of Object.keys(groupBranchTreeCache.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupBranchTreeCache.value[key]
+    }
+    for (const key of Object.keys(groupBlobCache.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupBlobCache.value[key]
+    }
+    for (const key of Object.keys(groupBranchCommit.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupBranchCommit.value[key]
+    }
+  }
+
+  // ── Group-branch (checkout-free) explorer (0186 P0005 §2·§3) ────────────────
+
+  const groupKey = (pid: string, gid: string) => `${pid}:${gid}`
+
+  function purgeGroupCommit(pid: string, gid: string, commit: string) {
+    const prefix = `${groupKey(pid, gid)}:${commit}`
+    for (const k of Object.keys(groupBranchTreeCache.value)) {
+      if (k === prefix) delete groupBranchTreeCache.value[k]
+    }
+    for (const k of Object.keys(groupBlobCache.value)) {
+      if (k.startsWith(`${prefix}:`)) delete groupBlobCache.value[k]
+    }
+  }
+
+  function currentGroupCommit(pid: string, gid: string): string | undefined {
+    return groupBranchCommit.value[groupKey(pid, gid)]
+  }
+
+  /** Fetch a group branch's tree straight from Git objects (no checkout switch).
+   *  DEVIATION from P0005 §4 / L0006 §2.4 (which contract a cache-hit read on group
+   *  re-selection with force-refresh as the only bypass): tree reads always hit the
+   *  server (freshness-first). A read-only explorer must never show a stale snapshot
+   *  of a branch that AI workers are actively advancing, and this makes scenario 5
+   *  (branch-advance detection) hold unconditionally without depending on a refresh
+   *  trigger firing. The blob cache below is kept (needed for the §2.3 point-in-time
+   *  pin). On a commit change the previous commit's tree/blob caches are purged. */
+  async function fetchGroupBranchTree(
+    pid: string,
+    gid: string,
+  ): Promise<{ branch: string; commit: string; nodes: FileNode[] }> {
+    loadingFile.value = true
+    fileError.value = null
+    try {
+      const res = await getRequest<{ data: { branch: string; commit: string; nodes: FileNode[] } }>(
+        `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/tree`,
+      )
+      const data = (res.data as any).data as { branch: string; commit: string; nodes: FileNode[] }
+      const key = groupKey(pid, gid)
+      const prev = groupBranchCommit.value[key]
+      if (prev && prev !== data.commit) purgeGroupCommit(pid, gid, prev)
+      groupBranchCommit.value = { ...groupBranchCommit.value, [key]: data.commit }
+      const nodes = data.nodes.filter((n) => n.permissions.includes('read'))
+      groupBranchTreeCache.value[`${key}:${data.commit}`] = nodes
+      return { branch: data.branch, commit: data.commit, nodes }
+    } catch (e) {
+      fileError.value = 'tree_load_failed'
+      throw e
+    } finally {
+      loadingFile.value = false
+    }
+  }
+
+  /** Fetch a single file from a group branch, pinned to the tree's commit so tree
+   *  and blob never disagree on point-in-time (L0006 §2.3·§2.4). Blob responses
+   *  are cached by (pid, gid, commit, path). */
+  async function fetchGroupBranchBlob(pid: string, gid: string, path: string): Promise<GroupBlobData> {
+    const commit = currentGroupCommit(pid, gid)
+    if (commit) {
+      const cached = groupBlobCache.value[`${groupKey(pid, gid)}:${commit}:${path}`]
+      if (cached) return cached
+    }
+    const refQ = commit ? `&ref=${encodeURIComponent(commit)}` : ''
+    const res = await getRequest<{ data: GroupBlobData }>(
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/blob` +
+        `?path=${encodeURIComponent(path)}${refQ}`,
+    )
+    const data = (res.data as any).data as GroupBlobData
+    groupBlobCache.value[`${groupKey(pid, gid)}:${data.commit}:${path}`] = data
+    return data
   }
 
   function getCachedFileTree(pid: string): FileNode[] | undefined {
@@ -157,6 +257,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
+    activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchBlob, currentGroupCommit,
     setWorkflowNodeState, clearWorkflowNodeState,
   }
 })

@@ -21,7 +21,7 @@
       </span>
       <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
       <span
-        v-if="isBaseDirty"
+        v-if="isBaseDirty && !readonly"
         class="tree-dirty-marker"
         :title="t('main.file_tree_node.modified_badge')"
         :aria-label="t('main.file_tree_node.modified_badge')"
@@ -36,6 +36,7 @@
         :node="child"
         :all-nodes="allNodes"
         :project-id="projectId"
+        :readonly="readonly"
         @open="$emit('open', $event)"
         @tree-changed="$emit('tree-changed')"
       />
@@ -48,26 +49,30 @@
         <ContextMenuItem icon="fa-solid fa-chevron-right" @click="toggleExpand">
           {{ t('main.file_tree_node.open') }}
         </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-folder-plus" @click="openCreateFolder">
-          {{ t('main.file_tree_node.new_folder') }}
-        </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-file-circle-plus" @click="openCreateFile">
-          {{ t('main.file_tree_node.new_file') }}
-        </ContextMenuItem>
+        <template v-if="!readonly">
+          <ContextMenuItem icon="fa-solid fa-folder-plus" @click="openCreateFolder">
+            {{ t('main.file_tree_node.new_folder') }}
+          </ContextMenuItem>
+          <ContextMenuItem icon="fa-solid fa-file-circle-plus" @click="openCreateFile">
+            {{ t('main.file_tree_node.new_file') }}
+          </ContextMenuItem>
+        </template>
         <ContextMenuItem icon="fa-solid fa-rotate-right" @click="doRefresh">
           {{ t('main.file_tree_node.refresh') }}
         </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-upload" @click="openUploadFiles">
-          {{ t('main.file_tree_node.upload_files') }}
-        </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-folder-arrow-up" @click="openUploadFolder">
-          {{ t('main.file_tree_node.upload_folder') }}
-        </ContextMenuItem>
+        <template v-if="!readonly">
+          <ContextMenuItem icon="fa-solid fa-upload" @click="openUploadFiles">
+            {{ t('main.file_tree_node.upload_files') }}
+          </ContextMenuItem>
+          <ContextMenuItem icon="fa-solid fa-folder-arrow-up" @click="openUploadFolder">
+            {{ t('main.file_tree_node.upload_folder') }}
+          </ContextMenuItem>
+        </template>
       </template>
       <ContextMenuItem icon="fa-solid fa-link" @click="copyLink">
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
-      <ContextMenuItem icon="fa-solid fa-download" @click="downloadNode">
+      <ContextMenuItem v-if="!readonly" icon="fa-solid fa-download" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
     </ContextMenu>
@@ -101,6 +106,9 @@ const props = defineProps<{
   node: FileNode
   allNodes: FileNode[]
   projectId: string
+  // 0186 P0005 — group-branch (checkout-free) view is read-only: suppress the
+  // create / upload / download / base-dirty affordances that target the base checkout.
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -266,7 +274,7 @@ function onNodeDragLeave(e: DragEvent) {
 }
 
 async function onNodeDrop(e: DragEvent) {
-  if (props.node.type !== 'folder') return
+  if (props.node.type !== 'folder' || props.readonly) return
   e.stopPropagation()
   nodeDragOver.value = false
   if (!e.dataTransfer?.items) return

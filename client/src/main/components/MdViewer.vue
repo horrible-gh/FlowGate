@@ -47,14 +47,20 @@ import { getRequest, postRequest } from '@shared/api'
 import api from '@shared/api'
 import { stripFrontmatter } from '@shared/utils/markdown'
 import { useToast } from './common/useToast'
+import { useExplorerStore } from '../stores/explorer'
 
 const props = defineProps<{
   path: string | null
   docId?: string | null
   contentOverride?: string | null
   projectId?: string | null
+  // 0186 P0005 — read the markdown source from a group branch's Git objects
+  // (checkout-free, read-only) instead of the base checkout.
+  gitGroupId?: string | null
+  gitCommit?: string | null
 }>()
 const { t } = useI18n()
+const explorerStore = useExplorerStore()
 const { showToast } = useToast()
 
 const content = ref('')
@@ -204,7 +210,13 @@ async function loadContent(): Promise<boolean> {
       content.value = (res.data as any)?.content ?? ''
       hasLinkedSource.value = true
     } else if (path) {
-      if (props.projectId) {
+      if (props.projectId && props.gitGroupId) {
+        // Group-branch read: checkout-free blob (read-only). Binary/oversize
+        // markdown is unusual, but fall back to empty content rather than error.
+        const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
+        content.value = data.binary ? '' : (data.content ?? '')
+        hasLinkedSource.value = true
+      } else if (props.projectId) {
         const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
         const res = await api.get<string>(url, { responseType: 'text' })
         content.value = res.data
@@ -255,7 +267,7 @@ function onDocumentContentChanged(e: Event) {
 }
 
 watch(
-  () => [props.path, props.docId, props.contentOverride, props.projectId],
+  () => [props.path, props.docId, props.contentOverride, props.projectId, props.gitGroupId, props.gitCommit],
   loadContent,
   { immediate: true },
 )

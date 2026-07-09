@@ -682,6 +682,13 @@ export default {
       search_clear: 'Clear search',
       search_content_label: 'Search document content',
       search_no_results: 'No matching documents.',
+      group_select: 'Branch',
+      base_branch: 'Base branch ({branch})',
+      readonly_badge: 'Viewing group {group} branch · read-only',
+      binary_file: 'Binary file — preview not available.',
+      truncated_file: 'File is large; showing the beginning only.',
+      git_ahead: 'Ahead of base by {n} commit(s)',
+      git_awaiting: 'finalize pending',
     },
     tabs: {
       new: '+ New Tab',
