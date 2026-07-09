@@ -20,15 +20,12 @@
         <span v-if="node.type === 'folder'">▶</span>
       </span>
       <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
-      <!-- 0182 NR0003 §1 (was 0177 §2.6-a trailing "M"): the modified marker is a
-           ">" PREFIX in a fixed-width slot, per the original 0177.0012-T wording
-           ("> aaa.py"). The slot renders on every row — empty when clean — so the
-           filename start column stays aligned regardless of dirty state. -->
       <span
-        class="tree-dirty-slot"
-        :title="isBaseDirty ? t('main.file_tree_node.modified_badge') : undefined"
-        :aria-label="isBaseDirty ? t('main.file_tree_node.modified_badge') : undefined"
-      >{{ isBaseDirty ? '>' : '' }}</span>
+        v-if="isBaseDirty"
+        class="tree-dirty-marker"
+        :title="t('main.file_tree_node.modified_badge')"
+        :aria-label="t('main.file_tree_node.modified_badge')"
+      >></span>
       <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isBaseDirty }">{{ node.label }}</span>
       <span v-if="downloading" class="tree-loading"><i class="fa-solid fa-spinner fa-spin"></i></span>
     </div>
@@ -323,19 +320,14 @@ async function onNodeFolderSelected(e: Event) {
 </script>
 
 <style scoped>
-/* flowgate.default.0182 NR0003 §1·§2 — uncommitted base-checkout edit: a ">"
-   prefix in a fixed-width slot (every row keeps the slot so filenames align)
-   plus a tinted filename. Color comes from the --git-modified theme token. */
 .tree-lbl--dirty {
   color: var(--git-modified, #e2c08d);
 }
-.tree-dirty-slot {
+.tree-dirty-marker {
   flex: none;
-  width: 10px;
-  text-align: center;
   font-size: 0.72rem;
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1;
   color: var(--git-modified, #e2c08d);
 }
 </style>
