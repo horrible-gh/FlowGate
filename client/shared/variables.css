@@ -13,6 +13,9 @@
 
   --hdr-bg: #1a2744; --hdr-h: 52px; --tab-h: 38px;
   --sdb-bg: #1e2d47; --sdb-w: 280px; --sdb-bdr: #2d3f5c;
+  /* 0182 NR0003 §2: git "modified" accent on the dark sidebar tree — the fixed
+     #b45309 was too dark/red there; VSCode-dark's gitModified tone reads well. */
+  --git-modified: #e2c08d;
 
   --r-sm: 4px; --r: 6px; --r-lg: 10px; --r-xl: 16px;
   --sh-sm: 0 1px 3px rgba(0,0,0,.08);

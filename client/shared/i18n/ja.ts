@@ -1773,6 +1773,9 @@ export default {
       base_revert_btn: '元に戻す',
       base_commit_done: 'base の編集をコミットしました ({commit})',
       base_revert_done: '{file} を元に戻しました',
+      cleanup_btn: '完了ブランチの後片付け ({n})',
+      cleanup_done: '完了ブランチ {n} 件を片付けました',
+      cleanup_partial: '{n} 件を片付け、{failed} 件は失敗しました（サーバーログ参照）',
     },
     git_menu: {
       tooltip: 'Git反映',

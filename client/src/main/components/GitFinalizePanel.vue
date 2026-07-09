@@ -231,6 +231,20 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
+// 0182 NR0003 §6: the chunk parser/assembler state machine moved to a shared
+// composable so the header Git status panel's inline resolver uses the same
+// button-based workflow. Behavior here is unchanged.
+import {
+  useConflictChunks,
+  applyChunkChoice,
+  chunkLabel,
+  chunkNumber,
+  currentFileContent,
+  isFileResolved,
+  joinLines,
+  residualMarkers,
+  type ConflictFileState,
+} from '../composables/useConflictChunks'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 
 const props = defineProps<{ groupId: string }>()
@@ -238,43 +252,8 @@ const props = defineProps<{ groupId: string }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const projectStore = useProjectStore()
+const { initConflictFile, switchToDirectEdit, switchToChunkView } = useConflictChunks()
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
-
-const MAX_CHUNK_VIEW_CHARS = 500000
-const MAX_MARKER_REPORT = 5
-const MARKER_OPEN_RE = /^<{7}( |$)/
-const MARKER_CLOSE_RE = /^>{7}( |$)/
-const MARKER_SEP_RE = /^={7}$/
-const MARKER_BASE_RE = /^\|{7}( |$)/
-
-type ConflictMode = 'chunk' | 'direct' | 'direct_only'
-type ChunkChoice = 'ours' | 'theirs' | 'both' | null
-
-type CommonSegment = { kind: 'common'; lines: string[] }
-type ChunkSegment = {
-  kind: 'chunk'
-  openLine: string
-  baseLine: string | null
-  sepLine: string
-  closeLine: string
-  ours: string[]
-  base: string[]
-  theirs: string[]
-  oursLabel: string
-  theirsLabel: string
-  choice: ChunkChoice
-  resolution: string[] | null
-}
-type ConflictSegment = CommonSegment | ChunkSegment
-
-interface ConflictFileState {
-  path: string
-  conflict_count: number
-  directText: string
-  mode: ConflictMode
-  segments: ConflictSegment[]
-  notice: string
-}
 
 interface GitCommitMessage {
   suggested: string
@@ -374,188 +353,6 @@ function actionLabel(c: string): string {
 }
 function actionDesc(c: string): string {
   return t(`main.git_finalize.action_desc.${c}`)
-}
-
-function splitKeepEol(content: string): string[] {
-  if (!content) return []
-  const matches = content.match(/.*(?:\r\n|\n|\r|$)/g) || []
-  return matches.filter((line, index) => line !== '' || index < matches.length - 1)
-}
-function stripEol(line: string): string {
-  return line.replace(/\r\n$|\n$|\r$/, '')
-}
-function markerLabel(line: string, prefix: string): string {
-  const s = stripEol(line)
-  return s.startsWith(prefix) ? s.slice(prefix.length).trim() : ''
-}
-function pushCommon(segments: ConflictSegment[], lines: string[]) {
-  if (lines.length) segments.push({ kind: 'common', lines: [...lines] })
-  lines.length = 0
-}
-function parseConflictFile(content: string): ConflictSegment[] | null {
-  const lines = splitKeepEol(content)
-  const segments: ConflictSegment[] = []
-  const common: string[] = []
-  let stateName: 'COMMON' | 'OURS' | 'BASE' | 'THEIRS' = 'COMMON'
-  let chunk: ChunkSegment | null = null
-
-  for (const line of lines) {
-    const s = stripEol(line)
-    if (stateName === 'COMMON') {
-      if (MARKER_OPEN_RE.test(s)) {
-        pushCommon(segments, common)
-        chunk = {
-          kind: 'chunk',
-          openLine: line,
-          baseLine: null,
-          sepLine: '',
-          closeLine: '',
-          ours: [],
-          base: [],
-          theirs: [],
-          oursLabel: markerLabel(line, '<<<<<<< '),
-          theirsLabel: '',
-          choice: null,
-          resolution: null,
-        }
-        stateName = 'OURS'
-      } else {
-        common.push(line)
-      }
-    } else if (stateName === 'OURS') {
-      if (!chunk) return null
-      if (MARKER_BASE_RE.test(s)) {
-        chunk.baseLine = line
-        stateName = 'BASE'
-      } else if (MARKER_SEP_RE.test(s)) {
-        chunk.sepLine = line
-        stateName = 'THEIRS'
-      } else if (MARKER_OPEN_RE.test(s) || MARKER_CLOSE_RE.test(s)) {
-        return null
-      } else {
-        chunk.ours.push(line)
-      }
-    } else if (stateName === 'BASE') {
-      if (!chunk) return null
-      if (MARKER_SEP_RE.test(s)) {
-        chunk.sepLine = line
-        stateName = 'THEIRS'
-      } else if (MARKER_OPEN_RE.test(s) || MARKER_CLOSE_RE.test(s)) {
-        return null
-      } else {
-        chunk.base.push(line)
-      }
-    } else if (stateName === 'THEIRS') {
-      if (!chunk) return null
-      if (MARKER_CLOSE_RE.test(s)) {
-        chunk.closeLine = line
-        chunk.theirsLabel = markerLabel(line, '>>>>>>> ')
-        segments.push(chunk)
-        chunk = null
-        stateName = 'COMMON'
-      } else if (MARKER_OPEN_RE.test(s) || MARKER_SEP_RE.test(s) || MARKER_BASE_RE.test(s)) {
-        return null
-      } else {
-        chunk.theirs.push(line)
-      }
-    }
-  }
-
-  if (stateName !== 'COMMON') return null
-  pushCommon(segments, common)
-  return segments
-}
-function assembleFile(segments: ConflictSegment[]): string {
-  const out: string[] = []
-  for (const seg of segments) {
-    if (seg.kind === 'common') {
-      out.push(...seg.lines)
-    } else if (seg.resolution) {
-      out.push(...seg.resolution)
-    } else {
-      out.push(seg.openLine, ...seg.ours)
-      if (seg.baseLine) out.push(seg.baseLine, ...seg.base)
-      out.push(seg.sepLine, ...seg.theirs, seg.closeLine)
-    }
-  }
-  return out.join('')
-}
-function residualMarkers(content: string): number[] {
-  const result: number[] = []
-  const lines = content.split(/\r\n|\n|\r/)
-  lines.forEach((line, index) => {
-    if (result.length >= MAX_MARKER_REPORT) return
-    if (MARKER_OPEN_RE.test(line) || MARKER_CLOSE_RE.test(line)) result.push(index + 1)
-  })
-  return result
-}
-function initConflictFile(f: { path: string; content: string; conflict_count: number }): ConflictFileState {
-  if (f.content.length > MAX_CHUNK_VIEW_CHARS) {
-    return {
-      path: f.path,
-      conflict_count: f.conflict_count,
-      directText: f.content,
-      mode: 'direct_only',
-      segments: [],
-      notice: t('main.git_finalize.too_large_direct'),
-    }
-  }
-  const parsed = parseConflictFile(f.content)
-  const chunkCount = parsed ? parsed.filter((seg) => seg.kind === 'chunk').length : 0
-  if (!parsed || (f.conflict_count > 0 && chunkCount === 0)) {
-    return {
-      path: f.path,
-      conflict_count: f.conflict_count,
-      directText: f.content,
-      mode: 'direct_only',
-      segments: [],
-      notice: t('main.git_finalize.direct_only_notice'),
-    }
-  }
-  return {
-    path: f.path,
-    conflict_count: f.conflict_count,
-    directText: f.content,
-    mode: 'chunk',
-    segments: parsed,
-    notice: '',
-  }
-}
-function currentFileContent(file: ConflictFileState): string {
-  return file.mode === 'chunk' ? assembleFile(file.segments) : file.directText
-}
-function isFileResolved(file: ConflictFileState): boolean {
-  return residualMarkers(currentFileContent(file)).length === 0
-}
-function joinLines(lines: string[]): string {
-  return lines.join('')
-}
-function applyChunkChoice(seg: ChunkSegment, choice: Exclude<ChunkChoice, null>) {
-  seg.choice = choice
-  if (choice === 'ours') seg.resolution = [...seg.ours]
-  else if (choice === 'theirs') seg.resolution = [...seg.theirs]
-  else seg.resolution = [...seg.ours, ...seg.theirs]
-}
-function switchToDirectEdit(file: ConflictFileState) {
-  file.directText = assembleFile(file.segments)
-  file.mode = 'direct'
-  file.notice = ''
-}
-function switchToChunkView(file: ConflictFileState) {
-  const parsed = parseConflictFile(file.directText)
-  if (!parsed) {
-    file.notice = t('main.git_finalize.switch_parse_failed')
-    return
-  }
-  file.segments = parsed
-  file.mode = 'chunk'
-  file.notice = ''
-}
-function chunkNumber(file: ConflictFileState, segmentIndex: number): number {
-  return file.segments.slice(0, segmentIndex + 1).filter((seg) => seg.kind === 'chunk').length
-}
-function chunkLabel(label: string, fallback: string): string {
-  return label || fallback
 }
 
 async function fetchState() {

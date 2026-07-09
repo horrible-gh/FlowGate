@@ -109,6 +109,9 @@ interface Pending {
   branch: string | null
   status: string
   default_action: string
+  // 0182 NR0003 §4: the group's final-approval doc (pending implies wf_done) —
+  // [open] targets it instead of the R root, which the git flow no longer needs.
+  ac_doc_id?: string | null
 }
 interface GitStatus {
   enabled: boolean
@@ -154,12 +157,26 @@ async function fetchStatus() {
   }
 }
 
-// Open a group by its workflow-root (R) document. R is always 0001 in a group,
-// so this reaches the group from any screen without extra plumbing; opening the
-// tab through the shared store makes MainPanel render it (§3.3 "jump to group").
+// Open a group from a pending row. 0182 NR0003 §4: every pending item's
+// workflow is already final-approved, so [open] goes to the AC document —
+// which hosts the git finalize panel since §3 — mirroring MainPanel's
+// openFinalApprovalTab tab shape. Groups without a resolvable AC doc fall
+// back to the R root (always 0001, reachable without extra plumbing).
 function openGroup(groupId: string) {
   dropdownOpen.value = false
   panelOpen.value = false
+  const acDocId = status.value?.pending.find((p) => p.group_id === groupId)?.ac_doc_id
+  if (acDocId) {
+    tabsStore.openTab({
+      id: acDocId,
+      title: `${acDocId} — ${t('main.review_action_bar.final_approval')}`,
+      path: '',
+      type: 'md',
+      typeCode: 'AC',
+      projectId: projectId.value,
+    })
+    return
+  }
   tabsStore.openTab({
     id: `${groupId}.0001-R`,
     title: `${groupId}.0001-R`,

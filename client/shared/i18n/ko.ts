@@ -1773,6 +1773,9 @@ export default {
       base_revert_btn: '되돌리기',
       base_commit_done: 'base 편집을 커밋했습니다 ({commit})',
       base_revert_done: '{file} 을(를) 되돌렸습니다',
+      cleanup_btn: '종결 브랜치 정리 ({n})',
+      cleanup_done: '종결 브랜치 {n}건을 정리했습니다',
+      cleanup_partial: '{n}건 정리, {failed}건 실패 (서버 로그 참조)',
     },
     git_menu: {
       tooltip: 'Git 마무리',

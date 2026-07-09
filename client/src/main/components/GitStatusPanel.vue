@@ -152,9 +152,11 @@
             </p>
           </div>
 
-          <!-- Inline conflict resolution editor (ported from GitFinalizePanel, P0005 §6).
-               Opens only for the expanded conflict row; edits the merged files and
-               submits resolve/abort against the same backend endpoints. -->
+          <!-- Inline conflict resolution editor. 0182 NR0003 §6: upgraded from the
+               0165-era raw textarea to the same button-based chunk workflow as
+               GitFinalizePanel (logic shared via useConflictChunks); parse-failure
+               and oversized files still fall back to direct editing. Submits
+               resolve/abort against the same backend endpoints as before. -->
           <div v-if="expanded === p.group_id && p.status === 'conflict'" class="git-status-conflict">
             <p class="git-fin-conflict-msg">
               <i class="fa-solid fa-triangle-exclamation"></i>
@@ -167,9 +169,54 @@
               <div class="git-conflict-path">
                 <i class="fa-solid fa-file-code"></i> {{ f.path }}
                 <span class="git-conflict-count">{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
+                <span class="git-conflict-path-spacer"></span>
+                <div v-if="f.mode !== 'direct_only'" class="git-conflict-mode-tabs">
+                  <button type="button" :class="{ active: f.mode === 'chunk' }" @click="switchToChunkView(f)">
+                    <i class="fa-solid fa-code-compare"></i> {{ t('main.git_finalize.chunk_view') }}
+                  </button>
+                  <button type="button" :class="{ active: f.mode === 'direct' }" @click="switchToDirectEdit(f)">
+                    <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_edit') }}
+                  </button>
+                </div>
+                <span v-else class="git-direct-only-badge">
+                  <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_only') }}
+                </span>
+              </div>
+              <p v-if="f.notice" class="git-conflict-notice">{{ f.notice }}</p>
+              <div v-if="f.mode === 'chunk'" class="git-status-chunk-list">
+                <template v-for="(seg, idx) in f.segments" :key="idx">
+                  <pre v-if="seg.kind === 'common' && seg.lines.length" class="git-common-block">{{ joinLines(seg.lines) }}</pre>
+                  <article v-else-if="seg.kind === 'chunk'" class="git-conflict-chunk">
+                    <div class="git-conflict-chunk-hd">
+                      <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(f, idx) }) }}</span>
+                      <div class="git-chunk-actions">
+                        <button type="button" :class="{ active: seg.choice === 'ours' }" @click="applyChunkChoice(seg, 'ours')">
+                          {{ t('main.git_finalize.current') }}
+                        </button>
+                        <button type="button" :class="{ active: seg.choice === 'theirs' }" @click="applyChunkChoice(seg, 'theirs')">
+                          {{ t('main.git_finalize.incoming') }}
+                        </button>
+                        <button type="button" :class="{ active: seg.choice === 'both' }" @click="applyChunkChoice(seg, 'both')">
+                          {{ t('main.git_finalize.both') }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="git-conflict-sides">
+                      <div class="git-conflict-side ours">
+                        <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }}</div>
+                        <pre>{{ joinLines(seg.ours) || '\n' }}</pre>
+                      </div>
+                      <div class="git-conflict-side theirs">
+                        <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }}</div>
+                        <pre>{{ joinLines(seg.theirs) || '\n' }}</pre>
+                      </div>
+                    </div>
+                  </article>
+                </template>
               </div>
               <textarea
-                v-model="f.edited"
+                v-else
+                v-model="f.directText"
                 class="git-conflict-editor"
                 spellcheck="false"
                 rows="12"
@@ -221,6 +268,18 @@
           <i class="fa-solid fa-cloud-arrow-up"></i>
           {{ t('main.git_status.push') }} ({{ status.base_branch }})
         </button>
+        <!-- 0182 NR0003 §5: backlog sweep of finalized slots' leftovers (worktree
+             dir + local work branch + ledger). New finalizes clean up after
+             themselves; this clears what accumulated before that (or failed). -->
+        <button
+          v-if="(status.cleanable_count ?? 0) > 0"
+          class="btn btn-sm btn-secondary"
+          :disabled="busy"
+          @click="doCleanup"
+        >
+          <i class="fa-solid fa-broom"></i>
+          {{ t('main.git_status.cleanup_btn', { n: status.cleanable_count }) }}
+        </button>
       </div>
     </div>
   </div>
@@ -232,26 +291,29 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
+// 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
+// (parser state machine + reassembly + residual-marker guard).
+import {
+  useConflictChunks,
+  applyChunkChoice,
+  chunkLabel,
+  chunkNumber,
+  currentFileContent,
+  isFileResolved,
+  joinLines,
+  type ConflictFileState,
+} from '../composables/useConflictChunks'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const { initConflictFile, switchToDirectEdit, switchToChunkView } = useConflictChunks()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
 const ACTIONS = ['merge', 'push', 'wait'] as const
-
-// Conflict-marker detection for the inline resolve guard (B0001 F2), mirroring
-// GitFinalizePanel: a bare "=======" is not counted (doubles as a Markdown rule).
-const MARKER_OPEN_RE = /^<{7}( |$)/
-const MARKER_CLOSE_RE = /^>{7}( |$)/
-function hasConflictMarkers(text: string): boolean {
-  return text
-    .split(/\r\n|\n|\r/)
-    .some((l) => MARKER_OPEN_RE.test(l) || MARKER_CLOSE_RE.test(l))
-}
 
 interface Slot {
   group_id: string
@@ -265,6 +327,8 @@ interface Pending {
   status: string
   default_action: string
   merge_id: number | null
+  // 0182 NR0003 §4: the group's final-approval doc (pending implies wf_done)
+  ac_doc_id?: string | null
 }
 interface GitStatus {
   enabled: boolean
@@ -277,6 +341,8 @@ interface GitStatus {
   slots: Slot[]
   pending: Pending[]
   pending_count: number
+  // 0182 NR0003 §5: finalized (merged/pushed) slots whose leftovers await cleanup
+  cleanable_count?: number
 }
 
 const status = ref<GitStatus | null>(null)
@@ -322,9 +388,9 @@ watch(baseCommitSuggested, (suggested) => {
 
 // Per-row chosen action (overrides default_action); keyed by group_id.
 const chosen = ref<Record<string, string>>({})
-// Currently expanded conflict row + its fetched files.
+// Currently expanded conflict row + its fetched files (chunk view state, §6).
 const expanded = ref<string | null>(null)
-const conflictFiles = ref<Array<{ path: string; conflict_count: number; edited: string }>>([])
+const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
 
 // Per-group commit-subject draft (B0001 F1). Lazily hydrated from the group's
@@ -340,7 +406,7 @@ interface CommitDraft {
 const commitDrafts = ref<Record<string, CommitDraft>>({})
 
 const inlineResolved = computed(
-  () => conflictFiles.value.length > 0 && conflictFiles.value.every((f) => !hasConflictMarkers(f.edited)),
+  () => conflictFiles.value.length > 0 && conflictFiles.value.every(isFileResolved),
 )
 
 const aheadBehindText = computed(() => {
@@ -634,11 +700,7 @@ async function openResolve(groupId: string) {
       ok: boolean
       files: Array<{ path: string; content: string; conflict_count: number }>
     }>(`/api/v1/groups/${groupId}/git/merge/${p.merge_id}/conflicts`)
-    conflictFiles.value = (data.files || []).map((f) => ({
-      path: f.path,
-      conflict_count: f.conflict_count,
-      edited: f.content,
-    }))
+    conflictFiles.value = (data.files || []).map(initConflictFile)
   } catch (e: any) {
     conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
   }
@@ -652,7 +714,7 @@ async function submitResolveInline(p: Pending) {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/resolve`,
       {
-        files: conflictFiles.value.map((f) => ({ path: f.path, content: f.edited })),
+        files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
         complete: true,
       },
     )
@@ -679,6 +741,35 @@ async function abortInline(p: Pending) {
     collapseResolve()
   } catch (e: any) {
     showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+// 0182 NR0003 §5: retroactive cleanup of merged/pushed slot leftovers.
+async function doCleanup() {
+  if (busy.value || !props.projectId) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{
+      ok: boolean
+      result?: { cleaned: string[]; failed: string[] }
+      error?: any
+    }>(`/api/v1/projects/${props.projectId}/git/cleanup`, {})
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+    } else {
+      const cleaned = data.result?.cleaned?.length ?? 0
+      const failed = data.result?.failed?.length ?? 0
+      if (failed > 0) {
+        showToast(t('main.git_status.cleanup_partial', { n: cleaned, failed }), 'warning')
+      } else {
+        showToast(t('main.git_status.cleanup_done', { n: cleaned }), 'success')
+      }
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -878,6 +969,131 @@ defineExpose({ fetchStatus })
 .git-conflict-count {
   font-size: 0.7rem;
   color: var(--text-m);
+}
+
+/* 0182 NR0003 §6 — inline chunk resolver (visual grammar mirrors the
+   GitFinalizePanel dialog, compacted for the header panel). */
+.git-conflict-path-spacer {
+  flex: 1 1 auto;
+}
+.git-conflict-mode-tabs {
+  flex: 0 0 auto;
+  display: inline-flex;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.git-conflict-mode-tabs button,
+.git-chunk-actions button {
+  border: none;
+  background: #fff;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.git-conflict-mode-tabs button + button,
+.git-chunk-actions button + button {
+  border-left: 1px solid var(--border, #e2e8f0);
+}
+.git-conflict-mode-tabs button.active,
+.git-chunk-actions button.active {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+.git-direct-only-badge {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: #92400e;
+}
+.git-conflict-notice {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  font-size: 0.73rem;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+}
+.git-status-chunk-list {
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--r, 8px);
+  background: #f8fafc;
+}
+.git-common-block,
+.git-conflict-side pre {
+  font: 0.73rem/1.48 var(--mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.git-common-block {
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+}
+.git-conflict-chunk {
+  margin-bottom: 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+.git-conflict-chunk-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-bottom: 1px solid #fee2e2;
+  background: #fff7ed;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+.git-chunk-actions {
+  display: inline-flex;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.git-conflict-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.git-conflict-side {
+  min-width: 0;
+}
+.git-conflict-side + .git-conflict-side {
+  border-left: 1px solid #e2e8f0;
+}
+.git-conflict-side-label {
+  padding: 5px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-bottom: 1px solid #e2e8f0;
+}
+.git-conflict-side.ours .git-conflict-side-label {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+.git-conflict-side.theirs .git-conflict-side-label {
+  color: #047857;
+  background: #ecfdf5;
+}
+.git-conflict-side pre {
+  min-height: 42px;
+  margin: 0;
+  padding: 8px;
+  color: #0f172a;
+}
+.git-status-recovery .btn + .btn {
+  margin-left: 8px;
 }
 .git-conflict-editor {
   width: 100%;

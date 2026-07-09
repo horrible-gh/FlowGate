@@ -1773,6 +1773,9 @@ export default {
       base_revert_btn: 'Revert',
       base_commit_done: 'Committed the base edits ({commit})',
       base_revert_done: 'Reverted {file}',
+      cleanup_btn: 'Clean up finished branches ({n})',
+      cleanup_done: 'Cleaned up {n} finished branch slot(s)',
+      cleanup_partial: 'Cleaned up {n}; {failed} could not be cleaned (see server log)',
     },
     git_menu: {
       tooltip: 'Git finalize',

@@ -87,26 +87,36 @@
                must render by typeCode regardless of tab.type. When reopened from
                the tree the tab type resolves to 'unsupported' (no md), which would
                otherwise fall through to the unsupported-view. -->
-          <div v-if="tab.typeCode === 'AC'" class="card md-preview-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <i class="fa-solid fa-clipboard-check" style="color:var(--text-m);"></i>
-                {{ t('main.review_action_bar.final_approval') }}
-              </span>
+          <template v-if="tab.typeCode === 'AC'">
+            <div class="card md-preview-card">
+              <div class="card-hd">
+                <span class="card-title">
+                  <i class="fa-solid fa-clipboard-check" style="color:var(--text-m);"></i>
+                  {{ t('main.review_action_bar.final_approval') }}
+                </span>
+              </div>
+              <div class="card-bd ac-final-approval-body">
+                <template v-if="isCompletedDoc(tab.id)">
+                  <i class="fa-solid fa-circle-check ac-fa-icon ac-fa-icon-done"></i>
+                  <p class="ac-fa-title">{{ t('main.final_approval.panel_title_done') }}</p>
+                  <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc_done') }}</p>
+                </template>
+                <template v-else>
+                  <i class="fa-solid fa-stamp ac-fa-icon"></i>
+                  <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
+                  <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
+                </template>
+              </div>
             </div>
-            <div class="card-bd ac-final-approval-body">
-              <template v-if="isCompletedDoc(tab.id)">
-                <i class="fa-solid fa-circle-check ac-fa-icon ac-fa-icon-done"></i>
-                <p class="ac-fa-title">{{ t('main.final_approval.panel_title_done') }}</p>
-                <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc_done') }}</p>
-              </template>
-              <template v-else>
-                <i class="fa-solid fa-stamp ac-fa-icon"></i>
-                <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
-                <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
-              </template>
-            </div>
-          </div>
+            <!-- 0182 NR0003 §3: the git finalize UI used to live on the R/B root
+                 only, forcing a detour back to the R document after final
+                 approval. Mount the same self-hiding panel under the AC card so
+                 merge/push/conflict resolution happens right where the approval
+                 ended. group-id resolves exactly like the R/B mount above. -->
+            <GitFinalizePanel
+              :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
+            />
+          </template>
           <!-- DC (group discard): file-less terminal record. Like AC it has no .md
                body, so it must render by typeCode (otherwise the tab type resolves to
                'unsupported' and shows the bogus "preview not supported" error —
