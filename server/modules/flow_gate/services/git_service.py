@@ -59,7 +59,7 @@ MASK_KEEP_SUFFIX = 4
 MASK_MIN_LEN = 9
 SECRET_ENV_KEY = "FLOWGATE_GIT_ENCRYPT_KEY"
 SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
-AUTO_COMMIT_MSG = "chore({group_id}): group work"
+AUTO_COMMIT_MSG = "chore: finalize workflow changes"
 AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
 # ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
 # Finalize-generated commit subjects are resolved through a fallback chain:
@@ -70,7 +70,7 @@ TRANSLATE_SOURCE = "auto"              # auto-detect source language (CH 0168.00
 TRANSLATE_TARGET = "en"
 # TR doc_review_status set whose commit_message draft is accepted (L0004 §1).
 DRAFT_ACCEPT_STATUSES = ("approved", "wf_done")
-FIXED_FALLBACK_SUBJECT = "{commit_type}({group_id}): group work"   # L0004 §1 (D0002 §3-4)
+FIXED_FALLBACK_SUBJECT = "{commit_type}: finalize workflow changes"   # L0004 §1 (D0002 §3-4)
 # Known machine-translation hallucinations / web boilerplate (lowercased, punctuation
 # stripped, exact match) that must never become a commit subject (CH 0168.0008).
 BOILERPLATE_BLACKLIST = frozenset({
@@ -292,6 +292,10 @@ def derive_commit_type(group_id: str) -> Optional[str]:
     return None
 
 
+def _commit_subject(commit_type: str, summary: str) -> str:
+    return f"{commit_type}: {summary}"
+
+
 def build_auto_commit_message(group_id: str) -> str:
     """Generate the finalize auto-commit subject from group metadata.
 
@@ -305,7 +309,7 @@ def build_auto_commit_message(group_id: str) -> str:
         if not title:
             return fallback
         commit_type = derive_commit_type(group_id) or "chore"
-        return f"{commit_type}({group_id}): {title}"
+        return _commit_subject(commit_type, title)
     except Exception:
         _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
         return fallback
@@ -389,19 +393,19 @@ def resolve_commit_message(group_id: str) -> tuple[str, str]:
         if title:
             # 2) ASCII title → existing auto-generation rule
             if _is_ascii(title):
-                subject = f"{ctype}({group_id}): {title}"
+                subject = _commit_subject(ctype, title)
                 if len(subject) <= COMMIT_SUBJECT_MAX:
                     return (subject, "auto_title")
             else:
                 # 3) non-ASCII title → translate
                 translated = _try_translate(project_id, title)
                 if translated:
-                    subject = f"{ctype}({group_id}): {translated}"
+                    subject = _commit_subject(ctype, translated)
                     if len(subject) <= COMMIT_SUBJECT_MAX:
                         return (subject, "translated")
 
         # 4) fixed English phrase
-        return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype, group_id=group_id), "fallback")
+        return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype), "fallback")
     except Exception:
         _log.warning("commit message resolution failed for %s", group_id, exc_info=True)
         return fallback

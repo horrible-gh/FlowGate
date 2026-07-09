@@ -207,7 +207,7 @@ class TestAutoCommitMessage:
         self._create_group(group_id, "깃 커밋 메세지", ["R", "D"])
 
         assert svc.build_auto_commit_message(group_id) == (
-            "feat(gitprj.default.0168): 깃 커밋 메세지"
+            "feat: 깃 커밋 메세지"
         )
 
     def test_bug_root_is_fix_even_with_design_doc(self, seed):
@@ -217,7 +217,7 @@ class TestAutoCommitMessage:
         self._create_group(group_id, "로그인 오류 수정", ["B", "D"])
 
         assert svc.build_auto_commit_message(group_id) == (
-            "fix(gitprj.default.0169): 로그인 오류 수정"
+            "fix: 로그인 오류 수정"
         )
 
     def test_requirement_without_design_doc_is_chore(self, seed):
@@ -227,14 +227,33 @@ class TestAutoCommitMessage:
         self._create_group(group_id, "문서 정리", ["R", "TR"])
 
         assert svc.build_auto_commit_message(group_id) == (
-            "chore(gitprj.default.0170): 문서 정리"
+            "chore: 문서 정리"
         )
 
     def test_missing_metadata_uses_conventional_fallback(self, seed):
         from modules.flow_gate.services import git_service as svc
 
         assert svc.build_auto_commit_message("gitprj.default.9999") == (
-            "chore(gitprj.default.9999): group work"
+            "chore: finalize workflow changes"
+        )
+
+    def test_resolver_ascii_title_omits_group_scope(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        group_id = "gitprj.default.0171"
+        self._create_group(group_id, "Polish git finalize subject", ["B", "TR"])
+
+        assert svc.resolve_commit_message(group_id) == (
+            "fix: Polish git finalize subject",
+            "auto_title",
+        )
+
+    def test_resolver_fallback_omits_group_scope(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        assert svc.resolve_commit_message("gitprj.default.9998") == (
+            "chore: finalize workflow changes",
+            "fallback",
         )
 # ── secret handling (L0006 §2.3) ─────────────────────────────────────────────
 

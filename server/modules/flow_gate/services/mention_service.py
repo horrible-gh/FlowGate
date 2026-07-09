@@ -818,7 +818,7 @@ def build_mention(
         if str(doc_type_value).upper() == "TR":
             post_body["commit_message"] = (
                 "<Optional. English one-line commit subject summarizing this group's "
-                "work, e.g. feat(<group_id>): capture commit subject at TR time>"
+                "work, e.g. fix(git): preserve finalized commit subject>"
             )
 
     post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
