@@ -1353,13 +1353,12 @@ def get_finalize_state(group_id: str) -> dict:
     project_id = _project_of_group(group_id)
     cfg = db_git.get_config(project_id)
     state = db_git.get_state(group_id)
-    if (
-        cfg is None or not cfg.get("enabled")
-        or state is None or not state.get("worktree_registered")
-    ):
+    if cfg is None or not cfg.get("enabled") or state is None:
         return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
 
     status = state.get("status") or "none"
+    if not state.get("worktree_registered") and status not in CLEANUP_STATUSES:
+        return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
     # Lazy none→awaiting_choice transition (L0006 §3): the workflow module never
     # calls into git; the first state query after wf_done realizes the transition.
     if status == "none" and _group_root_wf_done(group_id):
@@ -1400,6 +1399,7 @@ def get_finalize_state(group_id: str) -> dict:
         "ahead_count": ahead,
         "behind_count": behind,
         "merge_id": state.get("merge_id"),
+        "merge_commit": state.get("merge_commit"),
         "commit_message": commit_message,
     }}
 
