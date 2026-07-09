@@ -6,6 +6,7 @@ GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
+POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
 POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
 POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
@@ -195,6 +196,18 @@ def post_git_push(
     """Recovery re-push of an accumulated base/slot branch (P §3-2)."""
     try:
         return git_service.manual_push(project_id, body.branch if body else None)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/cleanup")
+def post_git_cleanup(
+    project_id: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Backlog sweep of finalized (merged/pushed) slot leftovers (0182 NR0003 §5)."""
+    try:
+        return git_service.cleanup_terminal_slots(project_id)
     except GitServiceError as exc:
         return _guard(exc)
 

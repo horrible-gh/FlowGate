@@ -97,6 +97,9 @@ SLOT_STATUSES = ("none", "awaiting_choice", "merging", "conflict", "waiting")  #
 # "merging" is a transient state: recorded, but its transition is not broadcast
 # (it would flicker the badge n→n-1→n before the terminal event lands, L §2.3).
 TRANSIENT_STATUSES = ("merging",)
+# flowgate.default.0182 NR0003 §5 — terminal statuses whose slot leftovers
+# (worktree dir, local work branch, ledger registration) are cleanup targets.
+CLEANUP_STATUSES = ("merged", "pushed")
 
 # Identity for commits the SERVER makes (auto-commit / merge commits). Without
 # an explicit identity `git commit` fails on hosts with no global user config.
@@ -1302,6 +1305,22 @@ def _group_root_wf_done(group_id: str) -> bool:
     return row is not None
 
 
+def _group_ac_doc_id(group_id: str) -> Optional[str]:
+    """Newest AC (final-approval) doc id of the group, or None. Never raises —
+    the field is advisory navigation state for the header [open] button
+    (flowgate.default.0182 NR0003 §4)."""
+    try:
+        row = get_store()._fetch_one(
+            "SELECT doc_id FROM documents "
+            "WHERE group_id = ? AND type_code = 'AC' ORDER BY doc_id DESC",
+            [group_id],
+        )
+        return row["doc_id"] if row else None
+    except Exception:
+        _log.warning("ac_doc_id lookup failed for %s", group_id, exc_info=True)
+        return None
+
+
 def realize_wf_done_transition(group_id: str) -> None:
     """Eagerly realize the lazy none→awaiting_choice transition at final-approval
     time (0177 NR0016 §3). The lazy design (L0006 §3) only realizes on the NEXT
@@ -1571,6 +1590,9 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             if proc.returncode != 0:
                 raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
             _set_status(group_id, "pushed")
+            # 0182 NR0003 §5: drop the slot leftovers right away (origin keeps
+            # the pushed branch; only the local worktree/ref/ledger go).
+            _cleanup_group_slot(project_id, group_id)
             return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
 
         # action == "merge"
@@ -1616,6 +1638,9 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
             _set_status(group_id, "merged", merge_commit=merge_commit)
+            # 0182 NR0003 §5: merged content lives in base — remove the group's
+            # worktree, work branch and ledger registration best-effort.
+            _cleanup_group_slot(project_id, group_id)
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id,
                 "action": "merge", "status": "merged", "merge_commit": merge_commit,
@@ -1800,6 +1825,9 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
     merge_commit = (head.stdout or "").strip() or None
     db_git.close_session(merge_id, "done")
     _set_status(group_id, "merged", merge_commit=merge_commit)
+    # 0182 NR0003 §5: same post-merge cleanup as the conflict-free path — while
+    # the merge session still holds the project lock.
+    _cleanup_group_slot(project_id, group_id)
     db_git.release_lock(project_id, f"merge:{merge_id}")
     _emit("git_finalize_done", project_id, group_id, {
         "project": project_id, "group_id": group_id,
@@ -1812,6 +1840,120 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
             "remaining_conflicts": [],
         },
     }
+
+
+# ── Post-finalize slot cleanup (flowgate.default.0182 NR0003 §5) ─────────────
+# Before 0182 nothing ever removed a finalized group's leftovers: the worktree
+# directory (a full source copy per group), the local work branch ref, and the
+# ledger row accumulated forever (delete_config intentionally leaves worktrees
+# alone, P0005 §2-3 — that guard is about CONFIG deletion and stays). Cleanup
+# now runs best-effort right after a finalize reaches merged/pushed, plus a
+# manual backlog sweep for everything that piled up before this landed.
+
+def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
+    """Best-effort removal of one terminal slot's leftovers. Never raises.
+
+    Removes, in order: the worktree directory (`git worktree remove --force` —
+    merged/pushed content already lives in base/origin, and stray build
+    artifacts must not park the leftovers forever), the local work branch, a
+    pre-0172 leftover origin work branch (merged groups only — a PUSHED branch
+    on origin is the user's chosen outcome and is never touched), and finally
+    the ledger registration (status/merge_commit stay as history).
+
+    Scope guard, consistent with E7: only a ledger-registered slot in a
+    terminal status is touched — an unregistered directory is never deleted.
+    The caller must hold the project git lock. Returns True when the slot
+    ended up unregistered.
+    """
+    try:
+        cfg = db_git.get_config(project_id)
+        project_name = _project_name(project_id)
+        if cfg is None or not cfg.get("enabled") or not project_name:
+            return False
+        state = db_git.get_state(group_id)
+        if (
+            state is None or not state.get("worktree_registered")
+            or (state.get("status") or "none") not in CLEANUP_STATUSES
+        ):
+            return False
+        branch = (state.get("branch") or "").strip()
+        if not branch:
+            return False
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        base_root = src_root(project_name, base_branch)
+        if not (base_root / ".git").exists() or not git_available():
+            return False
+        status = state.get("status")
+        wt_path = src_root(project_name, branch)
+
+        if wt_path.is_dir():
+            proc = _run_git(["worktree", "remove", "--force", str(wt_path)], cwd=base_root)
+            if proc.returncode != 0 or wt_path.exists():
+                _log.warning(
+                    "worktree remove failed for %s: %s", group_id, _last_line(proc.stderr)
+                )
+                return False
+        else:
+            # Directory already gone (manual removal) — just drop the stale
+            # worktree bookkeeping so the branch delete below can proceed.
+            _run_git(["worktree", "prune"], cwd=base_root)
+
+        if _ref_exists(base_root, f"refs/heads/{branch}"):
+            if status == "merged":
+                proc = _run_git(["branch", "-d", branch], cwd=base_root)
+            elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
+                # pushed: origin retains the content, the local ref is disposable.
+                proc = _run_git(["branch", "-D", branch], cwd=base_root)
+            else:
+                proc = None  # pushed but no origin ref visible — keep the local ref
+            if proc is not None and proc.returncode != 0:
+                _log.warning(
+                    "branch delete failed for %s: %s", group_id, _last_line(proc.stderr)
+                )
+
+        if status == "merged" and _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
+            # Work branches pushed before the 0172 fix were never meant to be
+            # published; retro-delete best-effort (failure is not a cleanup failure).
+            _run_git(
+                ["push", "origin", "--delete", branch],
+                cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+                username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+            )
+
+        db_git.unregister_worktree(group_id)
+        return True
+    except Exception:
+        _log.warning("slot cleanup failed for %s", group_id, exc_info=True)
+        return False
+
+
+def cleanup_terminal_slots(project_id: str) -> dict:
+    """POST …/projects/{id}/git/cleanup — backlog sweep of every registered
+    slot already finalized (merged/pushed). Covers groups finalized before the
+    per-finalize cleanup existed, and any slot whose immediate cleanup failed."""
+    _require_enabled_config(project_id)
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    cleaned: list[str] = []
+    failed: list[str] = []
+    try:
+        for row in db_git.list_states_of_project(project_id):
+            if (row.get("status") or "none") not in CLEANUP_STATUSES:
+                continue
+            gid = row["group_id"]
+            (cleaned if _cleanup_group_slot(project_id, gid) else failed).append(gid)
+    finally:
+        db_git.release_lock(project_id, holder)
+    return {"ok": True, "result": {"cleaned": cleaned, "failed": failed}}
 
 
 def abort_merge(group_id: str, merge_id: int) -> dict:
@@ -1904,7 +2046,7 @@ def project_git_status(project_id: str) -> dict:
         return {"ok": True, "status": {
             "enabled": False, "base_branch": None, "base_path_state": "empty",
             "ahead_count": None, "behind_count": None,
-            "slots": [], "pending": [], "pending_count": 0,
+            "slots": [], "pending": [], "pending_count": 0, "cleanable_count": 0,
         }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
@@ -1935,9 +2077,16 @@ def project_git_status(project_id: str) -> dict:
          "status": r.get("status"), "default_action": default_action,
          # 0165 T0004: merge_id lets the header panel resolve conflicts inline
          # (no need to open the group's R document / GitFinalizePanel).
-         "merge_id": r.get("merge_id")}
+         "merge_id": r.get("merge_id"),
+         # 0182 NR0003 §4: pending implies the workflow root is wf_done, so the
+         # header [open] button targets the AC document (which hosts the git
+         # finalize UI since §3) instead of detouring through the R root.
+         "ac_doc_id": _group_ac_doc_id(r["group_id"])}
         for r in rows if r.get("status") in PENDING_STATUSES
     ]
+    # 0182 NR0003 §5: registered slots already finalized (merged/pushed) are
+    # cleanup backlog — surfaced so the panel can offer the [clean up] action.
+    cleanable_count = sum(1 for r in rows if r.get("status") in CLEANUP_STATUSES)
     ahead, behind = _base_ahead_behind(base_root, base_branch)
     base_path_state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
     # 0177 L0002 §2.1: base-checkout dirty set (tracked files only) so the header
@@ -1959,6 +2108,7 @@ def project_git_status(project_id: str) -> dict:
         "ahead_count": ahead, "behind_count": behind,
         "base_dirty": {"dirty": bool(base_dirty_files), "files": base_dirty_files},
         "slots": slots, "pending": pending, "pending_count": len(pending),
+        "cleanable_count": cleanable_count,
     }}
 
 

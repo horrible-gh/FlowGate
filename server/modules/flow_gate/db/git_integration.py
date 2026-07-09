@@ -107,6 +107,18 @@ def register_worktree(group_id: str, project_id: str, branch: str) -> dict:
     return get_state(group_id)  # type: ignore[return-value]
 
 
+def unregister_worktree(group_id: str) -> None:
+    """Drop the worktree registration after slot cleanup (flowgate.default.0182
+    NR0003 §5). status / merge_commit remain untouched as group history; the row
+    simply stops counting as an active slot (list_states_of_project filters on
+    worktree_registered = 1)."""
+    get_store()._execute(
+        "UPDATE group_git_state SET worktree_registered = 0, updated_at = ? "
+        "WHERE group_id = ?",
+        [now_iso(), group_id],
+    )
+
+
 def set_status(
     group_id: str,
     status: str,
