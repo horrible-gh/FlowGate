@@ -226,7 +226,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
@@ -270,6 +270,7 @@ interface GitFinState {
   ahead_count: number | null
   behind_count: number | null
   merge_id: number | null
+  merge_commit?: string | null
   commit_message?: GitCommitMessage | null
 }
 
@@ -370,6 +371,7 @@ async function fetchState() {
     commitSuggested.value = cm?.suggested || ''
     commitSource.value = cm?.source || null
     commitMessage.value = cm?.suggested || ''
+    mergeCommit.value = data.state.merge_commit || null
     if (data.state.status === 'conflict' && data.state.merge_id != null) {
       await fetchConflicts(data.state.merge_id)
     } else {
@@ -522,6 +524,31 @@ async function abortMerge() {
     await fetchState()
   }
 }
+
+function matchesGroup(e: Event): boolean {
+  const detail = (e as CustomEvent).detail || {}
+  const eventGroup = detail.group_id || detail.groupId
+  return !eventGroup || eventGroup === props.groupId
+}
+
+function onGitStatusChanged(e: Event) {
+  if (matchesGroup(e)) fetchState()
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
+    window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
+    window.addEventListener('fg:git_status_open', onGitStatusChanged)
+  }
+})
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
+    window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
+    window.removeEventListener('fg:git_status_open', onGitStatusChanged)
+  }
+})
 
 watch(() => props.groupId, fetchState, { immediate: true })
 
