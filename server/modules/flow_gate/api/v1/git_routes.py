@@ -249,6 +249,41 @@ def post_git_base_revert(
         return _guard(exc)
 
 
+# ── Group branch file explorer: checkout-free tree/blob (0186 P0005) ─────────
+
+@router.get("/projects/{project_id}/git/groups/{group_id}/tree")
+def get_group_branch_tree(
+    project_id: str,
+    group_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Recursive file tree of a group branch's HEAD commit (read-only, no checkout)."""
+    try:
+        return git_service.read_group_tree(project_id, group_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/groups/{group_id}/blob")
+def get_group_branch_blob(
+    project_id: str,
+    group_id: str,
+    path: str,
+    ref: str | None = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Single-file content from a group branch (read-only, checkout-free).
+
+    ``ref`` (optional) pins the read to a full 40-hex commit sha so the client can
+    align blob reads with the tree's ``commit`` and avoid a tree/blob point-in-time
+    race (P0005 §3 / L0006 §2.3).
+    """
+    try:
+        return git_service.read_group_blob(project_id, group_id, path, ref)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
 # ── Group finalize (P0005 §5) ────────────────────────────────────────────────
 
 @router.get("/groups/{group_id}/git/finalize")

@@ -52,6 +52,10 @@ _log = logging.getLogger(__name__)
 GIT_TEST_TIMEOUT_SEC = 15
 GIT_NET_TIMEOUT_SEC = 120
 GIT_LOCAL_TIMEOUT_SEC = 30
+# Group branch file explorer — checkout-free ref/tree/blob reads (0186 L0006 §1).
+GIT_READ_TIMEOUT_SEC = 15          # local ls-tree / cat-file timeout (no network)
+BLOB_MAX_RETURN_BYTES = 1048576    # 1 MiB blob content cap; over → truncated=true
+BLOB_BINARY_SNIFF_BYTES = 8000     # NUL-scan window for binary detection (git heuristic)
 LOCK_WAIT_SEC = 5
 BRANCH_MAX_LEN = 100
 MASK_KEEP_PREFIX = 4
@@ -1401,6 +1405,241 @@ def get_finalize_state(group_id: str) -> dict:
         "merge_id": state.get("merge_id"),
         "merge_commit": state.get("merge_commit"),
         "commit_message": commit_message,
+    }}
+
+
+# ── Group branch file explorer: checkout-free ref/tree/blob (0186 L0006 §2) ──
+#
+# Pure read layer. The group worktree shares base_root/.git with the base
+# checkout (git worktree add), so a group branch's ref/tree/blob objects can be
+# served straight from the shared object store WITHOUT switching a checkout.
+# These functions acquire no git_project_lock, never provision a branch, and
+# write no DB row — a missing / disabled / unregistered group is a 409.
+
+_REF_PIN_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def resolve_group_ref(project_id: str, group_id: str) -> tuple[Path, str, str]:
+    """(base_root, branch, commit) for a group branch. Pure read (L0006 §2.1)."""
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        raise GitServiceError(
+            409, "invalid_state", f"Git integration is not active for group '{group_id}'"
+        )
+    state = db_git.get_state(group_id)
+    if state is None or not state.get("worktree_registered"):
+        raise GitServiceError(
+            409, "invalid_state", f"Git integration is not active for group '{group_id}'"
+        )
+    # Guard against a project_id path param that does not own this group: the
+    # config was looked up by project_id but the branch by group_id, so a mismatch
+    # would resolve the wrong repository.
+    if (state.get("project_id") or _project_of_group(group_id)) != project_id:
+        raise GitServiceError(
+            409, "invalid_state", f"group '{group_id}' does not belong to project '{project_id}'"
+        )
+    branch = state.get("branch")
+    project_name = _project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = src_root(project_name, base_branch)
+    if not (base_root / ".git").exists():
+        raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
+    if not git_available():
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    proc = _run_git(
+        ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    commit = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not commit:
+        raise GitServiceError(409, "invalid_state", f"branch '{branch}' not found in repository")
+    return base_root, branch, commit
+
+
+def _tree_sort_key(name: str, is_dir: bool) -> tuple:
+    # Reuse the exact file-tree ordering (folders-first, natural, case-insensitive)
+    # so the group explorer matches the base-branch tree. Lazy import avoids a
+    # module-load cycle with process_service.
+    from modules.flow_gate.process_service import _file_tree_sort_key
+    return _file_tree_sort_key(name, is_dir)
+
+
+def _build_tree_nodes(files: list[str]) -> list[dict]:
+    """FileNode list (same contract as process_service.get_file_tree) from a flat
+    list of visible blob paths."""
+    children: dict[str, dict[str, bool]] = {"": {}}
+    for path in files:
+        segs = path.split("/")
+        for i, name in enumerate(segs):
+            parent = "/".join(segs[:i])
+            is_dir = i < len(segs) - 1
+            children.setdefault(parent, {})
+            prev = children[parent].get(name)
+            children[parent][name] = bool(prev) or is_dir
+            if is_dir:
+                children.setdefault("/".join(segs[: i + 1]), {})
+    nodes: list[dict] = []
+    counter = [0]
+
+    def walk(dirpath: str, parent_id: Optional[str]) -> None:
+        entries = sorted(
+            children.get(dirpath, {}).items(),
+            key=lambda kv: _tree_sort_key(kv[0], kv[1]),
+        )
+        for name, is_dir in entries:
+            counter[0] += 1
+            cur = str(counter[0])
+            full = f"{dirpath}/{name}" if dirpath else name
+            if is_dir:
+                nodes.append({
+                    "id": cur, "parent_id": parent_id, "type": "folder",
+                    "name": name, "label": name, "path": full,
+                    "permissions": ["read"], "children": [],
+                })
+                walk(full, cur)
+            else:
+                nodes.append({
+                    "id": cur, "parent_id": parent_id, "type": "file",
+                    "name": name, "label": name, "path": full,
+                    "permissions": ["read", "download"],
+                })
+
+    walk("", None)
+    return nodes
+
+
+def read_group_tree(project_id: str, group_id: str) -> dict:
+    """checkout-free recursive tree of a group branch's HEAD commit (L0006 §2.2)."""
+    base_root, branch, commit = resolve_group_ref(project_id, group_id)
+    proc = _run_git(
+        ["ls-tree", "-r", "-z", commit], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "ls-tree failed")
+    visible_files: list[str] = []
+    for record in (proc.stdout or "").split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        if not path:
+            continue
+        parts = meta.split()
+        # entry: "<mode> <type> <sha>"; only blobs are files.
+        if len(parts) < 2 or parts[1] != "blob":
+            continue
+        segments = path.split("/")
+        # Same exposure rule as the base-branch tree: hide dotfiles and *.db.
+        if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
+            continue
+        visible_files.append(path)
+    nodes = _build_tree_nodes(visible_files)
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "commit": commit, "nodes": nodes,
+    }}
+
+
+def _validate_blob_path(path: str) -> None:
+    """Reject empty / absolute / drive-prefixed / '..' paths (P0005 §7)."""
+    if not path:
+        raise GitServiceError(400, "invalid_path", "path parameter is required")
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("/"):
+        raise GitServiceError(400, "invalid_path", "absolute paths are not allowed")
+    if len(normalized) >= 2 and normalized[1] == ":":
+        raise GitServiceError(400, "invalid_path", "drive prefix is not allowed")
+    if ".." in normalized.split("/"):
+        raise GitServiceError(400, "invalid_path", "'..' path segments are not allowed")
+
+
+def _ls_tree_entry(base_root: Path, commit: str, path: str) -> Optional[tuple[str, str]]:
+    """(object_type, sha) of a single path in a commit tree, or None if absent."""
+    proc = _run_git(
+        ["ls-tree", "-z", commit, "--", path], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "ls-tree failed")
+    for record in (proc.stdout or "").split("\0"):
+        if not record:
+            continue
+        meta, _, entry_path = record.partition("\t")
+        if entry_path != path:
+            continue
+        parts = meta.split()
+        if len(parts) >= 3:
+            return parts[1], parts[2]
+    return None
+
+
+def _cat_file_size(base_root: Path, sha: str) -> int:
+    proc = _run_git(["cat-file", "-s", sha], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "cat-file failed")
+    try:
+        return int((proc.stdout or "0").strip())
+    except ValueError:
+        return 0
+
+
+def _cat_file_blob_head(base_root: Path, sha: str, limit: int) -> bytes:
+    """Read up to ``limit`` raw bytes of a blob (bounded so a huge object is never
+    slurped whole just to sniff/truncate it)."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.Popen(
+            ["git", "cat-file", "blob", sha], cwd=str(base_root),
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+        )
+    except FileNotFoundError:
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    try:
+        data = proc.stdout.read(limit) if proc.stdout else b""
+    finally:
+        if proc.stdout:
+            proc.stdout.close()
+        proc.kill()
+        try:
+            proc.wait(timeout=GIT_READ_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            pass
+    return data
+
+
+def read_group_blob(
+    project_id: str, group_id: str, path: str, ref: Optional[str] = None
+) -> dict:
+    """checkout-free single-file read from a group branch (L0006 §2.3)."""
+    _validate_blob_path(path)
+    base_root, branch, head_commit = resolve_group_ref(project_id, group_id)
+    commit = head_commit
+    if ref:
+        if not _REF_PIN_RE.match(ref):
+            raise GitServiceError(400, "invalid_ref", "ref must be a full 40-hex commit sha")
+        tproc = _run_git(["cat-file", "-t", ref], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+        if tproc.returncode != 0 or (tproc.stdout or "").strip() != "commit":
+            raise GitServiceError(404, "not_found", f"commit '{ref}' not found")
+        commit = ref
+    entry = _ls_tree_entry(base_root, commit, path)
+    if entry is None or entry[0] != "blob":
+        raise GitServiceError(404, "not_found", f"path '{path}' not found in commit {commit}")
+    sha = entry[1]
+    size = _cat_file_size(base_root, sha)
+    head = _cat_file_blob_head(base_root, sha, BLOB_MAX_RETURN_BYTES)
+    if b"\x00" in head[:BLOB_BINARY_SNIFF_BYTES]:
+        return {"ok": True, "data": {
+            "group_id": group_id, "branch": branch, "commit": commit, "path": path,
+            "size": size, "binary": True, "truncated": False,
+            "encoding": None, "content": None,
+        }}
+    truncated = size > BLOB_MAX_RETURN_BYTES
+    body = head[:BLOB_MAX_RETURN_BYTES] if truncated else head[:size]
+    content = body.decode("utf-8", errors="replace")
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "commit": commit, "path": path,
+        "size": size, "binary": False, "truncated": truncated,
+        "encoding": "utf-8", "content": content,
     }}
 
 
