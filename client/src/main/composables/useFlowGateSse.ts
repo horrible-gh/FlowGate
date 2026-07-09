@@ -302,6 +302,15 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    source.addEventListener('test_run_started', (e: Event) => {
+      // Start events do not have a paired group_view_refresh from the backend, but open
+      // TS tabs need the running embed immediately after a failed re-run starts.
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        invalidateAndRefresh(data.project)
+      } catch { /* ignore parse errors */ }
+    })
+
     source.addEventListener('test_run_finished', (e: Event) => {
       // Global test-failure toast (R0001 group 0155 / NR0005 §HOW-4 second signal).
       // The in-context TestFailStrip only surfaces a failure while its own TS document

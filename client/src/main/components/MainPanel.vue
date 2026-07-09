@@ -33,6 +33,7 @@
           <TestFailStrip
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :doc-id="tab.id"
+            @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
           />
           <!-- 0174 (NR0003): first-run entry point. TestRunStrip carries the run/delegate
                logic + i18n + unit test built for 0166, but it was never mounted in any real

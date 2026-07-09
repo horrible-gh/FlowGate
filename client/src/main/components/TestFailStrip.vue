@@ -5,21 +5,34 @@
        the sole in-context signal that a run failed — directly answering R0001's concern
        that a plain notification gets ignored. Collapsed by default (~36px); expands to the
        failing-case list with each case's output tail. -->
-  <div v-if="visible" class="fail-strip" :class="{ 'fail-strip--open': expanded }">
+  <div
+    v-if="visible"
+    class="fail-strip"
+    :class="{
+      'fail-strip--open': expanded && !optimisticRunning,
+      'fail-strip--fresh': justFinished && !optimisticRunning,
+      'fail-strip--running': optimisticRunning,
+    }"
+  >
     <button
       type="button"
       class="fail-strip-bar"
       :aria-expanded="expanded"
       :aria-label="t('main.test_fail_strip.toggle_aria')"
-      @click="expanded = !expanded"
+      @click="toggleExpanded"
     >
-      <i class="fa-solid fa-triangle-exclamation fail-strip-ic" aria-hidden="true"></i>
+      <i
+        class="fa-solid fail-strip-ic"
+        :class="optimisticRunning ? 'fa-spinner fa-spin' : 'fa-triangle-exclamation'"
+        aria-hidden="true"
+      ></i>
       <span class="fail-strip-label">
-        {{ t('main.test_fail_strip.summary', { failed: failedCount, total: totalCount }) }}
+        {{ optimisticRunning ? t('main.test_fail_strip.optimistic_running') : t('main.test_fail_strip.summary', { failed: failedCount, total: totalCount }) }}
       </span>
-      <span v-if="subText" class="fail-strip-sub">{{ subText }}</span>
-      <span class="fail-strip-actions" @click.stop>
-        <button type="button" class="fail-strip-btn" @click="expanded = !expanded">
+      <span v-if="!optimisticRunning && finishedText" class="fail-strip-fresh-badge">{{ finishedText }}</span>
+      <span v-if="!optimisticRunning && subText" class="fail-strip-sub">{{ subText }}</span>
+      <span v-if="!optimisticRunning" class="fail-strip-actions" @click.stop>
+        <button type="button" class="fail-strip-btn" @click="toggleExpanded">
           <i class="fa-regular fa-file-lines" aria-hidden="true"></i>
           {{ t('main.test_fail_strip.log') }}
         </button>
@@ -38,13 +51,14 @@
         </button>
       </span>
       <i
+        v-if="!optimisticRunning"
         class="fa-solid fail-strip-caret"
         :class="expanded ? 'fa-chevron-up' : 'fa-chevron-down'"
         aria-hidden="true"
       ></i>
     </button>
 
-    <div v-if="expanded" class="fail-strip-detail">
+    <div v-if="expanded && !optimisticRunning" class="fail-strip-detail">
       <div v-for="(c, idx) in failedCases" :key="idx" class="fail-case">
         <div class="fail-case-hd">
           <span class="fail-case-name">
@@ -66,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
@@ -77,15 +91,23 @@ const props = defineProps<{
   docId: string
 }>()
 
-const { t } = useI18n()
+const emit = defineEmits<{
+  (e: 'run-started'): void
+}>()
+
+const { t, locale } = useI18n()
 const { showToast } = useToast()
 
 const expanded = ref(false)
 const rerunning = ref(false)
+const optimisticRunning = ref(false)
+const optimisticSourceRunId = ref<TestRun['run_id'] | null>(null)
+let optimisticRunningTimer: ReturnType<typeof setTimeout> | null = null
+const OPTIMISTIC_RUNNING_MS = 1500
 
 // Only a failed run surfaces the strip. Any other status (passed/running/absent) → null render,
 // so the gate is automatic on every non-failing doc (embed is null unless a run is bound).
-const visible = computed(() => props.testRun?.status === 'failed')
+const visible = computed(() => optimisticRunning.value || props.testRun?.status === 'failed')
 
 const failedCases = computed<TestRunCase[]>(() =>
   (props.testRun?.cases ?? []).filter((c) => c.result === 'fail' || c.result === 'timeout'),
@@ -96,13 +118,82 @@ const totalCount = computed(
   () => props.testRun?.case_total ?? props.testRun?.cases?.length ?? failedCount.value,
 )
 
+const finishedAt = computed(() =>
+  props.testRun?.finished_at ?? props.testRun?.started_at ?? props.testRun?.created_at ?? null,
+)
+
+function stopOptimisticRunning() {
+  if (optimisticRunningTimer !== null) {
+    clearTimeout(optimisticRunningTimer)
+    optimisticRunningTimer = null
+  }
+  optimisticRunning.value = false
+  optimisticSourceRunId.value = null
+}
+
+function startOptimisticRunning() {
+  if (optimisticRunningTimer !== null) clearTimeout(optimisticRunningTimer)
+  optimisticSourceRunId.value = props.testRun?.run_id ?? null
+  optimisticRunning.value = true
+  optimisticRunningTimer = setTimeout(() => {
+    optimisticRunning.value = false
+    optimisticSourceRunId.value = null
+    optimisticRunningTimer = null
+  }, OPTIMISTIC_RUNNING_MS)
+}
+
+function toggleExpanded() {
+  if (optimisticRunning.value) return
+  expanded.value = !expanded.value
+}
+
+watch(
+  () => [props.testRun?.status ?? null, props.testRun?.run_id ?? null] as const,
+  ([status, runId]) => {
+    if (!optimisticRunning.value) return
+    if (status === 'passed') {
+      stopOptimisticRunning()
+      return
+    }
+    if (status === 'running' && runId !== optimisticSourceRunId.value) {
+      // The server-side running embed has arrived; keep the short local indicator
+      // visible for its minimum window, then let TestRunStrip own the live state.
+      return
+    }
+  },
+)
+
+onBeforeUnmount(stopOptimisticRunning)
+function formatRunTime(date: Date): string {
+  return new Intl.DateTimeFormat(locale.value, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+const finishedText = computed(() => {
+  if (!finishedAt.value) return ''
+  const date = new Date(finishedAt.value)
+  if (Number.isNaN(date.getTime())) return ''
+  return t('main.test_fail_strip.finished_at', { time: formatRunTime(date) })
+})
+
+const justFinished = computed(() => {
+  if (!finishedAt.value) return false
+  const date = new Date(finishedAt.value)
+  if (Number.isNaN(date.getTime())) return false
+  return Date.now() - date.getTime() < 60_000
+})
+
 // A failed run has no tsr_doc_id (TSR is assembled on pass only). The identity of the failure
 // is therefore its run_id + the first failing case's exit code — shown as the sub text.
 const subText = computed(() => {
   const parts: string[] = []
   const first = failedCases.value[0]
   if (first && first.exit_code != null) parts.push(`exit ${first.exit_code}`)
-  if (props.testRun?.run_id) parts.push(props.testRun.run_id)
+  if (props.testRun?.run_id) parts.push(t('main.test_fail_strip.run_id', { id: props.testRun.run_id }))
   return parts.join(' · ')
 })
 
@@ -111,7 +202,9 @@ async function onRerun() {
   rerunning.value = true
   try {
     await postRequest('/api/v1/documents/test-run', { doc_id: props.docId })
+    startOptimisticRunning()
     showToast(t('main.test_fail_strip.rerun_started'), 'info')
+    emit('run-started')
   } catch (e: unknown) {
     const code = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
     const msg =
@@ -161,6 +254,29 @@ async function onRerun() {
   font-weight: 600;
   font-size: 0.82rem;
   white-space: nowrap;
+}
+.fail-strip-fresh-badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-radius: var(--r-sm, 4px);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--danger, #dc2626);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fail-strip--running {
+  border-color: var(--primary, #2563eb);
+  background: var(--primary-l, #dbeafe);
+}
+.fail-strip--running .fail-strip-bar {
+  color: var(--primary, #2563eb);
+  cursor: default;
+}
+.fail-strip--fresh .fail-strip-fresh-badge {
+  background: var(--surface, #fff);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
 }
 .fail-strip-sub {
   font-family: 'JetBrains Mono', monospace;
