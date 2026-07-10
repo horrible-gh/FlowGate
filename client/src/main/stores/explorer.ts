@@ -19,6 +19,11 @@ export interface FileNode {
 }
 
 // 0186 P0005 §3 — group-branch blob read (checkout-free). Mirrors read_group_blob.
+export interface GroupChangeData {
+  path: string
+  status: string
+}
+
 export interface GroupBlobData {
   group_id: string
   branch: string
@@ -80,6 +85,7 @@ export const useExplorerStore = defineStore('explorer', () => {
   const groupBranchCommit = ref<Record<string, string>>({})       // `${pid}:${gid}` -> commit
   const groupBranchTreeCache = ref<Record<string, FileNode[]>>({}) // `${pid}:${gid}:${commit}` -> nodes
   const groupBlobCache = ref<Record<string, GroupBlobData>>({})    // `${pid}:${gid}:${commit}:${path}` -> blob
+  const groupChangedFiles = ref<Record<string, string[]>>({})      // `${pid}:${gid}` -> normalized paths
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
@@ -147,6 +153,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(groupBranchCommit.value)) {
       if (key.startsWith(`${pid}:`)) delete groupBranchCommit.value[key]
     }
+    for (const key of Object.keys(groupChangedFiles.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupChangedFiles.value[key]
+    }
   }
 
   // ── Group-branch (checkout-free) explorer (0186 P0005 §2·§3) ────────────────
@@ -199,6 +208,22 @@ export const useExplorerStore = defineStore('explorer', () => {
     } finally {
       loadingFile.value = false
     }
+  }
+
+  async function fetchGroupBranchChanges(pid: string, gid: string): Promise<GroupChangeData[]> {
+    const res = await getRequest<{ data: { changes: GroupChangeData[] } }>(
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/changes`,
+    )
+    const changes = (res.data as any).data.changes as GroupChangeData[]
+    groupChangedFiles.value = {
+      ...groupChangedFiles.value,
+      [groupKey(pid, gid)]: changes.map((change) => change.path.replace(/\\/g, '/')),
+    }
+    return changes
+  }
+
+  function isGroupChangedPath(pid: string, gid: string, path: string): boolean {
+    return (groupChangedFiles.value[groupKey(pid, gid)] ?? []).includes(path.replace(/\\/g, '/'))
   }
 
   /** Fetch a single file from a group branch, pinned to the tree's commit so tree
@@ -257,7 +282,8 @@ export const useExplorerStore = defineStore('explorer', () => {
     baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
-    activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchBlob, currentGroupCommit,
+    activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
+    currentGroupCommit, groupChangedFiles, isGroupChangedPath,
     setWorkflowNodeState, clearWorkflowNodeState,
   }
 })

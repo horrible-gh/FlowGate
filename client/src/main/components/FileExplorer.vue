@@ -66,6 +66,7 @@
                 :all-nodes="nodes"
                 :project-id="projectId ?? ''"
                 :readonly="!!selectedGroup"
+                :group-id="selectedGroup"
                 @open="openFile"
                 @tree-changed="reload"
               />
@@ -220,6 +221,7 @@ async function reload() {
       const r = await explorerStore.fetchGroupBranchTree(props.projectId, selectedGroup.value)
       nodes.value = r.nodes
       groupCommit.value = r.commit
+      await explorerStore.fetchGroupBranchChanges(props.projectId, selectedGroup.value)
       await loadGroupGitBadge(selectedGroup.value)
     } else {
       groupCommit.value = null
@@ -415,6 +417,7 @@ watch(() => props.projectId, async (pid, prevPid) => {
       const r = await explorerStore.fetchGroupBranchTree(pid, selectedGroup.value)
       nodes.value = r.nodes
       groupCommit.value = r.commit
+      await explorerStore.fetchGroupBranchChanges(pid, selectedGroup.value)
       await loadGroupGitBadge(selectedGroup.value)
     } else {
       explorerStore.activeGroupBranch = null
@@ -442,6 +445,11 @@ watch(() => props.projectId, async (pid, prevPid) => {
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.fx-group-select option {
+  color: #1e293b;
+  background: #fff;
 }
 
 .fx-readonly-badge {

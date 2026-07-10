@@ -21,12 +21,12 @@
       </span>
       <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
       <span
-        v-if="isBaseDirty && !readonly"
+        v-if="isDirty"
         class="tree-dirty-marker"
         :title="t('main.file_tree_node.modified_badge')"
         :aria-label="t('main.file_tree_node.modified_badge')"
       >></span>
-      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isBaseDirty }">{{ node.label }}</span>
+      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isDirty }">{{ node.label }}</span>
       <span v-if="downloading" class="tree-loading"><i class="fa-solid fa-spinner fa-spin"></i></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
@@ -37,6 +37,7 @@
         :all-nodes="allNodes"
         :project-id="projectId"
         :readonly="readonly"
+        :group-id="groupId"
         @open="$emit('open', $event)"
         @tree-changed="$emit('tree-changed')"
       />
@@ -109,6 +110,7 @@ const props = defineProps<{
   // 0186 P0005 — group-branch (checkout-free) view is read-only: suppress the
   // create / upload / download / base-dirty affordances that target the base checkout.
   readonly?: boolean
+  groupId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -141,11 +143,15 @@ const children = computed(() =>
 
 const isSelected = computed(() => explorerStore.selectedFileNodeId === props.node.id)
 
-// flowgate.default.0177 L0002 §2.6-a: this file has an uncommitted edit sitting
-// in the project's base checkout (blocks merge finalize until commit/revert).
-const isBaseDirty = computed(
-  () => props.node.type === 'file' && explorerStore.isBaseDirtyPath(props.projectId, props.node.path),
-)
+// Reuse the established base-dirty marker for either the editable base checkout
+// or the selected read-only group branch's tracked changes.
+const isDirty = computed(() => {
+  if (props.node.type !== 'file') return false
+  if (props.readonly && props.groupId) {
+    return explorerStore.isGroupChangedPath(props.projectId, props.groupId, props.node.path)
+  }
+  return explorerStore.isBaseDirtyPath(props.projectId, props.node.path)
+})
 
 const iconFA = computed(() => {
   if (props.node.type === 'folder') {
