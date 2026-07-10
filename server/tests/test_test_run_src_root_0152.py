@@ -86,8 +86,9 @@ def test_execute_run_goes_through_resolver(monkeypatch):
 
     calls: dict = {}
 
-    def fake_resolver(project_id, fallback_branch="main"):
+    def fake_resolver(project_id, fallback_branch="main", group_id=None):
         calls["args"] = (project_id, fallback_branch)
+        calls["group_id"] = group_id
         return None
 
     monkeypatch.setattr(
@@ -97,6 +98,9 @@ def test_execute_run_goes_through_resolver(monkeypatch):
     test_run_service.execute_run({"run_id": "trun_0152", "doc_id": "doc-1"})
 
     assert calls["args"] == ("flowgate", "main")
+    # B0001 (0190): the runner must forward group_id so a git-integrated group
+    # resolves to its own worktree (work branch) instead of base(main).
+    assert calls["group_id"] == "flowgate.default.0152"
     assert finished["status"] == "failed"
     assert finished["error"] == "src_root_missing"
 

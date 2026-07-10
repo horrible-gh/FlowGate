@@ -319,8 +319,14 @@ def validate_and_create_run(
 
     # Fail fast at admission: without a source mirror the async worker can only
     # die with src_root_missing, which surfaces late and pathless (0152 outage).
+    # B0001 (0190): pass group_id so a git-integrated group resolves to its own
+    # worktree (the work branch), not base(main). Must match _execute_run_inner's
+    # resolution below — if the guard and the worker disagree on the folder, the
+    # admission check passes against one tree while tests run in another.
     src_root_path = storage_paths.resolve_project_src_root(
-        doc.get("project_id"), doc.get("branch") or "main"
+        doc.get("project_id"),
+        doc.get("branch") or "main",
+        group_id=doc.get("group_id"),
     )
     if src_root_path is None or not src_root_path.is_dir():
         raise _http_error(
@@ -566,8 +572,16 @@ def _execute_run_inner(run: dict) -> None:
         )
         return
 
+    # B0001 (0190): resolve the group's worktree (work branch), not base(main).
+    # group_id is the switch in resolve_project_src_root that selects the git
+    # worktree via git_service.effective_src_root; without it a git-integrated
+    # group runs its test commands in base(main), so TS cases that reference
+    # files created on the work branch fail with a fast exit-1 (file-not-found)
+    # even though CRUD/document views (which do pass group_id) show them present.
     root = storage_paths.resolve_project_src_root(
-        doc.get("project_id"), doc.get("branch") or "main"
+        doc.get("project_id"),
+        doc.get("branch") or "main",
+        group_id=doc.get("group_id"),
     )
     if root is None or not root.is_dir():
         logger.warning(
