@@ -264,6 +264,19 @@ def get_group_branch_tree(
         return _guard(exc)
 
 
+@router.get("/projects/{project_id}/git/groups/{group_id}/changes")
+def get_group_branch_changes(
+    project_id: str,
+    group_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Tracked paths changed from the base branch through the group worktree."""
+    try:
+        return git_service.read_group_changes(project_id, group_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
 @router.get("/projects/{project_id}/git/groups/{group_id}/blob")
 def get_group_branch_blob(
     project_id: str,

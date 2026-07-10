@@ -1540,6 +1540,53 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
     }}
 
 
+def read_group_changes(project_id: str, group_id: str) -> dict:
+    """Tracked paths changed from the group's base commit through its worktree."""
+    base_root, branch, commit = resolve_group_ref(project_id, group_id)
+    cfg = db_git.get_config(project_id) or {}
+    state = db_git.get_state(group_id) or {}
+    project_name = _project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    wt_path = src_root(project_name, state.get("branch") or branch)
+    if not wt_path.exists():
+        raise GitServiceError(409, "invalid_state", "group worktree is not available")
+
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    merge_proc = _run_git(
+        ["merge-base", f"refs/heads/{base_branch}", commit],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    merge_base = (merge_proc.stdout or "").strip()
+    if merge_proc.returncode != 0 or not merge_base:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
+        )
+
+    diff_proc = _run_git(
+        ["diff", "--name-status", "--no-renames", "-z", merge_base, "--"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(diff_proc.stderr) or "git diff failed"
+        )
+
+    fields = (diff_proc.stdout or "").split("\0")
+    changes: list[dict] = []
+    for index in range(0, len(fields) - 1, 2):
+        status, path = fields[index], fields[index + 1]
+        if not status or not path:
+            continue
+        segments = path.split("/")
+        if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
+            continue
+        changes.append({"path": path, "status": status[:1]})
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "commit": commit, "changes": changes,
+    }}
+
+
 def _validate_blob_path(path: str) -> None:
     """Reject empty / absolute / drive-prefixed / '..' paths (P0005 §7)."""
     if not path:
