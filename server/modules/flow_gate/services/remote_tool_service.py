@@ -726,6 +726,37 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
 
     # ⑥ Success history
     _log(grant, op, log_path, log_pattern, status=200, bytes_processed=nbytes)
+    # 0192 T0005 §2-d: a worker's source mutation (write/remove) previously emitted
+    # NO SSE, so an operator watching the file explorer saw the AI's edits only when
+    # some unrelated document event happened to fire — the "changes don't show up
+    # right away" complaint. Broadcast file_explorer_refresh on a successful mutation
+    # so the tree, change list and '>' markers refresh live. Best-effort; a delivery
+    # failure must never turn a successful op into an error.
+    if op in ("write", "remove"):
+        _emit_explorer_refresh(grant, op)
     # ⑦ Completion ment — only on successful state-changing operations (write/remove) (L0006 §6.1).
     continuation = _continuation(grant) if op in ("write", "remove") else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
+
+
+def _emit_explorer_refresh(grant: dict, op: str) -> None:
+    """Best-effort file_explorer_refresh broadcast after a worker source mutation
+    (0192 T0005 §2-d). Scoped to the worker's project (and group when known) so
+    the operator's explorer re-fetches the tree / change list / dirty markers."""
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            FlowEvent,
+            broadcast_event_threadsafe,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        broadcast_event_threadsafe(FlowEvent(
+            event_type=EventType.FILE_EXPLORER_REFRESH,
+            payload={"operation": op, "source": "remote_worker"},
+            audience="*",
+            project=grant.get("project"),
+            group_id=grant.get("group_id"),
+            doc_id=None,
+        ))
+    except Exception:
+        pass

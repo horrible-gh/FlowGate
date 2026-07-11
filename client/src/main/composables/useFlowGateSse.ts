@@ -360,6 +360,25 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    // 0192 T0005 §2-b: the group slot list appears/disappears on these three git
+    // lifecycle events, but the explorer had NO listener for any of them, so a
+    // finalized (merged/pushed) group lingered in the dropdown — and selecting the
+    // now-deleted branch threw "tree load failed" — while a freshly-provisioned
+    // group's branch did not show up until an unrelated remount. Each drives the
+    // standard invalidate+refresh, which remounts the explorer and re-fetches its
+    // slot list (the git_pending_changed path keeps the dropdown live in place for
+    // ordinary status transitions; these cover the create/remove moments).
+    const onGitSlotLifecycle = (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const project = data.payload?.project ?? data.project ?? null
+        invalidateAndRefresh(project)
+      } catch { /* ignore parse errors */ }
+    }
+    source.addEventListener('git_finalize_done', onGitSlotLifecycle)
+    source.addEventListener('git_worktree_ready', onGitSlotLifecycle)
+    source.addEventListener('git_merge_conflict', onGitSlotLifecycle)
+
     source.addEventListener('notification_new_action_candidate', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

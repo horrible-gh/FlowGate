@@ -226,6 +226,22 @@ export const useExplorerStore = defineStore('explorer', () => {
     return (groupChangedFiles.value[groupKey(pid, gid)] ?? []).includes(path.replace(/\\/g, '/'))
   }
 
+  // 0192 T0005 §1 — folder-level "modified" propagation. The dirty/changed marker
+  // ('>') was file-only, so an edit under a folder (especially a COLLAPSED one,
+  // whose children are not rendered) left no trace on any ancestor. A folder is
+  // "dirty" when it contains at least one changed file: any tracked path that lives
+  // under `folderPath + '/'`. Both the full file lists are already in the store, so
+  // this is a pure prefix scan — no new API or state.
+  function _anyUnder(files: string[] | undefined, folderPath: string): boolean {
+    if (!files || !files.length) return false
+    const prefix = folderPath.replace(/\\/g, '/').replace(/\/+$/, '') + '/'
+    return files.some((f) => f.startsWith(prefix))
+  }
+
+  function isGroupChangedDir(pid: string, gid: string, folderPath: string): boolean {
+    return _anyUnder(groupChangedFiles.value[groupKey(pid, gid)], folderPath)
+  }
+
   /** Fetch a single file from a group branch, pinned to the tree's commit so tree
    *  and blob never disagree on point-in-time (L0006 §2.3·§2.4). Blob responses
    *  are cached by (pid, gid, commit, path). */
@@ -266,6 +282,12 @@ export const useExplorerStore = defineStore('explorer', () => {
     return files.includes(path.replace(/\\/g, '/'))
   }
 
+  // 0192 T0005 §1 — see isGroupChangedDir. Folder is dirty when any base-checkout
+  // dirty file lives under it.
+  function isBaseDirtyDir(pid: string, folderPath: string): boolean {
+    return _anyUnder(baseDirtyFiles.value[pid], folderPath)
+  }
+
   function setWorkflowNodeState(docId: string, state: WorkflowNodeState) {
     workflowNodeStates.value[docId] = state
   }
@@ -279,11 +301,11 @@ export const useExplorerStore = defineStore('explorer', () => {
     fileTreeCache, groupTreeCache, workflowNodeStates,
     selectedFileNodeId, selectedGroupNodeId, pendingSelectFilePath,
     loadingFile, loadingGroup, fileError, groupError,
-    baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath,
+    baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath, isBaseDirtyDir,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
-    currentGroupCommit, groupChangedFiles, isGroupChangedPath,
+    currentGroupCommit, groupChangedFiles, isGroupChangedPath, isGroupChangedDir,
     setWorkflowNodeState, clearWorkflowNodeState,
   }
 })

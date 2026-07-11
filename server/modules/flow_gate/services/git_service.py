@@ -2140,6 +2140,80 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
 # now runs best-effort right after a finalize reaches merged/pushed, plus a
 # manual backlog sweep for everything that piled up before this landed.
 
+def _is_group_disposed(group_id: str) -> bool:
+    """Whether the group has been disposed (terminal DC discard). Lazy import to
+    avoid a process_service ↔ git_service import cycle; fail-closed on error so a
+    lookup failure never force-deletes a live group's branch."""
+    try:
+        from modules.flow_gate import process_service
+        return bool(process_service.is_group_disposed(group_id))
+    except Exception:
+        return False
+
+
+def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Path) -> None:
+    """Abort an in-progress merge for a disposed group and release its merge lock.
+
+    A group discarded mid-conflict still owns an open git_merge_session and holds
+    the project lock as ``merge:{merge_id}``. Abort the merge (clears the base
+    checkout's MERGE_HEAD/index), close the session, and release that lock so slot
+    teardown can proceed. Best-effort; idempotent (no open session → no-op)."""
+    try:
+        session = db_git.get_open_session_by_group(group_id)
+        if session is None:
+            return
+        if (base_root / ".git" / "MERGE_HEAD").exists():
+            _run_git(["merge", "--abort"], cwd=base_root)
+        merge_id = session.get("merge_id")
+        if merge_id is not None:
+            db_git.close_session(int(merge_id), "aborted")
+            db_git.release_lock(project_id, f"merge:{merge_id}")
+    except Exception:
+        _log.warning("disposed merge-session abort failed for %s", group_id, exc_info=True)
+
+
+def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
+    """Tear down a DISPOSED group's git leftovers (worktree dir + local work branch
+    + ledger registration). Called right after dispose_group succeeds.
+
+    dispose_group itself never touches git, so without this the discarded group's
+    entire source-tree worktree copy, its unmerged local branch, and its ledger row
+    all survived — the ledger row also kept the group in the §2 status dropdown as
+    an unselectable ghost. Disposal has ALREADY succeeded when we run, so a git
+    failure must never surface as an error: everything here is best-effort and
+    swallowed. No-op when git integration is off or the group holds no slot."""
+    try:
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return {"ok": True, "cleaned": False, "reason": "git_disabled"}
+        state = db_git.get_state(group_id)
+        if state is None or not state.get("worktree_registered"):
+            return {"ok": True, "cleaned": False, "reason": "no_slot"}
+        if not git_available():
+            return {"ok": True, "cleaned": False, "reason": "git_unavailable"}
+        # A conflict/merging slot holds the project lock as merge:{id}; abort +
+        # release it BEFORE acquiring our own lock (else _acquire_lock times out).
+        project_name = _project_name(project_id)
+        if project_name and (state.get("status") or "none") in ("conflict", "merging"):
+            base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+            _abort_disposed_merge_session(project_id, group_id, src_root(project_name, base_branch))
+        holder = f"dispose:{uuid.uuid4()}"
+        if not _acquire_lock(project_id, holder):
+            return {"ok": False, "cleaned": False, "reason": "git_busy"}
+        try:
+            cleaned = _cleanup_group_slot(project_id, group_id)
+        finally:
+            db_git.release_lock(project_id, holder)
+        # The slot just left the ledger; nudge clients to re-fetch the group
+        # dropdown (the explorer subscribes to git_pending_changed → reload slots).
+        if cleaned:
+            _emit_pending_changed(project_id, group_id, "none")
+        return {"ok": True, "cleaned": cleaned}
+    except Exception:
+        _log.warning("disposed group cleanup failed for %s", group_id, exc_info=True)
+        return {"ok": False, "cleaned": False, "reason": "error"}
+
+
 def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
     """Best-effort removal of one terminal slot's leftovers. Never raises.
 
@@ -2150,10 +2224,12 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
     on origin is the user's chosen outcome and is never touched), and finally
     the ledger registration (status/merge_commit stay as history).
 
-    Scope guard, consistent with E7: only a ledger-registered slot in a
-    terminal status is touched — an unregistered directory is never deleted.
-    The caller must hold the project git lock. Returns True when the slot
-    ended up unregistered.
+    Scope guard, consistent with E7: only a ledger-registered slot that is
+    either in a terminal status (merged/pushed) OR belongs to a disposed group
+    is touched — an unregistered directory is never deleted. A disposed group's
+    work branch is unmerged and is force-deleted (its content is intentionally
+    discarded). The caller must hold the project git lock. Returns True when the
+    slot ended up unregistered.
     """
     try:
         cfg = db_git.get_config(project_id)
@@ -2161,10 +2237,18 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
         if cfg is None or not cfg.get("enabled") or not project_name:
             return False
         state = db_git.get_state(group_id)
-        if (
-            state is None or not state.get("worktree_registered")
-            or (state.get("status") or "none") not in CLEANUP_STATUSES
-        ):
+        if state is None or not state.get("worktree_registered"):
+            return False
+        status = (state.get("status") or "none")
+        # 0192 T0005 §3: a DISPOSED group's slot is a cleanup target regardless of
+        # status. dispose_group never touched git, and the ledger gate below was
+        # merged/pushed-only, so a discarded group's worktree dir + local work
+        # branch + ledger row survived forever (and the stale row kept polluting
+        # the §2 dropdown). Its work branch is UNMERGED, so it is force-deleted
+        # (-D) — the discarded work is intentionally lost, matching the meaning of
+        # disposal.
+        disposed = _is_group_disposed(group_id)
+        if status not in CLEANUP_STATUSES and not disposed:
             return False
         branch = (state.get("branch") or "").strip()
         if not branch:
@@ -2173,7 +2257,13 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
         base_root = src_root(project_name, base_branch)
         if not (base_root / ".git").exists() or not git_available():
             return False
-        status = state.get("status")
+        # A disposed group may still hold an in-progress merge session (conflict/
+        # merging): abort it so base checkout's MERGE_HEAD/index are clean before
+        # the worktree teardown, and close the ledger session. Idempotent — a no-op
+        # once the session is already closed (e.g. cleanup_disposed_group aborted it
+        # before taking the lock).
+        if disposed and status in ("conflict", "merging"):
+            _abort_disposed_merge_session(project_id, group_id, base_root)
         wt_path = src_root(project_name, branch)
 
         if wt_path.is_dir():
@@ -2189,7 +2279,10 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
             _run_git(["worktree", "prune"], cwd=base_root)
 
         if _ref_exists(base_root, f"refs/heads/{branch}"):
-            if status == "merged":
+            if disposed:
+                # Discarded, unmerged work — force-delete (a safe `-d` would refuse).
+                proc = _run_git(["branch", "-D", branch], cwd=base_root)
+            elif status == "merged":
                 proc = _run_git(["branch", "-d", branch], cwd=base_root)
             elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
                 # pushed: origin retains the content, the local ref is disposable.
@@ -2219,8 +2312,11 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
 
 def cleanup_terminal_slots(project_id: str) -> dict:
     """POST …/projects/{id}/git/cleanup — backlog sweep of every registered
-    slot already finalized (merged/pushed). Covers groups finalized before the
-    per-finalize cleanup existed, and any slot whose immediate cleanup failed."""
+    slot already finalized (merged/pushed) OR belonging to a disposed group.
+    Covers groups finalized/discarded before the per-finalize / per-dispose
+    cleanup existed, and any slot whose immediate cleanup failed. (0192 T0005 §3
+    adds the disposed backlog: one sweep clears every ghost slot left by a group
+    that was discarded before dispose learned to touch git.)"""
     _require_enabled_config(project_id)
     if not git_available():
         raise GitServiceError(
@@ -2237,9 +2333,10 @@ def cleanup_terminal_slots(project_id: str) -> dict:
     failed: list[str] = []
     try:
         for row in db_git.list_states_of_project(project_id):
-            if (row.get("status") or "none") not in CLEANUP_STATUSES:
-                continue
             gid = row["group_id"]
+            terminal = (row.get("status") or "none") in CLEANUP_STATUSES
+            if not terminal and not _is_group_disposed(gid):
+                continue
             (cleaned if _cleanup_group_slot(project_id, gid) else failed).append(gid)
     finally:
         db_git.release_lock(project_id, holder)

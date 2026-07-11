@@ -109,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useExplorerStore, type FileNode } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
@@ -198,10 +198,29 @@ async function onGroupChange() {
   await reload()
 }
 
+// 0192 T0005 §2-b: keep the group dropdown live off git SSE. The server
+// broadcasts git_pending_changed on every slot status transition (create /
+// awaiting_choice / merged&removed) and useFlowGateSse re-broadcasts it as this
+// window event. Previously nothing in the explorer consumed it, so the dropdown
+// only refreshed on a full remount (group_view_refresh). Re-fetching just the
+// slots here updates the list in place without disturbing the current tree or
+// selection. Cross-project echoes are ignored. (git_finalize_done /
+// git_worktree_ready still drive a full remount via useFlowGateSse.)
+function onGitSlotsMaybeChanged(e: Event) {
+  const detail = (e as CustomEvent).detail as { project?: string | null } | undefined
+  if (detail?.project && props.projectId && detail.project !== props.projectId) return
+  if (props.projectId) loadGroupSlots(props.projectId)
+}
+
 onMounted(() => {
   if (rootFolderInputRef.value) {
     rootFolderInputRef.value.setAttribute('webkitdirectory', '')
   }
+  window.addEventListener('fg:git_pending_changed', onGitSlotsMaybeChanged)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('fg:git_pending_changed', onGitSlotsMaybeChanged)
 })
 
 const rootNodes = computed(() => nodes.value.filter((n) => n.parent_id === null))
@@ -213,6 +232,13 @@ function normPath(p: string): string {
 
 async function reload() {
   if (!props.projectId) return
+  // 0192 T0005 §2-a: the manual ↻ (and every tree-changed reload) must also
+  // re-fetch the group slot dropdown. Previously only a mount/remount called
+  // loadGroupSlots, so pressing refresh left removed/stale groups in the select
+  // and never surfaced newly-created ones. loadGroupSlots also clears a
+  // selectedGroup that has since vanished, so the branch/base decision below
+  // reads the reconciled value.
+  await loadGroupSlots(props.projectId)
   const silent = nodes.value.length > 0
   if (!silent) loading.value = true
   error.value = false
