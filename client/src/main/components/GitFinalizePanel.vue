@@ -476,7 +476,18 @@ function focusChunk(segmentIndex: number) {
   currentChunkSegment.value = segmentIndex
   void nextTick(() => {
     if (typeof document === 'undefined') return
-    document.getElementById(chunkDomId(segmentIndex))?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // 0207 CH0005: jump to a numbered chunk by scrolling ONLY the code area
+    // (.git-chunk-scroll). scrollIntoView() walks up and scrolls EVERY scrollable
+    // ancestor — including the overflow:hidden .git-conflict-dialog shell — which
+    // pushed the fixed header/footer out of the clipped dialog ("헤더가 위로 묻히고
+    // 푸터가 깨진다"). Confine the scroll to the code container and center the chunk.
+    const el = document.getElementById(chunkDomId(segmentIndex))
+    const scroller = el?.closest('.git-chunk-scroll') as HTMLElement | null
+    if (!el || !scroller) return
+    const elRect = el.getBoundingClientRect()
+    const scRect = scroller.getBoundingClientRect()
+    const centered = (elRect.top - scRect.top) - (scroller.clientHeight - el.clientHeight) / 2
+    scroller.scrollTo({ top: scroller.scrollTop + centered, behavior: 'smooth' })
   })
 }
 function moveChunk(delta: number) {
