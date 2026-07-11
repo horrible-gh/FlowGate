@@ -1193,3 +1193,67 @@ class TestBaseCommitRevert0177:
         files = _git(["ls-tree", "--name-only", "main"], cwd=base_origin["bare"]).split()
         assert "work.txt" in files
         assert _git(["show", "main:a.txt"], cwd=base_origin["bare"]) == "hotfixed alpha\n"
+
+
+# ── B0001 (flowgate.default.0211): time-machine git re-arm ───────────────────
+
+@needs_git
+class TestTimeMachineGitReArm:
+    """A reverse-time-machine rewind rolls the workflow back below its final
+    approval but leaves the git ledger wherever the prior finalize put it. When
+    that state was terminal (merged/pushed) the worktree is already gone, so the
+    re-worked group could never finalize again — precheck 422 / finalize 409.
+    reopen_group_git restores the "below-approval => not git-terminal" invariant."""
+
+    GROUP = "gitprj.default.0211"
+
+    def test_rearm_after_merge_allows_second_finalize(self, origin_repo):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        # first cycle: provision, do work, finalize(merge) -> terminal slot.
+        assert svc.ensure_worktree("gitprj", "default", self.GROUP) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0211")
+        (wt / "work.txt").write_text("first cycle\n", encoding="utf-8")
+        db_git.set_status(self.GROUP, "awaiting_choice")
+        assert svc.finalize(self.GROUP, "merge")["result"]["status"] == "merged"
+
+        # 0182 slot cleanup: worktree torn down + unregistered, status kept as history.
+        state = db_git.get_state(self.GROUP)
+        assert state["status"] == "merged"
+        assert state["worktree_registered"] == 0
+        assert not wt.exists()
+
+        # B0001 symptom: a second finalize on the still-terminal slot is impossible.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(self.GROUP, "merge")
+        assert exc.value.status == 409
+
+        # time-machine rewind re-arms the slot: status back to 'none', worktree back.
+        svc.reopen_group_git("gitprj", self.GROUP)
+        state = db_git.get_state(self.GROUP)
+        assert state["status"] == "none"
+        assert state["worktree_registered"] == 1
+        assert wt.is_dir()
+
+        # re-work + re-approve now finalizes again, landing the new work in origin.
+        (wt / "work2.txt").write_text("second cycle\n", encoding="utf-8")
+        db_git.set_status(self.GROUP, "awaiting_choice")
+        assert svc.finalize(self.GROUP, "merge")["result"]["status"] == "merged"
+        files = _git(["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]).split()
+        assert "work2.txt" in files
+
+    def test_rearm_is_noop_for_non_terminal_and_disabled(self, origin_repo):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        # A healthy in-progress slot (awaiting_choice) is left untouched.
+        group = "gitprj.default.0212"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        db_git.set_status(group, "awaiting_choice")
+        svc.reopen_group_git("gitprj", group)
+        assert db_git.get_state(group)["status"] == "awaiting_choice"
+
+        # A non-integrated project is a silent no-op (never raises).
+        svc.reopen_group_git("plainprj", "plainprj.default.0001")
