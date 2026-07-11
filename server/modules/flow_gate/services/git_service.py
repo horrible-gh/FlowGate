@@ -1353,7 +1353,7 @@ def realize_wf_done_transition(group_id: str) -> None:
         )
 
 
-def get_finalize_state(group_id: str) -> dict:
+def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     project_id = _project_of_group(group_id)
     cfg = db_git.get_config(project_id)
     state = db_git.get_state(group_id)
@@ -1368,6 +1368,21 @@ def get_finalize_state(group_id: str) -> dict:
     if status == "none" and _group_root_wf_done(group_id):
         _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
+    # flowgate.default.0197 T0004 §B — preliminary (display-only) awaiting_choice
+    # for the AC final-approval confirm dialog. At the instant the operator opens
+    # that dialog the workflow root is still wf_in_progress, so the persisted
+    # status is 'none' and the git choice block would not render — the direct
+    # cause of R0001 "선택할 수 없다" (NR0003 §2). When the caller IS that dialog
+    # (preview_ac) and a registered slot is still unfinalized, surface
+    # awaiting_choice WITHOUT persisting it: the DB status column, the header
+    # badge (PENDING_STATUSES) and slot aggregation stay 'none' until the
+    # approval actually lands and the ride-along finalize (run_approve_git_action)
+    # runs. GitFinalizePanel never passes preview_ac, so its radios — and the
+    # real finalize they trigger — remain gated on the persisted status as before.
+    preview = False
+    if preview_ac and status == "none" and state.get("worktree_registered"):
+        status = "awaiting_choice"
+        preview = True
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = state.get("branch")
@@ -1405,6 +1420,9 @@ def get_finalize_state(group_id: str) -> dict:
         "merge_id": state.get("merge_id"),
         "merge_commit": state.get("merge_commit"),
         "commit_message": commit_message,
+        # True only for the display-only pre-approval preview (0197 T0004 §B);
+        # the persisted status is still 'none'. Advisory for the FE.
+        "preview": preview,
     }}
 
 
