@@ -4,16 +4,16 @@
       <div class="modal-box" style="width:560px;max-width:94vw;">
         <div class="modal-hd">
           <span class="modal-title gd-danger">
-            <i class="fa-solid fa-ban"></i>
+            <AppIcon name="prohibit" />
             {{ t('main.group_actions.discard_title') }}
           </span>
           <button class="modal-close" type="button" @click="onCancel">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
           <div class="gd-warn">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <AppIcon name="warning" />
             <span>{{ t('main.group_actions.discard_warning', { group: groupTitle, count: documents.length }) }}</span>
           </div>
           <p class="gd-note">{{ t('main.group_actions.discard_note') }}</p>
@@ -52,8 +52,8 @@
             :disabled="!canConfirm || submitting"
             @click="onConfirm"
           >
-            <i v-if="submitting" class="fa-solid fa-spinner fa-spin"></i>
-            <i v-else class="fa-solid fa-ban"></i>
+            <AppIcon v-if="submitting" name="spinner" spin />
+            <AppIcon v-else name="prohibit" />
             {{ t('main.group_actions.discard_confirm') }}
           </button>
         </div>
@@ -65,6 +65,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 export interface GroupDiscardDoc {
   id: string

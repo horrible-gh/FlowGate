@@ -4,11 +4,11 @@
       <div class="modal-box" style="max-width:480px;">
         <div class="modal-hd">
           <span class="modal-title">
-            <i :class="dialogIcon"></i>
+            <AppIcon :name="dialogIcon" />
             {{ modalTitle }}
           </span>
           <button class="modal-close" type="button" @click="onCancel">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -79,15 +79,15 @@
         </div>
         <div class="modal-ft">
           <div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <AppIcon name="warning" />
             <span>{{ errorMessage }}</span>
           </div>
           <button class="btn btn-secondary" type="button" @click="onCancel">
             {{ t('common.cancel') }}
           </button>
           <button class="btn btn-primary" type="button" :disabled="submitting || (isModuleDialog && mode === 'create' && !moduleSlugValid)" @click="submit">
-            <i v-if="submitting" class="fa-solid fa-spinner fa-spin"></i>
-            <i v-else class="fa-solid fa-floppy-disk"></i>
+            <AppIcon v-if="submitting" name="spinner" spin />
+            <AppIcon v-else name="floppy-disk" />
             {{ t('common.save') }}
           </button>
         </div>
@@ -101,6 +101,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest, patchRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -152,7 +153,7 @@ const isModuleDialog = computed(() => props.dialogMode === 'module')
 const isGroupDialog = computed(() => props.dialogMode === 'group')
 
 const dialogIcon = computed(() =>
-  isModuleDialog.value ? 'fa-solid fa-layer-group' : 'fa-solid fa-folder-plus',
+  isModuleDialog.value ? 'stack' : 'folder-simple-plus',
 )
 
 const modalTitle = computed(() => {

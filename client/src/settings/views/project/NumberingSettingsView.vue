@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="alert alert-info">
-      <i class="fa-solid fa-circle-info"></i>
+      <AppIcon name="info" />
       {{ $t('settings.project.numbering_settings_view.text_5') }}
     </div>
 
@@ -35,8 +35,8 @@
 
     <!-- Action buttons -->
     <div class="flex" style="justify-content:flex-end; gap:10px;">
-      <button class="btn btn-secondary" @click="resetSettings"><i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}</button>
-      <button class="btn btn-primary" @click="save"><i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}</button>
+      <button class="btn btn-secondary" @click="resetSettings"><AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}</button>
+      <button class="btn btn-primary" @click="save"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
     </div>
   </div>
 </template>
@@ -47,6 +47,7 @@ import { useI18n } from 'vue-i18n';
 import { getRequest, patchRequest } from '@shared/api';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();

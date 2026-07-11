@@ -14,20 +14,20 @@
           <option v-for="s in groupSlots" :key="s.group_id" :value="s.group_id">{{ groupLabel(s) }}</option>
         </select>
         <button class="sdb-act-btn" :aria-label="t('main.explorer.retry')" @click="reload">
-          <i class="fa-solid fa-rotate-right"></i>
+          <AppIcon name="arrow-clockwise" />
         </button>
         <button
           class="sdb-act-btn"
           :aria-label="collapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
           @click="collapsed = !collapsed"
         >
-          <i :class="collapsed ? 'fa-solid fa-expand' : 'fa-solid fa-compress'"></i>
+          <AppIcon :name="collapsed ? 'corners-out' : 'corners-in'" />
         </button>
       </div>
     </div>
     <template v-if="!collapsed">
       <div v-if="selectedGroup" class="fx-readonly-badge">
-        <i class="fa-solid fa-eye"></i>
+        <AppIcon name="eye" />
         <span>{{ t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
         <span
           v-if="groupGitState && groupGitState.ahead_count > 0"
@@ -55,7 +55,7 @@
           >
             <div class="tree-row" :class="{ 'drag-over': rootDragOver }">
               <span class="tree-caret open"><span>▶</span></span>
-              <span class="tree-ico proj"><i class="fa-solid fa-folder-open"></i></span>
+              <span class="tree-ico proj"><AppIcon name="folder-open" /></span>
               <span class="tree-lbl tree-lbl--project">{{ projectName }}</span>
             </div>
             <ul class="tree-children">
@@ -78,19 +78,19 @@
   </div>
 
   <ContextMenu v-model:visible="showRootCtx" :x="rootCtxX" :y="rootCtxY">
-    <ContextMenuItem icon="fa-solid fa-folder-plus" @click="openRootCreateFolder">
+    <ContextMenuItem icon="folder-simple-plus" @click="openRootCreateFolder">
       {{ t('main.file_tree_node.new_folder') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="fa-solid fa-file-circle-plus" @click="openRootCreateFile">
+    <ContextMenuItem icon="file-plus" @click="openRootCreateFile">
       {{ t('main.file_tree_node.new_file') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="fa-solid fa-rotate-right" @click="refreshFromMenu">
+    <ContextMenuItem icon="arrow-clockwise" @click="refreshFromMenu">
       {{ t('main.file_tree_node.refresh') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="fa-solid fa-upload" @click="triggerRootUploadFiles">
+    <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFiles">
       {{ t('main.file_tree_node.upload_files') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="fa-solid fa-folder-arrow-up" @click="triggerRootUploadFolder">
+    <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFolder">
       {{ t('main.file_tree_node.upload_folder') }}
     </ContextMenuItem>
   </ContextMenu>
@@ -120,6 +120,7 @@ import FileTreeNode from './FileTreeNode.vue'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{ projectId: string | null }>()
 const { t } = useI18n()

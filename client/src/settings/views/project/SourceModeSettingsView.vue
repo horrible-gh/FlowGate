@@ -33,10 +33,10 @@
 
     <div class="flex" style="justify-content:flex-end; gap:10px;">
       <button class="btn btn-secondary" @click="fetchMode">
-        <i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}
+        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
       <button class="btn btn-primary" @click="save">
-        <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
       </button>
     </div>
   </div>
@@ -48,6 +48,7 @@ import { useI18n } from 'vue-i18n';
 import { getRequest, putRequest } from '@shared/api';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();

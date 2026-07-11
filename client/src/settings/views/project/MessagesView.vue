@@ -4,7 +4,7 @@
     <div class="flex justify-between items-center mb-4" style="margin-bottom:14px;">
       <p class="text-s text-sm">{{ $t('settings.project.messages_view.description') }}</p>
       <button v-if="auth.can('project.settings.edit')" class="btn btn-primary btn-sm" @click="openModal(null)">
-        <i class="fa-solid fa-plus"></i> {{ $t('settings.project.messages_view.btn_add') }}
+        <AppIcon name="plus" /> {{ $t('settings.project.messages_view.btn_add') }}
       </button>
     </div>
 
@@ -22,7 +22,7 @@
           <tbody>
             <tr v-if="messages.length === 0">
               <td colspan="3" style="text-align:center;padding:32px;color:var(--text-m);">
-                <i class="fa-solid fa-comment-dots" style="font-size:1.5rem;margin-bottom:8px;display:block;opacity:.4;"></i>
+                <AppIcon name="chat-circle-dots" style="font-size:1.5rem;margin-bottom:8px;display:block;opacity:.4;" />
                 {{ $t('settings.project.messages_view.empty') }}
               </td>
             </tr>
@@ -34,7 +34,7 @@
               <td>
                 <div class="tbl-actions">
                   <button v-if="auth.can('project.settings.edit')" class="btn btn-secondary btn-sm" @click="openModal(m)">
-                    <i class="fa-solid fa-pen"></i>
+                    <AppIcon name="pencil-simple" />
                   </button>
                   <button
                     v-if="auth.can('project.settings.edit')"
@@ -42,7 +42,7 @@
                     style="color:var(--danger);"
                     @click="askDelete(m.id)"
                   >
-                    <i class="fa-solid fa-trash"></i>
+                    <AppIcon name="trash" />
                   </button>
                 </div>
               </td>
@@ -58,10 +58,10 @@
         <div class="modal-box">
           <div class="modal-hd">
             <span class="modal-title">
-              <i :class="editing ? 'fa-solid fa-pen' : 'fa-solid fa-plus'" style="color:var(--primary);"></i>
+              <AppIcon :name="editing ? 'pencil-simple' : 'plus'" style="color:var(--primary);" />
               {{ editing ? $t('settings.project.messages_view.modal_edit_title') : $t('settings.project.messages_view.modal_add_title') }}
             </span>
-            <button class="modal-close" @click="showModal = false"><i class="fa-solid fa-xmark"></i></button>
+            <button class="modal-close" @click="showModal = false"><AppIcon name="x" /></button>
           </div>
           <div class="modal-bd">
             <div class="form-group">
@@ -83,7 +83,7 @@
           <div class="modal-ft">
             <button class="btn btn-secondary" @click="showModal = false">{{ $t('common.cancel') }}</button>
             <button class="btn btn-primary" :disabled="!form.message.trim()" @click="saveMessage">
-              <i :class="editing ? 'fa-solid fa-floppy-disk' : 'fa-solid fa-plus'"></i>
+              <AppIcon :name="editing ? 'floppy-disk' : 'plus'" />
               {{ editing ? $t('common.save') : $t('common.add') }}
             </button>
           </div>
@@ -104,6 +104,7 @@
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue'
 import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest, postRequest, patchRequest, deleteRequest } from '@shared/api';

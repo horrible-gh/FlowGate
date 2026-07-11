@@ -12,10 +12,10 @@
         <!-- Header -->
         <div class="modal-hd">
           <div class="modal-title" id="tmd-title">
-            <i class="fa-solid fa-clock-rotate-left" style="color:var(--warning, #d97706); margin-right:6px;"></i>{{ t('main.time_machine.title') }}
+            <AppIcon name="clock-counter-clockwise" style="color:var(--warning, #d97706); margin-right:6px;" />{{ t('main.time_machine.title') }}
           </div>
           <button type="button" class="modal-close" @click="onClose">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -24,7 +24,7 @@
           <p class="tmd-desc">{{ t('main.time_machine.desc') }}</p>
 
           <div v-if="loading" class="tmd-loading">
-            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.time_machine.loading') }}
+            <AppIcon name="spinner" spin /> {{ t('main.time_machine.loading') }}
           </div>
 
           <div v-else-if="steps.length === 0" class="tmd-empty">
@@ -40,7 +40,7 @@
               @click="selectedDocId = step.docId"
             >
               <span class="tmd-step-radio">
-                <i :class="selectedDocId === step.docId ? 'fa-solid fa-circle-dot' : 'fa-regular fa-circle'"></i>
+                <AppIcon :name="selectedDocId === step.docId ? 'radio-button' : 'circle'" />
               </span>
               <span class="tmd-step-type">{{ typeLabel(step.typeCode) }}</span>
               <span class="tmd-step-title">{{ step.title || step.docId }}</span>
@@ -48,7 +48,7 @@
           </ul>
 
           <p v-if="selectedStep" class="tmd-cascade-note">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <AppIcon name="warning" />
             {{ t('main.time_machine.cascade_note', { step: typeLabel(selectedStep.typeCode) }) }}
           </p>
         </div>
@@ -65,10 +65,10 @@
             @click="onConfirm"
           >
             <template v-if="submitting">
-              <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.time_machine.reopening') }}
+              <AppIcon name="spinner" spin /> {{ t('main.time_machine.reopening') }}
             </template>
             <template v-else>
-              <i class="fa-solid fa-clock-rotate-left"></i> {{ t('main.time_machine.confirm') }}
+              <AppIcon name="clock-counter-clockwise" /> {{ t('main.time_machine.confirm') }}
             </template>
           </button>
         </div>
@@ -81,6 +81,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import AppIcon from '@shared/AppIcon.vue'
 
 interface TimeMachineStep {
   docId: string

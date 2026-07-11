@@ -92,18 +92,18 @@
             <div class="card md-preview-card">
               <div class="card-hd">
                 <span class="card-title">
-                  <i class="fa-solid fa-clipboard-check" style="color:var(--text-m);"></i>
+                  <AppIcon name="clipboard-text" style="color:var(--text-m);" />
                   {{ t('main.review_action_bar.final_approval') }}
                 </span>
               </div>
               <div class="card-bd ac-final-approval-body">
                 <template v-if="isCompletedDoc(tab.id)">
-                  <i class="fa-solid fa-circle-check ac-fa-icon ac-fa-icon-done"></i>
+                  <AppIcon name="check-circle" class="ac-fa-icon ac-fa-icon-done" />
                   <p class="ac-fa-title">{{ t('main.final_approval.panel_title_done') }}</p>
                   <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc_done') }}</p>
                 </template>
                 <template v-else>
-                  <i class="fa-solid fa-stamp ac-fa-icon"></i>
+                  <AppIcon name="seal" class="ac-fa-icon" />
                   <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
                   <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
                 </template>
@@ -126,12 +126,12 @@
           <div v-else-if="tab.typeCode === 'DC'" class="card md-preview-card">
             <div class="card-hd">
               <span class="card-title">
-                <i class="fa-solid fa-ban" style="color:var(--danger, #dc2626);"></i>
+                <AppIcon name="prohibit" style="color:var(--danger, #dc2626);" />
                 {{ t('main.group_discard.panel_title') }}
               </span>
             </div>
             <div class="card-bd ac-final-approval-body">
-              <i class="fa-solid fa-circle-xmark ac-fa-icon" style="color:var(--danger, #dc2626);"></i>
+              <AppIcon name="x-circle" class="ac-fa-icon" style="color:var(--danger, #dc2626);" />
               <p class="ac-fa-title">{{ t('main.group_discard.panel_title_done') }}</p>
               <p class="ac-fa-desc">{{ t('main.group_discard.panel_desc_done') }}</p>
             </div>
@@ -185,7 +185,7 @@
             <template v-else>
             <div class="card-hd">
               <span class="card-title">
-                <i class="fa-brands fa-markdown" style="color:var(--text-m);"></i>
+                <AppIcon name="markdown-logo" style="color:var(--text-m);" />
                 {{ t('main.document_preview.title') }}
               </span>
               <div class="card-actions">
@@ -195,25 +195,25 @@
                     type="button"
                     @click.stop="toggleEditDropdown(tab.id)"
                   >
-                    <i class="fa-solid fa-pen"></i> {{ t('main.document_preview.edit') }}
-                    <i class="fa-solid fa-caret-down edit-caret"></i>
+                    <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
+                    <AppIcon name="caret-down" class="edit-caret" />
                   </button>
                   <transition name="edit-dropdown">
                     <div v-if="editDropdownTabId === tab.id" class="edit-dropdown-menu" @click.stop>
                       <button class="edit-dropdown-item" type="button" @click="onEditDirect(tab)">
-                        <i class="fa-solid fa-pen-to-square"></i> {{ t('main.main_panel.edit_direct') }}
+                        <AppIcon name="note-pencil" /> {{ t('main.main_panel.edit_direct') }}
                       </button>
                       <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditMentCopy(tab)">
-                        <i class="fa-regular fa-copy"></i> {{ t('main.main_panel.copy_mention') }}
+                        <AppIcon name="copy" /> {{ t('main.main_panel.copy_mention') }}
                       </button>
                       <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeCommand(tab)">
-                        <i class="fa-solid fa-terminal"></i> {{ t('main.main_panel.invoke_command') }}
+                        <AppIcon name="terminal" /> {{ t('main.main_panel.invoke_command') }}
                       </button>
                     </div>
                   </transition>
                 </div>
                 <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                  <i class="fa-solid fa-expand"></i> {{ t('main.document_preview.full_view') }}
+                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
                 </button>
               </div>
             </div>
@@ -232,7 +232,7 @@
           <div v-else-if="tab.type === 'text'" class="card text-preview-card">
             <div class="card-hd">
               <span class="card-title">
-                <i class="fa-regular fa-file-lines" style="color:var(--text-m);"></i>
+                <AppIcon name="file-text" style="color:var(--text-m);" />
                 {{ t('main.document_preview.text_title') }}
               </span>
               <div class="card-actions">
@@ -241,10 +241,10 @@
                   <span>{{ t('main.document_preview.wrap_lines') }}</span>
                 </label>
                 <button class="btn btn-outline btn-sm" type="button" @click="onEditDirect(tab)">
-                  <i class="fa-solid fa-pen"></i> {{ t('main.document_preview.edit') }}
+                  <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
                 </button>
                 <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                  <i class="fa-solid fa-expand"></i> {{ t('main.document_preview.full_view') }}
+                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
                 </button>
               </div>
             </div>
@@ -305,10 +305,10 @@
             :title="t('main.overview.refresh')"
             @click="emit('refresh-overview')"
           >
-            <i
-              class="fa-solid fa-rotate"
-              :class="{ 'fa-spin': dashboardEntry?.refreshing || dashboardEntry?.initialLoading }"
-            ></i>
+            <AppIcon
+              name="arrows-clockwise"
+              :spin="dashboardEntry?.refreshing || dashboardEntry?.initialLoading"
+            />
             <span>{{ t('main.overview.refresh') }}</span>
           </button>
         </div>
@@ -317,10 +317,10 @@
         <div v-if="!guideDismissed" class="guide-card">
           <div class="guide-card-hd">
             <span class="guide-card-title">
-              <i class="fa-solid fa-rocket"></i> {{ t('main.overview.guide_title') }}
+              <AppIcon name="rocket-launch" /> {{ t('main.overview.guide_title') }}
             </span>
             <button class="guide-dismiss" :aria-label="t('common.close')" @click="dismissGuide">
-              <i class="fa-solid fa-xmark"></i>
+              <AppIcon name="x" />
             </button>
           </div>
           <p class="guide-desc">{{ t('main.overview.guide_desc') }}</p>
@@ -330,24 +330,24 @@
               {{ t('main.overview.step_req') }}
               <span class="gs-hint">{{ t('main.main_panel.text_48') }}</span>
             </div>
-            <span class="guide-arr"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="guide-arr"><AppIcon name="caret-right" /></span>
             <div class="guide-step"><span class="gs-tag" style="background:#7c3aed;">DS</span> {{ t('main.overview.step_ds') }}</div>
-            <span class="guide-arr"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="guide-arr"><AppIcon name="caret-right" /></span>
             <div class="guide-step"><span class="gs-tag" style="background:#ea580c;">D</span> {{ t('main.overview.step_d') }}</div>
-            <span class="guide-arr"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="guide-arr"><AppIcon name="caret-right" /></span>
             <div class="guide-step"><span class="gs-tag" style="background:#0891b2;">T</span> {{ t('main.overview.step_t') }}</div>
-            <span class="guide-arr"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="guide-arr"><AppIcon name="caret-right" /></span>
             <div class="guide-step"><span class="gs-tag" style="background:#0284c7;">TR</span> {{ t('main.overview.step_tr') }}</div>
-            <span class="guide-arr"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="guide-arr"><AppIcon name="caret-right" /></span>
             <div class="guide-step"><span class="gs-tag" style="background:#16a34a;">AC</span> {{ t('main.overview.step_ac') }}</div>
           </div>
           <div class="guide-actions">
             <button class="btn btn-primary btn-sm" @click="$emit('create-requirement')">
-              <i class="fa-solid fa-plus"></i> {{ t('main.overview.guide_cta') }}
+              <AppIcon name="plus" /> {{ t('main.overview.guide_cta') }}
             </button>
             <span class="guide-kbdhint"><kbd class="kbd">Alt</kbd>+<kbd class="kbd">N</kbd> {{ t('main.overview.guide_kbd') }}</span>
             <button class="btn btn-ghost btn-sm" style="color:var(--text-m); font-size:.75rem; margin-left:auto;" @click="dismissGuide">
-              <i class="fa-solid fa-eye-slash"></i> {{ t('main.overview.guide_dismiss') }}
+              <AppIcon name="eye-slash" /> {{ t('main.overview.guide_dismiss') }}
             </button>
           </div>
         </div>
@@ -355,35 +355,35 @@
         <!-- Reopened guide indicator (when dismissed) -->
         <div v-else-if="projectStore.currentProjectId" class="guide-reopen">
           <button class="btn btn-outline btn-sm" @click="reopenGuide">
-            <i class="fa-solid fa-eye"></i> {{ t('main.overview.guide_reopen') }}
+            <AppIcon name="eye" /> {{ t('main.overview.guide_reopen') }}
           </button>
         </div>
 
         <!-- Stats grid -->
         <div class="stats-grid">
           <div class="stat-card">
-            <div class="stat-icon" style="background:#dcfce7;"><i class="fa-solid fa-diagram-project ic-green"></i></div>
+            <div class="stat-icon" style="background:#dcfce7;"><AppIcon name="tree-structure" class="ic-green" /></div>
             <div>
               <div class="stat-num" style="color:var(--success);">{{ activeProjects }}</div>
               <div class="stat-lbl">{{ t('main.overview.active_projects') }}</div>
             </div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon" style="background:#dbeafe;"><i class="fa-solid fa-file-lines ic-blue"></i></div>
+            <div class="stat-icon" style="background:#dbeafe;"><AppIcon name="file-text" class="ic-blue" /></div>
             <div>
               <div class="stat-num" style="color:var(--primary);">{{ totalDocs }}</div>
               <div class="stat-lbl">{{ t('main.overview.total_docs') }}</div>
             </div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon" style="background:#ede9fe;"><i class="fa-solid fa-bars-progress" style="color:#7c3aed;"></i></div>
+            <div class="stat-icon" style="background:#ede9fe;"><AppIcon name="list-checks" style="color:#7c3aed;" /></div>
             <div>
               <div class="stat-num" style="color:#7c3aed;">{{ inProgressWorkflows }}</div>
               <div class="stat-lbl">{{ t('main.overview.wf_in_progress') }}</div>
             </div>
           </div>
           <div class="stat-card">
-            <div class="stat-icon" style="background:#fef3c7;"><i class="fa-solid fa-gears ic-yellow"></i></div>
+            <div class="stat-icon" style="background:#fef3c7;"><AppIcon name="gear-six" class="ic-yellow" /></div>
             <div>
               <div class="stat-num" style="color:var(--warning);">{{ workingGroups }}</div>
               <div class="stat-lbl">{{ t('main.overview.working') }}</div>
@@ -403,18 +403,18 @@
             </div>
             <div class="card-body dashboard-list-body">
               <div v-if="dashboardEntry?.initialLoading" class="empty">
-                <i class="fa-solid fa-spinner fa-spin"></i>
+                <AppIcon name="spinner" spin />
                 <p>{{ t('main.overview.loading') }}</p>
               </div>
               <div v-else-if="dashboardEntry?.error && !dashboardEntry.data" class="empty">
-                <i class="fa-solid fa-triangle-exclamation"></i>
+                <AppIcon name="warning" />
                 <p>{{ t('main.overview.load_failed') }}</p>
                 <button class="btn btn-outline btn-sm" type="button" @click="dashboardStore.retryCurrent">
                   {{ t('main.overview.retry') }}
                 </button>
               </div>
               <div v-else-if="recentActivities.length === 0" class="empty">
-                <i class="fa-regular fa-clock"></i>
+                <AppIcon name="clock" />
                 <p>{{ t('main.overview.no_activity') }}</p>
               </div>
               <div
@@ -445,7 +445,7 @@
                       <span class="activity-target-title">{{ item.document.title }}</span>
                     </div>
                     <div v-else-if="item.group" class="activity-target">
-                      <i class="fa-regular fa-folder activity-group-icon"></i>
+                      <AppIcon name="folder" class="activity-group-icon" />
                       <strong class="activity-doc-id">{{ item.group.group_id }}</strong>
                       <span class="activity-target-title">{{ item.group.title }}</span>
                     </div>
@@ -464,10 +464,10 @@
                 @click="toggleActivitiesExpanded"
               >
                 <template v-if="activitiesExpanded">
-                  <i class="fa-solid fa-chevron-up"></i> {{ t('main.overview.collapse') }}
+                  <AppIcon name="caret-up" /> {{ t('main.overview.collapse') }}
                 </template>
                 <template v-else>
-                  <i class="fa-solid fa-chevron-down"></i>
+                  <AppIcon name="caret-down" />
                   {{ t('main.overview.view_all', { total: allRecentActivities.length }) }}
                 </template>
               </button>
@@ -490,18 +490,18 @@
               </div>
               <div class="card-body dashboard-list-body">
                 <div v-if="dashboardEntry?.initialLoading" class="empty">
-                  <i class="fa-solid fa-spinner fa-spin"></i>
+                  <AppIcon name="spinner" spin />
                   <p>{{ t('main.overview.loading') }}</p>
                 </div>
                 <div v-else-if="dashboardEntry?.error && !dashboardEntry.data" class="empty">
-                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  <AppIcon name="warning" />
                   <p>{{ t('main.overview.load_failed') }}</p>
                   <button class="btn btn-outline btn-sm" type="button" @click="dashboardStore.retryCurrent">
                     {{ t('main.overview.retry') }}
                   </button>
                 </div>
                 <div v-else-if="activeWorkflows.length === 0" class="empty">
-                  <i class="fa-solid fa-diagram-project"></i>
+                  <AppIcon name="tree-structure" />
                   <p>{{ t('main.overview.no_workflow') }}</p>
                 </div>
                 <div
@@ -543,7 +543,7 @@
                       <span class="workflow-footer">
                         <span class="workflow-stage-flow">
                           <span class="doc-tag c-R">R</span>
-                          <i class="fa-solid fa-chevron-right"></i>
+                          <AppIcon name="caret-right" />
                           <span class="doc-tag" :class="`c-${workflow.stage.type_code}`">
                             {{ workflow.stage.type_code }}
                           </span>
@@ -566,10 +566,10 @@
                   @click="toggleWorkflowsExpanded"
                 >
                   <template v-if="workflowsExpanded">
-                    <i class="fa-solid fa-chevron-up"></i> {{ t('main.overview.collapse') }}
+                    <AppIcon name="caret-up" /> {{ t('main.overview.collapse') }}
                   </template>
                   <template v-else>
-                    <i class="fa-solid fa-chevron-down"></i>
+                    <AppIcon name="caret-down" />
                     {{ t('main.overview.view_all', { total: allActiveWorkflows.length }) }}
                   </template>
                 </button>
@@ -587,7 +587,7 @@
               </div>
               <div class="card-body">
                 <div v-if="typeDistribution.length === 0" class="empty">
-                  <i class="fa-solid fa-chart-pie"></i>
+                  <AppIcon name="chart-pie" />
                   <p>{{ t('main.overview.no_data') }}</p>
                 </div>
                 <div v-else style="padding:14px 18px; display:flex; flex-direction:column; gap:8px;">
@@ -609,7 +609,7 @@
                       :aria-label="t('main.overview.dist_prev')"
                       @click="distPage--"
                     >
-                      <i class="fa-solid fa-chevron-left"></i>
+                      <AppIcon name="caret-left" />
                     </button>
                     <span class="text-xs text-m">{{ t('main.overview.dist_page', { current: distPage + 1, total: distPageCount }) }}</span>
                     <button
@@ -619,7 +619,7 @@
                       :aria-label="t('main.overview.dist_next')"
                       @click="distPage++"
                     >
-                      <i class="fa-solid fa-chevron-right"></i>
+                      <AppIcon name="caret-right" />
                     </button>
                   </div>
                 </div>
@@ -640,7 +640,7 @@
                 <div v-if="qListLoading" style="padding:20px; text-align:center; font-size:.8rem; opacity:.6;">{{ t('common.loading') }}</div>
                 <div v-else-if="qListError" style="padding:12px 16px; font-size:.8rem; color:var(--danger);">{{ qListError }}</div>
                 <div v-else-if="qList.length === 0" class="empty">
-                  <i class="fa-solid fa-circle-question"></i>
+                  <AppIcon name="question" />
                   <p>{{ t('main.main_panel.open_q_empty') }}</p>
                 </div>
                 <template v-else>
@@ -668,10 +668,10 @@
                     @click="toggleQListExpanded"
                   >
                     <template v-if="qListExpanded">
-                      <i class="fa-solid fa-chevron-up"></i> {{ t('main.overview.collapse') }}
+                      <AppIcon name="caret-up" /> {{ t('main.overview.collapse') }}
                     </template>
                     <template v-else>
-                      <i class="fa-solid fa-chevron-down"></i>
+                      <AppIcon name="caret-down" />
                       {{ t('main.overview.view_all', { total: allOpenQueries.length }) }}
                     </template>
                   </button>
@@ -726,7 +726,7 @@
         <div class="modal-box document-modal">
           <div class="modal-hd">
             <span class="modal-title">
-              <i :class="fullViewTab.type === 'text' ? 'fa-regular fa-file-lines' : 'fa-brands fa-markdown'" style="color:var(--text-m);"></i>
+              <AppIcon :name="fullViewTab.type === 'text' ? 'file-text' : 'markdown-logo'" style="color:var(--text-m);" />
               {{ fullViewTab.title }}
             </span>
             <div class="modal-hd-actions">
@@ -735,10 +735,10 @@
                 type="button"
                 @click="editFromFullView(fullViewTab)"
               >
-                <i class="fa-solid fa-pen"></i> {{ t('main.document_preview.edit') }}
+                <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
               </button>
               <button class="modal-close" type="button" @click="closeFullView">
-                <i class="fa-solid fa-xmark"></i>
+                <AppIcon name="x" />
               </button>
             </div>
           </div>
@@ -770,7 +770,7 @@
         <div class="modal-box document-modal document-modal--edit">
           <div class="modal-hd">
             <span class="modal-title">
-              <i class="fa-solid fa-pen" style="color:var(--primary);"></i>
+              <AppIcon name="pencil-simple" style="color:var(--primary);" />
               {{ t('main.document_preview.edit_title', { title: editTab.title }) }}
             </span>
             <div class="modal-hd-actions">
@@ -781,11 +781,11 @@
                 @click="toggleHeaderEditMode"
                 :title="headerEditModeVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_show')"
               >
-                <i class="fa-solid" :class="headerEditModeVisible ? 'fa-eye' : 'fa-eye-slash'"></i>
+                <AppIcon :name="headerEditModeVisible ? 'eye' : 'eye-slash'" />
                 {{ headerEditModeVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_edit') }}
               </button>
               <button class="modal-close" type="button" :disabled="editSaving" @click="closeEditModal">
-                <i class="fa-solid fa-xmark"></i>
+                <AppIcon name="x" />
               </button>
             </div>
           </div>
@@ -819,7 +819,7 @@
               :disabled="editLoading || editSaving || !!editError"
               @click="saveEditContent"
             >
-              <i class="fa-solid fa-floppy-disk"></i>
+              <AppIcon name="floppy-disk" />
               {{ editSaving ? t('main.document_preview.saving') : t('common.save') }}
             </button>
           </div>
@@ -952,7 +952,7 @@
       <div class="modal" style="max-width:480px;">
         <div class="modal-hd">
           <span>{{ t('main.quick_open.placeholder') }}</span>
-          <button class="modal-close" @click="showQuickOpen = false"><i class="fa-solid fa-xmark"></i></button>
+          <button class="modal-close" @click="showQuickOpen = false"><AppIcon name="x" /></button>
         </div>
         <div class="modal-body">
           <input
@@ -977,6 +977,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import api, { getRequest, patchRequest, postRequest } from '@shared/api'
+import AppIcon from '@shared/AppIcon.vue'
 import { isFileTab, useTabsStore, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'

@@ -7,7 +7,7 @@
           {{ t('main.new_q_modal.title') }}
         </span>
         <button class="modal-close" type="button" @click="$emit('close')">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
 
@@ -38,7 +38,7 @@
         <!-- Question list -->
         <div class="form-section">
           <div class="form-section-title">
-            <i class="fa-solid fa-list-ol"></i>
+            <AppIcon name="list-numbers" />
             {{ t('main.new_q_modal.question_list') }}
             <span style="font-size:.72rem; font-weight:400; color:var(--text-m); margin-left:4px;">{{ t('main.new_q_modal.one_or_more') }}</span>
           </div>
@@ -58,25 +58,25 @@
               type="button"
               @click="removeQuestion(idx)"
             >
-              <i class="fa-solid fa-xmark"></i>
+              <AppIcon name="x" />
             </button>
           </div>
 
           <button class="btn btn-outline btn-sm" type="button" style="margin-top:4px;" @click="addQuestion">
-            <i class="fa-solid fa-plus"></i> {{ t('main.new_q_modal.add_question') }}
+            <AppIcon name="plus" /> {{ t('main.new_q_modal.add_question') }}
           </button>
         </div>
       </div>
 
       <div class="modal-ft">
         <div v-if="flashMessage" :class="['alert', flashOk ? 'alert-success' : 'alert-danger']" style="width:100%; margin-bottom:12px;">
-          <i :class="flashOk ? 'fa-solid fa-check' : 'fa-solid fa-triangle-exclamation'"></i>
+          <AppIcon :name="flashOk ? 'check' : 'warning'" />
           <span>{{ flashMessage }}</span>
         </div>
         <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ t('common.cancel') }}</button>
         <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
-          <i v-if="submitting" class="fa-solid fa-spinner fa-spin"></i>
-          <i v-else class="fa-solid fa-circle-question"></i>
+          <AppIcon v-if="submitting" name="spinner" spin />
+          <AppIcon v-else name="question" />
           {{ submitting ? t('main.new_q_modal.submitting') : t('main.new_q_modal.submit') }}
         </button>
       </div>
@@ -89,6 +89,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
+import AppIcon from '@shared/AppIcon.vue'
 
 const emit = defineEmits<{
   close: []

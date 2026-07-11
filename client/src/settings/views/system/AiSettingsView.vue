@@ -6,7 +6,7 @@
     <div class="card mb-4">
       <div class="card-hd">
         <span class="card-title">
-          <i class="fa-solid fa-robot" style="margin-right:6px; color:var(--primary);"></i>
+          <AppIcon name="robot" style="margin-right:6px; color:var(--primary);" />
           {{ $t('settings.ai.providers_title') }}
         </span>
       </div>
@@ -24,16 +24,17 @@
 
     <div class="flex" style="justify-content:flex-end; gap:10px;">
       <button class="btn btn-secondary" @click="load">
-        <i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}
+        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
       <button class="btn btn-primary" @click="save">
-        <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
       </button>
     </div>
   </div>
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue'
 // flowgate.default.0164 (D0002 §6 global screen): register/edit AI providers, order them
 // (order = fallback chain) and pick the current default. Contract: GET/PUT
 // /api/v1/system/ai-settings (P0003). api_key is write-only — the payload carries it only

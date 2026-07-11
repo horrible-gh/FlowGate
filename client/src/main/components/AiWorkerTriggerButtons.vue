@@ -5,7 +5,7 @@
       :disabled="issuing"
       @click="onCopyMent"
     >
-      <i class="fa-regular fa-copy"></i>
+      <AppIcon name="copy" />
       {{ copyLabel }}
     </button>
     <button
@@ -13,7 +13,7 @@
       :disabled="issuing"
       @click="onInvokeCommand"
     >
-      <i class="fa-solid fa-terminal"></i>
+      <AppIcon name="terminal" />
       {{ t('main.ai_worker_trigger_buttons.invoke_command') }}
     </button>
     <CommandSelectorModal
@@ -30,6 +30,7 @@ import { useFlowGateToken, splitGroupId, type TokenIssueParams } from '../compos
 import { useToast } from './common/useToast'
 import { hasDocumentReadPermission } from '@shared/auth'
 import CommandSelectorModal from './CommandSelectorModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = withDefaults(
   defineProps<{

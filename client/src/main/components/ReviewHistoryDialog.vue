@@ -11,10 +11,10 @@
         <!-- Header -->
         <div class="modal-hd">
           <div class="modal-title" id="rhd-title">
-            <i class="fa-solid fa-clock-rotate-left" style="color:var(--warning, #d97706); margin-right:6px;"></i>{{ t('main.review_history.title') }}
+            <AppIcon name="clock-counter-clockwise" style="color:var(--warning, #d97706); margin-right:6px;" />{{ t('main.review_history.title') }}
           </div>
           <button type="button" class="modal-close" @click="onClose">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -29,7 +29,7 @@
               <div class="rhd-item" :class="`rhd-item--${item.kind}`">
                 <div class="rhd-item-head">
                   <span class="rhd-tag" :class="`rhd-tag--${item.kind}`">
-                    <i :class="item.kind === 'review' ? 'fa-solid fa-robot' : 'fa-solid fa-comment-slash'"></i>
+                    <AppIcon :name="item.kind === 'review' ? 'robot' : 'chat-slash'" />
                     {{ item.kind === 'review' ? t('main.review_history.review') : t('main.review_history.reject') }}
                   </span>
                   <span v-if="item.kind === 'review'" class="rhd-verdict" :class="verdictClass(item.review.verdict)">
@@ -44,7 +44,7 @@
                     :aria-expanded="!rejectCollapsed[idx]"
                     @click="toggleReject(idx)"
                   >
-                    <i class="fa-solid fa-chevron-down rhd-fold-chevron" :class="{ open: !rejectCollapsed[idx] }"></i>
+                    <AppIcon name="caret-down" class="rhd-fold-chevron" :class="{ open: !rejectCollapsed[idx] }" />
                   </button>
                 </div>
                 <div v-if="item.kind === 'review'" class="rhd-body-text">
@@ -73,13 +73,13 @@
                   @click="toggleResponse(idx)"
                 >
                   <span class="rhd-ai-response-label">
-                    <i class="fa-solid fa-reply rhd-ai-thread"></i>
-                    <i class="fa-solid fa-robot"></i> {{ t('main.review_history.ai_response') }}
+                    <AppIcon name="arrow-bend-up-left" class="rhd-ai-thread" />
+                    <AppIcon name="robot" /> {{ t('main.review_history.ai_response') }}
                   </span>
                   <!-- R0001: the AI response carries its own timestamp here, mirroring
                        the rejection's .rhd-when and DocInfoPanel's response date. -->
                   <span v-if="item.reject.responded_at" class="rhd-ai-response-date">{{ formatWhen(item.reject.responded_at) }}</span>
-                  <i class="fa-solid fa-chevron-down rhd-ai-chevron"></i>
+                  <AppIcon name="caret-down" class="rhd-ai-chevron" />
                 </button>
                 <p class="rhd-ai-response-text">{{ item.reject.ai_response }}</p>
               </div>
@@ -100,6 +100,7 @@
 import { computed, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AiReview } from '../types/aiReview'
+import AppIcon from '@shared/AppIcon.vue'
 
 type Rejection = {
   rejection_id?: string

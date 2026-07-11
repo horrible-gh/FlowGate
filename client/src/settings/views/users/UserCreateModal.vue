@@ -2,8 +2,8 @@
   <div class="modal-bg" role="dialog" aria-modal="true">
     <div class="modal-box">
       <div class="modal-hd">
-        <span class="modal-title"><i class="fa-solid fa-user-plus" style="color:var(--primary);"></i> {{ $t('settings.users.new_user') }}</span>
-        <button class="modal-close" type="button" @click="$emit('close')"><i class="fa-solid fa-xmark"></i></button>
+        <span class="modal-title"><AppIcon name="user-plus" style="color:var(--primary);" /> {{ $t('settings.users.new_user') }}</span>
+        <button class="modal-close" type="button" @click="$emit('close')"><AppIcon name="x" /></button>
       </div>
       <div class="modal-bd">
         <div class="form-row">
@@ -69,7 +69,7 @@
       <div class="modal-ft">
         <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ $t('common.cancel') }}</button>
         <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
-          <i class="fa-solid fa-plus"></i> {{ $t('common.add') }}
+          <AppIcon name="plus" /> {{ $t('common.add') }}
         </button>
       </div>
     </div>
@@ -79,6 +79,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { postRequest, getRequest } from '@shared/api';
+import AppIcon from '@shared/AppIcon.vue';
 
 const emit = defineEmits(['close', 'created']);
 

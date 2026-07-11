@@ -23,11 +23,11 @@ function ss(code: string, visual: 'done' | 'highlight' | 'rejected' | 'current' 
     future: 'future dip-step-disabled',
   }
   const ICN: Record<string, string> = {
-    done: 'fa-solid fa-circle-check',
-    highlight: 'fa-regular fa-circle',
-    rejected: 'fa-solid fa-circle-xmark',
-    current: 'fa-regular fa-circle-dot',
-    future: 'fa-regular fa-circle',
+    done: 'check-circle',
+    highlight: 'circle',
+    rejected: 'x-circle',
+    current: 'radio-button',
+    future: 'circle',
   }
   return { code, visual, className: CLS[visual], iconClass: ICN[visual] }
 }

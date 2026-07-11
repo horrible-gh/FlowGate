@@ -4,12 +4,12 @@
       <div class="modal-box" style="max-width:400px;">
         <div class="modal-hd">
           <span class="modal-title">
-            <i v-if="danger" class="fa-solid fa-triangle-exclamation" style="color:var(--danger);"></i>
-            <i v-else class="fa-solid fa-circle-question" style="color:var(--primary);"></i>
+            <AppIcon v-if="danger" name="warning" style="color:var(--danger);" />
+            <AppIcon v-else name="question" style="color:var(--primary);" />
             {{ title }}
           </span>
           <button class="modal-close" type="button" @click="onCancel">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -33,6 +33,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 defineProps<{
   visible: boolean

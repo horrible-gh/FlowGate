@@ -3,7 +3,7 @@
     <div class="flex justify-between items-center" style="margin-bottom:20px; gap:16px; flex-wrap:wrap;">
       <div>
         <h1 class="s-page-title">
-          <i class="fa-solid fa-layer-group" style="color:var(--primary); margin-right:8px;"></i>
+          <AppIcon name="stack" style="color:var(--primary); margin-right:8px;" />
           {{ $t('settings.project.group_management') }}
         </h1>
         <p class="s-page-sub" style="margin-bottom:0;">{{ $t('settings.project.group_management_view.subtitle') }}</p>
@@ -24,13 +24,13 @@
           :disabled="!settings.currentProjectId"
           @click="openCreate"
         >
-          <i class="fa-solid fa-plus"></i> {{ $t('settings.project.group_management_view.btn_create') }}
+          <AppIcon name="plus" /> {{ $t('settings.project.group_management_view.btn_create') }}
         </button>
       </div>
     </div>
 
     <div v-if="!settings.currentProjectId" class="alert alert-info">
-      <i class="fa-solid fa-circle-info"></i>
+      <AppIcon name="info" />
       {{ $t('settings.project.project_settings_view.text_35') }}
     </div>
 
@@ -54,13 +54,13 @@
           <tbody>
             <tr v-if="loading">
               <td colspan="6" class="group-empty">
-                <i class="fa-solid fa-spinner fa-spin group-empty-icon"></i>
+                <AppIcon name="spinner" spin class="group-empty-icon" />
                 {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="groups.length === 0">
               <td colspan="6" class="group-empty">
-                <i class="fa-solid fa-layer-group group-empty-icon"></i>
+                <AppIcon name="stack" class="group-empty-icon" />
                 {{ $t('settings.project.group_management_view.empty') }}
               </td>
             </tr>
@@ -72,7 +72,7 @@
                 <td>
                   <div class="group-title-cell">
                     <span class="group-title-icon">
-                      <i class="fa-solid fa-folder-tree"></i>
+                      <AppIcon name="tree-structure" />
                     </span>
                     <div>
                       <div class="group-title-main">{{ group.title }}</div>
@@ -95,7 +95,7 @@
                 <td>
                   <div v-if="auth.can('project.group.manage')" class="tbl-actions group-actions">
                     <button class="btn btn-sm btn-secondary" :title="$t('common.edit')" @click="openEdit(group)">
-                      <i class="fa-solid fa-pen"></i>
+                      <AppIcon name="pencil-simple" />
                     </button>
                     <button
                       class="btn btn-sm btn-ghost"
@@ -103,7 +103,7 @@
                       :title="$t('common.delete')"
                       @click="confirmDelete(group)"
                     >
-                      <i class="fa-solid fa-trash"></i>
+                      <AppIcon name="trash" />
                     </button>
                   </div>
                   <span v-else class="text-xs text-m">—</span>
@@ -145,6 +145,7 @@ import { useExplorerStore } from '@main/stores/explorer'
 import CreateEditGroupModal from '@main/components/CreateEditGroupModal.vue'
 import ConfirmModal from '@main/components/ConfirmModal.vue'
 import { useToast } from '@main/components/common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 
 const settings = useSettingsStore()
 const auth = useAuthStore()

@@ -75,13 +75,17 @@ beforeEach(() => {
 });
 
 describe('ProjectSettingsView tabs', () => {
-  it('shows only paths, numbering, and messages with paths as the default tab', () => {
+  it('renders the current project tabs with paths as the default tab', () => {
     const wrapper = mountProjectSettings();
 
-    expect(wrapper.findAll('.tab-nav-item')).toHaveLength(3);
+    // Tab set has grown across groups (source-mode 0147, test-recipes 0152, git 0162/0186,
+    // ai 0164/0187) to 7 unconditional tabs; the removed doc-types/structure tabs stay gone.
+    expect(wrapper.findAll('.tab-nav-item')).toHaveLength(7);
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.path'));
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.project_settings_view.text_56'));
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.messages'));
+    expect(wrapper.text()).toContain(i18n.global.t('settings.project.git.tab'));
+    expect(wrapper.text()).toContain(i18n.global.t('settings.project.ai.tab'));
     expect(wrapper.text()).not.toContain(i18n.global.t('settings.project.types'));
     expect(wrapper.text()).not.toContain(i18n.global.t('projects.form_structure'));
     expect(wrapper.find('[data-testid="path-view"]').exists()).toBe(true);

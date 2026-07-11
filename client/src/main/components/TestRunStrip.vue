@@ -7,11 +7,12 @@
        approved, or pending_review/revised with a prior run bound (the 0163/0169 re-run relaxation).
        The failed state stays owned by TestFailStrip to avoid a duplicate re-run button. -->
   <div v-if="visible" class="run-strip" :class="{ 'run-strip--running': isRunning }">
-    <i
-      class="fa-solid run-strip-ic"
-      :class="isRunning ? 'fa-spinner fa-spin' : 'fa-flask'"
+    <AppIcon
+      class="run-strip-ic"
+      :name="isRunning ? 'spinner' : 'flask'"
+      :spin="isRunning"
       aria-hidden="true"
-    ></i>
+    />
     <span class="run-strip-label">{{ label }}</span>
     <span v-if="subText" class="run-strip-sub">{{ subText }}</span>
     <span v-if="!isRunning" class="run-strip-actions">
@@ -22,11 +23,11 @@
         :title="t('main.test_run_strip.delegate_hint')"
         @click="onDelegate"
       >
-        <i
-          class="fa-solid"
-          :class="delegating ? 'fa-spinner fa-spin' : 'fa-robot'"
+        <AppIcon
+          :name="delegating ? 'spinner' : 'robot'"
+          :spin="delegating"
           aria-hidden="true"
-        ></i>
+        />
         {{ t('main.test_run_strip.delegate') }}
       </button>
       <button
@@ -35,11 +36,11 @@
         :disabled="busy"
         @click="onRun"
       >
-        <i
-          class="fa-solid"
-          :class="launching ? 'fa-spinner fa-spin' : 'fa-play'"
+        <AppIcon
+          :name="launching ? 'spinner' : 'play'"
+          :spin="launching"
           aria-hidden="true"
-        ></i>
+        />
         {{ hasRunHistory ? t('main.test_run_strip.rerun') : t('main.test_run_strip.run') }}
       </button>
     </span>
@@ -52,6 +53,7 @@ import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 import type { TestRun } from '../types/testRun'
 
 const props = defineProps<{

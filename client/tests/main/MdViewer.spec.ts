@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia } from 'pinia'
 import i18n from '@shared/i18n'
 import MdViewer from '@main/components/MdViewer.vue'
 
@@ -70,7 +71,7 @@ describe('MdViewer', () => {
         projectId: 'proj-t509',
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 
@@ -90,7 +91,7 @@ describe('MdViewer', () => {
         projectId: 'proj-t509',
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 
@@ -111,7 +112,7 @@ describe('MdViewer', () => {
         contentOverride: source,
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 
@@ -138,7 +139,7 @@ describe('MdViewer', () => {
         contentOverride: '# LAN HTTP',
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 
@@ -162,7 +163,7 @@ describe('MdViewer', () => {
         contentOverride: '```ts\nconst answer = 42\n```',
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 
@@ -186,7 +187,7 @@ describe('MdViewer', () => {
         contentOverride: '```\nfailed copy\n```',
       },
       global: {
-        plugins: [i18n],
+        plugins: [i18n, createPinia()],
       },
     })
 

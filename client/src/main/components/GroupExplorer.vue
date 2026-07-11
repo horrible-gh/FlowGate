@@ -9,7 +9,7 @@
           :title="`${t('main.requirement.create.nav_label')} (Alt+N)`"
           @click="$emit('create-requirement')"
         >
-          <i class="fa-solid fa-plus"></i>
+          <AppIcon name="plus" />
         </button>
         <button
           class="sdb-act-btn"
@@ -19,7 +19,7 @@
           :title="finalApprovedToggleLabel"
           @click="toggleFinalApproved"
         >
-          <i :class="showFinalApprovedGroups ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+          <AppIcon :name="showFinalApprovedGroups ? 'eye' : 'eye-slash'" />
         </button>
         <button
           class="sdb-act-btn"
@@ -31,7 +31,7 @@
           :title="t('main.explorer.search_toggle')"
           @click="toggleSearch"
         >
-          <i class="fa-solid fa-filter"></i>
+          <AppIcon name="funnel" />
         </button>
       </div>
     </div>
@@ -42,7 +42,7 @@
          backend body-search endpoint. Scoped to the current project. -->
     <div v-if="showSearch" class="sdb-search">
       <div class="sdb-search-row">
-        <i class="fa-solid fa-magnifying-glass sdb-search-ico"></i>
+        <AppIcon name="magnifying-glass" class="sdb-search-ico" />
         <input
           ref="searchInputEl"
           v-model="searchQuery"
@@ -61,7 +61,7 @@
           :title="t('main.explorer.search_clear')"
           @click="clearSearch"
         >
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
       <label class="sdb-search-opt" data-test="explorer-search-content-label">
@@ -153,6 +153,7 @@ import { useExplorerStore, type GroupNode } from '../stores/explorer'
 import { useTabsStore } from '../stores/tabs'
 import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{ projectId: string | null }>()
 defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()

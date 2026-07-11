@@ -5,11 +5,11 @@
         <!-- ── Header ── -->
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-forward-fast" style="color:var(--primary); margin-right:6px;"></i>
+            <AppIcon name="fast-forward" style="color:var(--primary); margin-right:6px;" />
             {{ t('main.continuous_work.title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -18,10 +18,10 @@
           <p class="cwd-intro">{{ t('main.continuous_work.intro') }}</p>
 
           <div v-if="loading" class="cwd-state">
-            <i class="fa-solid fa-spinner fa-spin"></i> {{ t('common.loading') }}
+            <AppIcon name="spinner" spin /> {{ t('common.loading') }}
           </div>
           <div v-else-if="errorKey" class="cwd-state cwd-state--error">
-            <i class="fa-solid fa-triangle-exclamation"></i> {{ t(errorKey) }}
+            <AppIcon name="warning" /> {{ t(errorKey) }}
           </div>
           <template v-else>
             <!-- R0001 "워크플로 결정부터": when the workflow has not been decided yet, the
@@ -32,14 +32,14 @@
               <div class="cwd-section-title">{{ t('main.continuous_work.from_decision_title') }}</div>
               <div class="cwd-steps">
                 <div class="cwd-step cwd-step--head cwd-step--target cwd-step--static">
-                  <span class="cwd-step-dot"><i class="fa-solid fa-circle-dot"></i></span>
+                  <span class="cwd-step-dot"><AppIcon name="radio-button" /></span>
                   <span class="cwd-step-badge doc-tag c-R">WF</span>
                   <span class="cwd-step-label">{{ t('main.continuous_work.from_decision_step') }}</span>
                   <span class="cwd-step-tag cwd-step-tag--head">{{ t('main.continuous_work.head_tag') }}</span>
                 </div>
               </div>
               <div class="cwd-note cwd-note--info">
-                <i class="fa-solid fa-circle-info"></i>
+                <AppIcon name="info" />
                 {{ t('main.continuous_work.from_decision_note') }}
               </div>
             </template>
@@ -68,14 +68,13 @@
                   @click="selectTarget(idx)"
                 >
                   <span class="cwd-step-dot">
-                    <i
-                      class="fa-solid"
-                      :class="idx < headIdx
-                        ? 'fa-circle-check'
+                    <AppIcon
+                      :name="idx < headIdx
+                        ? 'check-circle'
                         : idx === selectedIdx
-                          ? 'fa-circle-dot'
-                          : 'fa-circle'"
-                    ></i>
+                          ? 'radio-button'
+                          : 'circle'"
+                    />
                   </span>
                   <span class="cwd-step-badge doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                   <span class="cwd-step-label">{{ item.label }}</span>
@@ -89,11 +88,11 @@
               </div>
 
               <div v-if="headInProgress" class="cwd-note cwd-note--warn">
-                <i class="fa-solid fa-circle-exclamation"></i>
+                <AppIcon name="warning-circle" />
                 {{ t('main.continuous_work.head_in_progress_note') }}
               </div>
               <div v-if="allDone" class="cwd-note cwd-note--info">
-                <i class="fa-solid fa-circle-check"></i>
+                <AppIcon name="check-circle" />
                 {{ t('main.continuous_work.all_done_note') }}
               </div>
             </template>
@@ -105,7 +104,7 @@
               <input v-model="reviewMode" type="checkbox" />
               <span class="cwd-toggle-text">
                 <span class="cwd-toggle-title">
-                  <i class="fa-solid fa-user-shield"></i> {{ t('main.continuous_work.review_mode_label') }}
+                  <AppIcon name="user-gear" /> {{ t('main.continuous_work.review_mode_label') }}
                 </span>
                 <span class="cwd-toggle-desc">{{ t('main.continuous_work.review_mode_desc') }}</span>
               </span>
@@ -130,7 +129,7 @@
             :disabled="!canProceed"
             @click="onProceed"
           >
-            <i class="fa-solid fa-arrow-right"></i> {{ t('main.continuous_work.btn_next') }}
+            <AppIcon name="arrow-right" /> {{ t('main.continuous_work.btn_next') }}
           </button>
         </div>
       </div>
@@ -142,6 +141,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
+import AppIcon from '@shared/AppIcon.vue'
 
 interface SequenceItem {
   id: number

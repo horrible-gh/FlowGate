@@ -4,10 +4,10 @@
       <div class="modal-box">
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-plus" style="color:var(--primary);"></i> {{ t('main.new_related_doc_modal.title') }}
+            <AppIcon name="plus" style="color:var(--primary);" /> {{ t('main.new_related_doc_modal.title') }}
           </span>
           <button class="modal-close" type="button" @click="$emit('close')">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -72,16 +72,16 @@
             :class="['alert', flashOk ? 'alert-success' : 'alert-danger']"
             style="width:100%; margin-bottom:12px;"
           >
-            <i :class="flashOk ? 'fa-solid fa-check' : 'fa-solid fa-triangle-exclamation'"></i>
+            <AppIcon :name="flashOk ? 'check' : 'warning'" />
             <span>{{ flashMessage }}</span>
           </div>
           <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
             <span v-if="submitting">
-              <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.new_related_doc_modal.creating') }}
+              <AppIcon name="spinner" spin /> {{ t('main.new_related_doc_modal.creating') }}
             </span>
             <span v-else>
-              <i class="fa-solid fa-plus"></i> {{ t('main.new_related_doc_modal.create') }}
+              <AppIcon name="plus" /> {{ t('main.new_related_doc_modal.create') }}
             </span>
           </button>
         </div>
@@ -91,6 +91,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'

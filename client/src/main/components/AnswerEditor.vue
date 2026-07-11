@@ -18,21 +18,21 @@
           :class="{ selected: dispatchMode === 'command' }"
           @click="dispatchMode = 'command'"
         >
-          <i class="fa-solid fa-terminal"></i> {{ t('main.answer_editor.auto_invoke_command') }}
+          <AppIcon name="terminal" /> {{ t('main.answer_editor.auto_invoke_command') }}
         </div>
         <div
           class="answer-editor__dispatch-opt"
           :class="{ selected: dispatchMode === 'ment_copy' }"
           @click="dispatchMode = 'ment_copy'"
         >
-          <i class="fa-regular fa-copy"></i> {{ t('main.answer_editor.copy_message') }}
+          <AppIcon name="copy" /> {{ t('main.answer_editor.copy_message') }}
         </div>
         <div
           class="answer-editor__dispatch-opt"
           :class="{ selected: dispatchMode === 'none' }"
           @click="dispatchMode = 'none'"
         >
-          <i class="fa-solid fa-ban"></i> {{ t('main.answer_editor.no_dispatch') }}
+          <AppIcon name="prohibit" /> {{ t('main.answer_editor.no_dispatch') }}
         </div>
       </div>
     </div>
@@ -70,8 +70,8 @@
         :disabled="!canSubmit || submitting"
         @click="submit"
       >
-        <i v-if="submitting" class="fa-solid fa-circle-notch fa-spin"></i>
-        <i v-else class="fa-solid fa-paper-plane"></i>
+        <AppIcon v-if="submitting" name="circle-notch" spin />
+        <AppIcon v-else name="paper-plane-tilt" />
         {{ submitting ? t('main.answer_editor.submitting') : t('main.answer_editor.submit') }}
       </button>
     </div>
@@ -82,6 +82,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
 

@@ -26,18 +26,19 @@
         :class="{ active: activeTab === tab.id }"
         @click="selectTab(tab.id)"
       >
-        <i :class="`fa-solid ${tab.icon}`"></i> {{ tab.label }}
+        <AppIcon :name="tab.icon" /> {{ tab.label }}
       </div>
     </div>
 
     <component :is="activeComponent" v-if="settings.currentProjectId" />
     <div v-else class="alert alert-info">
-      <i class="fa-solid fa-circle-info"></i> {{ $t('settings.project.project_settings_view.text_35') }}
+      <AppIcon name="info" /> {{ $t('settings.project.project_settings_view.text_35') }}
     </div>
   </div>
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue';
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -56,13 +57,13 @@ const route = useRoute();
 const router = useRouter();
 
 const tabs = computed(() => [
-  { id: 'paths', label: t('settings.project.path'), icon: 'fa-folder-tree', component: PathSettingsView },
-  { id: 'source-mode', label: t('settings.project.source_mode.tab'), icon: 'fa-plug', component: SourceModeSettingsView },
-  { id: 'test-recipes', label: t('settings.project.test_recipes.tab'), icon: 'fa-flask-vial', component: TestRecipesView },
-  { id: 'numbering', label: t('settings.project.project_settings_view.text_56'), icon: 'fa-hashtag', component: NumberingSettingsView },
-  { id: 'messages', label: t('settings.project.messages'), icon: 'fa-comment-dots', component: MessagesView },
-  { id: 'git', label: t('settings.project.git.tab'), icon: 'fa-code-branch', component: GitSettingsView },
-  { id: 'ai', label: t('settings.project.ai.tab'), icon: 'fa-robot', component: AiProjectSettingsView },
+  { id: 'paths', label: t('settings.project.path'), icon: 'tree-structure', component: PathSettingsView },
+  { id: 'source-mode', label: t('settings.project.source_mode.tab'), icon: 'plugs', component: SourceModeSettingsView },
+  { id: 'test-recipes', label: t('settings.project.test_recipes.tab'), icon: 'test-tube', component: TestRecipesView },
+  { id: 'numbering', label: t('settings.project.project_settings_view.text_56'), icon: 'hash', component: NumberingSettingsView },
+  { id: 'messages', label: t('settings.project.messages'), icon: 'chat-circle-dots', component: MessagesView },
+  { id: 'git', label: t('settings.project.git.tab'), icon: 'git-branch', component: GitSettingsView },
+  { id: 'ai', label: t('settings.project.ai.tab'), icon: 'robot', component: AiProjectSettingsView },
 ]);
 
 const validTabIds = new Set(['paths', 'source-mode', 'test-recipes', 'numbering', 'messages', 'git', 'ai']);

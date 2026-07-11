@@ -12,10 +12,10 @@
         <!-- Header -->
         <div class="modal-hd">
           <div class="modal-title" id="rrd-title">
-            <i class="fa-solid fa-xmark-circle" style="color:var(--danger); margin-right:6px;"></i>{{ t('main.review_reject_dialog.title') }}
+            <AppIcon name="x-circle" style="color:var(--danger); margin-right:6px;" />{{ t('main.review_reject_dialog.title') }}
           </div>
           <button type="button" class="modal-close" @click="onClose">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -50,13 +50,13 @@
             @click="onSaveReason"
           >
             <template v-if="saving">
-              <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.review_reject_dialog.saving') }}
+              <AppIcon name="spinner" spin /> {{ t('main.review_reject_dialog.saving') }}
             </template>
             <template v-else-if="saved">
-              <i class="fa-solid fa-check"></i> {{ t('main.review_reject_dialog.saved') }}
+              <AppIcon name="check" /> {{ t('main.review_reject_dialog.saved') }}
             </template>
             <template v-else>
-              <i class="fa-solid fa-floppy-disk"></i> {{ t('main.review_reject_dialog.save_message') }}
+              <AppIcon name="floppy-disk" /> {{ t('main.review_reject_dialog.save_message') }}
             </template>
           </button>
 
@@ -67,7 +67,7 @@
               class="btn btn-secondary btn-sm rrd-split-caret"
               @click.stop="toggleDropdown"
             >
-              {{ t('main.review_reject_dialog.reject') }} <i class="fa-solid fa-caret-down"></i>
+              {{ t('main.review_reject_dialog.reject') }} <AppIcon name="caret-down" />
             </button>
             <div v-if="dropdownOpen" class="rrd-dropdown">
               <button
@@ -75,7 +75,7 @@
                 class="rrd-dropdown-item"
                 @click="onCopyMention"
               >
-                <i class="fa-regular fa-copy"></i> {{ t('main.review_reject_dialog.copy_mention') }}
+                <AppIcon name="copy" /> {{ t('main.review_reject_dialog.copy_mention') }}
               </button>
               <button
                 type="button"
@@ -83,7 +83,7 @@
                 disabled
                 :title="t('main.review_reject_dialog.coming_soon')"
               >
-                <i class="fa-solid fa-terminal"></i> {{ t('main.review_reject_dialog.invoke_command') }}
+                <AppIcon name="terminal" /> {{ t('main.review_reject_dialog.invoke_command') }}
               </button>
             </div>
           </div>
@@ -98,6 +98,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'

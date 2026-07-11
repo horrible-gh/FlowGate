@@ -4,15 +4,15 @@
   <div v-if="state && state.status !== 'none'" class="card git-fin-card">
     <div class="card-hd">
       <span class="card-title">
-        <i class="fa-solid fa-code-branch" style="color:var(--text-m);"></i>
+        <AppIcon name="git-branch" style="color:var(--text-m);" />
         {{ t('main.git_finalize.title') }}
       </span>
       <span class="git-branch-badge">
-        <i class="fa-solid fa-code-commit"></i> {{ state.branch }}
+        <AppIcon name="git-commit" /> {{ state.branch }}
       </span>
       <span class="badge" :class="statusBadgeClass">{{ statusLabel }}</span>
       <button class="git-refresh-btn" :disabled="busy" @click="fetchState" :title="t('main.git_finalize.refresh')">
-        <i class="fa-solid fa-rotate"></i>
+        <AppIcon name="arrows-clockwise" />
       </button>
     </div>
     <div class="card-bd pad">
@@ -50,7 +50,7 @@
         </div>
         <div class="flex" style="justify-content:flex-end; margin-top:10px;">
           <button class="btn btn-primary" :disabled="runDisabled" @click="runFinalize">
-            <i class="fa-solid fa-play"></i>
+            <AppIcon name="play" />
             {{ busy ? t('main.git_finalize.running') : t('main.git_finalize.execute') }}
           </button>
         </div>
@@ -58,39 +58,39 @@
 
       <template v-else-if="state.status === 'merged'">
         <p class="git-fin-done">
-          <i class="fa-solid fa-circle-check"></i>
+          <AppIcon name="check-circle" />
           {{ t('main.git_finalize.merged_msg', { base: state.base_branch, commit: mergeCommit || '-' }) }}
         </p>
       </template>
       <template v-else-if="state.status === 'pushed'">
         <p class="git-fin-done">
-          <i class="fa-solid fa-circle-check"></i>
+          <AppIcon name="check-circle" />
           {{ t('main.git_finalize.pushed_msg', { branch: state.branch }) }}
         </p>
       </template>
       <template v-else-if="state.status === 'merging'">
-        <p class="git-fin-meta"><i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.git_finalize.merging_msg') }}</p>
+        <p class="git-fin-meta"><AppIcon name="spinner" spin /> {{ t('main.git_finalize.merging_msg') }}</p>
       </template>
 
       <template v-else-if="state.status === 'conflict'">
         <p class="git-fin-conflict-msg">
-          <i class="fa-solid fa-triangle-exclamation"></i>
+          <AppIcon name="warning" />
           {{ t('main.git_finalize.conflict_msg', { n: conflictFiles.length }) }}
         </p>
         <p v-if="conflictError" class="git-fin-conflict-msg">{{ conflictError }}</p>
         <div class="git-conflict-summary">
           <span>
-            <i class="fa-solid fa-file-code"></i>
+            <AppIcon name="file-code" />
             {{ t('main.git_finalize.conflict_files_summary', { resolved: resolvedFileCount, total: conflictFiles.length }) }}
           </span>
           <span v-if="firstResidualMarker" class="git-marker-warning">{{ firstResidualMarker }}</span>
         </div>
         <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:10px;">
           <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
-            <i class="fa-solid fa-ban"></i> {{ t('main.git_finalize.abort') }}
+            <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </button>
           <button class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
-            <i class="fa-solid fa-code-compare"></i> {{ t('main.git_finalize.open_resolver') }}
+            <AppIcon name="git-diff" /> {{ t('main.git_finalize.open_resolver') }}
           </button>
         </div>
       </template>
@@ -105,18 +105,18 @@
           <p>{{ t('main.git_finalize.dialog_subtitle', { n: conflictFiles.length }) }}</p>
         </div>
         <button class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="closeConflictDialog">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
 
       <div v-if="conflictLoadStatus === 'loading'" class="git-conflict-loading">
-        <i class="fa-solid fa-spinner fa-spin"></i>
+        <AppIcon name="spinner" spin />
         {{ t('main.git_finalize.loading_conflicts') }}
       </div>
       <div v-else-if="conflictLoadStatus === 'error'" class="git-conflict-loading git-conflict-load-error">
         <span>{{ conflictError || t('main.git_finalize.load_failed') }}</span>
         <button class="btn btn-secondary" :disabled="busy" @click="retryFetchConflicts">
-          <i class="fa-solid fa-rotate"></i> {{ t('main.git_finalize.retry') }}
+          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.retry') }}
         </button>
       </div>
       <div v-else-if="!conflictFiles.length" class="git-conflict-loading">
@@ -143,19 +143,19 @@
           <section v-if="selectedConflictFile" class="git-conflict-workspace">
             <div class="git-conflict-workspace-hd">
               <div class="git-conflict-selected-path">
-                <i class="fa-solid fa-file-code"></i>
+                <AppIcon name="file-code" />
                 <span>{{ selectedConflictFile.path }}</span>
               </div>
               <div class="git-conflict-mode-tabs" v-if="selectedConflictFile.mode !== 'direct_only'">
                 <button :class="{ active: selectedConflictFile.mode === 'chunk' }" @click="switchToChunkView(selectedConflictFile)">
-                  <i class="fa-solid fa-code-compare"></i> {{ t('main.git_finalize.chunk_view') }}
+                  <AppIcon name="git-diff" /> {{ t('main.git_finalize.chunk_view') }}
                 </button>
                 <button :class="{ active: selectedConflictFile.mode === 'direct' }" @click="switchToDirectEdit(selectedConflictFile)">
-                  <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_edit') }}
+                  <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_edit') }}
                 </button>
               </div>
               <span v-else class="git-direct-only-badge">
-                <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_only') }}
+                <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_only') }}
               </span>
             </div>
 
@@ -204,15 +204,15 @@
 
         <div class="git-conflict-dialog-ft">
           <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }">
-            <i :class="allConflictsResolved ? 'fa-solid fa-circle-check' : 'fa-solid fa-triangle-exclamation'"></i>
+            <AppIcon :name="allConflictsResolved ? 'check-circle' : 'warning'" />
             <span>{{ markerGuardText }}</span>
           </div>
           <div class="git-conflict-footer-actions">
             <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
-              <i class="fa-solid fa-ban"></i> {{ t('main.git_finalize.abort') }}
+              <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
             <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="submitResolve">
-              <i class="fa-solid fa-check"></i> {{ t('main.git_finalize.resolve_submit') }}
+              <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
             </button>
           </div>
         </div>
@@ -226,6 +226,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'

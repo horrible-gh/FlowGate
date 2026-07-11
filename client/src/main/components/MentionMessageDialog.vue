@@ -5,10 +5,10 @@
         <!-- Header -->
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-regular fa-copy" style="color:var(--primary); margin-right:6px;"></i>
+            <AppIcon name="copy" style="color:var(--primary); margin-right:6px;" />
             {{ t('main.next_action_modal.mm_dialog_title') }}
           </span>
-          <button class="modal-close" type="button" @click="cancel"><i class="fa-solid fa-xmark"></i></button>
+          <button class="modal-close" type="button" @click="cancel"><AppIcon name="x" /></button>
         </div>
 
         <!-- Body -->
@@ -22,7 +22,7 @@
 
           <div class="mm-pick-label">{{ t('main.next_action_modal.mm_dialog_pick') }}</div>
           <div class="mm-candidate-list">
-            <div v-if="loading" class="mm-empty"><i class="fa-solid fa-spinner fa-spin"></i></div>
+            <div v-if="loading" class="mm-empty"><AppIcon name="spinner" spin /></div>
             <div v-else-if="localCandidates.length === 0" class="mm-empty">
               {{ t('main.next_action_modal.mm_dialog_empty') }}
             </div>
@@ -45,7 +45,7 @@
         <div class="modal-ft">
           <button class="btn btn-secondary" type="button" @click="cancel">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirm">
-            <i class="fa-solid fa-plus"></i> {{ t('main.next_action_modal.mm_dialog_add') }}
+            <AppIcon name="plus" /> {{ t('main.next_action_modal.mm_dialog_add') }}
           </button>
         </div>
       </div>
@@ -54,6 +54,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'

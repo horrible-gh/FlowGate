@@ -1,11 +1,13 @@
 <template>
   <button class="ctx-item" :class="{ 'ctx-item--danger': danger }" type="button" role="menuitem" @click="emit('click')">
-    <i v-if="icon" :class="icon" class="ctx-item__icon"></i>
+    <AppIcon v-if="icon" :name="icon" class="ctx-item__icon" />
     <slot />
   </button>
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
+
 defineProps<{
   icon?: string
   danger?: boolean

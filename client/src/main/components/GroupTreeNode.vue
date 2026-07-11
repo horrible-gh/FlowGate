@@ -17,7 +17,7 @@
       <span v-if="node.node_type === 'document' && node.type_code" class="doc-tag" :class="`c-${node.type_code}`">
         {{ node.type_code }}
       </span>
-      <span v-else class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
+      <span v-else class="tree-ico"><AppIcon :name="iconFA.cls" :style="{ color: iconFA.color }" /></span>
       <span class="tree-lbl" :class="{ 'tree-lbl--meta': node.node_type === 'module', 'tree-lbl--project': node.node_type === 'project' }">{{ label }}</span>
       <span
         v-if="workflowState?.docClass"
@@ -29,7 +29,7 @@
         :class="['node-state', workflowState.nodeStatus]"
         :title="_NS_META[workflowState.nodeStatus]?.label"
       >
-        <i :class="[_NS_META[workflowState.nodeStatus]?.icon ?? 'fa-solid fa-circle']" style="font-size:.5rem;"></i>
+        <AppIcon :name="_NS_META[workflowState.nodeStatus]?.icon ?? 'circle'" style="font-size:.5rem;" />
         {{ _NS_META[workflowState.nodeStatus]?.label }}
       </span>
     </div>
@@ -47,31 +47,31 @@
       />
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
-      <ContextMenuItem v-if="node.node_type === 'document'" icon="fa-solid fa-arrow-up-right" @click="toggleOpen">
+      <ContextMenuItem v-if="node.node_type === 'document'" icon="arrow-up-right" @click="toggleOpen">
         {{ t('main.group_tree_node.text_27') }}
       </ContextMenuItem>
       <template v-if="node.node_type === 'group'">
-        <ContextMenuItem v-if="isEmptyGroup" icon="fa-solid fa-file-circle-plus" @click="openCreateRequirement">
+        <ContextMenuItem v-if="isEmptyGroup" icon="file-plus" @click="openCreateRequirement">
           {{ t('main.group_tree_node.new_requirement') }}
         </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-pen" @click="openEditGroup">
+        <ContextMenuItem icon="pencil-simple" @click="openEditGroup">
           {{ t('main.group_tree_node.edit_group') }}
         </ContextMenuItem>
         <div class="ctx-separator" role="separator"></div>
-        <ContextMenuItem icon="fa-solid fa-trash-can" :danger="true" @click="openDisposeConfirm">
+        <ContextMenuItem icon="trash" :danger="true" @click="openDisposeConfirm">
           {{ t('main.group_tree_node.dispose_group') }}
         </ContextMenuItem>
       </template>
       <template v-if="node.node_type === 'project'">
-        <ContextMenuItem icon="fa-solid fa-layer-group" @click="openCreateModule">
+        <ContextMenuItem icon="stack" @click="openCreateModule">
           {{ t('main.group_tree_node.new_group') }}
         </ContextMenuItem>
       </template>
       <template v-if="node.node_type === 'module'">
-        <ContextMenuItem icon="fa-solid fa-folder-plus" @click="openCreateGroup">
+        <ContextMenuItem icon="folder-simple-plus" @click="openCreateGroup">
           {{ t('main.group_tree_node.new_group_child') }}
         </ContextMenuItem>
-        <ContextMenuItem icon="fa-solid fa-pen" @click="openEditModule">
+        <ContextMenuItem icon="pencil-simple" @click="openEditModule">
           {{ t('main.group_tree_node.edit_module') }}
         </ContextMenuItem>
       </template>
@@ -109,6 +109,7 @@ import CreateEditGroupModal from './CreateEditGroupModal.vue'
 import GroupDiscardModal from './GroupDiscardModal.vue'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
+import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 
 const props = defineProps<{
@@ -205,11 +206,11 @@ function hasDocumentDescendant(nodeId: string): boolean {
 }
 
 const iconFA = computed(() => {
-  if (props.node.node_type === 'project') return { cls: 'fa-solid fa-diagram-project', color: '#34d399' }
-  if (props.node.node_type === 'module') return { cls: 'fa-solid fa-layer-group', color: '#7c3aed' }
+  if (props.node.node_type === 'project') return { cls: 'tree-structure', color: '#34d399' }
+  if (props.node.node_type === 'module') return { cls: 'stack', color: '#7c3aed' }
   return expanded.value
-    ? { cls: 'fa-solid fa-folder-open', color: '#f59e0b' }
-    : { cls: 'fa-solid fa-folder', color: '#f59e0b' }
+    ? { cls: 'folder-open', color: '#f59e0b' }
+    : { cls: 'folder', color: '#f59e0b' }
 })
 
 const rowClass = computed(() => ({
@@ -217,11 +218,11 @@ const rowClass = computed(() => ({
 }))
 
 const _NS_META = computed(() => ({
-  'ns-pending':  { icon: 'fa-regular fa-clock',         label: t('main.group_tree_node.ns_pending')  },
-  'ns-approved': { icon: 'fa-solid fa-circle-check',    label: t('main.group_tree_node.ns_approved') },
-  'ns-advanced': { icon: 'fa-solid fa-forward-step',    label: t('main.group_tree_node.ns_advanced') },
-  'ns-next-act': { icon: 'fa-solid fa-arrow-right',     label: t('main.group_tree_node.ns_next_act') },
-  'ns-done':     { icon: 'fa-solid fa-check-double',    label: t('main.group_tree_node.ns_done')     },
+  'ns-pending':  { icon: 'clock',         label: t('main.group_tree_node.ns_pending')  },
+  'ns-approved': { icon: 'check-circle',    label: t('main.group_tree_node.ns_approved') },
+  'ns-advanced': { icon: 'skip-forward',    label: t('main.group_tree_node.ns_advanced') },
+  'ns-next-act': { icon: 'arrow-right',     label: t('main.group_tree_node.ns_next_act') },
+  'ns-done':     { icon: 'checks',    label: t('main.group_tree_node.ns_done')     },
 }))
 
 const _DC_LABELS = computed(() => ({

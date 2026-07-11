@@ -4,7 +4,7 @@
     <div class="card mb-4">
       <div class="card-hd">
         <span class="card-title">
-          <i class="fa-solid fa-list-check" style="margin-right:6px; color:var(--primary);"></i>
+          <AppIcon name="list-checks" style="margin-right:6px; color:var(--primary);" />
           {{ $t('settings.project.test_recipes.commands_title') }}
         </span>
       </div>
@@ -23,12 +23,12 @@
           <tbody>
             <tr v-if="loading">
               <td colspan="5" class="tr-empty">
-                <i class="fa-solid fa-spinner fa-spin tr-empty-icon"></i> {{ $t('common.loading') }}
+                <AppIcon name="spinner" spin class="tr-empty-icon" /> {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="commands.length === 0">
               <td colspan="5" class="tr-empty">
-                <i class="fa-solid fa-list-check tr-empty-icon"></i> {{ $t('settings.project.test_recipes.commands_empty') }}
+                <AppIcon name="list-checks" class="tr-empty-icon" /> {{ $t('settings.project.test_recipes.commands_empty') }}
               </td>
             </tr>
             <template v-else>
@@ -49,7 +49,7 @@
     <div class="card">
       <div class="card-hd">
         <span class="card-title">
-          <i class="fa-solid fa-flask" style="margin-right:6px; color:var(--primary);"></i>
+          <AppIcon name="flask" style="margin-right:6px; color:var(--primary);" />
           {{ $t('settings.project.test_recipes.recipes_title') }}
         </span>
       </div>
@@ -68,12 +68,12 @@
           <tbody>
             <tr v-if="loading">
               <td colspan="5" class="tr-empty">
-                <i class="fa-solid fa-spinner fa-spin tr-empty-icon"></i> {{ $t('common.loading') }}
+                <AppIcon name="spinner" spin class="tr-empty-icon" /> {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="recipes.length === 0">
               <td colspan="5" class="tr-empty">
-                <i class="fa-solid fa-flask tr-empty-icon"></i> {{ $t('settings.project.test_recipes.recipes_empty') }}
+                <AppIcon name="flask" class="tr-empty-icon" /> {{ $t('settings.project.test_recipes.recipes_empty') }}
               </td>
             </tr>
             <template v-else>
@@ -109,7 +109,7 @@
     </div>
 
     <p class="form-hint" style="margin-top:14px;">
-      <i class="fa-solid fa-circle-info" style="margin-right:5px;"></i>
+      <AppIcon name="info" style="margin-right:5px;" />
       {{ $t('settings.project.test_recipes.readonly_note') }}
     </p>
   </div>
@@ -127,6 +127,7 @@ import { useI18n } from 'vue-i18n';
 import { getRequest } from '@shared/api';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();

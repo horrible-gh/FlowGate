@@ -4,7 +4,7 @@
     <p class="login-subtitle">{{ message }}</p>
 
     <div v-if="displayError" class="login-alert login-alert-danger" role="alert">
-      <i class="fa-solid fa-circle-exclamation"></i>
+      <AppIcon name="warning-circle" />
       <span>{{ displayError }}</span>
     </div>
 
@@ -62,6 +62,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   loading: boolean

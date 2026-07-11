@@ -6,7 +6,7 @@
         <p class="s-page-sub" style="margin-bottom:0;">{{ $t('settings.users.users_view.subtitle_6') }}</p>
       </div>
       <button class="btn btn-primary" @click="showCreate = true">
-        <i class="fa-solid fa-plus"></i> {{ $t('settings.users.new_user') }}
+        <AppIcon name="plus" /> {{ $t('settings.users.new_user') }}
       </button>
     </div>
 
@@ -15,7 +15,7 @@
       <div class="card-bd pad" style="padding:12px 16px;">
         <div class="flex items-center gap-2">
           <div style="position:relative; flex:1; max-width:300px;">
-            <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-m); font-size:.8rem;"></i>
+            <AppIcon name="magnifying-glass" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-m); font-size:.8rem;" />
             <input type="text" class="form-ctrl" v-model="search" :placeholder="$t('settings.users.users_view.placeholder_19')" style="padding-left:32px;" @input="fetchUsers">
           </div>
           <select class="form-ctrl" style="width:140px;" v-model="roleFilter" @change="fetchUsers">
@@ -71,10 +71,10 @@
               </td>
               <td><span class="mono" style="font-size:.8rem;">{{ u.username }}</span></td>
               <td>
-                <span v-if="u.roles?.includes('admin')" class="badge badge-red"><i class="fa-solid fa-crown"></i> {{ $t('settings.users.role_admin') }}</span>
-                <span v-else-if="u.roles?.includes('manager')" class="badge badge-info"><i class="fa-solid fa-robot"></i> {{ $t('settings.users.role_manager') }}</span>
-                <span v-else-if="u.roles?.includes('worker')" class="badge badge-gray"><i class="fa-solid fa-eye"></i> {{ $t('settings.users.role_worker') }}</span>
-                <span v-else-if="u.roles?.includes('viewer')" class="badge badge-gray"><i class="fa-solid fa-eye"></i> {{ $t('settings.users.role_viewer') }}</span>
+                <span v-if="u.roles?.includes('admin')" class="badge badge-red"><AppIcon name="crown" /> {{ $t('settings.users.role_admin') }}</span>
+                <span v-else-if="u.roles?.includes('manager')" class="badge badge-info"><AppIcon name="robot" /> {{ $t('settings.users.role_manager') }}</span>
+                <span v-else-if="u.roles?.includes('worker')" class="badge badge-gray"><AppIcon name="eye" /> {{ $t('settings.users.role_worker') }}</span>
+                <span v-else-if="u.roles?.includes('viewer')" class="badge badge-gray"><AppIcon name="eye" /> {{ $t('settings.users.role_viewer') }}</span>
                 <span v-else class="badge badge-gray">—</span>
               </td>
               <td>
@@ -84,8 +84,8 @@
                 <span v-else class="text-xs text-m">—</span>
               </td>
               <td>
-                <span v-if="u.totp_enabled" class="badge badge-green"><i class="fa-solid fa-check"></i> {{ $t('projects.filter_active') }}</span>
-                <span v-else-if="u.is_active" class="badge badge-yellow"><i class="fa-solid fa-minus"></i> {{ $t('settings.users.totp_unset') }}</span>
+                <span v-if="u.totp_enabled" class="badge badge-green"><AppIcon name="check" /> {{ $t('projects.filter_active') }}</span>
+                <span v-else-if="u.is_active" class="badge badge-yellow"><AppIcon name="minus" /> {{ $t('settings.users.totp_unset') }}</span>
                 <span v-else class="badge badge-gray">—</span>
               </td>
               <td>
@@ -95,12 +95,12 @@
               </td>
               <td>
                 <div class="tbl-actions">
-                  <button class="btn btn-secondary btn-sm" @click="openEdit(u)"><i class="fa-solid fa-pen"></i></button>
+                  <button class="btn btn-secondary btn-sm" @click="openEdit(u)"><AppIcon name="pencil-simple" /></button>
                   <button
                     class="btn btn-ghost btn-sm"
                     :style="u.roles?.includes('admin') ? 'color:var(--text-m);' : 'color:var(--danger);'"
                     @click="handleTrash(u)"
-                  ><i class="fa-solid fa-trash"></i></button>
+                  ><AppIcon name="trash" /></button>
                 </div>
               </td>
             </tr>
@@ -111,7 +111,7 @@
 
     <!-- RBAC note -->
     <div class="alert alert-warning mt-4" style="margin-top:16px;">
-      <i class="fa-solid fa-triangle-exclamation"></i>
+      <AppIcon name="warning" />
       <div>
         <strong>{{ $t('settings.users.users_view.text_116') }}</strong> Detailed definitions and mapping of permission items will be decided during the design phase (DS→D) after the database schema design is finalized. (R014 §3, §10 unresolved item No.2)
       </div>
@@ -140,6 +140,7 @@
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest, patchRequest, postRequest } from '@shared/api';

@@ -1,7 +1,7 @@
 <template>
   <div class="login-step active" style="text-align:center;">
     <div class="totp-shield" style="background:var(--warning-l); color:var(--warning);">
-      <i class="fa-solid fa-lock"></i>
+      <AppIcon name="lock" />
     </div>
     <h2 class="login-title">{{ t('auth.login.locked.title') }}</h2>
     <p class="login-subtitle">{{ t('auth.login.locked.message') }}</p>
@@ -12,6 +12,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   lockedUntil: string | null

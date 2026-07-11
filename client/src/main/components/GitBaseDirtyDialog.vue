@@ -9,11 +9,11 @@
       <div class="modal-box gbd-box">
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger);"></i>
+            <AppIcon name="warning" style="color:var(--danger);" />
             {{ t('main.git_finalize.base_dirty_dialog_title') }}
           </span>
           <button class="modal-close" type="button" :disabled="busy" @click="cancel">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -38,7 +38,7 @@
             <p class="gbd-hint">{{ t('main.git_finalize.commit_message_hint') }}</p>
           </div>
           <p v-if="files.length" class="gbd-revert-note">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <AppIcon name="warning" />
             {{ t('main.git_finalize.base_dirty_revert_note') }}
           </p>
           <p v-if="errorMsg" class="gbd-error">{{ errorMsg }}</p>
@@ -53,10 +53,10 @@
             :disabled="busy || !files.length"
             @click="choose('revert')"
           >
-            <i class="fa-solid fa-rotate-left"></i> {{ t('main.git_finalize.base_dirty_revert_merge') }}
+            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
           </button>
           <button class="btn btn-primary" type="button" :disabled="busy" @click="choose('commit')">
-            <i class="fa-solid fa-check"></i> {{ t('main.git_finalize.base_dirty_commit_merge') }}
+            <AppIcon name="check" /> {{ t('main.git_finalize.base_dirty_commit_merge') }}
           </button>
         </div>
       </div>
@@ -65,6 +65,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'

@@ -94,7 +94,7 @@
           </div>
 
           <div v-if="testResult" class="git-test-result" :class="testOk ? 'git-test-ok' : 'git-test-fail'">
-            <i :class="testOk ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-xmark'"></i>
+            <AppIcon :name="testOk ? 'check-circle' : 'x-circle'" />
             <span>{{ testMessage }}</span>
           </div>
         </div>
@@ -128,12 +128,12 @@
           </div>
           <div style="margin-top:10px;">
             <button class="btn btn-secondary" :disabled="busy" @click="provisionNow">
-              <i class="fa-solid fa-download"></i>
+              <AppIcon name="download-simple" />
               {{ busyProvision ? $t('settings.project.git.provision_running') : $t('settings.project.git.provision_run') }}
             </button>
           </div>
           <p class="form-hint" style="margin-top:10px;">
-            <i class="fa-solid fa-circle-info"></i>
+            <AppIcon name="info" />
             {{ $t('settings.project.git.provision_note') }}
           </p>
         </template>
@@ -148,16 +148,16 @@
         :disabled="busy"
         @click="disconnect"
       >
-        <i class="fa-solid fa-link-slash"></i> {{ $t('settings.project.git.disconnect') }}
+        <AppIcon name="link-break" /> {{ $t('settings.project.git.disconnect') }}
       </button>
       <span v-else></span>
       <span class="flex" style="gap:10px;">
         <button class="btn btn-secondary" :disabled="busy || !form.repo_url" @click="testConnection">
-          <i class="fa-solid fa-plug-circle-check"></i>
+          <AppIcon name="plugs-connected" />
           {{ busyTest ? $t('settings.project.git.testing') : $t('settings.project.git.test') }}
         </button>
         <button class="btn btn-primary" :disabled="busy || !form.repo_url" @click="save">
-          <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+          <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
         </button>
       </span>
     </div>
@@ -170,6 +170,7 @@ import { useI18n } from 'vue-i18n';
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();

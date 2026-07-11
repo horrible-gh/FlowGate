@@ -8,7 +8,7 @@
     >
       <span class="proj-sw-dot" :style="{ background: currentProjectColor }"></span>
       <span>{{ currentProjectName }}</span>
-      <i class="fa-solid fa-chevron-down proj-sw-caret" :class="{ open }"></i>
+      <AppIcon name="caret-down" class="proj-sw-caret" :class="{ open }" />
     </button>
     <div v-if="open" class="proj-dd">
       <div class="proj-dd-hd">{{ t('main.nav.project_menu') }}</div>
@@ -26,11 +26,7 @@
         >
           <span class="proj-dd-dot" :style="{ background: projectColor(p) }"></span>
           <span>{{ p.project_name }}</span>
-          <i
-            v-if="p.project_id === projectStore.currentProjectId"
-            class="fa-solid fa-check"
-            style="margin-left:auto; font-size:.65rem; opacity:.5;"
-          ></i>
+          <AppIcon name="check" v-if="p.project_id === projectStore.currentProjectId" style="margin-left:auto; font-size:.65rem; opacity:.5;" />
         </button>
       </template>
       <div v-else-if="projectStore.error" class="proj-dd-item">
@@ -42,11 +38,11 @@
       <template v-if="isAdmin">
         <div class="proj-dd-div"></div>
         <a href="/settings/projects" class="proj-dd-item" @click="open = false">
-          <i class="fa-solid fa-table-cells-large" style="width:14px;text-align:center;color:rgba(255,255,255,.4);"></i>
+          <AppIcon name="grid-four" style="width:14px;text-align:center;color:rgba(255,255,255,.4);" />
           <span>{{ t('main.nav.project_list') }}</span>
         </a>
         <a href="/settings/projects?new=1" class="proj-dd-item" @click="open = false">
-          <i class="fa-solid fa-plus" style="width:14px;text-align:center;color:rgba(255,255,255,.4);"></i>
+          <AppIcon name="plus" style="width:14px;text-align:center;color:rgba(255,255,255,.4);" />
           <span>{{ t('main.nav.new_project') }}</span>
         </a>
       </template>
@@ -65,6 +61,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { onBeforeUnmount, onMounted, ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabsStore } from '../stores/tabs'

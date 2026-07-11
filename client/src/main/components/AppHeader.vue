@@ -8,7 +8,7 @@
       :aria-expanded="sidebarOpen"
       @click="emit('toggle-sidebar')"
     >
-      <i class="fa-solid fa-bars"></i>
+      <AppIcon name="list" />
     </button>
 
     <!-- Brand -->
@@ -52,7 +52,7 @@
 
       <!-- Settings (admin only) -->
       <button v-if="isAdmin" class="hdr-btn" @click="goToSettings">
-        <i class="fa-solid fa-gear"></i><span>{{ t('nav.settings') }}</span>
+        <AppIcon name="gear" /><span>{{ t('nav.settings') }}</span>
       </button>
 
       <div class="hdr-div"></div>
@@ -65,7 +65,7 @@
 
       <!-- Logout -->
       <button class="hdr-btn" @click="logout">
-        <i class="fa-solid fa-right-from-bracket"></i><span>{{ t('common.logout') }}</span>
+        <AppIcon name="sign-out" /><span>{{ t('common.logout') }}</span>
       </button>
     </nav>
   </header>
@@ -77,6 +77,7 @@ import { RouterLink } from 'vue-router'
 import ProjectSelector from './ProjectSelector.vue'
 import NotificationCenter from './NotificationCenter.vue'
 import GitActionMenu from './GitActionMenu.vue'
+import AppIcon from '@shared/AppIcon.vue'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { serverLogout } from '@shared/api'

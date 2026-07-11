@@ -2,14 +2,14 @@
   <div class="login-step active">
     <div style="text-align:center; margin-bottom:8px;">
       <div style="width:52px; height:52px; background:var(--primary-l); border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 12px;">
-        <i class="fa-solid fa-shield-halved" style="font-size:1.4rem; color:var(--primary);"></i>
+        <AppIcon name="shield-checkered" style="font-size:1.4rem; color:var(--primary);" />
       </div>
       <h2 class="login-title">{{ t('auth.totp.title') }}</h2>
       <p class="login-subtitle">{{ t('auth.totp.instruction') }}</p>
     </div>
 
     <div v-if="error" class="login-alert login-alert-danger" role="alert">
-      <i class="fa-solid fa-circle-exclamation"></i>
+      <AppIcon name="warning-circle" />
       <span>{{ error }}</span>
     </div>
 
@@ -32,7 +32,7 @@
     </div>
 
     <button class="btn btn-primary w-full btn-lg" :disabled="loading || code.length !== 6" @click="submitCode">
-      <i class="fa-solid fa-check"></i>
+      <AppIcon name="check" />
       <span>{{ t('auth.totp.submit') }}</span>
     </button>
     <button class="btn btn-ghost w-full" style="margin-top:8px;" :disabled="loading" @click="emit('back')">
@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   loading: boolean

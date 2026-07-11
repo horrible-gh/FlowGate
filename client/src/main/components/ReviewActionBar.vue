@@ -9,20 +9,18 @@
                (the workflow head lives elsewhere). When viewing the head doc itself, fall
                through to the normal branch so the status pills (review pending / AI review arrived) render. -->
           <template v-if="isViewingPastDoc">
-            <i
-              class="fa-solid"
-              :class="statusIconClass"
+            <AppIcon
+              :name="statusIconClass"
               :style="statusIconStyle"
-            ></i>
+            />
             <span class="sfb-mono">{{ headDocId }}</span>
             <span class="sfb-title">— [{{ headTypeLabel }}]: {{ headDocTitle || '(pending)' }}</span>
           </template>
           <template v-else-if="currentMode !== 'sequence-complete'">
-            <i
-              class="fa-solid"
-              :class="statusIconClass"
+            <AppIcon
+              :name="statusIconClass"
               :style="statusIconStyle"
-            ></i>
+            />
             <span class="sfb-mono">{{ docRef }}</span>
             <span v-if="docTitle" class="sfb-title">— {{ docTitle }}</span>
             <span
@@ -36,7 +34,7 @@
             <span
               v-if="showAiArrivedPill"
               class="sfb-status-pill ai-arrived"
-            ><i class="fa-solid fa-robot"></i> {{ t('main.review_action_bar.ai_arrived') }}</span>
+            ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_arrived') }}</span>
           </template>
           <template v-else>
             <span class="sfb-mono">{{ docRef }}</span>
@@ -49,7 +47,7 @@
 
       <div v-if="isViewingPastDoc" class="sfb-actions">
         <button class="btn btn-primary btn-sm" type="button" @click="onOpenHeadDocClick">
-          <i class="fa-solid fa-arrow-right"></i>
+          <AppIcon name="arrow-right" />
           {{ t('main.review_action_bar.btn_go_to_head', { doc: headDocShort }) }}
         </button>
       </div>
@@ -57,28 +55,28 @@
       <template v-else>
         <div v-if="currentMode === 'workflow'" class="sfb-actions">
           <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
-               mirroring the NextActionModal proceed dropdown (.fa-chevron-up). Clicking it
+               mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking it
                no longer opens a dialog; it expands the dropdown of workflow actions. -->
           <div class="ab-dd-wrap">
             <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
-              <i class="fa-solid fa-diagram-project"></i> {{ t('main.review_action_bar.btn_decide_workflow') }}
-              <i class="fa-solid ab-dd-chevron" :class="dropdownOpen ? 'fa-chevron-down' : 'fa-chevron-up'"></i>
+              <AppIcon name="tree-structure" /> {{ t('main.review_action_bar.btn_decide_workflow') }}
+              <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
               <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
               <button class="ab-split-item" type="button" @click="onWorkflowMentionCopyClick">
-                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <button class="ab-split-item" type="button" @click="onWorkflowCommandClick">
-                <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+                <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
               </button>
               <button class="ab-split-item" type="button" @click="onWorkflowManualClick">
-                <i class="fa-solid fa-sliders"></i> {{ t('main.review_action_bar.btn_manual_decision') }}
+                <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
               </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
               <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <i class="fa-solid fa-forward-fast"></i> {{ t('main.review_action_bar.btn_continuous_work') }}
+                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
               </button>
             </div>
           </div>
@@ -97,7 +95,7 @@
             :disabled="canNextAction === false"
             @click="$emit('next-action')"
           >
-            <i class="fa-solid fa-clipboard-check"></i> {{ t('main.review_action_bar.final_approval') }}
+            <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.final_approval') }}
           </button>
           <!-- TR0044.0010 rev3: when the NEXT workflow step is a conversation (CH),
                creating it is a single one-click action — no [Create empty doc]/[Create approved doc]
@@ -111,38 +109,38 @@
             :disabled="canNextAction === false"
             @click="$emit('create-conversation')"
           >
-            <i class="fa-regular fa-comments"></i> {{ t('main.review_action_bar.btn_create_conversation') }}
+            <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
-                 mirroring the NextActionModal proceed dropdown (.fa-chevron-up). Clicking
+                 mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking
                  the button opens the dropdown (no dialog). The proceed/copy/create actions
                  all live as dropdown items; order per reviewer (rev3, reversed):
                  Create approved doc → Create empty doc → Copy mention → Proceed to next step. -->
             <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
-              <i class="fa-solid fa-arrow-right"></i>
+              <AppIcon name="arrow-right" />
               {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
-              <i class="fa-solid ab-dd-chevron" :class="dropdownOpen ? 'fa-chevron-down' : 'fa-chevron-up'"></i>
+              <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
               <button v-if="canCreateApproved" class="ab-split-item" type="button" @click="onNextCreateApprovedClick">
-                <i class="fa-solid fa-file-circle-check"></i> {{ t('main.review_action_bar.btn_create_approved') }}
+                <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
               </button>
               <button class="ab-split-item" type="button" @click="onNextCreateEmptyClick">
-                <i class="fa-regular fa-file"></i> {{ t('main.review_action_bar.btn_create_empty') }}
+                <AppIcon name="file" /> {{ t('main.review_action_bar.btn_create_empty') }}
               </button>
               <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
                    opening the proceed dialog. -->
               <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
-                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
-                <i class="fa-solid fa-arrow-right"></i> {{ t('main.review_action_bar.btn_proceed_next') }}
+                <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
               </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
               <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <i class="fa-solid fa-forward-fast"></i> {{ t('main.review_action_bar.btn_continuous_work') }}
+                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
               </button>
             </div>
           </div>
@@ -150,7 +148,7 @@
 
         <div v-else-if="currentMode === 'q'" class="sfb-actions">
           <span class="sfb-hint">
-            <i class="fa-solid fa-circle-info"></i>
+            <AppIcon name="info" />
             {{ t('main.main_panel.q_doc_hint') }}
           </span>
         </div>
@@ -164,52 +162,52 @@
              This replaces the phantom [다음 단계] / [완료] that the empty sequence used to surface. -->
         <div v-else-if="currentMode === 'workflow-recover'" class="sfb-actions">
           <span class="sfb-hint sfb-hint--recover">
-            <i class="fa-solid fa-circle-exclamation"></i>
+            <AppIcon name="warning-circle" />
             {{ t('main.review_action_bar.recover_hint') }}
           </span>
         </div>
 
         <div v-else-if="currentMode === 'rejected'" class="sfb-actions sfb-actions--rework">
           <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkMentionCopyClick">
-            <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+            <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
           </button>
           <button class="btn btn-sm sfb-rework-tool" type="button" @click="onInvokeCommandClick">
-            <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+            <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
           </button>
           <button
             class="btn btn-sm sfb-rework-complete"
             :disabled="markRevising"
             @click="onMarkRevisedClick"
           >
-            <i class="fa-solid fa-check"></i> {{ t('main.review_action_bar.btn_mark_revised') }}
+            <AppIcon name="check" /> {{ t('main.review_action_bar.btn_mark_revised') }}
           </button>
         </div>
 
         <div v-else class="sfb-actions">
           <!-- Approve -->
           <button class="btn btn-success btn-sm" :disabled="approving" @click="onApproveClick">
-            <i class="fa-solid fa-check"></i> {{ t('main.review_action_bar.btn_approve') }}
+            <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
 
           <!-- Reject -->
           <button class="btn btn-danger btn-sm" :disabled="approving" @click="onRejectClick">
-            <i class="fa-solid fa-ban"></i> {{ t('main.review_action_bar.btn_reject') }}
+            <AppIcon name="prohibit" /> {{ t('main.review_action_bar.btn_reject') }}
           </button>
 
           <!-- Review request ▼ split button (excluding R type) -->
           <div v-if="canShowReviewRequestAction" class="ab-split-wrap">
             <button :class="reviewRequestMainClass" @click="onMentionCopyClick">
-              <i :class="reviewRequestIconClass"></i> {{ reviewRequestButtonLabel }}
+              <AppIcon :name="reviewRequestIconClass" /> {{ reviewRequestButtonLabel }}
             </button>
             <button :class="reviewRequestCaretClass" @click.stop="toggleDropdown">
-              <i class="fa-solid fa-chevron-down"></i>
+              <AppIcon name="caret-down" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
               <button class="ab-split-item" @click="onMentionCopyClick">
-                <i class="fa-regular fa-copy"></i> {{ t('main.review_action_bar.btn_copy_mention') }}
+                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
-                <i class="fa-solid fa-terminal"></i> {{ t('main.review_action_bar.btn_invoke_command') }}
+                <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
               </button>
             </div>
           </div>
@@ -230,7 +228,7 @@
     >
       <div v-if="showGitFinalizeBlock && gitFin" class="ab-git-fin">
         <p class="ab-git-fin-hd">
-          <i class="fa-solid fa-code-branch"></i>
+          <AppIcon name="git-branch" />
           {{ t('main.git_finalize.approve_heading', { branch: gitFin.branch || '-' }) }}
         </p>
         <label
@@ -261,6 +259,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 
@@ -424,12 +423,12 @@ const statusPillClass = computed(() => {
   return 'review-pending'
 })
 const statusIconClass = computed(() => {
-  if (isRootDecided.value) return 'fa-solid fa-circle-check'
-  if (normalizedStatus.value === 'approved' || normalizedStatus.value === 'wf_done') return 'fa-solid fa-circle-check'
-  if (normalizedStatus.value === 'rejected') return 'fa-ban'
-  if (normalizedStatus.value === 'revised') return 'fa-rotate'
-  if (normalizedStatus.value === 'wf_in_progress') return 'fa-play'
-  return 'fa-hourglass-half'
+  if (isRootDecided.value) return 'check-circle'
+  if (normalizedStatus.value === 'approved' || normalizedStatus.value === 'wf_done') return 'check-circle'
+  if (normalizedStatus.value === 'rejected') return 'prohibit'
+  if (normalizedStatus.value === 'revised') return 'arrows-clockwise'
+  if (normalizedStatus.value === 'wf_in_progress') return 'play'
+  return 'hourglass-medium'
 })
 const statusIconStyle = computed(() => ({
   color:
@@ -477,7 +476,7 @@ const reviewRequestCaretClass = computed(() => [
   isNextStageRequest.value ? 'ab-split-caret--next' : '',
 ])
 const reviewRequestIconClass = computed(() =>
-  isNextStageRequest.value ? 'fa-solid fa-arrow-right' : 'fa-regular fa-paper-plane',
+  isNextStageRequest.value ? 'arrow-right' : 'paper-plane-tilt',
 )
 const canShowReviewRequestAction = computed(() =>
   // R (workflow root) and AC (final approval gate) are not AI review targets. They are

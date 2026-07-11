@@ -2,8 +2,8 @@
   <div class="modal-bg" role="dialog" aria-modal="true">
     <div class="modal-box">
       <div class="modal-hd">
-        <span class="modal-title"><i class="fa-solid fa-pen" style="color:var(--primary);"></i> {{ $t('settings.users.user_edit_modal.modal_title_5') }}</span>
-        <button class="modal-close" type="button" @click="$emit('close')"><i class="fa-solid fa-xmark"></i></button>
+        <span class="modal-title"><AppIcon name="pencil-simple" style="color:var(--primary);" /> {{ $t('settings.users.user_edit_modal.modal_title_5') }}</span>
+        <button class="modal-close" type="button" @click="$emit('close')"><AppIcon name="x" /></button>
       </div>
       <div class="modal-bd">
         <div class="form-row">
@@ -64,7 +64,7 @@
       <div class="modal-ft">
         <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ $t('common.cancel') }}</button>
         <button class="btn btn-primary" type="button" :disabled="submitting" @click="save">
-          <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+          <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
         </button>
       </div>
     </div>
@@ -74,6 +74,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { getRequest, patchRequest, postRequest, deleteRequest } from '@shared/api';
+import AppIcon from '@shared/AppIcon.vue';
 
 const props = defineProps({ user: Object });
 const emit = defineEmits(['close', 'updated']);

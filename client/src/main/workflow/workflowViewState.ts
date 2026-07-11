@@ -33,13 +33,13 @@ export interface StepState {
    *   future    → 'future dip-step-disabled'
    */
   className: string
-  /** Canonical FA6 icon class string emitted by the SSOT — T843.
+  /** Canonical AppIcon name emitted by the SSOT — T843.
    * visual → iconClass mapping:
-   *   done      → 'fa-solid fa-circle-check'
-   *   highlight → 'fa-regular fa-circle'
-   *   rejected  → 'fa-solid fa-circle-xmark'
-   *   current   → 'fa-regular fa-circle-dot'
-   *   future    → 'fa-regular fa-circle'
+   *   done      → 'check-circle'
+   *   highlight → 'circle'
+   *   rejected  → 'x-circle'
+   *   current   → 'radio-button'
+   *   future    → 'circle'
    */
   iconClass: string
 }
@@ -122,11 +122,11 @@ const DESIGN_SERIES = new Set(['D', 'P', 'L', 'DB'])
 type StepStateSlice = Pick<WorkflowViewState, 'stepStates' | 'nextStepIndex'>
 
 // visual → (className, iconClass) canonical mapping (T843 SSOT emit)
-// done      → 'done'                                               | 'fa-solid fa-circle-check'
-// highlight → 'wf-next-action dip-step-clickable dip-step-active'  | 'fa-regular fa-circle'
-// rejected  → 'wf-rejected dip-step-rejected'                     | 'fa-solid fa-circle-xmark'
-// current   → 'current'                                            | 'fa-regular fa-circle-dot'
-// future    → 'future dip-step-disabled'                           | 'fa-regular fa-circle'
+// done      → 'done'                                               | 'check-circle'
+// highlight → 'wf-next-action dip-step-clickable dip-step-active'  | 'circle'
+// rejected  → 'wf-rejected dip-step-rejected'                     | 'x-circle'
+// current   → 'current'                                            | 'radio-button'
+// future    → 'future dip-step-disabled'                           | 'circle'
 const STEP_CLASS: Record<StepVisual, string> = {
   done:      'done',
   highlight: 'wf-next-action dip-step-clickable dip-step-active',
@@ -135,11 +135,11 @@ const STEP_CLASS: Record<StepVisual, string> = {
   future:    'future dip-step-disabled',
 }
 const STEP_ICON: Record<StepVisual, string> = {
-  done:      'fa-solid fa-circle-check',
-  highlight: 'fa-regular fa-circle',
-  rejected:  'fa-solid fa-circle-xmark',
-  current:   'fa-regular fa-circle-dot',
-  future:    'fa-regular fa-circle',
+  done:      'check-circle',
+  highlight: 'circle',
+  rejected:  'x-circle',
+  current:   'radio-button',
+  future:    'circle',
 }
 
 /**

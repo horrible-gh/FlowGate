@@ -4,11 +4,11 @@
       <div class="modal-box csm-modal">
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-terminal" style="color:var(--primary);"></i>
+            <AppIcon name="terminal" style="color:var(--primary);" />
             {{ t('main.command_selector_modal.title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -47,7 +47,7 @@
         <template v-else>
           <div class="modal-bd csm-body">
             <div v-if="executing" class="csm-state">
-              <i class="fa-solid fa-circle-notch fa-spin"></i>
+              <AppIcon name="circle-notch" spin />
               {{ t('main.command_selector_modal.executing') }}
             </div>
             <div v-else-if="loading" class="csm-state">{{ t('common.loading') }}</div>
@@ -78,7 +78,7 @@
               :disabled="!selectedId || executing"
               @click="executeCommand"
             >
-              <i class="fa-solid fa-play"></i>
+              <AppIcon name="play" />
               {{ t('main.command_selector_modal.btn_execute') }}
             </button>
           </div>
@@ -93,6 +93,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean

@@ -4,11 +4,11 @@
       <div class="modal-box" style="max-width:420px;">
         <div class="modal-hd">
           <span class="modal-title">
-            <i :class="type === 'folder' ? 'fa-solid fa-folder-plus' : 'fa-solid fa-file-circle-plus'"></i>
+            <AppIcon :name="type === 'folder' ? 'folder-simple-plus' : 'file-plus'" />
             {{ type === 'folder' ? t('main.create_file_folder_modal.title_folder') : t('main.create_file_folder_modal.title_file') }}
           </span>
           <button class="modal-close" type="button" @click="onCancel">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -27,15 +27,15 @@
         </div>
         <div class="modal-ft">
           <div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
-            <i class="fa-solid fa-triangle-exclamation"></i>
+            <AppIcon name="warning" />
             <span>{{ errorMessage }}</span>
           </div>
           <button class="btn btn-secondary" type="button" @click="onCancel">
             {{ t('common.cancel') }}
           </button>
           <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
-            <i v-if="submitting" class="fa-solid fa-spinner fa-spin"></i>
-            <i v-else class="fa-solid fa-floppy-disk"></i>
+            <AppIcon v-if="submitting" name="spinner" spin />
+            <AppIcon v-else name="floppy-disk" />
             {{ t('common.save') }}
           </button>
         </div>
@@ -48,6 +48,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean

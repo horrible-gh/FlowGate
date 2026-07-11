@@ -7,7 +7,7 @@
           {{ $t(`main.new_requirement_modal.title_${rootType}`) }}
         </span>
         <button class="modal-close" type="button" @click="$emit('close')">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
 
@@ -24,7 +24,7 @@
             @click="rootType = type"
           >
             <span class="root-tab-icon">
-              <i :class="type === 'B' ? 'fa-solid fa-bug' : 'fa-solid fa-list-check'"></i>
+              <AppIcon :name="type === 'B' ? 'bug' : 'list-checks'" />
             </span>
             <span>
               <strong>
@@ -37,7 +37,7 @@
         </div>
 
         <div class="req-start-info" :class="{ bug: rootType === 'B' }">
-          <i class="fa-solid fa-circle-info" style="margin-top:1px; flex-shrink:0;"></i>
+          <AppIcon name="info" style="margin-top:1px; flex-shrink:0;" />
           <i18n-t :keypath="`main.new_requirement_modal.info_text_${rootType}`" tag="span">
             <template #emphasis>
               <strong>{{ $t('main.new_requirement_modal.starting_point') }}</strong>
@@ -123,7 +123,7 @@
                 :title="$t('main.new_requirement_modal.use_group_name')"
                 @click="applyGroupNameToTitle"
               >
-                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <AppIcon name="magic-wand" />
               </button>
             </div>
           </div>
@@ -168,7 +168,7 @@
 
       <div class="modal-ft">
         <div v-if="flashMessage" :class="['alert', flashOk ? 'alert-success' : 'alert-danger']" style="width: 100%; margin-bottom: 12px;">
-          <i :class="flashOk ? 'fa-solid fa-check' : 'fa-solid fa-triangle-exclamation'"></i>
+          <AppIcon :name="flashOk ? 'check' : 'warning'" />
           <span>{{ flashMessage }}</span>
         </div>
         <button class="btn btn-secondary" type="button" @click="$emit('close')">
@@ -176,11 +176,11 @@
         </button>
         <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
           <span v-if="submitting">
-            <i class="fa-solid fa-spinner fa-spin"></i>
+            <AppIcon name="spinner" spin />
             {{ $t('main.new_requirement_modal.registering') || 'Registering...' }}
           </span>
           <span v-else>
-            <i class="fa-solid fa-file-circle-plus"></i>
+            <AppIcon name="file-plus" />
             {{ $t('main.new_requirement_modal.create_button') }}
           </span>
         </button>
@@ -190,6 +190,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postUrlEncoded } from '@shared/api'

@@ -2,7 +2,7 @@
   <div v-if="doc" class="doc-header">
     <div class="doc-meta">
       <span class="doc-chip" :class="`c-${headerTypeCode}`">
-        <i :class="typeIcon"></i> {{ typeLabel }}
+        <AppIcon :name="typeIcon" /> {{ typeLabel }}
       </span>
       <!-- R↔B root-type conversion (TR0066.0006 — UI for the TR0066.0005 backend endpoint).
            Shown only on a pristine workflow root (R/B) before the workflow decision; the
@@ -15,7 +15,7 @@
         :title="convertButtonTitle"
         @click.stop="openConvertConfirm"
       >
-        <i class="fa-solid fa-right-left"></i> {{ convertTargetType }}
+        <AppIcon name="arrows-left-right" /> {{ convertTargetType }}
       </button>
       <!-- R0001 group 0132: click the document-ID badge to copy the canonical doc ID. -->
       <button
@@ -25,13 +25,13 @@
         @click.stop="copyDocId"
       >
         {{ docFullPath }}
-        <i class="fa-solid fa-copy doc-id-copy-icon"></i>
+        <AppIcon name="copy" class="doc-id-copy-icon" />
       </button>
       <span class="doc-status" :class="statusCls">{{ statusLabel }}</span>
       <!-- Mention-copied badge (R0001 group 0015 / NR0003 rev4): shown ONLY when this user has
            copied the document's mention. Absence == not copied; there is no 'before copy' state. -->
       <span v-if="mentionCopy" class="doc-mc-badge" :title="mentionCopyTooltip">
-        <i class="fa-solid fa-clipboard-check"></i>
+        <AppIcon name="clipboard-text" />
         {{ mentionCopyLabel }} · {{ t('main.doc_header.mention_copied_at', { time: mentionCopyTime }) }}
       </span>
       <div v-if="hasGroup && headerTypeCode !== 'DC'" class="doc-hdr-more">
@@ -42,7 +42,7 @@
           :title="t('main.group_actions.more_title')"
           @click.stop="openGroupMenu"
         >
-          <i class="fa-solid fa-ellipsis"></i>
+          <AppIcon name="dots-three" />
         </button>
       </div>
     </div>
@@ -56,10 +56,10 @@
           @keydown.enter.prevent="saveTitle"
         />
         <button class="doc-title-btn doc-title-btn--save" :disabled="savingTitle" @click="saveTitle">
-          <i class="fa-solid fa-check"></i>
+          <AppIcon name="check" />
         </button>
         <button class="doc-title-btn doc-title-btn--cancel" @click="cancelEditTitle">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
         <button
           v-if="groupTitle"
@@ -68,7 +68,7 @@
           :title="t('main.doc_header.use_group_name')"
           @click="applyGroupNameToTitle"
         >
-          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <AppIcon name="magic-wand" />
         </button>
       </template>
       <template v-else>
@@ -79,7 +79,7 @@
           :title="t('main.doc_header.edit_title')"
           @click="startEditTitle"
         >
-          <i class="fa-solid fa-pencil"></i>
+          <AppIcon name="pencil" />
         </button>
         <button
           v-if="canEditDocument && headerTypeCode !== 'DC' && groupTitle"
@@ -88,7 +88,7 @@
           :title="t('main.doc_header.use_group_name')"
           @click="applyGroupNameToTitle"
         >
-          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <AppIcon name="magic-wand" />
         </button>
       </template>
     </div>
@@ -125,7 +125,7 @@
     />
     <!-- rejection reason banner -->
     <div v-if="showRejectionBanner" class="rejection-banner">
-      <i class="fa-solid fa-circle-exclamation"></i>
+      <AppIcon name="warning-circle" />
       <span class="rejection-banner-text">{{ rejectionBannerText }}</span>
     </div>
   </div>
@@ -146,10 +146,10 @@
   />
   <ContextMenu v-model:visible="showGroupMenu" :x="menuX" :y="menuY">
     <div class="dgm-cap">{{ t('main.group_actions.menu_caption') }}</div>
-    <ContextMenuItem icon="fa-solid fa-circle-info" @click="openGroupInfo">
+    <ContextMenuItem icon="info" @click="openGroupInfo">
       {{ t('main.group_actions.group_info') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="fa-solid fa-pen" @click="openRename">
+    <ContextMenuItem icon="pencil-simple" @click="openRename">
       {{ t('main.group_actions.rename_group') }}
     </ContextMenuItem>
     <!-- R↔B root-type conversion (TR0066.0006 rev1): the reviewer asked for the same action
@@ -158,12 +158,12 @@
          pristine root before the workflow decision; absent otherwise. -->
     <template v-if="canConvertRootType">
       <div class="dgm-sep" role="separator"></div>
-      <ContextMenuItem icon="fa-solid fa-right-left" @click="openConvertFromMenu">
+      <ContextMenuItem icon="arrows-left-right" @click="openConvertFromMenu">
         {{ t('main.group_actions.convert_root_type', { to: convertTargetLabel }) }}
       </ContextMenuItem>
     </template>
     <div class="dgm-sep" role="separator"></div>
-    <ContextMenuItem icon="fa-solid fa-ban" :danger="true" @click="openDiscard">
+    <ContextMenuItem icon="prohibit" :danger="true" @click="openDiscard">
       {{ t('main.group_actions.dispose_group') }}
     </ContextMenuItem>
   </ContextMenu>
@@ -202,6 +202,7 @@ import WorkflowDecisionModal from './WorkflowDecisionModal.vue'
 import type { WfdConfirmPayload } from './WorkflowDecisionModal.vue'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
+import AppIcon from '@shared/AppIcon.vue'
 import GroupInfoModal from './GroupInfoModal.vue'
 import type { GroupInfoDoc } from './GroupInfoModal.vue'
 import GroupDiscardModal from './GroupDiscardModal.vue'
@@ -1179,12 +1180,12 @@ defineExpose({
 const docTypeStore = useDocTypeStore()
 
 const TYPE_ICONS: Record<string, string> = {
-  R: 'fa-solid fa-file-lines',
-  DS: 'fa-solid fa-pen-ruler',
-  D: 'fa-solid fa-drafting-compass',
-  T: 'fa-solid fa-list-check',
-  TR: 'fa-solid fa-file-circle-check',
-  DC: 'fa-solid fa-trash-can',
+  R: 'file-text',
+  DS: 'pencil-ruler',
+  D: 'compass-tool',
+  T: 'list-checks',
+  TR: 'seal-check',
+  DC: 'trash',
 }
 
 const STATUS_MAP: Record<string, { cls: string }> = {
@@ -1229,7 +1230,7 @@ const typeLabel = computed(() => {
 })
 
 const typeIcon = computed(() =>
-  TYPE_ICONS[headerTypeCode.value] ?? 'fa-solid fa-file'
+  TYPE_ICONS[headerTypeCode.value] ?? 'file'
 )
 
 const statusCls = computed(() => {

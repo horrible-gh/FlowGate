@@ -2,7 +2,7 @@
   <aside class="doc-info-panel">
     <!-- Collapsed rail (vertical label) -->
     <button class="doc-panel-rail" @click="$emit('toggle')" :title="t('main.doc_info_panel.expand')">
-      <i class="fa-solid fa-circle-info"></i>
+      <AppIcon name="info" />
       {{ t('main.doc_info_panel.title') }}
     </button>
 
@@ -12,17 +12,17 @@
       <div class="dip-section" :class="{ collapsed: sectionCollapsed.status }">
         <div class="dip-section-head">
           <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.status" @click="toggleSection('status')">
-            <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
-            <i class="fa-solid fa-circle-dot"></i>
+            <AppIcon name="caret-down" class="dip-acc-caret" />
+            <AppIcon name="radio-button" />
             {{ t('main.doc_info_panel.section_status') }}
           </button>
           <button class="dip-panel-close btn-icon" @click="$emit('toggle')" :title="t('main.doc_info_panel.collapse')">
-            <i class="fa-solid fa-chevron-right"></i>
+            <AppIcon name="caret-right" />
           </button>
         </div>
         <div class="dip-sec-body">
           <div :class="['dip-status-badge', statusClass, (nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? 'dip-badge-clickable' : '']" @click="(nextStep?.visual === 'highlight' || nextStep?.visual === 'current') ? emit('next-action') : undefined">
-            <i class="fa-solid" :class="statusIcon"></i>
+            <AppIcon :name="statusIcon" />
             {{ statusLabel }}
           </div>
           <p class="dip-status-desc">{{ statusDesc }}</p>
@@ -35,18 +35,18 @@
       <div class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
         <div class="dip-qa-headline">
           <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.qa" @click="toggleSection('qa')">
-            <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
-            <i class="fa-solid fa-comments"></i>
+            <AppIcon name="caret-down" class="dip-acc-caret" />
+            <AppIcon name="chats" />
             {{ t('main.doc_info_panel.section_qa') }}
           </button>
           <div class="dip-qa-head-actions">
             <span v-if="qaUnansweredCount > 0" class="dip-qa-count">{{ t('main.doc_info_panel.qa_unanswered_count', { n: qaUnansweredCount }) }}</span>
             <button v-if="qaItems.length > 0" class="dip-qa-act dip-qa-fullview" type="button" @click="openQaFull(null, false)" :title="t('main.doc_info_panel.qa_view_full')">
-              <i class="fa-solid fa-expand"></i>
+              <AppIcon name="corners-out" />
               {{ t('main.doc_info_panel.qa_view_full') }}
             </button>
             <button class="dip-qa-act dip-qa-act--icon dip-qa-add" type="button" @click="toggleNewQ" :title="t('main.doc_info_panel.qa_add')">
-              <i class="fa-solid fa-plus"></i>
+              <AppIcon name="plus" />
             </button>
           </div>
         </div>
@@ -66,7 +66,7 @@
         <div v-else-if="qaError" class="dip-qa-error">{{ qaError }}</div>
         <template v-else>
           <div v-if="qaItems.length === 0" class="dip-reject-empty">
-            <i class="fa-regular fa-circle-question"></i>
+            <AppIcon name="question" />
             <span>{{ t('main.doc_info_panel.qa_empty') }}</span>
           </div>
           <div
@@ -79,7 +79,7 @@
             <p class="dip-qa-card-body">{{ item.body }}</p>
             <div class="dip-qa-card-actions">
               <button class="mini-action primary" type="button" @click="openQaFull(item.id, true)">
-                <i class="fa-solid fa-reply"></i>
+                <AppIcon name="arrow-bend-up-left" />
                 {{ t('main.doc_info_panel.qa_answer') }}
               </button>
             </div>
@@ -91,8 +91,8 @@
       <!-- Section 2.5: AI review feedback (latest review plus full history) -->
       <div v-if="canShowReviewSection" class="dip-section" :class="{ collapsed: sectionCollapsed.ai_review }">
         <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.ai_review" @click="toggleSection('ai_review')">
-          <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
-          <i class="fa-solid fa-robot"></i>
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="robot" />
           {{ t('main.doc_info_panel.section_ai_review') }}
         </button>
         <div class="dip-sec-body">
@@ -110,7 +110,7 @@
                 @click="toggleFindings"
               >
                 {{ aiVerdictLabel(aiReview) }}
-                <i class="fa-solid fa-chevron-down dip-ai-chevron" :class="{ open: findingsExpanded }"></i>
+                <AppIcon name="caret-down" class="dip-ai-chevron" :class="{ open: findingsExpanded }" />
               </button>
               <span v-else class="dip-ai-verdict" :class="aiVerdictClass(aiReview.verdict)">{{ aiVerdictLabel(aiReview) }}</span>
             </div>
@@ -134,9 +134,9 @@
                 @click="commentExpanded = !commentExpanded"
               >
                 <span class="dip-ai-comment-label">
-                  <i class="fa-solid fa-robot"></i> {{ t('main.doc_info_panel.ai_comment_label') }}
+                  <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_comment_label') }}
                 </span>
-                <i class="fa-solid fa-chevron-down dip-ai-comment-chevron"></i>
+                <AppIcon name="caret-down" class="dip-ai-comment-chevron" />
               </button>
               <div class="dip-ai-comment-body">{{ aiReview.comment }}</div>
             </div>
@@ -145,7 +145,7 @@
                record (not only when prior reviews exist), so the most common single-review
                case can still reach the full-content history view. -->
           <button v-if="(aiReviewHistory?.length ?? 0) > 0" class="dip-ai-history-link" type="button" @click="emit('open-review-history')">
-            <i class="fa-solid fa-clock-rotate-left"></i>
+            <AppIcon name="clock-counter-clockwise" />
             {{ priorReviewCount > 0
                 ? t('main.doc_info_panel.ai_review_view_history_count', { n: priorReviewCount })
                 : t('main.doc_info_panel.view_full') }}
@@ -153,7 +153,7 @@
         </template>
         <template v-else>
           <div class="dip-reject-empty">
-            <i class="fa-regular fa-comment-dots"></i>
+            <AppIcon name="chat-circle-dots" />
             <span>{{ t('main.doc_info_panel.ai_review_empty') }}</span>
             <span class="dip-reject-hint">{{ t('main.doc_info_panel.ai_review_hint') }}</span>
           </div>
@@ -164,8 +164,8 @@
       <!-- Section 3: rejection reason -->
       <div v-if="canShowRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.reject }">
         <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.reject" @click="toggleSection('reject')">
-          <i class="fa-solid fa-chevron-down dip-acc-caret"></i>
-          <i class="fa-solid fa-comment-slash"></i>
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="chat-slash" />
           {{ t('main.doc_info_panel.section_reject') }}
         </button>
         <div class="dip-sec-body">
@@ -179,11 +179,11 @@
               @click="rejectionExpanded = !rejectionExpanded"
             >
               <span class="dip-reject-quote-author">
-                <i class="fa-solid fa-user-shield"></i>
+                <AppIcon name="user-gear" />
                 <strong>{{ rejectionAuthorLabel }}</strong>
               </span>
               <span v-if="latestRejection" class="dip-reject-date">{{ formatRejectionDate(latestRejection.rejected_at) }}</span>
-              <i class="fa-solid fa-chevron-down dip-reject-chevron"></i>
+              <AppIcon name="caret-down" class="dip-reject-chevron" />
             </button>
             <div class="dip-reject-quote-body">
               <span class="dip-reject-reason">{{ rejectionDisplayReason }}</span>
@@ -191,7 +191,7 @@
               <!-- R0001: as with the AI review, offer "show-all" whenever there is a
                    rejection on record so a single rejection still has a full-view entry. -->
               <button v-if="rejectionHistoryList.length > 0" class="dip-ai-history-link" type="button" @click="emit('open-review-history')">
-                <i class="fa-solid fa-clock-rotate-left"></i>
+                <AppIcon name="clock-counter-clockwise" />
                 {{ priorRejectionCount > 0
                     ? t('main.doc_info_panel.rejection_view_history_count', { n: priorRejectionCount })
                     : t('main.doc_info_panel.view_full') }}
@@ -212,18 +212,18 @@
               @click="aiResponseExpanded = !aiResponseExpanded"
             >
               <span class="dip-ai-response-label">
-                <i class="fa-solid fa-reply dip-ai-response-thread"></i>
-                <i class="fa-solid fa-robot"></i> {{ t('main.doc_info_panel.ai_response_label') }}
+                <AppIcon name="arrow-bend-up-left" class="dip-ai-response-thread" />
+                <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_response_label') }}
               </span>
               <span v-if="latestRejection.responded_at" class="dip-ai-response-date">{{ formatRejectionDate(latestRejection.responded_at) }}</span>
-              <i class="fa-solid fa-chevron-down dip-ai-response-chevron"></i>
+              <AppIcon name="caret-down" class="dip-ai-response-chevron" />
             </button>
             <div class="dip-ai-response-body">{{ latestRejection.ai_response }}</div>
           </div>
         </template>
         <template v-else>
           <div class="dip-reject-empty">
-            <i class="fa-regular fa-comment-dots"></i>
+            <AppIcon name="chat-circle-dots" />
             <span>{{ t('main.doc_info_panel.reject_empty') }}</span>
             <span class="dip-reject-hint">{{ t('main.doc_info_panel.reject_hint') }}</span>
           </div>
@@ -252,6 +252,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
+import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
 import { useQaAnswers } from '../composables/useQaAnswers'
 import type { StepState } from '../workflow/workflowViewState'
@@ -378,15 +379,15 @@ const statusClass = computed(() => {
 })
 
 const statusIcon = computed(() => {
-  if (isQDoc.value) return isQDone.value ? 'fa-circle-check' : 'fa-clock'
+  if (isQDoc.value) return isQDone.value ? 'check-circle' : 'clock'
   switch (effectiveStatus.value) {
-    case 'pending_review': return 'fa-hourglass-half'
-    case 'approved':       return 'fa-circle-check'
-    case 'rejected':       return 'fa-circle-xmark'
-    case 'revised':        return 'fa-rotate'
-    case 'wf_in_progress': return 'fa-play'
-    case 'wf_done':        return 'fa-circle-check'
-    default:               return isRootWorkflowUndecided.value ? 'fa-circle-question' : 'fa-hourglass-half'
+    case 'pending_review': return 'hourglass-medium'
+    case 'approved':       return 'check-circle'
+    case 'rejected':       return 'x-circle'
+    case 'revised':        return 'arrows-clockwise'
+    case 'wf_in_progress': return 'play'
+    case 'wf_done':        return 'check-circle'
+    default:               return isRootWorkflowUndecided.value ? 'question' : 'hourglass-medium'
   }
 })
 

@@ -3,13 +3,13 @@
     <div class="modal-box" style="max-width: 520px;">
       <div class="modal-hd">
         <span class="modal-title">
-          <i v-if="state === 'running'" class="fa-solid fa-spinner fa-spin" style="color: var(--primary);"></i>
-          <i v-else-if="state === 'success'" class="fa-solid fa-circle-check" style="color: var(--success, #10b981);"></i>
-          <i v-else class="fa-solid fa-circle-xmark" style="color: var(--danger, #ef4444);"></i>
+          <AppIcon v-if="state === 'running'" name="spinner" spin style="color: var(--primary);" />
+          <AppIcon v-else-if="state === 'success'" name="check-circle" style="color: var(--success, #10b981);" />
+          <AppIcon v-else name="x-circle" style="color: var(--danger, #ef4444);" />
           {{ titleText }}
         </span>
         <button v-if="state !== 'running'" class="modal-close" type="button" @click="$emit('close')">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
       <div class="modal-bd">
@@ -64,6 +64,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   state: 'running' | 'success' | 'error'

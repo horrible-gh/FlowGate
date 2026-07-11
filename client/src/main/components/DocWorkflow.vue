@@ -1,14 +1,14 @@
 <template>
   <div v-if="stepStates.length > 0 || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))" class="wf-section">
     <div class="sec-title">
-      <i class="fa-solid fa-diagram-next"></i> {{ t('main.doc_workflow.title') }}
+      <AppIcon name="flow-arrow" /> {{ t('main.doc_workflow.title') }}
       <button
         v-if="workflowDecided"
         type="button"
         class="wf-edit-btn"
         @click="showEditModal = true"
       >
-        <i class="fa-solid fa-pen-to-square"></i>
+        <AppIcon name="note-pencil" />
         {{ t('main.doc_workflow.edit_btn') }}
       </button>
     </div>
@@ -17,14 +17,14 @@
       <template v-if="isWorkflowRoot && workflowDecided === false">
         <div class="wf-unit">
           <div class="wf-step wf-undecided current">
-            <i class="fa-solid fa-circle-question"></i>
+            <AppIcon name="question" />
             <span class="s-lbl">{{ docTypeStore.getLabel(tab.typeCode ?? 'R') }}</span>
           </div>
-          <span class="wf-arrow"><i class="fa-solid fa-chevron-right"></i></span>
+          <span class="wf-arrow"><AppIcon name="caret-right" /></span>
         </div>
         <div class="wf-unit">
           <div class="wf-step wf-undecided">
-            <i class="fa-solid fa-circle-question"></i>
+            <AppIcon name="question" />
             <span class="s-lbl">{{ t('main.doc_workflow.undecided') }}</span>
           </div>
         </div>
@@ -36,7 +36,7 @@
            steps (edit_workflow_pending inserts pending items into the existing sequence). -->
       <template v-else-if="decidedEmpty">
         <div class="wf-empty-recover">
-          <i class="fa-solid fa-circle-exclamation"></i>
+          <AppIcon name="warning-circle" />
           <span>{{ t('main.doc_workflow.decided_empty') }}</span>
         </div>
       </template>
@@ -54,11 +54,11 @@
             :title="stepHint(s, idx)"
             @click="onStepClick(s, idx)"
           >
-            <i :class="s.iconClass"></i>
+            <AppIcon :name="s.iconClass" />
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>
           </div>
           <span v-if="idx < stepStates.length - 1" class="wf-arrow">
-            <i class="fa-solid fa-chevron-right"></i>
+            <AppIcon name="caret-right" />
           </span>
         </div>
       </template>
@@ -81,6 +81,7 @@ import type { Tab } from '../stores/tabs'
 import type { StepState } from '../workflow/workflowViewState'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import WorkflowDecisionModal from './WorkflowDecisionModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   tab: Tab

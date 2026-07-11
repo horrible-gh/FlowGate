@@ -8,7 +8,7 @@
       <div class="md-viewer__toolbar">
         <div class="md-copy-group">
           <button class="md-copy-btn md-copy-btn--main" :class="{ 'md-copy-btn--copied': copyMdDone }" @click="copyMarkdown">
-            <i class="fa-solid fa-copy"></i>
+            <AppIcon name="copy" />
             {{ copyMdDone ? t('main.md_viewer.copied') : t('main.md_viewer.copy_md') }}
           </button>
           <button
@@ -17,8 +17,8 @@
             :title="t('main.md_viewer.copy_md_with_header')"
             @click="copyMarkdownWithHeader"
           >
-            <i v-if="!copyHeaderDone" class="fa-solid fa-heading"></i>
-            <i v-else class="fa-solid fa-check"></i>
+            <AppIcon v-if="!copyHeaderDone" name="text-h" />
+            <AppIcon v-else name="check" />
           </button>
         </div>
       </div>
@@ -32,7 +32,7 @@
         :disabled="regenerating"
         @click="regenerateFile"
       >
-        <i class="fa-solid fa-rotate-right"></i>
+        <AppIcon name="arrow-clockwise" />
         {{ regenerating ? t('main.state.regenerating') : t('main.state.regenerate_file') }}
       </button>
     </div>
@@ -40,6 +40,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Marked } from 'marked'
@@ -81,7 +82,7 @@ mdRenderer.use({
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
       const langClass = lang ? ` class="language-${lang}"` : ''
-      return `<div class="code-block-wrapper"><button class="code-copy-btn" type="button" aria-label="copy code"></button><pre><code${langClass}>${escaped}</code></pre></div>`
+      return `<div class="code-block-wrapper"><button class="code-copy-btn" type="button" aria-label="copy code"><svg class=\"code-copy-icon\" viewBox=\"0 0 256 256\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg></button><pre><code${langClass}>${escaped}</code></pre></div>`
     },
   },
 })
@@ -561,11 +562,10 @@ defineExpose({
   opacity: 1;
 }
 
-.md-viewer__content :deep(.code-copy-btn::before) {
-  content: '\f0c5';
-  font-family: 'Font Awesome 6 Free';
-  font-weight: 900;
-  margin-right: 4px;
+.md-viewer__content :deep(.code-copy-btn .code-copy-icon) {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
 }
 
 .md-viewer__content :deep(.code-copy-btn--copied) {

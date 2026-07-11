@@ -19,7 +19,7 @@
       <span class="tree-caret" :class="{ open: expanded, leaf: node.type !== 'folder' }">
         <span v-if="node.type === 'folder'">▶</span>
       </span>
-      <span class="tree-ico"><i :class="iconFA.cls" :style="{ color: iconFA.color }"></i></span>
+      <span class="tree-ico"><AppIcon :name="iconFA.name" :style="{ color: iconFA.color }" /></span>
       <span
         v-if="isDirty"
         class="tree-dirty-marker"
@@ -27,7 +27,7 @@
         :aria-label="t('main.file_tree_node.modified_badge')"
       >></span>
       <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isDirty }">{{ node.label }}</span>
-      <span v-if="downloading" class="tree-loading"><i class="fa-solid fa-spinner fa-spin"></i></span>
+      <span v-if="downloading" class="tree-loading"><AppIcon name="spinner" spin /></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
       <FileTreeNode
@@ -43,37 +43,37 @@
       />
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
-      <ContextMenuItem v-if="node.type === 'file'" icon="fa-solid fa-arrow-up-right" @click="openFile">
+      <ContextMenuItem v-if="node.type === 'file'" icon="arrow-up-right" @click="openFile">
         {{ t('main.file_tree_node.open') }}
       </ContextMenuItem>
       <template v-if="node.type === 'folder'">
-        <ContextMenuItem icon="fa-solid fa-chevron-right" @click="toggleExpand">
+        <ContextMenuItem icon="caret-right" @click="toggleExpand">
           {{ t('main.file_tree_node.open') }}
         </ContextMenuItem>
         <template v-if="!readonly">
-          <ContextMenuItem icon="fa-solid fa-folder-plus" @click="openCreateFolder">
+          <ContextMenuItem icon="folder-simple-plus" @click="openCreateFolder">
             {{ t('main.file_tree_node.new_folder') }}
           </ContextMenuItem>
-          <ContextMenuItem icon="fa-solid fa-file-circle-plus" @click="openCreateFile">
+          <ContextMenuItem icon="file-plus" @click="openCreateFile">
             {{ t('main.file_tree_node.new_file') }}
           </ContextMenuItem>
         </template>
-        <ContextMenuItem icon="fa-solid fa-rotate-right" @click="doRefresh">
+        <ContextMenuItem icon="arrow-clockwise" @click="doRefresh">
           {{ t('main.file_tree_node.refresh') }}
         </ContextMenuItem>
         <template v-if="!readonly">
-          <ContextMenuItem icon="fa-solid fa-upload" @click="openUploadFiles">
+          <ContextMenuItem icon="upload-simple" @click="openUploadFiles">
             {{ t('main.file_tree_node.upload_files') }}
           </ContextMenuItem>
-          <ContextMenuItem icon="fa-solid fa-folder-arrow-up" @click="openUploadFolder">
+          <ContextMenuItem icon="upload-simple" @click="openUploadFolder">
             {{ t('main.file_tree_node.upload_folder') }}
           </ContextMenuItem>
         </template>
       </template>
-      <ContextMenuItem icon="fa-solid fa-link" @click="copyLink">
+      <ContextMenuItem icon="link" @click="copyLink">
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
-      <ContextMenuItem v-if="!readonly" icon="fa-solid fa-download" @click="downloadNode">
+      <ContextMenuItem v-if="!readonly" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
     </ContextMenu>
@@ -102,6 +102,7 @@ import { downloadBlobRequest } from '@shared/api'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   node: FileNode
@@ -163,11 +164,11 @@ const isDirty = computed(() => {
 const iconFA = computed(() => {
   if (props.node.type === 'folder') {
     return expanded.value
-      ? { cls: 'fa-solid fa-folder-open', color: '#f59e0b' }
-      : { cls: 'fa-solid fa-folder', color: '#f59e0b' }
+      ? { name: 'folder-open', color: '#f59e0b' }
+      : { name: 'folder', color: '#f59e0b' }
   }
-  if (props.node.name.endsWith('.md')) return { cls: 'fa-solid fa-file-lines', color: '#60a5fa' }
-  return { cls: 'fa-solid fa-file', color: '#94a3b8' }
+  if (props.node.name.endsWith('.md')) return { name: 'file-text', color: '#60a5fa' }
+  return { name: 'file', color: '#94a3b8' }
 })
 
 function handleClick() {
