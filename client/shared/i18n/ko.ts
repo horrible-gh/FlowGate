@@ -1729,7 +1729,6 @@ export default {
       resolved_preview: '해소 결과 미리보기',
       empty_choice: '(빈 내용으로 해소)',
       empty_side: '(빈 내용)',
-      inline_resolve_submit: '머지 및 최종승인',
       conflict_files_summary: '해결 {resolved}/{total} 파일',
       open_resolver: '충돌 해결',
       dialog_title: '충돌 해결 - {branch} -> {base}',

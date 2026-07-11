@@ -89,7 +89,7 @@
           <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
             <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </button>
-          <button v-if="!props.inlineConflicts" class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
+          <button class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
             <AppIcon name="git-diff" /> {{ t('main.git_finalize.open_resolver') }}
           </button>
         </div>
@@ -98,19 +98,18 @@
   </div>
 
   <div
-    v-if="conflictDialogOpen || (props.inlineConflicts && state?.status === 'conflict')"
-    :class="props.inlineConflicts ? 'git-conflict-inline' : 'git-conflict-overlay'"
-    :tabindex="props.inlineConflicts ? 0 : undefined"
+    v-if="conflictDialogOpen"
+    class="git-conflict-overlay"
     @click.self="closeConflictDialog"
     @keydown="onResolverKeydown"
   >
-    <div :class="props.inlineConflicts ? 'git-conflict-dialog git-conflict-dialog--inline' : 'git-conflict-dialog'" role="dialog" :aria-modal="props.inlineConflicts ? undefined : 'true'">
+    <div class="git-conflict-dialog" role="dialog" aria-modal="true">
       <div class="git-conflict-dialog-hd">
         <div>
           <h2>{{ t('main.git_finalize.dialog_title', { branch: state?.branch || '-', base: state?.base_branch || '-' }) }}</h2>
           <p>{{ t('main.git_finalize.dialog_subtitle', { n: conflictFiles.length }) }}</p>
         </div>
-        <button v-if="!props.inlineConflicts" class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="closeConflictDialog">
+        <button class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="closeConflictDialog">
           <AppIcon name="x" />
         </button>
       </div>
@@ -255,7 +254,7 @@
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
             <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="submitResolve">
-              <AppIcon name="check" /> {{ t(props.inlineConflicts ? 'main.git_finalize.inline_resolve_submit' : 'main.git_finalize.resolve_submit') }}
+              <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
             </button>
           </div>
         </div>
@@ -298,7 +297,7 @@ import {
 } from '../composables/useConflictChunks'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 
-const props = defineProps<{ groupId: string; inlineConflicts?: boolean }>()
+const props = defineProps<{ groupId: string }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -882,10 +881,6 @@ defineExpose({ fetchState })
 .git-marker-warning {
   color: #b45309;
 }
-.git-conflict-inline {
-  margin-bottom: 12px;
-  outline: none;
-}
 .git-conflict-overlay {
   position: fixed;
   inset: 0;
@@ -906,13 +901,6 @@ defineExpose({ fetchState })
   border-radius: 8px;
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
   overflow: hidden;
-}
-.git-conflict-dialog--inline {
-  width: 100%;
-  height: min(760px, calc(100vh - 170px));
-  min-height: 620px;
-  border: 1px solid var(--border, #e2e8f0);
-  box-shadow: none;
 }
 .git-conflict-dialog-hd,
 .git-conflict-dialog-ft {
@@ -1323,11 +1311,7 @@ defineExpose({ fetchState })
   overflow-wrap: anywhere;
 }
 .git-empty-side { display: block; padding: 4px 10px; color: #94a3b8; font-style: italic; }@media (max-width: 760px) {
-  .git-conflict-inline {
-  margin-bottom: 12px;
-  outline: none;
-}
-.git-conflict-overlay {
+  .git-conflict-overlay {
     padding: 0;
   }
   .git-conflict-dialog {
