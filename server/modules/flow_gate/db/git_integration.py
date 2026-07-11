@@ -166,9 +166,9 @@ def create_session(group_id: str, files: list[str]) -> int:
     store = get_store()
     with store.transaction():
         store._execute(
-            "INSERT INTO git_merge_session (group_id, status, created_at) "
-            "VALUES (?, 'open', ?)",
-            [group_id, now],
+            "INSERT INTO git_merge_session (group_id, status, created_at, touched_at) "
+            "VALUES (?, 'open', ?, ?)",
+            [group_id, now, now],
         )
         row = store._fetch_one(
             "SELECT merge_id FROM git_merge_session "
@@ -234,6 +234,70 @@ def close_session(merge_id: int, status: str) -> None:
 def list_open_sessions() -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM git_merge_session WHERE status = 'open'", []
+    )
+
+
+def touch_session(merge_id: int) -> None:
+    """Bump a session's activity timestamp — the sweep TTL basis (0205 L §1).
+
+    Called on session creation (via create_session's touched_at), conflict-list
+    fetch, and resolve submission. A quiet session (no touch for the TTL window)
+    is what the auto-recovery sweep reclaims."""
+    get_store()._execute(
+        "UPDATE git_merge_session SET touched_at = ? WHERE merge_id = ?",
+        [now_iso(), merge_id],
+    )
+
+
+# ── group_git_state provisioning-failure ledger (0205 L §2.4 / DB0005) ────────
+
+def upsert_provision_failure(
+    group_id: str, project_id: str, branch: str, error: str
+) -> None:
+    """Persist a worktree provisioning failure so it survives the one-shot SSE
+    (0205 P scenario 4). Creates a minimal ledger row (worktree_registered=0,
+    status='none') when the group has none yet, else records the error on the
+    existing row. ``provision_error`` / ``provision_failed_at`` are always written
+    as a pair. ``branch`` may be "" when the failure preceded branch-name
+    resolution (E9) — the column is NOT NULL, so an empty string is stored."""
+    now = now_iso()
+    store = get_store()
+    with store.transaction():
+        existing = get_state(group_id)
+        if existing is None:
+            store._execute(
+                "INSERT INTO group_git_state "
+                "(group_id, project_id, branch, worktree_registered, status, "
+                "provision_error, provision_failed_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, 0, 'none', ?, ?, ?, ?)",
+                [group_id, project_id, branch or "", error, now, now, now],
+            )
+        else:
+            store._execute(
+                "UPDATE group_git_state SET provision_error = ?, "
+                "provision_failed_at = ?, updated_at = ? WHERE group_id = ?",
+                [error, now, now, group_id],
+            )
+
+
+def clear_provision_failure(group_id: str) -> None:
+    """Clear the provisioning-failure marker after a successful provision (0205
+    L §2.4). No-op when the group has no row. Cleared as a pair."""
+    get_store()._execute(
+        "UPDATE group_git_state SET provision_error = NULL, "
+        "provision_failed_at = NULL, updated_at = ? WHERE group_id = ?",
+        [now_iso(), group_id],
+    )
+
+
+def list_states_of_project_any(project_id: str) -> list[dict]:
+    """Every ledger row for a project, registered or not (0205 L §2.8).
+
+    ``list_states_of_project`` filters worktree_registered=1; the provision-failure
+    surface needs the UNregistered failure rows too. Covered by
+    idx_group_git_state_project(project_id, status) left prefix (DB0005 §4)."""
+    return get_store()._fetch_all(
+        "SELECT * FROM group_git_state WHERE project_id = ?", [project_id]
     )
 
 
