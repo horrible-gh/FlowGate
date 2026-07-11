@@ -144,13 +144,20 @@ const children = computed(() =>
 const isSelected = computed(() => explorerStore.selectedFileNodeId === props.node.id)
 
 // Reuse the established base-dirty marker for either the editable base checkout
-// or the selected read-only group branch's tracked changes.
+// or the selected read-only group branch's tracked changes. 0192 T0005 §1: the
+// marker now propagates to ANCESTOR FOLDERS — a folder is marked when it contains
+// a changed file (prefix match over the store's full path list). Without this an
+// edit inside a collapsed folder (whose children are not rendered) left no visible
+// trace anywhere in the tree.
 const isDirty = computed(() => {
-  if (props.node.type !== 'file') return false
   if (props.readonly && props.groupId) {
-    return explorerStore.isGroupChangedPath(props.projectId, props.groupId, props.node.path)
+    return props.node.type === 'folder'
+      ? explorerStore.isGroupChangedDir(props.projectId, props.groupId, props.node.path)
+      : explorerStore.isGroupChangedPath(props.projectId, props.groupId, props.node.path)
   }
-  return explorerStore.isBaseDirtyPath(props.projectId, props.node.path)
+  return props.node.type === 'folder'
+    ? explorerStore.isBaseDirtyDir(props.projectId, props.node.path)
+    : explorerStore.isBaseDirtyPath(props.projectId, props.node.path)
 })
 
 const iconFA = computed(() => {

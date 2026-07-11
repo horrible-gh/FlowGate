@@ -131,6 +131,17 @@ async def group_dispose(request: Request, group_id: str):
     # explorer and signals open tabs to refetch, which now surfaces group_disposed and
     # collapses the action bar. Best-effort; never fail the request on a delivery error.
     if isinstance(result, dict) and result.get("status") == "success":
+        # 0192 T0005 §3: dispose_group only writes the file-less DC marker — it never
+        # touched git, so the discarded group's worktree directory, unmerged local
+        # work branch and ledger row all leaked (and the stale ledger row lingered in
+        # the file-explorer group dropdown). Tear the slot down now, before the SSE
+        # refresh below, so clients re-fetching the slot list see it gone. Best-effort
+        # by contract: disposal has already succeeded and a git failure must not undo it.
+        try:
+            from modules.flow_gate.services import git_service
+            git_service.cleanup_disposed_group(result.get("project") or "", group_id)
+        except Exception:
+            pass
         try:
             from modules.flow_gate.api.v1.events import publisher as _events_pub
             from modules.flow_gate.api.v1.events.event_types import EventType
