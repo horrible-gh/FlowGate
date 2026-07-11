@@ -1360,6 +1360,9 @@ export default {
       toast_saved: 'Sequence saved.',
       all_done: 'All prior steps are complete. Add new steps below to continue the workflow.',
       cannot_empty: 'A decided workflow cannot be emptied. Keep at least one step.',
+      ai_edit: 'Ask AI to edit',
+      toast_ai_mention_copied: 'AI sequence-edit mention copied. Paste it to your AI to hand off.',
+      error_ai_mention_copy: 'Failed to copy to clipboard.',
     },
     file_tree_node: {
       open: 'Open',

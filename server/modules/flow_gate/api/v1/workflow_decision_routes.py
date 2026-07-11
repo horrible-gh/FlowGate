@@ -30,6 +30,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     advance_workflow,
     request_review,
     request_workflow_decision,
+    request_sequence_edit,
     get_workflow_sequence,
     edit_workflow_pending,
     continuation_kickoff_after_decide,
@@ -128,6 +129,11 @@ class EditSequenceItem(BaseModel):
 class EditSequenceBodyRequest(BaseModel):
     doc_id: str
     items: list[EditSequenceItem]
+
+
+class SequenceEditRequestBody(BaseModel):
+    """Issue an AI worker token + prompt to EDIT a decided workflow sequence (R0001 0208)."""
+    doc_id: str
 
 
 @router.post("/workflow/decide")
@@ -540,6 +546,72 @@ def post_workflow_decision_request(body: WorkflowDecisionRequestBody, request: R
     return JSONResponse(status_code=201, content=result)
 
 
+@router.post("/workflow/sequence-edit-request")
+def post_workflow_sequence_edit_request(body: SequenceEditRequestBody, request: Request):
+    """Issue an AI worker token + prompt to EDIT a decided workflow's pending sequence.
+
+    R0001 group 0208: the post-decision "시퀀스 수정" counterpart of
+    /workflow/decision-request. Requires a user session (a human mints the token/mention and
+    hands it to AI, exactly like the initial-decision path); the worker then applies the edit
+    autonomously via PATCH /workflow/sequence. The workflow must already be decided.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "user_session_required"},
+        )
+
+    target_doc = _db_documents.get_by_id(body.doc_id)
+    if target_doc is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "doc_not_found", "doc_id": body.doc_id},
+        )
+    project_id = target_doc.get("project_id") or ""
+    can_read = has_permission(auth["issued_to"], project_id, "perm_document_read")
+    can_update = has_permission(auth["issued_to"], project_id, "perm_document_update")
+    if not can_read or not can_update:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "workflow_decision_permission_denied"},
+        )
+
+    _disposed = _disposed_group_response(body.doc_id, target_doc)
+    if _disposed is not None:
+        return _disposed
+
+    try:
+        result = request_sequence_edit(
+            doc_id=body.doc_id,
+            issued_to=auth["issued_to"],
+            api_base_url=_build_api_base(request),
+            locale=request.headers.get("x-locale") or "ko",
+        )
+    except LookupError as exc:
+        _code, _, value = str(exc).partition(":")
+        return JSONResponse(
+            status_code=404,
+            content={"error": "doc_not_found", "doc_id": value},
+        )
+    except ValueError as exc:
+        code, _, value = str(exc).partition(":")
+        status = 404 if code == "group_not_found" else 400
+        return JSONResponse(
+            status_code=status,
+            content={"error": code, "doc_id": value},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "detail": str(exc)},
+        )
+
+    return JSONResponse(status_code=201, content=result)
+
+
 # ── GET /workflow/sequence ────────────────────────────────────────────────────
 
 @router.get("/workflow/sequence")
@@ -590,6 +662,24 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
+
+    # R0001 group 0208 (NR0003 §3-2): this PATCH previously accepted any valid bearer with no
+    # action_scope check, unlike /workflow/decide. Now that a worker can be handed a dedicated
+    # sequence-edit token, a worker token MUST carry action_scope=workflow_sequence_edit and be
+    # bound to this exact doc_ref. A user JWT (the human edit modal) has action_scope None and
+    # still passes unchanged — mirrors the decide endpoint's worker-token guard.
+    if auth.get("action_scope") is not None:
+        if (
+            auth.get("action_scope") != "workflow_sequence_edit"
+            or auth.get("doc_ref") != body.doc_id
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "workflow_sequence_edit_token_mismatch",
+                    "doc_id": body.doc_id,
+                },
+            )
 
     # TR0079.0003 rework (3rd pass): editing the workflow sequence of a
     # document in a disposed (DC) group is a forward write and must be rejected at the

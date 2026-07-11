@@ -290,6 +290,40 @@ export function useFlowGateToken() {
     }
   }
 
+  // Sequence edit request (R0001 group 0208): issue a token bound to a DECIDED workflow-root
+  // doc + a "please edit the pending sequence" mention, and hand it to an AI worker. The worker
+  // applies the change autonomously via PATCH /workflow/sequence (locked/completed steps stay
+  // immutable). Parallel of requestWorkflowDecision, for the post-decision 시퀀스 수정 path.
+  async function requestSequenceEdit(docId: string): Promise<IssuedToken | null> {
+    issuing.value = true
+    try {
+      const res = await postRequest<any>('/api/v1/workflow/sequence-edit-request', {
+        doc_id: docId,
+      })
+      const d = res.data as any
+      return {
+        raw_token: d.raw_token,
+        token_id: d.token_id,
+        expires_at: d.expires_at,
+        scratch_dir: d.scratch_dir,
+        action_scope: d.action_scope ?? 'workflow_sequence_edit',
+        doc_ref: d.doc_ref ?? docId,
+        mention: d.mention ?? null,
+      }
+    } catch (e: any) {
+      const status = e?.response?.status
+      const msg = e?.response?.data?.detail
+        ?? e?.response?.data?.error
+        ?? t('main.flow_gate_token.issue_failed')
+      if (status === 401) showToast(t('main.flow_gate_token.login_required'), 'danger')
+      else if (status === 403) showToast(t('main.flow_gate_token.permission_denied'), 'danger')
+      else showToast(msg, 'danger')
+      return null
+    } finally {
+      issuing.value = false
+    }
+  }
+
   // Builds the rejection section independently — prepend to the server mention or reuse inside the fallback buildMentText
   function buildRejectionSection(ctx: RejectionContext): string {
     if (!ctx.last && ctx.history.length === 0) return ''
@@ -388,6 +422,7 @@ export function useFlowGateToken() {
     issueToken,
     requestReview,
     requestWorkflowDecision,
+    requestSequenceEdit,
     composeMention,
     copyMentToClipboard,
   }

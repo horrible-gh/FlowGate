@@ -294,6 +294,16 @@
           <button
             v-if="mode === 'edit' && !loading && !loadError"
             type="button"
+            class="btn btn-secondary"
+            :disabled="requestingAiEdit || issuing"
+            @click="requestAiSequenceEdit"
+          >
+            <AppIcon name="robot" />
+            {{ t('main.workflow_edit_modal.ai_edit') }}
+          </button>
+          <button
+            v-if="mode === 'edit' && !loading && !loadError"
+            type="button"
             class="btn btn-primary"
             :disabled="saving || wouldEmptyDecided"
             :title="wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
@@ -316,6 +326,8 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, patchRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { useFlowGateToken, type IssuedToken } from '../composables/useFlowGateToken'
+import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
 
 export interface SequenceItem {
   id: number
@@ -349,6 +361,10 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
+
+// R0001 group 0208: delegate the pending-sequence edit to an AI worker.
+const { requestSequenceEdit, composeMention, issuing } = useFlowGateToken()
+const requestingAiEdit = ref(false)
 
 // ── Static config ──────────────────────────────────────────────────────────────
 
@@ -749,6 +765,27 @@ async function save() {
     showToast(t('main.workflow_edit_modal.error_save'), 'error')
   } finally {
     saving.value = false
+  }
+}
+
+// R0001 group 0208: hand the pending-sequence edit to an AI worker instead of editing here.
+// Issues a workflow_sequence_edit token + mention and copies the mention to the clipboard
+// (deferred so the click's clipboard activation survives the token round-trip — group 0133).
+// The worker then applies the change via PATCH /workflow/sequence; locked steps stay immutable.
+async function requestAiSequenceEdit() {
+  if (!props.docId || requestingAiEdit.value) return
+  requestingAiEdit.value = true
+  let token: IssuedToken | null = null
+  try {
+    const ok = await copyToClipboardDeferred(async () => {
+      token = await requestSequenceEdit(props.docId!)
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    })
+    if (ok) showToast(t('main.workflow_edit_modal.toast_ai_mention_copied'), 'success')
+    else if (token) showToast(t('main.workflow_edit_modal.error_ai_mention_copy'), 'warning')
+  } finally {
+    requestingAiEdit.value = false
   }
 }
 

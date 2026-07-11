@@ -1360,6 +1360,9 @@ export default {
       toast_saved: 'シーケンスが保存されました。',
       all_done: '以前のステップはすべて完了しています。下で新しいステップを追加するとワークフローが再開します。',
       cannot_empty: '決定済みワークフローは空にできません。最低1ステップを残してください。',
+      ai_edit: 'AIに修正を依頼',
+      toast_ai_mention_copied: 'AIシーケンス修正メンションをコピーしました。AIに貼り付けて渡してください。',
+      error_ai_mention_copy: 'クリップボードへのコピーに失敗しました。',
     },
     file_tree_node: {
       open: '開く',
