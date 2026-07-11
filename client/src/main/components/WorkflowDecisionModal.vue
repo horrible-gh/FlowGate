@@ -6,12 +6,12 @@
         <!-- ── Header ── -->
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-diagram-next" style="color:#7c3aed; margin-right:6px;"></i>
+            <AppIcon name="flow-arrow" style="color:#7c3aed; margin-right:6px;" />
             {{ mode === 'edit' ? t('main.workflow_edit_modal.title') : t('main.workflow_decision_modal.title') }}
             <span v-if="mode !== 'edit'" class="wdm-doc-class-badge">{{ docClass }}</span>
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -20,13 +20,13 @@
 
           <!-- Loading (edit mode) -->
           <div v-if="mode === 'edit' && loading" class="wem-loading">
-            <i class="fa-solid fa-spinner fa-spin"></i>
+            <AppIcon name="spinner" spin />
             {{ t('main.workflow_edit_modal.loading') }}
           </div>
 
           <!-- Error (edit mode) -->
           <div v-else-if="mode === 'edit' && loadError" class="wem-error">
-            <i class="fa-solid fa-circle-exclamation"></i>
+            <AppIcon name="warning-circle" />
             {{ t('main.workflow_edit_modal.error_load') }}
           </div>
 
@@ -35,11 +35,11 @@
             <!-- Locked section (edit mode only) -->
             <div v-if="mode === 'edit'" class="wem-locked-section">
               <div class="wem-section-title wem-locked-title">
-                <i class="fa-solid fa-lock"></i>
+                <AppIcon name="lock" />
                 {{ t('main.workflow_edit_modal.locked_section_title') }}
               </div>
               <div v-if="lockedItems.length === 0" class="wem-locked-empty">
-                <i class="fa-regular fa-circle-dot"></i>
+                <AppIcon name="radio-button" />
                 {{ t('main.workflow_edit_modal.locked_empty') }}
               </div>
               <div v-else class="wem-locked-list">
@@ -52,7 +52,7 @@
                   <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                   <span class="wem-locked-label">{{ docTypeStore.getLabel(item.type) }}</span>
                   <span class="wem-status-badge" :class="`status-${item.status}`">
-                    <i :class="item.status === 'done' ? 'fa-solid fa-circle-check' : 'fa-regular fa-circle-dot'"></i>
+                    <AppIcon :name="item.status === 'done' ? 'check-circle' : 'radio-button'" />
                     {{ item.status === 'done'
                       ? t('main.workflow_edit_modal.locked_badge_done')
                       : t('main.workflow_edit_modal.locked_badge_in_progress') }}
@@ -63,7 +63,7 @@
 
             <!-- All-locked notice (edit mode): prior steps done — new steps can still be appended -->
             <div v-if="mode === 'edit' && allDone" class="wem-all-done">
-              <i class="fa-solid fa-circle-check"></i>
+              <AppIcon name="check-circle" />
               {{ t('main.workflow_edit_modal.all_done') }}
             </div>
 
@@ -72,7 +72,7 @@
           <!-- Preset section -->
           <div class="wdm-preset-section">
             <div class="wdm-preset-title">
-              <i class="fa-solid fa-wand-magic-sparkles"></i>
+              <AppIcon name="magic-wand" />
               {{ t('main.workflow_decision_modal.preset_label') }}
             </div>
             <div class="wdm-preset-btns">
@@ -92,7 +92,7 @@
             <!-- LEFT: doc type picker -->
             <div class="wdm-left">
               <div class="wdm-panel-title">
-                <i class="fa-solid fa-list-check"></i>
+                <AppIcon name="list-checks" />
                 {{ t('main.workflow_decision_modal.type_picker_title') }}
               </div>
 
@@ -117,7 +117,7 @@
                     <span class="wdm-type-name">{{ docTypeStore.getLabel(item.type) }}</span>
                     <span v-if="item.autoHintKey" class="wdm-auto-hint">{{ t(`main.workflow_decision_modal.${item.autoHintKey}`) }}</span>
                     <span class="wdm-seq-badge" :style="typeSeqCounts[item.type] > 0 ? '' : 'display:none'">×{{ typeSeqCounts[item.type] }}</span>
-                    <i class="fa-solid fa-plus wdm-add-ico"></i>
+                    <AppIcon name="plus" class="wdm-add-ico" />
                   </button>
                 </div>
               </div>
@@ -136,7 +136,7 @@
 
               <!-- Auto mapping note -->
               <div class="wdm-note">
-                <i class="fa-solid fa-bolt"></i>
+                <AppIcon name="lightning" />
                 <div>
                   <strong>{{ t('main.workflow_decision_modal.auto_map_title') }}</strong><br>
                   {{ t('main.workflow_decision_modal.auto_map_desc') }}
@@ -147,7 +147,7 @@
             <!-- RIGHT: sequence editor -->
             <div class="wdm-right">
               <div class="wdm-panel-title">
-                <i class="fa-solid fa-sort"></i>
+                <AppIcon name="arrows-down-up" />
                 {{ t('main.workflow_decision_modal.seq_editor_title') }}
                 <span class="wdm-seq-count">{{ sequence.length }}{{ t('main.workflow_decision_modal.count_suffix') }}</span>
                 <button
@@ -156,7 +156,7 @@
                   :disabled="sequence.length === 0"
                   @click="clearSeq"
                 >
-                  <i class="fa-solid fa-trash-can"></i>
+                  <AppIcon name="trash" />
                   {{ t('main.workflow_decision_modal.clear_all') }}
                 </button>
               </div>
@@ -169,7 +169,7 @@
                 @drop.prevent="handleEditorDrop"
               >
                 <div v-if="sequence.length === 0" class="wdm-empty-state">
-                  <i class="fa-solid fa-arrow-left"></i>
+                  <AppIcon name="arrow-left" />
                   <span>{{ t('main.workflow_decision_modal.seq_empty') }}</span>
                 </div>
                 <div
@@ -188,13 +188,13 @@
                   @drop.prevent="handleDrop(item.id)"
                   @dragend="handleDragEnd"
                 >
-                  <i v-if="!item.isAuto" class="fa-solid fa-grip-vertical wdm-drag-handle"></i>
+                  <AppIcon name="dots-six-vertical" class="wdm-drag-handle" v-if="!item.isAuto" />
                   <span v-else class="wdm-drag-spacer"></span>
                   <span class="wdm-seq-num">{{ (mode === 'edit' ? lockedItems.length : 0) + idx + 1 }}</span>
                   <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                   <span class="wdm-seq-label">{{ docTypeStore.getLabel(item.type) }}</span>
                   <span v-if="item.isAuto" class="wdm-auto-badge">
-                    <i class="fa-solid fa-bolt" style="font-size:.58rem;"></i>
+                    <AppIcon name="lightning" style="font-size:.58rem;" />
                     {{ t('main.workflow_decision_modal.auto_badge', { parent: parentTypeOf(item) }) }}
                   </span>
                   <div class="wdm-seq-btns">
@@ -205,20 +205,20 @@
                         :title="t('main.workflow_decision_modal.move_up')"
                         :disabled="manualIndexOf(item) === 0"
                         @click="moveUp(item.id)"
-                      ><i class="fa-solid fa-chevron-up"></i></button>
+                      ><AppIcon name="caret-up" /></button>
                       <button
                         type="button"
                         class="wdm-seq-btn"
                         :title="t('main.workflow_decision_modal.move_down')"
                         :disabled="manualIndexOf(item) === manualItems.length - 1"
                         @click="moveDown(item.id)"
-                      ><i class="fa-solid fa-chevron-down"></i></button>
+                      ><AppIcon name="caret-down" /></button>
                       <button
                         type="button"
                         class="wdm-seq-btn del"
                         :title="t('main.workflow_decision_modal.remove')"
                         @click="removeFromSeq(item.id)"
-                      ><i class="fa-solid fa-trash-can"></i></button>
+                      ><AppIcon name="trash" /></button>
                     </template>
                     <template v-else>
                       <span style="width:82px; display:inline-block;"></span>
@@ -238,7 +238,7 @@
               <!-- Preview bar -->
               <div class="wdm-preview-wrap">
                 <div class="wdm-preview-label">
-                  <i class="fa-solid fa-eye"></i>
+                  <AppIcon name="eye" />
                   {{ t('main.workflow_decision_modal.preview_label') }}
                 </div>
                 <div class="wdm-preview">
@@ -252,7 +252,7 @@
                         <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                       </span>
                       <span v-if="idx < lockedItems.length - 1 || sequence.length > 0" class="wdm-prev-arrow">
-                        <i class="fa-solid fa-chevron-right"></i>
+                        <AppIcon name="caret-right" />
                       </span>
                     </template>
                   </template>
@@ -262,7 +262,7 @@
                       <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                     </span>
                     <span v-if="idx < sequence.length - 1" class="wdm-prev-arrow">
-                      <i class="fa-solid fa-chevron-right"></i>
+                      <AppIcon name="caret-right" />
                     </span>
                   </template>
                 </div>
@@ -277,7 +277,7 @@
         <!-- ── Footer ── -->
         <div class="modal-ft">
           <span class="wdm-footer-note">
-            <i class="fa-solid fa-circle-info"></i>
+            <AppIcon name="info" />
             {{ mode === 'edit' ? t('main.workflow_edit_modal.footer_note') : t('main.workflow_decision_modal.footer_note') }}
           </span>
           <button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
@@ -288,7 +288,7 @@
             :disabled="sequence.length === 0 || submitting"
             @click="confirm"
           >
-            <i class="fa-solid fa-check"></i>
+            <AppIcon name="check" />
             {{ t('main.workflow_decision_modal.confirm') }}
           </button>
           <button
@@ -299,7 +299,7 @@
             :title="wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
             @click="save"
           >
-            <i class="fa-solid fa-floppy-disk"></i>
+            <AppIcon name="floppy-disk" />
             {{ t('main.workflow_edit_modal.save') }}
           </button>
         </div>
@@ -310,6 +310,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, patchRequest } from '@shared/api'

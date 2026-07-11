@@ -4,10 +4,10 @@
       <div class="modal-box">
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-upload" style="color:var(--primary);"></i> {{ t('main.file_upload_modal.title') }}
+            <AppIcon name="upload-simple" style="color:var(--primary);" /> {{ t('main.file_upload_modal.title') }}
           </span>
           <button class="modal-close" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -19,7 +19,7 @@
             @drop.prevent="onDrop"
             @click="triggerFileInput"
           >
-            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <AppIcon name="cloud-arrow-up" class="drop-icon" />
             <p>{{ t('main.file_upload_modal.drop_zone') }}</p>
             <p class="upload-hint">{{ t('main.file_upload_modal.max_size') }}</p>
             <span v-if="selectedFile" class="upload-selected">{{ selectedFile.name }}</span>
@@ -40,8 +40,8 @@
         <div class="modal-ft">
           <button class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" :disabled="!selectedFile || !targetDocId || uploading" @click="doUpload">
-            <i v-if="uploading" class="fa-solid fa-spinner fa-spin"></i>
-            <i v-else class="fa-solid fa-upload"></i>
+            <AppIcon v-if="uploading" name="spinner" spin />
+            <AppIcon v-else name="upload-simple" />
             {{ uploading ? t('main.file_upload_modal.uploading') : t('main.file_upload_modal.upload') }}
           </button>
         </div>
@@ -51,6 +51,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postFormRequest } from '@shared/api'
@@ -222,7 +223,7 @@ watch(
   border-color: var(--primary);
   background: rgba(37, 99, 235, 0.04);
 }
-.upload-drop-zone .fa-cloud-arrow-up {
+.upload-drop-zone .drop-icon {
   font-size: 2rem;
   color: var(--text-m);
 }

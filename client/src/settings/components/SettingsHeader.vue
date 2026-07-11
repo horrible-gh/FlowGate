@@ -10,7 +10,7 @@
       <button class="proj-sw" type="button" @click.stop="projectMenuOpen = !projectMenuOpen">
         <span class="proj-sw-dot" :style="{ background: currentProjectColor }"></span>
         <span>{{ currentProjectName }}</span>
-        <i class="fa-solid fa-chevron-down proj-sw-caret" :class="{ open: projectMenuOpen }"></i>
+        <AppIcon name="caret-down" class="proj-sw-caret" :class="{ open: projectMenuOpen }" />
       </button>
       <div v-if="projectMenuOpen" class="proj-dd">
         <div class="proj-dd-hd">{{ t('main.nav.project_menu') }}</div>
@@ -24,20 +24,16 @@
         >
           <span class="proj-dd-dot" :style="{ background: projectColor(project) }"></span>
           <span>{{ project.project_name }}</span>
-          <i
-            v-if="project.project_id === settings.currentProjectId"
-            class="fa-solid fa-check"
-            style="margin-left:auto; font-size:.65rem; opacity:.5;"
-          ></i>
+          <AppIcon name="check" v-if="project.project_id === settings.currentProjectId" style="margin-left:auto; font-size:.65rem; opacity:.5;" />
         </button>
         <template v-if="auth.user?.is_admin">
           <div class="proj-dd-div"></div>
           <a class="proj-dd-item" href="/settings/projects">
-            <i class="fa-solid fa-table-cells-large" style="width:14px;text-align:center;color:rgba(255,255,255,.4);"></i>
+            <AppIcon name="grid-four" style="width:14px;text-align:center;color:rgba(255,255,255,.4);" />
             <span>{{ t('main.nav.project_list') }}</span>
           </a>
           <a class="proj-dd-item" href="/settings/projects?new=1">
-            <i class="fa-solid fa-plus" style="width:14px;text-align:center;color:rgba(255,255,255,.4);"></i>
+            <AppIcon name="plus" style="width:14px;text-align:center;color:rgba(255,255,255,.4);" />
             <span>{{ t('main.nav.new_project') }}</span>
           </a>
         </template>
@@ -57,18 +53,19 @@
         >{{ lang.toUpperCase() }}</button>
       </div>
       <div class="hdr-div"></div>
-      <a href="/main" class="hdr-btn"><i class="fa-solid fa-house"></i> {{ t('nav.dashboard') }}</a>
-      <a href="/settings" class="hdr-btn active"><i class="fa-solid fa-gear"></i><span>{{ t('nav.settings') }}</span></a>
+      <a href="/main" class="hdr-btn"><AppIcon name="house" /> {{ t('nav.dashboard') }}</a>
+      <a href="/settings" class="hdr-btn active"><AppIcon name="gear" /><span>{{ t('nav.settings') }}</span></a>
       <div class="hdr-div"></div>
       <div class="hdr-user"><div class="user-av">{{ userInitial }}</div>{{ username }}</div>
       <button type="button" class="hdr-btn" @click="logout">
-        <i class="fa-solid fa-right-from-bracket"></i><span>{{ t('common.logout') }}</span>
+        <AppIcon name="sign-out" /><span>{{ t('common.logout') }}</span>
       </button>
     </nav>
   </header>
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth.js';

@@ -4,11 +4,11 @@
       <div class="modal-box" style="max-width:460px;">
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-regular fa-file-lines" style="color:var(--primary);"></i>
+            <AppIcon name="file-text" style="color:var(--primary);" />
             {{ t('main.next_empty_doc_modal.title') }}
           </span>
           <button class="modal-close" type="button" :disabled="submitting" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -58,7 +58,7 @@
             :class="['alert', flashOk ? 'alert-success' : 'alert-danger']"
             style="width:100%; margin-bottom:12px;"
           >
-            <i :class="flashOk ? 'fa-solid fa-check' : 'fa-solid fa-triangle-exclamation'"></i>
+            <AppIcon :name="flashOk ? 'check' : 'warning'" />
             <span>{{ flashMessage }}</span>
           </div>
           <button class="btn btn-secondary" type="button" :disabled="submitting" @click="close">
@@ -66,10 +66,10 @@
           </button>
           <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
             <span v-if="submitting">
-              <i class="fa-solid fa-spinner fa-spin"></i> {{ t('main.next_empty_doc_modal.creating') }}
+              <AppIcon name="spinner" spin /> {{ t('main.next_empty_doc_modal.creating') }}
             </span>
             <span v-else>
-              <i class="fa-regular fa-file-lines"></i> {{ t('main.next_empty_doc_modal.create') }}
+              <AppIcon name="file-text" /> {{ t('main.next_empty_doc_modal.create') }}
             </span>
           </button>
         </div>
@@ -83,6 +83,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean

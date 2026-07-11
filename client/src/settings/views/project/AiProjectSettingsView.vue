@@ -3,7 +3,7 @@
     <div class="card mb-4">
       <div class="card-hd">
         <span class="card-title">
-          <i class="fa-solid fa-robot" style="margin-right:6px; color:var(--primary);"></i>
+          <AppIcon name="robot" style="margin-right:6px; color:var(--primary);" />
           {{ $t('settings.project.ai.title') }}
         </span>
         <span class="badge" :class="badgeClass" style="margin-left:10px;">{{ badgeLabel }}</span>
@@ -45,10 +45,10 @@
 
     <div class="flex" style="justify-content:flex-end; gap:10px;">
       <button class="btn btn-secondary" @click="load">
-        <i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}
+        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
       <button class="btn btn-primary" @click="save">
-        <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
       </button>
     </div>
   </div>
@@ -63,6 +63,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
+import AppIcon from '@shared/AppIcon.vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
 

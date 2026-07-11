@@ -4,7 +4,7 @@
       <div v-if="loading" class="conv-state">{{ t('common.loading') }}</div>
       <template v-else>
         <p v-if="turns.length === 0" class="conv-state conv-empty">
-          <i class="fa-regular fa-comments"></i>
+          <AppIcon name="chats" />
           {{ t('main.conversation_view.empty') }}
         </p>
         <div
@@ -16,7 +16,7 @@
           <div class="conv-bubble">
             <div class="conv-meta">
               <span class="conv-speaker">
-                <i :class="turn.speaker === 'user' ? 'fa-solid fa-user' : 'fa-solid fa-robot'"></i>
+                <AppIcon :name="turn.speaker === 'user' ? 'user' : 'robot'" />
                 {{ turn.speaker === 'user' ? t('main.conversation_view.speaker_user') : t('main.conversation_view.speaker_ai') }}
               </span>
               <span v-if="turn.ts" class="conv-ts">{{ formatTs(turn.ts) }}</span>
@@ -50,7 +50,7 @@
           :title="t('main.conversation_view.copy_mention_hint')"
           @click="emit('copy-mention')"
         >
-          <i class="fa-regular fa-copy"></i>
+          <AppIcon name="copy" />
           {{ t('main.conversation_view.copy_mention') }}
         </button>
       </div>
@@ -73,7 +73,7 @@
           :aria-label="t('main.conversation_view.send')"
           :disabled="sending || draft.trim().length === 0"
         >
-          <i :class="sending ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-paper-plane'"></i>
+          <AppIcon :name="sending ? 'spinner' : 'paper-plane-tilt'" :spin="sending" />
         </button>
       </div>
     </form>
@@ -85,6 +85,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 
 interface ConvTurn {
   speaker: string // 'user' | 'ai' | raw label

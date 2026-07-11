@@ -4,7 +4,7 @@
     <div class="flex justify-between items-center mb-4" style="margin-bottom:14px;">
       <p class="text-s text-sm">{{ $t('settings.project.document_types_view.description_5') }}</p>
       <button v-if="auth.can('project.document_type.create')" class="btn btn-primary btn-sm" @click="openModal(null)">
-        <i class="fa-solid fa-plus"></i> {{ $t('settings.project.document_types_view.text_7') }}
+        <AppIcon name="plus" /> {{ $t('settings.project.document_types_view.text_7') }}
       </button>
     </div>
 
@@ -26,7 +26,7 @@
           <tbody>
             <tr v-if="docTypes.length === 0">
               <td colspan="7" style="text-align:center;padding:32px;color:var(--text-m);">
-                <i class="fa-solid fa-tags" style="font-size:1.5rem;margin-bottom:8px;display:block;opacity:.4;"></i>
+                <AppIcon name="tag" style="font-size:1.5rem;margin-bottom:8px;display:block;opacity:.4;" />
                 {{ $t('settings.project.document_types_view.text_30') }}
               </td>
             </tr>
@@ -72,7 +72,7 @@
               <td>
                 <div class="tbl-actions">
                   <button v-if="auth.can('project.document_type.update')" class="btn btn-secondary btn-sm" @click="openModal(dt)">
-                    <i class="fa-solid fa-pen"></i>
+                    <AppIcon name="pencil-simple" />
                   </button>
                   <button
                     v-if="auth.can('project.document_type.delete') && !dt.is_system"
@@ -80,7 +80,7 @@
                     style="color:var(--danger);"
                     @click="deleteType(dt.id)"
                   >
-                    <i class="fa-solid fa-trash"></i>
+                    <AppIcon name="trash" />
                   </button>
                 </div>
               </td>
@@ -96,10 +96,10 @@
         <div class="modal-box">
           <div class="modal-hd">
             <span class="modal-title">
-              <i :class="editing ? 'fa-solid fa-pen' : 'fa-solid fa-plus'" style="color:var(--primary);"></i>
+              <AppIcon :name="editing ? 'pencil-simple' : 'plus'" style="color:var(--primary);" />
               {{ editing ? $t('settings.project.document_types_view.text_86') : $t('settings.project.document_types_view.text_86_2') }}
             </span>
-            <button class="modal-close" @click="showModal = false"><i class="fa-solid fa-xmark"></i></button>
+            <button class="modal-close" @click="showModal = false"><AppIcon name="x" /></button>
           </div>
           <div class="modal-bd">
             <div class="form-row">
@@ -138,7 +138,7 @@
             <div class="form-group">
               <label class="form-label">{{ $t('settings.project.document_types_view.label_125') }}</label>
               <div style="border:2px dashed var(--border);border-radius:var(--r);padding:16px;text-align:center;cursor:pointer;">
-                <i class="fa-solid fa-upload" style="color:var(--text-m);margin-right:6px;"></i>
+                <AppIcon name="upload-simple" style="color:var(--text-m);margin-right:6px;" />
                 <span class="text-sm text-s">{{ $t('settings.project.document_types_view.text_128') }}</span>
               </div>
             </div>
@@ -149,7 +149,7 @@
           <div class="modal-ft">
             <button class="btn btn-secondary" @click="showModal = false">{{ $t('common.cancel') }}</button>
             <button class="btn btn-primary" @click="saveType">
-              <i :class="editing ? 'fa-solid fa-floppy-disk' : 'fa-solid fa-plus'"></i>
+              <AppIcon :name="editing ? 'floppy-disk' : 'plus'" />
               {{ editing ? $t('common.save') : $t('common.add') }}
             </button>
           </div>
@@ -177,6 +177,7 @@ import { useToast } from '../../../main/components/common/useToast';
 import ConfirmModal from '@main/components/ConfirmModal.vue';
 import { useAuthStore } from '../../stores/auth.js';
 import { useSettingsStore } from '../../stores/settings.js';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t, locale } = useI18n();
 const auth = useAuthStore();

@@ -7,11 +7,11 @@
   <div v-if="status && status.enabled" class="card git-status-card">
     <div class="card-hd">
       <span class="card-title">
-        <i class="fa-solid fa-diagram-project" style="color:var(--text-m);"></i>
+        <AppIcon name="tree-structure" style="color:var(--text-m);" />
         {{ t('main.git_status.title') }}
       </span>
       <span class="git-branch-badge">
-        <i class="fa-solid fa-code-commit"></i>
+        <AppIcon name="git-commit" />
         {{ t('main.git_status.base_label') }}: {{ status.base_branch }}
       </span>
       <span class="git-ab-meta">{{ aheadBehindText }}</span>
@@ -21,7 +21,7 @@
         :title="t('main.git_status.fetch')"
         @click="doFetch"
       >
-        <i class="fa-solid fa-cloud-arrow-down"></i>
+        <AppIcon name="cloud-arrow-down" />
       </button>
     </div>
     <!-- flowgate.default.0177 L0002 §2.6-b·c — base-checkout edits pending commit.
@@ -29,7 +29,7 @@
          editable commit subject (seeded with the §2.2 default), and — when a merge
          finalize was parked on the base_dirty 409 — commit-then-merge in one go. -->
     <div v-if="showBaseDirtySection" class="git-base-dirty-alert" role="alert">
-      <i class="fa-solid fa-triangle-exclamation"></i>
+      <AppIcon name="warning" />
       <div class="git-base-dirty-alert__body">
         <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
         <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
@@ -40,7 +40,7 @@
             :disabled="busy"
             @click="doBaseRevert(f)"
           >
-            <i class="fa-solid fa-rotate-left"></i> {{ t('main.git_status.base_revert_btn') }}
+            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_status.base_revert_btn') }}
           </button>
         </div>
         <div v-if="baseDirtyFiles.length" class="git-base-commit-row">
@@ -53,14 +53,14 @@
             @input="onBaseCommitInput(($event.target as HTMLInputElement).value)"
           />
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="doBaseCommit">
-            <i class="fa-solid fa-check"></i>
+            <AppIcon name="check" />
             {{ pendingFinalize ? t('main.git_status.base_commit_merge_btn') : t('main.git_status.base_commit_btn') }}
           </button>
         </div>
         <!-- everything reverted while a merge was parked → proceed without a commit -->
         <div v-else-if="pendingFinalize" class="git-base-commit-row">
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="resumePendingFinalize">
-            <i class="fa-solid fa-play"></i> {{ t('main.git_status.base_merge_now_btn') }}
+            <AppIcon name="play" /> {{ t('main.git_status.base_merge_now_btn') }}
           </button>
         </div>
       </div>
@@ -71,7 +71,7 @@
         :title="t('common.close')"
         @click="pendingFinalize = null"
       >
-        <i class="fa-solid fa-xmark"></i>
+        <AppIcon name="x" />
       </button>
     </div>
     <div class="card-bd pad">
@@ -96,7 +96,7 @@
               :disabled="busy"
               @click="toggleResolve(p)"
             >
-              <i class="fa-solid fa-triangle-exclamation"></i>
+              <AppIcon name="warning" />
               {{ t('main.git_status.resolve_inline') }}
             </button>
 
@@ -112,12 +112,12 @@
                 <option v-for="c in ACTIONS" :key="c" :value="c">{{ actionLabel(c) }}</option>
               </select>
               <button class="btn btn-sm btn-primary" :disabled="busy" @click="execute(p)">
-                <i class="fa-solid fa-play"></i> {{ t('main.git_finalize.execute') }}
+                <AppIcon name="play" /> {{ t('main.git_finalize.execute') }}
               </button>
             </template>
 
             <button class="btn btn-sm btn-secondary" @click="emit('open-group', p.group_id)">
-              <i class="fa-solid fa-arrow-up-right-from-square"></i> {{ t('main.git_status.open') }}
+              <AppIcon name="arrow-square-out" /> {{ t('main.git_status.open') }}
             </button>
           </div>
 
@@ -159,7 +159,7 @@
                resolve/abort against the same backend endpoints as before. -->
           <div v-if="expanded === p.group_id && p.status === 'conflict'" class="git-status-conflict">
             <p class="git-fin-conflict-msg">
-              <i class="fa-solid fa-triangle-exclamation"></i>
+              <AppIcon name="warning" />
               {{ t('main.git_finalize.conflict_msg', { n: conflictFiles.length }) }}
             </p>
             <p v-if="!conflictFiles.length" class="git-status-empty">
@@ -167,19 +167,19 @@
             </p>
             <div v-for="f in conflictFiles" :key="f.path" class="git-conflict-file">
               <div class="git-conflict-path">
-                <i class="fa-solid fa-file-code"></i> {{ f.path }}
+                <AppIcon name="file-code" /> {{ f.path }}
                 <span class="git-conflict-count">{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
                 <span class="git-conflict-path-spacer"></span>
                 <div v-if="f.mode !== 'direct_only'" class="git-conflict-mode-tabs">
                   <button type="button" :class="{ active: f.mode === 'chunk' }" @click="switchToChunkView(f)">
-                    <i class="fa-solid fa-code-compare"></i> {{ t('main.git_finalize.chunk_view') }}
+                    <AppIcon name="git-diff" /> {{ t('main.git_finalize.chunk_view') }}
                   </button>
                   <button type="button" :class="{ active: f.mode === 'direct' }" @click="switchToDirectEdit(f)">
-                    <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_edit') }}
+                    <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_edit') }}
                   </button>
                 </div>
                 <span v-else class="git-direct-only-badge">
-                  <i class="fa-solid fa-pen-to-square"></i> {{ t('main.git_finalize.direct_only') }}
+                  <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_only') }}
                 </span>
               </div>
               <p v-if="f.notice" class="git-conflict-notice">{{ f.notice }}</p>
@@ -227,18 +227,18 @@
                  on markers being gone; mirror it here so the header resolver does not
                  post <<<<<<< />>>>>>>> content only to bounce off the backend 422. -->
             <p v-if="conflictFiles.length && !inlineResolved" class="git-status-marker-hint">
-              <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.git_finalize.submit_disabled_hint') }}
+              <AppIcon name="warning" /> {{ t('main.git_finalize.submit_disabled_hint') }}
             </p>
             <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:8px;">
               <button class="btn btn-sm btn-secondary" :disabled="busy" @click="abortInline(p)">
-                <i class="fa-solid fa-ban"></i> {{ t('main.git_finalize.abort') }}
+                <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
               </button>
               <button
                 class="btn btn-sm btn-primary"
                 :disabled="busy || !conflictFiles.length || !inlineResolved"
                 @click="submitResolveInline(p)"
               >
-                <i class="fa-solid fa-check"></i> {{ t('main.git_finalize.resolve_submit') }}
+                <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
               </button>
             </div>
           </div>
@@ -254,7 +254,7 @@
           {{ t('main.git_status.empty_slots') }}
         </p>
         <div v-for="s in status.slots" :key="s.group_id" class="git-status-slot">
-          <i class="fa-solid fa-code-branch"></i>
+          <AppIcon name="git-branch" />
           <span class="git-status-branch">{{ s.branch }}</span>
           <span class="git-status-slot-gid">{{ s.group_id }}</span>
           <span class="badge" :class="statusBadgeClass(s.status)">{{ statusLabel(s.status) }}</span>
@@ -265,7 +265,7 @@
       <div class="git-status-sect git-status-recovery">
         <p class="git-status-sub">{{ t('main.git_status.recovery_header') }}</p>
         <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doPush(status.base_branch)">
-          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <AppIcon name="cloud-arrow-up" />
           {{ t('main.git_status.push') }} ({{ status.base_branch }})
         </button>
         <!-- 0182 NR0003 §5: backlog sweep of finalized slots' leftovers (worktree
@@ -277,7 +277,7 @@
           :disabled="busy"
           @click="doCleanup"
         >
-          <i class="fa-solid fa-broom"></i>
+          <AppIcon name="broom" />
           {{ t('main.git_status.cleanup_btn', { n: status.cleanable_count }) }}
         </button>
       </div>
@@ -291,6 +291,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
+import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard).
 import {

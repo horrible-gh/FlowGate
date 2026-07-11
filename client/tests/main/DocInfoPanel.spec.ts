@@ -17,6 +17,7 @@ vi.mock('@shared/api', () => ({
 }))
 
 import DocInfoPanel from '@main/components/DocInfoPanel.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -54,9 +55,9 @@ describe('DocInfoPanel status fallback', () => {
     const vm = wrapper.vm as { statusClass: string; statusLabel: string; statusIcon: string }
     expect(vm.statusClass).toBe('not-decided')
     expect(vm.statusLabel).toBe(i18n.global.t('main.doc_info_panel.status_not_decided'))
-    expect(vm.statusIcon).toBe('fa-circle-question')
+    expect(vm.statusIcon).toBe('question')
     expect(badge(wrapper).classes()).toContain('not-decided')
-    expect(badge(wrapper).find('i').classes()).toContain('fa-circle-question')
+    expect(badge(wrapper).findComponent(AppIcon).props('name')).toBe('question')
   })
 
   it('2. R + null reviewStatus + decided workflowSteps → review-pending', () => {
@@ -64,7 +65,7 @@ describe('DocInfoPanel status fallback', () => {
     const vm = wrapper.vm as { statusClass: string; statusLabel: string; statusIcon: string }
     expect(vm.statusClass).toBe('review-pending')
     expect(vm.statusLabel).toBe(i18n.global.t('main.doc_info_panel.status_pending'))
-    expect(vm.statusIcon).toBe('fa-hourglass-half')
+    expect(vm.statusIcon).toBe('hourglass-medium')
     expect(badge(wrapper).classes()).toContain('review-pending')
   })
 

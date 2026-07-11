@@ -8,7 +8,7 @@
       <!-- Top: Q status badge + doc_id -->
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span class="qa-status-badge" :class="statusBadgeClass">
-          <i :class="statusIcon"></i> {{ statusLabel }}
+          <AppIcon :name="statusIcon" /> {{ statusLabel }}
         </span>
         <span style="font-size:.75rem; font-weight:700; color:var(--text-m);">{{ doc.doc_id }}</span>
         <span v-if="doc.target_id" style="font-size:.75rem; color:var(--text-m);">
@@ -18,7 +18,7 @@
 
       <!-- Query body render -->
       <div class="qa-section">
-        <div class="qa-section-title"><i class="fa-solid fa-question-circle"></i> Query Body</div>
+        <div class="qa-section-title"><AppIcon name="question" /> Query Body</div>
         <div class="card" style="padding:0; overflow:hidden;">
           <div class="md-viewer__content" style="padding:14px 16px; font-size:.8rem; line-height:1.8;" v-html="renderedContent" />
         </div>
@@ -26,7 +26,7 @@
 
       <!-- Related document links -->
       <div v-if="relatedDocIds.length > 0" class="qa-section">
-        <div class="qa-section-title"><i class="fa-solid fa-link"></i> Related Documents</div>
+        <div class="qa-section-title"><AppIcon name="link" /> Related Documents</div>
         <div class="qa-related-links">
           <span
             v-for="docId in relatedDocIds"
@@ -34,7 +34,7 @@
             class="qa-doc-link"
             @click="openRelatedDoc(docId)"
           >
-            <i class="fa-solid fa-file-lines" style="font-size:.65rem;"></i>
+            <AppIcon name="file-text" style="font-size:.65rem;" />
             {{ docId }}
           </span>
         </div>
@@ -42,7 +42,7 @@
 
       <!-- A list (when answered/closed) -->
       <div v-if="answerDocs.length > 0" class="qa-section">
-        <div class="qa-section-title"><i class="fa-solid fa-circle-check"></i> Posted Answers</div>
+        <div class="qa-section-title"><AppIcon name="check-circle" /> Posted Answers</div>
         <div class="qa-answer-list">
           <div
             v-for="aDoc in answerDocs"
@@ -60,7 +60,7 @@
 
       <!-- Answer editor (when not closed) -->
       <div v-if="doc.status !== 'closed'" class="qa-section">
-        <div class="qa-section-title"><i class="fa-solid fa-pen-to-square"></i> Submit Answer</div>
+        <div class="qa-section-title"><AppIcon name="note-pencil" /> Submit Answer</div>
         <AnswerEditor
           :q-doc-id="doc.doc_id"
           :prev-doc-id="doc.target_id ?? null"
@@ -70,7 +70,7 @@
 
       <!-- Closed status message -->
       <div v-else style="padding:12px 16px; background:var(--bg); border:1px solid var(--border); border-radius:var(--r); font-size:.8rem; color:var(--text-m);">
-        <i class="fa-solid fa-lock" style="margin-right:6px;"></i>This Q document is closed. No additional answers can be submitted.
+        <AppIcon name="lock" style="margin-right:6px;" />This Q document is closed. No additional answers can be submitted.
       </div>
     </template>
   </div>
@@ -83,6 +83,7 @@ import { getRequest } from '@shared/api'
 import { useTabsStore, type Tab } from '../stores/tabs'
 import { stripFrontmatter } from '@shared/utils/markdown'
 import AnswerEditor from './AnswerEditor.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{ tab: Tab }>()
 
@@ -158,10 +159,10 @@ const statusBadgeClass = computed(() => {
 
 const statusIcon = computed(() => {
   const s = doc.value?.status
-  if (s === 'open') return 'fa-solid fa-circle-dot'
-  if (s === 'answered') return 'fa-solid fa-circle-check'
-  if (s === 'closed') return 'fa-solid fa-lock'
-  return 'fa-solid fa-circle-dot'
+  if (s === 'open') return 'radio-button'
+  if (s === 'answered') return 'check-circle'
+  if (s === 'closed') return 'lock'
+  return 'radio-button'
 })
 
 const statusLabel = computed(() => {

@@ -3,11 +3,11 @@
     <div class="modal-box" style="max-width: 480px;">
       <div class="modal-hd">
         <span class="modal-title">
-          <i class="fa-solid fa-triangle-exclamation" style="color: var(--warning, #f59e0b);"></i>
+          <AppIcon name="warning" style="color: var(--warning, #f59e0b);" />
           {{ $t('settings.project.storage_migrate.confirm_title') }}
         </span>
         <button class="modal-close" type="button" @click="$emit('cancel')">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
       <div class="modal-bd">
@@ -19,7 +19,7 @@
           <div><strong>{{ $t('settings.project.storage_migrate.to_label') }}:</strong> {{ toPath }}</div>
         </div>
         <p style="margin: 12px 0 0 0; color: var(--danger, #ef4444); font-size: 0.875rem;">
-          <i class="fa-solid fa-circle-exclamation"></i>
+          <AppIcon name="warning-circle" />
           {{ $t('settings.project.storage_migrate.confirm_warning') }}
         </p>
       </div>
@@ -28,7 +28,7 @@
           {{ $t('common.cancel') }}
         </button>
         <button class="btn btn-primary" @click="$emit('confirm')">
-          <i class="fa-solid fa-check"></i>
+          <AppIcon name="check" />
           {{ $t('settings.project.storage_migrate.confirm_button') }}
         </button>
       </div>
@@ -37,6 +37,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 defineProps<{ fromPath: string; toPath: string }>()
 defineEmits<{ confirm: []; cancel: [] }>()
 </script>

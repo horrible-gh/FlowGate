@@ -12,7 +12,7 @@
       :title="t('main.git_menu.tooltip')"
       @click.stop="toggleDropdown"
     >
-      <i class="fa-solid fa-code-branch"></i>
+      <AppIcon name="git-branch" />
       <span v-if="status.pending_count > 0" class="git-menu-label">
         {{ t('main.git_menu.label') }}
       </span>
@@ -39,7 +39,7 @@
           class="btn btn-sm btn-danger-ol"
           @click="openPanel"
         >
-          <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.git_status.resolve_inline') }}
+          <AppIcon name="warning" /> {{ t('main.git_status.resolve_inline') }}
         </button>
         <button
           v-else
@@ -47,15 +47,15 @@
           :disabled="busy"
           @click="execute(p)"
         >
-          <i class="fa-solid fa-play"></i> {{ t('main.git_finalize.execute') }}
+          <AppIcon name="play" /> {{ t('main.git_finalize.execute') }}
         </button>
         <button class="btn btn-sm btn-secondary" @click="openGroup(p.group_id)">
-          <i class="fa-solid fa-arrow-up-right-from-square"></i> {{ t('main.git_status.open') }}
+          <AppIcon name="arrow-square-out" /> {{ t('main.git_status.open') }}
         </button>
       </div>
       <button class="git-menu-status-link" type="button" @click="openPanel">
-        <i class="fa-solid fa-diagram-project"></i> {{ t('main.git_menu.open_status') }}
-        <i class="fa-solid fa-arrow-right"></i>
+        <AppIcon name="tree-structure" /> {{ t('main.git_menu.open_status') }}
+        <AppIcon name="arrow-right" />
       </button>
     </div>
 
@@ -65,11 +65,11 @@
         <div class="modal-box git-panel-modal">
           <div class="modal-hd">
             <span class="modal-title">
-              <i class="fa-solid fa-diagram-project" style="color:var(--text-m);"></i>
+              <AppIcon name="tree-structure" style="color:var(--text-m);" />
               {{ t('main.git_status.title') }}
             </span>
             <button class="modal-close" type="button" @click="panelOpen = false">
-              <i class="fa-solid fa-xmark"></i>
+              <AppIcon name="x" />
             </button>
           </div>
           <div class="modal-bd git-panel-modal-bd">
@@ -90,6 +90,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
@@ -389,7 +390,7 @@ watch(projectId, fetchStatus)
 .git-menu-status-link:hover {
   background: var(--bg-hover, #f1f5f9);
 }
-.git-menu-status-link .fa-arrow-right {
+.git-menu-status-link .app-icon {
   margin-left: auto;
   font-size: 0.7rem;
 }

@@ -13,11 +13,11 @@
         <div class="modal-hd">
           <div>
             <div class="modal-title" id="dhd-title">
-              <i class="fa-solid fa-layer-group" style="color:var(--primary); margin-right:6px;"></i>{{ t('main.design_handoff_dialog.title') }}
+              <AppIcon name="stack" style="color:var(--primary); margin-right:6px;" />{{ t('main.design_handoff_dialog.title') }}
             </div>
           </div>
           <button type="button" class="modal-close" @click="onClose">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -27,14 +27,14 @@
           <!-- 1. Target card -->
           <div>
             <div class="dhd-section-title">
-              <i class="fa-solid fa-circle-info" style="color:var(--primary);"></i>{{ t('main.design_handoff_dialog.target_document') }}
+              <AppIcon name="info" style="color:var(--primary);" />{{ t('main.design_handoff_dialog.target_document') }}
             </div>
             <div class="dhd-target-card">
               <span class="doc-tag c-R" style="font-size:.72rem; padding:2px 7px;">R</span>
               <span class="dhd-target-id">{{ docRef }}</span>
               <span class="dhd-target-meta">{{ projectId }} / {{ groupId }}</span>
               <span class="dhd-badge-done">
-                <i class="fa-solid fa-check-circle"></i> {{ t('main.design_handoff_dialog.reviewed') }}
+                <AppIcon name="check-circle" /> {{ t('main.design_handoff_dialog.reviewed') }}
               </span>
             </div>
           </div>
@@ -44,7 +44,7 @@
           <!-- 2. Type checkboxes -->
           <div>
             <div class="dhd-section-title">
-              <i class="fa-solid fa-list-check" style="color:var(--primary);"></i>{{ t('main.design_handoff_dialog.document_type') }}
+              <AppIcon name="list-checks" style="color:var(--primary);" />{{ t('main.design_handoff_dialog.document_type') }}
               <span class="dhd-section-hint">— {{ t('main.design_handoff_dialog.workflow_hint') }}</span>
             </div>
             <div class="dhd-check-group">
@@ -56,7 +56,7 @@
                 @click.prevent="toggleType(t.code)"
               >
                 <span class="dhd-check-box">
-                  <i class="fa-solid fa-check dhd-check-ico"></i>
+                  <AppIcon name="check" class="dhd-check-ico" />
                 </span>
                 <span class="dhd-check-type-badge" :class="`c-${t.code}`">{{ t.code }}</span>
                 <span class="dhd-check-label">{{ t.label }}</span>
@@ -69,7 +69,7 @@
           <!-- 3. Mode radio -->
           <div>
             <div class="dhd-section-title">
-              <i class="fa-solid fa-sliders" style="color:var(--primary);"></i>{{ t('main.design_handoff_dialog.issuance_mode') }}
+              <AppIcon name="sliders-horizontal" style="color:var(--primary);" />{{ t('main.design_handoff_dialog.issuance_mode') }}
             </div>
             <div class="dhd-radio-group">
               <label
@@ -102,7 +102,7 @@
           <!-- 4. Mention preview -->
           <div>
             <div class="dhd-section-title">
-              <i class="fa-regular fa-eye" style="color:var(--primary);"></i>{{ t('main.design_handoff_dialog.mention_preview') }}
+              <AppIcon name="eye" style="color:var(--primary);" />{{ t('main.design_handoff_dialog.mention_preview') }}
             </div>
             <div class="dhd-preview-box">
               <span v-if="orderedChecked.length === 0" class="dhd-preview-empty">
@@ -123,7 +123,7 @@
             :disabled="orderedChecked.length === 0"
             @click="onCopyMention"
           >
-            <i class="fa-regular fa-copy"></i> {{ t('main.design_handoff_dialog.copy_mention') }}
+            <AppIcon name="copy" /> {{ t('main.design_handoff_dialog.copy_mention') }}
           </button>
         </div>
 
@@ -136,6 +136,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import AppIcon from '@shared/AppIcon.vue'
 
 type DesignType = 'D' | 'P' | 'L' | 'DB'
 

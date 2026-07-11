@@ -7,7 +7,7 @@
       <!-- Q header meta -->
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
         <span class="q-state-badge" :class="q.status">
-          <i :class="q.status === 'done' ? 'fa-solid fa-check-circle' : 'fa-solid fa-clock'"></i>
+          <AppIcon :name="q.status === 'done' ? 'check-circle' : 'clock'" />
           {{ q.status === 'done' ? t('main.qt_detail_viewer.answered') : t('main.qt_detail_viewer.in_progress') }}
         </span>
         <span style="font-size:.75rem; font-weight:700; color:var(--text-m);">{{ q.q_id }}</span>
@@ -30,10 +30,10 @@
             </div>
             <div class="acc-hd-right">
               <span class="q-state-badge" :class="item.answers.length > 0 ? 'done' : 'pending'" style="font-size:.68rem; padding:2px 8px;">
-                <i :class="item.answers.length > 0 ? 'fa-solid fa-check-circle' : 'fa-solid fa-clock'"></i>
+                <AppIcon :name="item.answers.length > 0 ? 'check-circle' : 'clock'" />
                 {{ item.answers.length > 0 ? t('main.qt_detail_viewer.answered') : t('main.qt_detail_viewer.in_progress') }}
               </span>
-              <i class="fa-solid fa-chevron-down acc-toggle-icon"></i>
+              <AppIcon name="caret-down" class="acc-toggle-icon" />
             </div>
           </div>
 
@@ -49,16 +49,16 @@
             :style="bodyStyles[item.id]"
           >
             <div class="acc-body-inner" :ref="(el) => setBodyInnerRef(item.id, el)">
-              <div class="q-section-label"><i class="fa-solid fa-user"></i> {{ t('main.qt_detail_viewer.question_body') }}</div>
+              <div class="q-section-label"><AppIcon name="user" /> {{ t('main.qt_detail_viewer.question_body') }}</div>
               <div class="q-body-readonly">{{ item.body }}</div>
               <hr class="q-divider" />
 
               <!-- Existing answer tree -->
               <template v-if="item.answers.length > 0">
-                <div class="q-section-label"><i class="fa-solid fa-check-circle" style="color:var(--success,#16a34a);"></i> {{ t('main.qt_detail_viewer.answers') }}</div>
+                <div class="q-section-label"><AppIcon name="check-circle" style="color:var(--success,#16a34a);" /> {{ t('main.qt_detail_viewer.answers') }}</div>
                 <div v-for="ans in item.answers" :key="ans.id" class="q-answer-entry">
                   <div class="q-answer-entry-meta">
-                    <i class="fa-solid fa-user-tie" style="color:var(--primary);"></i>
+                    <AppIcon name="user-circle" style="color:var(--primary);" />
                     <span>{{ ans.answered_by }}</span>
                     <span v-if="ans.answered_at">· {{ ans.answered_at.slice(0, 10) }}</span>
                   </div>
@@ -68,14 +68,14 @@
               </template>
 
               <!-- Answer input -->
-              <div class="q-section-label"><i class="fa-solid fa-user-tie"></i> {{ t('main.qt_detail_viewer.answer_input') }}</div>
+              <div class="q-section-label"><AppIcon name="user-circle" /> {{ t('main.qt_detail_viewer.answer_input') }}</div>
               <textarea
                 class="q-answer-textarea"
                 :placeholder="t('main.qt_detail_viewer.answer_placeholder', { seq: item.seq })"
                 v-model="answerDrafts[item.id]"
               ></textarea>
               <div class="md-format-hint">
-                <i class="fa-brands fa-markdown" style="margin-right:4px;"></i>
+                <AppIcon name="markdown-logo" style="margin-right:4px;" />
                 <strong>{{ t('main.qt_detail_viewer.markdown_hints') }}</strong>:
                 <code>**bold**</code>&nbsp;
                 <code>*italic*</code>&nbsp;
@@ -88,7 +88,7 @@
                 :disabled="savingStates[item.id]"
                 @click="saveAnswer(item)"
               >
-                <i :class="savingStates[item.id] ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-floppy-disk'"></i>
+                <AppIcon :name="savingStates[item.id] ? 'spinner' : 'floppy-disk'" :spin="savingStates[item.id]" />
                 {{ savingStates[item.id] ? t('main.qt_detail_viewer.saving') : t('main.qt_detail_viewer.save_answer') }}
               </button>
             </div>
@@ -98,7 +98,7 @@
 
       <!-- Follow-up question notice -->
       <div class="q-followup-notice">
-        <i class="fa-solid fa-circle-info"></i>
+        <AppIcon name="info" />
         <span>{{ t('main.qt_detail_viewer.followup_notice') }}</span>
       </div>
     </template>
@@ -106,6 +106,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'

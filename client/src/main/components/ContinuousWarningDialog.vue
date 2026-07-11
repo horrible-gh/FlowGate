@@ -5,18 +5,18 @@
         <!-- ── Header ── -->
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger); margin-right:6px;"></i>
+            <AppIcon name="warning" style="color:var(--danger); margin-right:6px;" />
             {{ t('main.continuous_work.warn_title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
         <!-- ── Body ── -->
         <div class="modal-bd cwarn-body">
           <div class="cwarn-summary">
-            <i class="fa-solid fa-forward-fast"></i>
+            <AppIcon name="fast-forward" />
             {{ summaryText }}
           </div>
 
@@ -41,7 +41,7 @@
             :disabled="!consented"
             @click="onConfirm"
           >
-            <i class="fa-solid fa-bolt"></i> {{ t('main.continuous_work.warn_btn_start') }}
+            <AppIcon name="lightning" /> {{ t('main.continuous_work.warn_btn_start') }}
           </button>
         </div>
       </div>
@@ -52,6 +52,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean

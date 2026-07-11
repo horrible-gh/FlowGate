@@ -4,7 +4,7 @@
     <p class="login-subtitle">{{ t('auth.totp.backup.instruction') }}</p>
 
     <div v-if="error" class="login-alert login-alert-danger" role="alert">
-      <i class="fa-solid fa-circle-exclamation"></i>
+      <AppIcon name="warning-circle" />
       <span>{{ error }}</span>
     </div>
 
@@ -22,7 +22,7 @@
       </div>
 
       <button type="submit" class="btn btn-primary w-full btn-lg" :disabled="loading || backupCode.length === 0">
-        <i class="fa-solid fa-check"></i>
+        <AppIcon name="check" />
         <span>{{ t('auth.totp.backup.submit') }}</span>
       </button>
     </form>
@@ -38,6 +38,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   loading: boolean

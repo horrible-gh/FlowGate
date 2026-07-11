@@ -1,5 +1,6 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia } from 'pinia'
 import i18n from '@shared/i18n'
 import MdViewer from '@main/components/MdViewer.vue'
 
@@ -21,7 +22,7 @@ function mountViewer() {
       docId: 'test.none.0002.0004-D',
       projectId: 'test',
     },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n, createPinia()] },
   })
 }
 

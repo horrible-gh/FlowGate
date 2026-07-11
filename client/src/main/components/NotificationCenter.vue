@@ -11,7 +11,7 @@
       :aria-expanded="open"
       @click="toggle"
     >
-      <i class="fa-regular fa-bell"></i>
+      <AppIcon name="bell" />
       <span v-if="store.unreadCount > 0" class="notif-badge">
         {{ store.unreadCount > 99 ? '99+' : store.unreadCount }}
       </span>
@@ -50,22 +50,22 @@
 
       <div class="notif-panel-body">
         <div v-if="store.loading && store.items.length === 0" class="notif-empty">
-          <i class="fa-solid fa-spinner fa-spin"></i>
+          <AppIcon name="spinner" spin />
           <p>{{ t('main.overview.loading') }}</p>
         </div>
         <div v-else-if="store.error && store.items.length === 0" class="notif-empty">
-          <i class="fa-solid fa-triangle-exclamation"></i>
+          <AppIcon name="warning" />
           <p>{{ t('main.notif_center.load_failed') }}</p>
           <button class="btn btn-outline btn-sm" type="button" @click="refresh">
             {{ t('main.overview.retry') }}
           </button>
         </div>
         <div v-else-if="store.items.length === 0" class="notif-empty">
-          <i class="fa-regular fa-bell-slash"></i>
+          <AppIcon name="bell-slash" />
           <p>{{ t('main.notif_center.empty') }}</p>
         </div>
         <div v-else-if="visibleItems.length === 0" class="notif-empty">
-          <i class="fa-regular fa-circle-check"></i>
+          <AppIcon name="check-circle" />
           <p>{{ t('main.notif_center.filter_empty') }}</p>
         </div>
         <button
@@ -98,14 +98,14 @@
               >{{ reviewBadge(item) }}</span>
             </span>
             <span v-else-if="item.group" class="notif-target">
-              <i class="fa-regular fa-folder notif-group-icon"></i>
+              <AppIcon name="folder" class="notif-group-icon" />
               <strong class="notif-doc-id">{{ item.group.group_id }}</strong>
               <span class="notif-target-title">{{ item.group.title }}</span>
             </span>
             <span class="notif-msg">{{ activityActionLabel(item) }}</span>
             <!-- 시안 3: "됐다는데 사실 확인 필요" — completed row whose AI verdict is issues. -->
             <span v-if="showRiskWarning(item)" class="notif-warn">
-              <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.notif_center.completed_but_issues') }}
+              <AppIcon name="warning" /> {{ t('main.notif_center.completed_but_issues') }}
             </span>
             <span class="notif-time">
               {{ formatDashboardTime(item.occurred_at) }}
@@ -127,6 +127,7 @@ import { useNotificationsStore } from '../stores/notifications'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
 import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'
+import AppIcon from '@shared/AppIcon.vue'
 
 const { t } = useI18n()
 const projectStore = useProjectStore()

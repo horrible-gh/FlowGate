@@ -3,13 +3,13 @@
     <div class="flex justify-between items-center" style="margin-bottom:20px; gap:16px; flex-wrap:wrap;">
       <div>
         <h1 class="s-page-title">
-          <i class="fa-solid fa-code" style="color:var(--primary); margin-right:8px;"></i>
+          <AppIcon name="code" style="color:var(--primary); margin-right:8px;" />
           {{ $t('settings.system.env_variables.title') }}
         </h1>
         <p class="s-page-sub" style="margin-bottom:0;">{{ $t('settings.system.env_variables.sub', { pattern: '${var}' }) }}</p>
       </div>
       <button class="btn btn-primary" @click="openCreate">
-        <i class="fa-solid fa-plus"></i> {{ $t('settings.system.env_variables.btn_create') }}
+        <AppIcon name="plus" /> {{ $t('settings.system.env_variables.btn_create') }}
       </button>
     </div>
 
@@ -27,13 +27,13 @@
           <tbody>
             <tr v-if="loading">
               <td colspan="4" class="ev-empty">
-                <i class="fa-solid fa-spinner fa-spin ev-empty-icon"></i>
+                <AppIcon name="spinner" spin class="ev-empty-icon" />
                 {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="envVars.length === 0">
               <td colspan="4" class="ev-empty">
-                <i class="fa-solid fa-code ev-empty-icon"></i>
+                <AppIcon name="code" class="ev-empty-icon" />
                 {{ $t('settings.system.env_variables.empty') }}
               </td>
             </tr>
@@ -45,7 +45,7 @@
                 <td>
                   <div class="tbl-actions">
                     <button class="btn btn-sm btn-secondary" :title="$t('common.edit')" @click="openEdit(ev)">
-                      <i class="fa-solid fa-pen"></i>
+                      <AppIcon name="pencil-simple" />
                     </button>
                     <button
                       class="btn btn-sm btn-ghost"
@@ -53,7 +53,7 @@
                       :title="$t('common.delete')"
                       @click="confirmDelete(ev)"
                     >
-                      <i class="fa-solid fa-trash"></i>
+                      <AppIcon name="trash" />
                     </button>
                   </div>
                 </td>
@@ -103,7 +103,7 @@
         <div class="modal-ft">
           <button class="btn btn-secondary" @click="closeModal">{{ $t('common.cancel') }}</button>
           <button class="btn btn-primary" :disabled="saving" @click="submitModal">
-            <i v-if="saving" class="fa-solid fa-spinner fa-spin"></i>
+            <AppIcon v-if="saving" name="spinner" spin />
             {{ $t('common.save') }}
           </button>
         </div>
@@ -123,6 +123,7 @@
 </template>
 
 <script setup>
+import AppIcon from '@shared/AppIcon.vue'
 import { ref, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest, deleteRequest } from '@shared/api'

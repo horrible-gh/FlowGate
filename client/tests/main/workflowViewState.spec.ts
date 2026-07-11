@@ -16,11 +16,11 @@ function ss(code: string, visual: 'done' | 'highlight' | 'rejected' | 'current' 
     future: 'future dip-step-disabled',
   }
   const ICN: Record<string, string> = {
-    done: 'fa-solid fa-circle-check',
-    highlight: 'fa-regular fa-circle',
-    rejected: 'fa-solid fa-circle-xmark',
-    current: 'fa-regular fa-circle-dot',
-    future: 'fa-regular fa-circle',
+    done: 'check-circle',
+    highlight: 'circle',
+    rejected: 'x-circle',
+    current: 'radio-button',
+    future: 'circle',
   }
   return { code, visual, className: CLS[visual], iconClass: ICN[visual] }
 }
@@ -1235,7 +1235,7 @@ describe('resolveWorkflowViewState — wf_done 강조 해제 (T871)', () => {
       expect(step.visual).toBe('done')
       expect(step.className).toBe('done')
       expect(step.className).not.toContain('wf-next-action')
-      expect(step.iconClass).toBe('fa-solid fa-circle-check')
+      expect(step.iconClass).toBe('check-circle')
     })
   })
 })
@@ -1342,7 +1342,7 @@ describe('resolveWorkflowViewState — M-tab 액션 제외 (T867)', () => {
 //
 // Target: workflowViewState.ts NR157 fix, ensuring the head cell becomes visual='rejected'.
 // In DocWorkflow.vue stepStates rendering, the head cell receives
-// s.className='wf-rejected dip-step-rejected' and s.iconClass='fa-solid fa-circle-xmark'.
+// s.className='wf-rejected dip-step-rejected' and s.iconClass='x-circle'.
 //
 // [feedback_head_viewed_nullcoalesce_trap]: headDocReviewStatus is normalized with ?? null,
 // so undefined/null inputs are excluded from rejected detection. S3 verifies this boundary.
@@ -1351,7 +1351,7 @@ describe('resolveWorkflowViewState — rejected head cell 강조 (T872)', () => 
   const steps6r = ['R', 'M', 'DS', 'D', 'T', 'TR']
 
   // T872-S1: R tab + rejected T head in the middle of the sequence -> mode=rejected and rejected T cell.
-  // className='wf-rejected dip-step-rejected', iconClass='fa-solid fa-circle-xmark'.
+  // className='wf-rejected dip-step-rejected', iconClass='x-circle'.
   // Also verify that earlier steps (R/M/DS/D) are done and the later TR step is future.
   it('T872-S1: R tab, head=T rejected (NR157) → mode=rejected, canNextAction=false, T cell visual=rejected + className + iconClass, 이전=done / 이후=future', () => {
     const result = s({
@@ -1371,7 +1371,7 @@ describe('resolveWorkflowViewState — rejected head cell 강조 (T872)', () => 
     const headCell = result.stepStates.find(st => st.code === 'T')!
     expect(headCell.visual).toBe('rejected')
     expect(headCell.className).toBe('wf-rejected dip-step-rejected')
-    expect(headCell.iconClass).toBe('fa-solid fa-circle-xmark')
+    expect(headCell.iconClass).toBe('x-circle')
     expect(result.nextStepIndex).toBe(4)
     expect(result.stepStates).toEqual([
       ss('R',  'done'),

@@ -7,7 +7,7 @@
         <div class="modal-hd">
           <div>
             <div class="modal-title">
-              <i class="fa-solid fa-arrow-right" style="color:var(--primary); margin-right:6px;"></i>
+              <AppIcon name="arrow-right" style="color:var(--primary); margin-right:6px;" />
               {{ t('main.next_action_modal.title') }}
             </div>
             <div class="nad-subtitle">
@@ -15,7 +15,7 @@
             </div>
           </div>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -25,7 +25,7 @@
           <!-- Section 1: Issue info card -->
           <div>
             <div class="nad-section-title">
-              <i class="fa-solid fa-circle-info" style="color:var(--primary);"></i>{{ t('main.next_action_modal.section_info') }}
+              <AppIcon name="info" style="color:var(--primary);" />{{ t('main.next_action_modal.section_info') }}
             </div>
             <div class="nad-target-card">
               <span v-if="nextTypeCode" class="nad-type-badge" :class="`c-${nextTypeCode}`">{{ nextTypeCode }}</span>
@@ -41,13 +41,13 @@
           <!-- Section 2: Selected reference docs -->
           <div>
             <div class="nad-section-title">
-              <i class="fa-solid fa-book-open" style="color:var(--primary);"></i>
+              <AppIcon name="book-open" style="color:var(--primary);" />
               {{ t('main.next_action_modal.section_selected_refs') }}
               <span class="nad-sel-count">{{ totalSelectedCount }}</span>
             </div>
             <div class="nad-selected-area">
               <span v-if="props.docRef" class="nad-sel-tag tag-locked">
-                <i class="fa-solid fa-lock tag-lock-icon"></i>
+                <AppIcon name="lock" class="tag-lock-icon" />
                 <span class="tag-locked-hint">{{ t('main.next_action_modal.locked_doc_hint') }}</span>
                 {{ normalizedDocRef }}
               </span>
@@ -58,7 +58,7 @@
               >
                 {{ docPath }}
                 <span class="tag-remove" :title="t('main.next_action_modal.remove_selection')" @click="removeSelectedDoc(docPath)">
-                  <i class="fa-solid fa-xmark"></i>
+                  <AppIcon name="x" />
                 </span>
               </span>
               <span v-if="!props.docRef && extraSelectedDocs.size === 0" class="nad-selected-empty">
@@ -70,7 +70,7 @@
           <!-- Section 3: Document browser -->
           <div class="nad-browser-section">
             <div class="nad-section-title">
-              <i class="fa-solid fa-folder-open" style="color:var(--primary);"></i>
+              <AppIcon name="folder-open" style="color:var(--primary);" />
               {{ t('main.next_action_modal.section_browser') }}
             </div>
             <div class="nad-browser-wrap">
@@ -78,10 +78,10 @@
               <!-- Module tabs -->
               <div class="nad-module-tabs">
                 <div v-if="modulesLoading" class="nad-loading-row">
-                  <i class="fa-solid fa-spinner fa-spin"></i>
+                  <AppIcon name="spinner" spin />
                 </div>
                 <div v-else-if="modulesError" class="nad-error-row">
-                  <i class="fa-solid fa-triangle-exclamation"></i> {{ t('main.next_action_modal.module_load_failed') }}
+                  <AppIcon name="warning" /> {{ t('main.next_action_modal.module_load_failed') }}
                 </div>
                 <template v-else>
                   <div
@@ -104,7 +104,7 @@
                   <div class="nad-panel-hd">{{ t('main.next_action_modal.group_panel') }}</div>
                   <div class="nad-group-list" ref="groupListEl" @scroll="onGroupListScroll">
                     <div v-if="groupsLoading" class="nad-doc-empty">
-                      <i class="fa-solid fa-spinner fa-spin"></i>
+                      <AppIcon name="spinner" spin />
                     </div>
                     <div v-else-if="groups.length === 0 && !groupsLoading" class="nad-doc-empty">
                       {{ t('main.next_action_modal.no_groups') }}
@@ -121,7 +121,7 @@
                         <span class="nad-group-name">{{ grp.title || shortId(grp.group_id) }}</span>
                       </div>
                       <div v-if="groupsLoadingMore" class="nad-group-more">
-                        <i class="fa-solid fa-spinner fa-spin"></i>
+                        <AppIcon name="spinner" spin />
                       </div>
                     </template>
                   </div>
@@ -130,7 +130,7 @@
                 <!-- Right: doc list -->
                 <div class="nad-doc-panel">
                   <div class="nad-doc-search-wrap">
-                    <i class="fa-solid fa-magnifying-glass nad-doc-search-icon"></i>
+                    <AppIcon name="magnifying-glass" class="nad-doc-search-icon" />
                     <input
                       v-model="searchQuery"
                       type="text"
@@ -144,14 +144,14 @@
                     :class="{ 'all-selected': allDocsSelected }"
                     @click="toggleSelectAll"
                   >
-                    <span class="nad-doc-check"><i class="fa-solid fa-check"></i></span>
+                    <span class="nad-doc-check"><AppIcon name="check" /></span>
                     <span class="nad-doc-selectall-label">
                       {{ allDocsSelected ? t('main.next_action_modal.deselect_all') : t('main.next_action_modal.select_all') }}
                     </span>
                   </div>
                   <div class="nad-doc-list">
                     <div v-if="docsLoading" class="nad-doc-empty">
-                      <i class="fa-solid fa-spinner fa-spin"></i>
+                      <AppIcon name="spinner" spin />
                     </div>
                     <div v-else-if="filteredDocs.length === 0" class="nad-doc-empty">
                       {{ searchQuery ? t('main.next_action_modal.no_search_results') : t('main.next_action_modal.no_documents') }}
@@ -163,7 +163,7 @@
                       :class="{ selected: isDocSelected(doc.doc_id) }"
                       @click="toggleDoc(doc)"
                     >
-                      <span class="nad-doc-check"><i class="fa-solid fa-check"></i></span>
+                      <span class="nad-doc-check"><AppIcon name="check" /></span>
                       <span class="nad-doc-id">{{ shortId(doc.doc_id) }}</span>
                       <span class="nad-doc-title">
                         {{ doc.title }}
@@ -192,25 +192,24 @@
                    the dialog's selected-refs become the new empty doc's context. The
                    create-empty emit is already wired to MainPanel.onNextActionCreateEmpty. -->
               <div class="nad-proceed-item" @click="onProceedAction('create-empty')">
-                <i class="fa-regular fa-file" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_create_empty') }}
+                <AppIcon name="file" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_create_empty') }}
               </div>
               <div class="nad-proceed-item" @click="onProceedAction('copy-mention')">
-                <i class="fa-regular fa-copy" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_copy_mention') }}
+                <AppIcon name="copy" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_copy_mention') }}
               </div>
               <div class="nad-proceed-item" @click="onProceedAction('copy-mention-with-message')">
-                <i class="fa-regular fa-comment-dots" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_copy_mention_with_message') }}
+                <AppIcon name="chat-circle-dots" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_copy_mention_with_message') }}
               </div>
               <div class="nad-proceed-item" @click="onProceedAction('invoke-command')">
-                <i class="fa-solid fa-terminal" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_invoke') }}
+                <AppIcon name="terminal" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_invoke') }}
               </div>
             </div>
             <button class="btn btn-primary" type="button" @click.stop="toggleProceed">
-              <i class="fa-solid fa-bolt"></i> {{ t('main.next_action_modal.title') }}
-              <i
-                class="fa-solid"
-                :class="proceedOpen ? 'fa-chevron-down' : 'fa-chevron-up'"
+              <AppIcon name="lightning" /> {{ t('main.next_action_modal.title') }}
+              <AppIcon
+                :name="proceedOpen ? 'caret-down' : 'caret-up'"
                 style="font-size:.6rem; margin-left:4px;"
-              ></i>
+              />
             </button>
           </div>
         </div>
@@ -226,6 +225,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { formatDocId } from '@shared/utils/docIdFormatter'
+import AppIcon from '@shared/AppIcon.vue'
 
 interface ModuleItem { module_id: string; title: string }
 interface GroupItem  { group_id: string; title?: string }

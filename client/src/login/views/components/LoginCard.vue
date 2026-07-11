@@ -5,7 +5,7 @@
 
     <!-- Error message -->
     <div v-if="error" class="login-alert login-alert-danger">
-      <i class="fa-solid fa-circle-exclamation"></i>
+      <AppIcon name="warning-circle" />
       <div>
         <p>{{ error }}</p>
         <p v-if="attemptText">{{ attemptText }}</p>
@@ -16,7 +16,7 @@
     <div class="form-group">
       <label class="form-label req" for="username">{{ t('auth.login.username') }}</label>
       <div class="form-inline" style="position:relative;">
-        <i class="fa-regular fa-user" style="color:var(--text-m); position:absolute; left:12px; z-index:1;"></i>
+        <AppIcon name="user" style="color:var(--text-m); position:absolute; left:12px; z-index:1;" />
         <input
           id="username"
           ref="usernameInput"
@@ -35,7 +35,7 @@
     <div class="form-group">
       <label class="form-label req" for="password">{{ t('auth.login.password') }}</label>
       <div class="form-inline" style="position:relative;">
-        <i class="fa-solid fa-lock" style="color:var(--text-m); position:absolute; left:12px; z-index:1;"></i>
+        <AppIcon name="lock" style="color:var(--text-m); position:absolute; left:12px; z-index:1;" />
         <input
           id="password"
           v-model="password"
@@ -52,7 +52,7 @@
           @click="showPassword = !showPassword"
           style="position:absolute; right:10px; color:var(--text-m); font-size:.85rem;"
         >
-          <i :class="showPassword ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye'"></i>
+          <AppIcon :name="showPassword ? 'eye-slash' : 'eye'" />
         </button>
       </div>
     </div>
@@ -63,12 +63,12 @@
       :disabled="loading"
       @click="handleSubmit"
     >
-      <i class="fa-solid fa-arrow-right-to-bracket"></i>
+      <AppIcon name="sign-in" />
       <span>{{ t('auth.login.submit') }}</span>
     </button>
 
     <div class="demo-hint">
-      <i class="fa-solid fa-circle-info"></i>
+      <AppIcon name="info" />
       <span>{{ t('auth.login.forgot_password_hint') }}</span>
     </div>
   </div>
@@ -77,6 +77,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
 
 interface LoginPayload {
   username: string

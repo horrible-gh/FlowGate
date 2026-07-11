@@ -21,11 +21,12 @@
       :aria-label="t('main.test_fail_strip.toggle_aria')"
       @click="toggleExpanded"
     >
-      <i
-        class="fa-solid fail-strip-ic"
-        :class="optimisticRunning ? 'fa-spinner fa-spin' : 'fa-triangle-exclamation'"
+      <AppIcon
+        class="fail-strip-ic"
+        :name="optimisticRunning ? 'spinner' : 'warning'"
+        :spin="optimisticRunning"
         aria-hidden="true"
-      ></i>
+      />
       <span class="fail-strip-label">
         {{ optimisticRunning ? t('main.test_fail_strip.optimistic_running') : t('main.test_fail_strip.summary', { failed: failedCount, total: totalCount }) }}
       </span>
@@ -33,7 +34,7 @@
       <span v-if="!optimisticRunning && subText" class="fail-strip-sub">{{ subText }}</span>
       <span v-if="!optimisticRunning" class="fail-strip-actions" @click.stop>
         <button type="button" class="fail-strip-btn" @click="toggleExpanded">
-          <i class="fa-regular fa-file-lines" aria-hidden="true"></i>
+          <AppIcon name="file-text" aria-hidden="true" />
           {{ t('main.test_fail_strip.log') }}
         </button>
         <button
@@ -42,20 +43,20 @@
           :disabled="rerunning"
           @click="onRerun"
         >
-          <i
-            class="fa-solid"
-            :class="rerunning ? 'fa-spinner fa-spin' : 'fa-rotate-right'"
+          <AppIcon
+            :name="rerunning ? 'spinner' : 'arrow-clockwise'"
+            :spin="rerunning"
             aria-hidden="true"
-          ></i>
+          />
           {{ t('main.test_fail_strip.rerun') }}
         </button>
       </span>
-      <i
+      <AppIcon
         v-if="!optimisticRunning"
-        class="fa-solid fail-strip-caret"
-        :class="expanded ? 'fa-chevron-up' : 'fa-chevron-down'"
+        class="fail-strip-caret"
+        :name="expanded ? 'caret-up' : 'caret-down'"
         aria-hidden="true"
-      ></i>
+      />
     </button>
 
     <div v-if="expanded && !optimisticRunning" class="fail-strip-detail">
@@ -80,6 +81,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'

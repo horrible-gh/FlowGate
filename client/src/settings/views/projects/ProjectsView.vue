@@ -3,22 +3,22 @@
     <div class="flex justify-between items-center" style="margin-bottom:24px;">
       <div>
         <h1 class="s-page-title">
-          <i class="fa-solid fa-table-cells-large" style="color:var(--primary); margin-right:8px;"></i>
+          <AppIcon name="grid-four" style="color:var(--primary); margin-right:8px;" />
           {{ t('projects.title') }}
         </h1>
         <p class="s-page-sub" style="margin-bottom:0;">{{ t('projects.sub') }}</p>
       </div>
       <button class="btn btn-primary" @click="showModal = true">
-        <i class="fa-solid fa-plus"></i> {{ t('projects.new') }}
+        <AppIcon name="plus" /> {{ t('projects.new') }}
       </button>
     </div>
 
     <div style="display:flex; gap:10px; margin-bottom:22px; flex-wrap:wrap;">
       <div style="position:relative; flex:1; max-width:300px;">
-        <i
-          class="fa-solid fa-magnifying-glass"
+        <AppIcon
+          name="magnifying-glass"
           style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-m); font-size:.8rem; pointer-events:none;"
-        ></i>
+        />
         <input
           v-model="searchQuery"
           type="text"
@@ -48,7 +48,7 @@
 
     <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); gap:16px;">
       <div v-if="loading" style="grid-column:1/-1; text-align:center; padding:48px; color:var(--text-m);">
-        <i class="fa-solid fa-spinner fa-spin" style="font-size:1.5rem; margin-bottom:12px; display:block;"></i>
+        <AppIcon name="spinner" spin style="font-size:1.5rem; margin-bottom:12px; display:block;" />
         {{ t('common.loading') }}
       </div>
 
@@ -85,7 +85,7 @@
             </div>
             <div class="proj-card-stats">
               <div class="proj-stat">
-                <i class="fa-regular fa-clock" style="color:var(--text-m);"></i>
+                <AppIcon name="clock" style="color:var(--text-m);" />
                 <span>{{ formatUpdatedAt(p.updated_at) }}</span>
               </div>
             </div>
@@ -95,14 +95,14 @@
                 class="btn btn-primary btn-sm"
                 @click="openProject(p)"
               >
-                <i class="fa-solid fa-arrow-right-to-bracket"></i> {{ t('projects.open') }}
+                <AppIcon name="sign-in" /> {{ t('projects.open') }}
               </button>
               <button
                 v-else
                 class="btn btn-secondary btn-sm"
                 @click="openProject(p)"
               >
-                <i class="fa-solid fa-box-archive"></i> {{ t('projects.open_readonly') }}
+                <AppIcon name="archive" /> {{ t('projects.open_readonly') }}
               </button>
               <button
                 v-if="p.is_active === 0"
@@ -110,7 +110,7 @@
                 style="color:var(--primary);"
                 @click="showToast(t('projects.toast_restored'), 'success')"
               >
-                <i class="fa-solid fa-rotate-left"></i> {{ t('projects.restore') }}
+                <AppIcon name="arrow-counter-clockwise" /> {{ t('projects.restore') }}
               </button>
               <button
                 v-if="p.is_active === 1"
@@ -119,7 +119,7 @@
                 :title="t('projects.archive')"
                 @click="showToast(t('projects.toast_archived'), 'info')"
               >
-                <i class="fa-solid fa-box-archive"></i>
+                <AppIcon name="archive" />
               </button>
             </div>
           </div>
@@ -127,7 +127,7 @@
 
         <div class="proj-card proj-card-new" @click="showModal = true">
           <div class="proj-card-new-inner">
-            <i class="fa-solid fa-plus"></i>
+            <AppIcon name="plus" />
             <span>{{ t('projects.new_card') }}</span>
           </div>
         </div>
@@ -139,11 +139,11 @@
     <div class="modal-box">
       <div class="modal-hd">
         <span class="modal-title">
-          <i class="fa-solid fa-plus" style="color:var(--primary);"></i>
+          <AppIcon name="plus" style="color:var(--primary);" />
           {{ t('projects.modal_title') }}
         </span>
         <button class="modal-close" @click="showModal = false">
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </button>
       </div>
       <div class="modal-bd">
@@ -246,7 +246,7 @@
       <div class="modal-ft">
         <button class="btn btn-secondary" @click="showModal = false">{{ t('common.cancel') }}</button>
         <button class="btn btn-primary" :disabled="!slugValid" @click="createProject">
-          <i class="fa-solid fa-plus"></i> {{ t('projects.create_btn') }}
+          <AppIcon name="plus" /> {{ t('projects.create_btn') }}
         </button>
       </div>
     </div>
@@ -260,6 +260,7 @@ import { useI18n } from 'vue-i18n';
 import { postRequest } from '@shared/api';
 import { useToast } from '../../../main/components/common/useToast';
 import { useSettingsStore } from '../../stores/settings.js';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const route = useRoute();

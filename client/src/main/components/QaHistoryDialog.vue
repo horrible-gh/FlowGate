@@ -11,10 +11,10 @@
         <!-- Header -->
         <div class="modal-hd">
           <div class="modal-title" id="qhd-title">
-            <i class="fa-solid fa-circle-question" style="color:var(--primary, #2563eb); margin-right:6px;"></i>{{ t('main.qa_history.title') }}
+            <AppIcon name="question" style="color:var(--primary, #2563eb); margin-right:6px;" />{{ t('main.qa_history.title') }}
           </div>
           <button type="button" class="modal-close" @click="onClose">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -39,7 +39,7 @@
                 <span class="qhd-seq">Q{{ item.seq }}</span>
                 <span v-if="item.title" class="qhd-title-text">{{ item.title }}</span>
                 <span class="qhd-asker">
-                  <i :class="item.asker_kind === 'ai' ? 'fa-solid fa-robot' : 'fa-solid fa-user'"></i>
+                  <AppIcon :name="item.asker_kind === 'ai' ? 'robot' : 'user'" />
                   {{ item.asker_kind === 'ai' ? t('main.doc_info_panel.qa_by_ai') : t('main.doc_info_panel.qa_by_human') }}
                 </span>
               </div>
@@ -50,7 +50,7 @@
               <template v-if="(item.answers?.length ?? 0) > 0">
                 <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_answer') }}</div>
                 <p v-for="(a, ai) in item.answers" :key="ai" class="qhd-box qhd-answer">
-                  <i :class="a.author_kind === 'ai' ? 'fa-solid fa-robot' : 'fa-solid fa-user'" class="qhd-answer-icon"></i>
+                  <AppIcon :name="a.author_kind === 'ai' ? 'robot' : 'user'" class="qhd-answer-icon" />
                   <span>{{ a.body }}</span>
                 </p>
               </template>
@@ -82,7 +82,7 @@
                     {{ t('main.doc_info_panel.qa_answer_write') }}
                   </button>
                   <button type="button" class="btn btn-outline btn-sm" :disabled="busy" @click="onRequestAi(item.id)">
-                    <i class="fa-solid fa-robot"></i> {{ t('main.doc_info_panel.qa_answer_ai') }}
+                    <AppIcon name="robot" /> {{ t('main.doc_info_panel.qa_answer_ai') }}
                   </button>
                 </div>
               </template>
@@ -103,6 +103,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = withDefaults(defineProps<{
   visible: boolean

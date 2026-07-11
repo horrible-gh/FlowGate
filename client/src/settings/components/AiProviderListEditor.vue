@@ -44,28 +44,28 @@
           </td>
           <td v-if="!readonly" style="white-space:nowrap;">
             <button class="btn btn-secondary btn-sm" :disabled="i === 0" :title="t('settings.ai.move_up')" @click="move(i, -1)">
-              <i class="fa-solid fa-arrow-up"></i>
+              <AppIcon name="arrow-up" />
             </button>
             <button class="btn btn-secondary btn-sm" :disabled="i === providers.length - 1" :title="t('settings.ai.move_down')" @click="move(i, 1)">
-              <i class="fa-solid fa-arrow-down"></i>
+              <AppIcon name="arrow-down" />
             </button>
             <button class="btn btn-secondary btn-sm" :title="t('common.edit')" @click="openEdit(i)">
-              <i class="fa-solid fa-pen"></i>
+              <AppIcon name="pencil-simple" />
             </button>
             <button class="btn btn-secondary btn-sm" :title="t('common.delete')" @click="remove(i)">
-              <i class="fa-solid fa-trash"></i>
+              <AppIcon name="trash" />
             </button>
           </td>
         </tr>
       </tbody>
     </table>
     <div v-else class="alert alert-info">
-      <i class="fa-solid fa-circle-info"></i> {{ t('settings.ai.empty') }}
+      <AppIcon name="info" /> {{ t('settings.ai.empty') }}
     </div>
 
     <div v-if="!readonly && !formOpen" style="margin-top:12px;">
       <button class="btn btn-secondary" @click="openAdd">
-        <i class="fa-solid fa-plus"></i> {{ t('settings.ai.add_provider') }}
+        <AppIcon name="plus" /> {{ t('settings.ai.add_provider') }}
       </button>
     </div>
 
@@ -153,6 +153,7 @@
 // value = replace) so the parent can omit the field to mean "keep" (P0003 write-only key).
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t, te } = useI18n();
 

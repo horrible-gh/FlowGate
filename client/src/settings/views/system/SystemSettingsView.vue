@@ -6,7 +6,7 @@
     <!-- Storage -->
     <div class="card mb-4">
       <div class="card-hd">
-        <span class="card-title"><i class="fa-solid fa-hard-drive" style="color:var(--primary);"></i> {{ $t('settings.system.storage.label') }}</span>
+        <span class="card-title"><AppIcon name="hard-drive" style="color:var(--primary);" /> {{ $t('settings.system.storage.label') }}</span>
       </div>
       <div class="card-bd pad">
         <div class="form-section">
@@ -14,7 +14,7 @@
             <label class="form-label req">{{ $t('settings.storage_root') }}</label>
             <div class="form-inline">
               <input type="text" class="form-ctrl" v-model="storageInput" style="flex:1;">
-              <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" @click="openStorageBrowser"><i class="fa-solid fa-folder-open"></i> {{ $t('common.browse') }}</button>
+              <button class="btn btn-secondary btn-sm" style="white-space:nowrap;" @click="openStorageBrowser"><AppIcon name="folder-open" /> {{ $t('common.browse') }}</button>
             </div>
             <p class="form-hint">{{ $t('settings.system.storage.hint') }}</p>
           </div>
@@ -34,7 +34,7 @@
               <div class="setting-name">{{ $t('settings.system.storage.structure') }}</div>
               <div class="setting-desc">{{ $t('settings.system.storage.structure_desc') }} <span class="mono" style="font-size:.75rem;">/documents/&lt;project&gt;/&lt;module&gt;/&lt;group&gt;/&lt;sub_group&gt;/</span></div>
             </div>
-            <div class="setting-ctrl"><span class="badge badge-green"><i class="fa-solid fa-check"></i> {{ $t('settings.system.storage.method_c') }}</span></div>
+            <div class="setting-ctrl"><span class="badge badge-green"><AppIcon name="check" /> {{ $t('settings.system.storage.method_c') }}</span></div>
           </div>
         </div>
       </div>
@@ -43,7 +43,7 @@
     <!-- Source mode -->
     <div class="card mb-4">
       <div class="card-hd">
-        <span class="card-title"><i class="fa-solid fa-plug" style="color:#0891b2;"></i> {{ $t('settings.system.source_mode.label') }}</span>
+        <span class="card-title"><AppIcon name="plugs" style="color:#0891b2;" /> {{ $t('settings.system.source_mode.label') }}</span>
       </div>
       <div class="card-bd pad">
         <div class="setting-item">
@@ -64,7 +64,7 @@
     <!-- Log -->
     <div class="card mb-4">
       <div class="card-hd">
-        <span class="card-title"><i class="fa-solid fa-scroll" style="color:#d97706;"></i> {{ $t('settings.system.log.label') }}</span>
+        <span class="card-title"><AppIcon name="scroll" style="color:#d97706;" /> {{ $t('settings.system.log.label') }}</span>
       </div>
       <div class="card-bd pad">
         <div class="form-row">
@@ -105,7 +105,7 @@
     <!-- Security -->
     <div class="card mb-4">
       <div class="card-hd">
-        <span class="card-title"><i class="fa-solid fa-shield-halved" style="color:#7c3aed;"></i> {{ $t('settings.system.auth_policy.label') }}</span>
+        <span class="card-title"><AppIcon name="shield-checkered" style="color:#7c3aed;" /> {{ $t('settings.system.auth_policy.label') }}</span>
       </div>
       <div class="card-bd pad">
         <div class="form-row">
@@ -153,12 +153,12 @@
     <!-- Mail server (TBD) -->
     <div class="card mb-4">
       <div class="card-hd">
-        <span class="card-title"><i class="fa-solid fa-envelope" style="color:var(--text-m);"></i> {{ $t('settings.system.mail.label') }}</span>
-        <span class="badge badge-yellow"><i class="fa-solid fa-clock"></i> {{ $t('settings.system.mail.tbd') }}</span>
+        <span class="card-title"><AppIcon name="envelope-simple" style="color:var(--text-m);" /> {{ $t('settings.system.mail.label') }}</span>
+        <span class="badge badge-yellow"><AppIcon name="clock" /> {{ $t('settings.system.mail.tbd') }}</span>
       </div>
       <div class="card-bd pad">
         <div class="alert alert-warning">
-          <i class="fa-solid fa-triangle-exclamation"></i>
+          <AppIcon name="warning" />
           {{ $t('settings.system.mail.tbd_note') }}
         </div>
         <div class="form-row" style="opacity:.4; pointer-events:none;">
@@ -176,8 +176,8 @@
 
     <!-- Save -->
     <div class="flex" style="justify-content:flex-end; gap:10px;">
-      <button class="btn btn-secondary" @click="resetSettings"><i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}</button>
-      <button class="btn btn-primary" @click="saveAll"><i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}</button>
+      <button class="btn btn-secondary" @click="resetSettings"><AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}</button>
+      <button class="btn btn-primary" @click="saveAll"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
     </div>
 
     <!-- Storage path change confirmation modal -->
@@ -204,6 +204,7 @@ import { useI18n } from 'vue-i18n';
 import { useSettingsStore } from '../../stores/settings.js';
 import { postFormRequest } from '@shared/api';
 import { useToast } from '../../../main/components/common/useToast';
+import AppIcon from '@shared/AppIcon.vue';
 
 const s = useSettingsStore();
 const { t } = useI18n();

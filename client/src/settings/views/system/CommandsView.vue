@@ -3,13 +3,13 @@
     <div class="flex justify-between items-center" style="margin-bottom:20px; gap:16px; flex-wrap:wrap;">
       <div>
         <h1 class="s-page-title">
-          <i class="fa-solid fa-terminal" style="color:var(--primary); margin-right:8px;"></i>
+          <AppIcon name="terminal" style="color:var(--primary); margin-right:8px;" />
           {{ $t('settings.system.commands.title') }}
         </h1>
         <p class="s-page-sub" style="margin-bottom:0;">{{ $t('settings.system.commands.sub', { pattern: '${var}' }) }}</p>
       </div>
       <button class="btn btn-primary" @click="openCreate">
-        <i class="fa-solid fa-plus"></i> {{ $t('settings.system.commands.btn_create') }}
+        <AppIcon name="plus" /> {{ $t('settings.system.commands.btn_create') }}
       </button>
     </div>
 
@@ -27,13 +27,13 @@
           <tbody>
             <tr v-if="loading">
               <td colspan="4" class="cmd-empty">
-                <i class="fa-solid fa-spinner fa-spin cmd-empty-icon"></i>
+                <AppIcon name="spinner" spin class="cmd-empty-icon" />
                 {{ $t('common.loading') }}
               </td>
             </tr>
             <tr v-else-if="commands.length === 0">
               <td colspan="4" class="cmd-empty">
-                <i class="fa-solid fa-terminal cmd-empty-icon"></i>
+                <AppIcon name="terminal" class="cmd-empty-icon" />
                 {{ $t('settings.system.commands.empty') }}
               </td>
             </tr>
@@ -45,7 +45,7 @@
                 <td>
                   <div class="tbl-actions">
                     <button class="btn btn-sm btn-secondary" :title="$t('common.edit')" @click="openEdit(cmd)">
-                      <i class="fa-solid fa-pen"></i>
+                      <AppIcon name="pencil-simple" />
                     </button>
                     <button
                       class="btn btn-sm btn-ghost"
@@ -53,7 +53,7 @@
                       :title="$t('common.delete')"
                       @click="confirmDelete(cmd)"
                     >
-                      <i class="fa-solid fa-trash"></i>
+                      <AppIcon name="trash" />
                     </button>
                   </div>
                 </td>
@@ -105,7 +105,7 @@
           <!-- Preview -->
           <div class="cmd-preview-box">
             <div class="cmd-preview-label">
-              <i class="fa-solid fa-eye" style="margin-right:4px;"></i>
+              <AppIcon name="eye" style="margin-right:4px;" />
               {{ $t('settings.system.commands.preview_title') }}
             </div>
             <p class="form-hint" style="margin-bottom:6px;">{{ $t('settings.system.commands.preview_hint', { pattern: '${var}' }) }}</p>
@@ -128,7 +128,7 @@
         <div class="modal-ft">
           <button class="btn btn-secondary" @click="closeModal">{{ $t('common.cancel') }}</button>
           <button class="btn btn-primary" :disabled="saving" @click="submitModal">
-            <i v-if="saving" class="fa-solid fa-spinner fa-spin"></i>
+            <AppIcon v-if="saving" name="spinner" spin />
             {{ $t('common.save') }}
           </button>
         </div>
@@ -153,6 +153,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest, deleteRequest } from '@shared/api'
 import { useToast } from '../../../main/components/common/useToast'
 import ConfirmModal from '@main/components/ConfirmModal.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 const { t } = useI18n()
 const { showToast } = useToast()

@@ -2,7 +2,7 @@
   <div>
     <!-- Info banner -->
     <div class="alert alert-info">
-      <i class="fa-solid fa-circle-info"></i>
+      <AppIcon name="info" />
       {{ $t('settings.project.path_settings_view.text_6') }}
     </div>
 
@@ -19,7 +19,7 @@
       <div class="card-hd">
         <span class="card-title">{{ $t('settings.project.path_settings_view.card_title_22', { name: currentProjectName }) }}</span>
         <button class="btn btn-secondary btn-sm" @click="showStorageEdit = !showStorageEdit">
-          <i class="fa-solid fa-plus"></i> {{ $t('settings.project.path_settings_view.text_24') }}
+          <AppIcon name="plus" /> {{ $t('settings.project.path_settings_view.text_24') }}
         </button>
       </div>
       <div class="card-bd">
@@ -41,7 +41,7 @@
               <td>
                 <div class="tbl-actions">
                   <button class="btn btn-secondary btn-sm" @click="showStorageEdit = !showStorageEdit">
-                    <i class="fa-solid fa-pen"></i>
+                    <AppIcon name="pencil-simple" />
                   </button>
                   <button
                     v-if="storageMode === 'custom'"
@@ -49,7 +49,7 @@
                     style="color:var(--danger);"
                     @click="clearStorageOverride"
                   >
-                    <i class="fa-solid fa-trash"></i>
+                    <AppIcon name="trash" />
                   </button>
                 </div>
               </td>
@@ -65,7 +65,7 @@
                     style="max-width:400px;"
                     @input="storageMode = 'custom'"
                   />
-                  <button class="btn btn-secondary btn-sm" @click="openStorageBrowser"><i class="fa-solid fa-folder-open"></i> {{ $t('common.browse') }}</button>
+                  <button class="btn btn-secondary btn-sm" @click="openStorageBrowser"><AppIcon name="folder-open" /> {{ $t('common.browse') }}</button>
                   <button class="btn btn-secondary btn-sm" @click="showStorageEdit = false">{{ $t('settings.numbering.done') }}</button>
                 </div>
               </td>
@@ -74,13 +74,13 @@
               <td><span class="badge badge-gray">{{ $t('settings.project.path_settings_view.text_76_badge') }}</span></td>
               <td><span class="mono" style="font-size:.75rem;">{{ documentRootPreview }}</span></td>
               <td class="text-s text-sm">{{ $t('settings.project.path_settings_view.text_77') }}</td>
-              <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><i class="fa-solid fa-pen"></i></button></div></td>
+              <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><AppIcon name="pencil-simple" /></button></div></td>
             </tr>
             <tr>
               <td><span class="badge badge-gray">{{ $t('settings.project.path_settings_view.text_82_badge') }}</span></td>
               <td><span class="mono" style="font-size:.75rem;">{{ sourceRootPreview }}</span></td>
               <td class="text-s text-sm">{{ $t('settings.project.path_settings_view.text_83') }}</td>
-              <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><i class="fa-solid fa-pen"></i></button></div></td>
+              <td><div class="tbl-actions"><button class="btn btn-secondary btn-sm"><AppIcon name="pencil-simple" /></button></div></td>
             </tr>
           </tbody>
         </table>
@@ -90,10 +90,10 @@
     <!-- Actions -->
     <div class="flex" style="justify-content:flex-end; gap:10px;">
       <button class="btn btn-secondary" @click="resetSettings">
-        <i class="fa-solid fa-rotate-left"></i> {{ $t('common.reset') }}
+        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
       <button class="btn btn-primary" @click="save">
-        <i class="fa-solid fa-floppy-disk"></i> {{ $t('common.save') }}
+        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
       </button>
     </div>
 
@@ -129,6 +129,7 @@ import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
 import StorageMigrateConfirmDialog from '../../components/StorageMigrateConfirmDialog.vue';
 import StorageMigrateProgressDialog from '../../components/StorageMigrateProgressDialog.vue';
+import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
 const settings = useSettingsStore();

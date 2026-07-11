@@ -4,11 +4,11 @@
       <div class="modal-box" style="width:560px;max-width:94vw;">
         <div class="modal-hd">
           <span class="modal-title gi-title">
-            <i class="fa-solid fa-circle-info"></i>
+            <AppIcon name="info" />
             {{ t('main.group_actions.info_title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
@@ -37,7 +37,7 @@
         </div>
         <div class="modal-ft">
           <button type="button" class="btn btn-outline gi-foot-left" @click="emit('rename')">
-            <i class="fa-solid fa-pen"></i>
+            <AppIcon name="pencil-simple" />
             {{ t('main.group_actions.rename_group') }}
           </button>
           <button type="button" class="btn btn-secondary" @click="close">
@@ -50,6 +50,7 @@
 </template>
 
 <script setup lang="ts">
+import AppIcon from '@shared/AppIcon.vue'
 import { useI18n } from 'vue-i18n'
 
 export interface GroupInfoDoc {

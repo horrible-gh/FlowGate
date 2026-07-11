@@ -12,7 +12,7 @@
         @click="tabsStore.activeTabId = null"
         @keydown.enter="tabsStore.activeTabId = null"
       >
-        <i class="fa-solid fa-house" style="font-size:.75rem;"></i> {{ t('main.tab_bar.text_14') }}
+        <AppIcon name="house" style="font-size:.75rem;" /> {{ t('main.tab_bar.text_14') }}
       </div>
       <div
         v-for="(tab, idx) in tabs"
@@ -39,18 +39,18 @@
           :aria-label="t('main.tabs.close')"
           @click.stop="tabsStore.closeTab(tab.id)"
         >
-          <i class="fa-solid fa-xmark"></i>
+          <AppIcon name="x" />
         </span>
       </div>
     </div>
     <ContextMenu v-model:visible="showTabContext" :x="ctxX" :y="ctxY">
-      <ContextMenuItem icon="fa-solid fa-xmark" @click="closeContextTab">
+      <ContextMenuItem icon="x" @click="closeContextTab">
         {{ t('main.tab_bar.close') }}
       </ContextMenuItem>
-      <ContextMenuItem icon="fa-solid fa-window-close" @click="closeAllTabs">
+      <ContextMenuItem icon="x-square" @click="closeAllTabs">
         {{ t('main.tab_bar.close_all') }}
       </ContextMenuItem>
-      <ContextMenuItem icon="fa-solid fa-window-restore" @click="closeOtherTabs">
+      <ContextMenuItem icon="browsers" @click="closeOtherTabs">
         {{ t('main.tab_bar.close_others') }}
       </ContextMenuItem>
     </ContextMenu>
@@ -67,6 +67,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import type { Tab } from '../stores/tabs'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
+import AppIcon from '@shared/AppIcon.vue'
 
 defineEmits<{ newTab: [] }>()
 const { t } = useI18n()
