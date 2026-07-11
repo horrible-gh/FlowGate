@@ -349,8 +349,13 @@ async function fetchGitFin() {
     return
   }
   try {
+    // context=approval → the server returns a display-only preliminary
+    // awaiting_choice so the choice block renders in THIS confirm dialog, before
+    // the approval has flipped the root to wf_done (0197 T0004 §B). Without it the
+    // slot is still 'none' at approval time and the block never shows — R0001's
+    // "선택할 수 없다". The persisted git status is unaffected by this read.
     const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
-      `/api/v1/groups/${props.groupId}/git/finalize`,
+      `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
     )
     gitFin.value = data.state
     gitChoice.value = data.state.default_action || 'wait'

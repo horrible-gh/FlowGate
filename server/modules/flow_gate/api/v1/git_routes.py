@@ -300,12 +300,20 @@ def get_group_branch_blob(
 # ── Group finalize (P0005 §5) ────────────────────────────────────────────────
 
 @router.get("/groups/{group_id}/git/finalize")
-def get_group_finalize_state(group_id: str, user=Depends(get_current_user)):
+def get_group_finalize_state(
+    group_id: str, context: str | None = None, user=Depends(get_current_user)
+):
     denied = _check_group_permission(user, group_id, "project.settings.read")
     if denied:
         return denied
     try:
-        return git_service.get_finalize_state(group_id)
+        # context="approval" → the AC final-approval confirm dialog, which asks
+        # for a display-only preliminary awaiting_choice so the git choice block
+        # renders while the root is still wf_in_progress (0197 T0004 §B). Any
+        # other caller (GitFinalizePanel, header) gets the persisted state.
+        return git_service.get_finalize_state(
+            group_id, preview_ac=(context == "approval")
+        )
     except GitServiceError as exc:
         return _guard(exc)
 
