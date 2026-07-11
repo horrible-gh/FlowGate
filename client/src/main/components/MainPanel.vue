@@ -112,11 +112,15 @@
             <!-- 0182 NR0003 §3: the git finalize UI used to live on the R/B root
                  only, forcing a detour back to the R document after final
                  approval. Mount the same self-hiding panel under the AC card so
-                 merge/push/conflict resolution happens right where the approval
-                 ended. group-id resolves exactly like the R/B mount above. -->
+                 merge/push happens right where the approval ended. group-id
+                 resolves exactly like the R/B mount above.
+                 0206 B0001: dropped the inline-conflicts prop — conflict
+                 resolution no longer force-renders cramped inside the document
+                 column. The panel now shows the status summary + a [conflict
+                 resolve] button that opens the shared 1180×820 overlay resolver,
+                 identical to the R/B root path. -->
             <GitFinalizePanel
               :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
-              inline-conflicts
             />
           </template>
           <!-- DC (group discard): file-less terminal record. Like AC it has no .md

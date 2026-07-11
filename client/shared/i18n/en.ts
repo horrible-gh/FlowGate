@@ -1729,7 +1729,6 @@ export default {
       resolved_preview: 'Resolution preview',
       empty_choice: '(resolved as empty)',
       empty_side: '(empty)',
-      inline_resolve_submit: 'Merge & final approve',
       conflict_files_summary: '{resolved}/{total} files resolved',
       open_resolver: 'Resolve conflicts',
       dialog_title: 'Resolve conflicts - {branch} -> {base}',

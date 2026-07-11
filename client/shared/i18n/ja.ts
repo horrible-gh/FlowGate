@@ -1729,7 +1729,6 @@ export default {
       resolved_preview: '解消結果プレビュー',
       empty_choice: '（空として解消）',
       empty_side: '（空）',
-      inline_resolve_submit: 'マージして最終承認',
       conflict_files_summary: '解消済み {resolved}/{total} ファイル',
       open_resolver: '競合を解消',
       dialog_title: '競合解消 - {branch} -> {base}',
