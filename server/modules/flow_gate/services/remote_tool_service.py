@@ -86,11 +86,19 @@ _GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning
 
 
 class _OpError(Exception):
-    """Signals a fail-fast pipeline stop with an HTTP status (L0006 §7)."""
+    """Signals a fail-fast pipeline stop with an HTTP status (L0006 §7).
 
-    def __init__(self, status: int):
+    ``details`` / ``message`` are optional (0205 P scenario 5): a write/remove
+    rejected for a missing worktree carries a structured cause so the worker can
+    cite exactly what is blocking it. Absent → the generic per-status envelope."""
+
+    def __init__(
+        self, status: int, *, details: Optional[dict] = None, message: Optional[str] = None
+    ):
         super().__init__(f"remote tool op error: {status}")
         self.status = status
+        self.details = details
+        self.message = message
 
 
 # ── ① Authentication ───────────────────────────────────────────────────────
@@ -392,6 +400,21 @@ def _validate_encoding(body: dict) -> None:
 
 # ── Source-root resolution ────────────────────────────────────────────────────
 
+def _fallback_project_root(grant: dict) -> Optional[Path]:
+    """The ordinary project-branch source folder (no worktree), or None (→ 503).
+
+    Branch comes from project_settings.branch (default 'main') — the only
+    spec-available source (NR0009 §8.3)."""
+    project_id = grant.get("project")
+    row = db_projects.get_by_id(project_id)
+    project_name = (row.get("project_name") or "").strip() if row else ""
+    if not project_name:
+        return None
+    settings = db_projects.get_settings(project_id)
+    branch = (settings.get("branch") or "main").strip() if settings else "main"
+    return src_root(project_name, branch).resolve()
+
+
 def _resolve_src_root(grant: dict) -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
@@ -399,7 +422,8 @@ def _resolve_src_root(grant: dict) -> Optional[Path]:
     when the project is git-integrated and the worktree is registered (L0006
     §2.2). Everything else — no group on the grant (legacy rows), no config,
     disabled integration, missing worktree — falls back to the ordinary
-    project-branch folder exactly as before (fallback-first principle).
+    project-branch folder exactly as before (fallback-first principle). Used by
+    read/grep/glob; write/remove use _resolve_root_for_mutation (0205 L §2.3).
     """
     project_id = grant.get("project")
     group_id = grant.get("group_id")
@@ -412,13 +436,82 @@ def _resolve_src_root(grant: dict) -> Optional[Path]:
                 return wt
         except Exception:
             pass  # resolution problems must never break the fallback path
-    row = db_projects.get_by_id(project_id)
-    project_name = (row.get("project_name") or "").strip() if row else ""
-    if not project_name:
-        return None
-    settings = db_projects.get_settings(project_id)
-    branch = (settings.get("branch") or "main").strip() if settings else "main"
-    return src_root(project_name, branch).resolve()
+    return _fallback_project_root(grant)
+
+
+def _mutation_block_message(
+    op: str, group_id: str, cause: str, blocking_group_id: Optional[str],
+    provision_error: Optional[str],
+) -> str:
+    """Human-readable reason a write/remove was blocked (0205 P scenario 5)."""
+    if cause == "merge_conflict_open":
+        why = f"unresolved merge of group '{blocking_group_id}'"
+    elif cause == "provision_failed":
+        why = f"worktree provisioning failed: {provision_error}"
+    else:
+        why = "worktree missing"
+    return (
+        f"git worktree unavailable for group '{group_id}' — {op} blocked (cause: {why})"
+    )
+
+
+def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
+    """Source root for a write/remove, with the silent base fallback REMOVED
+    (0205 L §2.3 / P scenario 5).
+
+    A worker whose group worktree is unavailable used to have its edits land in
+    the base checkout — outside git management — which is exactly how the 0203
+    tangle spread. Now the write is REJECTED (409) with the blocking cause, after
+    one synchronous self-heal ensure_worktree retry. Legacy grants (no group_id)
+    and non-integrated projects still fall back, unchanged.
+    """
+    project_id = grant.get("project")
+    group_id = grant.get("group_id")
+    if not group_id:
+        return _fallback_project_root(grant)   # legacy grant — unchanged
+
+    from modules.flow_gate.services import git_service  # lazy — import cycle
+    from modules.flow_gate.db import git_integration as db_git
+
+    wt = git_service.effective_src_root(project_id, group_id)
+    if wt is not None:
+        return wt
+
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        return _fallback_project_root(grant)   # non-integrated project — unchanged
+
+    # Self-heal: one synchronous ensure_worktree retry (WRITE_GATE_PROVISION_RETRY=1).
+    module = grant.get("module") or "default"
+    try:
+        if git_service.ensure_worktree(
+            project_id, module, group_id, trigger="remote_write_retry"
+        ) == "ok":
+            wt = git_service.effective_src_root(project_id, group_id)
+            if wt is not None:
+                return wt
+    except Exception:
+        pass
+
+    # Still unavailable — reject with the cause (priority: open session, then a
+    # recorded provisioning failure, else a bare missing worktree).
+    session = git_service.open_merge_session_of_project(project_id)
+    state = db_git.get_state(group_id)
+    provision_error = state.get("provision_error") if state else None
+    if session is not None:
+        cause, blocking = "merge_conflict_open", session.get("group_id")
+    elif provision_error:
+        cause, blocking = "provision_failed", None
+    else:
+        cause, blocking = "worktree_missing", None
+    raise _OpError(
+        409,
+        details={
+            "group_id": group_id, "cause": cause,
+            "blocking_group_id": blocking, "provision_error": provision_error,
+        },
+        message=_mutation_block_message(op, group_id, cause, blocking, provision_error),
+    )
 
 
 # ── ⑤ Execution ───────────────────────────────────────────────────────────────
@@ -704,14 +797,28 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         _validate_paths(op, body)
         # ④ Request validity (required fields)
         _validate_required(op, body)
-        # Resolve the target source root
-        root = _resolve_src_root(grant)
+        # Resolve the target source root. write/remove must not silently fall
+        # back to the base checkout when the group worktree is missing (0205
+        # §2.3) — they use the mutation gate, which raises a 409 with the cause.
+        if op in ("write", "remove"):
+            root = _resolve_root_for_mutation(grant, op)
+        else:
+            root = _resolve_src_root(grant)
         if root is None:
             raise _OpError(503)
         # ⑤ Execute the operation
         extra, nbytes = _execute(op, body, root)
     except _OpError as exc:
         _log(grant, op, log_path, log_pattern, status=exc.status)
+        if exc.details is not None or exc.message is not None:
+            code = ERROR_CODE_BY_STATUS[exc.status]
+            error = {
+                "code": code,
+                "message": exc.message or _ERROR_MESSAGES.get(exc.status, code),
+            }
+            if exc.details is not None:
+                error["details"] = exc.details
+            return exc.status, _envelope(False, op, error=error)
         return exc.status, _fail_envelope(op, exc.status)
     except OSError:
         # Unexpected I/O failure → 503 unavailable (logged to history).

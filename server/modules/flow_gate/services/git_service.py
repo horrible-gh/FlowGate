@@ -57,6 +57,12 @@ GIT_READ_TIMEOUT_SEC = 15          # local ls-tree / cat-file timeout (no networ
 BLOB_MAX_RETURN_BYTES = 1048576    # 1 MiB blob content cap; over → truncated=true
 BLOB_BINARY_SNIFF_BYTES = 8000     # NUL-scan window for binary detection (git heuristic)
 LOCK_WAIT_SEC = 5
+# ── Git tangle prevention (flowgate.default.0205 — D0002/P0003/L0004/DB0005) ──
+# A conflict wait no longer holds the project lock; abandoned sessions are
+# reclaimed by a sweep so one stalled merge can never silently disable every
+# later group's git management (0203 root cause).
+MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
+SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
 BRANCH_MAX_LEN = 100
 MASK_KEEP_PREFIX = 4
 MASK_KEEP_SUFFIX = 4
@@ -571,6 +577,58 @@ def _acquire_lock(project_id: str, holder: str, wait_sec: float = LOCK_WAIT_SEC)
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.25)
+
+
+# ── Base-protection gate (flowgate.default.0205 P scenario 3 / L §2.2) ────────
+
+def open_merge_session_of_project(project_id: str) -> Optional[dict]:
+    """The one open merge session belonging to this project, or None.
+
+    Open sessions are always few (≤ one per group by the DB invariant, and a
+    project rarely has more than a couple in flight), so a full scan is fine.
+    Should several somehow exist (past bug / manual edit), the newest merge_id
+    wins (L §5 boundary condition)."""
+    best: Optional[dict] = None
+    for session in db_git.list_open_sessions():
+        try:
+            if _project_of_group(session["group_id"]) != project_id:
+                continue
+        except Exception:
+            continue
+        if best is None or int(session["merge_id"]) > int(best["merge_id"]):
+            best = session
+    return best
+
+
+def guard_base_free(project_id: str) -> None:
+    """Reject a base-mutating op while any unresolved merge session holds the base
+    checkout (P scenario 3 / L §2.2). State-based, not lock-based: it survives
+    restarts and never depends on a long-held mutex. The blocking session always
+    belongs to a DIFFERENT group — a group in 'conflict' cannot itself reach a
+    base-mutating entry (its own state guard rejects it first)."""
+    session = open_merge_session_of_project(project_id)
+    if session is None:
+        return
+    raise GitServiceError(
+        409, "merge_conflict_open",
+        f"unresolved merge of group '{session['group_id']}' holds the base checkout "
+        "— resolve or abort it first",
+        details={
+            "blocking_group_id": session["group_id"],
+            "merge_id": session.get("merge_id"),
+            "conflict_since": session.get("created_at"),
+        },
+    )
+
+
+def _base_root_of(project_id: str) -> Optional[Path]:
+    """The project's base-checkout path, or None when unresolvable (0205 §2.5)."""
+    cfg = db_git.get_config(project_id)
+    project_name = _project_name(project_id)
+    if not cfg or not project_name:
+        return None
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    return src_root(project_name, base_branch)
 
 
 # ── Config CRUD (P0005 §1·§2) ────────────────────────────────────────────────
@@ -1122,22 +1180,22 @@ def ensure_worktree(
         project_name = _project_name(project_id)
         if not project_name:
             _record_attempt(project_id, "failed", "project_name missing", trigger, "none")
-            _emit_worktree_failed(project_id, group_id, None, "project_name missing")
+            _fail_worktree(project_id, group_id, None, "project_name missing")
             return "failed"
         try:
             branch = worktree_branch_name(project_id, module or _module_of(group_id), group_id)
         except GitServiceError as exc:
-            _emit_worktree_failed(project_id, group_id, None, exc.code)  # E9
+            _fail_worktree(project_id, group_id, None, exc.code)  # E9
             return "failed"
         if not git_available():
             _record_attempt(project_id, "failed", "git_unavailable", trigger, "none")
-            _emit_worktree_failed(project_id, group_id, branch, "git_unavailable")  # E1
+            _fail_worktree(project_id, group_id, branch, "git_unavailable")  # E1
             return "failed"
 
         holder = f"op:{uuid.uuid4()}"
         if not _acquire_lock(project_id, holder):
             _record_attempt(project_id, "failed", "git_busy", trigger, "none")
-            _emit_worktree_failed(project_id, group_id, branch, "git_busy")  # E11
+            _fail_worktree(project_id, group_id, branch, "git_busy")  # E11
             return "failed"
         try:
             return _ensure_worktree_locked(cfg, project_id, project_name, group_id, branch, trigger)
@@ -1146,7 +1204,7 @@ def ensure_worktree(
     except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
         _log.warning("ensure_worktree failed for %s", group_id, exc_info=True)
         try:
-            _emit_worktree_failed(project_id, group_id, None, _scrub(str(exc)))
+            _fail_worktree(project_id, group_id, None, _scrub(str(exc)))
         except Exception:
             pass
         return "failed"
@@ -1166,7 +1224,7 @@ def _ensure_worktree_locked(
     # 0161 replaces the old clone-only path that died with E7 base_path_occupied.
     provision = _provision_base_locked(cfg, project_id, project_name, trigger)
     if provision["status"] == "failed":
-        _emit_worktree_failed(project_id, group_id, branch, provision["reason"] or "git_error")
+        _fail_worktree(project_id, group_id, branch, provision["reason"] or "git_error")
         return "failed"
 
     # Idempotence: ledger says the worktree exists and the directory is present.
@@ -1177,12 +1235,13 @@ def _ensure_worktree_locked(
         and state.get("branch") == branch
         and wt_path.is_dir()
     ):
+        db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _emit_worktree_ready(project_id, group_id, branch, base_branch, wt_path, created=False)
         return "ok"
 
     if wt_path.exists():
         # Unregistered directory squatting on the slot (E7): never delete automatically.
-        _emit_worktree_failed(project_id, group_id, branch, "worktree_path_occupied")
+        _fail_worktree(project_id, group_id, branch, "worktree_path_occupied")
         return "failed"
 
     proc = _run_git(
@@ -1190,7 +1249,7 @@ def _ensure_worktree_locked(
         cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
     )
     if proc.returncode != 0:
-        _emit_worktree_failed(project_id, group_id, branch, proc.stderr.strip())
+        _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
         return "failed"
 
     if _ref_exists(base_root, f"refs/heads/{branch}"):
@@ -1211,10 +1270,11 @@ def _ensure_worktree_locked(
             ["worktree", "add", "-b", branch, str(wt_path), start_point], cwd=base_root
         )
     if proc.returncode != 0:
-        _emit_worktree_failed(project_id, group_id, branch, proc.stderr.strip())
+        _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
         return "failed"
 
     db_git.register_worktree(group_id, project_id, branch)
+    db_git.clear_provision_failure(group_id)   # success clears the failure marker (L §2.4)
     _emit_worktree_ready(project_id, group_id, branch, base_branch, wt_path, created=True)
     return "ok"
 
@@ -1245,6 +1305,22 @@ def _emit_worktree_failed(
         "branch": branch,
         "error": error,
     })
+
+
+def _fail_worktree(
+    project_id: str, group_id: str, branch: Optional[str], error: str
+) -> None:
+    """Persist the provisioning failure (0205 L §2.4) then emit the live SSE.
+
+    The persistent record lets the status query resurface the failure long after
+    the one-shot SSE is gone (P scenario 4) — a worker without a slot no longer
+    fails silently. Persistence is best-effort so a bookkeeping error never
+    swallows the operator-facing SSE."""
+    try:
+        db_git.upsert_provision_failure(group_id, project_id, branch or "", error)
+    except Exception:
+        _log.warning("record provision failure failed for %s", group_id, exc_info=True)
+    _emit_worktree_failed(project_id, group_id, branch, error)
 
 
 def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
@@ -1838,6 +1914,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         _set_status(group_id, "waiting")
         return _finalize_result(group_id, project_id, "wait", "waiting")
 
+    # 0205 L §2.2: a merge mutates the shared base checkout — refuse while another
+    # group's unresolved conflict session holds it. Checked BEFORE the lock wait
+    # (cheap reject) and again after (race close, below). push never touches base.
+    if action == "merge":
+        guard_base_free(project_id)
+
     if not git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -1849,8 +1931,11 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             409, "git_busy",
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
-    transferred = False
     try:
+        if action == "merge":
+            # 2nd gate: a conflict session may have opened while we waited on the
+            # lock (conflict no longer holds it — 0205 §2.1), so re-check now.
+            guard_base_free(project_id)
         branch = state["branch"]
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         username = cfg.get("username")
@@ -1971,11 +2056,16 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
         merge_id = db_git.create_session(group_id, files)
         _set_status(group_id, "conflict", merge_id=merge_id)
-        db_git.transfer_lock(project_id, holder, f"merge:{merge_id}")
-        transferred = True
+        # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
+        # is expressed by the persistent 'conflict' state + open session — which
+        # the base gate reads — not by an indefinitely-held project mutex (the
+        # 0203 tangle's root cause). The finally releases the lock unconditionally,
+        # so a later group can provision its worktree while this waits.
+        session = db_git.get_session(merge_id)
         _emit("git_merge_conflict", project_id, group_id, {
             "project": project_id, "group_id": group_id,
             "merge_id": merge_id, "conflict_count": len(files),
+            "conflict_since": session.get("created_at") if session else None,
         })
         return {
             "ok": True,
@@ -1985,8 +2075,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             },
         }
     finally:
-        if not transferred:
-            db_git.release_lock(project_id, holder)
+        db_git.release_lock(project_id, holder)
 
 
 def _finalize_result(
@@ -2035,6 +2124,7 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
 
 def list_conflicts(group_id: str, merge_id: int) -> dict:
     _session, cfg, _project_id, base_root = _session_context(group_id, merge_id)
+    db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     state = db_git.get_state(group_id) or {}
     files = []
     for row in db_git.session_files(merge_id):
@@ -2063,6 +2153,7 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
     _session, cfg, project_id, base_root = _session_context(group_id, merge_id)
+    db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     session_paths = {row["path"] for row in db_git.session_files(merge_id)}
 
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
@@ -2362,49 +2453,180 @@ def cleanup_terminal_slots(project_id: str) -> dict:
 
 
 def abort_merge(group_id: str, merge_id: int) -> dict:
+    """Manual [보류] — abort the merge, preserve the work branch, reopen re-merge
+    (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
+    the trigger differs. The merge:{id} release is now best-effort legacy cleanup
+    (0205 §2.1 stopped holding that lock). _set_status already broadcasts
+    git_pending_changed so the badge clears immediately (0184 lesson)."""
     _session, _cfg, project_id, base_root = _session_context(group_id, merge_id)
     _run_git(["merge", "--abort"], cwd=base_root)
     db_git.close_session(merge_id, "aborted")
     _set_status(group_id, "waiting")
-    db_git.release_lock(project_id, f"merge:{merge_id}")
-    return {"ok": True, "result": {"status": "waiting"}}
+    db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
+    return {"ok": True, "result": {"status": "waiting", "branch_preserved": True}}
 
 
-# ── Boot recovery (L0006 §2.8 / E8) ──────────────────────────────────────────
+# ── Auto-recovery sweep (flowgate.default.0205 P scenario 6 / L §2.5) ─────────
+
+def _ttl_expired(last: Optional[str]) -> bool:
+    """Whether an activity timestamp is older than MERGE_SESSION_TTL_HOURS."""
+    if not last:
+        return False   # unknown activity → never auto-abort on this basis
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        dt = datetime.fromisoformat(last)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - dt >= timedelta(hours=MERGE_SESSION_TTL_HOURS)
+    except Exception:
+        return False
+
+
+def _emit_auto_aborted(project_id: str, group_id: str, merge_id: int, reason: str) -> None:
+    state = db_git.get_state(group_id) or {}
+    _emit("git_merge_auto_aborted", project_id, group_id, {
+        "project": project_id, "group_id": group_id, "merge_id": merge_id,
+        "reason": reason, "branch": state.get("branch"), "branch_preserved": True,
+    })
+
+
+def _close_orphan(session: dict, project_id: str) -> None:
+    """A session whose base checkout has no MERGE_HEAD — the merge is gone from
+    disk (manual cleanup / crash). Close it and return the group to 'waiting'
+    (0205 L §2.5). branch_preserved: the work branch is untouched."""
+    merge_id = int(session["merge_id"])
+    group_id = session["group_id"]
+    db_git.close_session(merge_id, "aborted")
+    _set_status(group_id, "waiting")
+    db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
+    _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
+
+
+def _auto_abort_session(
+    session: dict, project_id: str, base_root: Path, reason: str
+) -> None:
+    """Reclaim an abandoned conflict session: git merge --abort (work branch
+    preserved), close it, return the group to 'waiting' (0205 L §2.5).
+
+    Takes a short sweep lock; if the project is busy it simply retries next cycle.
+    If merge --abort fails (e.g. it collides with unrelated local base changes)
+    the session is LEFT intact — a forced reset is never issued, protecting a base
+    checkout that has other groups' work mixed in (the exact 0203 accident)."""
+    merge_id = int(session["merge_id"])
+    group_id = session["group_id"]
+    holder = f"sweep:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        return   # another git op in progress — try again next cycle
+    try:
+        if (base_root / ".git" / "MERGE_HEAD").exists():
+            proc = _run_git(["merge", "--abort"], cwd=base_root)
+            if proc.returncode != 0:
+                _log.warning(
+                    "sweep merge --abort failed for %s (%s) — left intact",
+                    group_id, _last_line(proc.stderr),
+                )
+                return   # never force-reset (L §5)
+        db_git.close_session(merge_id, "aborted")
+        _set_status(group_id, "waiting")
+        db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
+        _emit_auto_aborted(project_id, group_id, merge_id, reason)
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def merge_session_sweep() -> None:
+    """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
+
+    For each open session: skip if the base checkout is gone (never guess);
+    close it as an orphan if the merge left no MERGE_HEAD on disk; auto-abort it
+    if it has been quiet past the TTL; otherwise leave it. Best-effort and fully
+    isolated per session so one bad row cannot sink the pass."""
+    try:
+        sessions = db_git.list_open_sessions()
+    except Exception:
+        _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
+        return
+    for session in sessions:
+        try:
+            group_id = session["group_id"]
+            project_id = _project_of_group(group_id)
+            base_root = _base_root_of(project_id)
+            if base_root is None or not (base_root / ".git").exists():
+                continue   # checkout gone — do not touch (log only)
+            if not (base_root / ".git" / "MERGE_HEAD").exists():
+                _close_orphan(session, project_id)
+                continue
+            last = session.get("touched_at") or session.get("created_at")
+            if not _ttl_expired(last):
+                continue
+            _auto_abort_session(session, project_id, base_root, "ttl_expired")
+        except Exception:
+            _log.warning(
+                "merge session sweep failed for merge %s", session.get("merge_id"),
+                exc_info=True,
+            )
+
+
+_sweep_daemon_started = False
+
+
+def _start_sweep_daemon() -> None:
+    """Launch the periodic sweep loop once (0205 L §2.6). Idempotent."""
+    global _sweep_daemon_started
+    if _sweep_daemon_started:
+        return
+    _sweep_daemon_started = True
+    import threading
+
+    def _loop() -> None:
+        while True:
+            time.sleep(SWEEP_INTERVAL_MIN * 60)
+            try:
+                merge_session_sweep()
+            except Exception:
+                _log.warning("periodic merge session sweep failed", exc_info=True)
+
+    threading.Thread(target=_loop, name="git-merge-sweep", daemon=True).start()
+
+
+# ── Boot recovery (flowgate.default.0205 P scenario 7 / L §2.6) ───────────────
 
 def startup_recovery() -> None:
-    """Restore/clean conflict sessions and drop stale one-shot locks at boot."""
+    """Heal conflict sessions, drop every stale lock, then sweep + start the
+    daemon at boot (0205 L §2.6).
+
+    A live MERGE_HEAD session is left in 'conflict' (state re-affirmed) but its
+    lock is NOT re-acquired — the base is protected by the state gate, not a mutex
+    (0205 §2.1). Sessions with no MERGE_HEAD are auto-aborted (orphan recovery).
+    Any surviving lock is stale by definition (nothing legitimately outlives a
+    restart) — op:/sweep:/merge:/dispose: locks are all force-released. Finally a
+    sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
     try:
         for session in db_git.list_open_sessions():
             merge_id = session["merge_id"]
             group_id = session["group_id"]
             try:
                 project_id = _project_of_group(group_id)
-                cfg = db_git.get_config(project_id)
-                project_name = _project_name(project_id)
-                merge_head_exists = False
-                if cfg and project_name:
-                    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-                    base_root = src_root(project_name, base_branch)
-                    merge_head_exists = (base_root / ".git" / "MERGE_HEAD").exists()
-                holder = f"merge:{merge_id}"
+                base_root = _base_root_of(project_id)
+                merge_head_exists = bool(
+                    base_root and (base_root / ".git" / "MERGE_HEAD").exists()
+                )
                 if merge_head_exists:
-                    lock = db_git.get_lock(project_id)
-                    if lock is None:
-                        db_git.try_acquire_lock(project_id, holder)
-                    elif lock.get("holder") != holder:
-                        db_git.force_release_lock(project_id)
-                        db_git.try_acquire_lock(project_id, holder)
+                    # Re-affirm the status; do NOT reclaim a merge:{id} lock (§2.6).
+                    _set_status(group_id, "conflict", merge_id=merge_id)
                 else:
-                    db_git.close_session(merge_id, "aborted")
-                    _set_status(group_id, "waiting")
-                    db_git.release_lock(project_id, holder)
+                    _close_orphan(session, project_id)
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
-        # One-shot op:* locks cannot survive a restart legitimately.
+        # One-time lock cleanup: no lock legitimately survives a restart. This
+        # includes the legacy merge:{id} inheritance lock (§2.6).
         for lock in db_git.list_locks():
-            if str(lock.get("holder") or "").startswith("op:"):
+            holder = str(lock.get("holder") or "")
+            if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
                 db_git.force_release_lock(lock["project_id"])
+        merge_session_sweep()   # reclaim anything already past TTL
+        _start_sweep_daemon()
     except Exception:
         # Table may not exist yet (pre-migration boot) — recovery is best-effort.
         _log.info("git startup recovery skipped", exc_info=True)
@@ -2489,6 +2711,36 @@ def project_git_status(project_id: str) -> dict:
          "ac_doc_id": _group_ac_doc_id(r["group_id"])}
         for r in rows if r.get("status") in PENDING_STATUSES
     ]
+    # 0205 P scenario 8: annotate conflict pending rows with how long they have
+    # been unresolved (elapsed = now − conflict_since), so the panel can surface
+    # the wait time and offer [해소 재개]/[보류]. Other rows carry no field.
+    for row in pending:
+        if row.get("status") == "conflict" and row.get("merge_id") is not None:
+            try:
+                s = db_git.get_session(int(row["merge_id"]))
+                row["conflict_since"] = s.get("created_at") if s else None
+            except Exception:
+                row["conflict_since"] = None
+    # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
+    # rows with a provision_error) so a slot-less group's "깃 미추적" warning
+    # survives the one-shot SSE. Disposed groups are excluded. Newest first.
+    provision_failures: list[dict] = []
+    try:
+        for r in db_git.list_states_of_project_any(project_id):
+            if (
+                r.get("provision_error")
+                and not r.get("worktree_registered")
+                and not _is_group_disposed(r["group_id"])
+            ):
+                provision_failures.append({
+                    "group_id": r["group_id"],
+                    "error": r.get("provision_error"),
+                    "failed_at": r.get("provision_failed_at"),
+                })
+        provision_failures.sort(key=lambda x: x.get("failed_at") or "", reverse=True)
+    except Exception:
+        _log.warning("provision_failures aggregation failed for %s", project_id, exc_info=True)
+        provision_failures = []
     # 0182 NR0003 §5: registered slots already finalized (merged/pushed) are
     # cleanup backlog — surfaced so the panel can offer the [clean up] action.
     cleanable_count = sum(1 for r in rows if r.get("status") in CLEANUP_STATUSES)
@@ -2514,6 +2766,7 @@ def project_git_status(project_id: str) -> dict:
         "base_dirty": {"dirty": bool(base_dirty_files), "files": base_dirty_files},
         "slots": slots, "pending": pending, "pending_count": len(pending),
         "cleanable_count": cleanable_count,
+        "provision_failures": provision_failures,
     }}
 
 
@@ -2595,6 +2848,12 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
         raise GitServiceError(
             409, "invalid_state", f"checkout for branch '{branch}' is missing"
         )
+    # 0205 §2.2: pushing the BASE branch publishes the shared base checkout —
+    # gate it while a conflict session holds base. A work-branch re-push does not
+    # touch base and is never gated.
+    pushes_base = branch == base_branch
+    if pushes_base:
+        guard_base_free(project_id)   # 1st gate (before lock)
     if not git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -2607,6 +2866,8 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        if pushes_base:
+            guard_base_free(project_id)   # 2nd gate (race close, after lock)
         proc = _run_git(
             ["push", "origin", branch],
             cwd=cwd, timeout=GIT_NET_TIMEOUT_SEC,
@@ -2676,6 +2937,7 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
             422, "invalid_request",
             "message must be a single line of at most 200 characters.",
         )
+    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
     if not git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -2688,6 +2950,7 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
         if _merge_in_progress(base_root):
             raise GitServiceError(
                 409, "invalid_state", "a merge is in progress; resolve or abort it first"
@@ -2738,6 +3001,7 @@ def base_revert(project_id: str, files: list[str]) -> dict:
         norm = f.replace("\\", "/")
         if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
             raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
+    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
     if not git_available():
         raise GitServiceError(
             500, "git_unavailable",
@@ -2750,6 +3014,7 @@ def base_revert(project_id: str, files: list[str]) -> dict:
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
         if _merge_in_progress(base_root):
             raise GitServiceError(
                 409, "invalid_state", "a merge is in progress; resolve or abort it first"

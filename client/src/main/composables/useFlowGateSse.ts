@@ -270,8 +270,7 @@ export function useFlowGateSse(refreshAll: () => void) {
         // document is the one on screen, a *different* document is open, or none
         // is. The previous design only toasted when the edited doc's own MdViewer
         // reported a successful reload (fg:document_content_refresh_completed),
-        // so an AI edit while a different doc was open produced no toast at all —
-        // the regression reported in R0001. Prefer the human title, fall back to
+        // so an AI edit while a different doc was open produced no toast at all —\n        // the regression reported in R0001. Prefer the human title, fall back to
         // the doc id so the message always identifies what changed (NR0003 #2).
         const label = payload.title ?? docId
         if (label && operation === 'created') {
@@ -378,6 +377,13 @@ export function useFlowGateSse(refreshAll: () => void) {
     source.addEventListener('git_finalize_done', onGitSlotLifecycle)
     source.addEventListener('git_worktree_ready', onGitSlotLifecycle)
     source.addEventListener('git_merge_conflict', onGitSlotLifecycle)
+    // 0205 P scenarios 4·6·7: a conflict auto-aborted by the sweep/boot recovery
+    // (badge clears, group returns to 'waiting') and a persisted provisioning
+    // failure ('깃 미추적' warning) both change the slot/pending surface, so they
+    // drive the same invalidate+refresh — the panel re-fetches git status and the
+    // new conflict_since / provision_failures fields render live (P scenario 8).
+    source.addEventListener('git_merge_auto_aborted', onGitSlotLifecycle)
+    source.addEventListener('git_worktree_failed', onGitSlotLifecycle)
 
     source.addEventListener('notification_new_action_candidate', (e: Event) => {
       try {
@@ -404,8 +410,7 @@ export function useFlowGateSse(refreshAll: () => void) {
         // viewer (QTDetailViewer) load their items once on mount / doc switch and do
         // NOT consume invalidateAndRefresh's explorer-scoped fg:open_docs_refresh, so
         // a worker-registered Q on the doc on screen stayed invisible until F5
-        // (0059 B0001). Dispatch a doc-scoped window event those panels refetch on —
-        // mirrors the fg:doc_review_status_changed pattern used for review badges.
+        // (0059 B0001). Dispatch a doc-scoped window event those panels refetch on —\n        // mirrors the fg:doc_review_status_changed pattern used for review badges.
         if (typeof window !== 'undefined' && qDocId) {
           window.dispatchEvent(new CustomEvent('fg:q_registered', {
             detail: { doc_id: qDocId, project: data.project ?? null },
@@ -494,3 +499,4 @@ export function useFlowGateSse(refreshAll: () => void) {
 
   return { connect, disconnect }
 }
+
