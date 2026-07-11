@@ -116,6 +116,7 @@
                  ended. group-id resolves exactly like the R/B mount above. -->
             <GitFinalizePanel
               :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
+              inline-conflicts
             />
           </template>
           <!-- DC (group discard): file-less terminal record. Like AC it has no .md

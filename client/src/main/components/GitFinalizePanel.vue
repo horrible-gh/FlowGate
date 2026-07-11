@@ -89,7 +89,7 @@
           <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
             <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </button>
-          <button class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
+          <button v-if="!props.inlineConflicts" class="btn btn-primary" :disabled="busy" @click="openConflictDialog">
             <AppIcon name="git-diff" /> {{ t('main.git_finalize.open_resolver') }}
           </button>
         </div>
@@ -97,14 +97,20 @@
     </div>
   </div>
 
-  <div v-if="conflictDialogOpen" class="git-conflict-overlay" @click.self="closeConflictDialog">
-    <div class="git-conflict-dialog" role="dialog" aria-modal="true">
+  <div
+    v-if="conflictDialogOpen || (props.inlineConflicts && state?.status === 'conflict')"
+    :class="props.inlineConflicts ? 'git-conflict-inline' : 'git-conflict-overlay'"
+    :tabindex="props.inlineConflicts ? 0 : undefined"
+    @click.self="closeConflictDialog"
+    @keydown="onResolverKeydown"
+  >
+    <div :class="props.inlineConflicts ? 'git-conflict-dialog git-conflict-dialog--inline' : 'git-conflict-dialog'" role="dialog" :aria-modal="props.inlineConflicts ? undefined : 'true'">
       <div class="git-conflict-dialog-hd">
         <div>
           <h2>{{ t('main.git_finalize.dialog_title', { branch: state?.branch || '-', base: state?.base_branch || '-' }) }}</h2>
           <p>{{ t('main.git_finalize.dialog_subtitle', { n: conflictFiles.length }) }}</p>
         </div>
-        <button class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="closeConflictDialog">
+        <button v-if="!props.inlineConflicts" class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="closeConflictDialog">
           <AppIcon name="x" />
         </button>
       </div>
@@ -123,6 +129,15 @@
         {{ t('main.git_finalize.no_conflicts') }}
       </div>
       <template v-else>
+        <div class="git-ai-assist-strip">
+          <div>
+            <strong><AppIcon name="sparkle" /> {{ t('main.git_finalize.ai_assist_title') }}</strong>
+            <span>{{ t('main.git_finalize.ai_assist_summary', { ready: aiSuggestionTotal, total: totalChunkCount }) }}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" :disabled="busy || aiSuggestionRemaining === 0" @click="applyAllSuggestions">
+            <AppIcon name="magic-wand" /> {{ t('main.git_finalize.ai_apply_all') }}
+          </button>
+        </div>
         <div class="git-conflict-dialog-bd">
           <aside class="git-conflict-sidebar" :aria-label="t('main.git_finalize.file_list')">
             <button
@@ -130,7 +145,7 @@
               :key="f.path"
               class="git-conflict-file-tab"
               :class="{ active: idx === selectedConflictIndex, resolved: isFileResolved(f) }"
-              @click="selectedConflictIndex = idx"
+              @click="selectConflictFile(idx)"
             >
               <span class="git-conflict-file-path">{{ f.path }}</span>
               <span class="git-conflict-file-meta">
@@ -159,40 +174,68 @@
               </span>
             </div>
 
+            <div v-if="selectedConflictFile.mode === 'chunk'" class="git-conflict-navigator">
+              <div class="git-conflict-nav-summary">
+                <strong>{{ t('main.git_finalize.remaining_chunks', { remaining: selectedRemainingCount, total: selectedChunkEntries.length }) }}</strong>
+                <span>{{ t('main.git_finalize.nav_shortcut') }}</span>
+              </div>
+              <div class="git-conflict-nav-actions">
+                <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(-1)" :title="t('main.git_finalize.previous_conflict')"><AppIcon name="caret-up" /></button>
+                <button v-for="entry in selectedChunkEntries" :key="entry.segmentIndex" type="button" class="git-conflict-chip" :class="{ active: currentChunkSegment === entry.segmentIndex, resolved: !!entry.chunk.resolution }" @click="focusChunk(entry.segmentIndex)">{{ entry.number }}</button>
+                <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(1)" :title="t('main.git_finalize.next_conflict')"><AppIcon name="caret-down" /></button>
+              </div>
+              <div class="git-code-size-controls" :aria-label="t('main.git_finalize.code_font_size')">
+                <button type="button" :disabled="codeFontRem <= 0.72" @click="adjustCodeFont(-0.08)">A−</button>
+                <span>{{ Math.round(codeFontRem * 100) }}%</span>
+                <button type="button" :disabled="codeFontRem >= 1.18" @click="adjustCodeFont(0.08)">A＋</button>
+              </div>
+            </div>
+
             <p v-if="selectedConflictFile.notice" class="git-conflict-notice">{{ selectedConflictFile.notice }}</p>
 
-            <div v-if="selectedConflictFile.mode === 'chunk'" class="git-chunk-scroll">
+            <div v-if="selectedConflictFile.mode === 'chunk'" class="git-chunk-scroll" :style="{ '--conflict-code-size': codeFontRem + 'rem' }">
               <template v-for="(seg, idx) in selectedConflictFile.segments" :key="idx">
-                <pre v-if="seg.kind === 'common' && seg.lines.length" class="git-common-block">{{ joinLines(seg.lines) }}</pre>
-                <article v-else-if="seg.kind === 'chunk'" class="git-conflict-chunk">
+                <div v-if="seg.kind === 'common' && seg.lines.length" class="git-common-shell">
+                  <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES && isCommonCollapsed(idx)" type="button" class="git-common-toggle" @click="toggleCommon(idx)">
+                    <AppIcon name="caret-right" /> {{ t('main.git_finalize.common_collapsed', { n: seg.lines.length }) }}
+                  </button>
+                  <template v-else>
+                    <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES" type="button" class="git-common-toggle git-common-toggle--open" @click="toggleCommon(idx)">
+                      <AppIcon name="caret-down" /> {{ t('main.git_finalize.common_collapse', { n: seg.lines.length }) }}
+                    </button>
+                    <pre class="git-common-block"><span v-for="(line, lineIdx) in seg.lines" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ commonLineNumber(selectedConflictFile, idx, lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span></pre>
+                  </template>
+                </div>
+                <article v-else-if="seg.kind === 'chunk'" :id="chunkDomId(idx)" class="git-conflict-chunk" :class="{ resolved: !!seg.resolution, focused: currentChunkSegment === idx }">
                   <div class="git-conflict-chunk-hd">
-                    <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(selectedConflictFile, idx) }) }}</span>
-                    <div class="git-chunk-actions">
-                      <button :class="{ active: seg.choice === 'ours' }" @click="applyChunkChoice(seg, 'ours')">
-                        {{ t('main.git_finalize.current') }}
-                      </button>
-                      <button :class="{ active: seg.choice === 'theirs' }" @click="applyChunkChoice(seg, 'theirs')">
-                        {{ t('main.git_finalize.incoming') }}
-                      </button>
-                      <button :class="{ active: seg.choice === 'both' }" @click="applyChunkChoice(seg, 'both')">
-                        {{ t('main.git_finalize.both') }}
-                      </button>
+                    <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(selectedConflictFile, idx) }) }} <strong v-if="seg.resolution" class="git-resolved-badge">{{ t('main.git_finalize.resolved') }}</strong></span>
+                    <button v-if="seg.resolution" type="button" class="git-chunk-undo" @click="undoChunk(seg)"><AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.undo_choice') }}</button>
+                    <div v-else class="git-chunk-actions">
+                      <button :class="{ suggested: recommendedChoice(seg) === 'ours' }" @click="chooseChunk(seg, 'ours')">{{ t('main.git_finalize.current') }}</button>
+                      <button :class="{ suggested: recommendedChoice(seg) === 'theirs' }" @click="chooseChunk(seg, 'theirs')">{{ t('main.git_finalize.incoming') }}</button>
+                      <button :class="{ suggested: recommendedChoice(seg) === 'both' }" @click="chooseChunk(seg, 'both')">{{ t('main.git_finalize.both') }}</button>
+                      <button @click="switchToDirectEdit(selectedConflictFile)">{{ t('main.git_finalize.direct_edit') }}</button>
+                      <button v-if="recommendedChoice(seg)" class="git-ai-apply" @click="applySuggestion(seg)"><AppIcon name="sparkle" /> {{ t('main.git_finalize.ai_apply_one') }}</button>
+                      <span v-else class="git-ai-hold">{{ t('main.git_finalize.ai_hold') }}</span>
                     </div>
                   </div>
-                  <div class="git-conflict-sides">
+                  <div v-if="seg.resolution" class="git-chunk-resolved">
+                    <div><strong>{{ t('main.git_finalize.selected_choice', { choice: choiceLabel(seg.choice) }) }}</strong><span>{{ t('main.git_finalize.resolved_preview') }}</span></div>
+                    <pre>{{ joinLines(seg.resolution).trim() || t('main.git_finalize.empty_choice') }}</pre>
+                  </div>
+                  <div v-else class="git-conflict-sides">
                     <div class="git-conflict-side ours">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }}</div>
-                      <pre>{{ joinLines(seg.ours) || '\n' }}</pre>
+                      <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
+                      <pre><span v-for="(line, lineIdx) in seg.ours" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                     <div class="git-conflict-side theirs">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }}</div>
-                      <pre>{{ joinLines(seg.theirs) || '\n' }}</pre>
+                      <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
+                      <pre><span v-for="(line, lineIdx) in seg.theirs" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                   </div>
                 </article>
               </template>
             </div>
-
             <textarea
               v-else
               v-model="selectedConflictFile.directText"
@@ -212,7 +255,7 @@
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
             <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="submitResolve">
-              <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
+              <AppIcon name="check" /> {{ t(props.inlineConflicts ? 'main.git_finalize.inline_resolve_submit' : 'main.git_finalize.resolve_submit') }}
             </button>
           </div>
         </div>
@@ -227,7 +270,7 @@
 
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
@@ -238,17 +281,24 @@ import { useToast } from './common/useToast'
 import {
   useConflictChunks,
   applyChunkChoice,
+  chunkIndexes,
   chunkLabel,
   chunkNumber,
   currentFileContent,
   isFileResolved,
   joinLines,
+  recommendChunkChoice,
+  resetChunkChoice,
   residualMarkers,
+  unresolvedChunkCount,
+  type ChunkChoice,
+  type ChunkSegment,
   type ConflictFileState,
+  type ConflictSegment,
 } from '../composables/useConflictChunks'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 
-const props = defineProps<{ groupId: string }>()
+const props = defineProps<{ groupId: string; inlineConflicts?: boolean }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -287,6 +337,10 @@ const conflictError = ref('')
 const conflictDialogOpen = ref(false)
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const selectedConflictIndex = ref(0)
+const currentChunkSegment = ref(-1)
+const collapsedCommon = ref<Record<string, boolean>>({})
+const codeFontRem = ref(0.86)
+const COMMON_COLLAPSE_LINES = 12
 
 const statusLabel = computed(() =>
   state.value ? t(`main.git_finalize.status.${state.value.status}`) : '',
@@ -349,6 +403,148 @@ const markerGuardText = computed(() => {
     .filter(Boolean)
   return remaining.length ? remaining.join(' / ') : t('main.git_finalize.submit_disabled_hint')
 })
+const selectedChunkEntries = computed(() => {
+  const file = selectedConflictFile.value
+  if (!file) return []
+  return chunkIndexes(file).map((segmentIndex, index) => ({
+    segmentIndex,
+    number: index + 1,
+    chunk: file.segments[segmentIndex] as ChunkSegment,
+  }))
+})
+const selectedRemainingCount = computed(() =>
+  selectedConflictFile.value ? unresolvedChunkCount(selectedConflictFile.value) : 0,
+)
+const totalChunkCount = computed(() =>
+  conflictFiles.value.reduce((total, file) => total + chunkIndexes(file).length, 0),
+)
+const aiSuggestionTotal = computed(() =>
+  conflictFiles.value.reduce(
+    (total, file) => total + file.segments.filter(
+      (seg): seg is ChunkSegment => seg.kind === 'chunk' && recommendChunkChoice(seg) !== null,
+    ).length,
+    0,
+  ),
+)
+const aiSuggestionRemaining = computed(() =>
+  conflictFiles.value.reduce(
+    (total, file) => total + file.segments.filter(
+      (seg): seg is ChunkSegment =>
+        seg.kind === 'chunk' && !seg.resolution && recommendChunkChoice(seg) !== null,
+    ).length,
+    0,
+  ),
+)
+
+function recommendedChoice(seg: ChunkSegment): ChunkChoice {
+  return recommendChunkChoice(seg)
+}
+function choiceLabel(choice: ChunkChoice): string {
+  if (!choice) return ''
+  const key = choice === 'ours' ? 'current' : choice === 'theirs' ? 'incoming' : 'both'
+  return t(`main.git_finalize.${key}`)
+}
+function chooseChunk(seg: ChunkSegment, choice: Exclude<ChunkChoice, null>) {
+  applyChunkChoice(seg, choice)
+}
+function undoChunk(seg: ChunkSegment) {
+  resetChunkChoice(seg)
+}
+function applySuggestion(seg: ChunkSegment) {
+  const recommendation = recommendedChoice(seg)
+  if (recommendation) applyChunkChoice(seg, recommendation)
+}
+function applyAllSuggestions() {
+  for (const file of conflictFiles.value) {
+    for (const seg of file.segments) {
+      if (seg.kind !== 'chunk' || seg.resolution) continue
+      const recommendation = recommendedChoice(seg)
+      if (recommendation) applyChunkChoice(seg, recommendation)
+    }
+  }
+}
+function selectConflictFile(index: number) {
+  selectedConflictIndex.value = index
+  const file = conflictFiles.value[index]
+  const first = file ? (chunkIndexes(file)[0] ?? -1) : -1
+  currentChunkSegment.value = first
+  if (first >= 0) void nextTick(() => focusChunk(first))
+}
+function chunkDomId(segmentIndex: number): string {
+  return 'git-conflict-' + selectedConflictIndex.value + '-' + segmentIndex
+}
+function focusChunk(segmentIndex: number) {
+  currentChunkSegment.value = segmentIndex
+  void nextTick(() => {
+    if (typeof document === 'undefined') return
+    document.getElementById(chunkDomId(segmentIndex))?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+function moveChunk(delta: number) {
+  const indexes = selectedChunkEntries.value.map((entry) => entry.segmentIndex)
+  if (!indexes.length) return
+  const current = indexes.indexOf(currentChunkSegment.value)
+  const next = current < 0 ? 0 : (current + delta + indexes.length) % indexes.length
+  focusChunk(indexes[next])
+}
+function onResolverKeydown(event: KeyboardEvent) {
+  if (!event.shiftKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+  event.preventDefault()
+  moveChunk(event.key === 'ArrowUp' ? -1 : 1)
+}
+function adjustCodeFont(delta: number) {
+  codeFontRem.value = Math.min(1.18, Math.max(0.72, Number((codeFontRem.value + delta).toFixed(2))))
+}
+function commonKey(segmentIndex: number): string {
+  return selectedConflictIndex.value + ':' + segmentIndex
+}
+function isCommonCollapsed(segmentIndex: number): boolean {
+  return collapsedCommon.value[commonKey(segmentIndex)] === true
+}
+function toggleCommon(segmentIndex: number) {
+  const key = commonKey(segmentIndex)
+  collapsedCommon.value = { ...collapsedCommon.value, [key]: !collapsedCommon.value[key] }
+}
+function resetCommonCollapse() {
+  const next: Record<string, boolean> = {}
+  conflictFiles.value.forEach((file, fileIndex) => {
+    file.segments.forEach((seg, segmentIndex) => {
+      if (seg.kind === 'common' && seg.lines.length > COMMON_COLLAPSE_LINES) {
+        next[fileIndex + ':' + segmentIndex] = true
+      }
+    })
+  })
+  collapsedCommon.value = next
+}
+function originalSegmentLineCount(seg: ConflictSegment): number {
+  if (seg.kind === 'common') return seg.lines.length
+  return 1 + seg.ours.length + (seg.baseLine ? 1 + seg.base.length : 0) + 1 + seg.theirs.length + 1
+}
+function segmentStartLine(file: ConflictFileState, segmentIndex: number): number {
+  return 1 + file.segments.slice(0, segmentIndex).reduce(
+    (sum, seg) => sum + originalSegmentLineCount(seg),
+    0,
+  )
+}
+function commonLineNumber(file: ConflictFileState, segmentIndex: number, lineIndex: number): number {
+  return segmentStartLine(file, segmentIndex) + lineIndex
+}
+function sideLineNumber(
+  file: ConflictFileState,
+  segmentIndex: number,
+  side: 'ours' | 'theirs',
+  lineIndex: number,
+): number {
+  const seg = file.segments[segmentIndex]
+  if (!seg || seg.kind !== 'chunk') return lineIndex + 1
+  const offset = side === 'ours'
+    ? 1
+    : 1 + seg.ours.length + (seg.baseLine ? 1 + seg.base.length : 0) + 1
+  return segmentStartLine(file, segmentIndex) + offset + lineIndex
+}
+function stripLineEnding(line: string): string {
+  return line.replace(/\r\n$|\n$|\r$/, '')
+}
 
 function actionLabel(c: string): string {
   return t(`main.git_finalize.action.${c}`)
@@ -394,6 +590,9 @@ async function fetchConflicts(mergeId: number) {
     }>(`/api/v1/groups/${props.groupId}/git/merge/${mergeId}/conflicts`)
     conflictFiles.value = (data.files || []).map(initConflictFile)
     selectedConflictIndex.value = 0
+    resetCommonCollapse()
+    const firstFile = conflictFiles.value[0]
+    currentChunkSegment.value = firstFile ? (chunkIndexes(firstFile)[0] ?? -1) : -1
     conflictLoadStatus.value = 'ready'
   } catch (e: any) {
     conflictFiles.value = []
@@ -683,6 +882,10 @@ defineExpose({ fetchState })
 .git-marker-warning {
   color: #b45309;
 }
+.git-conflict-inline {
+  margin-bottom: 12px;
+  outline: none;
+}
 .git-conflict-overlay {
   position: fixed;
   inset: 0;
@@ -703,6 +906,13 @@ defineExpose({ fetchState })
   border-radius: 8px;
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
   overflow: hidden;
+}
+.git-conflict-dialog--inline {
+  width: 100%;
+  height: min(760px, calc(100vh - 170px));
+  min-height: 620px;
+  border: 1px solid var(--border, #e2e8f0);
+  box-shadow: none;
 }
 .git-conflict-dialog-hd,
 .git-conflict-dialog-ft {
@@ -871,8 +1081,9 @@ defineExpose({ fetchState })
 }
 .git-common-block,
 .git-conflict-side pre,
-.git-conflict-direct-editor {
-  font: 0.75rem/1.48 var(--mono, ui-monospace, monospace);
+.git-conflict-direct-editor,
+.git-chunk-resolved pre {
+  font: var(--conflict-code-size, 0.86rem)/1.5 var(--mono, ui-monospace, monospace);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
@@ -936,7 +1147,7 @@ defineExpose({ fetchState })
 .git-conflict-side pre {
   min-height: 54px;
   margin: 0;
-  padding: 10px;
+  padding: 8px 0;
   color: #0f172a;
 }
 .git-conflict-direct-editor {
@@ -970,8 +1181,153 @@ defineExpose({ fetchState })
   display: flex;
   gap: 10px;
 }
-@media (max-width: 760px) {
-  .git-conflict-overlay {
+.git-ai-assist-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #ddd6fe;
+  color: #5b21b6;
+  background: #f5f3ff;
+  font-size: 0.76rem;
+}
+.git-ai-assist-strip > div,
+.git-ai-assist-strip strong { display: flex; align-items: center; gap: 8px; }
+.git-conflict-navigator {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  background: #fff;
+}
+.git-conflict-nav-summary { display: flex; flex-direction: column; gap: 1px; font-size: 0.74rem; }
+.git-conflict-nav-summary span { color: var(--text-m); font-size: 0.66rem; }
+.git-conflict-nav-actions,
+.git-code-size-controls { display: inline-flex; align-items: center; gap: 4px; }
+.git-conflict-nav-actions button,
+.git-code-size-controls button {
+  min-width: 28px;
+  height: 28px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+.git-conflict-nav-actions button:disabled,
+.git-code-size-controls button:disabled { opacity: 0.45; cursor: default; }
+.git-conflict-nav-actions .git-conflict-chip {
+  min-width: 26px;
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.git-conflict-nav-actions .git-conflict-chip.resolved {
+  color: #15803d;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+.git-conflict-nav-actions .git-conflict-chip.active { box-shadow: 0 0 0 2px #93c5fd; }
+.git-code-size-controls { margin-left: auto; color: var(--text-m); font-size: 0.7rem; }
+.git-common-shell { margin-bottom: 10px; }
+.git-common-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.git-common-toggle--open { margin-bottom: 4px; border-radius: 8px 8px 0 0; }
+.git-conflict-chunk.resolved { border-color: #bbf7d0; background: #f0fdf4; }
+.git-conflict-chunk.focused { box-shadow: 0 0 0 2px #93c5fd; }
+.git-resolved-badge,
+.git-ai-recommended {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #15803d;
+  background: #dcfce7;
+  font-size: 0.66rem;
+}
+.git-chunk-undo {
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: #166534;
+  background: #fff;
+  cursor: pointer;
+}
+.git-chunk-actions button.suggested {
+  color: #6d28d9;
+  background: #f5f3ff;
+  box-shadow: inset 0 -2px #8b5cf6;
+}
+.git-chunk-actions .git-ai-apply { color: #fff; background: #7c3aed; }
+.git-ai-hold {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  color: #92400e;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.git-chunk-resolved {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px;
+}
+.git-chunk-resolved > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #166534;
+  font-size: 0.72rem;
+}
+.git-chunk-resolved pre {
+  max-height: 92px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  background: #fff;
+  white-space: pre-wrap;
+}
+.git-code-line {
+  display: grid;
+  grid-template-columns: 3.6rem minmax(0, 1fr);
+  min-height: 1.5em;
+}
+.git-line-number {
+  padding: 0 10px 0 6px;
+  color: #94a3b8;
+  text-align: right;
+  user-select: none;
+}
+.git-code-line-text {
+  min-width: 0;
+  padding-right: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.git-empty-side { display: block; padding: 4px 10px; color: #94a3b8; font-style: italic; }@media (max-width: 760px) {
+  .git-conflict-inline {
+  margin-bottom: 12px;
+  outline: none;
+}
+.git-conflict-overlay {
     padding: 0;
   }
   .git-conflict-dialog {

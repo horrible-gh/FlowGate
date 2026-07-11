@@ -16,6 +16,7 @@ export const MARKER_BASE_RE = /^\|{7}( |$)/
 
 export type ConflictMode = 'chunk' | 'direct' | 'direct_only'
 export type ChunkChoice = 'ours' | 'theirs' | 'both' | null
+export type ConcreteChunkChoice = Exclude<ChunkChoice, null>
 
 export type CommonSegment = { kind: 'common'; lines: string[] }
 export type ChunkSegment = {
@@ -172,11 +173,52 @@ export function joinLines(lines: string[]): string {
   return lines.join('')
 }
 
-export function applyChunkChoice(seg: ChunkSegment, choice: Exclude<ChunkChoice, null>) {
+export function applyChunkChoice(seg: ChunkSegment, choice: ConcreteChunkChoice) {
   seg.choice = choice
   if (choice === 'ours') seg.resolution = [...seg.ours]
   else if (choice === 'theirs') seg.resolution = [...seg.theirs]
   else seg.resolution = [...seg.ours, ...seg.theirs]
+}
+
+export function resetChunkChoice(seg: ChunkSegment) {
+  seg.choice = null
+  seg.resolution = null
+}
+
+function comparableLines(lines: string[]): string {
+  return lines.join('').replace(/\r\n/g, '\n').trimEnd()
+}
+
+/**
+ * Conservative three-way assistant recommendation.
+ *
+ * A choice is returned only when the merge semantics are mechanically clear:
+ * identical sides, one side unchanged from diff3 base, or one empty side.
+ * Ambiguous chunks deliberately return null so a person remains the final
+ * decision-maker.
+ */
+export function recommendChunkChoice(seg: ChunkSegment): ChunkChoice {
+  const ours = comparableLines(seg.ours)
+  const theirs = comparableLines(seg.theirs)
+  const base = comparableLines(seg.base)
+
+  if (ours === theirs) return 'ours'
+  if (seg.baseLine && ours === base) return 'theirs'
+  if (seg.baseLine && theirs === base) return 'ours'
+  if (!ours && theirs) return 'theirs'
+  if (!theirs && ours) return 'ours'
+  return null
+}
+
+export function chunkIndexes(file: ConflictFileState): number[] {
+  return file.segments.reduce<number[]>((indexes, seg, index) => {
+    if (seg.kind === 'chunk') indexes.push(index)
+    return indexes
+  }, [])
+}
+
+export function unresolvedChunkCount(file: ConflictFileState): number {
+  return file.segments.filter((seg) => seg.kind === 'chunk' && !seg.resolution).length
 }
 
 export function chunkNumber(file: ConflictFileState, segmentIndex: number): number {
