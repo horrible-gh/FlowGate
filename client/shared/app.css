@@ -13,6 +13,9 @@ button { cursor: pointer; font-family: inherit; border: none; background: none; 
 input, select, textarea { font-family: inherit; font-size: inherit; }
 ul, ol { list-style: none; }
 
+/* Match the prototype's optical icon-size correction without overriding contextual sizes. */
+.app-icon { font-size: 1.125em; }
+
 /* ─── App Shell ─── */
 .app-shell {
   display: grid;
