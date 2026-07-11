@@ -3080,3 +3080,46 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
         if getattr(exc, "details", None):
             error["details"] = exc.details
         return {"ok": False, "error": error}
+
+
+def reopen_group_git(project_id: str, group_id: str) -> None:
+    """Re-arm a group's git slot after a time-machine rewind past finalize (B0001,
+    flowgate.default.0211).
+
+    The reverse-time-machine rewinds only the document/workflow layer; the git
+    ledger keeps whatever the prior finalize left it in. When that state is
+    terminal (merged/pushed) the group's worktree was already torn down and
+    unregistered by slot cleanup (0182), so the next finalize on the re-worked
+    group is impossible: precheck_approve_git_action rejects 422 ("not a git-active
+    group") while the worktree is gone, or finalize rejects 409 ("already
+    finalized") once a write-gate self-heal re-registers the worktree but leaves
+    the status terminal (register_worktree never touches status). Restore the
+    invariant "a workflow below final approval is not git-terminal": drop the
+    status back to 'none' and re-provision the worktree from base HEAD so the
+    group can be finalized again.
+
+    Only terminal slots are touched — a healthy in-progress slot needs no
+    re-arming, and an in-flight merge/conflict owns the base checkout and must not
+    be disturbed (its own state gate and the sweep handle those). Never raises: the
+    caller's document rewind has already committed and must stand regardless.
+    """
+    try:
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return
+        state = db_git.get_state(group_id)
+        if state is None:
+            return
+        status = (state.get("status") or "none")
+        if status not in ("merged", "pushed"):
+            return
+        # Clear the terminal marker FIRST so the re-provision below cannot leave a
+        # "registered worktree, still merged" contradiction (register_worktree only
+        # updates branch/worktree_registered, never the status column).
+        _set_status(group_id, "none")
+        # Re-provision a clean worktree for the re-work. Idempotent and best-effort:
+        # a 'failed' result leaves status 'none', and the existing write-gate
+        # self-heal re-attempts provisioning on the next source write.
+        ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
+    except Exception:
+        _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)

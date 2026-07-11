@@ -1850,7 +1850,21 @@ def reopen_workflow(
         except Exception as exc:  # pragma: no cover - best-effort event trail
             _log.warning("[workflow reopen] event logging failed: %s", exc, exc_info=True)
 
-        return {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
+        result = {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
+
+    # B0001 (flowgate.default.0211): the time machine is git-aware here. A rewind that
+    # rolls the workflow back below its final approval must not leave the group's git
+    # ledger terminal (merged/pushed) — that desync makes the next finalize impossible
+    # (precheck 422 "not git-active" / finalize 409 "already finalized"). Re-arm the git
+    # slot to a clean, re-finalizable state. Post-commit and best-effort: a git hiccup
+    # must never break the document rewind that already stood.
+    try:
+        from modules.flow_gate.services import git_service as _git_service
+        _git_service.reopen_group_git(project_id, group_id)
+    except Exception as exc:  # pragma: no cover - best-effort git re-arm
+        _log.warning("[workflow reopen] git re-arm failed for %s: %s", group_id, exc, exc_info=True)
+
+    return result
 
 
 @router.get("/workflow/{doc_id}/return-point")
