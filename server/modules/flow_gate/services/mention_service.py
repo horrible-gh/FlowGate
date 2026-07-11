@@ -1229,6 +1229,119 @@ def build_workflow_decision_mention(
     return "\n\n".join(sections)
 
 
+# ── Sequence-edit mention builder (R0001 group 0208) ──────────────────────────
+# Post-decision counterpart of build_workflow_decision_mention: the workflow is ALREADY
+# decided, so instead of asking the worker to CHOOSE a sequence this shows it the current
+# sequence (locked steps it must not touch + editable pending steps) and asks it to edit the
+# pending tail, then submit via PATCH /workflow/sequence. Locked steps are immutable server-
+# side; only the pending tail is replaced.
+
+def build_sequence_edit_mention(
+    *,
+    token_rec: dict,
+    target_doc: dict,
+    api_base_url: str,
+    raw_token: str,
+    sequence_items: Optional[list] = None,
+    locale: str = "ko",
+) -> str:
+    """Build instructions for an AI worker to EDIT a decided workflow's pending sequence.
+
+    ``sequence_items`` is the current sequence as ``[{type, label, status}]`` (status one of
+    pending / in_progress / done). The worker applies the change autonomously via PATCH
+    /workflow/sequence — the same endpoint the human edit modal uses.
+    """
+    project = token_rec.get("project", "")
+    group_id = token_rec.get("group_id", "")
+    parts = group_id.split(".", 2) if group_id else []
+    if len(parts) == 3:
+        _project, module, group = parts
+    else:
+        module = target_doc.get("module", "none")
+        group = group_id
+
+    doc_id = target_doc.get("doc_id", "")
+    doc_type = target_doc.get("type_code", "")
+    seq = target_doc.get("seq", 0)
+    short_id = f"{doc_type}{seq:04d}" if seq else doc_id
+    title = target_doc.get("title", "")
+    base = _api_base(api_base_url)
+
+    s1_body = (
+        f"project: {project}\n"
+        f"module: {module}\n"
+        f"group: {group}\n"
+        f"type: {doc_type}\n"
+        f"type_detail: {get_type_name(doc_type, locale)}\n"
+        f"doc_number: {short_id}\n"
+        f"title: {title}"
+    )
+
+    # Current sequence, split into locked (immutable) vs pending (editable).
+    items = sequence_items or []
+    locked = [it for it in items if (it.get("status") or "") != "pending"]
+    pending = [it for it in items if (it.get("status") or "") == "pending"]
+
+    def _fmt(rows: list) -> str:
+        if not rows:
+            return "  (none)"
+        lines = []
+        for i, it in enumerate(rows, start=1):
+            tcode = it.get("type", "")
+            label = it.get("label", "") or get_type_name(tcode, locale)
+            lines.append(f"  {i}. [{tcode}] {label}")
+        return "\n".join(lines)
+
+    seq_body = (
+        "Locked steps — already done or in progress; you CANNOT change these, they are\n"
+        "preserved server-side no matter what you submit:\n"
+        f"{_fmt(locked)}\n\n"
+        "Pending steps — the editable tail; your submission REPLACES exactly this list:\n"
+        f"{_fmt(pending)}"
+    )
+
+    s2_body = (
+        f"The workflow for {doc_id} is already decided. Edit ONLY the pending (not-yet-started)\n"
+        "tail of its sequence — add, remove, or reorder pending steps to match what the work now\n"
+        "needs. Locked steps (done / in progress) are immutable and preserved automatically.\n"
+        "Submit the FULL replacement pending list (not a diff) through the PATCH below. Report\n"
+        "steps (NR/TR/TSR) are attached automatically to each N/T/TS step, so submit only the\n"
+        "instruction and design steps. Do NOT edit the root document. Use the document type\n"
+        "guide for valid type codes. You may not empty a decided workflow that has no locked\n"
+        "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
+    )
+
+    s3_body = (
+        f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n"
+        f"{doc_id}: GET {base}/document/{doc_id}\n"
+        f"Current sequence: GET {base}/workflow/sequence?doc_id={doc_id}"
+    )
+
+    edit_body = {
+        "doc_id": doc_id,
+        "items": [
+            {"type": "<TYPE_CODE>", "label": "<STEP_LABEL>"},
+        ],
+    }
+    s5_body = (
+        f"Submit the sequence edit: PATCH {base}/workflow/sequence\n"
+        f"Authorization: Bearer {raw_token}\n\n"
+        f"{json.dumps(edit_body, ensure_ascii=False, indent=2)}"
+    )
+
+    sections = [
+        _section("Document information", s1_body),
+        _section("Clarification guide", _clarification_guide_body(base, doc_id, raw_token, locale)),
+        _section("Sequence edit instructions", s2_body),
+        _section("Current sequence", seq_body),
+        _section("Reference documents", s3_body),
+        _section("Sequence edit submission", s5_body),
+        _section("doc_type guide", f"GET {base}/help/doc_type"),
+        _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
+    ]
+    return "\n\n".join(sections)
+
+
 # ── Review-request mention builder ────────────────────────────────────────────
 # Distinct genre from build_mention: build_mention hands off CREATING the next
 # document (action:new + next_type); this asks a worker to REVIEW an existing

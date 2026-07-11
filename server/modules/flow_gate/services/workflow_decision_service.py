@@ -728,6 +728,85 @@ def request_workflow_decision(
     }
 
 
+def request_sequence_edit(
+    doc_id: str,
+    issued_to: str,
+    api_base_url: str,
+    locale: str = "ko",
+) -> dict:
+    """Issue a document-bound token + prompt for an AI worker to EDIT the pending sequence.
+
+    Parallel of request_workflow_decision, for the post-decision "시퀀스 수정" path
+    (R0001 group 0208). The workflow is ALREADY decided, so instead of a decide token this
+    mints a ``workflow_sequence_edit``-scoped token bound to the root doc plus a mention that
+    hands the worker the current sequence (locked vs pending) and the edit contract. The
+    worker applies the change autonomously via PATCH /workflow/sequence — the same endpoint
+    the human edit modal uses — so locked/completed steps stay immutable and only the pending
+    tail is replaced (the human path is unchanged; this just lets AI drive it too).
+
+    Raises
+    ------
+    LookupError
+        "doc_not_found:{doc_id}" — document not found
+    ValueError
+        "sequence_not_decided:{doc_id}" — workflow not yet decided (nothing to edit)
+        "group_not_found:{doc_id}" — document has no group
+    """
+    doc = db_documents.get_by_id(doc_id)
+    if doc is None:
+        raise LookupError(f"doc_not_found:{doc_id}")
+
+    seq = db_wfseq.get_sequence_by_doc_id(doc_id)
+    if seq is None:
+        raise ValueError(f"sequence_not_decided:{doc_id}")
+
+    group_id: Optional[str] = doc.get("group_id")
+    if not group_id:
+        raise ValueError(f"group_not_found:{doc_id}")
+
+    project_id = doc.get("project_id") or ""
+    issue_result = token_service.issue(
+        project=project_id,
+        group_id=group_id,
+        action_scope="workflow_sequence_edit",
+        doc_ref=doc_id,
+        issued_to=issued_to,
+    )
+
+    items = db_wfseq.get_sequence_items(seq["id"])
+    sequence_items = [
+        {
+            "type": it["type"],
+            "label": _safe_label(it["label"], it["type"], locale),
+            "status": it["status"],
+        }
+        for it in items
+    ]
+
+    mention = mention_service.build_sequence_edit_mention(
+        token_rec={
+            "project": project_id,
+            "group_id": group_id,
+            "scratch_dir": issue_result["scratch_dir"],
+        },
+        target_doc=doc,
+        api_base_url=api_base_url,
+        raw_token=issue_result["raw_token"],
+        sequence_items=sequence_items,
+        locale=locale,
+    )
+    return {
+        "doc_ref": doc_id,
+        "action_scope": "workflow_sequence_edit",
+        "group_id": group_id,
+        "raw_token": issue_result["raw_token"],
+        "token_id": issue_result["token_id"],
+        "expires_at": issue_result["expires_at"],
+        "scratch_dir": issue_result["scratch_dir"],
+        "mention": mention,
+    }
+
+
 # ── Continuous-work decide kickoff (group 0086 R0001) ───────────────────────────────
 
 def continuation_kickoff_after_decide(
@@ -920,6 +999,14 @@ def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
     # steps + the AC gate, which is a valid "stop here" intent.
     if not new_items and locked_count == 0:
         raise ValueError(f"invalid_sequence_empty:{doc_id}")
+
+    # R0001 group 0208 (NR0003 §3-3): make the edit path symmetric with decide_workflow —
+    # attach each instruction step's report (N→NR, T→TR, TS→TSR) here on the server, exactly
+    # as decide_workflow does. _expand_auto_reports is idempotent: the human edit modal already
+    # interleaves the reports (they pass through untouched), while an AI worker that PATCHes a
+    # bare instruction list (the new autonomous 시퀀스 수정 path) gets its report steps inserted,
+    # so an AI edit can never drop them and desync the sequence.
+    new_items = _expand_auto_reports(new_items)
 
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"

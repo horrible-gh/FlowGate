@@ -1360,6 +1360,9 @@ export default {
       toast_saved: '시퀀스가 저장되었습니다.',
       all_done: '이전 단계는 모두 완료되었습니다. 아래에서 새 단계를 추가하면 워크플로가 다시 진행됩니다.',
       cannot_empty: '결정된 워크플로는 비울 수 없습니다. 최소 한 단계를 남기세요.',
+      ai_edit: 'AI에게 수정 요청',
+      toast_ai_mention_copied: 'AI 시퀀스 수정 멘트를 복사했습니다. AI에게 붙여넣어 전달하세요.',
+      error_ai_mention_copy: '클립보드 복사에 실패했습니다.',
     },
     file_tree_node: {
       open: '열기',
