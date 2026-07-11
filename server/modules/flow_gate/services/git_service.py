@@ -104,6 +104,17 @@ TRANSIENT_STATUSES = ("merging",)
 # flowgate.default.0182 NR0003 §5 — terminal statuses whose slot leftovers
 # (worktree dir, local work branch, ledger registration) are cleanup targets.
 CLEANUP_STATUSES = ("merged", "pushed")
+# flowgate.default.0199 B0001 — RESPONSE/SSE label (not a persisted git state:
+# the group_git_state.status CHECK has no such value). A wf_done group that
+# produced NO work (its work branch sits at the base tip with a clean worktree —
+# e.g. a pure R/CH/AC inquiry with no T) is auto-terminated: its slot is torn
+# down (worktree removed, local branch force-deleted, ledger unregistered) with
+# NO merge and NO push, so base never gets an empty `--no-ff` merge commit and
+# origin never gets a leaked empty branch. The DB row is left status="none" +
+# worktree_registered=0 (indistinguishable from an un-provisioned slot, which is
+# exactly right — there is nothing to finalize); finalize/status responses report
+# this label so callers can tell an auto-discard from a real merge/push.
+DISCARDED_STATUS = "discarded"
 
 # Identity for commits the SERVER makes (auto-commit / merge commits). Without
 # an explicit identity `git commit` fails on hosts with no global user config.
@@ -1329,6 +1340,114 @@ def _group_ac_doc_id(group_id: str) -> Optional[str]:
         return None
 
 
+# ── No-work divergence gating (flowgate.default.0199 B0001) ──────────────────
+#
+# The none→awaiting_choice transition (three sites: realize_wf_done_transition,
+# get_finalize_state lazy, project_git_status aggregation) used to fire on
+# `wf_done` + `worktree_registered` ALONE, never checking whether the group's
+# work branch actually diverged from base. A pure R/CH/AC inquiry (no T = no code
+# change) thus landed in `awaiting_choice`, and the only exits were merge (empty
+# `--no-ff` commit + base push) or push (empty branch leaked to origin) — hence
+# the "forced git finalize with nothing to finalize" bug. These helpers let each
+# transition site prove emptiness first and, when proven, auto-discard the slot
+# with no merge and no push instead.
+
+def _ahead_of_base(base_root: Path, base_branch: str, branch: str) -> Optional[int]:
+    """Number of commits on `branch` not yet on `base_branch` (local rev-list, no
+    network). None when it cannot be counted (missing ref / git failure)."""
+    proc = _run_git(["rev-list", "--count", f"{base_branch}..{branch}"], cwd=base_root)
+    if proc.returncode != 0:
+        return None
+    try:
+        return int((proc.stdout or "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _group_has_changes(
+    cfg: dict, state: dict, project_name: Optional[str]
+) -> Optional[bool]:
+    """Whether a group's work branch carries real, mergeable work.
+
+    True  — commits ahead of the base branch, OR any uncommitted / untracked edit
+            in the worktree (finalize's `add -A` absorb would turn these into a
+            commit, so they count as work).
+    False — branch at the base tip AND a pristine worktree: nothing to merge/push.
+    None  — divergence cannot be measured (git off, or the branch/worktree/base
+            checkout is missing). The caller must then keep the conservative
+            awaiting_choice gate — never discard on doubt.
+    """
+    if not project_name or not git_available():
+        return None
+    branch = (state.get("branch") or "").strip()
+    if not branch:
+        return None
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = src_root(project_name, base_branch)
+    if not (base_root / ".git").exists():
+        return None
+    ahead = _ahead_of_base(base_root, base_branch, branch)
+    if ahead is None:
+        return None
+    if ahead > 0:
+        return True
+    # ahead == 0: no committed work. Uncommitted/untracked worktree edits still
+    # count (a merge/push would absorb them), so inspect the worktree too.
+    wt_path = src_root(project_name, branch)
+    if wt_path.is_dir():
+        return bool(_dirty(wt_path))
+    return False
+
+
+def _auto_discard_group(project_id: str, group_id: str) -> str:
+    """Tear down a PROVEN no-work group's slot without any merge or push. Reuses
+    `_cleanup_group_slot(force_discard=True)` (worktree remove --force → prune →
+    branch -D → unregister); with ahead_count==0 the force-deleted local branch
+    holds no unique commit, so nothing is lost, and origin is never touched.
+
+    Best-effort: if the project git lock is busy the group is left `none` (its
+    badge stays hidden — a no-work group is not "pending" — and the next status
+    query retries the discard). Never raises. Returns the label the caller should
+    treat the group as having: DISCARDED_STATUS on success, "none" when the lock
+    was busy (the DB status stays "none" either way — see the constant)."""
+    holder = f"discard:{uuid.uuid4()}"
+    # wait_sec=0: never block a status GET / an approval on a busy lock — retry
+    # opportunistically on the next transition query instead.
+    if not _acquire_lock(project_id, holder, wait_sec=0):
+        return "none"
+    try:
+        cleaned = _cleanup_group_slot(project_id, group_id, force_discard=True)
+    finally:
+        db_git.release_lock(project_id, holder)
+    if not cleaned:
+        # Cleanup could not complete (e.g. worktree remove blocked) — leave the
+        # slot registered so a later query retries rather than orphaning it.
+        return "none"
+    # Slot unregistered; clear any pending badge and nudge the explorer to re-fetch
+    # the group dropdown (mirrors cleanup_disposed_group's post-cleanup emit).
+    _emit_pending_changed(project_id, group_id, "none")
+    return DISCARDED_STATUS
+
+
+def _decide_pending_transition(
+    project_id: str, cfg: dict, state: dict, group_id: str
+) -> str:
+    """Resolve a wf_done group out of `none` into its real status.
+
+    A group with actual work (or whose divergence cannot be proven empty) enters
+    `awaiting_choice` — the finalize gate, exactly as before. A PROVEN no-work
+    group is auto-discarded instead (no merge, no push). Returns the status the
+    caller should treat the group as having: "awaiting_choice", "discarded", or
+    "none" (no-work but the discard lock was busy — retry later). Never raises the
+    git error out to the caller."""
+    project_name = _project_name(project_id)
+    if _group_has_changes(cfg, state, project_name) is False:
+        return _auto_discard_group(project_id, group_id)
+    # Had changes, or divergence unmeasurable → preserve the original safe gate.
+    _set_status(group_id, "awaiting_choice")
+    return "awaiting_choice"
+
+
 def realize_wf_done_transition(group_id: str) -> None:
     """Eagerly realize the lazy none→awaiting_choice transition at final-approval
     time (0177 NR0016 §3). The lazy design (L0006 §3) only realizes on the NEXT
@@ -1346,7 +1465,9 @@ def realize_wf_done_transition(group_id: str) -> None:
         ):
             return
         if (state.get("status") or "none") == "none" and _group_root_wf_done(group_id):
-            _set_status(group_id, "awaiting_choice")
+            # 0199 B0001: a no-work group is discarded (no merge/push) rather than
+            # parked in awaiting_choice; a real group still gets the finalize gate.
+            _decide_pending_transition(project_id, cfg, state, group_id)
     except Exception:
         _log.warning(
             "wf_done git transition realization failed for %s", group_id, exc_info=True
@@ -1365,9 +1486,14 @@ def get_finalize_state(group_id: str) -> dict:
         return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
     # Lazy none→awaiting_choice transition (L0006 §3): the workflow module never
     # calls into git; the first state query after wf_done realizes the transition.
+    # 0199 B0001: a proven no-work group is auto-discarded here instead of being
+    # gated — it has nothing to finalize, so report it as the empty NONE state.
     if status == "none" and _group_root_wf_done(group_id):
-        _set_status(group_id, "awaiting_choice")
-        status = "awaiting_choice"
+        status = _decide_pending_transition(project_id, cfg, state, group_id)
+        if status != "awaiting_choice":
+            # discarded (torn down, no merge/push) or none (discard lock busy —
+            # retry next query): either way there is no finalize gate to show.
+            return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = state.get("branch")
@@ -1864,6 +1990,28 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             if proc.returncode != 0:
                 raise GitServiceError(500, "git_error", _last_line(proc.stderr))
 
+        # 0199 B0001: no-change short-circuit. After absorbing any worker edits,
+        # if the work branch still holds NO commit beyond base there is nothing to
+        # merge or push — an explicit merge/push here would only stamp an empty
+        # `--no-ff` commit on base or leak an empty branch to origin. Tear the slot
+        # down with no merge and no push (mirrors the auto-discard transition).
+        # ahead is None when it cannot be counted → fall through to the normal
+        # merge/push path (never discard on doubt).
+        ahead = _ahead_of_base(base_root, base_branch, branch)
+        if ahead == 0:
+            _cleanup_group_slot(project_id, group_id, force_discard=True)
+            # Leave the DB status "none" on the now-unregistered slot (see
+            # DISCARDED_STATUS); "discarded" is only a response/SSE label.
+            _set_status(group_id, "none")
+            _emit("git_finalize_done", project_id, group_id, {
+                "project": project_id, "group_id": group_id,
+                "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
+            })
+            return {"ok": True, "result": {
+                "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
+                "pushed": False, "merge_id": None, "conflict_files": [],
+            }}
+
         # Publish the work branch to origin ONLY for a bare push. A merge lands
         # the worker's commits into base/default locally (the work branch is a
         # worktree of the same repository, reachable by the base merge without a
@@ -2214,7 +2362,9 @@ def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
         return {"ok": False, "cleaned": False, "reason": "error"}
 
 
-def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
+def _cleanup_group_slot(
+    project_id: str, group_id: str, *, force_discard: bool = False
+) -> bool:
     """Best-effort removal of one terminal slot's leftovers. Never raises.
 
     Removes, in order: the worktree directory (`git worktree remove --force` —
@@ -2224,12 +2374,14 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
     on origin is the user's chosen outcome and is never touched), and finally
     the ledger registration (status/merge_commit stay as history).
 
-    Scope guard, consistent with E7: only a ledger-registered slot that is
-    either in a terminal status (merged/pushed) OR belongs to a disposed group
-    is touched — an unregistered directory is never deleted. A disposed group's
-    work branch is unmerged and is force-deleted (its content is intentionally
-    discarded). The caller must hold the project git lock. Returns True when the
-    slot ended up unregistered.
+    Scope guard, consistent with E7: only a ledger-registered slot that is in a
+    terminal status (merged/pushed), belongs to a disposed group, OR is being
+    force-discarded (0199 B0001: a no-work group, branch at base) is touched — an
+    unregistered directory is never deleted. A disposed or force-discarded work
+    branch is force-deleted; for a disposed group its unmerged content is
+    intentionally thrown away, and for a no-work group the branch holds no unique
+    commit so nothing is lost, and origin was never pushed. The caller must hold
+    the project git lock. Returns True when the slot ended up unregistered.
     """
     try:
         cfg = db_git.get_config(project_id)
@@ -2248,7 +2400,10 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
         # (-D) — the discarded work is intentionally lost, matching the meaning of
         # disposal.
         disposed = _is_group_disposed(group_id)
-        if status not in CLEANUP_STATUSES and not disposed:
+        # 0199 B0001: a force-discarded no-work slot is cleaned up exactly like a
+        # disposed one — worktree torn down and the (base-tip, no-unique-commit)
+        # local work branch force-deleted, with NO merge and NO push.
+        if status not in CLEANUP_STATUSES and not disposed and not force_discard:
             return False
         branch = (state.get("branch") or "").strip()
         if not branch:
@@ -2279,8 +2434,11 @@ def _cleanup_group_slot(project_id: str, group_id: str) -> bool:
             _run_git(["worktree", "prune"], cwd=base_root)
 
         if _ref_exists(base_root, f"refs/heads/{branch}"):
-            if disposed:
-                # Discarded, unmerged work — force-delete (a safe `-d` would refuse).
+            if disposed or force_discard:
+                # disposed: unmerged work intentionally thrown away.
+                # force_discard (0199): branch sits at base tip with no unique
+                # commit, so -D loses nothing; origin was never pushed, so no
+                # origin ref to retro-delete below. Force-delete (`-d` refuses).
                 proc = _run_git(["branch", "-D", branch], cwd=base_root)
             elif status == "merged":
                 proc = _run_git(["branch", "-d", branch], cwd=base_root)
@@ -2445,8 +2603,13 @@ def project_git_status(project_id: str) -> dict:
     for row in rows:
         if (row.get("status") or "none") == "none" and _group_root_wf_done(row["group_id"]):
             try:
-                _set_status(row["group_id"], "awaiting_choice")
-                row["status"] = "awaiting_choice"
+                # 0199 B0001: proven no-work groups are discarded (torn down, no
+                # merge/push) here; real groups still transition to awaiting_choice.
+                # A discarded group's slot is unregistered by the cleanup, so it
+                # drops out of every list below (SLOT/PENDING/CLEANUP filters).
+                row["status"] = _decide_pending_transition(
+                    project_id, cfg, row, row["group_id"]
+                )
             except Exception:
                 # One broken group must not sink the whole aggregation
                 # (0115 batch-fetch exception-isolation lesson, L §5).
