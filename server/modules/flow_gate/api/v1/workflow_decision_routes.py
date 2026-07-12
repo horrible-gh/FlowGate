@@ -684,7 +684,9 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     # TR0079.0003 rework (3rd pass): editing the workflow sequence of a
     # document in a disposed (DC) group is a forward write and must be rejected at the
     # server, mirroring decide/advance/review-request above.
-    _disposed = _disposed_group_response(body.doc_id, _db_documents.get_by_id(body.doc_id))
+    _pre_doc = _db_documents.get_by_id(body.doc_id)
+    _prev_review_status = _pre_doc.get("doc_review_status") if _pre_doc else None
+    _disposed = _disposed_group_response(body.doc_id, _pre_doc)
     if _disposed is not None:
         return _disposed
 
@@ -712,6 +714,53 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         return JSONResponse(status_code=400, content={"error": msg})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": "internal_error", "detail": str(exc)})
+
+    # SSE broadcast: AI sequence edits happen through a worker PATCH, so the user's
+    # browser does not receive the modal-local saved event. Reuse the existing group
+    # refresh pipeline so explorer/open documents silently refetch the updated steps.
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            broadcast_event_threadsafe,
+            FlowEvent,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        _post_doc = _db_documents.get_by_id(body.doc_id)
+        _next_review_status = _post_doc.get("doc_review_status") if _post_doc else None
+        _project = _post_doc.get("project_id") if _post_doc else ((_pre_doc or {}).get("project_id"))
+        _group_id = _post_doc.get("group_id") if _post_doc else ((_pre_doc or {}).get("group_id"))
+        review_status_delivered = 0
+        if _prev_review_status != _next_review_status:
+            review_status_delivered = broadcast_event_threadsafe(FlowEvent(
+                event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
+                payload={
+                    "doc_id": body.doc_id,
+                    "prev_status": _prev_review_status,
+                    "next_status": _next_review_status,
+                    "rejection_reason": None,
+                    "actor_user_id": None if auth.get("action_scope") is not None else auth.get("issued_to"),
+                },
+                audience="*",
+                doc_id=body.doc_id,
+                project=_project,
+                group_id=_group_id,
+            ))
+        if _group_id:
+            group_refresh_delivered = broadcast_event_threadsafe(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": _group_id, "reason": "workflow_sequence_edited"},
+                audience="*",
+                doc_id=body.doc_id,
+                project=_project,
+                group_id=_group_id,
+            ))
+            if review_status_delivered == 0 and group_refresh_delivered == 0:
+                _log.info(
+                    "workflow sequence edit SSE had no active subscribers for %s",
+                    body.doc_id,
+                )
+    except Exception as _sse_exc:
+        _log.warning("workflow sequence edit SSE broadcast failed for %s: %s", body.doc_id, _sse_exc)
 
     return JSONResponse(status_code=200, content=result)
 
