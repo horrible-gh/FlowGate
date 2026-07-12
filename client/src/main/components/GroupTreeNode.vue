@@ -51,6 +51,9 @@
         {{ t('main.group_tree_node.text_27') }}
       </ContextMenuItem>
       <template v-if="node.node_type === 'group'">
+        <ContextMenuItem v-if="canIssueToken" icon="fa-solid fa-key" @click="openIssueToken">
+          {{ t('main.group_tree_node.issue_token') }}
+        </ContextMenuItem>
         <ContextMenuItem v-if="isEmptyGroup" icon="fa-solid fa-file-circle-plus" @click="openCreateRequirement">
           {{ t('main.group_tree_node.new_requirement') }}
         </ContextMenuItem>
@@ -96,6 +99,13 @@
       :submitting="disposing"
       @confirm="onConfirmDispose"
     />
+    <GroupTokenIssueModal
+      v-if="node.node_type === 'group'"
+      v-model:visible="showTokenModal"
+      :group-id="node.id"
+      :group-name="node.label"
+      :project-id="projectId"
+    />
   </li>
 </template>
 
@@ -103,10 +113,12 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
+import { hasDocumentReadPermission } from '@shared/auth'
 import { type GroupNode } from '../stores/explorer'
 import { useExplorerStore } from '../stores/explorer'
 import CreateEditGroupModal from './CreateEditGroupModal.vue'
 import GroupDiscardModal from './GroupDiscardModal.vue'
+import GroupTokenIssueModal from './GroupTokenIssueModal.vue'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import { useToast } from './common/useToast'
@@ -168,6 +180,11 @@ const editGroupData = ref<{ group_id: string; title: string; module: string; pri
 const editModuleData = ref<{ module_id: string; name: string; title: string } | undefined>(undefined)
 const showDisposeConfirm = ref(false)
 const disposing = ref(false)
+const showTokenModal = ref(false)
+
+// Group token issuance needs perm_document_read (the same gate /token/issue enforces).
+// Hide the menu item when the user cannot issue, rather than offering an action that 403s.
+const canIssueToken = computed(() => hasDocumentReadPermission())
 
 const isExpandable = computed(() => props.node.node_type !== 'document')
 
@@ -334,6 +351,11 @@ function openCreateRequirement() {
 function openDisposeConfirm() {
   showCtx.value = false
   showDisposeConfirm.value = true
+}
+
+function openIssueToken() {
+  showCtx.value = false
+  showTokenModal.value = true
 }
 
 function onGroupSaved(groupId: string) {
