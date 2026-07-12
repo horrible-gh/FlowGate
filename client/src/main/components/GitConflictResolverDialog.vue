@@ -135,11 +135,11 @@
                   <div v-else class="git-conflict-sides">
                     <div class="git-conflict-side ours">
                       <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
-                      <pre><span v-for="(line, lineIdx) in seg.ours" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      <pre><span v-for="line in chunkDiff(seg).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                     <div class="git-conflict-side theirs">
                       <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
-                      <pre><span v-for="(line, lineIdx) in seg.theirs" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      <pre><span v-for="line in chunkDiff(seg).theirs" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                   </div>
                 </article>
@@ -179,6 +179,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   useConflictChunks,
+  buildChunkSideDiff,
   applyChunkChoice,
   chunkIndexes,
   chunkLabel,
@@ -192,6 +193,7 @@ import {
   unresolvedChunkCount,
   type ChunkChoice,
   type ChunkSegment,
+  type ChunkSideDiff,
   type ConflictFileState,
   type ConflictSegment,
 } from '../composables/useConflictChunks'
@@ -281,6 +283,9 @@ const aiSuggestionRemaining = computed(() =>
 
 function recommendedChoice(seg: ChunkSegment): ChunkChoice {
   return recommendChunkChoice(seg)
+}
+function chunkDiff(seg: ChunkSegment): ChunkSideDiff {
+  return buildChunkSideDiff(seg.ours, seg.theirs)
 }
 function choiceLabel(choice: ChunkChoice): string {
   if (!choice) return ''
@@ -866,6 +871,36 @@ watch(
   overflow-wrap: anywhere;
 }
 .git-empty-side { display: block; padding: 4px 10px; color: #94a3b8; font-style: italic; }
+.git-code-line.diff-removed {
+  background: #fff1f2;
+}
+.git-code-line.diff-added {
+  background: #ecfdf5;
+}
+.git-code-line.diff-changed {
+  background: #fff7ed;
+}
+.git-code-line.diff-common {
+  background: transparent;
+}
+.git-code-token.diff-token-removed,
+.git-code-token.diff-token-added,
+.git-code-token.diff-token-changed {
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.git-code-token.diff-token-removed {
+  color: #9f1239;
+  background: #ffe4e6;
+}
+.git-code-token.diff-token-added {
+  color: #047857;
+  background: #bbf7d0;
+}
+.git-code-token.diff-token-changed {
+  color: #9a3412;
+  background: #fed7aa;
+}
 @media (max-width: 760px) {
   .git-conflict-overlay {
     padding: 0;

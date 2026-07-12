@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyChunkChoice,
+  buildChunkSideDiff,
   chunkIndexes,
   parseConflictFile,
   recommendChunkChoice,
@@ -77,5 +78,24 @@ describe('conflict chunk recommendations', () => {
     const parsedChunk = parsed?.find((segment): segment is ChunkSegment => segment.kind === 'chunk')
     expect(parsedChunk).toBeTruthy()
     expect(recommendChunkChoice(parsedChunk!)).toBe('theirs')
+  })
+  it('builds display-only line and token diffs without changing chunk source lines', () => {
+    const seg = chunk(['same\n', 'value = 1\n', 'ours only\n'], ['same\n', 'value = 2\n', 'theirs only\n'])
+    const diff = buildChunkSideDiff(seg.ours, seg.theirs)
+
+    expect(diff.ours.map((line) => line.status)).toEqual(['common', 'changed', 'changed'])
+    expect(diff.theirs.map((line) => line.status)).toEqual(['common', 'changed', 'changed'])
+    expect(diff.ours[1].tokens.some((token) => token.status === 'changed' && token.text === '1')).toBe(true)
+    expect(diff.theirs[1].tokens.some((token) => token.status === 'changed' && token.text === '2')).toBe(true)
+    expect(seg.ours).toEqual(['same\n', 'value = 1\n', 'ours only\n'])
+    expect(seg.theirs).toEqual(['same\n', 'value = 2\n', 'theirs only\n'])
+  })
+
+  it('marks unmatched lines as removed or added in display diffs', () => {
+    const diff = buildChunkSideDiff(['same\n', 'old\n'], ['same\n', 'new\n', 'extra\n'])
+
+    expect(diff.ours.map((line) => line.status)).toEqual(['common', 'changed'])
+    expect(diff.theirs.map((line) => line.status)).toEqual(['common', 'changed', 'added'])
+    expect(diff.theirs[2].tokens).toEqual([{ text: 'extra', status: 'added' }])
   })
 })
