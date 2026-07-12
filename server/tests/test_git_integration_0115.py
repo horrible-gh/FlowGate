@@ -43,7 +43,58 @@ _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
 _GIT = shutil.which("git") is not None
-needs_git = pytest.mark.skipif(not _GIT, reason="git binary not available")
+
+
+def _git_can_clone_local_file_url() -> bool:
+    """Probe whether this platform's git can clone a local ``file://`` origin.
+
+    The real-git E2E suite provisions bare origins and hands their ``file://``
+    URL to the service's ``git clone`` (a native subprocess). On POSIX this is
+    the normal same-host mirror path. git-for-Windows, however, cannot clone a
+    ``file:///DRIVE:/...`` URL through a native subprocess — it strips the
+    scheme to ``/C:/...`` and reports "does not appear to be a git repository".
+    That is an environment capability gap, not a defect in the code under test,
+    so the E2E classes must *skip* (never *fail*) where the capability is
+    absent. On the Linux deployment the probe passes and the suite runs in full.
+    """
+    if not _GIT:
+        return False
+    probe = Path(tempfile.mkdtemp(prefix="fg-git-probe-"))
+    ident = ["-c", "user.name=Probe", "-c", "user.email=probe@probe"]
+
+    def _run(args, cwd=None):
+        return subprocess.run(
+            ["git", *args], cwd=str(cwd) if cwd else None,
+            capture_output=True, text=True,
+        )
+    try:
+        bare = probe / "o.git"
+        work = probe / "w"
+        if _run(["init", "--bare", "-b", "main", str(bare)]).returncode:
+            return False
+        if _run(["init", "-b", "main", str(work)]).returncode:
+            return False
+        (work / "f.txt").write_text("probe\n", encoding="utf-8")
+        if _run([*ident, "add", "-A"], cwd=work).returncode:
+            return False
+        if _run([*ident, "commit", "-m", "probe"], cwd=work).returncode:
+            return False
+        _run(["remote", "add", "origin", str(bare)], cwd=work)
+        if _run([*ident, "push", "origin", "main"], cwd=work).returncode:
+            return False
+        return _run(["clone", bare.as_uri(), str(probe / "c")]).returncode == 0
+    except Exception:
+        return False
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+
+
+_FILE_CLONE = _git_can_clone_local_file_url()
+needs_git = pytest.mark.skipif(
+    not (_GIT and _FILE_CLONE),
+    reason="git binary or local file:// clone capability unavailable "
+           "(e.g. git-for-Windows cannot clone file:///DRIVE:/... via subprocess)",
+)
 
 
 class _MockTxn:
@@ -148,6 +199,11 @@ class TestMigration:
         mock_db, _ = tmp_db
         cols = [r["name"] for r in mock_db.fetch_all("PRAGMA table_info(remote_tool_grant)")]
         assert "group_id" in cols
+
+    def test_merge_session_finalize_action_column(self, tmp_db):
+        mock_db, _ = tmp_db
+        cols = [r["name"] for r in mock_db.fetch_all("PRAGMA table_info(git_merge_session)")]
+        assert "finalize_action" in cols
 
 
 # ── branch naming (L0006 §2.1) ───────────────────────────────────────────────
@@ -537,7 +593,8 @@ class TestGitEndToEnd:
 
         state = svc.get_finalize_state(self.GROUP)["state"]
         assert state["status"] == "waiting"
-        assert state["choices"] == ["merge", "push", "wait"]
+        assert state["choices"] == ["merge", "merge_only", "wait"]
+        assert state["aux_choices"] == ["push"]
 
         subject = "fix(git_service): use confirmed merge subject"
         out = svc.finalize(self.GROUP, "merge", commit_message=subject)
@@ -574,6 +631,46 @@ class TestGitEndToEnd:
         heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
         assert "refs/heads/gitprj_default_0101" in heads
 
+    def test_merge_only_unpushed_status_and_unmerge(self, origin_repo):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0105"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0105")
+        (wt / "local-only.txt").write_text("not pushed yet\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        out = svc.finalize(group, "merge_only", commit_message="feat: local merge only")
+        assert out["result"]["status"] == "merged"
+        assert out["result"]["pushed"] is False
+        merge_commit = out["result"]["merge_commit"]
+
+        assert "local-only.txt" in _git(["ls-tree", "--name-only", "main"], cwd=src_root("GitProj", "main"))
+        assert "local-only.txt" not in _git(
+            ["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]
+        )
+
+        status = svc.project_git_status("gitprj")["status"]
+        unpushed = status["unpushed"]
+        assert unpushed["count"] == 1
+        assert unpushed["commit_count"] >= unpushed["count"]
+        assert unpushed["merges"][0]["group_id"] == group
+        assert unpushed["merges"][0]["can_unmerge"] is True
+
+        undo = svc.unmerge(group, merge_commit)["result"]
+        assert undo["unmerged"] is True
+        assert undo["group_status"] == "awaiting_choice"
+        assert undo["reprovisioned"] is True
+
+        state = db_git.get_state(group)
+        assert state["status"] == "awaiting_choice"
+        assert state["merge_commit"] is None
+        assert state["worktree_registered"] == 1
+        assert (wt / "local-only.txt").read_text(encoding="utf-8") == "not pushed yet\n"
+        assert "local-only.txt" not in _git(["ls-tree", "--name-only", "main"], cwd=src_root("GitProj", "main"))
+
     def test_conflict_resolve_flow(self, origin_repo):
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
@@ -597,11 +694,16 @@ class TestGitEndToEnd:
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
         assert out["result"]["conflict_files"] == ["shared.txt"]
-        # the conflict session holds the project lock (L0006 §2.8)
-        assert db_git.get_lock("gitprj")["holder"] == f"merge:{merge_id}"
-        # a competing finalize on another group is locked out (409 git_busy)
+        # 0205: conflict sessions no longer hold the project mutex; the base is
+        # protected by the open-session guard instead.
+        assert db_git.get_lock("gitprj") is None
+        assert svc.open_merge_session_of_project("gitprj")["merge_id"] == merge_id
         group2 = "gitprj.default.0103"
-        assert svc.ensure_worktree("gitprj", "default", group2) == "failed"  # lock busy
+        assert svc.ensure_worktree("gitprj", "default", group2) == "ok"
+        db_git.set_status(group2, "awaiting_choice")
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group2, "merge")
+        assert exc.value.code == "merge_conflict_open"
 
         conflicts = svc.list_conflicts(group, merge_id)
         assert conflicts["files"][0]["path"] == "shared.txt"
@@ -1364,3 +1466,4 @@ class TestNoWorkAutoDiscard0199:
         # push of a no-work group must NOT leak an empty branch to origin.
         assert "gitnoop_default_0214" not in self._origin_heads(noop_origin)
         assert db_git.get_state(group)["worktree_registered"] == 0
+

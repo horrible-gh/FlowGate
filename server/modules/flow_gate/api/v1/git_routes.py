@@ -10,6 +10,7 @@ POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
 POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
 POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
+POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
@@ -340,6 +341,25 @@ def post_group_finalize(
             body.action if body else None,
             body.commit_message if body else None,
         )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class UnmergeBody(BaseModel):
+    merge_commit: str
+
+
+@router.post("/groups/{group_id}/git/unmerge")
+def post_group_unmerge(
+    group_id: str,
+    body: UnmergeBody,
+    user=Depends(get_current_user),
+):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.unmerge(group_id, body.merge_commit)
     except GitServiceError as exc:
         return _guard(exc)
 

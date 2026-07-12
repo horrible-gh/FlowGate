@@ -100,7 +100,12 @@ ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 # Per-project last-attempt ledger in the generic system_settings KV (no DDL).
 ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
-ACTION_VALUES = ("merge", "push", "wait")
+ACTION_VALUES = ("merge", "merge_only", "push", "wait")
+DEFAULT_FINALIZE_ACTION_VALUES = ("merge", "push", "wait")
+FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
+FINALIZE_AUX_CHOICES = ("push",)
+SESSION_ACTION_DEFAULT = "merge"
+UNMERGE_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 # flowgate.default.0162 L §1 — group git status subsets.
 PENDING_STATUSES = ("awaiting_choice", "waiting", "conflict")  # "finalize pending"
 SLOT_STATUSES = ("none", "awaiting_choice", "merging", "conflict", "waiting")  # not terminal
@@ -552,7 +557,7 @@ def _count_pending(project_id: str) -> int:
     return sum(1 for r in rows if (r.get("status") in PENDING_STATUSES))
 
 
-def _emit_pending_changed(project_id: str, group_id: str, new_status: str) -> None:
+def _emit_pending_changed(project_id: str, group_id: Optional[str], new_status: Optional[str]) -> None:
     _emit("git_pending_changed", project_id, group_id, {
         "project": project_id,
         "group_id": group_id,
@@ -706,7 +711,7 @@ def save_config(project_id: str, body: dict) -> dict:
     if provider not in PROVIDER_VALUES:
         raise GitServiceError(422, "invalid_request", f"invalid provider: {provider!r}")
     action = body.get("default_finalize_action") or "wait"
-    if action not in ACTION_VALUES:
+    if action not in DEFAULT_FINALIZE_ACTION_VALUES:
         raise GitServiceError(
             422, "invalid_request", f"invalid default_finalize_action: {action!r}"
         )
@@ -1386,7 +1391,7 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 _NONE_STATE = {
     "branch": None, "base_branch": None, "status": "none", "default_action": None,
-    "choices": [], "ahead_count": None, "behind_count": None, "merge_id": None,
+    "choices": [], "aux_choices": [], "ahead_count": None, "behind_count": None, "merge_id": None,
 }
 
 
@@ -1595,13 +1600,15 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     else:
         commit_message = None
 
+    actionable = status in ("awaiting_choice", "waiting")
     return {"ok": True, "state": {
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
         "status": status,
         "default_action": cfg.get("default_finalize_action") or "wait",
-        "choices": list(ACTION_VALUES),
+        "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
+        "aux_choices": list(FINALIZE_AUX_CHOICES if actionable else ()),
         "ahead_count": ahead,
         "behind_count": behind,
         "merge_id": state.get("merge_id"),
@@ -2028,7 +2035,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
     # 0205 L §2.2: a merge mutates the shared base checkout — refuse while another
     # group's unresolved conflict session holds it. Checked BEFORE the lock wait
     # (cheap reject) and again after (race close, below). push never touches base.
-    if action == "merge":
+    if action in ("merge", "merge_only"):
         guard_base_free(project_id)
 
     if not git_available():
@@ -2043,7 +2050,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
-        if action == "merge":
+        if action in ("merge", "merge_only"):
             # 2nd gate: a conflict session may have opened while we waited on the
             # lock (conflict no longer holds it — 0205 §2.1), so re-check now.
             guard_base_free(project_id)
@@ -2121,7 +2128,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             _cleanup_group_slot(project_id, group_id)
             return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
 
-        # action == "merge"
+        # action == "merge" / "merge_only"
         if _dirty(base_root, include_untracked=False):
             # E3 — never auto-stash the server's own checkout. Name the dirty files
             # so the FE can tell the operator exactly what to commit or revert in
@@ -2152,15 +2159,17 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             cwd=base_root,
         )
         if proc.returncode == 0:
-            push = _run_git(
-                ["push", "origin", base_branch],
-                cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-            )
-            if push.returncode != 0:
-                # E6 — atomicity: never report merged unless the push landed.
-                _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
-                _set_status(group_id, "waiting")
-                raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
+            wants_push = action == "merge"
+            if wants_push:
+                push = _run_git(
+                    ["push", "origin", base_branch],
+                    cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+                )
+                if push.returncode != 0:
+                    # E6 — atomicity: never report merged unless the push landed.
+                    _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
+                    _set_status(group_id, "waiting")
+                    raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
             head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
             _set_status(group_id, "merged", merge_commit=merge_commit)
@@ -2169,13 +2178,14 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             _cleanup_group_slot(project_id, group_id)
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id,
-                "action": "merge", "status": "merged", "merge_commit": merge_commit,
+                "action": action, "status": "merged", "merge_commit": merge_commit,
+                "pushed": wants_push,
             })
             return {
                 "ok": True,
                 "result": {
-                    "action": "merge", "status": "merged", "merge_commit": merge_commit,
-                    "pushed": True, "merge_id": None, "conflict_files": [],
+                    "action": action, "status": "merged", "merge_commit": merge_commit,
+                    "pushed": wants_push, "merge_id": None, "conflict_files": [],
                 },
             }
 
@@ -2187,7 +2197,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             _run_git(["merge", "--abort"], cwd=base_root)
             _set_status(group_id, "waiting")
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-        merge_id = db_git.create_session(group_id, files)
+        merge_id = db_git.create_session(group_id, files, finalize_action=action)
         _set_status(group_id, "conflict", merge_id=merge_id)
         # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
         # is expressed by the persistent 'conflict' state + open session — which
@@ -2203,7 +2213,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         return {
             "ok": True,
             "result": {
-                "action": "merge", "status": "conflict", "merge_commit": None,
+                "action": action, "status": "conflict", "merge_commit": None,
                 "pushed": False, "merge_id": merge_id, "conflict_files": files,
             },
         }
@@ -2285,7 +2295,7 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
 def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete: bool) -> dict:
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    _session, cfg, project_id, base_root = _session_context(group_id, merge_id)
+    session, cfg, project_id, base_root = _session_context(group_id, merge_id)
     db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     session_paths = {row["path"] for row in db_git.session_files(merge_id)}
 
@@ -2340,18 +2350,22 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
     )
     if proc.returncode != 0:
         raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    push = _run_git(
-        ["push", "origin", base_branch],
-        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
-    )
-    if push.returncode != 0:
-        # E6 — roll the merge commit back; the session ends and the group re-chooses.
-        _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
-        db_git.close_session(merge_id, "aborted")
-        _set_status(group_id, "waiting")
-        db_git.release_lock(project_id, f"merge:{merge_id}")
-        raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
+    session_action = (session.get("finalize_action") or SESSION_ACTION_DEFAULT)
+    pushed = False
+    if session_action != "merge_only":
+        push = _run_git(
+            ["push", "origin", base_branch],
+            cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        )
+        if push.returncode != 0:
+            # E6 — roll the merge commit back; the session ends and the group re-chooses.
+            _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
+            db_git.close_session(merge_id, "aborted")
+            _set_status(group_id, "waiting")
+            db_git.release_lock(project_id, f"merge:{merge_id}")
+            raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
+        pushed = True
 
     head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
     merge_commit = (head.stdout or "").strip() or None
@@ -2363,12 +2377,13 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
     db_git.release_lock(project_id, f"merge:{merge_id}")
     _emit("git_finalize_done", project_id, group_id, {
         "project": project_id, "group_id": group_id,
-        "action": "merge", "status": "merged", "merge_commit": merge_commit,
+        "action": session_action, "status": "merged", "merge_commit": merge_commit,
+        "pushed": pushed,
     })
     return {
         "ok": True,
         "result": {
-            "status": "merged", "merge_commit": merge_commit, "pushed": True,
+            "status": "merged", "merge_commit": merge_commit, "pushed": pushed,
             "remaining_conflicts": [],
         },
     }
@@ -2803,6 +2818,104 @@ def _base_ahead_behind(
     return ahead, behind
 
 
+def _short_head(repo: Path) -> Optional[str]:
+    proc = _run_git(["rev-parse", "--short", "HEAD"], cwd=repo)
+    return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
+
+
+def _rev_parse(repo: Path, rev: str, *, short: bool = False) -> Optional[str]:
+    args = ["rev-parse"]
+    if short:
+        args.append("--short")
+    args.append(rev)
+    proc = _run_git(args, cwd=repo)
+    return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
+
+
+def _full_sha_matches(full_sha: str, candidate: str) -> bool:
+    full = (full_sha or "").lower()
+    cand = (candidate or "").lower()
+    return bool(full and cand and (full.startswith(cand) or cand.startswith(full)))
+
+
+def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[list[dict]]:
+    if base_root is None or not git_available() or not (base_root / ".git").exists():
+        return None
+    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+        return None
+    proc = _run_git(
+        [
+            "log", "--first-parent", f"origin/{base_branch}..{base_branch}",
+            "--format=%H%x1f%P%x1f%cI%x1f%s",
+        ],
+        cwd=base_root,
+    )
+    if proc.returncode != 0:
+        return None
+    commits: list[dict] = []
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split("\x1f", 3)
+        if len(parts) != 4:
+            continue
+        full_sha, parents, committed_at, subject = parts
+        parent_list = [p for p in parents.split() if p]
+        commits.append({
+            "full_sha": full_sha,
+            "parents": parent_list,
+            "committed_at": committed_at,
+            "subject": subject,
+        })
+    return commits
+
+
+def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
+    matches: list[str] = []
+    for row in db_git.list_states_of_project_any(project_id):
+        if row.get("status") != "merged" or not row.get("merge_commit"):
+            continue
+        if full_sha.lower().startswith(str(row["merge_commit"]).lower()):
+            matches.append(row["group_id"])
+    return matches[0] if len(matches) == 1 else None
+
+
+def _build_unpushed(
+    project_id: str,
+    base_root: Optional[Path],
+    base_branch: str,
+    commit_count: Optional[int] = None,
+) -> dict:
+    commits = _unpushed_commits(base_root, base_branch)
+    if commits is None:
+        return {"count": 0, "commit_count": 0, "merges": [], "measured": False}
+    merge_commits = [c for c in commits if len(c["parents"]) >= 2]
+    merges: list[dict] = []
+    top_sha = commits[0]["full_sha"] if commits else None
+    for c in merge_commits:
+        group_id = _ledger_group_by_merge_sha(project_id, c["full_sha"])
+        is_top = bool(top_sha and c["full_sha"] == top_sha)
+        can_unmerge = is_top and group_id is not None
+        if can_unmerge:
+            blocked_reason = None
+        elif group_id is None:
+            blocked_reason = "unmapped"
+        else:
+            blocked_reason = "not_top"
+        merges.append({
+            "merge_commit": c["full_sha"][:7],
+            "group_id": group_id,
+            "subject": c["subject"],
+            "merged_at": c["committed_at"],
+            "can_unmerge": can_unmerge,
+            "blocked_reason": blocked_reason,
+        })
+    return {
+        "count": len(merges),
+        "commit_count": commit_count if commit_count is not None else len(commits),
+        "merges": merges,
+        "measured": True,
+    }
+
+
 def project_git_status(project_id: str) -> dict:
     """GET …/projects/{id}/git/status — status + finalize-pending list + count.
 
@@ -2907,6 +3020,7 @@ def project_git_status(project_id: str) -> dict:
     except Exception:
         _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
         base_dirty_files = []
+    unpushed = _build_unpushed(project_id, base_root, base_branch, ahead)
     return {"ok": True, "status": {
         "enabled": True, "base_branch": base_branch,
         "base_path_state": base_path_state,
@@ -2915,6 +3029,7 @@ def project_git_status(project_id: str) -> dict:
         "slots": slots, "pending": pending, "pending_count": len(pending),
         "cleanable_count": cleanable_count,
         "provision_failures": provision_failures,
+        "unpushed": unpushed,
     }}
 
 
@@ -3023,9 +3138,120 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
         )
         if proc.returncode != 0:
             raise GitServiceError(500, "push_rejected", _last_line(proc.stderr))
-        return {"ok": True, "result": {"pushed": True, "branch": branch}}
+        ahead, behind = _base_ahead_behind(cwd, base_branch) if pushes_base else (None, None)
+        if pushes_base:
+            _emit_pending_changed(project_id, None, None)
+        return {"ok": True, "result": {
+            "pushed": True, "branch": branch,
+            "ahead_count": ahead, "behind_count": behind,
+        }}
     finally:
         db_git.release_lock(project_id, holder)
+
+
+def unmerge(group_id: str, merge_commit: str) -> dict:
+    """Undo the latest unpushed merge for a group and re-open its worktree."""
+    req_sha = (merge_commit or "").strip().lower()
+    if not UNMERGE_SHA_RE.match(req_sha):
+        raise GitServiceError(
+            422, "invalid_request",
+            "merge_commit must be a 7 to 40 character hexadecimal sha prefix.",
+        )
+    project_id = _project_of_group(group_id)
+    cfg = _require_enabled_config(project_id)
+    state = db_git.get_state(group_id)
+    ledger_sha = str((state or {}).get("merge_commit") or "").lower()
+    if (
+        state is None
+        or (state.get("status") or "none") != "merged"
+        or not ledger_sha
+        or _is_group_disposed(group_id)
+    ):
+        raise GitServiceError(409, "invalid_state", "group is not an unmergeable merged group")
+    if not _full_sha_matches(req_sha, ledger_sha):
+        raise GitServiceError(409, "stale_target", "requested merge commit does not match this group")
+
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    project_name = _project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    base_root = src_root(project_name, base_branch)
+    if _judge_base_slot(base_root, base_branch) != "checkout":
+        raise GitServiceError(409, "invalid_state", "base checkout is not available")
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+
+    guard_base_free(project_id)
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        guard_base_free(project_id)
+        commits = _unpushed_commits(base_root, base_branch)
+        if commits is None:
+            raise GitServiceError(409, "invalid_state", "unpushed base history is not measurable")
+        if not commits:
+            raise GitServiceError(409, "already_pushed", "merge commit is no longer unpushed")
+
+        top = commits[0]
+        target_in_chain = any(_full_sha_matches(c["full_sha"], ledger_sha) for c in commits)
+        if not _full_sha_matches(top["full_sha"], ledger_sha):
+            if target_in_chain:
+                raise GitServiceError(
+                    409, "not_top_merge",
+                    "a newer unpushed commit blocks unmerge",
+                    details={
+                        "top_merge_commit": top["full_sha"][:7],
+                        "top_group_id": _ledger_group_by_merge_sha(project_id, top["full_sha"]),
+                    },
+                )
+            raise GitServiceError(409, "already_pushed", "merge commit is no longer unpushed")
+        if len(top["parents"]) < 2 or not _full_sha_matches(top["full_sha"], req_sha):
+            raise GitServiceError(
+                409, "stale_target",
+                "requested merge commit is no longer the current top merge",
+                details={"current_top": top["full_sha"][:7]},
+            )
+
+        branch = (state.get("branch") or worktree_branch_name(project_id, _module_of(group_id), group_id)).strip()
+        restored_head = _rev_parse(base_root, f"{top['full_sha']}^2")
+        if not restored_head:
+            raise GitServiceError(500, "git_error", "cannot resolve merged work branch head")
+        if _ref_exists(base_root, f"refs/heads/{branch}"):
+            current = _rev_parse(base_root, f"refs/heads/{branch}")
+            if current != restored_head:
+                raise GitServiceError(
+                    500, "git_error",
+                    f"local branch '{branch}' exists at an unexpected commit",
+                )
+        else:
+            proc = _run_git(["branch", branch, f"{top['full_sha']}^2"], cwd=base_root)
+            if proc.returncode != 0:
+                raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+
+        _set_status(group_id, "awaiting_choice")
+        reset = _run_git(["reset", "--hard", f"{top['full_sha']}^1"], cwd=base_root)
+        if reset.returncode != 0:
+            _set_status(group_id, "merged", merge_commit=ledger_sha)
+            raise GitServiceError(500, "git_error", _last_line(reset.stderr))
+        base_head = _short_head(base_root)
+    finally:
+        db_git.release_lock(project_id, holder)
+
+    reprovision_result = ensure_worktree(project_id, _module_of(group_id), group_id, trigger="unmerge")
+    return {"ok": True, "result": {
+        "unmerged": True,
+        "merge_commit": top["full_sha"][:7],
+        "base_head": base_head,
+        "group_status": "awaiting_choice",
+        "reprovisioned": reprovision_result == "ok",
+    }}
 
 
 # ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
@@ -3271,3 +3497,4 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
         ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
+

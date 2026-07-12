@@ -15,7 +15,7 @@ from typing import Any, Optional
 from .connection import get_store, now_iso
 
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
-ACTION_VALUES = ("merge", "push", "wait")
+ACTION_VALUES = ("merge", "merge_only", "push", "wait")
 STATE_VALUES = (
     "none", "awaiting_choice", "merging", "conflict", "merged", "pushed", "waiting",
 )
@@ -160,15 +160,18 @@ def list_states_of_project(project_id: str) -> list[dict]:
 
 # ── git_merge_session (+ files) ───────────────────────────────────────────────
 
-def create_session(group_id: str, files: list[str]) -> int:
+def create_session(group_id: str, files: list[str], finalize_action: str | None = None) -> int:
     """Create an open merge session with its conflict file set (one transaction)."""
+    if finalize_action is not None and finalize_action not in ACTION_VALUES:
+        raise ValueError(f"invalid finalize action: {finalize_action!r}")
     now = now_iso()
     store = get_store()
     with store.transaction():
         store._execute(
-            "INSERT INTO git_merge_session (group_id, status, created_at, touched_at) "
-            "VALUES (?, 'open', ?, ?)",
-            [group_id, now, now],
+            "INSERT INTO git_merge_session "
+            "(group_id, status, finalize_action, created_at, touched_at) "
+            "VALUES (?, 'open', ?, ?, ?)",
+            [group_id, finalize_action, now, now],
         )
         row = store._fetch_one(
             "SELECT merge_id FROM git_merge_session "

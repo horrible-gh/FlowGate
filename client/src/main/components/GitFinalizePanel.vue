@@ -26,6 +26,19 @@
             <span class="git-choice-desc">{{ actionDesc(c) }}</span>
           </label>
         </div>
+        <div v-if="state.aux_choices?.length" class="git-aux">
+          <button class="git-aux-toggle" type="button" @click="auxOpen = !auxOpen">
+            <AppIcon :name="auxOpen ? 'caret-down' : 'caret-right'" />
+            {{ t('main.git_finalize.aux_toggle') }}
+          </button>
+          <div v-if="auxOpen" class="git-choice-row git-choice-row--aux">
+            <label v-for="c in state.aux_choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
+              <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
+              <span class="git-choice-label">{{ actionLabel(c) }}</span>
+              <span class="git-choice-desc">{{ actionDesc(c) }}</span>
+            </label>
+          </div>
+        </div>
         <div v-if="showCommitInput" class="git-commit-msg">
           <div class="git-commit-msg-hd">
             <label class="git-commit-msg-label" for="git-commit-subject">
@@ -158,6 +171,7 @@ interface GitFinState {
   status: string
   default_action: string | null
   choices: string[]
+  aux_choices?: string[]
   ahead_count: number | null
   behind_count: number | null
   merge_id: number | null
@@ -176,6 +190,7 @@ const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
 const conflictDialogOpen = ref(false)
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const auxOpen = ref(false)
 
 const statusLabel = computed(() =>
   state.value ? t(`main.git_finalize.status.${state.value.status}`) : '',
@@ -196,7 +211,7 @@ const aheadBehindText = computed(() => {
   if (!s || s.ahead_count == null || s.behind_count == null) return ''
   return t('main.git_finalize.ahead_behind', { ahead: s.ahead_count, behind: s.behind_count })
 })
-const showCommitInput = computed(() => chosen.value === 'merge' || chosen.value === 'push')
+const showCommitInput = computed(() => ['merge', 'merge_only', 'push'].includes(chosen.value))
 const commitMessageBlank = computed(() => !commitMessage.value.trim())
 const commitSourceLabel = computed(() =>
   commitSource.value ? t(`main.git_finalize.commit_source.${commitSource.value}`) : '',
@@ -242,6 +257,7 @@ async function fetchState() {
     )
     state.value = data.state
     chosen.value = data.state.default_action || 'wait'
+    auxOpen.value = !!data.state.aux_choices?.includes(chosen.value)
     const cm = data.state.commit_message
     commitSuggested.value = cm?.suggested || ''
     commitSource.value = cm?.source || null
@@ -322,7 +338,8 @@ async function postFinalize(
       if (r?.status === 'conflict') {
         showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
       } else if (r?.status === 'merged') {
-        showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
+        const key = r?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
+        showToast(t(key, { commit: r.merge_commit || '' }), 'success')
       } else if (r?.status === 'pushed') {
         showToast(t('main.git_finalize.pushed_toast'), 'success')
       } else if (r?.status === 'waiting') {
@@ -366,7 +383,8 @@ async function submitResolve() {
     } else if (data.result?.status === 'merged') {
       mergeCommit.value = data.result.merge_commit || null
       conflictDialogOpen.value = false
-      showToast(t('main.git_finalize.merged_toast', { commit: data.result.merge_commit || '' }), 'success')
+      const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
+      showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
     } else if (data.result?.status === 'conflict') {
       conflictError.value = data.result?.remaining_conflicts || t('main.git_finalize.failed')
     }
@@ -475,6 +493,26 @@ defineExpose({ fetchState })
   gap: 10px;
   flex-wrap: wrap;
 }
+.git-choice-row--aux {
+  margin-top: 8px;
+}
+.git-aux {
+  margin-top: 8px;
+}
+.git-aux-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-m);
+  font-size: 0.76rem;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.git-aux-toggle:hover {
+  color: var(--primary);
+}
 .git-choice {
   flex: 1 1 160px;
   display: flex;
@@ -557,3 +595,4 @@ defineExpose({ fetchState })
   color: #b45309;
 }
 </style>
+

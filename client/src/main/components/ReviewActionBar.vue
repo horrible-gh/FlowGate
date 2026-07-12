@@ -261,6 +261,24 @@
           <span class="ab-git-choice-label">{{ gitActionLabel(c) }}</span>
           <span class="ab-git-choice-desc">{{ gitActionDesc(c) }}</span>
         </label>
+        <div v-if="gitFin.aux_choices?.length" class="ab-git-aux">
+          <button class="ab-git-aux-toggle" type="button" @click="gitAuxOpen = !gitAuxOpen">
+            <AppIcon :name="gitAuxOpen ? 'caret-down' : 'caret-right'" />
+            {{ t('main.git_finalize.aux_toggle') }}
+          </button>
+          <template v-if="gitAuxOpen">
+            <label
+              v-for="c in gitFin.aux_choices"
+              :key="c"
+              class="ab-git-choice ab-git-choice--aux"
+              :class="{ sel: gitChoice === c }"
+            >
+              <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitChoice" />
+              <span class="ab-git-choice-label">{{ gitActionLabel(c) }}</span>
+              <span class="ab-git-choice-desc">{{ gitActionDesc(c) }}</span>
+            </label>
+          </template>
+        </div>
       </div>
     </ConfirmModal>
 
@@ -341,6 +359,7 @@ const showMarkRevisedConfirm = ref(false)
 const dropdownOpen = ref(false)
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
+const gitAuxOpen = ref(false)
 
 // flowgate.default.0162 §3.1 "본선": git finalize state for an AC final-approval doc.
 // Fetched from the same per-group endpoint the GitFinalizePanel uses, so the choice
@@ -350,6 +369,7 @@ interface GitFinState {
   status: string
   default_action: string | null
   choices: string[]
+  aux_choices?: string[]
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitChoice = ref<string>('')
@@ -382,6 +402,7 @@ async function fetchGitFin() {
     )
     gitFin.value = data.state
     gitChoice.value = data.state.default_action || 'wait'
+    gitAuxOpen.value = !!data.state.aux_choices?.includes(gitChoice.value)
   } catch {
     gitFin.value = null // 403/404/500 — no git block, plain approve
   }
@@ -614,7 +635,8 @@ async function doApprove() {
     } else if (git?.result?.status === 'conflict') {
       showToast(t('main.git_finalize.conflict_toast', { n: (git.result.conflict_files || []).length }), 'warning')
     } else if (git?.result?.status === 'merged') {
-      showToast(t('main.git_finalize.merged_toast', { commit: git.result.merge_commit || '' }), 'success')
+      const key = git.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
+      showToast(t(key, { commit: git.result.merge_commit || '' }), 'success')
     } else if (git?.result?.status === 'pushed') {
       showToast(t('main.git_finalize.pushed_toast'), 'success')
     } else if (git?.result?.status === 'waiting') {
@@ -991,5 +1013,26 @@ onBeforeUnmount(() => {
   font-size: 0.72rem;
   color: var(--text-m);
 }
+.ab-git-choice--aux {
+  margin-top: 8px;
+}
+.ab-git-aux {
+  margin-top: 2px;
+}
+.ab-git-aux-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-m);
+  font-size: 0.76rem;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.ab-git-aux-toggle:hover {
+  color: var(--primary);
+}
 </style>
+
 
