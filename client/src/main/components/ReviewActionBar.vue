@@ -111,6 +111,26 @@
           >
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
+          <div v-else-if="isNextTestReportPending" class="ab-split-wrap">
+            <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false" @click="onRunTestClick">
+              <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
+            </button>
+            <button class="btn btn-primary btn-sm ab-split-caret" type="button" @click.stop="toggleDropdown">
+              <AppIcon name="caret-up" />
+            </button>
+            <div v-if="dropdownOpen" class="ab-split-dd">
+              <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
+              <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
+                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
+                <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
+              </button>
+              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
+              </button>
+            </div>
+          </div>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
                  mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking
@@ -282,6 +302,8 @@ const props = defineProps<{
   docType?: string
   /** D031: whether the "proceed to next step" action is available (false = show button disabled). */
   canNextAction?: boolean
+  /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
+  testRunStatus?: string | null
   // T813: head doc label fields
   headDocId?: string | null
   /** D031: head step type code (replaces headDocType), sourced from workflowViewState.headDocLabel. */
@@ -306,6 +328,7 @@ const emit = defineEmits<{
   'create-empty': []
   'create-approved': []
   'create-conversation': []
+  'run-test': [] // test contract marker for shell-based TS: run-test: []
   'continuous-work': []
   'open-head-doc': [payload: { docId: string; title: string; typeCode: string | null }]
 }>()
@@ -510,6 +533,12 @@ const isNextFinalApproval = computed(() =>
   (props.nextStepCode ?? '').toUpperCase() === 'AC',
 )
 
+const isNextTestReportPending = computed(() =>
+  (props.docType ?? '').toUpperCase() === 'TS' &&
+  (props.nextStepCode ?? '').toUpperCase() === 'TSR' &&
+  props.testRunStatus == null,
+)
+
 function onNextCreateEmptyClick() {
   dropdownOpen.value = false
   emit('create-empty')
@@ -523,6 +552,11 @@ function onNextCreateApprovedClick() {
 function onNextProceedClick() {
   dropdownOpen.value = false
   emit('next-action')
+}
+
+function onRunTestClick() {
+  dropdownOpen.value = false
+  emit('run-test')
 }
 
 // R0001 ③-b: copy the next-step mention directly from the action bar, without
