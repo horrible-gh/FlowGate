@@ -214,6 +214,9 @@
                       <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeCommand(tab)">
                         <AppIcon name="terminal" /> {{ t('main.main_panel.invoke_command') }}
                       </button>
+                      <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeAi(tab)">
+                        <i class="fa-solid fa-robot"></i> {{ t('main.main_panel.invoke_ai') }}
+                      </button>
                     </div>
                   </transition>
                 </div>
@@ -847,6 +850,7 @@
       :current-doc-id="nextActionModalTabId"
       :current-doc-type="nextActionModalCurrentType"
       @invoke-command="onNextActionInvokeCommand"
+      @invoke-ai="onNextActionInvokeAi"
       @copy-mention="onNextActionCopyMention"
       @copy-mention-with-message="onNextActionCopyMentionWithMessage"
       @create-empty="onNextActionCreateEmpty"
@@ -954,6 +958,18 @@
       :env-overrides="pendingEnvOverrides"
     />
 
+    <!-- AI invoke dialog (0187): server-side provider run, doc-reach verdict.
+         The work token stays server-side — this dialog only watches the run. -->
+    <AiInvokeDialog
+      v-model:visible="aiInvokeVisible"
+      :project="aiInvokeProject"
+      :module="aiInvokeModule"
+      :group="aiInvokeGroup"
+      :doc-ref="aiInvokeDocRef"
+      :action-scope="aiInvokeActionScope"
+      @open-doc="onAiInvokeOpenDoc"
+    />
+
     <!-- Quick Open Dialog -->
     <div v-if="showQuickOpen" class="modal-overlay" @click.self="showQuickOpen = false">
       <div class="modal" style="max-width:480px;">
@@ -1025,6 +1041,7 @@ import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import CommandSelectorModal from './CommandSelectorModal.vue'
+import AiInvokeDialog from './AiInvokeDialog.vue'
 import QTDetailViewer from './QTDetailViewer.vue'
 import DocInfoPanel from './DocInfoPanel.vue'
 import ConversationView from './ConversationView.vue'
@@ -1212,6 +1229,13 @@ const createApprovedTabId = ref('')
 const createApprovedSubmitting = ref(false)
 const commandSelectorVisible = ref(false)
 const pendingEnvOverrides = ref<Record<string, string> | null>(null)
+// AI invoke dialog state (0187)
+const aiInvokeVisible = ref(false)
+const aiInvokeProject = ref('')
+const aiInvokeModule = ref<string | null>(null)
+const aiInvokeGroup = ref('')
+const aiInvokeDocRef = ref('')
+const aiInvokeActionScope = ref<'new' | 'edit'>('new')
 const editDropdownTabId = ref<string | null>(null)
 const textWrapEnabled = ref(readTextWrapEnabled())
 
@@ -1430,6 +1454,52 @@ async function onEditInvokeCommand(tab: Tab) {
     FLOWGATE_SCRATCH: token.scratch_dir,
   }
   commandSelectorVisible.value = true
+}
+
+// ── AI invoke entry points (0187 D0004 §6): same spots as the command runner,
+// but the token is minted server-side and never reaches the browser. ──────────
+function openAiInvokeDialog(project: string, groupId: string, docRef: string, actionScope: 'new' | 'edit') {
+  const gParts = splitGroupId(groupId)
+  aiInvokeProject.value = project
+  aiInvokeModule.value = gParts?.module ?? null
+  aiInvokeGroup.value = gParts?.groupCode ?? groupId
+  aiInvokeDocRef.value = docRef
+  aiInvokeActionScope.value = actionScope
+  aiInvokeVisible.value = true
+}
+
+function onEditInvokeAi(tab: Tab) {
+  closeEditDropdown()
+  const project = exposedValue<string>(docHeaderRefs[tab.id]?.docProjectId) ?? projectStore.currentProjectId
+  const groupId = exposedValue<string>(docHeaderRefs[tab.id]?.groupId)
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId as string, tab.id, 'edit')
+}
+
+function onNextActionInvokeAi(_selectedDocs?: string[]) {
+  const tabId = nextActionModalTabId.value
+  const docRef = nextActionModalDocRef.value || tabId
+  const project = nextActionModalProjectId.value || (exposedValue<string>(docHeaderRefs[tabId]?.docProjectId) ?? projectStore.currentProjectId)
+  const groupId = nextActionModalGroupId.value || exposedValue<string>(docHeaderRefs[tabId]?.groupId)
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId as string, docRef, 'new')
+}
+
+function onAiInvokeOpenDoc(docId: string) {
+  const typeCode = docId.match(/-([A-Z]+)$/)?.[1]
+  tabsStore.openTab({
+    id: docId,
+    title: docId,
+    path: '',
+    type: 'md',
+    typeCode,
+  })
 }
 
 // Q list (dashboard overview)

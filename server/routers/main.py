@@ -34,6 +34,7 @@ from modules.flow_gate.api.v1.slug_routes import router as _slug_router
 from modules.flow_gate.api.v1.dashboard_routes import router as _dashboard_router
 from modules.flow_gate.api.v1.remote_routes import router as _remote_router
 from modules.flow_gate.api.v1.test_run_routes import router as _test_run_router
+from modules.flow_gate.api.v1.ai_invoke_routes import router as _ai_invoke_router
 from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_recipe_router
 from modules.flow_gate.api.v1.git_routes import router as _git_router
 from config import settings
@@ -121,6 +122,7 @@ app.include_router(_slug_router, prefix=f"{CONTEXT}", tags=["Slug"])
 app.include_router(_dashboard_router, prefix=f"{CONTEXT}", tags=["Dashboard"])
 app.include_router(_remote_router, prefix=f"{CONTEXT}", tags=["RemoteTool"])
 app.include_router(_test_run_router, prefix=f"{CONTEXT}", tags=["TestRun"])
+app.include_router(_ai_invoke_router, prefix=f"{CONTEXT}", tags=["AiInvoke"])
 app.include_router(_engine_recipe_router, prefix=f"{CONTEXT}", tags=["EngineRecipes"])
 app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])

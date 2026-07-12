@@ -13,3 +13,6 @@ class EventType(str, Enum):
     TEST_STAGE_FINISHED                   = "test_stage_finished"
     TEST_CASE_FINISHED                    = "test_case_finished"
     TEST_RUN_FINISHED                     = "test_run_finished"
+    AI_INVOKE_STARTED                     = "ai_invoke_started"            # 0187: AI run launched (first provider)
+    AI_INVOKE_PROVIDER_SWITCHED           = "ai_invoke_provider_switched"  # 0187: startup-failure fallback hop
+    AI_INVOKE_FINISHED                    = "ai_invoke_finished"           # 0187: document-reach verdict payload

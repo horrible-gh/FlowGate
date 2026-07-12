@@ -1087,7 +1087,7 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
                 timeout=10,
             )
         except Exception:
-            logger.warning("taskkill failed for test run process %s", proc.pid, exc_info=True)
+            logger.warning("taskkill failed for process %s", proc.pid, exc_info=True)
         if proc.poll() is None:
             try:
                 proc.kill()
