@@ -431,6 +431,23 @@ class TestFinalizeGuards:
             svc.finalize("plainprj.default.0001", "merge")
         assert exc.value.status == 409
 
+    def test_preview_flag_reflects_preview_ac(self, seed):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitprj.default.0101"
+        svc.save_config("gitprj", {
+            "repo_url": "https://example.com/team/repo.git",
+            "enabled": True,
+        })
+        db_git.register_worktree(group, "gitprj", "gitprj_default_0101")
+        db_git.set_status(group, "awaiting_choice")
+
+        state = svc.get_finalize_state(group, preview_ac=True)
+
+        assert state["state"]["status"] == "awaiting_choice"
+        assert state["state"]["preview"] is True
+
 
 # ── REAL git end-to-end (L0006 §2.4~§2.7) ────────────────────────────────────
 

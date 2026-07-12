@@ -1609,7 +1609,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
         # the persisted status is still 'none'. Advisory for the FE.
-        "preview": preview,
+        "preview": preview_ac,
     }}
 
 
