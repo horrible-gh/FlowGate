@@ -113,6 +113,17 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     wrapper.unmount()
   })
 
+  it('renders line and token diff classes for unresolved chunk sides', () => {
+    const { wrapper } = mountDialog()
+    const chunks = wrapper.findAll('.git-conflict-chunk')
+    const ambiguousChunk = chunks[1]
+
+    expect(ambiguousChunk.findAll('.git-code-line.diff-changed')).toHaveLength(2)
+    expect(ambiguousChunk.findAll('.git-code-token.diff-token-changed').length).toBeGreaterThan(0)
+
+    wrapper.unmount()
+  })
+
   it('folds long common blocks and expands them on demand', async () => {
     const { wrapper } = mountDialog()
 

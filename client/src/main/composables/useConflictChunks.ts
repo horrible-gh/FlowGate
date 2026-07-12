@@ -17,7 +17,22 @@ export const MARKER_BASE_RE = /^\|{7}( |$)/
 export type ConflictMode = 'chunk' | 'direct' | 'direct_only'
 export type ChunkChoice = 'ours' | 'theirs' | 'both' | null
 export type ConcreteChunkChoice = Exclude<ChunkChoice, null>
-
+export type DiffLineStatus = 'common' | 'removed' | 'added' | 'changed'
+export type DiffTokenStatus = 'common' | 'removed' | 'added' | 'changed'
+export interface DiffToken {
+  text: string
+  status: DiffTokenStatus
+}
+export interface DiffLine {
+  line: string
+  sourceIndex: number
+  status: DiffLineStatus
+  tokens: DiffToken[]
+}
+export interface ChunkSideDiff {
+  ours: DiffLine[]
+  theirs: DiffLine[]
+}
 export type CommonSegment = { kind: 'common'; lines: string[] }
 export type ChunkSegment = {
   kind: 'chunk'
@@ -173,6 +188,113 @@ export function joinLines(lines: string[]): string {
   return lines.join('')
 }
 
+function normalizedLine(line: string): string {
+  return stripEol(line)
+}
+
+function tokenizeForInlineDiff(line: string): string[] {
+  return normalizedLine(line).match(/\s+|[A-Za-z0-9_]+|./gu) || []
+}
+
+function lcsPairs<T>(left: T[], right: T[], key: (value: T) => string): Array<[number, number]> {
+  const dp = Array.from({ length: left.length + 1 }, () => Array<number>(right.length + 1).fill(0))
+  for (let i = left.length - 1; i >= 0; i -= 1) {
+    for (let j = right.length - 1; j >= 0; j -= 1) {
+      dp[i][j] = key(left[i]) === key(right[j])
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  const pairs: Array<[number, number]> = []
+  let i = 0
+  let j = 0
+  while (i < left.length && j < right.length) {
+    if (key(left[i]) === key(right[j])) {
+      pairs.push([i, j])
+      i += 1
+      j += 1
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i += 1
+    } else {
+      j += 1
+    }
+  }
+  return pairs
+}
+
+function inlineTokens(leftLine: string, rightLine: string): { left: DiffToken[]; right: DiffToken[] } {
+  const left = tokenizeForInlineDiff(leftLine)
+  const right = tokenizeForInlineDiff(rightLine)
+  const pairs = lcsPairs(left, right, (token) => token)
+  const leftTokens: DiffToken[] = []
+  const rightTokens: DiffToken[] = []
+  let leftPos = 0
+  let rightPos = 0
+
+  function pushChanged(tokens: string[], target: DiffToken[], status: DiffTokenStatus) {
+    for (const text of tokens) target.push({ text, status })
+  }
+
+  for (const [nextLeft, nextRight] of pairs) {
+    pushChanged(left.slice(leftPos, nextLeft), leftTokens, 'changed')
+    pushChanged(right.slice(rightPos, nextRight), rightTokens, 'changed')
+    leftTokens.push({ text: left[nextLeft], status: 'common' })
+    rightTokens.push({ text: right[nextRight], status: 'common' })
+    leftPos = nextLeft + 1
+    rightPos = nextRight + 1
+  }
+  pushChanged(left.slice(leftPos), leftTokens, 'changed')
+  pushChanged(right.slice(rightPos), rightTokens, 'changed')
+  return { left: leftTokens, right: rightTokens }
+}
+
+function plainTokens(line: string, status: DiffTokenStatus): DiffToken[] {
+  return [{ text: normalizedLine(line), status }]
+}
+
+function appendDiffRun(
+  ours: DiffLine[],
+  theirs: DiffLine[],
+  oursRun: Array<{ line: string; index: number }>,
+  theirsRun: Array<{ line: string; index: number }>,
+) {
+  const paired = Math.min(oursRun.length, theirsRun.length)
+  for (let i = 0; i < paired; i += 1) {
+    const oursLine = oursRun[i]
+    const theirsLine = theirsRun[i]
+    const tokens = inlineTokens(oursLine.line, theirsLine.line)
+    ours.push({ line: oursLine.line, sourceIndex: oursLine.index, status: 'changed', tokens: tokens.left })
+    theirs.push({ line: theirsLine.line, sourceIndex: theirsLine.index, status: 'changed', tokens: tokens.right })
+  }
+  for (const oursLine of oursRun.slice(paired)) {
+    ours.push({ line: oursLine.line, sourceIndex: oursLine.index, status: 'removed', tokens: plainTokens(oursLine.line, 'removed') })
+  }
+  for (const theirsLine of theirsRun.slice(paired)) {
+    theirs.push({ line: theirsLine.line, sourceIndex: theirsLine.index, status: 'added', tokens: plainTokens(theirsLine.line, 'added') })
+  }
+}
+
+export function buildChunkSideDiff(oursLines: string[], theirsLines: string[]): ChunkSideDiff {
+  const ours = oursLines.map((line, index) => ({ line, index }))
+  const theirs = theirsLines.map((line, index) => ({ line, index }))
+  const pairs = lcsPairs(ours, theirs, (entry) => normalizedLine(entry.line))
+  const result: ChunkSideDiff = { ours: [], theirs: [] }
+  let oursPos = 0
+  let theirsPos = 0
+
+  for (const [nextOurs, nextTheirs] of pairs) {
+    appendDiffRun(result.ours, result.theirs, ours.slice(oursPos, nextOurs), theirs.slice(theirsPos, nextTheirs))
+    const oursLine = ours[nextOurs]
+    const theirsLine = theirs[nextTheirs]
+    result.ours.push({ line: oursLine.line, sourceIndex: oursLine.index, status: 'common', tokens: plainTokens(oursLine.line, 'common') })
+    result.theirs.push({ line: theirsLine.line, sourceIndex: theirsLine.index, status: 'common', tokens: plainTokens(theirsLine.line, 'common') })
+    oursPos = nextOurs + 1
+    theirsPos = nextTheirs + 1
+  }
+  appendDiffRun(result.ours, result.theirs, ours.slice(oursPos), theirs.slice(theirsPos))
+  return result
+}
 export function applyChunkChoice(seg: ChunkSegment, choice: ConcreteChunkChoice) {
   seg.choice = choice
   if (choice === 'ours') seg.resolution = [...seg.ours]
@@ -300,5 +422,6 @@ export function useConflictChunks() {
     applyChunkChoice,
     chunkNumber,
     chunkLabel,
+    buildChunkSideDiff,
   }
 }
