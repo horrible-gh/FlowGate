@@ -1721,6 +1721,7 @@ export default {
       ai_hold: 'AI判断を保留',
       ai_recommended: 'AI提案',
       remaining_chunks: '未解消 {remaining}/{total}',
+      resolve_progress: '解消 {done} / {total}',
       nav_shortcut: 'Shift+↑/↓で競合へ移動',
       previous_conflict: '前の競合',
       next_conflict: '次の競合',

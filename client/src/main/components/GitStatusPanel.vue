@@ -152,96 +152,25 @@
             </p>
           </div>
 
-          <!-- Inline conflict resolution editor. 0182 NR0003 §6: upgraded from the
-               0165-era raw textarea to the same button-based chunk workflow as
-               GitFinalizePanel (logic shared via useConflictChunks); parse-failure
-               and oversized files still fall back to direct editing. Submits
-               resolve/abort against the same backend endpoints as before. -->
-          <div v-if="expanded === p.group_id && p.status === 'conflict'" class="git-status-conflict">
-            <p class="git-fin-conflict-msg">
-              <AppIcon name="warning" />
-              {{ t('main.git_finalize.conflict_msg', { n: conflictFiles.length }) }}
-            </p>
-            <p v-if="!conflictFiles.length" class="git-status-empty">
-              {{ t('main.git_finalize.conflict_count', { n: 0 }) }}
-            </p>
-            <div v-for="f in conflictFiles" :key="f.path" class="git-conflict-file">
-              <div class="git-conflict-path">
-                <AppIcon name="file-code" /> {{ f.path }}
-                <span class="git-conflict-count">{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
-                <span class="git-conflict-path-spacer"></span>
-                <div v-if="f.mode !== 'direct_only'" class="git-conflict-mode-tabs">
-                  <button type="button" :class="{ active: f.mode === 'chunk' }" @click="switchToChunkView(f)">
-                    <AppIcon name="git-diff" /> {{ t('main.git_finalize.chunk_view') }}
-                  </button>
-                  <button type="button" :class="{ active: f.mode === 'direct' }" @click="switchToDirectEdit(f)">
-                    <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_edit') }}
-                  </button>
-                </div>
-                <span v-else class="git-direct-only-badge">
-                  <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_only') }}
-                </span>
-              </div>
-              <p v-if="f.notice" class="git-conflict-notice">{{ f.notice }}</p>
-              <div v-if="f.mode === 'chunk'" class="git-status-chunk-list">
-                <template v-for="(seg, idx) in f.segments" :key="idx">
-                  <pre v-if="seg.kind === 'common' && seg.lines.length" class="git-common-block">{{ joinLines(seg.lines) }}</pre>
-                  <article v-else-if="seg.kind === 'chunk'" class="git-conflict-chunk">
-                    <div class="git-conflict-chunk-hd">
-                      <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(f, idx) }) }}</span>
-                      <div class="git-chunk-actions">
-                        <button type="button" :class="{ active: seg.choice === 'ours' }" @click="applyChunkChoice(seg, 'ours')">
-                          {{ t('main.git_finalize.current') }}
-                        </button>
-                        <button type="button" :class="{ active: seg.choice === 'theirs' }" @click="applyChunkChoice(seg, 'theirs')">
-                          {{ t('main.git_finalize.incoming') }}
-                        </button>
-                        <button type="button" :class="{ active: seg.choice === 'both' }" @click="applyChunkChoice(seg, 'both')">
-                          {{ t('main.git_finalize.both') }}
-                        </button>
-                      </div>
-                    </div>
-                    <div class="git-conflict-sides">
-                      <div class="git-conflict-side ours">
-                        <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }}</div>
-                        <pre>{{ joinLines(seg.ours) || '\n' }}</pre>
-                      </div>
-                      <div class="git-conflict-side theirs">
-                        <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }}</div>
-                        <pre>{{ joinLines(seg.theirs) || '\n' }}</pre>
-                      </div>
-                    </div>
-                  </article>
-                </template>
-              </div>
-              <textarea
-                v-else
-                v-model="f.directText"
-                class="git-conflict-editor"
-                spellcheck="false"
-                rows="12"
-              ></textarea>
-            </div>
-            <p v-if="conflictError" class="git-fin-conflict-msg">{{ conflictError }}</p>
-            <!-- Residual-marker guard (B0001 F2): the document-path panel gates submit
-                 on markers being gone; mirror it here so the header resolver does not
-                 post <<<<<<< />>>>>>>> content only to bounce off the backend 422. -->
-            <p v-if="conflictFiles.length && !inlineResolved" class="git-status-marker-hint">
-              <AppIcon name="warning" /> {{ t('main.git_finalize.submit_disabled_hint') }}
-            </p>
-            <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:8px;">
-              <button class="btn btn-sm btn-secondary" :disabled="busy" @click="abortInline(p)">
-                <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
-              </button>
-              <button
-                class="btn btn-sm btn-primary"
-                :disabled="busy || !conflictFiles.length || !inlineResolved"
-                @click="submitResolveInline(p)"
-              >
-                <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
-              </button>
-            </div>
-          </div>
+          <!-- Conflict resolution. 0182 NR0003 §6 introduced the chunk workflow;
+               0212 T0009 replaced the compacted in-house overlay with the SAME
+               shared 1180×820 resolver dialog (0207 시안 A) the finalize panel
+               uses: file sidebar, chunk chips/navigation, AI assist strip,
+               common-block folding, font-size controls. Submits resolve/abort
+               against the same backend endpoints as before. -->
+          <GitConflictResolverDialog
+            v-if="expanded === p.group_id && p.status === 'conflict'"
+            :files="conflictFiles"
+            :branch="p.branch || p.group_id"
+            :base-branch="status?.base_branch || null"
+            :busy="busy"
+            :load-status="conflictLoadStatus"
+            :error-message="conflictError"
+            @close="collapseResolve"
+            @abort="abortInline(p)"
+            @submit="submitResolveInline(p)"
+            @retry="openResolve(p.group_id)"
+          />
         </div>
       </div>
 
@@ -293,24 +222,22 @@ import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
-// (parser state machine + reassembly + residual-marker guard).
+// (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
+// resolver UI itself is the shared GitConflictResolverDialog.
 import {
   useConflictChunks,
-  applyChunkChoice,
-  chunkLabel,
-  chunkNumber,
   currentFileContent,
   isFileResolved,
-  joinLines,
   type ConflictFileState,
 } from '../composables/useConflictChunks'
+import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
-const { initConflictFile, switchToDirectEdit, switchToChunkView } = useConflictChunks()
+const { initConflictFile } = useConflictChunks()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
@@ -393,6 +320,8 @@ const chosen = ref<Record<string, string>>({})
 const expanded = ref<string | null>(null)
 const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
+// Load lifecycle for the shared resolver dialog (loading spinner / retry state).
+const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
 // Per-group commit-subject draft (B0001 F1). Lazily hydrated from the group's
 // finalize state (state.commit_message) the first time its row shows merge/push;
@@ -406,6 +335,9 @@ interface CommitDraft {
 }
 const commitDrafts = ref<Record<string, CommitDraft>>({})
 
+// Residual-marker guard (B0001 F2): the shared dialog disables its submit
+// button on unresolved markers; keep the same check here so a stray submit
+// event can never post <<<<<<< />>>>>>>> content to bounce off the backend 422.
 const inlineResolved = computed(
   () => conflictFiles.value.length > 0 && conflictFiles.value.every(isFileResolved),
 )
@@ -676,6 +608,7 @@ function collapseResolve() {
   expanded.value = null
   conflictFiles.value = []
   conflictError.value = ''
+  conflictLoadStatus.value = 'idle'
 }
 
 async function toggleResolve(p: Pending) {
@@ -696,19 +629,22 @@ async function openResolve(groupId: string) {
   expanded.value = groupId
   conflictError.value = ''
   conflictFiles.value = []
+  conflictLoadStatus.value = 'loading'
   try {
     const { data } = await getRequest<{
       ok: boolean
       files: Array<{ path: string; content: string; conflict_count: number }>
     }>(`/api/v1/groups/${groupId}/git/merge/${p.merge_id}/conflicts`)
     conflictFiles.value = (data.files || []).map(initConflictFile)
+    conflictLoadStatus.value = 'ready'
   } catch (e: any) {
     conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    conflictLoadStatus.value = 'error'
   }
 }
 
 async function submitResolveInline(p: Pending) {
-  if (p.merge_id == null || busy.value) return
+  if (p.merge_id == null || busy.value || !inlineResolved.value) return
   busy.value = true
   conflictError.value = ''
   try {
@@ -941,172 +877,8 @@ defineExpose({ fetchStatus })
   background: var(--bg, #fff);
   color: var(--text, #0f172a);
 }
-.git-status-conflict {
-  margin: 8px 0 4px;
-  padding: 10px;
-  border: 1px solid #fecaca;
-  border-radius: var(--r, 8px);
-  background: #fef2f2;
-}
-.git-fin-conflict-msg {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.8rem;
-  color: #b91c1c;
-  margin: 0 0 8px;
-}
-.git-conflict-file {
-  margin-bottom: 10px;
-}
-.git-conflict-path {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
-  font-family: var(--mono, ui-monospace, monospace);
-  margin-bottom: 4px;
-}
-.git-conflict-count {
-  font-size: 0.7rem;
-  color: var(--text-m);
-}
-
-/* 0182 NR0003 §6 — inline chunk resolver (visual grammar mirrors the
-   GitFinalizePanel dialog, compacted for the header panel). */
-.git-conflict-path-spacer {
-  flex: 1 1 auto;
-}
-.git-conflict-mode-tabs {
-  flex: 0 0 auto;
-  display: inline-flex;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.git-conflict-mode-tabs button,
-.git-chunk-actions button {
-  border: none;
-  background: #fff;
-  padding: 4px 8px;
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-.git-conflict-mode-tabs button + button,
-.git-chunk-actions button + button {
-  border-left: 1px solid var(--border, #e2e8f0);
-}
-.git-conflict-mode-tabs button.active,
-.git-chunk-actions button.active {
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-weight: 700;
-}
-.git-direct-only-badge {
-  flex: 0 0 auto;
-  font-size: 0.7rem;
-  color: #92400e;
-}
-.git-conflict-notice {
-  margin: 0 0 6px;
-  padding: 6px 10px;
-  font-size: 0.73rem;
-  color: #92400e;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-}
-.git-status-chunk-list {
-  max-height: 420px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--r, 8px);
-  background: #f8fafc;
-}
-.git-common-block,
-.git-conflict-side pre {
-  font: 0.73rem/1.48 var(--mono, ui-monospace, monospace);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  tab-size: 2;
-}
-.git-common-block {
-  margin: 0 0 8px;
-  padding: 8px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-}
-.git-conflict-chunk {
-  margin-bottom: 10px;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  background: #fff;
-  overflow: hidden;
-}
-.git-conflict-chunk-hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 8px;
-  border-bottom: 1px solid #fee2e2;
-  background: #fff7ed;
-  font-size: 0.73rem;
-  font-weight: 700;
-}
-.git-chunk-actions {
-  display: inline-flex;
-  border: 1px solid #fed7aa;
-  border-radius: 6px;
-  overflow: hidden;
-}
-.git-conflict-sides {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-.git-conflict-side {
-  min-width: 0;
-}
-.git-conflict-side + .git-conflict-side {
-  border-left: 1px solid #e2e8f0;
-}
-.git-conflict-side-label {
-  padding: 5px 8px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  border-bottom: 1px solid #e2e8f0;
-}
-.git-conflict-side.ours .git-conflict-side-label {
-  color: #1d4ed8;
-  background: #eff6ff;
-}
-.git-conflict-side.theirs .git-conflict-side-label {
-  color: #047857;
-  background: #ecfdf5;
-}
-.git-conflict-side pre {
-  min-height: 42px;
-  margin: 0;
-  padding: 8px;
-  color: #0f172a;
-}
 .git-status-recovery .btn + .btn {
   margin-left: 8px;
-}
-.git-conflict-editor {
-  width: 100%;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 0.75rem;
-  line-height: 1.45;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--r, 8px);
-  padding: 8px;
-  background: var(--bg, #fff);
-  color: var(--text, #0f172a);
-  resize: vertical;
 }
 .git-status-slot {
   display: flex;
@@ -1179,15 +951,6 @@ defineExpose({ fetchStatus })
   color: var(--text-m);
   margin: 4px 0 0;
 }
-.git-status-marker-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.74rem;
-  color: #b45309;
-  margin: 4px 0 0;
-}
-
 /* flowgate.default.0176 T0010 §b banner → 0177 L0002 §2.6 actionable section. */
 .git-base-dirty-alert {
   display: flex;
