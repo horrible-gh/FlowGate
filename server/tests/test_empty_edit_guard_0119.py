@@ -85,7 +85,14 @@ def test_empty_edit_with_a_locked_item_is_allowed(monkeypatch):
 
 
 def test_nonempty_edit_recovers_an_empty_sequence(monkeypatch):
-    """§6-B recovery: an already-empty sequence accepts new pending steps via edit."""
+    """§6-B recovery: an already-empty sequence accepts new pending steps via edit.
+
+    0208 R0001 (NR0003 §3-3): edit_workflow_pending is symmetric with decide_workflow —
+    it runs _expand_auto_reports, so a bare instruction step (T) auto-attaches its report
+    step (TR). A single requested "T" is therefore stored as ["T", "TR"] and pending_count
+    reflects the actual stored item count (2). Prior to 0208 the edit path did not expand,
+    which is why the original 0119 assertions (["T"], count 1) are now stale.
+    """
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", _seq)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda _sid: [])  # currently empty
     monkeypatch.setattr(svc.db_wfseq, "delete_pending_items", lambda _sid: None)
@@ -109,8 +116,8 @@ def test_nonempty_edit_recovers_an_empty_sequence(monkeypatch):
         [{"type": "T", "label": "작업지시"}],
     )
     assert out["status"] == "updated"
-    assert out["pending_count"] == 1
-    assert [row["type_"] for row in inserted] == ["T"]
+    assert out["pending_count"] == 2
+    assert [row["type_"] for row in inserted] == ["T", "TR"]
 
 
 # ── route mapping: PATCH /workflow/sequence → 400 invalid_sequence_empty ─────────
@@ -142,3 +149,47 @@ def test_patch_route_maps_empty_guard_to_400(monkeypatch):
     payload = _json.loads(bytes(resp.body))
     assert payload["error"] == "invalid_sequence_empty"
     assert payload["doc_id"] == "flowgate.default.0119.0001-B"
+
+def test_patch_route_broadcasts_group_refresh_after_success(monkeypatch):
+    """AI-driven sequence edits must notify open clients to refetch workflow steps."""
+    from modules.flow_gate.api.v1 import workflow_decision_routes as routes
+    from modules.flow_gate.api.v1.events import publisher
+    from modules.flow_gate.api.v1.events.event_types import EventType
+
+    monkeypatch.setattr(routes, "verify_bearer", lambda _request: {
+        "token_id": "tok-1",
+        "project": "flowgate",
+        "issued_to": "user-1",
+    })
+    monkeypatch.setattr(routes._db_documents, "get_by_id", lambda _id: {
+        "doc_id": _id,
+        "project_id": "flowgate",
+        "group_id": "flowgate.default.0119",
+        "doc_review_status": "wf_in_progress",
+    })
+    monkeypatch.setattr(routes, "_disposed_group_response", lambda *_a, **_k: None)
+    monkeypatch.setattr(routes, "edit_workflow_pending", lambda **_k: {
+        "status": "updated",
+        "doc_id": "flowgate.default.0119.0001-B",
+        "pending_count": 2,
+    })
+
+    events = []
+    monkeypatch.setattr(publisher, "broadcast_event_threadsafe", lambda event: events.append(event) or 1)
+
+    body = routes.EditSequenceBodyRequest(
+        doc_id="flowgate.default.0119.0001-B",
+        items=[routes.EditSequenceItem(type="T", label="작업지시")],
+    )
+    resp = routes.patch_workflow_sequence_endpoint(body, MagicMock())
+
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0].event_type == EventType.GROUP_VIEW_REFRESH
+    assert events[0].payload == {
+        "group_id": "flowgate.default.0119",
+        "reason": "workflow_sequence_edited",
+    }
+    assert events[0].doc_id == "flowgate.default.0119.0001-B"
+    assert events[0].project == "flowgate"
+    assert events[0].group_id == "flowgate.default.0119"
