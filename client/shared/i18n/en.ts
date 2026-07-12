@@ -1721,6 +1721,7 @@ export default {
       ai_hold: 'AI decision deferred',
       ai_recommended: 'AI suggestion',
       remaining_chunks: '{remaining}/{total} unresolved',
+      resolve_progress: 'Resolved {done} / {total}',
       nav_shortcut: 'Shift+Up/Down to navigate',
       previous_conflict: 'Previous conflict',
       next_conflict: 'Next conflict',

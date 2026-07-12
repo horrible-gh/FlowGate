@@ -1721,6 +1721,7 @@ export default {
       ai_hold: 'AI 판단 보류',
       ai_recommended: 'AI 추천',
       remaining_chunks: '미해소 {remaining}/{total}',
+      resolve_progress: '해소 {done} / {total}',
       nav_shortcut: 'Shift+↑/↓로 충돌 이동',
       previous_conflict: '이전 충돌',
       next_conflict: '다음 충돌',
