@@ -320,7 +320,8 @@ def validate_and_create_run(
     # Fail fast at admission: without a source mirror the async worker can only
     # die with src_root_missing, which surfaces late and pathless (0152 outage).
     src_root_path = storage_paths.resolve_project_src_root(
-        doc.get("project_id"), doc.get("branch") or "main"
+        doc.get("project_id"),
+        doc.get("branch") or "main",
     )
     if src_root_path is None or not src_root_path.is_dir():
         raise _http_error(
@@ -567,7 +568,8 @@ def _execute_run_inner(run: dict) -> None:
         return
 
     root = storage_paths.resolve_project_src_root(
-        doc.get("project_id"), doc.get("branch") or "main"
+        doc.get("project_id"),
+        doc.get("branch") or "main",
     )
     if root is None or not root.is_dir():
         logger.warning(
@@ -1073,7 +1075,7 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
                 timeout=10,
             )
         except Exception:
-            logger.warning("taskkill failed for test run process %s", proc.pid, exc_info=True)
+            logger.warning("taskkill failed for process %s", proc.pid, exc_info=True)
         if proc.poll() is None:
             try:
                 proc.kill()

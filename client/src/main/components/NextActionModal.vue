@@ -203,6 +203,9 @@
               <div class="nad-proceed-item" @click="onProceedAction('invoke-command')">
                 <i class="fa-solid fa-terminal" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_invoke') }}
               </div>
+              <div class="nad-proceed-item" @click="onProceedAction('invoke-ai')">
+                <i class="fa-solid fa-robot" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_invoke_ai') }}
+              </div>
             </div>
             <button class="btn btn-primary" type="button" @click.stop="toggleProceed">
               <i class="fa-solid fa-bolt"></i> {{ t('main.next_action_modal.title') }}
@@ -250,6 +253,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   'invoke-command': [selectedDocs: string[]]
+  'invoke-ai':      [selectedDocs: string[]]
   'copy-mention':   [selectedDocs: string[]]
   'copy-mention-with-message': [selectedDocs: string[]]
   'create-empty':   [selectedDocs: string[]]
@@ -621,11 +625,12 @@ function getAllSelectedDocs(): string[] {
   return [head, ...Array.from(extraSelectedDocs.value).map(formatDocId)]
 }
 
-function onProceedAction(action: 'create-empty' | 'copy-mention' | 'copy-mention-with-message' | 'invoke-command') {
+function onProceedAction(action: 'create-empty' | 'copy-mention' | 'copy-mention-with-message' | 'invoke-command' | 'invoke-ai') {
   proceedOpen.value = false
   const selected = getAllSelectedDocs()
   emit('update:visible', false)
   if (action === 'invoke-command') emit('invoke-command', selected)
+  else if (action === 'invoke-ai') emit('invoke-ai', selected)
   else if (action === 'copy-mention') emit('copy-mention', selected)
   else if (action === 'copy-mention-with-message') emit('copy-mention-with-message', selected)
   else emit('create-empty', selected)

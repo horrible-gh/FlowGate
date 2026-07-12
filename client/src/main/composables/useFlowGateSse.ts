@@ -337,6 +337,28 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
+    // AI invoke run lifecycle (flowgate.default.0187 P0005). The dialog owns all
+    // presentation — re-broadcast as window events it subscribes to (fg:git_pending_changed
+    // pattern). The finished event's paired group_view_refresh (emitted server-side)
+    // already drives the explorer resync, so no invalidateAndRefresh here.
+    const aiInvokeKinds: Array<[string, string]> = [
+      ['ai_invoke_started', 'started'],
+      ['ai_invoke_provider_switched', 'switched'],
+      ['ai_invoke_finished', 'finished'],
+    ]
+    for (const [eventName, kind] of aiInvokeKinds) {
+      source.addEventListener(eventName, (e: Event) => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('fg:ai_invoke', {
+              detail: { kind, payload: data.payload ?? {} },
+            }))
+          }
+        } catch { /* ignore parse errors */ }
+      })
+    }
+
     source.addEventListener('git_pending_changed', (e: Event) => {
       // Git finalize-pending set changed (flowgate.default.0162 §4-3). The
       // payload carries the server-recomputed absolute pending_count — the
