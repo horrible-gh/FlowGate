@@ -703,6 +703,7 @@
       :next-step-code="getWorkflowViewState(activeTabId).nextStepCode ?? undefined"
       :review-request-label="getReviewRequestLabel(activeTabId)"
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
+      :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
       :head-doc-label="getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
@@ -721,6 +722,7 @@
       @create-empty="onActionBarCreateEmpty(activeTabId)"
       @create-approved="onActionBarCreateApproved(activeTabId)"
       @create-conversation="onActionBarCreateConversation(activeTabId)"
+      @run-test="onActionBarRunTest(activeTabId)"
       @continuous-work="onActionBarContinuousWork(activeTabId)"
       @open-head-doc="onOpenHeadDocClick"
     />
@@ -2535,6 +2537,37 @@ function onActionBarCopyNextMention(tabId: string) {
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
   void onNextActionCopyMention()
+}
+
+function testRunErrorMessage(e: unknown): string {
+  const code = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
+  switch (code) {
+    case 'permission_denied':
+      return t('main.test_run_strip.err_denied')
+    case 'run_in_progress':
+      return t('main.test_run_strip.err_in_progress')
+    case 'doc_not_approved':
+      return t('main.test_run_strip.err_not_approved')
+    case 'group_disposed':
+      return t('main.test_run_strip.err_disposed')
+    case 'src_root_missing':
+      return t('main.test_run_strip.err_src_missing')
+    case 'no_test_cases':
+      return t('main.test_run_strip.err_no_cases')
+    default:
+      return t('main.test_run_strip.err_failed')
+  }
+}
+
+async function onActionBarRunTest(tabId: string) {
+  if ((getTabTypeCode(tabId) ?? '').toUpperCase() !== 'TS') return
+  try {
+    await postRequest('/api/v1/documents/test-run', { doc_id: tabId })
+    showToast(t('main.test_run_strip.run_started'), 'info')
+    docHeaderRefs[tabId]?.fetchDoc?.(tabId)
+  } catch (e: unknown) {
+    showToast(testRunErrorMessage(e), 'error')
+  }
 }
 
 // ── Continuous (unmanned) work (R0001 group 0086) ──────────────────────────────
