@@ -217,6 +217,33 @@ function resetInputHeight() {
   if (el) el.style.height = 'auto'
 }
 
+function describeErrorDetail(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(describeErrorDetail).filter(Boolean).join('; ')
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    const loc = Array.isArray(record.loc)
+      ? record.loc.join('.')
+      : typeof record.loc === 'string'
+        ? record.loc
+        : ''
+    const msg = typeof record.msg === 'string'
+      ? record.msg
+      : typeof record.message === 'string'
+        ? record.message
+        : ''
+    const type = typeof record.type === 'string' ? ` (${record.type})` : ''
+    if (loc && msg) return `${loc}: ${msg}${type}`
+    if (msg) return `${msg}${type}`
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
 function scrollToBottom() {
   const pin = () => {
     const el = scrollEl.value
@@ -279,7 +306,7 @@ async function send(): Promise<void> {
     if (autoCopy.value) emit('copy-mention', { auto: true })
     void nextTick(() => inputEl.value?.focus())
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
+    const detail = describeErrorDetail(e?.response?.data?.detail ?? e?.response?.data ?? e)
     showToast(t('main.conversation_view.send_failed', { detail }), 'danger')
   } finally {
     sending.value = false
