@@ -43,7 +43,8 @@
       </div>
     </div>
 
-    <div class="flex" style="justify-content:flex-end; gap:10px;">
+    <div class="flex" style="justify-content:flex-end; align-items:center; gap:10px;">
+      <span v-if="dirty" class="badge badge-yellow" style="margin-right:2px;">{{ $t('settings.ai.unsaved_badge') }}</span>
       <button class="btn btn-secondary" @click="load">
         <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
@@ -60,6 +61,7 @@
 // /api/v1/projects/{id}/ai-settings (P0003). A mode-only save never destroys the stored
 // custom list (L0004 §3), so switching back to custom restores the last list.
 import { computed, onMounted, ref, watch } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
@@ -77,6 +79,12 @@ const providers = ref([]);
 const defaultIndex = ref(-1);
 const effective = ref({ source: 'system', providers: [], default_provider_id: null });
 const catalog = ref({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } });
+
+function snapshot() {
+  return JSON.stringify({ mode: mode.value, providers: providers.value, defaultIndex: defaultIndex.value });
+}
+const baseline = ref(snapshot());
+const dirty = computed(() => baseline.value !== snapshot());
 
 const projectId = computed(() => settings.currentProjectId);
 const effectiveProviders = computed(() => effective.value.providers || []);
@@ -101,6 +109,7 @@ function applyResponse(data) {
   defaultIndex.value = providers.value.findIndex((p) => p.id === data.default_provider_id);
   effective.value = data.effective || { source: 'system', providers: [], default_provider_id: null };
   if (data.catalog) catalog.value = data.catalog;
+  baseline.value = snapshot();
 }
 
 async function load() {
@@ -151,6 +160,11 @@ async function save() {
     else showToast(t('common.toast.settings_save_failed'), 'danger');
   }
 }
+
+onBeforeRouteLeave(() => {
+  if (dirty.value && !window.confirm(t('settings.ai.unsaved_confirm'))) return false;
+  return true;
+});
 
 watch(projectId, load);
 onMounted(load);

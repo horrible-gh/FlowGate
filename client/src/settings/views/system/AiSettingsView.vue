@@ -22,7 +22,8 @@
       </div>
     </div>
 
-    <div class="flex" style="justify-content:flex-end; gap:10px;">
+    <div class="flex" style="justify-content:flex-end; align-items:center; gap:10px;">
+      <span v-if="dirty" class="badge badge-yellow" style="margin-right:2px;">{{ $t('settings.ai.unsaved_badge') }}</span>
       <button class="btn btn-secondary" @click="load">
         <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
       </button>
@@ -39,7 +40,8 @@ import AppIcon from '@shared/AppIcon.vue'
 // (order = fallback chain) and pick the current default. Contract: GET/PUT
 // /api/v1/system/ai-settings (P0003). api_key is write-only — the payload carries it only
 // when the user typed a new value ('' = delete); omission means keep.
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
@@ -52,10 +54,17 @@ const providers = ref([]);
 const defaultIndex = ref(-1);
 const catalog = ref({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } });
 
+function snapshot() {
+  return JSON.stringify({ providers: providers.value, defaultIndex: defaultIndex.value });
+}
+const baseline = ref(snapshot());
+const dirty = computed(() => baseline.value !== snapshot());
+
 function applyResponse(data) {
   providers.value = data.providers || [];
   defaultIndex.value = providers.value.findIndex((p) => p.id === data.default_provider_id);
   if (data.catalog) catalog.value = data.catalog;
+  baseline.value = snapshot();
 }
 
 async function load() {
@@ -100,6 +109,11 @@ async function save() {
     else showToast(t('common.toast.settings_save_failed'), 'danger');
   }
 }
+
+onBeforeRouteLeave(() => {
+  if (dirty.value && !window.confirm(t('settings.ai.unsaved_confirm'))) return false;
+  return true;
+});
 
 onMounted(load);
 </script>
