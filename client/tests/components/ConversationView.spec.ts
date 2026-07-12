@@ -5,14 +5,17 @@ import i18n from '@shared/i18n'
 // 0085: ConversationView gains an "auto-copy mention" checkbox to the left of the
 // "Copy mention" button. When on, a successful send() fires the same copy-mention
 // event the manual button does (with { auto: true }); it never fires on a failed send.
-const getRequest = vi.fn()
-const postRequest = vi.fn()
+const { getRequest, postRequest, showToast } = vi.hoisted(() => ({
+  getRequest: vi.fn(),
+  postRequest: vi.fn(),
+  showToast: vi.fn(),
+}))
 vi.mock('@shared/api', () => ({
   getRequest: (...a: unknown[]) => getRequest(...a),
   postRequest: (...a: unknown[]) => postRequest(...a),
 }))
 vi.mock('@main/components/common/useToast', () => ({
-  useToast: () => ({ showToast: vi.fn() }),
+  useToast: () => ({ showToast }),
 }))
 
 import ConversationView from '@main/components/ConversationView.vue'
@@ -31,6 +34,7 @@ beforeEach(() => {
   localStorage.clear()
   getRequest.mockReset().mockResolvedValue({ data: { content: '' } })
   postRequest.mockReset().mockResolvedValue({ data: { content: '' } })
+  showToast.mockReset()
 })
 
 describe('ConversationView auto-copy', () => {
@@ -53,6 +57,39 @@ describe('ConversationView auto-copy', () => {
     await flushPromises()
     expect(postRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.emitted('copy-mention')).toEqual([[{ auto: true }]])
+  })
+  it('posts the trimmed message body and speaker to the conversation turn endpoint', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('  hello worker  ')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
+      { body: 'hello worker', speaker: 'user' },
+    )
+  })
+
+  it('renders FastAPI validation details as readable toast text', async () => {
+    postRequest.mockRejectedValueOnce({
+      response: {
+        data: {
+          detail: [
+            { loc: ['body', 'body'], msg: 'Field required', type: 'missing' },
+            { loc: ['body', 'speaker'], msg: 'Input should be user or ai' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('hello worker')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(showToast).toHaveBeenCalledWith(
+      'Failed to send message: body.body: Field required (missing); body.speaker: Input should be user or ai',
+      'danger',
+    )
   })
 
   it('does NOT auto-copy when the checkbox is off', async () => {
