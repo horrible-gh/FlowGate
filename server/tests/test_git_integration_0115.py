@@ -1195,65 +1195,155 @@ class TestBaseCommitRevert0177:
         assert _git(["show", "main:a.txt"], cwd=base_origin["bare"]) == "hotfixed alpha\n"
 
 
-# ── B0001 (flowgate.default.0211): time-machine git re-arm ───────────────────
+# ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
+
+@pytest.fixture(scope="class")
+def noop_origin(seed):
+    """A dedicated bare origin + enabled project for the 0199 no-work surface."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "gitnoop", "project_name": "GitNoop"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0199-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("gitnoop", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("gitnoop")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _seed_wf_done_root(group_id: str, project_id: str = "gitnoop") -> None:
+    """Insert an approved (wf_done) R root so _group_root_wf_done(group_id) is True
+    (the precondition for the none→awaiting_choice / auto-discard transition). Also
+    creates the parent groups row the documents FK requires."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import groups as db_groups
+
+    db_groups.create({
+        "group_id": group_id, "project_id": project_id,
+        "module": "default", "title": "inquiry",
+    })
+    doc_id = f"{group_id}.0001-R"
+    db_docs.create({
+        "doc_id": doc_id, "project_id": project_id, "module": "default",
+        "group_id": group_id, "type_code": "R", "seq": 1, "title": "inquiry root",
+        "file_path": f"documents/{group_id}/0001-R.md",
+    })
+    db_docs.update(doc_id, {"doc_review_status": "wf_done"})
+
 
 @needs_git
-class TestTimeMachineGitReArm:
-    """A reverse-time-machine rewind rolls the workflow back below its final
-    approval but leaves the git ledger wherever the prior finalize put it. When
-    that state was terminal (merged/pushed) the worktree is already gone, so the
-    re-worked group could never finalize again — precheck 422 / finalize 409.
-    reopen_group_git restores the "below-approval => not git-terminal" invariant."""
+class TestNoWorkAutoDiscard0199:
+    """flowgate.default.0199 B0001 — a wf_done group that produced NO work (branch
+    at base tip, clean worktree) must be auto-discarded: its slot is torn down with
+    NO merge and NO push (no empty `--no-ff` commit on base, no leaked branch on
+    origin), instead of being parked in the finalize gate."""
 
-    GROUP = "gitprj.default.0211"
+    def _origin_heads(self, origin) -> str:
+        return _git(["ls-remote", "--heads", str(origin["bare"])])
 
-    def test_rearm_after_merge_allows_second_finalize(self, origin_repo):
+    def _origin_main_commits(self, origin) -> int:
+        out = _git(["log", "--oneline", "main"], cwd=origin["bare"])
+        return len([l for l in out.splitlines() if l.strip()])
+
+    def test_realize_transition_discards_no_work_group(self, noop_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitnoop.default.0210"
+        assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        assert db_git.get_state(group)["worktree_registered"] == 1
+        _seed_wf_done_root(group)
+
+        # Eager approval-time realization: no work → auto-discard, not awaiting_choice.
+        svc.realize_wf_done_transition(group)
+
+        state = db_git.get_state(group)
+        # Slot torn down: unregistered, DB status left at the neutral "none"
+        # ("discarded" is a response label only — the status CHECK has no such value).
+        assert state["worktree_registered"] == 0
+        assert state["status"] == "none"
+        # No finalize gate is surfaced for a discarded group.
+        assert svc.get_finalize_state(group)["state"]["status"] == "none"
+        # Base got NO empty merge commit; origin got NO leaked work branch.
+        assert self._origin_main_commits(noop_origin) == 1        # init only
+        assert "gitnoop_default_0210" not in self._origin_heads(noop_origin)
+
+    def test_no_work_group_absent_from_status_lists(self, noop_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitnoop.default.0211"
+        assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        _seed_wf_done_root(group)
+
+        # Aggregation-time realization also discards; the group never appears as a
+        # pending finalize nor as an active slot.
+        out = svc.project_git_status("gitnoop")["status"]
+        assert group not in {p["group_id"] for p in out["pending"]}
+        assert group not in {s["group_id"] for s in out["slots"]}
+
+    def test_real_work_group_still_gated(self, noop_origin):
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
         from modules.flow_gate.storage.paths import src_root
 
-        # first cycle: provision, do work, finalize(merge) -> terminal slot.
-        assert svc.ensure_worktree("gitprj", "default", self.GROUP) == "ok"
-        wt = src_root("GitProj", "gitprj_default_0211")
-        (wt / "work.txt").write_text("first cycle\n", encoding="utf-8")
-        db_git.set_status(self.GROUP, "awaiting_choice")
-        assert svc.finalize(self.GROUP, "merge")["result"]["status"] == "merged"
+        group = "gitnoop.default.0212"
+        assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        wt = src_root("GitNoop", "gitnoop_default_0212")
+        # An uncommitted worktree edit is real, mergeable work (finalize absorbs it).
+        (wt / "work.txt").write_text("real work\n", encoding="utf-8")
+        _seed_wf_done_root(group)
 
-        # 0182 slot cleanup: worktree torn down + unregistered, status kept as history.
-        state = db_git.get_state(self.GROUP)
-        assert state["status"] == "merged"
-        assert state["worktree_registered"] == 0
-        assert not wt.exists()
-
-        # B0001 symptom: a second finalize on the still-terminal slot is impossible.
-        with pytest.raises(svc.GitServiceError) as exc:
-            svc.finalize(self.GROUP, "merge")
-        assert exc.value.status == 409
-
-        # time-machine rewind re-arms the slot: status back to 'none', worktree back.
-        svc.reopen_group_git("gitprj", self.GROUP)
-        state = db_git.get_state(self.GROUP)
-        assert state["status"] == "none"
+        svc.realize_wf_done_transition(group)
+        state = db_git.get_state(group)
+        assert state["status"] == "awaiting_choice"    # real work → keep the gate
         assert state["worktree_registered"] == 1
-        assert wt.is_dir()
 
-        # re-work + re-approve now finalizes again, landing the new work in origin.
-        (wt / "work2.txt").write_text("second cycle\n", encoding="utf-8")
-        db_git.set_status(self.GROUP, "awaiting_choice")
-        assert svc.finalize(self.GROUP, "merge")["result"]["status"] == "merged"
-        files = _git(["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]).split()
-        assert "work2.txt" in files
-
-    def test_rearm_is_noop_for_non_terminal_and_disabled(self, origin_repo):
+    def test_finalize_merge_no_change_short_circuits(self, noop_origin):
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
 
-        # A healthy in-progress slot (awaiting_choice) is left untouched.
-        group = "gitprj.default.0212"
-        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        group = "gitnoop.default.0213"
+        assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        # Force the gate open on a clean worktree (branch at base, no work) and
+        # explicitly pick merge — the no-change guard must still refuse to stamp an
+        # empty merge commit / push.
         db_git.set_status(group, "awaiting_choice")
-        svc.reopen_group_git("gitprj", group)
-        assert db_git.get_state(group)["status"] == "awaiting_choice"
 
-        # A non-integrated project is a silent no-op (never raises).
-        svc.reopen_group_git("plainprj", "plainprj.default.0001")
+        out = svc.finalize(group, "merge")["result"]
+        assert out["status"] == "discarded"
+        assert out["pushed"] is False
+        assert out["merge_commit"] is None
+        # No empty merge commit on base/origin, no leaked branch, slot cleaned.
+        assert self._origin_main_commits(noop_origin) == 1
+        assert "gitnoop_default_0213" not in self._origin_heads(noop_origin)
+        assert db_git.get_state(group)["worktree_registered"] == 0
+
+    def test_finalize_push_no_change_short_circuits(self, noop_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitnoop.default.0214"
+        assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        db_git.set_status(group, "awaiting_choice")
+
+        out = svc.finalize(group, "push")["result"]
+        assert out["status"] == "discarded"
+        # push of a no-work group must NOT leak an empty branch to origin.
+        assert "gitnoop_default_0214" not in self._origin_heads(noop_origin)
+        assert db_git.get_state(group)["worktree_registered"] == 0
