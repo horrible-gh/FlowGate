@@ -15,6 +15,17 @@
         {{ t('main.git_status.base_label') }}: {{ status.base_branch }}
       </span>
       <span class="git-ab-meta">{{ aheadBehindText }}</span>
+      <span v-if="unpushedBadgeText" class="badge git-unpushed-badge">{{ unpushedBadgeText }}</span>
+      <button
+        v-if="canPushBase"
+        class="btn btn-sm btn-primary"
+        type="button"
+        :disabled="busy"
+        @click="doPush(status.base_branch)"
+      >
+        <AppIcon name="cloud-arrow-up" />
+        {{ t('main.git_status.push_all') }}
+      </button>
       <button
         class="git-refresh-btn"
         :disabled="busy"
@@ -74,7 +85,28 @@
         <AppIcon name="x" />
       </button>
     </div>
-    <div class="card-bd pad">
+      <div class="card-bd pad">
+      <!-- Unpushed base-merge list (0202 P0006 scenarios 5-8). -->
+      <div v-if="showUnpushedSection" class="git-status-sect git-unpushed-sect">
+        <p class="git-status-sub">{{ unpushedBadgeText }}</p>
+        <div v-for="m in status.unpushed?.merges || []" :key="m.merge_commit" class="git-unpushed-row">
+          <div class="git-unpushed-main">
+            <span class="git-status-gid">{{ m.group_id || '-' }}</span>
+            <span class="git-unpushed-commit">{{ m.merge_commit }}</span>
+            <span class="git-unpushed-subject">{{ m.subject || '' }}</span>
+          </div>
+          <button
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="busy || !m.can_unmerge || !m.group_id"
+            @click="doUnmerge(m)"
+          >
+            <AppIcon name="arrow-counter-clockwise" />
+            {{ t('main.git_status.unmerge_btn') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Finalize-pending list (each item finalizes inline, or opens the group) -->
       <div class="git-status-sect">
         <p class="git-status-sub">
@@ -190,13 +222,9 @@
         </div>
       </div>
 
-      <!-- Recovery (manual): re-push the base branch when automation stalled -->
+      <!-- Recovery (manual cleanup only; base push is a first-class header action). -->
       <div class="git-status-sect git-status-recovery">
         <p class="git-status-sub">{{ t('main.git_status.recovery_header') }}</p>
-        <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doPush(status.base_branch)">
-          <AppIcon name="cloud-arrow-up" />
-          {{ t('main.git_status.push') }} ({{ status.base_branch }})
-        </button>
         <!-- 0182 NR0003 §5: backlog sweep of finalized slots' leftovers (worktree
              dir + local work branch + ledger). New finalizes clean up after
              themselves; this clears what accumulated before that (or failed). -->
@@ -241,7 +269,7 @@ const { initConflictFile } = useConflictChunks()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
-const ACTIONS = ['merge', 'push', 'wait'] as const
+const ACTIONS = ['merge', 'merge_only', 'wait'] as const
 
 interface Slot {
   group_id: string
@@ -271,6 +299,19 @@ interface GitStatus {
   pending_count: number
   // 0182 NR0003 §5: finalized (merged/pushed) slots whose leftovers await cleanup
   cleanable_count?: number
+  unpushed?: {
+    count: number
+    commit_count: number
+    merges: UnpushedMerge[]
+  }
+}
+interface UnpushedMerge {
+  merge_commit: string
+  group_id: string | null
+  subject?: string | null
+  merged_at?: string | null
+  can_unmerge: boolean
+  blocked_reason?: string | null
 }
 
 const status = ref<GitStatus | null>(null)
@@ -348,6 +389,18 @@ const aheadBehindText = computed(() => {
     return t('main.git_status.unmeasured')
   }
   return t('main.git_finalize.ahead_behind', { ahead: s.ahead_count, behind: s.behind_count })
+})
+const unpushedCount = computed(() => status.value?.unpushed?.count ?? 0)
+const unpushedCommitCount = computed(() => status.value?.unpushed?.commit_count ?? status.value?.ahead_count ?? 0)
+const canPushBase = computed(() => !!status.value?.base_branch && unpushedCommitCount.value > 0)
+const showUnpushedSection = computed(
+  () => unpushedCount.value > 0 || (unpushedCount.value === 0 && unpushedCommitCount.value > 0),
+)
+const unpushedBadgeText = computed(() => {
+  if (!status.value) return ''
+  if (unpushedCount.value > 0) return t('main.git_status.unpushed_badge', { n: unpushedCount.value })
+  if (unpushedCommitCount.value > 0) return t('main.git_status.unpushed_commits', { n: unpushedCommitCount.value })
+  return ''
 })
 
 function statusLabel(s: string): string {
@@ -493,7 +546,8 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
       await fetchStatus()
       await openResolve(groupId)
     } else if (r?.status === 'merged') {
-      showToast(t('main.git_finalize.merged_toast', { commit: r.merge_commit || '' }), 'success')
+      const key = r?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
+      showToast(t(key, { commit: r.merge_commit || '' }), 'success')
     } else if (r?.status === 'pushed') {
       showToast(t('main.git_finalize.pushed_toast'), 'success')
     } else if (r?.status === 'waiting') {
@@ -658,7 +712,8 @@ async function submitResolveInline(p: Pending) {
     if (data.ok === false) {
       conflictError.value = data.error?.message || t('main.git_finalize.failed')
     } else if (data.result?.status === 'merged') {
-      showToast(t('main.git_finalize.merged_toast', { commit: data.result.merge_commit || '' }), 'success')
+      const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
+      showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
       collapseResolve()
     }
   } catch (e: any) {
@@ -755,6 +810,40 @@ async function doPush(branch: string | null) {
   }
 }
 
+async function doUnmerge(m: UnpushedMerge) {
+  if (busy.value || !m.group_id || !m.merge_commit) return
+  const ok = window.confirm(t('main.git_status.unmerge_confirm', {
+    gid: m.group_id,
+    commit: m.merge_commit,
+  }))
+  if (!ok) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/groups/${m.group_id}/git/unmerge`,
+      { merge_commit: m.merge_commit },
+    )
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+    } else {
+      const key = data.result?.reprovisioned === false
+        ? 'main.git_status.unmerge_reprovisioning'
+        : 'main.git_status.unmerged_toast'
+      showToast(t(key), 'success')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+          detail: { project: props.projectId, group_id: m.group_id, status: 'awaiting_choice' },
+        }))
+      }
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
 function matchesProject(e: Event): boolean {
   const detail = (e as CustomEvent).detail || {}
   const eventProject = detail.project || detail.project_id
@@ -822,6 +911,11 @@ defineExpose({ fetchStatus })
   font-size: 0.74rem;
   color: var(--text-m);
 }
+.git-unpushed-badge {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
 .git-refresh-btn {
   margin-left: auto;
   border: none;
@@ -877,8 +971,35 @@ defineExpose({ fetchStatus })
   background: var(--bg, #fff);
   color: var(--text, #0f172a);
 }
-.git-status-recovery .btn + .btn {
-  margin-left: 8px;
+.git-unpushed-sect {
+  border-bottom: 1px dashed var(--border, #e2e8f0);
+  padding-bottom: 10px;
+}
+.git-unpushed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.git-unpushed-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.git-unpushed-commit {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.76rem;
+  color: #0369a1;
+}
+.git-unpushed-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+  color: var(--text-m);
 }
 .git-status-slot {
   display: flex;
@@ -1017,3 +1138,4 @@ defineExpose({ fetchStatus })
   color: var(--text);
 }
 </style>
+
