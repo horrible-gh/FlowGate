@@ -311,6 +311,8 @@ export default {
       err_cli_command_required: 'CLI実行コマンドを入力してください。',
       err_api_model_required: 'APIモデルを入力してください。',
       toast_invalid: '入力値が正しくありません。各項目を確認してください。',
+      unsaved_badge: '未保存',
+      unsaved_confirm: '保存していない変更があります。保存せずに移動しますか？',
       exec_type: {
         cli: 'CLI',
         api: 'API',

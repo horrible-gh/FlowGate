@@ -311,6 +311,8 @@ export default {
       err_cli_command_required: 'Enter the CLI command.',
       err_api_model_required: 'Enter the API model.',
       toast_invalid: 'Some fields are invalid. Check each entry.',
+      unsaved_badge: 'Unsaved',
+      unsaved_confirm: 'You have unsaved changes. Leave without saving?',
       exec_type: {
         cli: 'CLI',
         api: 'API',
