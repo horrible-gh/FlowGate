@@ -204,7 +204,7 @@
                 <AppIcon name="terminal" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_invoke') }}
               </div>
               <div class="nad-proceed-item" @click="onProceedAction('invoke-ai')">
-                <i class="fa-solid fa-robot" style="width:1.2em;"></i> {{ t('main.next_action_modal.btn_invoke_ai') }}
+                <AppIcon name="robot" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_invoke_ai') }}
               </div>
             </div>
             <button class="btn btn-primary" type="button" @click.stop="toggleProceed">

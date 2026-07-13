@@ -215,7 +215,7 @@
                         <AppIcon name="terminal" /> {{ t('main.main_panel.invoke_command') }}
                       </button>
                       <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeAi(tab)">
-                        <i class="fa-solid fa-robot"></i> {{ t('main.main_panel.invoke_ai') }}
+                        <AppIcon name="robot" /> {{ t('main.main_panel.invoke_ai') }}
                       </button>
                     </div>
                   </transition>
@@ -720,6 +720,7 @@
       @decide-workflow="openWorkflowDecisionForActive"
       @copy-workflow-mention="onWorkflowDecisionCopyMention"
       @invoke-workflow-command="onWorkflowDecisionInvokeCommand"
+      @invoke-workflow-ai="onWorkflowDecisionInvokeAi"
       @next-action="onProceedNextStep(activeTabId)"
       @copy-next-mention="onActionBarCopyNextMention(activeTabId)"
       @create-empty="onActionBarCreateEmpty(activeTabId)"
@@ -967,6 +968,10 @@
       :group="aiInvokeGroup"
       :doc-ref="aiInvokeDocRef"
       :action-scope="aiInvokeActionScope"
+      :initial-mode="aiInvokeInitialMode"
+      :initial-target-seq="aiInvokeInitialTargetSeq"
+      :continuation-review-mode="aiInvokeContinuationReviewMode"
+      :auto-start="aiInvokeAutoStart"
       @open-doc="onAiInvokeOpenDoc"
     />
 
@@ -1236,7 +1241,11 @@ const aiInvokeProject = ref('')
 const aiInvokeModule = ref<string | null>(null)
 const aiInvokeGroup = ref('')
 const aiInvokeDocRef = ref('')
-const aiInvokeActionScope = ref<'new' | 'edit'>('new')
+const aiInvokeActionScope = ref<'new' | 'edit' | 'workflow_decide'>('new')
+const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
+const aiInvokeInitialTargetSeq = ref<number | null>(null)
+const aiInvokeContinuationReviewMode = ref(false)
+const aiInvokeAutoStart = ref(false)
 const editDropdownTabId = ref<string | null>(null)
 const textWrapEnabled = ref(readTextWrapEnabled())
 
@@ -1459,13 +1468,23 @@ async function onEditInvokeCommand(tab: Tab) {
 
 // ── AI invoke entry points (0187 D0004 §6): same spots as the command runner,
 // but the token is minted server-side and never reaches the browser. ──────────
-function openAiInvokeDialog(project: string, groupId: string, docRef: string, actionScope: 'new' | 'edit') {
+function openAiInvokeDialog(
+  project: string,
+  groupId: string,
+  docRef: string,
+  actionScope: 'new' | 'edit' | 'workflow_decide',
+  preset?: { mode?: 'single' | 'continuous'; targetSeq?: number | null; reviewMode?: boolean; autoStart?: boolean },
+) {
   const gParts = splitGroupId(groupId)
   aiInvokeProject.value = project
   aiInvokeModule.value = gParts?.module ?? null
   aiInvokeGroup.value = gParts?.groupCode ?? groupId
   aiInvokeDocRef.value = docRef
   aiInvokeActionScope.value = actionScope
+  aiInvokeInitialMode.value = preset?.mode ?? 'single'
+  aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
+  aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
+  aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeVisible.value = true
 }
 
@@ -2183,6 +2202,15 @@ async function onWorkflowDecisionInvokeCommand(payload: ReviewActionPayload) {
   commandSelectorVisible.value = true
 }
 
+function onWorkflowDecisionInvokeAi(payload: ReviewActionPayload) {
+  const project = payload.projectId || projectStore.currentProjectId
+  if (!project || !payload.groupId || !payload.docRef) {
+    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, payload.groupId, payload.docRef, 'workflow_decide')
+}
+
 async function onReviewReworkCopyMention(payload: ReviewActionPayload) {
   const project = payload.projectId || projectStore.currentProjectId
   const groupId = payload.groupId
@@ -2668,9 +2696,9 @@ function onContinuousDialogConfirm(payload: { targetSeq: number; targetLabel: st
   continuousWarnVisible.value = true
 }
 
-// Consent given → issue the FIRST continuation token via /workflow/advance (continuous=true)
-// and copy its continuous mention. The server self-chains the remaining steps from the inbox
-// response; the worker reads next_token off each 201 (no human re-issue per step).
+// Consent given → start the in-app provider immediately. Pre-decision runs use the
+// workflow_decide token/mention and the run-to-end sentinel; decided sequences retain the
+// concrete target chosen in ContinuousWorkDialog.
 async function onContinuousWarnConfirm() {
   continuousWarnVisible.value = false
   const project = continuousProjectId.value
@@ -2681,56 +2709,19 @@ async function onContinuousWarnConfirm() {
     showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
     return
   }
-  // R0001 "워크플로 결정부터": the workflow is not decided yet, so /workflow/advance would
-  // 400 (sequence_not_decided). Instead issue the workflow-decision token (continuous): the
-  // worker decides the sequence, and the server self-chains the rest from the decide
-  // response. The decision mention carries the same delegation/unmanned block.
-  if (continuousFromDecision.value) {
-    let token: IssuedToken | null = null
-    await copyMentionDeferred(
-      async () => {
-        token = await requestWorkflowDecision(docRef, {
-          continuous: true,
-          continuationReviewMode: continuousReviewMode.value,
-        })
-        if (!token) throw new ClipboardAbort()
-        return composeMention(token)
-      },
-      {
-        tabId: continuousTabId.value,
-        kind: 'continuous',
-        successToast: t('main.continuous_work.toast_started'),
-        aborted: () => token == null,
-      },
-    )
-    return
-  }
-  const gParts = splitGroupId(groupId)
-  let token: IssuedToken | null = null
-  await copyMentionDeferred(
-    async () => {
-      token = await issueToken({
-        project,
-        ...(gParts?.module != null ? { module: gParts.module } : {}),
-        group: gParts?.groupCode ?? groupId,
-        doc_ref: docRef,
-        action_scope: 'new',
-        continuous: true,
-        continuationTargetSeq: targetSeq,
-        continuationReviewMode: continuousReviewMode.value,
-      })
-      if (!token) throw new ClipboardAbort()
-      return composeMention(token)
-    },
+  openAiInvokeDialog(
+    project,
+    groupId,
+    docRef,
+    continuousFromDecision.value ? 'workflow_decide' : 'new',
     {
-      tabId: continuousTabId.value,
-      kind: 'continuous',
-      successToast: t('main.continuous_work.toast_started'),
-      aborted: () => token == null,
+      mode: 'continuous',
+      targetSeq,
+      reviewMode: continuousReviewMode.value,
+      autoStart: true,
     },
   )
 }
-
 // R0001 #2 (0048): action-bar split "create approved doc" — confirm once, then create
 // + approve in one server call (next-approved). Offered only for N/T next steps; TS is
 // excluded (group 0121 R0001 — a test-scenario directive is token-issued/AI-authored,

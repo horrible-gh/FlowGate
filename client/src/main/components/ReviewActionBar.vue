@@ -70,6 +70,9 @@
               <button class="ab-split-item" type="button" @click="onWorkflowCommandClick">
                 <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
               </button>
+              <button class="ab-split-item" type="button" @click="onWorkflowAiClick">
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+              </button>
               <button class="ab-split-item" type="button" @click="onWorkflowManualClick">
                 <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
               </button>
@@ -341,6 +344,7 @@ const emit = defineEmits<{
   'decide-workflow': []
   'copy-workflow-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'invoke-workflow-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-workflow-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'next-action': []
   'copy-next-mention': []
   'create-empty': []
@@ -734,6 +738,11 @@ function onWorkflowMentionCopyClick() {
 function onWorkflowCommandClick() {
   dropdownOpen.value = false
   emit('invoke-workflow-command', reworkPayload())
+}
+
+function onWorkflowAiClick() {
+  dropdownOpen.value = false
+  emit('invoke-workflow-ai', reworkPayload())
 }
 
 // R0001 (0086): open the continuous (unmanned) work dialog. Shared by the 'workflow' and

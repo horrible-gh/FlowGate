@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
+from modules.flow_gate.services import workflow_decision_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
@@ -38,6 +39,7 @@ class AiInvokeStartRequest(BaseModel):
     mode: str = "single"
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
+    provider_id: Optional[str] = None
 
 
 def _err(exc: HTTPException) -> JSONResponse:
@@ -68,10 +70,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     errors: list[dict] = []
     if body.mode not in ("single", "continuous"):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
-    if body.action_scope not in ("new", "edit"):
-        errors.append({"loc": "action_scope", "msg": "must be new or edit"})
+    if body.action_scope not in ("new", "edit", "workflow_decide"):
+        errors.append({"loc": "action_scope", "msg": "must be new, edit, or workflow_decide"})
     if body.mode == "continuous" and body.continuation_target_seq is None:
         errors.append({"loc": "continuation_target_seq", "msg": "required for continuous mode"})
+    if (
+        body.action_scope == "workflow_decide"
+        and body.mode == "continuous"
+        and body.continuation_target_seq != -1
+    ):
+        errors.append({"loc": "continuation_target_seq", "msg": "must be -1 for a pre-decision run"})
     try:
         validate_project_id(body.project)
     except ValueError as exc:
@@ -119,6 +127,19 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuous=is_continuous,
         )
 
+    issue_builder = None
+    if body.action_scope == "workflow_decide":
+        def _issue_workflow_decision():
+            return workflow_decision_service.request_workflow_decision(
+                doc_id=body.doc_ref,
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                locale=locale,
+                continuous=is_continuous,
+                continuation_review_mode=body.continuation_review_mode,
+            )
+        issue_builder = _issue_workflow_decision
+
     try:
         result = ai_invoke_service.start_run(
             project_id=body.project,
@@ -133,10 +154,39 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued_to=user_id,
             api_base_url=_token_routes._build_api_base(request),
             mention_builder=_mention_builder,
+            provider_id=body.provider_id,
+            issue_builder=issue_builder,
         )
     except HTTPException as exc:
         return _err(exc)
+    except LookupError as exc:
+        return JSONResponse(status_code=404, content={
+            "code": "workflow_decision_unavailable", "message": str(exc)})
+    except ValueError as exc:
+        return JSONResponse(status_code=409, content={
+            "code": "workflow_decision_conflict", "message": str(exc)})
     return JSONResponse(status_code=200, content=result)
+
+
+@router.get("/providers")
+def get_ai_invoke_providers(project: str, request: Request):
+    """Return only safe provider briefs for the header runtime selector."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_project_id(project)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "project", "msg": str(exc)}])
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    effective = ai_invoke_service.list_runtime_providers(project)
+    return JSONResponse(status_code=200, content=effective)
 
 
 @router.get("/{run_id}")

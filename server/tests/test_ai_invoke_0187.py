@@ -127,7 +127,7 @@ def fake_env(monkeypatch, tmp_path):
     return {"docs": docs, "chain": chain_holder, "events": events, "tmp": tmp_path}
 
 
-def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n"):
+def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n", provider_id=None):
     fake_env["chain"]["providers"] = providers
     return svc.start_run(
         project_id="flowgate",
@@ -142,6 +142,7 @@ def _start(fake_env, providers, mode="single", target=None, mention="## prompt\n
         issued_to="usr_admin",
         api_base_url="http://127.0.0.1:1/flowgate/api/v1",
         mention_builder=lambda raw, scratch: mention,
+        provider_id=provider_id,
     )
 
 
@@ -240,6 +241,20 @@ class TestForcedKill:
 # ── ③ Provider error (harness case 3) ────────────────────────────────────────
 
 class TestProviderError:
+    def test_runtime_selection_moves_provider_to_chain_head(self, fake_env):
+        first = _provider(name="first", cmd=f'"{PY}" -c "print(1)"', pid="aip_first")
+        selected = _provider(name="selected", cmd=f'"{PY}" -c "print(2)"', pid="aip_selected")
+        res = _start(fake_env, [first, selected], provider_id="aip_selected")
+        run = _wait_finished(res["run_id"])
+        assert res["provider"]["id"] == "aip_selected"
+        assert run["provider_id"] == "aip_selected"
+
+    def test_unknown_runtime_selection_is_rejected(self, fake_env):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _start(fake_env, [_provider(cmd=f'"{PY}" -c "print(1)"')], provider_id="aip_missing")
+        assert exc.value.status_code == 422
+
     def test_fast_fail_falls_back_to_next_provider(self, fake_env):
         bad = _provider(name="bad", cmd=f'"{PY}" -c "import sys; sys.exit(3)"', pid="aip_bad001")
         good = _provider(name="good", cmd=f'"{PY}" -c "import sys; sys.stdin.read(); print(\'rescued\')"',
@@ -322,6 +337,65 @@ class TestLastMessageRecovery:
         assert run["last_message_received"] is False
         assert run["last_message"] is None
 
+
+# ── Workflow-decision API loop (group 0223) ──────────────────────────────────
+
+def _workflow_api_run(mode: str, *, target_to_end: bool = False) -> dict:
+    return {
+        "project_id": "flowgate", "chain_source": "system", "run_id": "aiv_workflow",
+        "docs_target": 0 if mode == "single" else 1, "raw_token": "decision-token",
+        "action_scope": "workflow_decide", "mode": mode,
+        "cancel_event": threading.Event(), "started_mono": time.monotonic(),
+        "timeout_sec": 30, "target_to_end": target_to_end, "baseline_seq": 4,
+    }
+
+
+class TestWorkflowDecisionApiLoop:
+    def test_single_stops_after_decision(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+
+        def model(*args):
+            tool_name = args[5]
+            calls.append(tool_name)
+            return "decided", {
+                "id": "tc1", "name": tool_name,
+                "input": {"doc_class": "standard", "sequence": ["T"]},
+            }, {"role": "assistant", "content": "decided", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        monkeypatch.setattr(svc, "_workflow_decide", lambda *a: (
+            200, {"next_token": "doc-token", "next_mention": "next"}))
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: pytest.fail(
+            "single workflow decision must not register a document"))
+        result = svc._api_execute(
+            _provider(exec_type="api", kind="openai"), "prompt", _workflow_api_run("single"))
+        assert result[0] == "started_ok"
+        assert calls == ["decide_workflow"]
+
+    def test_continuous_switches_from_decision_to_registration(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+
+        def model(*args):
+            tool_name = args[5]
+            calls.append(tool_name)
+            payload = ({"doc_class": "standard", "sequence": ["T"]}
+                       if tool_name == "decide_workflow"
+                       else {"doc_type": "T", "title": "title", "content": "content"})
+            return "worked", {"id": f"tc{len(calls)}", "name": tool_name, "input": payload}, {
+                "role": "assistant", "content": "worked", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        monkeypatch.setattr(svc, "_workflow_decide", lambda *a: (200, {
+            "next_token": "doc-token", "next_mention": "next", "continuation_target_seq": 5,
+        }))
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: (200, {"ok": True}))
+        run = _workflow_api_run("continuous", target_to_end=True)
+        result = svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run)
+        assert result[0] == "started_ok"
+        assert calls == ["decide_workflow", "register_document"]
+        assert run["docs_target"] == 1
 
 # ── Document-reach oracle (§2.6) ─────────────────────────────────────────────
 

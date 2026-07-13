@@ -31,6 +31,7 @@ from fastapi import HTTPException
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import process_runner, token_service
 from modules.flow_gate.settings import ai_settings_service
@@ -67,6 +68,32 @@ _REGISTER_TOOL_SCHEMA = {
         "doc_type": {"type": "string", "description": "Document type code, e.g. NR, D, P, L, T, TR"},
     },
     "required": ["title", "content", "doc_type"],
+}
+
+_DECIDE_TOOL_NAME = "decide_workflow"
+_DECIDE_TOOL_DESC = (
+    "Save the workflow decision for the target requirement. Choose the document class "
+    "and the ordered, non-empty sequence required by the workflow-decision instruction."
+)
+_DECIDE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_class": {"type": "string", "description": "Workflow document class"},
+        "sequence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "type": {"type": "string"},
+                    "label": {"type": "string"},
+                },
+                "required": ["id", "type", "label"],
+            },
+            "minItems": 1,
+        },
+    },
+    "required": ["doc_class", "sequence"],
 }
 
 # ── Registry ─────────────────────────────────────────────────────────────────
@@ -155,6 +182,17 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
 
 # ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
 
+def list_runtime_providers(project_id: str) -> dict:
+    """Safe effective-provider view for ordinary document readers."""
+    effective = ai_settings_service.resolve_effective(project_id)
+    return {
+        "ok": True,
+        "project": project_id,
+        "providers": [_provider_brief(provider) for provider in effective.get("providers") or []],
+        "default_provider_id": effective.get("default_provider_id"),
+    }
+
+
 def start_run(
     *,
     project_id: str,
@@ -169,6 +207,8 @@ def start_run(
     issued_to: str,
     api_base_url: str,
     mention_builder: Callable[[str, str], Optional[str]],
+    provider_id: Optional[str] = None,
+    issue_builder: Optional[Callable[[], dict]] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -177,6 +217,14 @@ def start_run(
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
+    if provider_id:
+        selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
+        if selected is None:
+            raise _http_error(
+                422, "provider_unavailable",
+                "The selected AI provider is not enabled for this project.",
+            )
+        chain = [selected, *(provider for provider in chain if provider.get("id") != provider_id)]
     if not chain:
         raise _http_error(
             409, "no_enabled_provider",
@@ -189,7 +237,10 @@ def start_run(
                           run_id=active["run_id"])
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
-    if mode == "single":
+    target_to_end = mode == "continuous" and continuation_target_seq == -1
+    if action_scope == "workflow_decide":
+        docs_target = 0
+    elif mode == "single":
         docs_target = 1
     else:
         target = int(continuation_target_seq or 0)
@@ -201,17 +252,21 @@ def start_run(
                             "msg": f"must exceed the group's current seq ({baseline_seq})"}],
             })
 
-    issue = token_service.issue(
-        project=project_id,
-        group_id=group_id,
-        action_scope=action_scope,
-        doc_ref=doc_ref,
-        issued_to=issued_to,
-        continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
-        continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
-        continuation_locale=continuation_locale if mode == "continuous" else None,
-    )
-    mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
+    if issue_builder is not None:
+        issue = issue_builder()
+        mention = issue.get("mention")
+    else:
+        issue = token_service.issue(
+            project=project_id,
+            group_id=group_id,
+            action_scope=action_scope,
+            doc_ref=doc_ref,
+            issued_to=issued_to,
+            continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
+            continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
+            continuation_locale=continuation_locale if mode == "continuous" else None,
+        )
+        mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
     if not mention:
         # No prompt ⇒ nothing to launch. Discard the just-minted token.
         try:
@@ -242,7 +297,7 @@ def start_run(
         "doc_ref": doc_ref,
         "docs_target": docs_target,
         "baseline_seq": baseline_seq,
-        "timeout_sec": min(RUN_TIMEOUT_BASE_SEC * docs_target, RUN_TIMEOUT_CAP_SEC),
+        "timeout_sec": RUN_TIMEOUT_CAP_SEC if target_to_end else min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC),
         "provider": None,
         "provider_id": None,
         "attempt_no": 0,
@@ -269,6 +324,8 @@ def start_run(
         "source_root": str(source_root) if source_root else None,
         "api_base_url": api_base_url,
         "chain_source": chain_source,
+        "action_scope": action_scope,
+        "target_to_end": target_to_end,
         "raw_token": issue["raw_token"],
     }
     with _runs_lock:
@@ -524,10 +581,7 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
 # ── API adapter: minimal agent loop (L0006 §2.4) ─────────────────────────────
 
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
-    """API providers cannot register documents themselves, so the run wraps the
-    model in a one-tool agent loop: the model calls register_document and the
-    server performs the registration with the run token (the body is registered
-    verbatim, so the document-reach oracle keeps its meaning)."""
+    """Minimal tool loop for API providers, including workflow decision kickoff."""
     secret_scope = run["project_id"] if run.get("chain_source") == "project" else None
     key = ai_settings_service.get_provider_secret(secret_scope, provider.get("id"))
     if not key:
@@ -540,14 +594,17 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     kind = provider.get("kind") or "openai"
     base_url = (provider.get("api_base_url") or "").rstrip("/")
     model = provider.get("api_model") or ""
-    max_turns = max(1, run["docs_target"] * API_MAX_TURNS_PER_DOC)
+    max_turns = max(API_MAX_TURNS_PER_DOC, max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
 
     current_token = run["raw_token"]
     registered = 0
+    workflow_pending = run.get("action_scope") == "workflow_decide"
     last_text: Optional[str] = None
     conversation: list[dict] = [{"role": "user", "content": prompt}]
+    turn = 0
 
-    for turn in range(1, max_turns + 1):
+    while turn < max_turns:
+        turn += 1
         if run["cancel_event"].is_set():
             break
         remaining = _remaining_sec(run)
@@ -555,14 +612,19 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["timed_out"] = True
             break
         call_timeout = min(remaining, API_CALL_MAX_TIMEOUT_SEC)
+        tool_name = _DECIDE_TOOL_NAME if workflow_pending else _REGISTER_TOOL_NAME
+        tool_desc = _DECIDE_TOOL_DESC if workflow_pending else _REGISTER_TOOL_DESC
+        tool_schema = _DECIDE_TOOL_SCHEMA if workflow_pending else _REGISTER_TOOL_SCHEMA
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
-                    base_url, model, key, conversation, call_timeout
+                    base_url, model, key, conversation, call_timeout,
+                    tool_name, tool_desc, tool_schema,
                 )
             else:
                 reply_text, tool_call, assistant_msg = _call_openai(
-                    base_url, model, key, conversation, call_timeout
+                    base_url, model, key, conversation, call_timeout,
+                    tool_name, tool_desc, tool_schema,
                 )
         except urllib.error.HTTPError as exc:
             if turn == 1:
@@ -578,10 +640,31 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         conversation.append(assistant_msg)
         if reply_text:
             last_text = reply_text
-
         if tool_call is None:
-            # No tool use ⇒ the model declared it is done.
             break
+
+        if workflow_pending:
+            status, resp = _workflow_decide(run, current_token, tool_call["input"])
+            if 200 <= status < 300:
+                workflow_pending = False
+                next_token = resp.get("next_token")
+                next_mention = resp.get("next_mention")
+                resolved_target = resp.get("continuation_target_seq")
+                if run.get("target_to_end") and isinstance(resolved_target, int) and resolved_target > 0:
+                    run["docs_target"] = max(0, resolved_target - run["baseline_seq"])
+                    max_turns = max(max_turns, turn + max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
+                if next_token:
+                    current_token = next_token
+                result_text = next_mention or json.dumps(resp, ensure_ascii=False)[:4000]
+                conversation.append(_tool_result_msg(kind, tool_call, result_text))
+                if run["mode"] == "single" or not next_token:
+                    break
+                continue
+            conversation.append(_tool_result_msg(
+                kind, tool_call,
+                f"Workflow decision failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
+            ))
+            continue
 
         status, resp = _inbox_register(run, current_token, tool_call["input"])
         if 200 <= status < 300:
@@ -608,7 +691,6 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     run["last_message_received"] = bool(last_text)
     return "started_ok", None
 
-
 def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
     if kind == "claude":
         return {
@@ -634,7 +716,8 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict
 
 
 def _call_anthropic(
-    base_url: str, model: str, key: str, conversation: list[dict], timeout: float
+    base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
+    tool_name: str, tool_desc: str, tool_schema: dict,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     data = _http_post_json(
         f"{base_url}/v1/messages",
@@ -644,9 +727,9 @@ def _call_anthropic(
             "max_tokens": API_MAX_TOKENS,
             "messages": conversation,
             "tools": [{
-                "name": _REGISTER_TOOL_NAME,
-                "description": _REGISTER_TOOL_DESC,
-                "input_schema": _REGISTER_TOOL_SCHEMA,
+                "name": tool_name,
+                "description": tool_desc,
+                "input_schema": tool_schema,
             }],
         },
         timeout,
@@ -655,15 +738,16 @@ def _call_anthropic(
     text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
     tool_call = None
     for block in content:
-        if block.get("type") == "tool_use" and block.get("name") == _REGISTER_TOOL_NAME:
-            tool_call = {"id": block.get("id"), "input": block.get("input") or {}}
+        if block.get("type") == "tool_use" and block.get("name") == tool_name:
+            tool_call = {"id": block.get("id"), "name": tool_name, "input": block.get("input") or {}}
             break
     assistant_msg = {"role": "assistant", "content": content}
     return ("\n".join(p for p in text_parts if p) or None), tool_call, assistant_msg
 
 
 def _call_openai(
-    base_url: str, model: str, key: str, conversation: list[dict], timeout: float
+    base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
+    tool_name: str, tool_desc: str, tool_schema: dict,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     data = _http_post_json(
         f"{base_url}/v1/chat/completions",
@@ -674,9 +758,9 @@ def _call_openai(
             "tools": [{
                 "type": "function",
                 "function": {
-                    "name": _REGISTER_TOOL_NAME,
-                    "description": _REGISTER_TOOL_DESC,
-                    "parameters": _REGISTER_TOOL_SCHEMA,
+                    "name": tool_name,
+                    "description": tool_desc,
+                    "parameters": tool_schema,
                 },
             }],
         },
@@ -687,15 +771,40 @@ def _call_openai(
     tool_call = None
     for tc in message.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        if fn.get("name") == _REGISTER_TOOL_NAME:
+        if fn.get("name") == tool_name:
             try:
                 args = json.loads(fn.get("arguments") or "{}")
             except ValueError:
                 args = {}
-            tool_call = {"id": tc.get("id"), "input": args}
+            tool_call = {"id": tc.get("id"), "name": tool_name, "input": args}
             break
     return message.get("content"), tool_call, message
 
+
+def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    body = {
+        "doc_class": tool_input.get("doc_class") or "standard",
+        "sequence": tool_input.get("sequence") or [],
+    }
+    req = urllib.request.Request(
+        f"{run['api_base_url']}/workflow/{run['doc_ref']}/decide",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {raw_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
 
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Server-side proxy registration for API providers: POST the model-authored
@@ -749,10 +858,28 @@ def _settle_and_judge(run: dict) -> None:
     except Exception:
         logger.warning("ai-invoke oracle query failed for %s", run["run_id"], exc_info=True)
 
+    workflow_decided = False
+    if run.get("action_scope") == "workflow_decide":
+        try:
+            sequence = db_wfseq.get_sequence_by_doc_id(run["doc_ref"])
+            workflow_decided = sequence is not None
+            if workflow_decided and run.get("target_to_end"):
+                items = db_wfseq.get_sequence_items(sequence["id"])
+                if items:
+                    target_seq = max(int(item.get("item_seq") or 0) for item in items)
+                    run["docs_target"] = max(0, target_seq - run["baseline_seq"])
+        except Exception:
+            logger.warning("ai-invoke workflow oracle failed for %s", run["run_id"], exc_info=True)
+
     docs_reached = min(len(new_docs), run["docs_target"])
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
-    if docs_reached >= run["docs_target"]:
+    if run.get("action_scope") == "workflow_decide" and run["mode"] == "single":
+        run["outcome"] = "complete" if workflow_decided else "none"
+    elif run.get("action_scope") == "workflow_decide" and not workflow_decided:
+        # Pre-decision continuous run that never decided: no resolved target to satisfy.
+        run["outcome"] = "partial" if docs_reached >= 1 else "none"
+    elif docs_reached >= run["docs_target"]:
         run["outcome"] = "complete"
     elif docs_reached >= 1:
         run["outcome"] = "partial"

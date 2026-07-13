@@ -959,6 +959,12 @@ export default {
       login_required: 'ログインが必要です。',
       permission_denied: 'トークンを発行する権限がありません。(document.read 権限が必要です)',
     },
+    ai_provider: {
+      label: 'AIプロバイダー',
+      loading: '読み込み中…',
+      none: '利用可能なプロバイダーなし',
+      load_failed: 'AIプロバイダー一覧を読み込めませんでした。',
+    },
     ai_invoke_dialog: {
       title: 'AI 呼び出し',
       target_doc: '対象ドキュメント:',
@@ -968,6 +974,7 @@ export default {
       mode_continuous_desc: '目標seqに到達するまでAIがドキュメントを登録し続けます。',
       target_seq_label: '目標 seq',
       target_seq_hint: 'このグループで到達すべきドキュメントseq（現在のseqより大きい値）。',
+      target_to_end_hint: 'ワークフロー決定後、シーケンス全体を実行します。',
       btn_start: 'AI 実行開始',
       btn_cancel_run: '実行を取消',
       running: 'AIが作業中です… 完成したドキュメントから順に登録されます。',
@@ -1202,6 +1209,7 @@ export default {
       toast_create_approved_failed: '承認ドキュメントの作成に失敗しました。',
       btn_design_handoff: '設計書作成',
       btn_invoke_command: 'コマンド実行',
+      btn_invoke_ai: 'AI 呼び出し',
       btn_create_conversation: '会話ドキュメント作成',
       btn_continuous_work: '連続作業',
       conversation_default_title: '会話',

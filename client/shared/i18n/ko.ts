@@ -959,6 +959,12 @@ export default {
       login_required: '로그인이 필요합니다.',
       permission_denied: '토큰 발급 권한이 없습니다. (document.read 권한 필요)',
     },
+    ai_provider: {
+      label: 'AI 프로바이더',
+      loading: '불러오는 중…',
+      none: '사용 가능 프로바이더 없음',
+      load_failed: 'AI 프로바이더 목록을 불러오지 못했습니다.',
+    },
     ai_invoke_dialog: {
       title: 'AI 호출',
       target_doc: '대상 문서:',
@@ -968,6 +974,7 @@ export default {
       mode_continuous_desc: '목표 seq에 도달할 때까지 AI가 문서를 계속 등록합니다.',
       target_seq_label: '목표 seq',
       target_seq_hint: '이 그룹에서 도달할 문서 seq(현재 seq보다 커야 함).',
+      target_to_end_hint: '워크플로 결정 후 전체 시퀀스를 실행합니다.',
       btn_start: 'AI 실행 시작',
       btn_cancel_run: '실행 취소',
       running: 'AI가 작업 중입니다… 완성된 문서부터 차례로 등록됩니다.',
@@ -1202,6 +1209,7 @@ export default {
       toast_create_approved_failed: '승인 문서 생성에 실패했습니다.',
       btn_design_handoff: '설계서 작성',
       btn_invoke_command: '명령어 실행',
+      btn_invoke_ai: 'AI 호출',
       btn_create_conversation: '대화 문서 생성',
       btn_continuous_work: '연속 작업',
       conversation_default_title: '대화',
