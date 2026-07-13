@@ -126,6 +126,10 @@
               <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
+              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+              </button>
               <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
                 <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
               </button>
@@ -156,6 +160,10 @@
                    opening the proceed dialog. -->
               <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
               <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
                 <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
@@ -197,6 +205,10 @@
           <button class="btn btn-sm sfb-rework-tool" type="button" @click="onInvokeCommandClick">
             <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
           </button>
+          <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkInvokeAiClick">
+            <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+          </button>
           <button
             class="btn btn-sm sfb-rework-complete"
             :disabled="markRevising"
@@ -228,6 +240,10 @@
             <div v-if="dropdownOpen" class="ab-split-dd">
               <button class="ab-split-item" @click="onMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+              </button>
+              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+              <button class="ab-split-item" @click="onReviewInvokeAiClick">
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
               <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
                 <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
@@ -340,6 +356,9 @@ const emit = defineEmits<{
   'open-mention-dialog': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'copy-rework-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'invoke-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-rework-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-review-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
+  'invoke-next-ai': []
   'revision-complete': [nextStatus?: string | null]
   'decide-workflow': []
   'copy-workflow-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
@@ -597,6 +616,12 @@ function onNextMentionCopyClick() {
   emit('copy-next-mention')
 }
 
+// Group 0223: in-app invoke of the same next-step work the copy button hands out.
+function onNextInvokeAiClick() {
+  dropdownOpen.value = false
+  emit('invoke-next-ai')
+}
+
 function onOpenHeadDocClick() {
   if (!props.headDocId) return
   emit('open-head-doc', {
@@ -721,6 +746,11 @@ function onInvokeCommandClick() {
   emit('invoke-command', reworkPayload())
 }
 
+// Group 0223: in-app invoke of the rework (rejection-context) mention.
+function onReworkInvokeAiClick() {
+  emit('invoke-rework-ai', reworkPayload())
+}
+
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
 }
@@ -750,6 +780,13 @@ function onWorkflowAiClick() {
 function onContinuousWorkClick() {
   dropdownOpen.value = false
   emit('continuous-work')
+}
+
+// Group 0223: in-app invoke of the review-request / VR-correction / handoff mention;
+// MainPanel branches on the same review-status rules as the copy path.
+function onReviewInvokeAiClick() {
+  dropdownOpen.value = false
+  emit('invoke-review-ai', reworkPayload())
 }
 
 function onMentionCopyClick() {

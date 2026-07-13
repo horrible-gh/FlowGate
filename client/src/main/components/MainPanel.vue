@@ -158,6 +158,7 @@
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
                 @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
+                @invoke-ai="onConversationInvokeAi(tab.id)"
               />
             </div>
           </div>
@@ -717,6 +718,9 @@
       @open-mention-dialog="onReviewOpenMentionDialog"
       @copy-rework-mention="onReviewReworkCopyMention"
       @invoke-command="onReviewInvokeCommand"
+      @invoke-rework-ai="onReviewReworkInvokeAi"
+      @invoke-review-ai="onReviewInvokeAiEntry"
+      @invoke-next-ai="onActionBarInvokeNextAi(activeTabId)"
       @decide-workflow="openWorkflowDecisionForActive"
       @copy-workflow-mention="onWorkflowDecisionCopyMention"
       @invoke-workflow-command="onWorkflowDecisionInvokeCommand"
@@ -879,6 +883,7 @@
       :doc-types="mmDialogDocTypes"
       :candidates="mmDialogCandidates"
       @select="onMmDialogSelect"
+      @select-invoke="onMmDialogSelectInvoke"
       @cancel="onMmDialogCancel"
     />
 
@@ -891,6 +896,7 @@
       :default-types="designHandoffDefaultTypes"
       :next-step-label="designHandoffNextStepLabel"
       @copy-mention="onDesignHandoffCopyMention"
+      @invoke-ai="onDesignHandoffInvokeAi"
     />
 
     <!-- Review Reject Dialog -->
@@ -903,6 +909,7 @@
       :existing-reason="rejectDialogExistingReason"
       @save-reason="onRejectDialogSaveReason"
       @copy-mention="onRejectDialogCopyMention"
+      @invoke-ai="onRejectDialogInvokeAi"
       @update:visible="(v: boolean) => { rejectDialogVisible = v; if (!v) onRejectDialogClosed() }"
     />
 
@@ -972,6 +979,12 @@
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
       :auto-start="aiInvokeAutoStart"
+      :selected-docs="aiInvokeSelectedDocs"
+      :messages="aiInvokeMessages"
+      :reject-reason="aiInvokeRejectReason"
+      :design-types="aiInvokeDesignTypes"
+      :design-mode="aiInvokeDesignMode"
+      :design-first-label="aiInvokeDesignFirstLabel"
       @open-doc="onAiInvokeOpenDoc"
     />
 
@@ -1235,17 +1248,24 @@ const createApprovedTabId = ref('')
 const createApprovedSubmitting = ref(false)
 const commandSelectorVisible = ref(false)
 const pendingEnvOverrides = ref<Record<string, string> | null>(null)
-// AI invoke dialog state (0187)
+// AI invoke dialog state (0187; parallel-invoke scopes group 0223)
+type AiInvokeScope = 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
 const aiInvokeVisible = ref(false)
 const aiInvokeProject = ref('')
 const aiInvokeModule = ref<string | null>(null)
 const aiInvokeGroup = ref('')
 const aiInvokeDocRef = ref('')
-const aiInvokeActionScope = ref<'new' | 'edit' | 'workflow_decide'>('new')
+const aiInvokeActionScope = ref<AiInvokeScope>('new')
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
 const aiInvokeAutoStart = ref(false)
+const aiInvokeSelectedDocs = ref<string[] | null>(null)
+const aiInvokeMessages = ref<string[] | null>(null)
+const aiInvokeRejectReason = ref<string | null>(null)
+const aiInvokeDesignTypes = ref<string[] | null>(null)
+const aiInvokeDesignMode = ref<string | null>(null)
+const aiInvokeDesignFirstLabel = ref<string | null>(null)
 const editDropdownTabId = ref<string | null>(null)
 const textWrapEnabled = ref(readTextWrapEnabled())
 
@@ -1472,8 +1492,16 @@ function openAiInvokeDialog(
   project: string,
   groupId: string,
   docRef: string,
-  actionScope: 'new' | 'edit' | 'workflow_decide',
+  actionScope: AiInvokeScope,
   preset?: { mode?: 'single' | 'continuous'; targetSeq?: number | null; reviewMode?: boolean; autoStart?: boolean },
+  extras?: {
+    selectedDocs?: string[] | null
+    messages?: string[] | null
+    rejectReason?: string | null
+    designTypes?: string[] | null
+    designMode?: string | null
+    designFirstLabel?: string | null
+  },
 ) {
   const gParts = splitGroupId(groupId)
   aiInvokeProject.value = project
@@ -1485,6 +1513,12 @@ function openAiInvokeDialog(
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
   aiInvokeAutoStart.value = !!preset?.autoStart
+  aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
+  aiInvokeMessages.value = extras?.messages ?? null
+  aiInvokeRejectReason.value = extras?.rejectReason ?? null
+  aiInvokeDesignTypes.value = extras?.designTypes ?? null
+  aiInvokeDesignMode.value = extras?.designMode ?? null
+  aiInvokeDesignFirstLabel.value = extras?.designFirstLabel ?? null
   aiInvokeVisible.value = true
 }
 
@@ -2161,6 +2195,22 @@ async function onRejectDialogCopyMention(reason: string) {
   } else notifyCopyFailure()
 }
 
+// Group 0223: in-app invoke from the reject dialog. Maps to the rework scope — the
+// server prepends the rejection context; the live (possibly unsaved) reason rides
+// along as reject_reason so the prompt matches what the copy button would embed.
+function onRejectDialogInvokeAi(reason: string) {
+  const tabId = rejectDialogTabId.value
+  if (!tabId) return
+  const h = docHeaderRefs[tabId]
+  const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  const groupId = exposedValue<string>(h?.groupId) ?? ''
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId, tabId, 'rework', undefined, { rejectReason: reason || null })
+}
+
 function onRejectDialogClosed() {
   // Dialog closed (saved or cancelled): a silent backfill keeps the header fresh without
   // the non-silent blank-then-fail risk we just removed from the reject path (gap D).
@@ -2246,6 +2296,52 @@ async function onReviewReworkCopyMention(payload: ReviewActionPayload) {
       aborted: () => token == null,
     },
   )
+}
+
+// Group 0223: in-app invoke of the rework mention. The rejection context the copy
+// path assembles client-side is rebuilt server-side from the document's rejection
+// history (invoke_mention_service.build_rejection_section).
+function onReviewReworkInvokeAi(payload: ReviewActionPayload) {
+  const project = payload.projectId || projectStore.currentProjectId
+  if (!project || !payload.groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, payload.groupId, payload.docRef, 'rework')
+}
+
+// Group 0223: invoke twin of onReviewOpenMentionDialog — same branch order as the
+// copy path: VR correction → review request → design handoff (the dialog carries its
+// own invoke button) → next-step handoff.
+function onReviewInvokeAiEntry(payload: ReviewActionPayload) {
+  const project = payload.projectId || projectStore.currentProjectId
+  const groupId = payload.groupId
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  const headType = exposedValue<string | null>(docHeaderRefs[payload.docId]?.workflowHeadType)
+  if (headType === 'VR') {
+    openAiInvokeDialog(project, groupId, payload.docId, 'vr_correction')
+    return
+  }
+  const reviewStatus = exposedValue<string | null>(docHeaderRefs[payload.docId]?.docReviewStatus)
+  if (reviewStatus == null || reviewStatus === 'pending_review' || reviewStatus === 'revised') {
+    openAiInvokeDialog(project, groupId, payload.docId, 'review')
+    return
+  }
+  const designTypes = getWorkflowDesignTypes(payload.docId)
+  if (designTypes.length > 0) {
+    designHandoffDocId.value = payload.docId
+    designHandoffDocRef.value = payload.docRef
+    designHandoffProjectId.value = project
+    designHandoffGroupId.value = groupId
+    designHandoffDefaultTypes.value = designTypes
+    designHandoffNextStepLabel.value = getNextStepLabel(payload.docId)
+    designHandoffVisible.value = true
+    return
+  }
+  openAiInvokeDialog(project, groupId, payload.docRef, 'new')
 }
 
 async function onReviewInvokeCommand(payload: ReviewActionPayload) {
@@ -2379,6 +2475,22 @@ function onDesignHandoffCopyMention(payload: { types: string[]; mode: string; co
   if (!payload.copied) return
   showToast(t('main.main_panel.toast_mention_copied'), 'success')
   void recordMentionCopy(designHandoffDocId.value, 'design_handoff')
+}
+
+// Group 0223: invoke twin of onDesignHandoffCopyMention — the picked types/mode ride to
+// the server, which rebuilds the identical handoff text ahead of a tokened new mention.
+function onDesignHandoffInvokeAi(payload: { types: string[]; mode: string; firstLabel: string }) {
+  const project = designHandoffProjectId.value || projectStore.currentProjectId || ''
+  const groupId = designHandoffGroupId.value
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId, designHandoffDocRef.value, 'design_handoff', undefined, {
+    designTypes: payload.types,
+    designMode: payload.mode,
+    designFirstLabel: payload.firstLabel,
+  })
 }
 
 function getNextStepLabelForNonR(tabId: string): string {
@@ -2559,6 +2671,27 @@ function onMmDialogCancel() {
   mmDialogToken.value = null
 }
 
+// Group 0223: invoke twin of onMmDialogSelect — the server re-issues its own token
+// and prepends the picked message(s) to the same next-step mention
+// (invoke_mention_service.prepend_messages_section). The copy-path token issued when
+// the dialog opened is simply left unused, exactly as on cancel.
+function onMmDialogSelectInvoke(messages: string[]) {
+  mmDialogVisible.value = false
+  mmDialogToken.value = null
+  const tabId = nextActionModalTabId.value
+  const docRef = nextActionModalDocRef.value || tabId
+  const project = mmDialogProjectId.value || projectStore.currentProjectId || ''
+  const groupId = nextActionModalGroupId.value || (exposedValue<string>(docHeaderRefs[tabId]?.groupId) ?? '')
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId, docRef, 'next_step_message', undefined, {
+    selectedDocs: mmDialogSelectedDocs.value ?? null,
+    messages,
+  })
+}
+
 function onNextActionCreateEmpty(_selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
   const docRef = nextActionModalDocRef.value || tabId
@@ -2639,6 +2772,22 @@ function onActionBarCopyNextMention(tabId: string) {
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
   void onNextActionCopyMention()
+}
+
+// Group 0223: in-app invoke twin of onActionBarCopyNextMention — seed the same
+// modal-scoped refs, then reuse the NextActionModal invoke path verbatim.
+function onActionBarInvokeNextAi(tabId: string) {
+  if (!guardNextActionAvailable(tabId)) return
+  const h = docHeaderRefs[tabId]
+  const groupId = exposedValue<string>(h?.groupId) ?? ''
+  nextActionModalTabId.value = tabId
+  nextActionModalDocRef.value = nextActionDocRef(tabId)
+  nextActionModalCurrentType.value = getTabTypeCode(tabId) ?? 'R'
+  nextActionModalTypeCode.value = getNextStepCode(tabId)
+  nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  nextActionModalGroupId.value = groupId
+  nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
+  onNextActionInvokeAi()
 }
 
 function testRunErrorMessage(e: unknown): string {
@@ -2868,6 +3017,20 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     // processed my previous message"). Failures must surface even on the auto path.
     notifyCopyFailure()
   }
+}
+
+// Group 0223: in-app counterpart of onConversationCopyMention. The server rebuilds the
+// same compact chat-only mention (invoke_mention_service.build_conversation_mention) and
+// feeds it to the provider run, so no copy-paste loop is needed to keep the chat going.
+function onConversationInvokeAi(tabId: string) {
+  const h = docHeaderRefs[tabId]
+  const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  const groupId = exposedValue<string>(h?.groupId) ?? ''
+  if (!project || !groupId) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
+    return
+  }
+  openAiInvokeDialog(project, groupId, tabId, 'chat')
 }
 
 // Honest clipboard write of a ready string (B0001 / group 0133). Returns whether the

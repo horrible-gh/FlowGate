@@ -77,6 +77,14 @@
               >
                 <AppIcon name="copy" /> {{ t('main.review_reject_dialog.copy_mention') }}
               </button>
+              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+              <button
+                type="button"
+                class="rrd-dropdown-item"
+                @click="onInvokeAi"
+              >
+                <AppIcon name="robot" /> {{ t('main.review_reject_dialog.invoke_ai') }}
+              </button>
               <button
                 type="button"
                 class="rrd-dropdown-item"
@@ -116,6 +124,7 @@ const emit = defineEmits<{
   'save-reason': [reason: string]
   'copy-mention': [reason: string]
   'invoke-command': [reason: string]
+  'invoke-ai': [reason: string]
 }>()
 
 const { t } = useI18n()
@@ -178,6 +187,13 @@ function onCopyMention() {
   dropdownOpen.value = false
   const r = reason.value.trim() || props.existingReason?.trim() || ''
   emit('copy-mention', r)
+}
+
+// Group 0223: in-app invoke with the same live reason the copy button would embed.
+function onInvokeAi() {
+  dropdownOpen.value = false
+  const r = reason.value.trim() || props.existingReason?.trim() || ''
+  emit('invoke-ai', r)
 }
 
 function onOutsideDropdownClick() {

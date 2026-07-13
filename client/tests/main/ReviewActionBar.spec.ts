@@ -314,15 +314,21 @@ describe('ReviewActionBar', () => {
     const items = wrapper.findAll('.ab-split-dd .ab-split-item')
     // Order per reviewer (rev3, reversed): 승인 문서 생성 → 빈 문서 생성 → 멘트 복사 → 다음 단계 진행.
     // create-approved shows because nextStepCode 'T' is in the N/T whitelist.
+    // Group 0223: [Invoke AI] rides directly after every [Copy Mention] (병행 배치).
     expect(items.map(i => i.text())).toEqual([
       'Create Approved Doc',
       'Create Empty Doc',
       'Copy Mention',
+      'Invoke AI',
       'Proceed to Next Step',
       // R0001 (0086): continuous (unmanned) work entry.
       'Continuous Work',
     ])
-    const copyItem = items.find(i => i.text().includes('Copy Mention'))!
+    const invokeItem = items.find(i => i.text().includes('Invoke AI'))!
+    await invokeItem.trigger('click')
+    expect(wrapper.emitted('invoke-next-ai')).toHaveLength(1)
+    await wrapper.find('.ab-dd-toggle').trigger('click')
+    const copyItem = wrapper.findAll('.ab-split-dd .ab-split-item').find(i => i.text().includes('Copy Mention'))!
     await copyItem.trigger('click')
     expect(wrapper.emitted('copy-next-mention')).toHaveLength(1)
     // Selecting the item closes the dropdown.

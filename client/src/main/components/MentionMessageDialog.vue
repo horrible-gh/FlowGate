@@ -47,6 +47,10 @@
           <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirm">
             <AppIcon name="plus" /> {{ t('main.next_action_modal.mm_dialog_add') }}
           </button>
+          <!-- Group 0223: same message pick, but fed straight into an in-app provider run. -->
+          <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirmInvoke">
+            <AppIcon name="robot" /> {{ t('main.next_action_modal.mm_dialog_invoke_ai') }}
+          </button>
         </div>
       </div>
     </div>
@@ -73,6 +77,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [messages: string[]]
+  'select-invoke': [messages: string[]]
   cancel: []
 }>()
 
@@ -130,6 +135,14 @@ function confirm() {
   const messages = localCandidates.value.filter((c) => picked.has(c.id)).map((c) => c.message)
   if (messages.length === 0) return
   emit('select', messages)
+}
+
+// Group 0223: same DISPLAY-order pick, handed to the in-app invoke path instead of the clipboard.
+function confirmInvoke() {
+  const picked = new Set(selectedIds.value)
+  const messages = localCandidates.value.filter((c) => picked.has(c.id)).map((c) => c.message)
+  if (messages.length === 0) return
+  emit('select-invoke', messages)
 }
 
 function cancel() {

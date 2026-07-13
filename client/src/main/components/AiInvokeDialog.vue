@@ -28,14 +28,14 @@
                 <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_single_desc') }}</span>
               </span>
             </label>
-            <label class="aiv-mode" :class="{ active: mode === 'continuous' }">
+            <label v-if="canContinuous" class="aiv-mode" :class="{ active: mode === 'continuous' }">
               <input v-model="mode" type="radio" value="continuous" />
               <span class="aiv-mode-text">
                 <span class="aiv-mode-title">{{ t('main.ai_invoke_dialog.mode_continuous') }}</span>
                 <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_continuous_desc') }}</span>
               </span>
             </label>
-            <div v-if="mode === 'continuous'" class="aiv-seq-row">
+            <div v-if="canContinuous && mode === 'continuous'" class="aiv-seq-row">
               <template v-if="actionScope === 'workflow_decide'">
                 <AppIcon name="fast-forward" />
                 <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
@@ -210,11 +210,19 @@ const props = defineProps<{
   module?: string | null
   group: string
   docRef: string
-  actionScope: 'new' | 'edit' | 'workflow_decide'
+  actionScope: 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
   autoStart?: boolean
+  // Parallel-invoke extras (group 0223): context the matching copy-mention flow
+  // assembles client-side; forwarded so the server rebuilds the identical prompt.
+  selectedDocs?: string[] | null
+  messages?: string[] | null
+  rejectReason?: string | null
+  designTypes?: string[] | null
+  designMode?: string | null
+  designFirstLabel?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -245,6 +253,12 @@ const fallbackOpen = ref(false)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let startedAtMono = 0
+
+// Continuous chains only make sense for the scopes the server can chain
+// (group 0223): the parallel-invoke extras are one-shot actions.
+const canContinuous = computed(() =>
+  props.actionScope === 'new' || props.actionScope === 'edit' || props.actionScope === 'workflow_decide',
+)
 
 const canStart = computed(() =>
   mode.value === 'single' ||
@@ -279,7 +293,7 @@ function fallbackReasonLabel(reason: string): string {
 
 function resetState() {
   phase.value = 'setup'
-  mode.value = props.initialMode ?? 'single'
+  mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
   targetSeq.value = props.initialTargetSeq ?? (props.actionScope === 'workflow_decide' ? -1 : null)
   starting.value = false
   startError.value = ''
@@ -324,6 +338,12 @@ async function start() {
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (props.module != null) body.module = props.module
+    if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
+    if (props.messages?.length) body.messages = props.messages
+    if (props.rejectReason) body.reject_reason = props.rejectReason
+    if (props.designTypes?.length) body.design_types = props.designTypes
+    if (props.designMode) body.design_mode = props.designMode
+    if (props.designFirstLabel) body.design_first_label = props.designFirstLabel
     if (mode.value === 'continuous') {
       body.continuation_target_seq = props.actionScope === 'workflow_decide' ? -1 : targetSeq.value
       body.continuation_review_mode = !!props.continuationReviewMode
