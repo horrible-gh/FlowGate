@@ -67,6 +67,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFlowGateToken, splitGroupId, type IssuedToken } from '../composables/useFlowGateToken'
 import { copyToClipboard } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 import { useToast } from './common/useToast'
 
 const props = defineProps<{
@@ -135,7 +136,10 @@ async function onCopy() {
   if (ok) {
     showToast(t('main.group_tree_node.issue_token_copied'), 'success')
   } else {
-    showToast(t('main.ai_worker_trigger_buttons.clipboard_unsupported'), 'warning')
+    // B0001 / group 0221: the write failed with the text in hand — open the manual-copy
+    // fallback modal. (The old toast referenced main.ai_worker_trigger_buttons.*, a key that
+    // never existed in any locale, so it displayed the raw key path.)
+    openClipboardFallback(mention.value)
   }
 }
 

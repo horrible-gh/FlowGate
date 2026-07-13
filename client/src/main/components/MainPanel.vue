@@ -1037,6 +1037,7 @@ import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
 import MentionMessageDialog from './MentionMessageDialog.vue'
 import { buildCandidateList, type MessageEntry } from '../utils/mentionMessages'
 import { copyToClipboard, copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
@@ -2138,7 +2139,7 @@ async function onRejectDialogCopyMention(reason: string) {
   if (ok) {
     showToast(t('main.main_panel.toast_reject_mention_copied'), 'success')
     void recordMentionCopy(rejectDialogTabId.value, 'reject')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  } else notifyCopyFailure()
 }
 
 function onRejectDialogClosed() {
@@ -2271,7 +2272,7 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
       showToast(t('main.main_panel.toast_vr_mention_copied'), 'success')
       void recordMentionCopy(payload.docId, 'vr_correction')
     } else {
-      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+      notifyCopyFailure()
     }
     return
   }
@@ -2295,7 +2296,7 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
     })
     if (token == null) return
     if (noMention || !ok) {
-      showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+      notifyCopyFailure()
     } else {
       showToast(t('main.main_panel.toast_mention_copied'), 'success')
       void recordMentionCopy(payload.docId, 'review')
@@ -2344,7 +2345,10 @@ async function onReviewOpenMentionDialog(payload: { docId: string; projectId: st
   )
 }
 
-function onDesignHandoffCopyMention(_payload: { types: string[]; mode: string }) {
+function onDesignHandoffCopyMention(payload: { types: string[]; mode: string; copied: boolean }) {
+  // B0001 / group 0221: only claim success when the write actually landed — the dialog
+  // already opened the manual-copy fallback modal for the failure case.
+  if (!payload.copied) return
   showToast(t('main.main_panel.toast_mention_copied'), 'success')
   void recordMentionCopy(designHandoffDocId.value, 'design_handoff')
 }
@@ -2486,7 +2490,7 @@ async function onNextActionCopyMentionWithMessage(selectedDocs?: string[]) {
     if (ok) {
       showToast(t('main.next_action_modal.copy_mention_fallback_toast'), 'warning')
       void recordMentionCopy(tabId, 'next_step_message')
-    } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+    } else notifyCopyFailure()
     return
   }
 
@@ -2518,7 +2522,7 @@ async function onMmDialogSelect(messages: string[]) {
   if (ok) {
     showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
     void recordMentionCopy(nextActionModalTabId.value, 'next_step_message')
-  } else showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  } else notifyCopyFailure()
   mmDialogToken.value = null
 }
 
@@ -2867,8 +2871,11 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     // doesn't spam a success toast each turn; the manual button still confirms with one.
     if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
     void recordMentionCopy(tabId, 'edit')
-  } else if (!opts?.auto) {
-    showToast(t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+  } else {
+    // B0001 / group 0221: an auto-copy failure used to be completely silent — the clipboard
+    // kept the PREVIOUS turn's mention and the user pasted it believing it was fresh ("AI
+    // processed my previous message"). Failures must surface even on the auto path.
+    notifyCopyFailure()
   }
 }
 
@@ -2878,6 +2885,17 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
 // write left the user pasting stale/empty clipboard content ("truncated"/"blank"/"nothing").
 function doClipboardCopy(text: string): Promise<boolean> {
   return copyToClipboard(text)
+}
+
+// Every failed copy lands here (B0001 / group 0221). When the text made it out of the
+// producer, open the manual-copy fallback modal — on this HTTP LAN deploy the write itself
+// (execCommand) is what fails intermittently, and re-copying from the modal's fresh click is
+// the reliable recovery. Only when no text is known (producer failed) fall back to a toast;
+// its wording says "failed, retry", not the old misdiagnosis "browser not supported".
+function notifyCopyFailure() {
+  if (!openClipboardFallback()) {
+    showToast(t('main.main_panel.toast_copy_failed'), 'warning')
+  }
 }
 
 // Centralized mention copy that preserves the click's user activation across an async text
@@ -2891,7 +2909,6 @@ async function copyMentionDeferred(
     tabId: string | null | undefined
     kind: MentionKind
     successToast: string
-    failToast?: string
     aborted?: () => boolean
   },
 ): Promise<boolean> {
@@ -2901,7 +2918,7 @@ async function copyMentionDeferred(
     showToast(opts.successToast, 'success')
     void recordMentionCopy(opts.tabId, opts.kind)
   } else {
-    showToast(opts.failToast ?? t('main.main_panel.toast_clipboard_not_supported'), 'warning')
+    notifyCopyFailure()
   }
   return ok
 }

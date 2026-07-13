@@ -52,6 +52,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 import { useToast } from './common/useToast'
 import AppIcon from '@shared/AppIcon.vue'
 import type { TestRun } from '../types/testRun'
@@ -167,7 +168,11 @@ async function onDelegate() {
       }
     })
     if (ok) showToast(t('main.test_run_strip.delegate_copied'), 'info')
-    else if (!apiErrorShown) showToast(t('main.test_run_strip.delegate_copy_failed'), 'error')
+    // B0001 / group 0221: when the mention was produced but the write failed, offer the
+    // manual-copy fallback modal instead of only toasting.
+    else if (!apiErrorShown && !openClipboardFallback()) {
+      showToast(t('main.test_run_strip.delegate_copy_failed'), 'error')
+    }
   } finally {
     delegating.value = false
   }

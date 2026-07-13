@@ -49,6 +49,8 @@ import api from '@shared/api'
 import { stripFrontmatter } from '@shared/utils/markdown'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
+import { copyToClipboard } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 
 const props = defineProps<{
   path: string | null
@@ -89,37 +91,21 @@ mdRenderer.use({
 
 const renderedContent = computed(() => mdRenderer.parse(stripFrontmatter(content.value || '')) as string)
 
+// Shared honest write (B0001 / group 0221) — the former local copy is folded into
+// utils/clipboard. On failure offer the manual-copy fallback modal; toast only when it
+// could not open (no text).
 async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // Fall through for HTTP LAN origins and denied clipboard permissions.
-    }
+  const ok = await copyToClipboard(text)
+  if (!ok && !openClipboardFallback(text)) {
+    showToast(t('main.md_viewer.copy_failed'), 'danger')
   }
-
-  const el = document.createElement('textarea')
-  try {
-    el.value = text
-    el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'
-    document.body.appendChild(el)
-    el.select()
-    return document.execCommand('copy')
-  } catch {
-    return false
-  } finally {
-    el.remove()
-  }
+  return ok
 }
 
 async function copyMarkdown() {
   if (copyMdDone.value) return
   const copied = await copyText(stripFrontmatter(content.value))
-  if (!copied) {
-    showToast(t('main.md_viewer.copy_failed'), 'danger')
-    return
-  }
+  if (!copied) return
   copyMdDone.value = true
   setTimeout(() => { copyMdDone.value = false }, 1500)
 }
@@ -127,10 +113,7 @@ async function copyMarkdown() {
 async function copyMarkdownWithHeader() {
   if (copyHeaderDone.value) return
   const copied = await copyText(content.value)
-  if (!copied) {
-    showToast(t('main.md_viewer.copy_failed'), 'danger')
-    return
-  }
+  if (!copied) return
   copyHeaderDone.value = true
   setTimeout(() => { copyHeaderDone.value = false }, 1500)
 }
@@ -144,10 +127,7 @@ async function handleContentClick(e: MouseEvent) {
   if (!codeEl) return
   const text = codeEl.textContent ?? ''
   const copied = await copyText(text)
-  if (!copied) {
-    showToast(t('main.md_viewer.copy_failed'), 'danger')
-    return
-  }
+  if (!copied) return
   btn.textContent = t('main.md_viewer.copied')
   btn.classList.add('code-copy-btn--copied')
   setTimeout(() => {

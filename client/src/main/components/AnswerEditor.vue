@@ -85,6 +85,8 @@ import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
+import { copyToClipboard } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 
 const props = defineProps<{
   qDocId: string
@@ -171,9 +173,17 @@ async function submit() {
     const result = res.data as AnswerResult
 
     if (dispatchMode.value === 'ment_copy' && (result.ment_text || result.raw_token)) {
-      await copyMentToClipboard(result)
-      showToast(t('main.answer_editor.submitted_copied'), 'success')
-      void recordMentionCopy(props.qDocId, 'qa_answer')
+      // B0001 / group 0221: honest write — the previous local copy swallowed failures and
+      // this path always toasted "copied". On failure the manual-copy fallback modal offers
+      // the mention text instead of a false success.
+      const copied = await copyToClipboard(buildQnaMentText(result))
+      if (copied) {
+        showToast(t('main.answer_editor.submitted_copied'), 'success')
+        void recordMentionCopy(props.qDocId, 'qa_answer')
+      } else {
+        showToast(t('main.answer_editor.submitted', { docId: result.a_doc_id }), 'success')
+        openClipboardFallback(buildQnaMentText(result))
+      }
     } else if (dispatchMode.value === 'command') {
       showToast(t('main.answer_editor.submitted_invoked', { docId: result.a_doc_id }), 'success')
     } else {
@@ -203,24 +213,6 @@ function buildQnaMentText(result: AnswerResult): string {
   ].join('\n')
 }
 
-async function copyMentToClipboard(result: AnswerResult): Promise<void> {
-  const text = buildQnaMentText(result)
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return
-    } catch { /* fall through */ }
-  }
-  try {
-    const el = document.createElement('textarea')
-    el.value = text
-    el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'
-    document.body.appendChild(el)
-    el.select()
-    document.execCommand('copy')
-    document.body.removeChild(el)
-  } catch { /* ignore */ }
-}
 
 defineExpose({ answerBody, dispatchMode, submitting })
 </script>

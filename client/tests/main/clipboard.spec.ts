@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ClipboardAbort, copyToClipboard, copyToClipboardDeferred } from '@main/utils/clipboard'
+import {
+  ClipboardAbort,
+  consumeLastFailedCopyText,
+  copyToClipboard,
+  copyToClipboardDeferred,
+} from '@main/utils/clipboard'
 
 // B0001 (group 0133): the mention-copy paths intermittently "didn't copy / truncated / blanked".
 // Root cause was an awaited token round-trip between the click and the clipboard write, plus a
@@ -19,6 +24,7 @@ afterEach(() => {
   else Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
   ;(globalThis as any).ClipboardItem = origClipboardItem
   vi.restoreAllMocks()
+  consumeLastFailedCopyText() // drain the failed-copy buffer between tests
 })
 
 describe('copyToClipboard (honest write)', () => {
@@ -50,6 +56,43 @@ describe('copyToClipboard (honest write)', () => {
     ;(document as any).execCommand = vi.fn().mockReturnValue(false)
 
     expect(await copyToClipboard('nope')).toBe(false)
+  })
+
+  // B0001 / group 0221: on insecure (HTTP LAN) origins navigator.clipboard is absent and
+  // execCommand is the ONLY write path — re-focus and retry it once before giving up.
+  it('re-focuses and retries execCommand once when the async API is absent (insecure context)', async () => {
+    setClipboard(undefined)
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {})
+    ;(document as any).execCommand = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+
+    expect(await copyToClipboard('lan-retry')).toBe(true)
+    expect((document as any).execCommand).toHaveBeenCalledTimes(2)
+    expect(focus).toHaveBeenCalled()
+  })
+
+  it('records the failed text for the manual-copy fallback, consumable exactly once', async () => {
+    setClipboard(undefined)
+    vi.spyOn(window, 'focus').mockImplementation(() => {})
+    ;(document as any).execCommand = vi.fn().mockReturnValue(false)
+
+    expect(await copyToClipboard('manual-me')).toBe(false)
+    expect(consumeLastFailedCopyText()).toBe('manual-me')
+    expect(consumeLastFailedCopyText()).toBeNull()
+  })
+
+  it('clears any recorded failed text once a later write succeeds', async () => {
+    setClipboard(undefined)
+    vi.spyOn(window, 'focus').mockImplementation(() => {})
+    ;(document as any).execCommand = vi.fn().mockReturnValue(false)
+    expect(await copyToClipboard('stale-fail')).toBe(false)
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    expect(await copyToClipboard('fresh')).toBe(true)
+    expect(consumeLastFailedCopyText()).toBeNull()
   })
 })
 

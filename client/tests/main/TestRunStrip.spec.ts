@@ -30,6 +30,9 @@ vi.mock('@main/utils/clipboard', () => ({
     }
     return clipboardResult
   },
+  // No failed text pending → the manual-copy fallback modal (B0001 / group 0221) cannot
+  // open and the failure path falls back to the toast this suite asserts.
+  consumeLastFailedCopyText: () => null,
 }))
 
 import TestRunStrip from '@main/components/TestRunStrip.vue'

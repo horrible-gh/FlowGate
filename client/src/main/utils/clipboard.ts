@@ -27,6 +27,20 @@ export class ClipboardAbort extends Error {
   }
 }
 
+// Text of the most recent copy that failed with the text already resolved (B0001 / group
+// 0221). On insecure (HTTP LAN) origins `navigator.clipboard` does not exist at all, so
+// every write rides on `execCommand('copy')` and its transient-activation window — failures
+// are unavoidable there. The manual-copy fallback UI consumes this to offer the exact text
+// the user meant to copy.
+let lastFailedCopyText: string | null = null
+
+/** Return-and-clear the text of the last failed copy, or null if none is pending. */
+export function consumeLastFailedCopyText(): string | null {
+  const text = lastFailedCopyText
+  lastFailedCopyText = null
+  return text
+}
+
 function legacyExecCopy(text: string): boolean {
   if (typeof document === 'undefined') return false
   try {
@@ -52,6 +66,14 @@ function legacyExecCopy(text: string): boolean {
  * can warn the user instead of falsely claiming success.
  */
 export async function copyToClipboard(text: string): Promise<boolean> {
+  const ok = await copyToClipboardInner(text)
+  // Record the text of a failed write for the manual-copy fallback UI; a later success
+  // clears any stale record so the fallback never resurfaces outdated text.
+  lastFailedCopyText = ok ? null : text
+  return ok
+}
+
+async function copyToClipboardInner(text: string): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text)
@@ -67,6 +89,11 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       }
     }
   }
+  // execCommand is focus-sensitive too (and on insecure origins it is the ONLY path, entered
+  // after any producer round-trip already spent the activation window — B0001 / group 0221).
+  // Re-focus and retry once before giving up.
+  if (legacyExecCopy(text)) return true
+  if (typeof window !== 'undefined') window.focus?.()
   return legacyExecCopy(text)
 }
 

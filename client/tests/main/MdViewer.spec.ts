@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import i18n from '@shared/i18n'
 import MdViewer from '@main/components/MdViewer.vue'
+import { closeClipboardFallback, useClipboardFallback } from '@main/composables/useClipboardFallback'
 
 const { getRequest, apiGet, showToast } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -178,7 +179,7 @@ describe('MdViewer', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
-  it('shows a failure toast without throwing when both copy methods fail', async () => {
+  it('opens the manual-copy fallback modal when both copy methods fail (B0001 / 0221)', async () => {
     setClipboard(undefined)
     setExecCommand(vi.fn().mockReturnValue(false))
     const wrapper = mount(MdViewer, {
@@ -191,10 +192,18 @@ describe('MdViewer', () => {
       },
     })
 
-    await wrapper.find('.code-copy-btn').trigger('click')
-    await flushPromises()
+    const { state } = useClipboardFallback()
+    try {
+      await wrapper.find('.code-copy-btn').trigger('click')
+      await flushPromises()
 
-    expect(showToast).toHaveBeenCalledWith('복사 실패', 'danger')
-    expect(wrapper.find('.code-copy-btn').classes()).not.toContain('code-copy-btn--copied')
+      // The failed text is carried into the fallback modal instead of a dead-end toast.
+      expect(state.visible).toBe(true)
+      expect(state.text.trim()).toBe('failed copy')
+      expect(showToast).not.toHaveBeenCalled()
+      expect(wrapper.find('.code-copy-btn').classes()).not.toContain('code-copy-btn--copied')
+    } finally {
+      closeClipboardFallback()
+    }
   })
 })

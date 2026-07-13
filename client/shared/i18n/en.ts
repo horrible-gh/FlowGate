@@ -1483,6 +1483,13 @@ export default {
       discard_success: 'The group has been discarded.',
       discard_error: 'An error occurred while discarding the group.',
     },
+    clipboard_fallback: {
+      title: 'Automatic copy failed',
+      message: 'Copying to the clipboard failed. Press [Copy], or select the text below and copy it with Ctrl+C.',
+      copy_btn: 'Copy',
+      toast_copied: 'Copied to the clipboard.',
+      toast_copy_failed: 'Copy failed again. Select the text and press Ctrl+C.',
+    },
     main_panel: {
       text_22: 'Preview is not supported for this file format.',
       text_48: '← Start here',
@@ -1513,7 +1520,7 @@ export default {
       header_edit: 'Edit header',
       error_info_unavailable: 'Could not retrieve information.',
       toast_mention_copied: 'Mention copied to clipboard.',
-      toast_clipboard_not_supported: 'Clipboard copy is not supported in this browser.',
+      toast_copy_failed: 'Copy to clipboard failed. Please try again.',
       error_q_list_failed: 'Could not load Q list.',
       toast_rejected: 'Rejected.',
       toast_reject_failed: 'Rejection failed: {detail}',
