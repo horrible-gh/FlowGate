@@ -313,7 +313,7 @@ watch(projectId, fetchStatus)
   font-weight: 600;
 }
 .git-menu-attn {
-  color: var(--danger, #dc2626);
+  color: var(--warning, #d97706);
 }
 .git-menu-badge {
   position: absolute;
@@ -327,7 +327,7 @@ watch(projectId, fetchStatus)
   line-height: 16px;
   text-align: center;
   color: #fff;
-  background: var(--danger, #dc2626);
+  background: var(--warning, #d97706);
   border-radius: 999px;
 }
 .git-menu-dd {
