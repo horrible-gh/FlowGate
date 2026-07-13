@@ -5,11 +5,11 @@
         <!-- ── Header ── -->
         <div class="modal-hd">
           <span class="modal-title">
-            <i class="fa-solid fa-robot" style="color:var(--primary); margin-right:6px;"></i>
+            <AppIcon name="robot" style="color:var(--primary); margin-right:6px;" />
             {{ t('main.ai_invoke_dialog.title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
 
@@ -36,25 +36,31 @@
               </span>
             </label>
             <div v-if="mode === 'continuous'" class="aiv-seq-row">
-              <label class="aiv-seq-label" for="aiv-target-seq">{{ t('main.ai_invoke_dialog.target_seq_label') }}</label>
-              <input
-                id="aiv-target-seq"
-                v-model.number="targetSeq"
-                type="number"
-                class="form-ctrl aiv-seq-input"
-                min="1"
-              />
-              <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_seq_hint') }}</span>
+              <template v-if="actionScope === 'workflow_decide'">
+                <AppIcon name="fast-forward" />
+                <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
+              </template>
+              <template v-else>
+                <label class="aiv-seq-label" for="aiv-target-seq">{{ t('main.ai_invoke_dialog.target_seq_label') }}</label>
+                <input
+                  id="aiv-target-seq"
+                  v-model.number="targetSeq"
+                  type="number"
+                  class="form-ctrl aiv-seq-input"
+                  min="1"
+                />
+                <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_seq_hint') }}</span>
+              </template>
             </div>
             <div v-if="startError" class="aiv-error">
-              <i class="fa-solid fa-triangle-exclamation"></i> {{ startError }}
+              <AppIcon name="warning" /> {{ startError }}
             </div>
           </template>
 
           <!-- Running -->
           <template v-else-if="phase === 'running'">
             <div class="aiv-running">
-              <i class="fa-solid fa-circle-notch fa-spin aiv-spinner"></i>
+              <AppIcon name="circle-notch" class="aiv-spinner" spin />
               <div class="aiv-running-provider">
                 {{ providerName || '—' }}
                 <span v-if="attemptNo > 1" class="aiv-attempt-badge">
@@ -74,12 +80,11 @@
           <!-- Finished: success / failure with document-reach as the verdict -->
           <template v-else>
             <div class="aiv-result-head" :class="`aiv-outcome-${result?.outcome}`">
-              <i
-                class="fa-solid"
-                :class="result?.outcome === 'complete'
-                  ? 'fa-circle-check'
-                  : result?.outcome === 'partial' ? 'fa-triangle-exclamation' : 'fa-circle-xmark'"
-              ></i>
+              <AppIcon
+                :name="result?.outcome === 'complete'
+                  ? 'check-circle'
+                  : result?.outcome === 'partial' ? 'warning' : 'x-circle'"
+              />
               <span class="aiv-result-title">
                 {{ result?.outcome === 'complete'
                   ? t('main.ai_invoke_dialog.outcome_complete')
@@ -104,7 +109,7 @@
                   class="aiv-doc-link"
                   @click="emit('open-doc', docId)"
                 >
-                  <i class="fa-regular fa-file-lines"></i> {{ docId }}
+                  <AppIcon name="file-text" /> {{ docId }}
                 </button>
               </div>
             </div>
@@ -119,7 +124,7 @@
 
             <div v-if="(result?.fallback_history?.length ?? 0) > 0" class="aiv-section">
               <button type="button" class="aiv-fallback-toggle" @click="fallbackOpen = !fallbackOpen">
-                <i class="fa-solid" :class="fallbackOpen ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+                <AppIcon :name="fallbackOpen ? 'caret-down' : 'caret-right'" />
                 {{ t('main.ai_invoke_dialog.fallback_history', { count: result!.fallback_history.length }) }}
               </button>
               <ul v-if="fallbackOpen" class="aiv-fallback-list">
@@ -136,7 +141,7 @@
             </div>
 
             <div v-if="result?.source_dirty" class="aiv-dirty-banner">
-              <i class="fa-solid fa-triangle-exclamation"></i>
+              <AppIcon name="warning" />
               {{ t('main.ai_invoke_dialog.source_dirty', { count: result?.source_dirty_files?.length ?? 0 }) }}
               <span class="aiv-dirty-files">{{ (result?.source_dirty_files ?? []).join(', ') }}</span>
             </div>
@@ -148,12 +153,12 @@
           <template v-if="phase === 'setup'">
             <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
             <button type="button" class="btn btn-primary" :disabled="starting || !canStart" @click="start">
-              <i class="fa-solid fa-bolt"></i> {{ t('main.ai_invoke_dialog.btn_start') }}
+              <AppIcon name="lightning" /> {{ t('main.ai_invoke_dialog.btn_start') }}
             </button>
           </template>
           <template v-else-if="phase === 'running'">
             <button type="button" class="btn btn-danger" :disabled="cancelRequested" @click="cancelRun">
-              <i class="fa-solid fa-stop"></i> {{ t('main.ai_invoke_dialog.btn_cancel_run') }}
+              <AppIcon name="prohibit" /> {{ t('main.ai_invoke_dialog.btn_cancel_run') }}
             </button>
           </template>
           <template v-else>
@@ -170,6 +175,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
+import { useAiProviderStore } from '../stores/aiProvider'
 
 interface FallbackEntry {
   provider_id: string | null
@@ -203,7 +210,11 @@ const props = defineProps<{
   module?: string | null
   group: string
   docRef: string
-  actionScope: 'new' | 'edit'
+  actionScope: 'new' | 'edit' | 'workflow_decide'
+  initialMode?: 'single' | 'continuous'
+  initialTargetSeq?: number | null
+  continuationReviewMode?: boolean
+  autoStart?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -213,6 +224,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const aiProviderStore = useAiProviderStore()
 
 const phase = ref<'setup' | 'running' | 'finished'>('setup')
 const mode = ref<'single' | 'continuous'>('single')
@@ -235,7 +247,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let startedAtMono = 0
 
 const canStart = computed(() =>
-  mode.value === 'single' || (targetSeq.value != null && targetSeq.value > 0),
+  mode.value === 'single' ||
+  props.actionScope === 'workflow_decide' ||
+  (targetSeq.value != null && targetSeq.value > 0),
 )
 
 const elapsedText = computed(() => {
@@ -265,8 +279,8 @@ function fallbackReasonLabel(reason: string): string {
 
 function resetState() {
   phase.value = 'setup'
-  mode.value = 'single'
-  targetSeq.value = null
+  mode.value = props.initialMode ?? 'single'
+  targetSeq.value = props.initialTargetSeq ?? (props.actionScope === 'workflow_decide' ? -1 : null)
   starting.value = false
   startError.value = ''
   runId.value = null
@@ -300,6 +314,7 @@ async function start() {
   starting.value = true
   startError.value = ''
   try {
+    await aiProviderStore.ensureLoaded(props.project)
     const body: Record<string, unknown> = {
       project: props.project,
       group: props.group,
@@ -307,10 +322,11 @@ async function start() {
       action_scope: props.actionScope,
       mode: mode.value,
     }
+    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (props.module != null) body.module = props.module
     if (mode.value === 'continuous') {
-      body.continuation_target_seq = targetSeq.value
-      body.continuation_review_mode = false
+      body.continuation_target_seq = props.actionScope === 'workflow_decide' ? -1 : targetSeq.value
+      body.continuation_review_mode = !!props.continuationReviewMode
     }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)
     const data = res.data
@@ -415,6 +431,7 @@ watch(
     if (val) {
       resetState()
       window.addEventListener('fg:ai_invoke', onSseEvent)
+      if (props.autoStart) void start()
     } else {
       window.removeEventListener('fg:ai_invoke', onSseEvent)
       stopTimers()

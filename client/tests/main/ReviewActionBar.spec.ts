@@ -389,13 +389,15 @@ describe('ReviewActionBar', () => {
 
     // R0001 rev4: reviewer-specified order — 멘트 복사 → 명령어 실행 → 수동 결정.
     // R0001 (0086): continuous (unmanned) work entry appended.
+    // R0001 (0223): in-app [Invoke AI] entry inserted after Run Command.
     expect(items.map(item => item.text())).toEqual([
       'Copy Mention',
       'Run Command',
+      'Invoke AI',
       'Manual Decision',
       'Continuous Work',
     ])
-    await items[2].trigger('click')
+    await items[3].trigger('click')
     expect(wrapper.emitted('decide-workflow')).toHaveLength(1)
   })
 
@@ -428,6 +430,10 @@ describe('ReviewActionBar', () => {
     await wrapper.find('.ab-dd-toggle').trigger('click')
     await wrapper.findAll('.ab-split-item')[1].trigger('click')
     expect(wrapper.emitted('invoke-workflow-command')?.[0]).toEqual([payload])
+
+    await wrapper.find('.ab-dd-toggle').trigger('click')
+    await wrapper.findAll('.ab-split-item')[2].trigger('click')
+    expect(wrapper.emitted('invoke-workflow-ai')?.[0]).toEqual([payload])
   })
 
   it('R4. R wf_done → info mode, empty action area', () => {

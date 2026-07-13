@@ -21,6 +21,23 @@
     <!-- Project Selector -->
     <ProjectSelector @projectChanged="onProjectChanged" />
 
+    <!-- Runtime AI provider: user/project-local selection, applied to every in-app run. -->
+    <label class="ai-provider-selector" :title="providerTitle">
+      <AppIcon name="robot" />
+      <select
+        :value="aiProviderStore.selectedProviderId"
+        :aria-label="t('main.ai_provider.label')"
+        :disabled="aiProviderStore.loading || aiProviderStore.providers.length === 0"
+        @change="onProviderChanged"
+      >
+        <option v-if="aiProviderStore.loading" value="">{{ t('main.ai_provider.loading') }}</option>
+        <option v-else-if="aiProviderStore.providers.length === 0" value="">{{ t('main.ai_provider.none') }}</option>
+        <option v-for="provider in aiProviderStore.providers" :key="provider.id" :value="provider.id">
+          {{ provider.name }}
+        </option>
+      </select>
+    </label>
+
     <!-- Spacer -->
     <div class="header-spacer"></div>
 
@@ -72,6 +89,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import ProjectSelector from './ProjectSelector.vue'
@@ -79,6 +97,7 @@ import NotificationCenter from './NotificationCenter.vue'
 import GitActionMenu from './GitActionMenu.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useProjectStore } from '../stores/project'
+import { useAiProviderStore } from '../stores/aiProvider'
 import { useTabsStore } from '../stores/tabs'
 import { serverLogout } from '@shared/api'
 
@@ -92,6 +111,7 @@ withDefaults(defineProps<{
 const emit = defineEmits<{ 'toggle-sidebar': [] }>()
 const { t, locale } = useI18n()
 const projectStore = useProjectStore()
+const aiProviderStore = useAiProviderStore()
 const tabsStore = useTabsStore()
 
 interface AccessTokenPayload {
@@ -119,8 +139,26 @@ const isAdmin =
 const username = tokenPayload?.username ?? (window.__accessToken__ ? 'user' : 'guest')
 const usernameInitial = username.charAt(0).toUpperCase()
 
+const providerTitle = computed(() => {
+  if (aiProviderStore.error) return t('main.ai_provider.load_failed')
+  return t('main.ai_provider.label')
+})
+
+watch(
+  () => projectStore.currentProjectId,
+  (projectId) => {
+    if (projectId) void aiProviderStore.loadForProject(projectId)
+    else aiProviderStore.clear()
+  },
+  { immediate: true },
+)
+
 function onProjectChanged(projectId: string) {
   projectStore.setCurrentProject(projectId)
+}
+
+function onProviderChanged(event: Event) {
+  aiProviderStore.selectProvider((event.target as HTMLSelectElement).value)
 }
 
 // Clicking the brand/logo should land on the Overview tab. The router

@@ -959,6 +959,12 @@ export default {
       login_required: 'Login required.',
       permission_denied: 'No permission to issue tokens. (document.read required)',
     },
+    ai_provider: {
+      label: 'AI provider',
+      loading: 'Loading…',
+      none: 'No available provider',
+      load_failed: 'Failed to load AI providers.',
+    },
     ai_invoke_dialog: {
       title: 'AI Invoke',
       target_doc: 'Target document:',
@@ -968,6 +974,7 @@ export default {
       mode_continuous_desc: 'The AI keeps registering documents until the target seq is reached.',
       target_seq_label: 'Target seq',
       target_seq_hint: 'Document seq in this group to reach (must exceed the current seq).',
+      target_to_end_hint: 'Runs the entire sequence after the workflow decision.',
       btn_start: 'Start AI run',
       btn_cancel_run: 'Cancel run',
       running: 'AI is working… documents register as they are completed.',
@@ -1202,6 +1209,7 @@ export default {
       toast_create_approved_failed: 'Failed to create the approved document.',
       btn_design_handoff: 'Create Design Docs',
       btn_invoke_command: 'Run Command',
+      btn_invoke_ai: 'Invoke AI',
       btn_create_conversation: 'Create Conversation Doc',
       btn_continuous_work: 'Continuous Work',
       conversation_default_title: 'Conversation',

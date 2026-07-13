@@ -4,24 +4,24 @@
       <div class="modal-box" style="width:620px;max-width:94vw;">
         <div class="modal-hd">
           <span class="modal-title gti-title">
-            <i class="fa-solid fa-key"></i>
+            <AppIcon name="key" />
             {{ t('main.group_tree_node.issue_token_title') }}
           </span>
           <button class="modal-close" type="button" @click="close">
-            <i class="fa-solid fa-xmark"></i>
+            <AppIcon name="x" />
           </button>
         </div>
         <div class="modal-bd">
           <!-- Lead: mirrors the approved prototype — group scope only, no group/doc creation. -->
           <div class="gti-lead">
-            <i class="fa-solid fa-circle-info"></i>
+            <AppIcon name="info" />
             <span>{{ t('main.group_tree_node.issue_token_lead') }}</span>
           </div>
 
           <div class="gti-field">
             <label>{{ t('main.group_tree_node.issue_token_target') }}</label>
             <div class="gti-group-card">
-              <i class="fa-solid fa-folder-open"></i>
+              <AppIcon name="folder-open" />
               <div>
                 <div class="gti-group-id">{{ groupId }}</div>
                 <div class="gti-group-name">{{ groupName || '—' }}</div>
@@ -31,7 +31,7 @@
 
           <div class="gti-issue-row">
             <button class="btn btn-primary" type="button" :disabled="issuing" @click="onIssue">
-              <i class="fa-solid fa-key"></i>
+              <AppIcon name="key" />
               {{ t('main.group_tree_node.issue_token_btn') }}
             </button>
             <span class="gti-note">{{ t('main.group_tree_node.issue_token_note') }}</span>
@@ -39,17 +39,17 @@
 
           <!-- Result: only the full execution mention is shown (no standalone Bearer card). -->
           <div v-if="mention" class="gti-out">
-            <div class="gti-out-hd"><i class="fa-solid fa-circle-check"></i> {{ t('main.group_tree_node.issue_token_done') }}</div>
+            <div class="gti-out-hd"><AppIcon name="check-circle" /> {{ t('main.group_tree_node.issue_token_done') }}</div>
             <div class="gti-mention-head">
-              <span><i class="fa-regular fa-comment-dots"></i> {{ t('main.group_tree_node.issue_token_mention_head') }}</span>
+              <span><AppIcon name="chat-circle-dots" /> {{ t('main.group_tree_node.issue_token_mention_head') }}</span>
               <button class="btn btn-outline btn-sm" type="button" @click="onCopy">
-                <i class="fa-regular fa-copy"></i>
+                <AppIcon name="copy" />
                 {{ t('main.group_tree_node.issue_token_copy') }}
               </button>
             </div>
             <pre class="gti-mention">{{ mention }}</pre>
             <div class="gti-deliver">
-              <i class="fa-solid fa-arrow-right-from-bracket"></i>
+              <AppIcon name="sign-out" />
               <span>{{ t('main.group_tree_node.issue_token_deliver') }}</span>
             </div>
           </div>
@@ -69,6 +69,7 @@ import { useFlowGateToken, splitGroupId, type IssuedToken } from '../composables
 import { copyToClipboard } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
 import { useToast } from './common/useToast'
+import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -233,7 +234,7 @@ watch(
   font-size: .8rem;
   line-height: 1.5;
 }
-.gti-lead > i { color: var(--primary); margin-top: 2px; }
+.gti-lead > .app-icon { color: var(--primary); margin-top: 2px; }
 .gti-field { margin-bottom: 16px; }
 .gti-field > label {
   display: block;
@@ -253,7 +254,7 @@ watch(
   border-radius: var(--r);
   background: var(--bg);
 }
-.gti-group-card > i { color: #f59e0b; font-size: 1.1rem; }
+.gti-group-card > .app-icon { color: #f59e0b; font-size: 1.1rem; }
 .gti-group-id {
   color: var(--text);
   font-family: 'JetBrains Mono', monospace;
@@ -318,5 +319,5 @@ watch(
   font-size: .74rem;
   line-height: 1.5;
 }
-.gti-deliver > i { margin-top: 2px; }
+.gti-deliver > .app-icon { margin-top: 2px; }
 </style>
