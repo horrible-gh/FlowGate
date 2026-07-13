@@ -454,7 +454,13 @@ def _frontmatter_identity_mismatch(
 
     declared_target_id = _present(header.get("target_id"))
     if declared_target_id and expected_target_id and declared_target_id != expected_target_id:
-        mismatches.append(f"target_id={declared_target_id!r} expected {expected_target_id!r}")
+        # 0226 B0001 / NR0003 §3.1: the mention's §2 header instructs the SHORT form
+        # ("target_id: B0001") while expected_target_id is the canonical id, so an
+        # unmanned worker that followed the instruction verbatim was structurally
+        # 409'd. Accept the same alternate spellings doc_number already gets.
+        expected_code = _doc_id_suffix(expected_target_id)
+        if declared_target_id not in _doc_code_alternates(expected_code):
+            mismatches.append(f"target_id={declared_target_id!r} expected {expected_target_id!r}")
 
     return "; ".join(mismatches) if mismatches else None
 
@@ -936,6 +942,21 @@ def _continuation_self_chain(
     from modules.flow_gate.db import workflow_sequences as _wfseq
     completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
     completed_seq = completed_item.get("item_seq") if completed_item else None
+
+    # 0226 B0001 / NR0003 §1.2 (§5-3): a submission that did NOT fill the current head
+    # slot (e.g. a doc_type differing from the head) proves no progress toward the
+    # target — the old flow skipped the target-reached check below entirely and
+    # advanced anyway, minting another token every hop past the target (the actual
+    # "endless run"). Pause honestly instead: the stray document stays saved (and
+    # unapproved — this runs before the auto-approve) for the human to triage.
+    if completed_seq is None:
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = (
+            f"submitted document ({doc_type}) did not fill the current workflow head "
+            "slot; progress toward the target cannot be verified, so the chain pauses "
+            "instead of advancing."
+        )
+        return envelope
 
     # Auto-approve the just-submitted document so the head can advance — and do it BEFORE the
     # target-reached check so the LAST step is left approved too (group 0086 TR0004 rework

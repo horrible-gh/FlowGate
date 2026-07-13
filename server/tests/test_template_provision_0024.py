@@ -539,9 +539,13 @@ class TestSeededGlobalTemplates:
 
     def test_unsupported_raw_locale_folds_to_seeded_ko(self, seeded_store):
         # A locale outside SUPPORTED_LOCALES that reaches resolve directly still folds
-        # to the seeded ko body (global-fallback-ko) — graceful, never blocks.
+        # to the seeded ko body — graceful, never blocks. The fold now happens at the
+        # resolve entry itself (normalize_locale, landed after 2026-07-04 with the
+        # i18n hardening), so the seeded ko row is an EXACT hit for the folded
+        # request rather than a per-row fallback (pre-existing stale expectation
+        # fixed alongside flowgate.default.0226 — behavior itself is unchanged).
         r = tp.resolve_active_template("anyproject", "P", "fr")
-        assert r["resolution"] == "global-fallback-ko"
+        assert r["resolution"] == "global-exact"
         assert r["resolved_locale"] == "ko"
 
     def test_project_override_still_wins_over_seed(self, seeded_store):

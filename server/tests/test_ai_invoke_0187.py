@@ -48,6 +48,33 @@ def _provider(name="cli-1", kind="claude", cmd=None, exec_type="cli", pid="aip_t
     return p
 
 
+class FakeWfseq:
+    """Mutable stand-in for db.workflow_sequences (0226 NR0003 §5-1: docs_target is
+    derived from the decided sequence's items, never a group-doc-seq subtraction)."""
+
+    def __init__(self):
+        self.sequence: dict | None = {"id": 1}
+        # Default decided sequence: N/NR realized, T/TR/TS/TSR pending — the pending
+        # worker items (TR, TS, TSR) are what a continuous run can still produce.
+        self.items: list[dict] = [
+            {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
+            {"item_seq": 2, "type": "NR", "result_doc_id": "d-0003-NR"},
+            {"item_seq": 3, "type": "T", "result_doc_id": None},
+            {"item_seq": 4, "type": "TR", "result_doc_id": None},
+            {"item_seq": 5, "type": "TS", "result_doc_id": None},
+            {"item_seq": 6, "type": "TSR", "result_doc_id": None},
+        ]
+
+    def get_sequence_for_member_doc(self, doc_id):
+        return self.sequence
+
+    def get_sequence_by_doc_id(self, doc_id):
+        return self.sequence
+
+    def get_sequence_items(self, seq_id):
+        return list(self.items)
+
+
 class FakeDocs:
     """Mutable stand-in for db.documents limited to what the oracle reads."""
 
@@ -77,12 +104,16 @@ class FakeDocs:
 def fake_env(monkeypatch, tmp_path):
     """Patch every collaborator start_run touches; return the mutable doc store."""
     docs = FakeDocs()
+    wfseq = FakeWfseq()
     chain_holder = {"providers": [], "source": "system"}
 
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", docs.get_documents_by_group_id)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", wfseq.get_sequence_for_member_doc)
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", wfseq.get_sequence_by_doc_id)
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda pid: {"project_name": "testproj"})
     monkeypatch.setattr(
         svc.ai_settings_service, "resolve_effective",
@@ -124,7 +155,7 @@ def fake_env(monkeypatch, tmp_path):
         svc, "_broadcast", lambda run, event_type, payload: events.append((event_type, payload))
     )
 
-    return {"docs": docs, "chain": chain_holder, "events": events, "tmp": tmp_path}
+    return {"docs": docs, "wfseq": wfseq, "chain": chain_holder, "events": events, "tmp": tmp_path}
 
 
 def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n", provider_id=None):
@@ -345,6 +376,7 @@ def _workflow_api_run(mode: str, *, target_to_end: bool = False) -> dict:
         "project_id": "flowgate", "chain_source": "system", "run_id": "aiv_workflow",
         "docs_target": 0 if mode == "single" else 1, "raw_token": "decision-token",
         "action_scope": "workflow_decide", "mode": mode,
+        "doc_ref": "flowgate.default.0187.0001-R",
         "cancel_event": threading.Event(), "started_mono": time.monotonic(),
         "timeout_sec": 30, "target_to_end": target_to_end, "baseline_seq": 4,
     }
@@ -388,9 +420,16 @@ class TestWorkflowDecisionApiLoop:
 
         monkeypatch.setattr(svc, "_call_openai", model)
         monkeypatch.setattr(svc, "_workflow_decide", lambda *a: (200, {
-            "next_token": "doc-token", "next_mention": "next", "continuation_target_seq": 5,
+            "next_token": "doc-token", "next_mention": "next", "continuation_target_seq": 2,
         }))
         monkeypatch.setattr(svc, "_inbox_register", lambda *a: (200, {"ok": True}))
+        # 0226 NR0003 §5-1: the resolved to-end target (an item_seq) is now counted
+        # against the decided sequence's worker items ([T, TR] ⇒ 1 doc, the TR).
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda s: [
+            {"item_seq": 1, "type": "T", "result_doc_id": None},
+            {"item_seq": 2, "type": "TR", "result_doc_id": None},
+        ])
         run = _workflow_api_run("continuous", target_to_end=True)
         result = svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run)
         assert result[0] == "started_ok"
@@ -471,17 +510,48 @@ class TestAdmission:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
 
-    def test_continuous_target_must_exceed_baseline(self, fake_env):
+    def test_continuous_requires_decided_sequence(self, fake_env):
+        # 0226 NR0003 §5-1: the target lives in the workflow item_seq space, so a
+        # continuous run without a decided sequence has no coordinate system at all.
         from fastapi import HTTPException
+        fake_env["wfseq"].sequence = None
         with pytest.raises(HTTPException) as exc:
-            _start(fake_env, [_provider(cmd="echo hi")], mode="continuous", target=4)
+            _start(fake_env, [_provider(cmd="echo hi")], mode="continuous", target=6)
         assert exc.value.status_code == 422
         assert exc.value.detail["code"] == "validation_failed"
 
-    def test_continuous_docs_target_derived_from_seq_delta(self, fake_env):
+    def test_continuous_target_below_head_is_rejected(self, fake_env):
+        # No pending worker item at or below the target ⇒ nothing to run (replaces the
+        # old group-doc-seq "must exceed baseline" guard in the item_seq space).
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _start(fake_env, [_provider(cmd="echo hi")], mode="continuous", target=2)
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "validation_failed"
+
+    def test_continuous_docs_target_counts_pending_worker_items(self, fake_env):
+        # Fixture sequence: T(3)/TR(4)/TS(5)/TSR(6) pending — instruction head T is
+        # auto-created server-side (draft, oracle-invisible), so target 6 ⇒ 3 worker docs.
         cmd = f'"{PY}" -c "import sys; sys.stdin.read()"'
-        res = _start(fake_env, [_provider(cmd=cmd)], mode="continuous", target=7)
-        assert res["docs_target"] == 3  # baseline 4 → 7
+        res = _start(fake_env, [_provider(cmd=cmd)], mode="continuous", target=6)
+        assert res["docs_target"] == 3
+        _wait_finished(res["run_id"])
+
+    def test_continuous_docs_target_survives_sparse_item_seq(self, fake_env):
+        # 0226 B0001 ② reproduction: edit_workflow_pending renumbers the pending tail
+        # past max_item_seq (items 18–21) while the group doc seq sits at 12. The old
+        # subtraction targeted 21-12=9 docs for 4 actual steps ("0/9"); item_seq-space
+        # counting yields the 3 worker docs (TR·TS·TSR — the T head auto-completes).
+        fake_env["docs"].max_seq = 12
+        fake_env["wfseq"].items = [
+            {"item_seq": 18, "type": "T", "result_doc_id": None},
+            {"item_seq": 19, "type": "TR", "result_doc_id": None},
+            {"item_seq": 20, "type": "TS", "result_doc_id": None},
+            {"item_seq": 21, "type": "TSR", "result_doc_id": None},
+        ]
+        cmd = f'"{PY}" -c "import sys; sys.stdin.read()"'
+        res = _start(fake_env, [_provider(cmd=cmd)], mode="continuous", target=21)
+        assert res["docs_target"] == 3  # TR + TS + TSR (T auto-completes as draft)
         _wait_finished(res["run_id"])
 
     def test_mention_unavailable(self, fake_env):

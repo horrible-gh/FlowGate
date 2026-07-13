@@ -128,6 +128,51 @@ def get_run_record(run_id: str) -> Optional[dict]:
         return _runs.get(run_id)
 
 
+def _continuation_docs_target(
+    doc_ref: str,
+    target_item_seq: Optional[int],
+    *,
+    pending_only: bool = True,
+) -> Optional[int]:
+    """docs_target in the workflow item_seq coordinate system (0226 B0001 / NR0003 §5-1).
+
+    ``continuation_target_seq`` lives in the workflow-sequence item_seq space, which is
+    unrelated to the group document seq space (item_seq turns sparse after
+    edit_workflow_pending renumbers the pending tail past max_item_seq). The former
+    ``target - get_group_max_seq()`` subtraction mixed the two spaces, yielding
+    arbitrary targets (the reported 0/9 and 4/3). Count instead the sequence items up
+    to the target that will land as worker-visible documents: instruction heads (N/T,
+    INSTRUCTION_AUTO_TYPES) are auto-created server-side as drafts, which the
+    document-reach oracle never counts, so they are excluded here symmetrically.
+
+    ``pending_only=True`` counts only unrealized slots (start-of-run admission).
+    The to-end resolution paths pass False: the whole freshly-decided sequence is the
+    run's scope regardless of what has been realized by the time of the query.
+    ``target_item_seq=None`` means "no upper bound" (to-end).
+    Returns None when the doc has no decided workflow sequence.
+    """
+    from modules.flow_gate.services.workflow_decision_service import INSTRUCTION_AUTO_TYPES
+
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    if seq is None:
+        return None
+    count = 0
+    for item in db_wfseq.get_sequence_items(seq["id"]) or []:
+        item_seq = item.get("item_seq")
+        if (
+            target_item_seq is not None
+            and item_seq is not None
+            and int(item_seq) > int(target_item_seq)
+        ):
+            continue
+        if pending_only and item.get("result_doc_id") is not None:
+            continue
+        if (item.get("type") or "").upper() in INSTRUCTION_AUTO_TYPES:
+            continue
+        count += 1
+    return count
+
+
 # ── Scratch lifecycle (L0006 §2.7) ───────────────────────────────────────────
 
 def _sanitize_project_name(name: str) -> str:
@@ -243,13 +288,24 @@ def start_run(
     elif mode == "single":
         docs_target = 1
     else:
+        # 0226 B0001 / NR0003 §5-1: the target is a workflow item_seq, never a group
+        # document seq — derive docs_target from the sequence's pending worker items.
         target = int(continuation_target_seq or 0)
-        docs_target = target - baseline_seq
+        resolved_target = _continuation_docs_target(doc_ref, target)
+        if resolved_target is None:
+            raise HTTPException(status_code=422, detail={
+                "code": "validation_failed",
+                "errors": [{"loc": "continuation_target_seq",
+                            "msg": "continuous run requires a decided workflow sequence "
+                                   f"on {doc_ref}"}],
+            })
+        docs_target = resolved_target
         if docs_target <= 0:
             raise HTTPException(status_code=422, detail={
                 "code": "validation_failed",
                 "errors": [{"loc": "continuation_target_seq",
-                            "msg": f"must exceed the group's current seq ({baseline_seq})"}],
+                            "msg": "no pending worker step at or below workflow item_seq "
+                                   f"{target}"}],
             })
 
     if issue_builder is not None:
@@ -651,7 +707,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 next_mention = resp.get("next_mention")
                 resolved_target = resp.get("continuation_target_seq")
                 if run.get("target_to_end") and isinstance(resolved_target, int) and resolved_target > 0:
-                    run["docs_target"] = max(0, resolved_target - run["baseline_seq"])
+                    # 0226 NR0003 §5-1: resolved_target is an item_seq — count the decided
+                    # sequence's worker items instead of subtracting the group doc seq.
+                    resolved = _continuation_docs_target(
+                        run["doc_ref"], resolved_target, pending_only=False
+                    )
+                    if resolved is not None:
+                        run["docs_target"] = resolved
                     max_turns = max(max_turns, turn + max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
                 if next_token:
                     current_token = next_token
@@ -843,18 +905,29 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
 
 # ── Judge / finish (L0006 §2.6–2.8) ──────────────────────────────────────────
 
+def _oracle_new_docs(run: dict) -> list[dict]:
+    """Run-attributed documents: non-draft docs past the run's baseline seq.
+
+    The single filter shared by the live progress counter (get_status) and the final
+    judge (_settle_and_judge) — 0226 NR0003 §5-2. The live counter previously showed
+    the raw group max-seq delta (drafts and documents this run never made included),
+    so it could read 4/3 mid-run while the judge later clamped to 3/3.
+    """
+    docs = db_docs.get_documents_by_group_id(run["group_id"])
+    return sorted(
+        (
+            d for d in docs
+            if (d.get("seq") or 0) > run["baseline_seq"] and (d.get("status") or "") != "draft"
+        ),
+        key=lambda d: d.get("seq") or 0,
+    )
+
+
 def _settle_and_judge(run: dict) -> None:
     time.sleep(ORACLE_SETTLE_SEC)
     new_docs: list[dict] = []
     try:
-        docs = db_docs.get_documents_by_group_id(run["group_id"])
-        new_docs = sorted(
-            (
-                d for d in docs
-                if (d.get("seq") or 0) > run["baseline_seq"] and (d.get("status") or "") != "draft"
-            ),
-            key=lambda d: d.get("seq") or 0,
-        )
+        new_docs = _oracle_new_docs(run)
     except Exception:
         logger.warning("ai-invoke oracle query failed for %s", run["run_id"], exc_info=True)
 
@@ -864,14 +937,19 @@ def _settle_and_judge(run: dict) -> None:
             sequence = db_wfseq.get_sequence_by_doc_id(run["doc_ref"])
             workflow_decided = sequence is not None
             if workflow_decided and run.get("target_to_end"):
-                items = db_wfseq.get_sequence_items(sequence["id"])
-                if items:
-                    target_seq = max(int(item.get("item_seq") or 0) for item in items)
-                    run["docs_target"] = max(0, target_seq - run["baseline_seq"])
+                # 0226 NR0003 §5-1: to-end scope = every worker item of the decided
+                # sequence (item_seq space), not a group doc seq subtraction.
+                resolved = _continuation_docs_target(
+                    run["doc_ref"], None, pending_only=False
+                )
+                if resolved is not None:
+                    run["docs_target"] = resolved
         except Exception:
             logger.warning("ai-invoke workflow oracle failed for %s", run["run_id"], exc_info=True)
 
-    docs_reached = min(len(new_docs), run["docs_target"])
+    # 0226 NR0003 §5-2: no min() clamp — an overrun (more docs than the target) stays
+    # visible in docs_reached/docs_target instead of being normalized away at the end.
+    docs_reached = len(new_docs)
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
     if run.get("action_scope") == "workflow_decide" and run["mode"] == "single":
@@ -955,9 +1033,12 @@ def get_status(run_id: str) -> dict:
     if run["status"] == "finished":
         return {"ok": True, "run_id": run_id, "status": "finished", "mode": run["mode"],
                 **finished_payload(run)}
+    # 0226 NR0003 §5-2: count run-attributed documents (the same oracle filter the
+    # final judge uses) instead of the raw group max-seq delta, which inflated the
+    # live counter with drafts (auto-created N/T) and documents outside this run.
     docs_so_far = 0
     try:
-        docs_so_far = max(0, db_docs.get_group_max_seq(run["group_id"]) - run["baseline_seq"])
+        docs_so_far = len(_oracle_new_docs(run))
     except Exception:
         pass
     return {
