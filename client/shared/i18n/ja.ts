@@ -978,6 +978,8 @@ export default {
       btn_start: 'AI 実行開始',
       btn_cancel_run: '実行を取消',
       running: 'AIが作業中です… 完成したドキュメントから順に登録されます。',
+      inline_running: 'このグループで AI を実行中です。',
+      badge_running: '実行中',
       cancelling: '取消中 — プロセスツリーを終了しています…',
       attempt_no: '{n}回目の試行',
       docs_progress: 'ドキュメント到達: {reached}/{target}',
@@ -1952,4 +1954,3 @@ export default {
     sub: 'プロジェクト状況と最近のアクティビティ',
   },
 } as const
-

@@ -2,6 +2,7 @@
 
 POST /api/v1/ai-invoke/start          — admit + launch a run (session auth)
 GET  /api/v1/ai-invoke/{run_id}       — status (running / finished payload)
+GET  /api/v1/ai-invoke/active         — active run for a group (session auth)
 POST /api/v1/ai-invoke/{run_id}/cancel — tree-kill cancel
 
 The work token is minted server-side and injected only into the run's
@@ -187,6 +188,27 @@ def get_ai_invoke_providers(project: str, request: Request):
                                                       "message": "perm_document_read required"})
     effective = ai_invoke_service.list_runtime_providers(project)
     return JSONResponse(status_code=200, content=effective)
+
+
+@router.get("/active")
+def get_active_ai_invoke(group_id: str, request: Request):
+    """Restore the group-scoped progress indicator after navigation or reload."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    project = group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    return JSONResponse(status_code=200, content=ai_invoke_service.get_active_status(group_id))
 
 
 @router.get("/{run_id}")
