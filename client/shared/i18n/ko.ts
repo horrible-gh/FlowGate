@@ -1483,6 +1483,13 @@ export default {
       discard_success: '그룹이 폐기되었습니다.',
       discard_error: '그룹 폐기 중 오류가 발생했습니다.',
     },
+    clipboard_fallback: {
+      title: '자동 복사 실패',
+      message: '클립보드 자동 복사에 실패했습니다. [복사] 버튼을 누르거나 아래 내용을 선택해 Ctrl+C로 직접 복사하세요.',
+      copy_btn: '복사',
+      toast_copied: '클립보드에 복사되었습니다.',
+      toast_copy_failed: '복사에 실패했습니다. 텍스트를 선택해 Ctrl+C로 복사하세요.',
+    },
     main_panel: {
       text_22: '이 파일 형식은 미리보기를 지원하지 않습니다.',
       text_48: '← 여기서 시작',
@@ -1513,7 +1520,7 @@ export default {
       header_edit: '헤더 수정',
       error_info_unavailable: '정보를 가져올 수 없습니다.',
       toast_mention_copied: '멘트가 클립보드에 복사되었습니다.',
-      toast_clipboard_not_supported: '클립보드 복사를 지원하지 않는 브라우저입니다.',
+      toast_copy_failed: '클립보드 복사에 실패했습니다. 다시 시도해 주세요.',
       error_q_list_failed: 'Q 목록을 불러올 수 없습니다.',
       toast_rejected: '반려 처리되었습니다.',
       toast_reject_failed: '반려 처리 실패: {detail}',

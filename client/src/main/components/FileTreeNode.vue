@@ -98,6 +98,8 @@ import { useI18n } from 'vue-i18n'
 import { useExplorerStore, type FileNode } from '../stores/explorer'
 import { useToast } from './common/useToast'
 import { useFileUpload } from '../composables/useFileUpload'
+import { copyToClipboard } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 import { downloadBlobRequest } from '@shared/api'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
@@ -201,9 +203,13 @@ function onContextMenu(e: MouseEvent) {
   showCtx.value = true
 }
 
-function copyLink() {
-  navigator.clipboard?.writeText(props.node.path).catch(() => {})
+async function copyLink() {
   showCtx.value = false
+  // B0001 / group 0221: the old `navigator.clipboard?.writeText(...)` was a silent no-op on
+  // this HTTP LAN deploy (no navigator.clipboard on insecure origins). Use the shared honest
+  // write and surface a failure via the manual-copy fallback modal.
+  const ok = await copyToClipboard(props.node.path)
+  if (!ok) openClipboardFallback(props.node.path)
 }
 
 function openCreateFolder() {

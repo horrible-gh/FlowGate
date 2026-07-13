@@ -136,6 +136,8 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { copyToClipboard } from '../utils/clipboard'
+import { openClipboardFallback } from '../composables/useClipboardFallback'
 import AppIcon from '@shared/AppIcon.vue'
 
 type DesignType = 'D' | 'P' | 'L' | 'DB'
@@ -151,7 +153,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
-  'copy-mention': [payload: { types: DesignType[]; mode: string }]
+  'copy-mention': [payload: { types: DesignType[]; mode: string; copied: boolean }]
 }>()
 
 const docTypeStore = useDocTypeStore()
@@ -213,32 +215,15 @@ function onClose() {
   emit('update:visible', false)
 }
 
-async function doClipboardCopy(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch { /* fall through */ }
-  }
-  try {
-    const el = document.createElement('textarea')
-    el.value = text
-    el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;'
-    document.body.appendChild(el)
-    el.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(el)
-    return ok
-  } catch {
-    return false
-  }
-}
-
 async function onCopyMention() {
   const types = orderedChecked.value
   if (types.length === 0) return
-  await doClipboardCopy(mentionText.value)
-  emit('copy-mention', { types, mode: mode.value })
+  // Shared honest write (B0001 / group 0221) — the previous local copy ignored the result,
+  // so a failed write still closed the dialog claiming success. On failure the manual-copy
+  // fallback modal carries the mention text past this dialog's close.
+  const copied = await copyToClipboard(mentionText.value)
+  if (!copied) openClipboardFallback(mentionText.value)
+  emit('copy-mention', { types, mode: mode.value, copied })
   emit('update:visible', false)
 }
 </script>
