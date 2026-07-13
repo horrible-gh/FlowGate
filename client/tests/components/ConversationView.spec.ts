@@ -21,10 +21,16 @@ vi.mock('@main/components/common/useToast', () => ({
 import ConversationView from '@main/components/ConversationView.vue'
 
 const AUTO_COPY_KEY = 'flowgate.chat.autoCopyMention'
+const DOC_ID = 'flowgate.default.0085.0009-CH'
+const OTHER_DOC_ID = 'flowgate.default.0224.0005-CH'
 
-function mountView() {
+function draftKey(docId = DOC_ID, userId = 'guest') {
+  return 'flowgate.user.' + userId + '.chat.drafts.' + docId
+}
+
+function mountView(docId = DOC_ID) {
   return mount(ConversationView, {
-    props: { docId: 'flowgate.default.0085.0009-CH', projectId: 'flowgate' },
+    props: { docId, projectId: 'flowgate' },
     global: { plugins: [i18n] },
   })
 }
@@ -32,6 +38,7 @@ function mountView() {
 beforeEach(() => {
   i18n.global.locale.value = 'en'
   localStorage.clear()
+  delete window.__accessToken__
   getRequest.mockReset().mockResolvedValue({ data: { content: '' } })
   postRequest.mockReset().mockResolvedValue({ data: { content: '' } })
   showToast.mockReset()
@@ -129,5 +136,94 @@ describe('ConversationView auto-copy', () => {
     const wrapper2 = mountView()
     await flushPromises()
     expect((wrapper2.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+  })
+})
+
+describe('ConversationView draft persistence', () => {
+  it('restores the exact draft after unmount and remount', async () => {
+    const text = '  first line\nsecond line  '
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue(text)
+    expect(localStorage.getItem(draftKey())).toBe(text)
+
+    wrapper.unmount()
+    const restored = mountView()
+    await flushPromises()
+    expect((restored.find('textarea').element as HTMLTextAreaElement).value).toBe(text)
+  })
+
+  it('keeps drafts isolated by document and restores them when docId changes', async () => {
+    localStorage.setItem(draftKey(DOC_ID), 'draft A')
+    localStorage.setItem(draftKey(OTHER_DOC_ID), 'draft B')
+    const wrapper = mountView(DOC_ID)
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('draft A')
+
+    await wrapper.setProps({ docId: OTHER_DOC_ID })
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('draft B')
+  })
+
+  it('uses the signed-in username to isolate the storage key', async () => {
+    const payload = btoa(JSON.stringify({ username: 'alice' }))
+    window.__accessToken__ = 'header.' + payload + '.signature'
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('alice draft')
+    expect(localStorage.getItem(draftKey(DOC_ID, 'alice'))).toBe('alice draft')
+    expect(localStorage.getItem(draftKey())).toBeNull()
+  })
+
+  it('removes the stored draft after a successful send', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('send me')
+    expect(localStorage.getItem(draftKey())).toBe('send me')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
+    expect(localStorage.getItem(draftKey())).toBeNull()
+  })
+
+  it('keeps the stored draft when send fails', async () => {
+    postRequest.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('retry me')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('retry me')
+    expect(localStorage.getItem(draftKey())).toBe('retry me')
+  })
+
+  it('removes the storage entry when the input is cleared', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('temporary')
+    await wrapper.find('textarea').setValue('')
+    expect(localStorage.getItem(draftKey())).toBeNull()
+  })
+
+  it('continues rendering and sending when localStorage throws', async () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('blocked')
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    getItem.mockRestore()
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota')
+    })
+    await wrapper.find('textarea').setValue('still sends')
+    setItem.mockRestore()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
+      { body: 'still sends', speaker: 'user' },
+    )
   })
 })
