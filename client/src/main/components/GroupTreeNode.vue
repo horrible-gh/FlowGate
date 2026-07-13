@@ -51,11 +51,11 @@
         {{ t('main.group_tree_node.text_27') }}
       </ContextMenuItem>
       <template v-if="node.node_type === 'group'">
+        <ContextMenuItem v-if="isEmptyGroup" icon="file-plus" @click="openCreateRequirement">
+          {{ t('main.group_tree_node.new_requirement') }}
+        </ContextMenuItem>
         <ContextMenuItem v-if="canIssueToken" icon="key" @click="openIssueToken">
           {{ t('main.group_tree_node.issue_token') }}
-        </ContextMenuItem>
-      <ContextMenuItem v-if="isEmptyGroup" icon="file-plus" @click="openCreateRequirement">
-          {{ t('main.group_tree_node.new_requirement') }}
         </ContextMenuItem>
         <ContextMenuItem icon="pencil-simple" @click="openEditGroup">
           {{ t('main.group_tree_node.edit_group') }}
