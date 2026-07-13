@@ -128,6 +128,19 @@ def get_run_record(run_id: str) -> Optional[dict]:
         return _runs.get(run_id)
 
 
+def get_active_status(group_id: str) -> dict:
+    """Return the live run for a group, if any, without exposing token/process state."""
+    run = _active_run_for_group(group_id)
+    if run is None:
+        return {"ok": True, "active": False, "group_id": group_id}
+    return {
+        **get_status(run["run_id"]),
+        "active": True,
+        "group_id": group_id,
+        "doc_ref": run["doc_ref"],
+    }
+
+
 # ── Scratch lifecycle (L0006 §2.7) ───────────────────────────────────────────
 
 def _sanitize_project_name(name: str) -> str:

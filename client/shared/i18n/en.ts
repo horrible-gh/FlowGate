@@ -978,6 +978,8 @@ export default {
       btn_start: 'Start AI run',
       btn_cancel_run: 'Cancel run',
       running: 'AI is working… documents register as they are completed.',
+      inline_running: 'AI is running in this group.',
+      badge_running: 'Running',
       cancelling: 'Cancelling — terminating the process tree…',
       attempt_no: 'attempt {n}',
       docs_progress: 'Documents reached: {reached}/{target}',
@@ -1952,7 +1954,6 @@ export default {
     sub: 'Project Status & Recent Activity',
   },
 } as const
-
 
 
 

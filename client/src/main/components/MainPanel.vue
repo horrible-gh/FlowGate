@@ -26,6 +26,10 @@
             :class="['doc-with-panel', { 'panel-collapsed': canShowDocInfoPanel(tab.id) && docInfoCollapsed }]"
           >
           <div class="doc-main">
+          <AiInvokeInline
+            v-if="activeAiInvokeGroupId"
+            :group-id="activeAiInvokeGroupId"
+          />
           <!-- 0155: test-failure strip (confirmed design B) — self-hides unless the
                viewed doc's latest test run failed. Sits above DocHeader as the first
                child of .doc-main, per the confirmed layout. A failed run assembles no
@@ -691,6 +695,7 @@
       </div>
     </div>
 
+
     <ReviewActionBar
       v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
       :mode="getActionBarMode(activeTabId)!"
@@ -959,8 +964,7 @@
       :env-overrides="pendingEnvOverrides"
     />
 
-    <!-- AI invoke dialog (0187): server-side provider run, doc-reach verdict.
-         The work token stays server-side — this dialog only watches the run. -->
+    <!-- AI invoke setup: admitted runs continue in the group-scoped inline strip. -->
     <AiInvokeDialog
       v-model:visible="aiInvokeVisible"
       :project="aiInvokeProject"
@@ -972,7 +976,6 @@
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
       :auto-start="aiInvokeAutoStart"
-      @open-doc="onAiInvokeOpenDoc"
     />
 
     <!-- Quick Open Dialog -->
@@ -1048,6 +1051,7 @@ import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import CommandSelectorModal from './CommandSelectorModal.vue'
 import AiInvokeDialog from './AiInvokeDialog.vue'
+import AiInvokeInline from './AiInvokeInline.vue'
 import QTDetailViewer from './QTDetailViewer.vue'
 import DocInfoPanel from './DocInfoPanel.vue'
 import ConversationView from './ConversationView.vue'
@@ -1246,6 +1250,10 @@ const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
 const aiInvokeAutoStart = ref(false)
+const activeAiInvokeGroupId = computed(() => {
+  if (!activeTabId.value) return ''
+  return exposedValue<string>(docHeaderRefs[activeTabId.value]?.groupId) ?? ''
+})
 const editDropdownTabId = ref<string | null>(null)
 const textWrapEnabled = ref(readTextWrapEnabled())
 
@@ -1509,17 +1517,6 @@ function onNextActionInvokeAi(_selectedDocs?: string[]) {
     return
   }
   openAiInvokeDialog(project, groupId as string, docRef, 'new')
-}
-
-function onAiInvokeOpenDoc(docId: string) {
-  const typeCode = docId.match(/-([A-Z]+)$/)?.[1]
-  tabsStore.openTab({
-    id: docId,
-    title: docId,
-    path: '',
-    type: 'md',
-    typeCode,
-  })
 }
 
 // Q list (dashboard overview)
@@ -3880,5 +3877,9 @@ watch(textWrapEnabled, (enabled) => {
 .edit-dropdown-leave-to {
   opacity: 0;
   transform: translateY(-6px);
+}
+
+.doc-main {
+  position: relative;
 }
 </style>

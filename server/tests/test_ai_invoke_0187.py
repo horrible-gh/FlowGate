@@ -498,6 +498,31 @@ class TestAdmission:
         assert exc.value.status_code == 404
         assert exc.value.detail["code"] == "run_not_found"
 
+    def test_active_status_is_group_scoped_and_redacted(self, fake_env):
+        run = {
+            "run_id": "aiv_active", "status": "running", "mode": "single",
+            "group_id": "flowgate.default.0187",
+            "doc_ref": "flowgate.default.0187.0001-R",
+            "docs_target": 1, "baseline_seq": 4,
+            "provider": {"id": "aip_test01", "name": "Codex"},
+            "attempt_no": 1, "started_at": "2026-07-13T00:00:00+00:00",
+            "started_mono": time.monotonic(),
+            # These fields must never escape through the restore endpoint.
+            "raw_token": "secret", "proc": object(),
+        }
+        svc._runs[run["run_id"]] = run
+
+        active = svc.get_active_status("flowgate.default.0187")
+        inactive = svc.get_active_status("flowgate.default.9999")
+
+        assert active["active"] is True
+        assert active["run_id"] == "aiv_active"
+        assert active["doc_ref"] == "flowgate.default.0187.0001-R"
+        assert "raw_token" not in active and "proc" not in active
+        assert inactive == {
+            "ok": True, "active": False, "group_id": "flowgate.default.9999",
+        }
+
 
 # ── SSE contract (P0005) ─────────────────────────────────────────────────────
 

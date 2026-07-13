@@ -34,6 +34,9 @@
       >
         <span v-if="tab.typeCode" class="doc-tag" :class="`c-${tab.typeCode}`" style="font-size:.6rem; font-weight:700; padding:1px 4px; flex-shrink:0;">{{ tab.typeCode }}</span>
         <span class="tab-title">{{ getTabDisplayTitle(tab) }}</span>
+        <span v-if="isTabGroupRunning(tab)" class="tab-invoke-badge">
+          {{ t('main.ai_invoke_dialog.badge_running') }}
+        </span>
         <span
           class="tab-x"
           :aria-label="t('main.tabs.close')"
@@ -64,6 +67,7 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabsStore } from '../stores/tabs'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { groupIdFromDocId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import type { Tab } from '../stores/tabs'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
@@ -73,6 +77,7 @@ defineEmits<{ newTab: [] }>()
 const { t } = useI18n()
 const tabsStore = useTabsStore()
 const docTypeStore = useDocTypeStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
 
 function getTabDisplayTitle(tab: Tab): string {
   // Strip legacy "[TypeLabel]: " prefix that was embedded by the server (always English).
@@ -82,8 +87,30 @@ function getTabDisplayTitle(tab: Tab): string {
   }
   return tab.title
 }
+
+function isTabGroupRunning(tab: Tab): boolean {
+  if (!tab.typeCode) return false
+  return aiInvokeRunsStore.isGroupRunning(groupIdFromDocId(tab.id))
+}
+
 const tabs = computed(() => tabsStore.tabs)
 const activeTabId = computed(() => tabsStore.activeTabId)
+const openDocumentGroupIds = computed(() => [
+  ...new Set(
+    tabs.value
+      .filter(tab => !!tab.typeCode)
+      .map(tab => groupIdFromDocId(tab.id))
+      .filter((groupId): groupId is string => groupId != null),
+  ),
+])
+
+watch(
+  openDocumentGroupIds,
+  groupIds => {
+    for (const groupId of groupIds) void aiInvokeRunsStore.discover(groupId)
+  },
+  { immediate: true },
+)
 
 const tabsBar = ref<HTMLElement | null>(null)
 const showButtons = ref(false)
@@ -241,3 +268,18 @@ function dragDrop(toIdx: number) {
   dragFromIdx = -1
 }
 </script>
+
+<style scoped>
+.tab-invoke-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary-l);
+  color: var(--primary);
+  font-size: .6rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+</style>
