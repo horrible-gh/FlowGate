@@ -54,34 +54,118 @@ class TemplateValidationError(ValueError):
 
 
 # ── type-default skeletons (L0013 §1-1) ──────────────────────────────────────
-# Deterministic, locale-neutral, NEVER contain a file path (AC-1 / invariant c).
-TYPE_DEFAULT_SKELETON: dict[str, str] = {
-    "D": (
-        "# 기본설계\n\n"
-        "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
-        "## 1. 배경\n## 2. 목표·성공기준\n## 3. 범위\n## 4. 요구사항\n## 5. 사용자 시나리오\n"
+# Deterministic, locale-specific, NEVER contain a file path (AC-1 / invariant c).
+TYPE_DEFAULT_SKELETON: dict[str, dict[str, str]] = {
+    "D": {
+        "ko": (
+            "# 기본설계\n\n"
+            "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
+            "## 1. 배경\n## 2. 목표·성공기준\n## 3. 범위\n## 4. 요구사항\n## 5. 사용자 시나리오\n"
+        ),
+        "ja": (
+            "# 基本設計\n\n"
+            "> 標準テンプレート本文はまだ登録されていません。以下のタイプ既定の骨格で作成してください。\n\n"
+            "## 1. 背景\n## 2. 目標・成功基準\n## 3. スコープ\n## 4. 要件\n## 5. ユーザーシナリオ\n"
+        ),
+        "en": (
+            "# Basic Design\n\n"
+            "> No standard template body is registered yet. Use the type-default outline below.\n\n"
+            "## 1. Background\n## 2. Goals and Success Criteria\n## 3. Scope\n## 4. Requirements\n## 5. User Scenarios\n"
+        ),
+    },
+    "P": {
+        "ko": (
+            "# 프로토콜설계\n\n"
+            "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
+            "## 1. 표기 규칙(S/C)\n## 2. 리소스·엔드포인트\n## 3. 시나리오\n## 4. 실패·엣지\n## 5. 검증 규칙\n"
+        ),
+        "ja": (
+            "# プロトコル設計\n\n"
+            "> 標準テンプレート本文はまだ登録されていません。以下のタイプ既定の骨格で作成してください。\n\n"
+            "## 1. 表記ルール(S/C)\n## 2. リソース・エンドポイント\n## 3. シナリオ\n## 4. 失敗・エッジケース\n## 5. 検証ルール\n"
+        ),
+        "en": (
+            "# Protocol Design\n\n"
+            "> No standard template body is registered yet. Use the type-default outline below.\n\n"
+            "## 1. Notation Rules (S/C)\n## 2. Resources and Endpoints\n## 3. Scenarios\n## 4. Failures and Edge Cases\n## 5. Validation Rules\n"
+        ),
+    },
+    "L": {
+        "ko": (
+            "# 로직설계\n\n"
+            "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
+            "## 목적\n## 1. 파라미터 정의\n## 2. 알고리즘/처리 로직\n## 3. 상태 전이\n## 4. 결정 트리\n## 5. 경계 조건\n"
+        ),
+        "ja": (
+            "# ロジック設計\n\n"
+            "> 標準テンプレート本文はまだ登録されていません。以下のタイプ既定の骨格で作成してください。\n\n"
+            "## 目的\n## 1. パラメータ定義\n## 2. アルゴリズム/処理ロジック\n## 3. 状態遷移\n## 4. 決定ツリー\n## 5. 境界条件\n"
+        ),
+        "en": (
+            "# Logic Design\n\n"
+            "> No standard template body is registered yet. Use the type-default outline below.\n\n"
+            "## Purpose\n## 1. Parameter Definitions\n## 2. Algorithm / Processing Logic\n## 3. State Transitions\n## 4. Decision Tree\n## 5. Boundary Conditions\n"
+        ),
+    },
+    "DB": {
+        "ko": (
+            "# DB설계\n\n"
+            "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
+            "## 1. 대상 테이블\n## 2. 컬럼·키·제약\n## 3. 마이그레이션\n## 4. 읽기/쓰기 쿼리\n"
+        ),
+        "ja": (
+            "# DB設計\n\n"
+            "> 標準テンプレート本文はまだ登録されていません。以下のタイプ既定の骨格で作成してください。\n\n"
+            "## 1. 対象テーブル\n## 2. カラム・キー・制約\n## 3. マイグレーション\n## 4. 読み取り/書き込みクエリ\n"
+        ),
+        "en": (
+            "# DB Design\n\n"
+            "> No standard template body is registered yet. Use the type-default outline below.\n\n"
+            "## 1. Target Tables\n## 2. Columns, Keys, and Constraints\n## 3. Migrations\n## 4. Read/Write Queries\n"
+        ),
+    },
+}
+_DEFENSIVE_SKELETON: dict[str, str] = {
+    "ko": (
+        "# {type_code} 설계\n\n"
+        "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 기본 골격으로 작성하세요.\n\n"
+        "## 1. 개요\n## 2. 본문\n"
     ),
-    "P": (
-        "# 프로토콜설계\n\n"
-        "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
-        "## 1. 표기 규칙(S/C)\n## 2. 리소스·엔드포인트\n## 3. 시나리오\n## 4. 실패·엣지\n## 5. 검증 규칙\n"
+    "ja": (
+        "# {type_code} 設計\n\n"
+        "> 標準テンプレート本文はまだ登録されていません。以下の既定の骨格で作成してください。\n\n"
+        "## 1. 概要\n## 2. 本文\n"
     ),
-    "L": (
-        "# 로직설계\n\n"
-        "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
-        "## 목적\n## 1. 파라미터 정의\n## 2. 알고리즘/처리 로직\n## 3. 상태 전이\n## 4. 결정 트리\n## 5. 경계 조건\n"
-    ),
-    "DB": (
-        "# DB설계\n\n"
-        "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 타입 기본 골격으로 작성하세요.\n\n"
-        "## 1. 대상 테이블\n## 2. 컬럼·키·제약\n## 3. 마이그레이션\n## 4. 읽기/쓰기 쿼리\n"
+    "en": (
+        "# {type_code} Design\n\n"
+        "> No standard template body is registered yet. Use the default outline below.\n\n"
+        "## 1. Overview\n## 2. Body\n"
     ),
 }
-_DEFENSIVE_SKELETON = (
-    "# {type_code} 설계\n\n"
-    "> 표준 템플릿 본문이 아직 등록되지 않았습니다. 아래 기본 골격으로 작성하세요.\n\n"
-    "## 1. 개요\n## 2. 본문\n"
-)
+
+_PROVISION_COPY: dict[str, dict[str, str]] = {
+    "ko": {
+        "default_locale": "기본",
+        "heading": "## 다음 문서 템플릿 ({type_code} / {display_locale})",
+        "type_default": "> 표준 템플릿 미등록 — 타입 기본 골격을 제공합니다. 작성은 진행 가능합니다.",
+        "global_source": "> 출처: 전역 표준 템플릿",
+        "fallback": "> 제공 언어: {resolved_locale} (요청 {req_locale} 미보유, 폴백)",
+    },
+    "ja": {
+        "default_locale": "既定",
+        "heading": "## 次の文書テンプレート ({type_code} / {display_locale})",
+        "type_default": "> 標準テンプレート未登録 — タイプ既定の骨格を提供します。作成は続行できます。",
+        "global_source": "> 出典: グローバル標準テンプレート",
+        "fallback": "> 提供言語: {resolved_locale} (要求 {req_locale} は未登録のためフォールバック)",
+    },
+    "en": {
+        "default_locale": "default",
+        "heading": "## Next Document Template ({type_code} / {display_locale})",
+        "type_default": "> No standard template is registered — a type-default outline is provided. You can continue writing.",
+        "global_source": "> Source: global standard template",
+        "fallback": "> Provided language: {resolved_locale} (requested {req_locale} is unavailable; fallback applied)",
+    },
+}
 
 # ── path-non-exposure predicate (L0013 §5-5 / AC-1) ──────────────────────────
 _DRIVE_PATH_RE = re.compile(r"(^|\s)[A-Za-z]:[\\/]")
@@ -118,16 +202,17 @@ def normalize_locale(x_locale: Optional[str]) -> str:
     return x if x in SUPPORTED_LOCALES else FALLBACK_LOCALE
 
 
-def build_type_default(type_code: str) -> str:
+def build_type_default(type_code: str, req_locale: str = FALLBACK_LOCALE) -> str:
     """L0013 §2-3 — deterministic, DB-free type skeleton (writing never blocked).
 
     Falls back to a defensive skeleton (not a 500) if a design type lacks a
     skeleton entry (coverage-invariant drift, L0013 §5-6).
     """
-    skeleton = TYPE_DEFAULT_SKELETON.get(type_code)
+    locale = normalize_locale(req_locale)
+    skeleton = TYPE_DEFAULT_SKELETON.get(type_code, {}).get(locale)
     if skeleton is None:
         logger.warning("type-default skeleton missing for design type %s", type_code)
-        skeleton = _DEFENSIVE_SKELETON.format(type_code=type_code)
+        skeleton = _DEFENSIVE_SKELETON[locale].format(type_code=type_code)
     # self-check: our own artefact must never carry a path (regression guard)
     assert not contains_path(skeleton), "type-default skeleton must not contain a path"
     return skeleton
@@ -170,6 +255,7 @@ def resolve_active_template(
     Active-empty / path-polluted rows fall through (invariant b: never blocks).
     Raises UnknownDesignType for non-design types (→ 404).
     """
+    req_locale = normalize_locale(req_locale)
     if not tdb.is_design_type(type_code):
         raise UnknownDesignType(type_code)
 
@@ -203,7 +289,7 @@ def resolve_active_template(
         # active-empty / path-polluted → fall through to the next row
 
     # rank 5: no active row produced a usable body → type-default (never blocks)
-    skeleton = build_type_default(type_code)
+    skeleton = build_type_default(type_code, req_locale)
     return Resolved(
         content=skeleton,
         resolution="type-default",
@@ -244,16 +330,21 @@ def render_provision_block(type_code: str, req_locale: str, resolved: Resolved) 
     truth so the worker mention (mention_service.build_mention) and the AC/RJ
     self-contained sections (process_service) stay byte-identical and cannot drift.
     """
-    display_locale = resolved["resolved_locale"] or "기본"
-    lines = [f"## 다음 문서 템플릿 ({type_code} / {display_locale})"]
+    locale = normalize_locale(req_locale)
+    copy = _PROVISION_COPY[locale]
+    display_locale = resolved["resolved_locale"] or copy["default_locale"]
+    lines = [copy["heading"].format(type_code=type_code, display_locale=display_locale)]
     if resolved["resolution"] == "type-default":
-        lines.append("> 표준 템플릿 미등록 — 타입 기본 골격을 제공합니다. 작성은 진행 가능합니다.")
+        lines.append(copy["type_default"])
     else:
         if resolved["scope"] == "global":
-            lines.append("> 출처: 전역 표준 템플릿")
-        if resolved["resolved_locale"] != req_locale:
+            lines.append(copy["global_source"])
+        if resolved["resolved_locale"] != locale:
             lines.append(
-                f"> 제공 언어: {resolved['resolved_locale']} (요청 {req_locale} 미보유, 폴백)"
+                copy["fallback"].format(
+                    resolved_locale=resolved["resolved_locale"],
+                    req_locale=locale,
+                )
             )
     lines += ["", resolved["content"]]
     return "\n".join(lines)
