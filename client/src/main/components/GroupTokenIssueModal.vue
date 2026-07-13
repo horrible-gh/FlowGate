@@ -81,31 +81,89 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { showToast } = useToast()
 const { issuing, issueToken } = useFlowGateToken()
 
 const mention = ref<string | null>(null)
+
+type MentionLocale = 'ko' | 'ja' | 'en'
+
+const GROUP_MENTION_COPY: Record<MentionLocale, {
+  title: string
+  lead: (groupId: string) => string
+  project: string
+  module: string
+  targetGroup: string
+  scope: string
+  scratchDir: string
+  expiresAt: string
+  api: string
+  completion: string
+}> = {
+  ko: {
+    title: '## FlowGate 그룹 작업 토큰',
+    lead: (groupId) => `이 멘트와 함께 전달된 작업 요청을 FlowGate 그룹 ${groupId} 범위에서 수행하십시오.`,
+    project: '- 프로젝트:',
+    module: '- 모듈:',
+    targetGroup: '- 대상 그룹:',
+    scope: '- 권한 범위: 위 그룹에 바인딩된 1회성 작업 권한',
+    scratchDir: '- 스크래치 디렉터리:',
+    expiresAt: '- 토큰 만료:',
+    api: '- 작업 API: FlowGate API의 해당 작업 엔드포인트',
+    completion: '- 완료 조건: 작업 성공 응답을 확인한 뒤 결과를 보고하고 토큰을 재사용하지 마십시오.',
+  },
+  ja: {
+    title: '## FlowGate グループ作業トークン',
+    lead: (groupId) => `このメンションと一緒に渡された作業依頼を、FlowGate グループ ${groupId} の範囲で実行してください。`,
+    project: '- プロジェクト:',
+    module: '- モジュール:',
+    targetGroup: '- 対象グループ:',
+    scope: '- 権限範囲: 上記グループに紐づく一回限りの作業権限',
+    scratchDir: '- スクラッチディレクトリ:',
+    expiresAt: '- トークン有効期限:',
+    api: '- 作業 API: FlowGate API の該当する作業エンドポイント',
+    completion: '- 完了条件: 作業成功レスポンスを確認したうえで結果を報告し、トークンを再利用しないでください。',
+  },
+  en: {
+    title: '## FlowGate Group Work Token',
+    lead: (groupId) => `Perform the request delivered with this mention within the FlowGate group ${groupId}.`,
+    project: '- Project:',
+    module: '- Module:',
+    targetGroup: '- Target group:',
+    scope: '- Permission scope: one-time work permission bound to the group above',
+    scratchDir: '- Scratch directory:',
+    expiresAt: '- Token expires at:',
+    api: '- Work API: the corresponding work endpoint in the FlowGate API',
+    completion: '- Completion condition: confirm a successful work response, report the result, and do not reuse the token.',
+  },
+}
+
+function currentMentionLocale(): MentionLocale {
+  const raw = String(locale.value || '').split('-')[0]
+  return raw === 'ja' || raw === 'en' ? raw : 'ko'
+}
 
 // Build the group-token execution mention. Faithful to the approved prototype
 // (set3/document_page_group_bootstrap.html) — one self-contained mention that carries the
 // Bearer credential together with the target group and usage steps, so the credential is
 // never handed over on its own. The real token adds scratch dir + expiry over the mock.
 function buildGroupMention(token: IssuedToken, ids: { project: string; module: string; groupId: string }): string {
+  const copy = GROUP_MENTION_COPY[currentMentionLocale()]
   return [
-    '## FlowGate 그룹 작업 토큰',
-    `이 멘트와 함께 전달된 작업 요청을 FlowGate 그룹 ${ids.groupId} 범위에서 수행하십시오.`,
+    copy.title,
+    copy.lead(ids.groupId),
     '',
     `Authorization: Bearer ${token.raw_token}`,
     '',
-    `- 프로젝트: ${ids.project}`,
-    `- 모듈: ${ids.module}`,
-    `- 대상 그룹: ${ids.groupId}`,
-    '- 권한 범위: 위 그룹에 바인딩된 1회성 작업 권한',
-    `- 스크래치 디렉터리: ${token.scratch_dir}`,
-    `- 토큰 만료: ${token.expires_at}`,
-    '- 작업 API: FlowGate API의 해당 작업 엔드포인트',
-    '- 완료 조건: 작업 성공 응답을 확인한 뒤 결과를 보고하고 토큰을 재사용하지 마십시오.',
+    `${copy.project} ${ids.project}`,
+    `${copy.module} ${ids.module}`,
+    `${copy.targetGroup} ${ids.groupId}`,
+    copy.scope,
+    `${copy.scratchDir} ${token.scratch_dir}`,
+    `${copy.expiresAt} ${token.expires_at}`,
+    copy.api,
+    copy.completion,
   ].join('\n')
 }
 
