@@ -62,7 +62,7 @@
           :placeholder="t('main.conversation_view.placeholder')"
           :disabled="sending"
           rows="1"
-          @input="autoGrow"
+          @input="onDraftInput"
           @keydown.enter.exact.prevent="send"
         ></textarea>
         <button
@@ -109,6 +109,47 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { showToast } = useToast()
 
+interface AccessTokenPayload {
+  username?: string
+  sub?: string
+  user_id?: string
+}
+
+function getDraftUserId(): string {
+  try {
+    const token = window.__accessToken__
+    if (!token) return 'guest'
+    const payload = JSON.parse(atob(token.split('.')[1])) as AccessTokenPayload
+    return String(payload.username ?? payload.sub ?? payload.user_id ?? 'guest')
+  } catch {
+    return 'guest'
+  }
+}
+
+function draftStorageKey(docId: string): string {
+  return 'flowgate.user.' + getDraftUserId() + '.chat.drafts.' + docId
+}
+
+function loadDraft(docId: string): string {
+  if (!docId) return ''
+  try {
+    return localStorage.getItem(draftStorageKey(docId)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function persistDraft(docId: string, value: string): void {
+  if (!docId) return
+  try {
+    const key = draftStorageKey(docId)
+    if (value === '') localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    /* Draft persistence is best-effort; chat input and sending must keep working. */
+  }
+}
+
 // 0085: "auto-copy mention" toggle. When on, a successful send() also fires the same
 // copy-mention event the manual button does. Persisted as a single global user
 // preference in localStorage (matches the existing UI-toggle persistence pattern), so
@@ -131,7 +172,7 @@ watch(autoCopy, (v) => {
 })
 
 const turns = ref<ConvTurn[]>([])
-const draft = ref('')
+const draft = ref(loadDraft(props.docId))
 const loading = ref(false)
 const sending = ref(false)
 const scrollEl = ref<HTMLElement | null>(null)
@@ -210,6 +251,11 @@ function autoGrow() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 140)}px`
+}
+
+function onDraftInput() {
+  persistDraft(props.docId, draft.value)
+  autoGrow()
 }
 
 function resetInputHeight() {
@@ -292,6 +338,7 @@ async function send(): Promise<void> {
     const p = parseConversation(data?.content ?? '')
     turns.value = p.turns
     draft.value = ''
+    persistDraft(props.docId, '')
     resetInputHeight()
     scrollToBottom()
     if (data?.carried_over_doc_id) {
@@ -323,10 +370,15 @@ function onContentChanged(e: Event) {
   void load()
 }
 
-watch(() => props.docId, load)
+watch(() => props.docId, (docId) => {
+  draft.value = loadDraft(docId)
+  void nextTick(autoGrow)
+  void load()
+})
 
 onMounted(() => {
   void load()
+  void nextTick(autoGrow)
   window.addEventListener('fg:document_content_changed', onContentChanged)
 })
 
