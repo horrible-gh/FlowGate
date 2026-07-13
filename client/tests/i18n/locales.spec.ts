@@ -37,6 +37,12 @@ function sourceFiles(directory: string): string[] {
   })
 }
 
+function koreanSyllableKeys(messages: Map<string, string>): string[] {
+  return [...messages.entries()]
+    .filter(([, value]) => /[가-힣]/.test(value))
+    .map(([key]) => key)
+}
+
 describe('i18n locales', () => {
   const locales = {
     ko: flattenMessages(ko),
@@ -55,6 +61,13 @@ describe('i18n locales', () => {
         placeholders(locales.ko.get(key) ?? ''),
       )
     }
+  })
+
+  it.each([
+    ['en', locales.en],
+    ['ja', locales.ja],
+  ])('%s has no Korean syllable leakage', (_, messages) => {
+    expect(koreanSyllableKeys(messages)).toEqual([])
   })
 
   it('defines every statically referenced translation key', () => {
