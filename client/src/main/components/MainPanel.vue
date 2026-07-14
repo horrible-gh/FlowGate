@@ -862,7 +862,7 @@
       @create-empty="onNextActionCreateEmpty"
     />
 
-    <!-- Continuous (unmanned) work — sequence pick → warning/consent → token + mention copy -->
+    <!-- Continuous work: choose a range, then select in-app execution or an external-AI mention. -->
     <ContinuousWorkDialog
       v-model:visible="continuousDialogVisible"
       :doc-ref="continuousDocRef"
@@ -870,11 +870,14 @@
     />
     <ContinuousWarningDialog
       v-model:visible="continuousWarnVisible"
+      :project="continuousProjectId"
       :step-count="continuousStepCount"
       :target-label="continuousTargetLabel"
       :review-mode="continuousReviewMode"
       :from-decision="continuousFromDecision"
       @confirm="onContinuousWarnConfirm"
+      @copy-mention="onContinuousWarnCopyMention"
+      @copy-with-message="onContinuousWarnCopyMentionWithMessage"
     />
 
     <MentionMessageDialog
@@ -1202,8 +1205,8 @@ const nextActionModalModuleName = ref('')
 const nextActionModalTypeCode = ref('')
 const nextActionModalCurrentType = ref('')
 const nextActionModalInitialDocs = ref<string[]>([])
-// Continuous (unmanned) work (R0001 group 0086): sequence-pick dialog → warning/consent gate
-// → issue the first continuation token via /workflow/advance and copy its continuous mention.
+// Continuous work (R0001 group 0086): sequence selection feeds a consent gate that offers
+// either an in-app provider run or the external-AI continuous mention path.
 const continuousDialogVisible = ref(false)
 const continuousWarnVisible = ref(false)
 const continuousTabId = ref('')
@@ -1211,6 +1214,7 @@ const continuousDocRef = ref('')
 const continuousProjectId = ref('')
 const continuousGroupId = ref('')
 const continuousTargetSeq = ref<number | null>(null)
+const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
 const continuousStepCount = ref(0)
@@ -1226,6 +1230,7 @@ const mmDialogDocTypes = ref<{ code: string; label: string }[]>([])
 const mmDialogCandidates = ref<MessageEntry[]>([])
 const mmDialogToken = ref<IssuedToken | null>(null)
 const mmDialogSelectedDocs = ref<string[] | undefined>(undefined)
+const mmDialogContext = ref<'next' | 'continuous'>('next')
 const nextEmptyDocModalVisible = ref(false)
 const nextEmptyDocProjectId = ref('')
 const nextEmptyDocGroupId = ref('')
@@ -2530,6 +2535,7 @@ async function onNextActionCopyMentionWithMessage(selectedDocs?: string[]) {
   } catch {
     docTypes = [] // dialog still works; dropdown falls back to [All] + the current type
   }
+  mmDialogContext.value = 'next'
   mmDialogToken.value = token
   mmDialogSelectedDocs.value = selectedDocs
   mmDialogProjectId.value = project
@@ -2545,15 +2551,25 @@ async function onMmDialogSelect(messages: string[]) {
   if (!token) return
   const ok = await copyTokenMention(token, mmDialogSelectedDocs.value, messages)
   if (ok) {
-    showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
-    void recordMentionCopy(nextActionModalTabId.value, 'next_step_message')
+    if (mmDialogContext.value === 'continuous') {
+      showToast(t('main.continuous_work.toast_started'), 'success')
+      void recordMentionCopy(
+        continuousTabId.value,
+        continuousFromDecision.value ? 'workflow_decision' : 'next_step',
+      )
+    } else {
+      showToast(t('main.next_action_modal.copy_mention_toast'), 'success')
+      void recordMentionCopy(nextActionModalTabId.value, 'next_step_message')
+    }
   } else notifyCopyFailure()
   mmDialogToken.value = null
+  mmDialogContext.value = 'next'
 }
 
 function onMmDialogCancel() {
   mmDialogVisible.value = false
   mmDialogToken.value = null
+  mmDialogContext.value = 'next'
 }
 
 function onNextActionCreateEmpty(_selectedDocs?: string[]) {
@@ -2683,8 +2699,9 @@ function onActionBarContinuousWork(tabId: string) {
 }
 
 // Sequence-pick confirmed → carry the run parameters into the warning/consent gate.
-function onContinuousDialogConfirm(payload: { targetSeq: number; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }) {
+function onContinuousDialogConfirm(payload: { targetSeq: number; targetType: string; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }) {
   continuousTargetSeq.value = payload.targetSeq
+  continuousTargetType.value = payload.targetType
   continuousTargetLabel.value = payload.targetLabel
   continuousReviewMode.value = payload.reviewMode
   continuousStepCount.value = payload.stepCount
@@ -2718,6 +2735,107 @@ async function onContinuousWarnConfirm() {
       autoStart: true,
     },
   )
+}
+
+async function issueContinuousToken(): Promise<IssuedToken | null> {
+  const project = continuousProjectId.value
+  const groupId = continuousGroupId.value
+  const docRef = continuousDocRef.value
+  const targetSeq = continuousTargetSeq.value
+  if (!project || !groupId || !docRef || targetSeq == null) {
+    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
+    return null
+  }
+  if (continuousFromDecision.value) {
+    return requestWorkflowDecision(docRef, {
+      continuous: true,
+      continuationReviewMode: continuousReviewMode.value,
+    })
+  }
+  const groupParts = splitGroupId(groupId)
+  return issueToken({
+    project,
+    ...(groupParts?.module != null ? { module: groupParts.module } : {}),
+    group: groupParts?.groupCode ?? groupId,
+    doc_ref: docRef,
+    action_scope: 'new',
+    continuous: true,
+    continuationTargetSeq: targetSeq,
+    continuationReviewMode: continuousReviewMode.value,
+  })
+}
+
+async function onContinuousWarnCopyMention() {
+  continuousWarnVisible.value = false
+  let token: IssuedToken | null = null
+  await copyMentionDeferred(
+    async () => {
+      token = await issueContinuousToken()
+      if (!token) throw new ClipboardAbort()
+      return composeMention(token)
+    },
+    {
+      tabId: continuousTabId.value,
+      kind: continuousFromDecision.value ? 'workflow_decision' : 'next_step',
+      successToast: t('main.continuous_work.toast_started'),
+      aborted: () => token == null,
+    },
+  )
+}
+
+async function onContinuousWarnCopyMentionWithMessage() {
+  continuousWarnVisible.value = false
+  const project = continuousProjectId.value
+  const docType = continuousTargetType.value
+  if (!project) {
+    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
+    return
+  }
+
+  let candidates: MessageEntry[]
+  try {
+    const res = await getRequest<{ data: MessageEntry[] }>(
+      `/api/v1/projects/${encodeURIComponent(project)}/messages`,
+      { doc_type: docType || '*' },
+    )
+    candidates = buildCandidateList(res.data?.data ?? [], docType || '*')
+  } catch {
+    showToast(t('main.next_action_modal.copy_mention_error_toast'), 'danger')
+    return
+  }
+
+  const token = await issueContinuousToken()
+  if (!token) return
+  if (candidates.length === 0) {
+    const ok = await copyTokenMention(token)
+    if (ok) {
+      showToast(t('main.continuous_work.toast_started'), 'success')
+      void recordMentionCopy(
+        continuousTabId.value,
+        continuousFromDecision.value ? 'workflow_decision' : 'next_step',
+      )
+    } else notifyCopyFailure()
+    return
+  }
+
+  let docTypes: { code: string; label: string }[] = []
+  try {
+    const res = await getRequest<{ data: { code: string; label: string; is_active?: number }[] }>(
+      `/api/v1/projects/${encodeURIComponent(project)}/document-types`,
+      { locale: locale.value },
+    )
+    docTypes = (res.data?.data ?? []).filter(d => d.is_active).map(d => ({ code: d.code, label: d.label }))
+  } catch {
+    docTypes = []
+  }
+  mmDialogContext.value = 'continuous'
+  mmDialogToken.value = token
+  mmDialogSelectedDocs.value = undefined
+  mmDialogProjectId.value = project
+  mmDialogDocType.value = docType || '*'
+  mmDialogDocTypes.value = docTypes
+  mmDialogCandidates.value = candidates
+  mmDialogVisible.value = true
 }
 // R0001 #2 (0048): action-bar split "create approved doc" — confirm once, then create
 // + approve in one server call (next-approved). Offered only for N/T next steps; TS is

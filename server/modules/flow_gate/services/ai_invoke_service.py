@@ -1,7 +1,7 @@
 """AI invoke engine (flowgate.default.0187 D0004 / P0005 / L0006).
 
 First real consumer of the 0164 AI-provider settings: starts an AI run for a
-document, walks the provider chain (list order = fallback order, startup/
+document, walks the default provider chain (list order = fallback order, startup/
 transport failures only), watches it with the process_runner primitives
 (process-group spawn, tree kill, timeout), and judges success by the
 document-reach oracle — "did documents actually land in the group past the
@@ -47,6 +47,7 @@ SCRATCH_RETENTION_DAYS = 7       # failed-run scratch retention
 LAST_MESSAGE_MAX_BYTES = 16384   # keep the tail, truncate the front
 OUTPUT_TAIL_BYTES = 8192         # stdout/stderr auxiliary tails
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
+API_MAX_TOOL_NUDGES = 2          # retry when the model claims completion without using the tool
 ORACLE_SETTLE_SEC = 3            # wait before judging (late-commit slack)
 CONCURRENT_RUNS_PER_GROUP = 1
 
@@ -237,7 +238,8 @@ def start_run(
                 422, "provider_unavailable",
                 "The selected AI provider is not enabled for this project.",
             )
-        chain = [selected, *(provider for provider in chain if provider.get("id") != provider_id)]
+        # An explicit UI selection pins the run. Fallback order only applies when no provider was specified.
+        chain = [selected]
     if not chain:
         raise _http_error(
             409, "no_enabled_provider",
@@ -315,6 +317,10 @@ def start_run(
         "provider_id": None,
         "attempt_no": 0,
         "fallback_history": [],
+        "register_errors": [],
+        "tool_call_misses": 0,
+        "turn_limit_exhausted": False,
+        "oracle_mismatch": False,
         "started_at": now_iso(),
         "started_mono": time.monotonic(),
         "cancel_event": threading.Event(),
@@ -595,6 +601,9 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
 
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
+    run.setdefault("register_errors", [])
+    run.setdefault("tool_call_misses", 0)
+    run.setdefault("turn_limit_exhausted", False)
     secret_scope = run["project_id"] if run.get("chain_source") == "project" else None
     key = ai_settings_service.get_provider_secret(secret_scope, provider.get("id"))
     if not key:
@@ -654,6 +663,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if reply_text:
             last_text = reply_text
         if tool_call is None:
+            run["tool_call_misses"] += 1
+            if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
+                conversation.append({
+                    "role": "user",
+                    "content": (
+                        f"The required action is not complete. Call the `{tool_name}` tool now with "
+                        "the actual full payload. Do not merely say that you registered or attached it."
+                    ),
+                })
+                continue
             break
 
         if workflow_pending:
@@ -694,15 +713,47 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if run["mode"] == "single" or registered >= run["docs_target"] or not next_token:
                 break
         else:
+            reason = _registration_error_summary(resp)
+            run["register_errors"].append({
+                "status": status,
+                "reason": reason,
+                "turn": turn,
+            })
             conversation.append(_tool_result_msg(
                 kind, tool_call,
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
 
+    goal_met = (
+        not workflow_pending
+        and (
+            (run.get("action_scope") == "workflow_decide" and run["mode"] == "single")
+            or registered >= run["docs_target"]
+        )
+    )
+    if (
+        turn >= max_turns
+        and not goal_met
+        and not run["cancel_event"].is_set()
+        and not run.get("timed_out")
+    ):
+        run["turn_limit_exhausted"] = True
+
     run["exit_code"] = None
     run["last_message"] = _truncate_front(last_text)
     run["last_message_received"] = bool(last_text)
     return "started_ok", None
+
+def _registration_error_summary(response: dict) -> str:
+    for key in ("code", "error", "message", "detail"):
+        value = response.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)[:500]
+        return str(value)[:500]
+    return json.dumps(response, ensure_ascii=False)[:500] or "unknown registration error"
+
 
 def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
     if kind == "claude":
@@ -899,6 +950,14 @@ def _settle_and_judge(run: dict) -> None:
     else:
         run["outcome"] = "none"
 
+    run["oracle_mismatch"] = bool(
+        run["outcome"] == "none"
+        and run.get("end_reason") == "exited"
+        and not run.get("register_errors")
+        and not run.get("tool_call_misses")
+        and not run.get("turn_limit_exhausted")
+    )
+
     # Scratch lifecycle (§2.7): success cleans up, everything else retains.
     scratch = Path(run["scratch_dir"])
     if run["outcome"] == "complete":
@@ -949,6 +1008,10 @@ def finished_payload(run: dict) -> dict:
         "provider_id": run["provider_id"],
         "attempt_no": run["attempt_no"],
         "fallback_history": run["fallback_history"],
+        "register_errors": run.get("register_errors", []),
+        "tool_call_misses": run.get("tool_call_misses", 0),
+        "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
+        "oracle_mismatch": bool(run.get("oracle_mismatch")),
         "source_dirty": run["source_dirty"],
         "duration_ms": run["duration_ms"],
     }

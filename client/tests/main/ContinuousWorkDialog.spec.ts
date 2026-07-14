@@ -171,6 +171,7 @@ describe('ContinuousWorkDialog', () => {
     expect(ev).toHaveLength(1)
     const payload = ev![0][0] as any
     expect(payload.targetSeq).toBe(4)
+    expect(payload.targetType).toBe('TR')
     // head=item3 .. target=item4 inclusive → 2 steps.
     expect(payload.stepCount).toBe(2)
     expect(payload.reviewMode).toBe(true)
@@ -200,6 +201,7 @@ describe('ContinuousWorkDialog', () => {
     const payload = ev![0][0] as any
     expect(payload.fromDecision).toBe(true)
     expect(payload.targetSeq).toBe(-1)
+    expect(payload.targetType).toBe('')
   })
 
   it('starts from the workflow decision on a 400 sequence_not_decided fallback (R0001 워크플로 결정부터)', async () => {
@@ -227,5 +229,6 @@ describe('ContinuousWorkDialog', () => {
     const payload = ev![0][0] as any
     expect(payload.fromDecision).toBe(true)
     expect(payload.targetSeq).toBe(-1)
+    expect(payload.targetType).toBe('')
   })
 })

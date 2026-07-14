@@ -249,6 +249,19 @@ class TestProviderError:
         assert res["provider"]["id"] == "aip_selected"
         assert run["provider_id"] == "aip_selected"
 
+    def test_explicit_runtime_selection_never_falls_back(self, fake_env):
+        good = _provider(name="good", cmd=f'"{PY}" -c "print(1)"', pid="aip_goodpin")
+        selected = _provider(name="selected", cmd=f'"{PY}" -c "import sys; sys.exit(7)"',
+                             pid="aip_selectedpin")
+        res = _start(fake_env, [good, selected], provider_id="aip_selectedpin")
+        run = _wait_finished(res["run_id"])
+
+        assert res["provider"]["id"] == "aip_selectedpin"
+        assert run["attempt_no"] == 1
+        assert run["end_reason"] == "all_providers_failed"
+        assert [item["provider_id"] for item in run["fallback_history"]] == ["aip_selectedpin"]
+        assert not any(item["provider_id"] == "aip_goodpin" for item in run["fallback_history"])
+
     def test_unknown_runtime_selection_is_rejected(self, fake_env):
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
@@ -336,6 +349,60 @@ class TestLastMessageRecovery:
         run = _wait_finished(res["run_id"])
         assert run["last_message_received"] is False
         assert run["last_message"] is None
+
+
+# ── Registration diagnostics and no-tool nudges (group 0231) ─────────────────
+
+def _registration_api_run() -> dict:
+    return {
+        "project_id": "flowgate", "chain_source": "system", "run_id": "aiv_register",
+        "docs_target": 1, "raw_token": "doc-token", "action_scope": "new", "mode": "single",
+        "cancel_event": threading.Event(), "started_mono": time.monotonic(), "timeout_sec": 30,
+    }
+
+
+class TestRegistrationDiagnostics:
+    def test_missing_tool_is_nudged_twice_then_registration_succeeds(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+
+        def model(*args):
+            calls.append([dict(message) for message in args[3]])
+            if len(calls) < 3:
+                return "attached", None, {"role": "assistant", "content": "attached"}
+            tool = {"id": "tc3", "name": "register_document", "input": {
+                "doc_type": "TR", "title": "done", "content": "body",
+            }}
+            return "registering", tool, {"role": "assistant", "content": "registering", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: (200, {"ok": True, "doc_id": "d"}))
+        run = _registration_api_run()
+        result = svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run)
+
+        assert result == ("started_ok", None)
+        assert len(calls) == 3
+        assert run["tool_call_misses"] == 2
+        assert "Call the `register_document` tool" in calls[1][-1]["content"]
+        assert run["turn_limit_exhausted"] is False
+
+    def test_registration_failures_are_recorded_and_turn_limit_is_visible(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+
+        def model(*args):
+            tool = {"id": "tc", "name": "register_document", "input": {
+                "doc_type": "TR", "title": "dup", "content": "same",
+            }}
+            return "done", tool, {"role": "assistant", "content": "done", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: (409, {"code": "dup_body"}))
+        run = _registration_api_run()
+        svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run)
+
+        assert len(run["register_errors"]) == svc.API_MAX_TURNS_PER_DOC
+        assert run["register_errors"][0] == {"status": 409, "reason": "dup_body", "turn": 1}
+        assert run["turn_limit_exhausted"] is True
 
 
 # ── Workflow-decision API loop (group 0223) ──────────────────────────────────
@@ -441,6 +508,7 @@ class TestOracle:
     def test_none_default(self, fake_env):
         run = self._finished_run(fake_env, 1, [])
         assert (run["outcome"], run["docs_reached"]) == ("none", 0)
+        assert run["oracle_mismatch"] is True
 
     def test_drafts_do_not_count(self, fake_env):
         run = self._finished_run(fake_env, 1, [], draft_seqs=[5])

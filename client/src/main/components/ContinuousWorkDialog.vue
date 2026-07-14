@@ -162,7 +162,7 @@ const emit = defineEmits<{
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
   // workflow-decision step and targetSeq is the run-to-end sentinel (-1, R0001 "워크플로 결정부터").
-  'confirm': [payload: { targetSeq: number; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }]
+  'confirm': [payload: { targetSeq: number; targetType: string; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }]
 }>()
 
 const { t } = useI18n()
@@ -323,6 +323,7 @@ function onProceed() {
     // the whole decided sequence. No concrete target item exists yet → run-to-end sentinel.
     emit('confirm', {
       targetSeq: TARGET_TO_END,
+      targetType: '',
       targetLabel: t('main.continuous_work.from_decision_target_label'),
       reviewMode: reviewMode.value,
       stepCount: 0,
@@ -333,6 +334,7 @@ function onProceed() {
   const target = items.value[selectedIdx.value]
   emit('confirm', {
     targetSeq: target.item_seq,
+    targetType: target.type,
     targetLabel: target.label,
     reviewMode: reviewMode.value,
     stepCount: stepCount.value,

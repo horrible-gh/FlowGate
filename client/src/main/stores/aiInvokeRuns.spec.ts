@@ -71,6 +71,26 @@ describe('aiInvokeRuns store', () => {
     expect(run.finishedPayload?.last_message).toBe('done')
   })
 
+  it('normalizes registration diagnostics from a finished payload', () => {
+    const groupId = 'flowgate.default.1003'
+    store.trackFinished({
+      run_id: 'run-diagnostic',
+      group_id: groupId,
+      outcome: 'none',
+      docs_reached: 0,
+      register_errors: [{ status: 409, reason: 'dup_body', turn: 4 }],
+      tool_call_misses: 2,
+      turn_limit_exhausted: true,
+      oracle_mismatch: false,
+    })
+
+    expect(store.runsByGroup[groupId].registerErrors).toEqual([
+      { status: 409, reason: 'dup_body', turn: 4 },
+    ])
+    expect(store.runsByGroup[groupId].toolCallMisses).toBe(2)
+    expect(store.runsByGroup[groupId].turnLimitExhausted).toBe(true)
+  })
+
   it('keeps simultaneous groups isolated', () => {
     const groupA = 'flowgate.default.1001'
     const groupB = 'flowgate.default.1002'

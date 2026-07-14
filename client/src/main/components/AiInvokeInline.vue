@@ -77,6 +77,15 @@
 
         <p v-if="endReasonText" class="aiv-inline__notice">{{ endReasonText }}</p>
 
+        <div v-if="missingDocReasons.length > 0" class="aiv-inline__section aiv-inline__diagnostics">
+          <strong>{{ t('main.ai_invoke_dialog.failure_details') }}</strong>
+          <ul class="aiv-inline__history">
+            <li v-for="(reason, index) in missingDocReasons" :key="`${index}-${reason}`">
+              {{ reason }}
+            </li>
+          </ul>
+        </div>
+
         <div v-if="run.reachedDocIds.length > 0" class="aiv-inline__section">
           <strong>{{ t('main.ai_invoke_dialog.reached_docs') }}</strong>
           <div class="aiv-inline__chips">
@@ -119,7 +128,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import {
@@ -155,6 +164,21 @@ const elapsedText = computed(() => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 })
 
+const missingDocReasons = computed(() => {
+  const current = run.value
+  if (!current || current.phase !== 'finished' || current.docsReached > 0) return []
+  const reasons = current.registerErrors.map(error => t('main.ai_invoke_dialog.register_error', {
+    status: error.status,
+    reason: error.reason,
+  }))
+  if (current.toolCallMisses > 0) {
+    reasons.push(t('main.ai_invoke_dialog.tool_not_called', { count: current.toolCallMisses }))
+  }
+  if (current.turnLimitExhausted) reasons.push(t('main.ai_invoke_dialog.turn_limit_exhausted'))
+  if (current.oracleMismatch) reasons.push(t('main.ai_invoke_dialog.oracle_no_documents'))
+  return reasons
+})
+
 const endReasonText = computed(() => {
   const reason = run.value?.endReason
   if (reason === 'cancelled') return t('main.ai_invoke_dialog.end_cancelled')
@@ -188,6 +212,23 @@ async function cancel(): Promise<void> {
     cancelling.value = false
   }
 }
+
+watch(
+  () => run.value?.phase === 'running' ? run.value.runId : null,
+  runId => {
+    if (!runId) return
+    void nextTick(() => {
+      const container = document.querySelector<HTMLElement>('.content-wrap')
+      if (!container) return
+      if (typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: 0, behavior: 'auto' })
+      } else {
+        container.scrollTop = 0
+      }
+    })
+  },
+  { immediate: true },
+)
 
 watch(
   () => props.groupId,
@@ -337,6 +378,13 @@ watch(
 
 .aiv-inline__notice--warning {
   color: var(--warning);
+  background: var(--warning-l);
+}
+
+.aiv-inline__diagnostics {
+  padding: 9px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--r);
   background: var(--warning-l);
 }
 
