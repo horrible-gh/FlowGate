@@ -538,10 +538,10 @@ class TestSeededGlobalTemplates:
         assert "S: 서버가 클라이언트에게 보내는 데이터" in p   # S/C notation absorbed
 
     def test_unsupported_raw_locale_folds_to_seeded_ko(self, seeded_store):
-        # A locale outside SUPPORTED_LOCALES that reaches resolve directly still folds
-        # to the seeded ko body (global-fallback-ko) — graceful, never blocks.
+        # A locale outside SUPPORTED_LOCALES folds to the seeded ko body before
+        # resolution, so the normalized ko request is an exact global hit.
         r = tp.resolve_active_template("anyproject", "P", "fr")
-        assert r["resolution"] == "global-fallback-ko"
+        assert r["resolution"] == "global-exact"
         assert r["resolved_locale"] == "ko"
 
     def test_project_override_still_wins_over_seed(self, seeded_store):

@@ -202,6 +202,8 @@
             @abort="abortInline(p)"
             @submit="submitResolveInline(p)"
             @retry="openResolve(p.group_id)"
+            @ai-invoke="invokeConflictAi(p)"
+            @copy-mention="copyConflictMention(p)"
           />
         </div>
       </div>
@@ -721,6 +723,65 @@ async function submitResolveInline(p: Pending) {
   } finally {
     busy.value = false
     await fetchStatus()
+  }
+}
+
+function groupParts(groupId: string) {
+  const [project, module = 'none', ...rest] = groupId.split('.')
+  return { project, module, group: rest.join('.') }
+}
+
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.left = '-9999px'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  document.execCommand('copy')
+  document.body.removeChild(ta)
+}
+
+async function invokeConflictAi(p: Pending) {
+  if (p.merge_id == null || busy.value) return
+  busy.value = true
+  try {
+    await postRequest('/api/v1/ai-invoke/start', {
+      ...groupParts(p.group_id),
+      action_scope: 'resolve_conflict',
+      mode: 'single',
+      merge_id: p.merge_id,
+    })
+    showToast(t('main.git_finalize.conflict_ai_started'), 'success')
+  } catch (e: any) {
+    showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+async function copyConflictMention(p: Pending) {
+  if (p.merge_id == null || busy.value) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{ mention?: string }>('/api/v1/token/issue', {
+      ...groupParts(p.group_id),
+      action_scope: 'resolve_conflict',
+      merge_id: p.merge_id,
+    })
+    if (!data.mention) throw new Error(t('main.git_finalize.failed'))
+    await copyToClipboard(data.mention)
+    showToast(t('main.git_finalize.conflict_mention_copied'), 'success')
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail || e?.message || t('main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
   }
 }
 

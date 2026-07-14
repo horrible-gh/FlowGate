@@ -35,12 +35,13 @@ class AiInvokeStartRequest(BaseModel):
     project: str
     module: Optional[str] = None
     group: str
-    doc_ref: str
+    doc_ref: Optional[str] = None
     action_scope: str = "new"
     mode: str = "single"
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     provider_id: Optional[str] = None
+    merge_id: Optional[int] = None
 
 
 def _err(exc: HTTPException) -> JSONResponse:
@@ -71,8 +72,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     errors: list[dict] = []
     if body.mode not in ("single", "continuous"):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
-    if body.action_scope not in ("new", "edit", "workflow_decide"):
-        errors.append({"loc": "action_scope", "msg": "must be new, edit, or workflow_decide"})
+    if body.action_scope not in ("new", "edit", "workflow_decide", "resolve_conflict"):
+        errors.append({"loc": "action_scope", "msg": "must be new, edit, workflow_decide, or resolve_conflict"})
     if body.mode == "continuous" and body.continuation_target_seq is None:
         errors.append({"loc": "continuation_target_seq", "msg": "required for continuous mode"})
     if (
@@ -91,10 +92,19 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         validate_group_id(group_id)
     except ValueError as exc:
         errors.append({"loc": "group", "msg": str(exc)})
-    try:
-        validate_doc_id(body.doc_ref)
-    except ValueError as exc:
-        errors.append({"loc": "doc_ref", "msg": str(exc)})
+    if body.action_scope == "resolve_conflict":
+        if body.merge_id is None:
+            errors.append({"loc": "merge_id", "msg": "required for resolve_conflict"})
+        if body.mode != "single":
+            errors.append({"loc": "mode", "msg": "resolve_conflict must be single"})
+    else:
+        if not body.doc_ref:
+            errors.append({"loc": "doc_ref", "msg": "required"})
+        else:
+            try:
+                validate_doc_id(body.doc_ref)
+            except ValueError as exc:
+                errors.append({"loc": "doc_ref", "msg": str(exc)})
     if errors:
         return _validation_failed(errors)
 
@@ -126,13 +136,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             action_scope=body.action_scope,
             locale=locale,
             continuous=is_continuous,
+            merge_id=body.merge_id,
         )
 
     issue_builder = None
     if body.action_scope == "workflow_decide":
         def _issue_workflow_decision():
             return workflow_decision_service.request_workflow_decision(
-                doc_id=body.doc_ref,
+                doc_id=body.doc_ref or "",
                 issued_to=user_id,
                 api_base_url=_token_routes._build_api_base(request),
                 locale=locale,
@@ -146,7 +157,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             project_id=body.project,
             module=body.module,
             group_id=group_id,
-            doc_ref=body.doc_ref,
+            doc_ref=body.doc_ref or "",
             action_scope=body.action_scope,
             mode=body.mode,
             continuation_target_seq=body.continuation_target_seq,
@@ -157,6 +168,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             mention_builder=_mention_builder,
             provider_id=body.provider_id,
             issue_builder=issue_builder,
+            merge_id=body.merge_id,
         )
     except HTTPException as exc:
         return _err(exc)

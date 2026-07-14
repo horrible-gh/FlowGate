@@ -1782,12 +1782,16 @@ export default {
       merging_msg: 'Merging...',
       conflict_msg: '{n} conflict(s) - resolve them by chunk in the resolver dialog.',
       conflict_count: '{n} conflict(s)',
-      ai_assist_title: 'AI-assisted suggestions',
-      ai_assist_summary: 'A safe suggestion is available for {ready} of {total} chunks.',
-      ai_apply_all: 'Apply all suggestions',
-      ai_apply_one: 'Apply AI choice',
-      ai_hold: 'AI decision deferred',
-      ai_recommended: 'AI suggestion',
+      quick_recommend_title: 'Rule-based quick suggestions',
+      quick_recommend_summary: 'A local rule can suggest {ready} of {total} chunks.',
+      quick_apply_all: 'Apply all quick suggestions',
+      quick_apply_one: 'Apply quick suggestion',
+      quick_hold: 'No quick suggestion',
+      quick_recommended: 'Quick suggestion',
+      copy_conflict_mention: 'Copy mention',
+      invoke_conflict_ai: 'Call AI',
+      conflict_ai_started: 'AI conflict resolution started',
+      conflict_mention_copied: 'Conflict resolution mention copied',
       remaining_chunks: '{remaining}/{total} unresolved',
       resolve_progress: 'Resolved {done} / {total}',
       nav_shortcut: 'Shift+Up/Down to navigate',
@@ -1954,6 +1958,5 @@ export default {
     sub: 'Project Status & Recent Activity',
   },
 } as const
-
 
 
