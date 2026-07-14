@@ -1287,8 +1287,6 @@ export default {
       carried_over: '会話が長くなったため新しいドキュメントに引き継がれます: {doc}',
       copy_mention: 'メント コピー',
       copy_mention_hint: 'まだリアルタイムチャットではないため、メントをコピーしてAIに直接渡すと、AIがこの会話を読んで返信を残します。',
-      auto_copy: '自動コピー',
-      auto_copy_hint: 'チェックしておくと、メッセージを送るたびにメントが自動的にコピーされます。',
       invoke_ai: 'AI呼び出し',
       invoke_ai_hint: '同じチャットメントをアプリ内AIプロバイダーで直接実行します。コピーせずに返信を受け取れます。',
       send_action_label: '送信時',
@@ -1298,6 +1296,7 @@ export default {
       send_action_invoke_disabled_hint: '利用可能なAIプロバイダーがありません。',
       invoke_ai_running: 'AI呼び出し中…',
       invoke_ai_failed: 'AI呼び出しに失敗しました: {detail}',
+      invoke_ai_no_docs: 'AIの応答がドキュメントに登録されませんでした。',
     },
     review_reject_dialog: {
       title: '差し戻し処理',

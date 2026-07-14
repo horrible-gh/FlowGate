@@ -1287,8 +1287,6 @@ export default {
       carried_over: '대화가 길어져 새 문서로 이어집니다: {doc}',
       copy_mention: '멘트 복사',
       copy_mention_hint: '아직 실시간 채팅이 아니므로, 멘트를 복사해 AI에게 직접 전달하면 AI가 이 대화를 읽고 답신을 남깁니다.',
-      auto_copy: '자동 복사',
-      auto_copy_hint: '체크해 두면 메시지를 보낼 때마다 멘트가 자동으로 복사됩니다.',
       invoke_ai: 'AI 호출',
       invoke_ai_hint: '같은 채팅 멘트를 인앱 AI 프로바이더로 바로 실행합니다. 복사 없이 답신을 받습니다.',
       send_action_label: '전송 시',
@@ -1298,6 +1296,7 @@ export default {
       send_action_invoke_disabled_hint: '사용 가능한 AI 프로바이더가 없어 선택할 수 없습니다.',
       invoke_ai_running: 'AI 호출 중…',
       invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',
+      invoke_ai_no_docs: 'AI 응답이 문서로 등록되지 않았습니다.',
     },
     review_reject_dialog: {
       title: '반려 처리',

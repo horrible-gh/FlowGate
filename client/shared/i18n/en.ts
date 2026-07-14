@@ -1287,8 +1287,6 @@ export default {
       carried_over: 'The conversation rolled over to a new document: {doc}',
       copy_mention: 'Copy Mention',
       copy_mention_hint: 'Live chat is not wired yet — copy the mention and hand it to the AI worker, which reads this conversation and posts its reply.',
-      auto_copy: 'Auto-copy',
-      auto_copy_hint: 'When checked, the mention is copied automatically every time you send a message.',
       invoke_ai: 'Invoke AI',
       invoke_ai_hint: 'Run the same chat mention through the in-app AI provider — no copy-paste needed for a reply.',
       send_action_label: 'On send',
@@ -1298,6 +1296,7 @@ export default {
       send_action_invoke_disabled_hint: 'No AI provider is available.',
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',
+      invoke_ai_no_docs: 'The AI reply was not registered to any document.',
     },
     review_reject_dialog: {
       title: 'Reject Document',
