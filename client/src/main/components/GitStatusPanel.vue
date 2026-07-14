@@ -779,7 +779,10 @@ async function copyConflictMention(p: Pending) {
     await copyToClipboard(data.mention)
     showToast(t('main.git_finalize.conflict_mention_copied'), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || e?.message || t('main.git_finalize.failed'), 'danger')
+    // A stale conflict card can point at a non-open merge session; the server now
+    // returns the git envelope {ok:false,error:{message}} (0233 B0001) instead of a
+    // bodyless 500, so surface error.message like the other git actions do.
+    showToast(e?.response?.data?.error?.message || e?.response?.data?.detail || e?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
   }
