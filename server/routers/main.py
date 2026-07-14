@@ -37,6 +37,7 @@ from modules.flow_gate.api.v1.test_run_routes import router as _test_run_router
 from modules.flow_gate.api.v1.ai_invoke_routes import router as _ai_invoke_router
 from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_recipe_router
 from modules.flow_gate.api.v1.git_routes import router as _git_router
+from modules.flow_gate.services.git_service import GitServiceError
 from config import settings
 from startup import run_all as _bootstrap
 from modules.flow_gate import db as _flowgate_db
@@ -85,6 +86,25 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()}
+    )
+
+
+# GitServiceError is a plain domain Exception carrying (http_status, code, message)
+# — FastAPI will NOT auto-convert it to a 4xx. git_routes wraps every handler in a
+# local `_guard` that turns it into the {"ok": false, "error": {...}} envelope, but
+# other endpoints that reuse git_service (token/issue, ai-invoke/start build the
+# conflict mention via git_service.list_conflicts) had no such guard, so a
+# GitServiceError from a stale/non-open merge session leaked out as a bare 500
+# (flowgate.default.0233 B0001). This global handler converts it once for every
+# route — present and future — matching the git_routes envelope exactly.
+@app.exception_handler(GitServiceError)
+async def git_service_exception_handler(request: Request, exc: GitServiceError):
+    error: dict = {"code": exc.code, "message": exc.message}
+    if exc.details:
+        error["details"] = exc.details
+    return JSONResponse(
+        status_code=exc.status,
+        content={"ok": False, "error": error},
     )
 
 app.add_middleware(SlowAPIMiddleware)
