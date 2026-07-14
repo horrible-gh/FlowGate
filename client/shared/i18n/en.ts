@@ -962,6 +962,7 @@ export default {
     },
     ai_provider: {
       label: 'AI provider',
+      run_label: 'Provider for this run',
       loading: 'Loading…',
       none: 'No available provider',
       load_failed: 'Failed to load AI providers.',

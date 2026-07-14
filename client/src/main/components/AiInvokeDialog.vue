@@ -20,6 +20,17 @@
               <span class="aiv-target-label">{{ t('main.ai_invoke_dialog.target_doc') }}</span>
               <span class="aiv-target-id">{{ docRef }}</span>
             </div>
+            <!-- 0234 B0001 RC2: confirm/change which provider this run uses, at the
+                 invocation point itself (not only the global header dropdown). -->
+            <div class="aiv-provider-row">
+              <AiProviderSelect
+                :providers="aiProviderStore.providers"
+                :model-value="aiProviderStore.selectedProviderId"
+                :loading="aiProviderStore.loading"
+                :errored="!!aiProviderStore.error"
+                @update:model-value="aiProviderStore.selectProvider"
+              />
+            </div>
             <label class="aiv-mode" :class="{ active: mode === 'single' }">
               <input v-model="mode" type="radio" value="single" />
               <span class="aiv-mode-text">
@@ -73,6 +84,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 
@@ -204,6 +216,9 @@ watch(
   (val) => {
     if (val) {
       resetState()
+      // Load the runtime provider list so the confirm/change selector is populated as
+      // soon as the dialog opens (RC2). start() also ensures this for the autoStart path.
+      void aiProviderStore.ensureLoaded(props.project)
       if (props.autoStart) void start()
     }
   },
@@ -238,6 +253,8 @@ watch(
 }
 .aiv-target-label { color: var(--text-m); }
 .aiv-target-id { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+.aiv-provider-row { display: flex; }
+.aiv-provider-row > * { flex: 1; min-width: 0; }
 .aiv-mode {
   display: flex;
   align-items: flex-start;
