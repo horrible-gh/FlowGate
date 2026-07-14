@@ -883,6 +883,7 @@
       :step-count="continuousStepCount"
       :target-label="continuousTargetLabel"
       :review-mode="continuousReviewMode"
+      :instruction-mode="continuousInstructionMode"
       :from-decision="continuousFromDecision"
       @confirm="onContinuousWarnConfirm"
       @copy-mention="onContinuousWarnCopyMention"
@@ -990,6 +991,7 @@
       :initial-mode="aiInvokeInitialMode"
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
+      :continuation-instruction-mode="aiInvokeContinuationInstructionMode"
       :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
@@ -1239,6 +1241,7 @@ const continuousTargetSeq = ref<number | null>(null)
 const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
+const continuousInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1277,6 +1280,7 @@ const aiInvokeActionScope = ref<AiInvokeScope>('new')
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
+const aiInvokeContinuationInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
 const aiInvokeAutoStart = ref(false)
 const activeAiInvokeGroupId = computed(() => {
   if (!activeTabId.value) return ''
@@ -1515,7 +1519,13 @@ function openAiInvokeDialog(
   groupId: string,
   docRef: string,
   actionScope: AiInvokeScope,
-  preset?: { mode?: 'single' | 'continuous'; targetSeq?: number | null; reviewMode?: boolean; autoStart?: boolean },
+  preset?: {
+    mode?: 'single' | 'continuous'
+    targetSeq?: number | null
+    reviewMode?: boolean
+    instructionMode?: 'auto_approved' | 'ai_direct'
+    autoStart?: boolean
+  },
   extras?: {
     selectedDocs?: string[] | null
     messages?: string[] | null
@@ -1534,6 +1544,7 @@ function openAiInvokeDialog(
   aiInvokeInitialMode.value = preset?.mode ?? 'single'
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
+  aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? 'auto_approved'
   aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
@@ -2859,11 +2870,20 @@ function onActionBarContinuousWork(tabId: string) {
 }
 
 // Sequence-pick confirmed → carry the run parameters into the warning/consent gate.
-function onContinuousDialogConfirm(payload: { targetSeq: number; targetType: string; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }) {
+function onContinuousDialogConfirm(payload: {
+  targetSeq: number
+  targetType: string
+  targetLabel: string
+  reviewMode: boolean
+  instructionMode: 'auto_approved' | 'ai_direct'
+  stepCount: number
+  fromDecision: boolean
+}) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
   continuousTargetLabel.value = payload.targetLabel
   continuousReviewMode.value = payload.reviewMode
+  continuousInstructionMode.value = payload.instructionMode
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -2892,6 +2912,7 @@ async function onContinuousWarnConfirm() {
       mode: 'continuous',
       targetSeq,
       reviewMode: continuousReviewMode.value,
+      instructionMode: continuousInstructionMode.value,
       autoStart: true,
     },
   )

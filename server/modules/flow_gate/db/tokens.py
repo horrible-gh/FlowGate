@@ -24,8 +24,9 @@ def create(data: dict[str, Any]) -> dict:
         "INSERT INTO tokens "
         "(token_id, hash, pepper_id, project, group_id, doc_ref, "
         "action_scope, issued_to, created_at, expires_at, consumed_at, revoked_at, scratch_dir, "
-        "continuation_target_seq, continuation_review_mode, continuation_locale, merge_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "continuation_target_seq, continuation_review_mode, continuation_locale, "
+        "merge_id, continuation_instruction_mode) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -40,6 +41,7 @@ def create(data: dict[str, Any]) -> dict:
             # 051). NULL for ordinary + legacy continuation tokens → header/ko fallback.
             data.get("continuation_locale"),
             data.get("merge_id"),
+            data.get("continuation_instruction_mode"),
         ],
     )
     return get_by_id(data["token_id"])  # type: ignore[return-value]

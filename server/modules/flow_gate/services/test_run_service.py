@@ -388,6 +388,7 @@ def issue_test_run_request(
     api_base_url: str,
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
+    continuation_instruction_mode: Optional[str] = None,
     locale: Optional[str] = None,
     continuous: bool = False,
 ) -> dict:
@@ -413,6 +414,7 @@ def issue_test_run_request(
         issued_to=issued_to,
         continuation_target_seq=continuation_target_seq if continuous else None,
         continuation_review_mode=bool(continuous and continuation_review_mode),
+        continuation_instruction_mode=continuation_instruction_mode if continuous else None,
         continuation_locale=locale if continuous else None,
     )
     mention = _build_test_run_mention(

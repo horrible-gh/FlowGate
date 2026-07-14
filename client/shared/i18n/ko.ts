@@ -1237,6 +1237,11 @@ export default {
       head_in_progress_note: '현재 단계가 진행 중(검수 대기)입니다. 먼저 이 단계를 처리해야 연속 작업을 시작할 수 있습니다.',
       review_mode_label: 'AI 검토 모드',
       review_mode_desc: '첫 단계 수행 후 자동으로 이어가지 않고, 검수 결과와 질의(Q)를 한 번 확인한 뒤 사람이 다시 진행합니다.',
+      instruction_mode_title: 'N/T 실행 방식',
+      instruction_mode_auto: '승인 문서 생성',
+      instruction_mode_auto_desc: 'N/T 지시문서는 서버가 생성·승인하고 AI는 NR/TR부터 작성합니다.',
+      instruction_mode_ai: 'AI 직접 작성',
+      instruction_mode_ai_desc: 'N/T 지시문서도 AI가 직접 작성한 뒤 다음 단계로 이어갑니다.',
       summary: '현재 단계부터 [{target}]까지 {count}개 단계를 연속 수행합니다.',
       from_decision_title: '워크플로 결정부터 시작',
       from_decision_step: '워크플로 결정',
@@ -1256,6 +1261,8 @@ export default {
       warn_summary_review: '현재 단계부터 [{target}]까지 {count}개 단계 — 첫 단계 후 검토를 위해 일시중지합니다.',
       warn_summary_from_decision: '워크플로 결정부터 시작하여 결정된 시퀀스 전체를 무인으로 연속 수행합니다.',
       warn_summary_from_decision_review: '워크플로 결정부터 시작 — 첫 단계 수행 후 검토를 위해 일시중지합니다.',
+      warn_instruction_mode_auto: 'N/T 실행 방식: 승인 문서 생성',
+      warn_instruction_mode_ai: 'N/T 실행 방식: AI 직접 작성',
       warn_unmanned: '무인(UNMANNED)으로 실행되며, AI에게 모든 권한이 위임되고 중간에 멈추지 않습니다.',
       warn_responsibility: '작업 결과에 대해 책임지지 않습니다.',
       warn_quality: '작업의 품질은 제공된 정보량에 의존합니다.',
@@ -1976,4 +1983,3 @@ export default {
     sub: '프로젝트 현황 및 최근 활동',
   },
 } as const
-

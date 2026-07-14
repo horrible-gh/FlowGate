@@ -916,6 +916,7 @@ def _continuation_self_chain(
         return None  # ordinary token — not a continuation chain
 
     review_mode = bool(token_rec.get("continuation_review_mode"))
+    instruction_mode = token_rec.get("continuation_instruction_mode")
     spine_doc_ref = token_rec.get("doc_ref")
     actor_user_id = token_rec["issued_to"]
 
@@ -923,6 +924,7 @@ def _continuation_self_chain(
         "continuation": True,
         "continuation_review_mode": review_mode,
         "continuation_target_seq": target_seq,
+        "continuation_instruction_mode": instruction_mode or "auto_approved",
     }
 
     # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (group 0086 TR0004 rework
@@ -1047,6 +1049,7 @@ def _continuation_self_chain(
             continuous=True,
             continuation_target_seq=target_seq,
             continuation_review_mode=review_mode,
+            continuation_instruction_mode=instruction_mode,
         )
     except (LookupError, ValueError) as exc:
         envelope["continuation_paused"] = True

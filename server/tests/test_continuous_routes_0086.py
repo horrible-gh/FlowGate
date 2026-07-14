@@ -31,10 +31,12 @@ def test_advance_body_accepts_continuation_fields():
         continuous=True,
         continuation_target_seq=6,
         continuation_review_mode=True,
+        continuation_instruction_mode="ai_direct",
     )
     assert body.continuous is True
     assert body.continuation_target_seq == 6
     assert body.continuation_review_mode is True
+    assert body.continuation_instruction_mode == "ai_direct"
 
 
 def test_advance_body_defaults_are_ordinary():
@@ -42,15 +44,18 @@ def test_advance_body_defaults_are_ordinary():
     assert body.continuous is False
     assert body.continuation_target_seq is None
     assert body.continuation_review_mode is False
+    assert body.continuation_instruction_mode is None
 
 
 def test_token_issue_request_accepts_continuation_fields():
     body = tr.TokenIssueRequest(
         project="flowgate", group="0086",
         continuation_target_seq=6, continuation_review_mode=True,
+        continuation_instruction_mode="ai_direct",
     )
     assert body.continuation_target_seq == 6
     assert body.continuation_review_mode is True
+    assert body.continuation_instruction_mode == "ai_direct"
 
 
 # ── /workflow/advance forwards continuation params (primary FE path) ───────────
@@ -72,6 +77,7 @@ def test_advance_route_forwards_continuation(monkeypatch):
         wdr.AdvanceBodyRequest(
             doc_id="flowgate.default.0086.0001-R",
             continuous=True, continuation_target_seq=6, continuation_review_mode=True,
+            continuation_instruction_mode="ai_direct",
         ),
         _FakeRequest(),
     )
@@ -79,6 +85,7 @@ def test_advance_route_forwards_continuation(monkeypatch):
     assert captured["continuous"] is True
     assert captured["continuation_target_seq"] == 6
     assert captured["continuation_review_mode"] is True
+    assert captured["continuation_instruction_mode"] == "ai_direct"
 
 
 def test_advance_route_ordinary_advance_unchanged(monkeypatch):

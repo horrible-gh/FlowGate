@@ -140,6 +140,7 @@ def issue(
     continuation_review_mode: bool = False,
     continuation_locale: Optional[str] = None,
     merge_id: Optional[int] = None,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -188,6 +189,7 @@ def issue(
         # without depending on a per-request x-locale header (group 0099 B0001).
         "continuation_locale": continuation_locale,
         "merge_id": merge_id,
+        "continuation_instruction_mode": continuation_instruction_mode,
     })
 
     db_events.create({
@@ -215,6 +217,7 @@ def issue(
         "continuation_review_mode": continuation_review_mode,
         "continuation_locale": continuation_locale,
         "merge_id": merge_id,
+        "continuation_instruction_mode": continuation_instruction_mode,
     }
 
 

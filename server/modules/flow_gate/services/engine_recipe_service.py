@@ -431,6 +431,10 @@ def _emit_repair(doc: dict, run: dict, items: list[dict], token_rec: dict, attem
         continuation_target_seq=token_rec.get("continuation_target_seq"),
         continuation_review_mode=bool(token_rec.get("continuation_review_mode")),
         continuation_locale=token_rec.get("continuation_locale"),
+        # N/T authoring mode (group 0230 R0001 / T0005 WI-5): carry the instruction-mode choice
+        # onto the repair token too, so a test auto-recovery retry keeps the run's N/T handling
+        # policy on every subsequent hop instead of silently reverting to auto_approved.
+        continuation_instruction_mode=token_rec.get("continuation_instruction_mode"),
     )
     mention = _build_repair_mention(doc, run, items, attempt, issue["raw_token"], engine_hint)
     doc_row_id = None

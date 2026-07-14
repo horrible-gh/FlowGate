@@ -287,6 +287,7 @@ def start_run(
     mode: str,
     continuation_target_seq: Optional[int],
     continuation_review_mode: bool,
+    continuation_instruction_mode: Optional[str],
     continuation_locale: Optional[str],
     issued_to: str,
     api_base_url: str,
@@ -361,6 +362,7 @@ def start_run(
             issued_to=issued_to,
             continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
             continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
+            continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
             continuation_locale=continuation_locale if mode == "continuous" else None,
             merge_id=merge_id if action_scope == "resolve_conflict" else None,
         )
@@ -428,6 +430,9 @@ def start_run(
         "chain_source": chain_source,
         "action_scope": action_scope,
         "target_to_end": target_to_end,
+        "continuation_instruction_mode": (
+            continuation_instruction_mode if mode == "continuous" else None
+        ),
         "raw_token": issue["raw_token"],
         "merge_id": merge_id,
     }
@@ -450,6 +455,9 @@ def start_run(
         "group_id": group_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
+        "continuation_instruction_mode": (
+            continuation_instruction_mode if mode == "continuous" else None
+        ),
         "provider": _provider_brief(chain[0]),
         "attempt_no": 1,
         "started_at": run["started_at"],

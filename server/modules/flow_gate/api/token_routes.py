@@ -21,6 +21,7 @@ from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services.workflow_decision_service import normalize_continuation_instruction_mode
 from modules.flow_gate.utils.id_validators import (
     validate_project_id,
     validate_group_id,
@@ -45,6 +46,7 @@ class TokenIssueRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     merge_id: Optional[int] = None
+    continuation_instruction_mode: Optional[str] = None
 
 
 class TokenIssueResponse(BaseModel):
@@ -145,6 +147,10 @@ def issue_token(
         continuation_review_mode=body.continuation_review_mode,
         continuation_locale=req_locale if is_continuous else None,
         merge_id=body.merge_id if resolved_action_scope == "resolve_conflict" else None,
+        continuation_instruction_mode=(
+            normalize_continuation_instruction_mode(body.continuation_instruction_mode)
+            if is_continuous else None
+        ),
     )
 
     # Step 8: build M020 mention (when doc_ref + sequence head exist)
@@ -475,3 +481,4 @@ def _load_current_revision_review(doc: dict) -> Optional[dict]:
         "comment": row.get("comment"),
         "reviewed_at": row.get("reviewed_at"),
     }
+

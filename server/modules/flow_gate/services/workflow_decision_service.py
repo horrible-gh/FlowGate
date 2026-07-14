@@ -49,6 +49,19 @@ _log = logging.getLogger(__name__)
 # decided step whose report is auto-attached) — only the auto-APPROVAL of TS is removed.
 # DS likewise excluded — it is neither here nor in AUTO_REPORT_MAP.
 INSTRUCTION_AUTO_TYPES = {"N", "T"}
+CONTINUATION_INSTRUCTION_AUTO_APPROVED = "auto_approved"
+CONTINUATION_INSTRUCTION_AI_DIRECT = "ai_direct"
+CONTINUATION_INSTRUCTION_MODES = {
+    CONTINUATION_INSTRUCTION_AUTO_APPROVED,
+    CONTINUATION_INSTRUCTION_AI_DIRECT,
+}
+
+
+def normalize_continuation_instruction_mode(mode: Optional[str]) -> str:
+    """Return the continuous-chain N/T handling mode, preserving legacy auto behavior."""
+    if mode in CONTINUATION_INSTRUCTION_MODES:
+        return mode
+    return CONTINUATION_INSTRUCTION_AUTO_APPROVED
 
 # ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
 # A continuous run started BEFORE the workflow is decided ("워크플로 결정부터") cannot name
@@ -341,6 +354,7 @@ def advance_workflow(
     continuous: bool = False,
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
@@ -395,7 +409,8 @@ def advance_workflow(
     # (group 0092 B0001 / NR0003 B안). This advances the head past the instruction(s) to its
     # paired report before head/token/mention resolution proceeds as normal. Managed advance
     # (continuous=False) is untouched — the FE still drives "자동승인문서" explicitly there.
-    if continuous:
+    instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
+    if continuous and instruction_mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
         _auto_complete_instruction_heads(
             spine_doc=doc,
             seq=seq,
@@ -469,6 +484,7 @@ def advance_workflow(
                 api_base_url=api_base_url,
                 continuation_target_seq=continuation_target_seq,
                 continuation_review_mode=continuation_review_mode,
+                continuation_instruction_mode=instruction_mode,
                 locale=locale,
                 continuous=True,
             )
@@ -485,6 +501,7 @@ def advance_workflow(
                 "continuous": True,
                 "continuation_target_seq": continuation_target_seq,
                 "continuation_review_mode": bool(continuation_review_mode),
+                "continuation_instruction_mode": instruction_mode,
                 "continuation_remaining": remaining,
                 "head_item_seq": head_item_seq,
             }
@@ -504,6 +521,7 @@ def advance_workflow(
         # Persist the chosen locale on the continuation token so the unmanned self-chain
         # honors it on every hop (group 0099 B0001). Ordinary tokens leave it NULL.
         continuation_locale=locale if continuous else None,
+        continuation_instruction_mode=instruction_mode if continuous else None,
     )
     raw_token: str = issue_result["raw_token"]
     scratch_dir: str = issue_result["scratch_dir"]
@@ -578,6 +596,7 @@ def advance_workflow(
         "continuous": continuous,
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
+        "continuation_instruction_mode": instruction_mode if continuous else None,
         "continuation_remaining": remaining,
         "head_item_seq": head_item_seq,
     }
@@ -660,6 +679,7 @@ def request_workflow_decision(
     locale: str = "ko",
     continuous: bool = False,
     continuation_review_mode: bool = False,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> dict:
     """Issue a document-bound token and prompt for AI workflow decision.
 
@@ -685,6 +705,7 @@ def request_workflow_decision(
         raise ValueError(f"group_not_found:{doc_id}")
 
     project_id = doc.get("project_id") or ""
+    instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
     issue_result = token_service.issue(
         project=project_id,
         group_id=group_id,
@@ -693,6 +714,7 @@ def request_workflow_decision(
         issued_to=issued_to,
         continuation_target_seq=CONTINUATION_TO_END if continuous else None,
         continuation_review_mode=bool(continuous and continuation_review_mode),
+        continuation_instruction_mode=instruction_mode if continuous else None,
     )
     recent_before_seq = db_documents.get_group_max_seq(group_id) or doc.get("seq", 0)
     recent_docs = db_documents.fetch_recent_group_docs(
@@ -725,6 +747,7 @@ def request_workflow_decision(
         "mention": mention,
         "continuous": continuous,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
+        "continuation_instruction_mode": instruction_mode if continuous else None,
     }
 
 
@@ -816,6 +839,7 @@ def continuation_kickoff_after_decide(
     locale: str = "ko",
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> Optional[dict]:
     """Mint the first real step after an unmanned-chain workflow decision is saved.
 
@@ -834,9 +858,11 @@ def continuation_kickoff_after_decide(
         return None  # ordinary workflow_decide token — not a continuation chain
 
     review_mode = bool(continuation_review_mode)
+    instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
     envelope: dict = {
         "continuation": True,
         "continuation_review_mode": review_mode,
+        "continuation_instruction_mode": instruction_mode,
     }
 
     # Resolve the TO_END sentinel against the now-decided sequence.
@@ -870,6 +896,7 @@ def continuation_kickoff_after_decide(
             continuous=True,
             continuation_target_seq=target_seq,
             continuation_review_mode=review_mode,
+            continuation_instruction_mode=instruction_mode,
         )
     except Exception as exc:
         envelope["continuation_paused"] = True
@@ -883,6 +910,7 @@ def continuation_kickoff_after_decide(
             "next_mention": adv["mention"],
             "next_expires_at": adv.get("expires_at"),
             "continuation_remaining": adv.get("continuation_remaining"),
+            "continuation_instruction_mode": instruction_mode,
         }
     )
     return envelope

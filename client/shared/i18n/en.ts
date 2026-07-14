@@ -1237,6 +1237,11 @@ export default {
       head_in_progress_note: 'The current step is in progress (awaiting review). Resolve this step first before starting continuous work.',
       review_mode_label: 'AI review mode',
       review_mode_desc: 'After the first step, pause instead of auto-chaining: record a review + questions (Q) once, then a human resumes the run.',
+      instruction_mode_title: 'N/T execution',
+      instruction_mode_auto: 'Create approved docs',
+      instruction_mode_auto_desc: 'The server creates and approves N/T instructions; AI starts at NR/TR.',
+      instruction_mode_ai: 'AI writes directly',
+      instruction_mode_ai_desc: 'AI writes N/T instruction documents before continuing to the next step.',
       summary: 'Runs {count} step(s) from the current step through [{target}].',
       from_decision_title: 'Start from the workflow decision',
       from_decision_step: 'Workflow decision',
@@ -1256,6 +1261,8 @@ export default {
       warn_summary_review: '{count} step(s) from the current step through [{target}] — pauses after the first step for review.',
       warn_summary_from_decision: 'Starts from the workflow decision and runs the whole decided sequence unattended.',
       warn_summary_from_decision_review: 'Starts from the workflow decision — pauses after the first step for review.',
+      warn_instruction_mode_auto: 'N/T execution: create approved docs',
+      warn_instruction_mode_ai: 'N/T execution: AI writes directly',
       warn_unmanned: 'Runs UNMANNED: the AI is delegated full authority and will not stop midway.',
       warn_responsibility: 'No responsibility is taken for the work results.',
       warn_quality: 'The quality of the work depends on the amount of information provided.',
@@ -1976,5 +1983,3 @@ export default {
     sub: 'Project Status & Recent Activity',
   },
 } as const
-
-
