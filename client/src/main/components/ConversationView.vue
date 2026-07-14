@@ -225,14 +225,18 @@ watch(sendAction, (v) => {
 })
 
 // ── Provider availability (D0005 §3-3, L0008 §2-4) — single source of truth ──
-function pid(): string {
-  return props.projectId ?? ''
-}
+// The gating project is the tab's projectId when the parent supplies one, but CH
+// tabs opened from the group tree (GroupExplorer.openDocument) carry NO projectId,
+// so fall back to the project code embedded in the doc id
+// (project.module.group.seq-TYPE). Without this fallback the provider store never
+// loaded for those tabs and [Call AI] stayed hidden/disabled even when a provider
+// WAS registered. Kept in lockstep with invokeAi(), which resolves the same code.
+const projectCode = computed(() => props.projectId || props.docId.split('.')[0] || '')
 const providersResolving = computed(
-  () => providerStore.loading || providerStore.loadedProjectId !== pid(),
+  () => providerStore.loading || providerStore.loadedProjectId !== projectCode.value,
 )
 const hasProviders = computed(
-  () => providerStore.loadedProjectId === pid() && providerStore.providers.length > 0,
+  () => providerStore.loadedProjectId === projectCode.value && providerStore.providers.length > 0,
 )
 // "Call AI" (radio + manual button) is selectable only when a provider exists.
 const invokeSelectable = computed(() => hasProviders.value)
@@ -419,7 +423,7 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
     showToast(t('main.conversation_view.invoke_ai_failed', { detail: props.docId }), 'danger')
     return
   }
-  const project = props.projectId ?? parts[0]
+  const project = projectCode.value || parts[0]
   const moduleCode = parts[1]
   const groupCode = parts[2]
   invoking.value = true
@@ -466,18 +470,23 @@ async function pollRun(runId: string): Promise<void> {
         invoking.value = false
         void load()
         if ((data?.docs_reached ?? 0) === 0) {
-          showToast(
-            t('main.conversation_view.invoke_ai_failed', { detail: t('main.conversation_view.speaker_ai') }),
-            'danger',
-          )
+          // The run finished but registered nothing (L0008 §2-3 notify_fail,
+          // reason=not_registered) — a dedicated "nothing registered" notice, not the
+          // generic call-failed toast with a meaningless {detail}.
+          showToast(t('main.conversation_view.invoke_ai_no_docs'), 'danger')
         }
         return
       }
-    } catch {
-      // 404 (server restart / run evicted) — stop spinning, the conversation still
-      // reloads on any turn via SSE.
-      invoking.value = false
-      return
+    } catch (e: any) {
+      // Only a gone run is terminal: 404 (server restart / run evicted) or 410. A
+      // transient network error or a one-off 5xx must NOT release the spinner or
+      // swallow the docs_reached==0 notice — keep polling (L0008 §3: RUNNING→IDLE
+      // only on a finished run). The conversation also still reloads on any turn via SSE.
+      const status = e?.response?.status
+      if (status === 404 || status === 410) {
+        invoking.value = false
+        return
+      }
     }
   }
   invoking.value = false
@@ -538,14 +547,16 @@ watch(() => props.docId, (docId) => {
   void load()
 })
 
-watch(() => props.projectId, (projectId) => {
-  if (projectId) void providerStore.ensureLoaded(projectId)
+// Load the provider list whenever the RESOLVED project changes — either the
+// projectId prop or the doc id it is derived from (single source of truth, L0008 §2-4).
+watch(projectCode, (code) => {
+  if (code) void providerStore.ensureLoaded(code)
 })
 
 onMounted(() => {
   void load()
   void nextTick(autoGrow)
-  if (props.projectId) void providerStore.ensureLoaded(props.projectId)
+  if (projectCode.value) void providerStore.ensureLoaded(projectCode.value)
   window.addEventListener('fg:document_content_changed', onContentChanged)
 })
 

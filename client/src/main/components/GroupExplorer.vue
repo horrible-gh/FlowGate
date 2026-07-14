@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
 function openDocument(node: GroupNode) {
   if (node.node_type !== 'document') return
   if (!node.has_md) {
-    tabsStore.openTab({ id: node.id, title: node.label, path: node.md_path ?? '', type: 'unsupported', typeCode: node.type_code })
+    tabsStore.openTab({ id: node.id, title: node.label, path: node.md_path ?? '', type: 'unsupported', typeCode: node.type_code, projectId: props.projectId })
     return
   }
   tabsStore.openTab({
@@ -454,6 +454,7 @@ function openDocument(node: GroupNode) {
     type: node.type_code === 'Q' ? 'qtui' : 'md',
     mdPath: node.md_path,
     typeCode: node.type_code,
+    projectId: props.projectId,
   })
 }
 

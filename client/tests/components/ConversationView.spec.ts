@@ -229,6 +229,55 @@ describe('ConversationView send-time action', () => {
   })
 })
 
+// Group 0235 — the chat AI invoke path (D0005 §3-1, L0008 §2-3 / §3 / §5). Covers the
+// provider gating derived from the doc id (the reported "provider is registered but
+// [Call AI] doesn't show" regression) and the start-time 409 / failure contract, which
+// depends on ai_invoke_routes._err() flattening {code, run_id} to the top level.
+describe('ConversationView chat AI invoke', () => {
+  it('derives the project from the doc id when the tab passes no projectId, so a registered provider still enables Call AI', async () => {
+    // GroupExplorer.openDocument opened CH tabs without a projectId; gating must fall
+    // back to the project code embedded in the doc id instead of hiding [Call AI].
+    const wrapper = mount(ConversationView, {
+      props: { docId: DOC_ID, projectId: null },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await flushPromises()
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/providers', { project: 'flowgate' })
+    expect(
+      (wrapper.find('input[type="radio"][value="invoke_ai"]').element as HTMLInputElement).disabled,
+    ).toBe(false)
+    // Both [Copy mention] and [Call AI] are present.
+    expect(wrapper.findAll('.conv-assist-btn').length).toBe(2)
+  })
+
+  it('absorbs a 409 run_in_progress from start without surfacing an error toast', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    postRequest.mockRejectedValueOnce({ response: { data: { code: 'run_in_progress', run_id: 'r9' } } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click') // manual [Call AI]
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/ai-invoke/start',
+      expect.objectContaining({ action_scope: 'chat' }),
+    )
+    // The existing run is adopted (spinner keeps polling), never surfaced as a failure.
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('shows the invoke-failed toast when start fails for a non-409 reason', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    postRequest.mockRejectedValueOnce({ response: { data: { detail: 'server exploded' } } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click') // manual [Call AI]
+    await flushPromises()
+    expect(showToast).toHaveBeenCalledWith('AI call failed: server exploded', 'danger')
+  })
+})
+
 describe('ConversationView draft persistence', () => {
   it('restores the exact draft after unmount and remount', async () => {
     const text = '  first line\nsecond line  '
