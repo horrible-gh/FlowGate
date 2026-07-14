@@ -276,6 +276,45 @@ describe('ConversationView chat AI invoke', () => {
     await flushPromises()
     expect(showToast).toHaveBeenCalledWith('AI call failed: server exploded', 'danger')
   })
+
+  // R0001: chat AI progress must show on the SEND button (no dialog). While a chat AI
+  // run is in flight, the send button itself spins and stays disabled — not just the
+  // separate [Call AI] button.
+  it('spins and disables the SEND button itself while a chat AI call is running', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    // Send button idle before any run: enabled once a draft exists, plane icon.
+    await wrapper.find('textarea').setValue('review this')
+    expect(wrapper.find('.conv-send').attributes('disabled')).toBeUndefined()
+
+    postRequest.mockReset()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } }) // start → run in flight
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click') // manual [Call AI]
+    await flushPromises()
+
+    // The polling loop keeps invoking=true (its first tick is behind a 2.5s timer), so
+    // the send button reflects the in-flight AI call: disabled + "Calling AI…" title.
+    const send = wrapper.find('.conv-send')
+    expect(send.attributes('disabled')).toBeDefined()
+    expect(send.attributes('title')).toBe('Calling AI…')
+  })
+
+  it('blocks a new send while a chat AI call is still in flight', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } }) // start
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click') // manual [Call AI] → invoking
+    await flushPromises()
+    postRequest.mockClear()
+    // Submitting while the AI call spins must be a no-op (one turn at a time).
+    await wrapper.find('textarea').setValue('queued while busy')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+  })
 })
 
 describe('ConversationView draft persistence', () => {

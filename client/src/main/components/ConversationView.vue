@@ -32,7 +32,9 @@
          automatically on a successful send (copy mention / call AI / nothing) — and
          (2) the manual [Copy mention] / [Call AI] buttons. Chat AI calls run
          immediately with the header-selected provider (no settings dialog); the
-         button becomes a spinner while a run is in flight. -->
+         SEND button itself becomes a spinner while that run is in flight (R0001:
+         "make the send button a rotating icon" — no dialog for chat), and the manual
+         [Call AI] button spins in lockstep. -->
     <form class="conv-composer" @submit.prevent="send">
       <div class="conv-assist">
         <!-- Send-time action (D0005 §3-2). Replaces the old "auto-copy" checkbox.
@@ -99,15 +101,20 @@
           @input="onDraftInput"
           @keydown.enter.exact.prevent="send"
         ></textarea>
+        <!-- R0001: for CH docs the AI call must NOT open a settings dialog; its
+             progress shows on the SEND button itself ("보내기버튼을 회전아이콘으로").
+             So the send button spins for BOTH the turn POST (sending) and the ensuing
+             chat AI call (invoking) — a single, unified busy indicator — and stays
+             disabled until the in-flight work settles. -->
         <button
           type="submit"
           class="conv-send"
-          :class="{ 'is-sending': sending }"
-          :title="t('main.conversation_view.send')"
+          :class="{ 'is-sending': busy }"
+          :title="sendButtonTitle"
           :aria-label="t('main.conversation_view.send')"
-          :disabled="sending || draft.trim().length === 0"
+          :disabled="busy || draft.trim().length === 0"
         >
-          <AppIcon :name="sending ? 'spinner' : 'paper-plane-tilt'" :spin="sending" />
+          <AppIcon :name="busy ? 'spinner' : 'paper-plane-tilt'" :spin="busy" />
         </button>
       </div>
     </form>
@@ -255,6 +262,14 @@ const draft = ref(loadDraft(props.docId))
 const loading = ref(false)
 const sending = ref(false)
 const invoking = ref(false)
+// R0001: chat AI progress is shown on the SEND button (no dialog), so the send
+// button is "busy" while EITHER the turn is posting OR a chat AI call is running.
+const busy = computed(() => sending.value || invoking.value)
+const sendButtonTitle = computed(() =>
+  invoking.value
+    ? t('main.conversation_view.invoke_ai_running')
+    : t('main.conversation_view.send'),
+)
 const scrollEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 let disposed = false
@@ -494,7 +509,9 @@ async function pollRun(runId: string): Promise<void> {
 
 async function send(): Promise<void> {
   const text = draft.value.trim()
-  if (!text || sending.value) return
+  // Block a new send while the send button is busy — either already posting a turn
+  // OR spinning through a chat AI call (R0001: one turn at a time, progress on send).
+  if (!text || busy.value) return
   sending.value = true
   try {
     const res = await postRequest<{ content: string; carried_over_doc_id?: string }>(
