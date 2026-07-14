@@ -110,6 +110,28 @@
               </span>
             </label>
 
+            <div v-if="!allDone" class="cwd-mode-group">
+              <div class="cwd-section-title">{{ t('main.continuous_work.instruction_mode_title') }}</div>
+              <label class="cwd-mode" :class="{ active: instructionMode === 'auto_approved' }">
+                <input v-model="instructionMode" type="radio" value="auto_approved" />
+                <span class="cwd-toggle-text">
+                  <span class="cwd-toggle-title">
+                    <AppIcon name="seal-check" /> {{ t('main.continuous_work.instruction_mode_auto') }}
+                  </span>
+                  <span class="cwd-toggle-desc">{{ t('main.continuous_work.instruction_mode_auto_desc') }}</span>
+                </span>
+              </label>
+              <label class="cwd-mode" :class="{ active: instructionMode === 'ai_direct' }">
+                <input v-model="instructionMode" type="radio" value="ai_direct" />
+                <span class="cwd-toggle-text">
+                  <span class="cwd-toggle-title">
+                    <AppIcon name="robot" /> {{ t('main.continuous_work.instruction_mode_ai') }}
+                  </span>
+                  <span class="cwd-toggle-desc">{{ t('main.continuous_work.instruction_mode_ai_desc') }}</span>
+                </span>
+              </label>
+            </div>
+
             <div class="cwd-summary">
               {{ allDone
                 ? t('main.continuous_work.all_done_summary')
@@ -162,7 +184,14 @@ const emit = defineEmits<{
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
   // workflow-decision step and targetSeq is the run-to-end sentinel (-1, R0001 "워크플로 결정부터").
-  'confirm': [payload: { targetSeq: number; targetLabel: string; reviewMode: boolean; stepCount: number; fromDecision: boolean }]
+  'confirm': [payload: {
+    targetSeq: number
+    targetLabel: string
+    reviewMode: boolean
+    instructionMode: 'auto_approved' | 'ai_direct'
+    stepCount: number
+    fromDecision: boolean
+  }]
 }>()
 
 const { t } = useI18n()
@@ -179,6 +208,7 @@ const items = ref<SequenceItem[]>([])
 const stepsRef = ref<HTMLElement | null>(null)
 const selectedIdx = ref(-1)
 const reviewMode = ref(false)
+const instructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
 // R0001 "워크플로 결정부터": set when /workflow/sequence reports the sequence is not decided
 // yet. Instead of blocking, the dialog offers to start the run from the workflow decision.
 const fromDecision = ref(false)
@@ -269,6 +299,7 @@ async function loadSequence() {
   items.value = []
   selectedIdx.value = -1
   reviewMode.value = false
+  instructionMode.value = 'auto_approved'
   fromDecision.value = false
   allDone.value = false
   try {
@@ -325,6 +356,7 @@ function onProceed() {
       targetSeq: TARGET_TO_END,
       targetLabel: t('main.continuous_work.from_decision_target_label'),
       reviewMode: reviewMode.value,
+      instructionMode: instructionMode.value,
       stepCount: 0,
       fromDecision: true,
     })
@@ -335,6 +367,7 @@ function onProceed() {
     targetSeq: target.item_seq,
     targetLabel: target.label,
     reviewMode: reviewMode.value,
+    instructionMode: instructionMode.value,
     stepCount: stepCount.value,
     fromDecision: false,
   })
@@ -484,6 +517,29 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--r);
   cursor: pointer;
+}
+.cwd-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cwd-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.cwd-mode.active {
+  border-color: var(--primary);
+  background: var(--primary-l);
+}
+.cwd-mode input {
+  margin-top: 3px;
+  flex-shrink: 0;
 }
 .cwd-toggle input { margin-top: 3px; flex-shrink: 0; }
 .cwd-toggle-text { display: flex; flex-direction: column; gap: 2px; }

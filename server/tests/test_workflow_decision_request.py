@@ -39,6 +39,8 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
 
     # 0086 "워크플로 결정부터": an ordinary (non-continuous) decision request passes the
     # continuation params as None/False — the token stays a plain workflow_decide token.
+    # group 0230 T0005: request_workflow_decision now also threads continuation_instruction_mode
+    # (None for a non-continuous request → legacy auto_approved handling downstream).
     issue.assert_called_once_with(
         project="flowgate",
         group_id="flowgate.default.0002",
@@ -47,6 +49,7 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
         issued_to="user-1",
         continuation_target_seq=None,
         continuation_review_mode=False,
+        continuation_instruction_mode=None,
     )
     assert result["action_scope"] == "workflow_decide"
     assert result["raw_token"] == "worker-token"

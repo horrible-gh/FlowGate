@@ -40,6 +40,7 @@ class AiInvokeStartRequest(BaseModel):
     mode: str = "single"
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
+    continuation_instruction_mode: Optional[str] = None
     provider_id: Optional[str] = None
 
 
@@ -138,6 +139,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 locale=locale,
                 continuous=is_continuous,
                 continuation_review_mode=body.continuation_review_mode,
+                continuation_instruction_mode=body.continuation_instruction_mode,
             )
         issue_builder = _issue_workflow_decision
 
@@ -151,6 +153,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             mode=body.mode,
             continuation_target_seq=body.continuation_target_seq,
             continuation_review_mode=body.continuation_review_mode,
+            continuation_instruction_mode=body.continuation_instruction_mode,
             continuation_locale=locale if is_continuous else None,
             issued_to=user_id,
             api_base_url=_token_routes._build_api_base(request),

@@ -34,6 +34,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     get_workflow_sequence,
     edit_workflow_pending,
     continuation_kickoff_after_decide,
+    normalize_continuation_instruction_mode,
 )
 from modules.flow_gate.db import documents as _db_documents
 from modules.flow_gate import process_service as _process_service
@@ -86,6 +87,7 @@ class AdvanceRequest(BaseModel):
     continuous: bool = False
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
+    continuation_instruction_mode: Optional[str] = None
 
 
 class DecideBodyRequest(BaseModel):
@@ -100,6 +102,7 @@ class AdvanceBodyRequest(BaseModel):
     continuous: bool = False
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
+    continuation_instruction_mode: Optional[str] = None
 
 
 class ReviewRequestBody(BaseModel):
@@ -119,6 +122,7 @@ class WorkflowDecisionRequestBody(BaseModel):
     doc_id: str
     continuous: bool = False
     continuation_review_mode: bool = False
+    continuation_instruction_mode: Optional[str] = None
 
 
 class EditSequenceItem(BaseModel):
@@ -155,6 +159,7 @@ def post_workflow_advance_rpc(body: AdvanceBodyRequest, request: Request):
             continuous=body.continuous,
             continuation_target_seq=body.continuation_target_seq,
             continuation_review_mode=body.continuation_review_mode,
+            continuation_instruction_mode=body.continuation_instruction_mode,
         ),
     )
 
@@ -328,6 +333,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                     locale=request.headers.get("x-locale") or "ko",
                     continuation_target_seq=auth.get("continuation_target_seq"),
                     continuation_review_mode=bool(auth.get("continuation_review_mode")),
+                    continuation_instruction_mode=auth.get("continuation_instruction_mode"),
                 )
                 if chain:
                     result = {**result, **chain}
@@ -371,6 +377,9 @@ def post_workflow_advance(
     continuous = bool(body.continuous) if body else False
     continuation_target_seq = body.continuation_target_seq if body else None
     continuation_review_mode = bool(body.continuation_review_mode) if body else False
+    continuation_instruction_mode = normalize_continuation_instruction_mode(
+        body.continuation_instruction_mode if body else None
+    )
 
     _disposed = _disposed_group_response(doc_id, _db_documents.get_by_id(doc_id))
     if _disposed is not None:
@@ -386,6 +395,7 @@ def post_workflow_advance(
             continuous=continuous,
             continuation_target_seq=continuation_target_seq,
             continuation_review_mode=continuation_review_mode,
+            continuation_instruction_mode=continuation_instruction_mode,
         )
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
@@ -523,6 +533,7 @@ def post_workflow_decision_request(body: WorkflowDecisionRequestBody, request: R
             locale=request.headers.get("x-locale") or "ko",
             continuous=bool(body.continuous),
             continuation_review_mode=bool(body.continuation_review_mode),
+            continuation_instruction_mode=body.continuation_instruction_mode,
         )
     except LookupError as exc:
         _code, _, value = str(exc).partition(":")

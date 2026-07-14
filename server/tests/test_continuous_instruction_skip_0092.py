@@ -195,6 +195,38 @@ def test_advance_continuous_skips_instruction_mints_report(monkeypatch):
     assert result["continuation_remaining"] == 5
 
 
+def test_advance_continuous_ai_direct_mints_instruction(monkeypatch):
+    _patch_perms(monkeypatch)
+    doc = {"doc_id": "flowgate.default.0230.0001-R", "group_id": "flowgate.default.0230",
+           "project_id": "flowgate", "type_code": "R", "seq": 1}
+    _wire_advance_min(monkeypatch, doc)
+
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("T", 3))
+    calls = []
+    monkeypatch.setattr(docs_mod, "create_next_approved_core",
+                        lambda **k: calls.append(k) or {"doc_id": "x"})
+    mention_kw = {}
+    issue_kw = {}
+    monkeypatch.setattr(
+        svc.token_service, "issue",
+        lambda **k: issue_kw.update(k) or {"raw_token": "RAW", "scratch_dir": "/tmp/s",
+                                           "token_id": "tok", "expires_at": "2026-06-20"},
+    )
+    monkeypatch.setattr(svc.mention_service, "build_mention_from_token_rec",
+                        lambda **k: mention_kw.update(k) or "M")
+
+    result = svc.advance_workflow(
+        doc_id="flowgate.default.0230.0001-R", issued_to="pm-1",
+        api_base_url="http://h/flow_gate/api/v1",
+        continuous=True, continuation_target_seq=6,
+        continuation_instruction_mode="ai_direct",
+    )
+    assert calls == []
+    assert mention_kw["head_type"] == "T"
+    assert issue_kw["continuation_instruction_mode"] == "ai_direct"
+    assert result["continuation_instruction_mode"] == "ai_direct"
+
+
 def test_advance_continuous_issues_worker_token_for_TS(monkeypatch):
     # group 0121 R0001: with TS removed from INSTRUCTION_AUTO_TYPES, a TS head is NOT
     # auto-completed — advance_workflow mints a worker token+mention for TS itself so the AI

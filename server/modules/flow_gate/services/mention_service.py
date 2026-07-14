@@ -540,6 +540,55 @@ def _ts_authoring_section() -> str:
     return _section("Test scenario authoring (TS)", body)
 
 
+# ── N/T instruction authoring (group 0230 R0001 / T0005 WI-7) ────────────────────
+# When a continuous run chooses "AI 직접 작성" (continuation_instruction_mode = ai_direct),
+# advance_workflow SKIPS the server-side auto-complete of N/T instruction heads, so the head
+# reaches the worker mention as an N or T. Without a dedicated guide the worker would receive a
+# generic new-document mention and might mis-scope the instruction (e.g. an N that fails to name
+# what to investigate, or a T with no acceptance criteria). This section tells the worker how to
+# AUTHOR the instruction document itself — mirroring _ts_authoring_section's role for TS.
+#
+# In the default (auto_approved) path N/T are auto-completed server-side and never reach this
+# code, so the section is only ever emitted when the flag is on — no regression to managed runs.
+_NT_AUTHORING_TYPES = {"N", "T"}
+
+
+def _nt_authoring_section(scope_type: str) -> str:
+    """Authoring guidance for an instruction document the worker writes directly (N or T)."""
+    stype = (scope_type or "").upper()
+    if stype == "N":
+        body = (
+            "You are authoring this N (조사지시 / investigation-instruction) directly instead of\n"
+            "the server emitting a fixed template. Reflect the actual context of this group and\n"
+            "the requirement it serves. A good N does NOT investigate or implement anything — it\n"
+            "DIRECTS the investigation the paired NR will carry out. Cover:\n"
+            "- 목적/배경: why this investigation is needed (tie it to the driving R/B).\n"
+            "- 조사 범위: the concrete questions the NR must answer + the code/areas to inspect.\n"
+            "- 산출물 기대: what the NR should conclude (root cause, coordinates, reuse anchors).\n"
+            "Keep it an instruction: name what to find out, not the findings themselves — those\n"
+            "belong in the NR that follows. Do NOT modify source code in this step."
+        )
+    else:  # T (and any other instruction head routed here)
+        body = (
+            "You are authoring this T (작업지시 / work-instruction) directly instead of the server\n"
+            "emitting a fixed template. Reflect the actual context of this group and the findings\n"
+            "of the preceding investigation. A good T DIRECTS the work the paired TR will carry\n"
+            "out. Cover:\n"
+            "- 목적/범위: what change is being made and why (tie it to the driving R/B + NR).\n"
+            "- 작업 항목: the concrete, ordered work items (files/areas to touch, the approach).\n"
+            "- 완료 기준: how the TR proves it is done (tests to run GREEN, acceptance checks).\n"
+            "Keep it an instruction: direct the work; the implementation + evidence belong in the\n"
+            "TR that follows. Do NOT implement the code in this step — write the directive."
+        )
+    body += (
+        "\n\nInclude the next-document header exactly as given in the 'Instruction to include next\n"
+        "document header' section above (next_type / project / module / group / title / target_id).\n"
+        "On submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\n"
+        "the unmanned chain proceeds to its paired report step."
+    )
+    return _section(f"Instruction authoring ({stype})", body)
+
+
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
 def build_mention(
@@ -705,6 +754,13 @@ def build_mention(
     ts_authoring_section = ""
     if scope_type in _TS_AUTHORING_TYPES:
         ts_authoring_section = _ts_authoring_section()
+
+    # ── N/T instruction authoring guidance (group 0230 R0001 / T0005 WI-7) ────
+    # Only reached when the run chose ai_direct: in auto_approved mode N/T are
+    # auto-completed server-side and never arrive here as a worker mention.
+    nt_authoring_section = ""
+    if scope_type in _NT_AUTHORING_TYPES:
+        nt_authoring_section = _nt_authoring_section(scope_type)
 
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
@@ -914,6 +970,8 @@ def build_mention(
     ]
     if scope_section:
         sections.append(scope_section)
+    if nt_authoring_section:
+        sections.append(nt_authoring_section)
     if ts_authoring_section:
         sections.append(ts_authoring_section)
         # flowgate.default.0152: right after the TS authoring guide, list this project's

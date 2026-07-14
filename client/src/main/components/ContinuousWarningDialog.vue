@@ -19,6 +19,10 @@
             <AppIcon name="fast-forward" />
             {{ summaryText }}
           </div>
+          <div class="cwarn-summary cwarn-summary--mode">
+            <AppIcon name="gear" />
+            {{ instructionModeText }}
+          </div>
 
           <ul class="cwarn-list">
             <li>{{ t('main.continuous_work.warn_unmanned') }}</li>
@@ -59,6 +63,7 @@ const props = defineProps<{
   stepCount: number
   targetLabel: string
   reviewMode: boolean
+  instructionMode?: 'auto_approved' | 'ai_direct'
   // R0001 "워크플로 결정부터": the run starts from the workflow decision; there is no step
   // count to quote, so the summary uses a dedicated decision-first line.
   fromDecision?: boolean
@@ -82,6 +87,11 @@ const summaryText = computed(() => {
     ? t('main.continuous_work.warn_summary_review', { count: props.stepCount, target: props.targetLabel })
     : t('main.continuous_work.warn_summary', { count: props.stepCount, target: props.targetLabel })
 })
+const instructionModeText = computed(() =>
+  props.instructionMode === 'ai_direct'
+    ? t('main.continuous_work.warn_instruction_mode_ai')
+    : t('main.continuous_work.warn_instruction_mode_auto'),
+)
 
 function onConfirm() {
   if (!consented.value) return
@@ -123,6 +133,10 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.cwarn-summary--mode {
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 .cwarn-list {
   margin: 0;

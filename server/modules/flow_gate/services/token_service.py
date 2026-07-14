@@ -139,6 +139,7 @@ def issue(
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
     continuation_locale: Optional[str] = None,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -186,6 +187,7 @@ def issue(
         # Chosen locale persisted so the unmanned self-chain honors it on every hop
         # without depending on a per-request x-locale header (group 0099 B0001).
         "continuation_locale": continuation_locale,
+        "continuation_instruction_mode": continuation_instruction_mode,
     })
 
     db_events.create({
@@ -212,6 +214,7 @@ def issue(
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
         "continuation_locale": continuation_locale,
+        "continuation_instruction_mode": continuation_instruction_mode,
     }
 
 

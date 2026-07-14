@@ -38,6 +38,7 @@ export interface TokenIssueParams {
   continuous?: boolean
   continuationTargetSeq?: number
   continuationReviewMode?: boolean
+  continuationInstructionMode?: 'auto_approved' | 'ai_direct'
 }
 
 /**
@@ -160,6 +161,7 @@ export function useFlowGateToken() {
                     continuous: true,
                     continuation_target_seq: params.continuationTargetSeq,
                     continuation_review_mode: !!params.continuationReviewMode,
+                    continuation_instruction_mode: params.continuationInstructionMode ?? 'auto_approved',
                   }
                 : {}),
             },
@@ -182,13 +184,20 @@ export function useFlowGateToken() {
           // Other advance errors fall back to /token/issue (legacy compat)
         }
       }
-      const { continuous, continuationTargetSeq, continuationReviewMode, ...issueBody } = params
+      const {
+        continuous,
+        continuationTargetSeq,
+        continuationReviewMode,
+        continuationInstructionMode,
+        ...issueBody
+      } = params
       const res = await postRequest<any>('/api/v1/token/issue', {
         ...issueBody,
         ...(continuous && continuationTargetSeq != null
           ? {
               continuation_target_seq: continuationTargetSeq,
               continuation_review_mode: !!continuationReviewMode,
+              continuation_instruction_mode: continuationInstructionMode ?? 'auto_approved',
             }
           : {}),
       })
@@ -253,7 +262,11 @@ export function useFlowGateToken() {
   // run once the decision is saved. continuationReviewMode pauses after the first produced step.
   async function requestWorkflowDecision(
     docId: string,
-    opts?: { continuous?: boolean; continuationReviewMode?: boolean },
+    opts?: {
+      continuous?: boolean
+      continuationReviewMode?: boolean
+      continuationInstructionMode?: 'auto_approved' | 'ai_direct'
+    },
   ): Promise<IssuedToken | null> {
     issuing.value = true
     try {
@@ -263,6 +276,7 @@ export function useFlowGateToken() {
           ? {
               continuous: true,
               continuation_review_mode: !!opts.continuationReviewMode,
+              continuation_instruction_mode: opts.continuationInstructionMode ?? 'auto_approved',
             }
           : {}),
       })

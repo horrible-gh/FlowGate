@@ -86,6 +86,7 @@ const props = defineProps<{
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
+  continuationInstructionMode?: 'auto_approved' | 'ai_direct'
   autoStart?: boolean
 }>()
 
@@ -133,6 +134,7 @@ async function start() {
     if (mode.value === 'continuous') {
       body.continuation_target_seq = props.actionScope === 'workflow_decide' ? -1 : targetSeq.value
       body.continuation_review_mode = !!props.continuationReviewMode
+      body.continuation_instruction_mode = props.continuationInstructionMode ?? 'auto_approved'
     }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)
     const data = res.data

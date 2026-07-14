@@ -138,6 +138,7 @@ def _start(fake_env, providers, mode="single", target=None, mention="## prompt\n
         mode=mode,
         continuation_target_seq=target,
         continuation_review_mode=False,
+        continuation_instruction_mode=None,
         continuation_locale=None,
         issued_to="usr_admin",
         api_base_url="http://127.0.0.1:1/flowgate/api/v1",
