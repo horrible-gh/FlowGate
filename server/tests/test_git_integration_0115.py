@@ -601,7 +601,16 @@ class TestGitEndToEnd:
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
         assert out["result"]["merge_commit"]
-        assert _git(["log", "-1", "--format=%s", "main"], cwd=origin_repo["bare"]).strip() == subject
+        # flowgate.default.0232 B0001: the merge commit no longer reuses the work
+        # subject — reusing it stamped two commits of identical title+diff onto
+        # origin ("same code committed twice"). The top of origin main is now a
+        # conventional Merge commit; the confirmed work subject rides in on its
+        # second parent (the absorb commit), a normal work-commit + merge-commit
+        # pair. `main^2` also proves the two-parent topology unmerge relies on.
+        top_subject = _git(["log", "-1", "--format=%s", "main"], cwd=origin_repo["bare"]).strip()
+        assert top_subject.startswith("Merge branch ")
+        assert top_subject != subject
+        assert _git(["log", "-1", "--format=%s", "main^2"], cwd=origin_repo["bare"]).strip() == subject
         # origin main actually contains the group's work
         files = _git(
             ["ls-tree", "--name-only", "main"], cwd=origin_repo["bare"]
@@ -731,6 +740,18 @@ class TestGitEndToEnd:
         }], True)
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
+        # flowgate.default.0232 B0001: the conflict-resolution merge commit must
+        # ALSO carry a conventional Merge subject, not the reused work subject.
+        # This path likewise precedes the merge with an absorb commit, so reusing
+        # the finalize subject stamped two commits of identical title+diff onto
+        # origin ("same code committed twice"). Guard the fix here too — without
+        # this assertion the conflict path could silently regress to the old
+        # resolve_commit_message()[0] subject while test_finalize_wait_then_merge
+        # (clean path only) still passes.
+        top_subject = _git(["log", "-1", "--format=%s", "main"], cwd=origin_repo["bare"]).strip()
+        assert top_subject.startswith("Merge branch ")
+        absorb_subject = _git(["log", "-1", "--format=%s", "main^2"], cwd=origin_repo["bare"]).strip()
+        assert top_subject != absorb_subject  # a normal work+merge pair, not a duplicate
         assert db_git.get_lock("gitprj") is None
         session = db_git.get_session(merge_id)
         assert session["status"] == "done"
