@@ -1782,12 +1782,16 @@ export default {
       merging_msg: '머지를 실행하고 있습니다...',
       conflict_msg: '충돌 {n}건 - 충돌 해결 다이얼로그에서 청크별로 정리하세요.',
       conflict_count: '충돌 {n}곳',
-      ai_assist_title: 'AI 보조 추천',
-      ai_assist_summary: '전체 {total}개 중 {ready}개는 안전한 해소안을 제안할 수 있습니다.',
-      ai_apply_all: '추천안 일괄 적용',
-      ai_apply_one: 'AI안 적용',
-      ai_hold: 'AI 판단 보류',
-      ai_recommended: 'AI 추천',
+      quick_recommend_title: '규칙 기반 빠른 추천',
+      quick_recommend_summary: '로컬 규칙으로 전체 {total}개 중 {ready}개를 제안할 수 있습니다.',
+      quick_apply_all: '빠른 추천 일괄 적용',
+      quick_apply_one: '빠른 추천 적용',
+      quick_hold: '빠른 추천 없음',
+      quick_recommended: '빠른 추천',
+      copy_conflict_mention: '멘트 복사',
+      invoke_conflict_ai: 'AI 호출',
+      conflict_ai_started: 'AI 충돌 해소를 시작했습니다',
+      conflict_mention_copied: '충돌 해소 멘션을 복사했습니다',
       remaining_chunks: '미해소 {remaining}/{total}',
       resolve_progress: '해소 {done} / {total}',
       nav_shortcut: 'Shift+↑/↓로 충돌 이동',
@@ -1954,5 +1958,4 @@ export default {
     sub: '프로젝트 현황 및 최근 활동',
   },
 } as const
-
 

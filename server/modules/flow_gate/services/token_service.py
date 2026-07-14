@@ -1,4 +1,4 @@
-﻿"""Token service — issue / verify / consume / revoke (D020 §2).
+"""Token service — issue / verify / consume / revoke (D020 §2).
 
 All hash comparisons use hmac.compare_digest() to prevent timing attacks (D020 §7-1).
 Pepper is managed via environment variables FLOWGATE_TOKEN_PEPPER_<id> / FLOWGATE_TOKEN_PEPPER_ACTIVE_ID.
@@ -139,6 +139,7 @@ def issue(
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
     continuation_locale: Optional[str] = None,
+    merge_id: Optional[int] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -186,6 +187,7 @@ def issue(
         # Chosen locale persisted so the unmanned self-chain honors it on every hop
         # without depending on a per-request x-locale header (group 0099 B0001).
         "continuation_locale": continuation_locale,
+        "merge_id": merge_id,
     })
 
     db_events.create({
@@ -212,6 +214,7 @@ def issue(
         "continuation_target_seq": continuation_target_seq,
         "continuation_review_mode": continuation_review_mode,
         "continuation_locale": continuation_locale,
+        "merge_id": merge_id,
     }
 
 

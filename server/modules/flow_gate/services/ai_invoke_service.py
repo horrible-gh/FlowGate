@@ -33,7 +33,8 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import process_runner, token_service
+from modules.flow_gate.services import git_service, process_runner, token_service
+from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -94,6 +95,30 @@ _DECIDE_TOOL_SCHEMA = {
         },
     },
     "required": ["doc_class", "sequence"],
+}
+
+_RESOLVE_TOOL_NAME = "resolve_git_conflict"
+_RESOLVE_TOOL_DESC = (
+    "Submit complete resolved file contents for the bound git merge conflict session. "
+    "All conflict markers must be removed and complete must be true when every file is resolved."
+)
+_RESOLVE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+        "complete": {"type": "boolean"},
+    },
+    "required": ["files", "complete"],
 }
 
 # ── Registry ─────────────────────────────────────────────────────────────────
@@ -222,6 +247,7 @@ def start_run(
     mention_builder: Callable[[str, str], Optional[str]],
     provider_id: Optional[str] = None,
     issue_builder: Optional[Callable[[], dict]] = None,
+    merge_id: Optional[int] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -251,7 +277,7 @@ def start_run(
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     target_to_end = mode == "continuous" and continuation_target_seq == -1
-    if action_scope == "workflow_decide":
+    if action_scope in ("workflow_decide", "resolve_conflict"):
         docs_target = 0
     elif mode == "single":
         docs_target = 1
@@ -278,6 +304,7 @@ def start_run(
             continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
             continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
             continuation_locale=continuation_locale if mode == "continuous" else None,
+            merge_id=merge_id if action_scope == "resolve_conflict" else None,
         )
         mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
     if not mention:
@@ -340,6 +367,7 @@ def start_run(
         "action_scope": action_scope,
         "target_to_end": target_to_end,
         "raw_token": issue["raw_token"],
+        "merge_id": merge_id,
     }
     with _runs_lock:
         _runs[run_id] = run
@@ -612,6 +640,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     current_token = run["raw_token"]
     registered = 0
     workflow_pending = run.get("action_scope") == "workflow_decide"
+    conflict_pending = run.get("action_scope") == "resolve_conflict"
     last_text: Optional[str] = None
     conversation: list[dict] = [{"role": "user", "content": prompt}]
     turn = 0
@@ -625,9 +654,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["timed_out"] = True
             break
         call_timeout = min(remaining, API_CALL_MAX_TIMEOUT_SEC)
-        tool_name = _DECIDE_TOOL_NAME if workflow_pending else _REGISTER_TOOL_NAME
-        tool_desc = _DECIDE_TOOL_DESC if workflow_pending else _REGISTER_TOOL_DESC
-        tool_schema = _DECIDE_TOOL_SCHEMA if workflow_pending else _REGISTER_TOOL_SCHEMA
+        if workflow_pending:
+            tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
+        elif conflict_pending:
+            tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
+        else:
+            tool_name, tool_desc, tool_schema = _REGISTER_TOOL_NAME, _REGISTER_TOOL_DESC, _REGISTER_TOOL_SCHEMA
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
@@ -679,6 +711,17 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ))
             continue
 
+        if conflict_pending:
+            status, resp = _resolve_conflict(run, current_token, tool_call["input"])
+            if 200 <= status < 300:
+                conversation.append(_tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
+                break
+            conversation.append(_tool_result_msg(
+                kind, tool_call,
+                f"Conflict resolve failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
+            ))
+            continue
+
         status, resp = _inbox_register(run, current_token, tool_call["input"])
         if 200 <= status < 300:
             registered += 1
@@ -715,6 +758,32 @@ def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
             }],
         }
     return {"role": "tool", "tool_call_id": tool_call["id"], "content": text}
+
+
+def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    body = {
+        "files": tool_input.get("files") or [],
+        "complete": bool(tool_input.get("complete")),
+    }
+    req = urllib.request.Request(
+        f"{run['api_base_url']}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {raw_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
 
 
 def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict:
@@ -858,6 +927,14 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
 
 def _settle_and_judge(run: dict) -> None:
     time.sleep(ORACLE_SETTLE_SEC)
+    if run.get("action_scope") == "resolve_conflict":
+        resolved = _conflict_resolved(run)
+        run["docs_reached"] = 0
+        run["reached_doc_ids"] = []
+        run["outcome"] = "complete" if resolved else "none"
+        _finish_run_record(run)
+        return
+
     new_docs: list[dict] = []
     try:
         docs = db_docs.get_documents_by_group_id(run["group_id"])
@@ -899,6 +976,27 @@ def _settle_and_judge(run: dict) -> None:
     else:
         run["outcome"] = "none"
 
+    _finish_run_record(run)
+
+
+def _conflict_resolved(run: dict) -> bool:
+    merge_id = run.get("merge_id")
+    if merge_id is None:
+        return False
+    try:
+        conflicts = git_service.list_conflicts(run["group_id"], int(merge_id))
+    except GitServiceError as exc:
+        # A successful complete=true resolve closes the merge session; list_conflicts
+        # then returns not_found. Treat closed/missing as terminal for this scoped oracle.
+        return exc.status == 404
+    except Exception:
+        logger.warning("ai-invoke conflict oracle failed for %s", run["run_id"], exc_info=True)
+        return False
+    files = conflicts.get("files") or []
+    return sum(int(f.get("conflict_count") or 0) for f in files) == 0
+
+
+def _finish_run_record(run: dict) -> None:
     # Scratch lifecycle (§2.7): success cleans up, everything else retains.
     scratch = Path(run["scratch_dir"])
     if run["outcome"] == "complete":

@@ -20,6 +20,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import git_service
 from modules.flow_gate.utils.id_validators import (
     validate_project_id,
     validate_group_id,
@@ -43,6 +44,7 @@ class TokenIssueRequest(BaseModel):
     # the FE primarily issues the first continuation token via /workflow/advance.
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
+    merge_id: Optional[int] = None
 
 
 class TokenIssueResponse(BaseModel):
@@ -74,10 +76,10 @@ def issue_token(
     7. token_service.issue() call
     """
     # Step 1: action_scope handling (validate if explicit, defer auto-determination if null)
-    if body.action_scope is not None and body.action_scope not in ("new", "edit"):
+    if body.action_scope is not None and body.action_scope not in ("new", "edit", "resolve_conflict"):
         raise HTTPException(
             status_code=400,
-            detail="action_scope must be new or edit",
+            detail="action_scope must be new, edit, or resolve_conflict",
         )
 
     # Step 1-b: project_id / group / doc_ref canonical form validation (T261)
@@ -98,6 +100,8 @@ def issue_token(
             validate_doc_id(body.doc_ref)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+    if body.action_scope == "resolve_conflict" and body.merge_id is None:
+        raise HTTPException(status_code=422, detail="merge_id is required for resolve_conflict")
 
     # Step 2: project existence check
     project = db_projects.get_by_id(body.project)
@@ -122,6 +126,8 @@ def issue_token(
         resolved_action_scope = body.action_scope
     else:
         resolved_action_scope = _determine_action_scope(body.doc_ref)
+    if resolved_action_scope == "resolve_conflict" and group_id is None:
+        raise HTTPException(status_code=404, detail=f"Group not found: {canonical_group_id}")
 
     # The dialog request carries the chosen locale in x-locale; persist it on a continuation
     # token so the unmanned self-chain honors it on every hop (group 0099 B0001).
@@ -138,6 +144,7 @@ def issue_token(
         continuation_target_seq=body.continuation_target_seq,
         continuation_review_mode=body.continuation_review_mode,
         continuation_locale=req_locale if is_continuous else None,
+        merge_id=body.merge_id if resolved_action_scope == "resolve_conflict" else None,
     )
 
     # Step 8: build M020 mention (when doc_ref + sequence head exist)
@@ -154,6 +161,7 @@ def issue_token(
         action_scope=resolved_action_scope,
         locale=req_locale,
         continuous=is_continuous,
+        merge_id=body.merge_id,
     )
 
     return TokenIssueResponse(
@@ -235,6 +243,7 @@ def _build_mention_for_token(
     action_scope: str = "new",
     locale: str = "ko",
     continuous: bool = False,
+    merge_id: Optional[int] = None,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -242,6 +251,18 @@ def _build_mention_for_token(
     Generates with placeholders even when no sequence/head exists.
     Includes the 5 most recent group documents in section 4 (section omitted if 0).
     """
+    if action_scope == "resolve_conflict":
+        if not group_id or merge_id is None:
+            return None
+        return _build_conflict_mention(
+            group_id=group_id,
+            project_id=project_id,
+            merge_id=merge_id,
+            scratch_dir=scratch_dir,
+            raw_token=raw_token,
+            api_base_url=_build_api_base(request),
+        )
+
     if not doc_ref or not group_id:
         return None
 
@@ -327,6 +348,100 @@ def _build_mention_for_token(
     )
 
 
+def _split_conflict_chunks(content: str) -> list[dict]:
+    chunks: list[dict] = []
+    state: Optional[str] = None
+    current = {"ours": [], "base": [], "theirs": []}
+    ours_label = ""
+    theirs_label = ""
+    for line in content.splitlines():
+        if line.startswith("<<<<<<<"):
+            state = "ours"
+            current = {"ours": [], "base": [], "theirs": []}
+            ours_label = line[7:].strip()
+            theirs_label = ""
+            continue
+        if state == "ours" and line.startswith("|||||||"):
+            state = "base"
+            continue
+        if state in ("ours", "base") and line.startswith("======="):
+            state = "theirs"
+            continue
+        if state == "theirs" and line.startswith(">>>>>>>"):
+            theirs_label = line[7:].strip()
+            chunks.append({
+                "ours_label": ours_label,
+                "theirs_label": theirs_label,
+                "ours": current["ours"],
+                "base": current["base"],
+                "theirs": current["theirs"],
+            })
+            state = None
+            continue
+        if state in current:
+            current[state].append(line)
+    return chunks
+
+
+def _build_conflict_mention(
+    *,
+    group_id: str,
+    project_id: str,
+    merge_id: int,
+    scratch_dir: str,
+    raw_token: str,
+    api_base_url: str,
+) -> Optional[str]:
+    conflicts = git_service.list_conflicts(group_id, merge_id)
+    files = conflicts.get("files") or []
+    resolve_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/resolve-token"
+    chunks_payload = []
+    for file in files:
+        content = file.get("content") or ""
+        chunks_payload.append({
+            "path": file.get("path"),
+            "conflict_count": file.get("conflict_count"),
+            "chunks": _split_conflict_chunks(content),
+            "raw_content": content,
+        })
+    payload = {
+        "group_id": group_id,
+        "merge_id": merge_id,
+        "branch": conflicts.get("branch"),
+        "base_branch": conflicts.get("base_branch"),
+        "files": chunks_payload,
+    }
+    return (
+        "## Document information\n"
+        "---\n"
+        f"project: {project_id}\n"
+        f"group: {group_id}\n"
+        "type: git_conflict\n"
+        f"merge_id: {merge_id}\n\n"
+        "## Git conflict auto-resolve task\n"
+        "---\n"
+        "Resolve every conflict autonomously. Do not ask the user to choose chunks. "
+        "Produce complete file contents with all conflict markers removed, then call the bound resolve endpoint.\n\n"
+        "## Bound resolve endpoint\n"
+        "---\n"
+        f"POST {resolve_url}\n"
+        f"Authorization: Bearer {raw_token}\n"
+        "Content-Type: application/json\n\n"
+        "{\n"
+        "  \"files\": [\n"
+        "    {\"path\": \"<project-source-root relative path>\", \"content\": \"<complete resolved file content>\"}\n"
+        "  ],\n"
+        "  \"complete\": true\n"
+        "}\n\n"
+        "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+        "## Conflict session\n"
+        "---\n"
+        f"scratch_dir: {scratch_dir}\n"
+        "```json\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+        "```\n"
+    )
+
 def _load_current_revision_review(doc: dict) -> Optional[dict]:
     """Return the latest review only when it targets the document's current revision."""
     from modules.flow_gate.db import document_reviews as db_reviews
@@ -355,5 +470,3 @@ def _load_current_revision_review(doc: dict) -> Optional[dict]:
         "comment": row.get("comment"),
         "reviewed_at": row.get("reviewed_at"),
     }
-
-

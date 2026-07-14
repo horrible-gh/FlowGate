@@ -2,7 +2,7 @@
   <!-- flowgate.default.0212 T0009 — the shared 1180×820 conflict resolver
        (approved 0207 시안 A). Extracted verbatim from GitFinalizePanel so the
        header Git status panel and the finalize panel present the SAME resolver:
-       file sidebar, chunk chips/navigation, AI assist strip + per-chunk
+       file sidebar, chunk chips/navigation, quick recommendation strip + per-chunk
        recommendation, common-block folding and font-size controls. The host
        component owns fetching, submission and abort; this dialog owns only
        view-state and in-place chunk choices on the shared file objects. -->
@@ -40,11 +40,11 @@
       <template v-else>
         <div class="git-ai-assist-strip">
           <div>
-            <strong><AppIcon name="sparkle" /> {{ t('main.git_finalize.ai_assist_title') }}</strong>
-            <span>{{ t('main.git_finalize.ai_assist_summary', { ready: aiSuggestionTotal, total: totalChunkCount }) }}</span>
+            <strong><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_recommend_title') }}</strong>
+            <span>{{ t('main.git_finalize.quick_recommend_summary', { ready: aiSuggestionTotal, total: totalChunkCount }) }}</span>
           </div>
           <button class="btn btn-secondary btn-sm" :disabled="busy || aiSuggestionRemaining === 0" @click="applyAllSuggestions">
-            <AppIcon name="magic-wand" /> {{ t('main.git_finalize.ai_apply_all') }}
+            <AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_all') }}
           </button>
         </div>
         <div class="git-conflict-dialog-bd">
@@ -124,8 +124,8 @@
                       <button :class="{ suggested: recommendedChoice(seg) === 'theirs' }" @click="chooseChunk(seg, 'theirs')">{{ t('main.git_finalize.incoming') }}</button>
                       <button :class="{ suggested: recommendedChoice(seg) === 'both' }" @click="chooseChunk(seg, 'both')">{{ t('main.git_finalize.both') }}</button>
                       <button @click="switchToDirectEdit(selectedConflictFile)">{{ t('main.git_finalize.direct_edit') }}</button>
-                      <button v-if="recommendedChoice(seg)" class="git-ai-apply" @click="applySuggestion(seg)"><AppIcon name="sparkle" /> {{ t('main.git_finalize.ai_apply_one') }}</button>
-                      <span v-else class="git-ai-hold">{{ t('main.git_finalize.ai_hold') }}</span>
+                      <button v-if="recommendedChoice(seg)" class="git-ai-apply" @click="applySuggestion(seg)"><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_one') }}</button>
+                      <span v-else class="git-ai-hold">{{ t('main.git_finalize.quick_hold') }}</span>
                     </div>
                   </div>
                   <div v-if="seg.resolution" class="git-chunk-resolved">
@@ -134,11 +134,11 @@
                   </div>
                   <div v-else class="git-conflict-sides">
                     <div class="git-conflict-side ours">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
+                      <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
                       <pre><span v-for="line in chunkDiff(seg).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                     <div class="git-conflict-side theirs">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.ai_recommended') }}</span></div>
+                      <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
                       <pre><span v-for="line in chunkDiff(seg).theirs" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                   </div>
@@ -160,6 +160,12 @@
             <span>{{ errorMessage || markerGuardText }}</span>
           </div>
           <div class="git-conflict-footer-actions">
+            <button class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
+              <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
+            </button>
+            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke')">
+              <AppIcon name="sparkle" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
+            </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
@@ -206,7 +212,7 @@ const props = defineProps<{
   loadStatus: 'idle' | 'loading' | 'ready' | 'error'
   errorMessage: string
 }>()
-const emit = defineEmits<{ close: []; abort: []; submit: []; retry: [] }>()
+const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': []; 'copy-mention': [] }>()
 
 const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()

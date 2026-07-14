@@ -24,13 +24,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
-from modules.flow_gate.services import git_service
+from modules.flow_gate.services import git_service, token_service
+from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
@@ -403,6 +404,37 @@ def post_merge_resolve(
             [f.model_dump() for f in body.files],
             bool(body.complete),
         )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/resolve-token")
+def post_merge_resolve_token(
+    group_id: str,
+    merge_id: int,
+    body: ResolveBody,
+    request: Request,
+):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if auth.get("_is_user_jwt"):
+        return _error_response(403, "conflict_token_required", "A resolve_conflict worker token is required")
+    if (
+        auth.get("action_scope") != "resolve_conflict"
+        or auth.get("group_id") != group_id
+        or int(auth.get("merge_id") or -1) != int(merge_id)
+    ):
+        return _error_response(403, "conflict_token_scope_mismatch", "Token is not bound to this merge session")
+    try:
+        result = git_service.resolve_conflicts(
+            group_id, merge_id,
+            [f.model_dump() for f in body.files],
+            bool(body.complete),
+        )
+        if result.get("ok") and result.get("result", {}).get("status") == "merged":
+            token_service.consume(auth["token_id"], auth["project"])
+        return result
     except GitServiceError as exc:
         return _guard(exc)
 
