@@ -1995,6 +1995,18 @@ def base_checkout_dirty_status(project_id: str) -> dict:
         return {"enabled": False, "dirty": False, "files": []}
 
 
+def _merge_commit_subject(branch: str, base_branch: str) -> str:
+    """flowgate.default.0232 B0001 — the `--no-ff` merge commit must NOT reuse the
+    work subject. Workers never run `git commit`, so the work branch holds exactly
+    one absorb commit carrying finalize_subject(); wrapping that single commit in a
+    merge commit of the SAME memoized subject made origin show identical title+diff
+    twice ("same code committed twice"). A conventional Merge subject makes the pair
+    read as a normal work-commit + merge-commit instead of a duplicate. `--no-ff`
+    (the two-parent topology) is deliberately kept so unmerge's `^2` restore
+    (flowgate.default.0202) still resolves the merged work branch."""
+    return f"Merge branch '{branch}' into '{base_branch}'"
+
+
 def finalize(group_id: str, action: Optional[str], commit_message: Optional[str] = None) -> dict:
     cfg, state, project_id, base_root, wt_path = _finalize_context(group_id)
     action = action or cfg.get("default_finalize_action") or "wait"
@@ -2154,8 +2166,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     "base checkout has local-only commits and cannot fast-forward",
                 )
         _set_status(group_id, "merging")
+        # 0232 B0001: the merge commit carries a conventional Merge subject, NOT the
+        # work subject — the absorb commit above already holds finalize_subject().
+        # Reusing it here stamped two commits of identical title+diff onto origin.
         proc = _run_git(
-            [*_GIT_IDENT, "merge", "--no-ff", "-m", finalize_subject(), branch],
+            [*_GIT_IDENT, "merge", "--no-ff", "-m",
+             _merge_commit_subject(branch, base_branch), branch],
             cwd=base_root,
         )
         if proc.returncode == 0:
@@ -2344,8 +2360,14 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
         }
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # 0232 B0001: finishing a conflicted merge also creates a merge commit over the
+    # absorb commit — give it the same conventional Merge subject (not the work
+    # subject) so the resolved merge is not a title-duplicate of the work commit.
+    state = db_git.get_state(group_id) or {}
+    branch = (state.get("branch")
+              or worktree_branch_name(project_id, _module_of(group_id), group_id))
     proc = _run_git(
-        [*_GIT_IDENT, "commit", "-m", resolve_commit_message(group_id)[0]],
+        [*_GIT_IDENT, "commit", "-m", _merge_commit_subject(branch, base_branch)],
         cwd=base_root,
     )
     if proc.returncode != 0:
