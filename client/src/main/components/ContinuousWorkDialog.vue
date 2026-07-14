@@ -110,6 +110,18 @@
               </span>
             </label>
 
+            <!-- 0234 B0001 RC3: the continuous run auto-starts (the AI-invoke dialog is not
+                 shown), so this is the only chance to confirm/change which provider it uses. -->
+            <div v-if="!allDone" class="cwd-provider">
+              <AiProviderSelect
+                :providers="providers"
+                :model-value="selectedProvider"
+                :loading="providerLoading"
+                :errored="providerErrored"
+                @update:model-value="(v) => emit('update:provider', v)"
+              />
+            </div>
+
             <div class="cwd-summary">
               {{ allDone
                 ? t('main.continuous_work.all_done_summary')
@@ -142,6 +154,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 
 interface SequenceItem {
   id: number
@@ -155,10 +168,18 @@ const props = defineProps<{
   visible: boolean
   /** Sequence-owning root (R/B) doc id — the dialog reads /workflow/sequence by this id. */
   docRef: string
+  // 0234 B0001: runtime provider list + current selection, owned by MainPanel (which holds
+  // the aiProvider store). Surfaced so the continuous run's provider is confirmable here.
+  providers?: { id: string; name: string }[]
+  selectedProvider?: string
+  providerLoading?: boolean
+  providerErrored?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
+  // 0234 B0001 RC3: propagate a provider change back to the store-owning parent.
+  'update:provider': [value: string]
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
   // workflow-decision step and targetSeq is the run-to-end sentinel (-1, R0001 "워크플로 결정부터").
@@ -489,6 +510,13 @@ watch(
 .cwd-toggle-text { display: flex; flex-direction: column; gap: 2px; }
 .cwd-toggle-title { font-size: .85rem; font-weight: 600; color: var(--text); }
 .cwd-toggle-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
+.cwd-provider {
+  display: flex;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.cwd-provider > * { flex: 1; min-width: 0; }
 .cwd-summary {
   font-size: .82rem;
   font-weight: 600;

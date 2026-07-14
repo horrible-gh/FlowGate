@@ -120,12 +120,17 @@
     :busy="busy"
     :load-status="conflictLoadStatus"
     :error-message="conflictError"
+    :providers="aiProviderStore.providers"
+    :selected-provider="aiProviderStore.selectedProviderId"
+    :provider-loading="aiProviderStore.loading"
+    :provider-errored="!!aiProviderStore.error"
     @close="closeConflictDialog"
     @abort="abortMerge"
     @submit="submitResolve"
     @retry="retryFetchConflicts"
     @ai-invoke="invokeConflictAi"
     @copy-mention="copyConflictMention"
+    @update:provider="aiProviderStore.selectProvider"
   />
 
   <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
@@ -139,6 +144,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
+import { useAiProviderStore } from '../stores/aiProvider'
 import { useToast } from './common/useToast'
 // 0182 NR0003 §6: the chunk parser/assembler state machine lives in a shared
 // composable; 0212 T0009 moved the resolver dialog itself into
@@ -158,6 +164,9 @@ const props = defineProps<{ groupId: string }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const projectStore = useProjectStore()
+// 0234 B0001: single source of truth for the runtime provider (shared with AppHeader),
+// so the conflict AI run started here honours the selection.
+const aiProviderStore = useAiProviderStore()
 const { initConflictFile } = useConflictChunks()
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
 
@@ -299,6 +308,8 @@ async function retryFetchConflicts() {
 }
 async function openConflictDialog() {
   conflictDialogOpen.value = true
+  // Populate the provider selector shown in the resolver footer (RC2).
+  void aiProviderStore.ensureLoaded(providerProject.value)
   const mergeId = state.value?.merge_id
   if (mergeId != null && (!conflictFiles.value.length || conflictLoadStatus.value === 'error')) {
     await fetchConflicts(mergeId)
@@ -312,6 +323,10 @@ function groupParts(groupId: string) {
   const [project, module = 'none', ...rest] = groupId.split('.')
   return { project, module, group: rest.join('.') }
 }
+
+// Project id used to load the runtime provider list. The group id's first segment is the
+// project; fall back to the active project store when the group id is not yet set.
+const providerProject = computed(() => groupParts(props.groupId).project || projectStore.currentProjectId || '')
 
 async function copyToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -334,12 +349,17 @@ async function invokeConflictAi() {
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
   try {
-    await postRequest('/api/v1/ai-invoke/start', {
+    // RC1: forward the current provider selection so the run honours it instead of
+    // silently falling back to the server default chain.
+    await aiProviderStore.ensureLoaded(providerProject.value)
+    const body: Record<string, unknown> = {
       ...groupParts(props.groupId),
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: mergeId,
-    })
+    }
+    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    await postRequest('/api/v1/ai-invoke/start', body)
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')

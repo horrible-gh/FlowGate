@@ -198,12 +198,17 @@
             :busy="busy"
             :load-status="conflictLoadStatus"
             :error-message="conflictError"
+            :providers="aiProviderStore.providers"
+            :selected-provider="aiProviderStore.selectedProviderId"
+            :provider-loading="aiProviderStore.loading"
+            :provider-errored="!!aiProviderStore.error"
             @close="collapseResolve"
             @abort="abortInline(p)"
             @submit="submitResolveInline(p)"
             @retry="openResolve(p.group_id)"
             @ai-invoke="invokeConflictAi(p)"
             @copy-mention="copyConflictMention(p)"
+            @update:provider="aiProviderStore.selectProvider"
           />
         </div>
       </div>
@@ -250,6 +255,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
+import { useAiProviderStore } from '../stores/aiProvider'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
@@ -268,6 +274,9 @@ const emit = defineEmits<{ 'open-group': [groupId: string] }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const { initConflictFile } = useConflictChunks()
+// 0234 B0001: the header provider selection must reach the conflict AI run. This store
+// is the single source of truth for the runtime provider (also driven by AppHeader).
+const aiProviderStore = useAiProviderStore()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
@@ -686,6 +695,8 @@ async function openResolve(groupId: string) {
   conflictError.value = ''
   conflictFiles.value = []
   conflictLoadStatus.value = 'loading'
+  // Populate the provider selector shown in the resolver footer (RC2).
+  void aiProviderStore.ensureLoaded(props.projectId)
   try {
     const { data } = await getRequest<{
       ok: boolean
@@ -751,12 +762,17 @@ async function invokeConflictAi(p: Pending) {
   if (p.merge_id == null || busy.value) return
   busy.value = true
   try {
-    await postRequest('/api/v1/ai-invoke/start', {
+    // RC1: forward the header/dialog provider selection so the run honours it instead
+    // of silently falling back to the server default chain (first = e.g. Fable).
+    await aiProviderStore.ensureLoaded(props.projectId)
+    const body: Record<string, unknown> = {
       ...groupParts(p.group_id),
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: p.merge_id,
-    })
+    }
+    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    await postRequest('/api/v1/ai-invoke/start', body)
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')

@@ -870,7 +870,12 @@
     <ContinuousWorkDialog
       v-model:visible="continuousDialogVisible"
       :doc-ref="continuousDocRef"
+      :providers="aiProviderStore.providers"
+      :selected-provider="aiProviderStore.selectedProviderId"
+      :provider-loading="aiProviderStore.loading"
+      :provider-errored="!!aiProviderStore.error"
       @confirm="onContinuousDialogConfirm"
+      @update:provider="aiProviderStore.selectProvider"
     />
     <ContinuousWarningDialog
       v-model:visible="continuousWarnVisible"
@@ -1025,6 +1030,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { isFileTab, useTabsStore, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
+import { useAiProviderStore } from '../stores/aiProvider'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1094,6 +1100,9 @@ const emit = defineEmits<{
 const tabsStore = useTabsStore()
 const projectStore = useProjectStore()
 const explorerStore = useExplorerStore()
+// 0234 B0001: runtime provider selection, shared with AppHeader. Surfaced in the
+// continuous-work dialog so its auto-started run's provider is confirmable (RC3).
+const aiProviderStore = useAiProviderStore()
 const dashboardStore = useDashboardStore()
 const dashboardEntry = computed(() => dashboardStore.currentEntry)
 
@@ -2828,6 +2837,8 @@ function onActionBarContinuousWork(tabId: string) {
   continuousDocRef.value = nextActionDocRef(tabId)
   continuousProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   continuousGroupId.value = exposedValue<string>(h?.groupId) ?? ''
+  // Populate the provider selector shown in the continuous-work dialog (RC3).
+  void aiProviderStore.ensureLoaded(continuousProjectId.value)
   continuousDialogVisible.value = true
 }
 

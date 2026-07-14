@@ -962,6 +962,7 @@ export default {
     },
     ai_provider: {
       label: 'AI 프로바이더',
+      run_label: '이번 실행 프로바이더',
       loading: '불러오는 중…',
       none: '사용 가능 프로바이더 없음',
       load_failed: 'AI 프로바이더 목록을 불러오지 못했습니다.',

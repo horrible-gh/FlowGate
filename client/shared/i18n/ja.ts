@@ -962,6 +962,7 @@ export default {
     },
     ai_provider: {
       label: 'AIプロバイダー',
+      run_label: 'この実行のプロバイダー',
       loading: '読み込み中…',
       none: '利用可能なプロバイダーなし',
       load_failed: 'AIプロバイダー一覧を読み込めませんでした。',

@@ -163,6 +163,18 @@
             <button class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
               <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
             </button>
+            <!-- 0234 B0001 RC1/RC2: confirm/change the provider that the conflict AI run
+                 uses, right next to the invoke button. The host wires provider_id from
+                 the same global selection into /ai-invoke/start. -->
+            <AiProviderSelect
+              class="git-conflict-provider"
+              :providers="providers"
+              :model-value="selectedProvider"
+              :loading="providerLoading"
+              :errored="providerErrored"
+              hide-label
+              @update:model-value="(v) => emit('update:provider', v)"
+            />
             <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke')">
               <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
             </button>
@@ -181,6 +193,7 @@
 
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -211,8 +224,14 @@ const props = defineProps<{
   busy: boolean
   loadStatus: 'idle' | 'loading' | 'ready' | 'error'
   errorMessage: string
+  // 0234 B0001: runtime provider list + current selection, owned by the host panel
+  // (GitStatusPanel / GitFinalizePanel) which holds the aiProvider store.
+  providers?: { id: string; name: string }[]
+  selectedProvider?: string
+  providerLoading?: boolean
+  providerErrored?: boolean
 }>()
-const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': []; 'copy-mention': [] }>()
+const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': []; 'copy-mention': []; 'update:provider': [value: string] }>()
 
 const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()
@@ -733,7 +752,12 @@ watch(
 .git-conflict-footer-actions {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+.git-conflict-provider {
+  flex: 0 1 210px;
+  max-width: 210px;
 }
 .git-ai-assist-strip {
   flex: 0 0 auto;
