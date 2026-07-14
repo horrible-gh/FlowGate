@@ -62,6 +62,9 @@ def test_src_content_patch_updates_existing_file(monkeypatch):
     payload = patch_res.json()
     assert payload["path"] == "docs/editable.md"
     assert payload["content_length"] == 5
+    # 0176 T0010: the save response carries the advisory base-checkout dirty status
+    # (benign default for a git-disabled project). Pre-existing stale expectation
+    # fixed alongside flowgate.default.0226 — the route behavior is unchanged.
     assert payload["base_git"] == {"enabled": False, "dirty": False, "files": []}
     assert file_path.read_text(encoding="utf-8") == "after"
 

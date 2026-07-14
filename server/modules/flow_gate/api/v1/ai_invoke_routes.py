@@ -167,6 +167,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             locale=locale,
             continuous=is_continuous,
             merge_id=body.merge_id,
+            # 0226 NR0003 §4 (부수): the review-mode flag previously never reached the
+            # mention builder, so a review-mode first hop got the no-stop block instead
+            # of the Q-allowed review variant.
+            continuous_review_mode=body.continuation_review_mode,
         )
 
     def _mention_builder(raw_token: str, scratch_dir: str):
@@ -258,6 +262,31 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 continuation_review_mode=body.continuation_review_mode,
             )
         issue_builder = _issue_workflow_decision
+    elif is_continuous and body.action_scope == "new" and not body.continuation_review_mode:
+        # 0226 B0001 ④ / NR0003 §4 (§5-5): the continuous first hop used to mint the
+        # token directly, bypassing advance_workflow — the ONLY place instruction heads
+        # (N/T) are auto-created + auto-approved for an unmanned chain. Starting on an
+        # N/T head therefore handed the AI the instruction document to write by hand.
+        # Route the first hop through advance_workflow, exactly like every later inbox
+        # self-chain hop. Review mode stays on the direct-issue path above: the
+        # pre-flight Q phase must not create documents.
+        def _issue_first_hop():
+            adv = workflow_decision_service.advance_workflow(
+                doc_id=body.doc_ref,
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                locale=locale,
+                continuous=True,
+                continuation_target_seq=body.continuation_target_seq,
+                continuation_review_mode=body.continuation_review_mode,
+            )
+            return {
+                "raw_token": adv["token"],
+                "token_id": adv["token_id"],
+                "scratch_dir": adv["scratch_dir"],
+                "mention": adv["mention"],
+            }
+        issue_builder = _issue_first_hop
 
     try:
         result = ai_invoke_service.start_run(

@@ -974,7 +974,7 @@ export default {
       mode_continuous: 'Continuous run (unmanned chain)',
       mode_continuous_desc: 'The AI keeps registering documents until the target seq is reached.',
       target_seq_label: 'Target seq',
-      target_seq_hint: 'Document seq in this group to reach (must exceed the current seq).',
+      target_seq_hint: 'Workflow step number (item_seq) to reach. Must be a remaining (pending) step.',
       target_to_end_hint: 'Runs the entire sequence after the workflow decision.',
       btn_start: 'Start AI run',
       btn_cancel_run: 'Cancel run',

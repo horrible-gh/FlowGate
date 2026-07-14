@@ -974,7 +974,7 @@ export default {
       mode_continuous: '連続実行（無人チェーン）',
       mode_continuous_desc: '目標seqに到達するまでAIがドキュメントを登録し続けます。',
       target_seq_label: '目標 seq',
-      target_seq_hint: 'このグループで到達すべきドキュメントseq（現在のseqより大きい値）。',
+      target_seq_hint: '到達するワークフローステップ番号（item_seq）。残り（未実行）のステップである必要があります。',
       target_to_end_hint: 'ワークフロー決定後、シーケンス全体を実行します。',
       btn_start: 'AI 実行開始',
       btn_cancel_run: '実行を取消',

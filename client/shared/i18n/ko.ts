@@ -974,7 +974,7 @@ export default {
       mode_continuous: '연속 실행(무인 체인)',
       mode_continuous_desc: '목표 seq에 도달할 때까지 AI가 문서를 계속 등록합니다.',
       target_seq_label: '목표 seq',
-      target_seq_hint: '이 그룹에서 도달할 문서 seq(현재 seq보다 커야 함).',
+      target_seq_hint: '도달할 워크플로 스텝 번호(item_seq). 남은(미실행) 스텝이어야 합니다.',
       target_to_end_hint: '워크플로 결정 후 전체 시퀀스를 실행합니다.',
       btn_start: 'AI 실행 시작',
       btn_cancel_run: '실행 취소',

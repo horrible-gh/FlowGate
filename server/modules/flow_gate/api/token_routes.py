@@ -162,6 +162,7 @@ def issue_token(
         locale=req_locale,
         continuous=is_continuous,
         merge_id=body.merge_id,
+        continuous_review_mode=bool(is_continuous and body.continuation_review_mode),
     )
 
     return TokenIssueResponse(
@@ -244,6 +245,7 @@ def _build_mention_for_token(
     locale: str = "ko",
     continuous: bool = False,
     merge_id: Optional[int] = None,
+    continuous_review_mode: bool = False,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -345,6 +347,9 @@ def _build_mention_for_token(
         locale=locale,
         head_context_doc=head_context_doc,
         continuous=continuous,
+        # 0226 NR0003 §4 (부수): forward the review-mode flag so a continuous
+        # review-phase mention carries the Q-allowed review variant, not no-stop.
+        continuous_review_mode=continuous_review_mode,
     )
 
 
