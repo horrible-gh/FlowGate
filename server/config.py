@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     FLOWGATE_GIT_ENCRYPT_KEY: str | None = None
     FLOWGATE_GIT_ENCRYPT_KEY_PREV: str | None = None
 
+    # Group 0235 D0005 §3-4 / L0008 §2-5: submission base for the EXTERNAL AGENT
+    # (CLI provider) inbox POST. Origin only (scheme://host[:port]); the server
+    # appends CONTEXT + /api/v1. When unset, the agent api base is derived by
+    # swapping the operator host for loopback (same-host run). Set this when the
+    # agent cannot reach the loopback:port (e.g. behind a reverse proxy).
+    FLOWGATE_AGENT_API_BASE: str | None = None
+
     @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
     @classmethod
     def _blank_int_uses_default(cls, v):

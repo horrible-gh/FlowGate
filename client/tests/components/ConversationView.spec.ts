@@ -1,10 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 
-// 0085: ConversationView gains an "auto-copy mention" checkbox to the left of the
-// "Copy mention" button. When on, a successful send() fires the same copy-mention
-// event the manual button does (with { auto: true }); it never fires on a failed send.
+// Group 0235 (D0005 §3-2 / P0007 §0-1 / L0008): ConversationView replaces the old
+// "auto-copy" checkbox with a "send-time action" radio group (copy_mention /
+// invoke_ai / none). On a successful send it dispatches the chosen action — copy the
+// mention ({ auto: true }), run the in-app AI call, or nothing. The old boolean key
+// is migrated to the new key on first read. Never dispatches on a failed send.
 const { getRequest, postRequest, showToast } = vi.hoisted(() => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
@@ -20,7 +23,8 @@ vi.mock('@main/components/common/useToast', () => ({
 
 import ConversationView from '@main/components/ConversationView.vue'
 
-const AUTO_COPY_KEY = 'flowgate.chat.autoCopyMention'
+const SEND_ACTION_KEY = 'flowgate.chat.sendAction'
+const LEGACY_AUTOCOPY_KEY = 'flowgate.chat.autoCopyMention'
 const DOC_ID = 'flowgate.default.0085.0009-CH'
 const OTHER_DOC_ID = 'flowgate.default.0224.0005-CH'
 
@@ -28,10 +32,37 @@ function draftKey(docId = DOC_ID, userId = 'guest') {
   return 'flowgate.user.' + userId + '.chat.drafts.' + docId
 }
 
+// getRequest serves BOTH the conversation content load and the provider list. Default:
+// one enabled provider present, so the "Call AI" radio/button is available.
+function withProviders() {
+  getRequest.mockImplementation((url: unknown) => {
+    if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+      return Promise.resolve({
+        data: {
+          ok: true,
+          project: 'flowgate',
+          providers: [{ id: 'p1', name: 'P1', exec_type: 'api', kind: 'openai' }],
+          default_provider_id: 'p1',
+        },
+      })
+    }
+    return Promise.resolve({ data: { content: '' } })
+  })
+}
+
+function withoutProviders() {
+  getRequest.mockImplementation((url: unknown) => {
+    if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+      return Promise.resolve({ data: { ok: true, project: 'flowgate', providers: [], default_provider_id: null } })
+    }
+    return Promise.resolve({ data: { content: '' } })
+  })
+}
+
 function mountView(docId = DOC_ID) {
   return mount(ConversationView, {
     props: { docId, projectId: 'flowgate' },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n, createPinia()] },
   })
 }
 
@@ -39,32 +70,56 @@ beforeEach(() => {
   i18n.global.locale.value = 'en'
   localStorage.clear()
   delete window.__accessToken__
-  getRequest.mockReset().mockResolvedValue({ data: { content: '' } })
+  getRequest.mockReset()
+  withProviders()
   postRequest.mockReset().mockResolvedValue({ data: { content: '' } })
   showToast.mockReset()
 })
 
-describe('ConversationView auto-copy', () => {
-  it('renders the auto-copy checkbox left of the copy-mention button', async () => {
+describe('ConversationView send-time action', () => {
+  it('renders the send-time action radios instead of a checkbox', async () => {
     const wrapper = mountView()
     await flushPromises()
-    const cb = wrapper.find('input[type="checkbox"]')
-    expect(cb.exists()).toBe(true)
-    // The checkbox must come before the copy button in the assist row.
-    const html = wrapper.find('.conv-assist').html()
-    expect(html.indexOf('checkbox')).toBeLessThan(html.indexOf('conv-assist-btn'))
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="radio"][value="copy_mention"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="radio"][value="invoke_ai"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="radio"][value="none"]').exists()).toBe(true)
   })
 
-  it('emits copy-mention with { auto: true } after a successful send when checked', async () => {
+  it('emits copy-mention with { auto: true } after a successful send when set to copy_mention', async () => {
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     expect(postRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.emitted('copy-mention')).toEqual([[{ auto: true }]])
   })
+
+  it('runs the in-app AI call after a successful send when set to invoke_ai', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('input[type="radio"][value="invoke_ai"]').setValue()
+    await wrapper.find('textarea').setValue('hello worker')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    // First POST is the turn; second is the immediate chat AI invoke.
+    expect(postRequest).toHaveBeenCalledTimes(2)
+    expect(postRequest).toHaveBeenLastCalledWith(
+      '/api/v1/ai-invoke/start',
+      expect.objectContaining({
+        project: 'flowgate',
+        module: 'default',
+        group: '0085',
+        doc_ref: DOC_ID,
+        action_scope: 'chat',
+        mode: 'single',
+      }),
+    )
+    expect(wrapper.emitted('copy-mention')).toBeUndefined()
+  })
+
   it('posts the trimmed message body and speaker to the conversation turn endpoint', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -99,7 +154,7 @@ describe('ConversationView auto-copy', () => {
     )
   })
 
-  it('does NOT auto-copy when the checkbox is off', async () => {
+  it('does NOT dispatch any action when set to none (default)', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.find('textarea').setValue('hello worker')
@@ -109,11 +164,11 @@ describe('ConversationView auto-copy', () => {
     expect(wrapper.emitted('copy-mention')).toBeUndefined()
   })
 
-  it('does NOT auto-copy when the send fails', async () => {
-    postRequest.mockRejectedValueOnce(new Error('boom'))
+  it('does NOT dispatch when the send fails', async () => {
+    postRequest.mockReset().mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -127,15 +182,50 @@ describe('ConversationView auto-copy', () => {
     expect(wrapper.emitted('copy-mention')).toEqual([[]])
   })
 
-  it('persists the toggle to localStorage and restores it on remount', async () => {
+  it('migrates the legacy auto-copy key to the new send-action key on first read', async () => {
+    localStorage.setItem(LEGACY_AUTOCOPY_KEY, '1')
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.find('input[type="checkbox"]').setValue(true)
-    expect(localStorage.getItem(AUTO_COPY_KEY)).toBe('1')
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('copy_mention')
+    expect(localStorage.getItem(LEGACY_AUTOCOPY_KEY)).toBeNull()
+    expect(
+      (wrapper.find('input[type="radio"][value="copy_mention"]').element as HTMLInputElement).checked,
+    ).toBe(true)
+  })
+
+  it('persists the selection and restores it on remount', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('copy_mention')
 
     const wrapper2 = mountView()
     await flushPromises()
-    expect((wrapper2.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+    expect(
+      (wrapper2.find('input[type="radio"][value="copy_mention"]').element as HTMLInputElement).checked,
+    ).toBe(true)
+  })
+
+  it('disables the "Call AI" radio and hides the manual button when no provider exists', async () => {
+    withoutProviders()
+    const wrapper = mountView()
+    await flushPromises()
+    expect(
+      (wrapper.find('input[type="radio"][value="invoke_ai"]').element as HTMLInputElement).disabled,
+    ).toBe(true)
+    // Only the [Copy mention] button remains in the assist row.
+    expect(wrapper.findAll('.conv-assist-btn').length).toBe(1)
+  })
+
+  it('reverts a stale invoke_ai selection to none once the empty provider list resolves', async () => {
+    localStorage.setItem(SEND_ACTION_KEY, 'invoke_ai')
+    withoutProviders()
+    const wrapper = mountView()
+    await flushPromises()
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('none')
+    expect(
+      (wrapper.find('input[type="radio"][value="none"]').element as HTMLInputElement).checked,
+    ).toBe(true)
   })
 })
 
@@ -188,7 +278,7 @@ describe('ConversationView draft persistence', () => {
   })
 
   it('keeps the stored draft when send fails', async () => {
-    postRequest.mockRejectedValueOnce(new Error('boom'))
+    postRequest.mockReset().mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountView()
     await flushPromises()
     await wrapper.find('textarea').setValue('retry me')

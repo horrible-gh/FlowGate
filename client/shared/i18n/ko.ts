@@ -1291,6 +1291,13 @@ export default {
       auto_copy_hint: '체크해 두면 메시지를 보낼 때마다 멘트가 자동으로 복사됩니다.',
       invoke_ai: 'AI 호출',
       invoke_ai_hint: '같은 채팅 멘트를 인앱 AI 프로바이더로 바로 실행합니다. 복사 없이 답신을 받습니다.',
+      send_action_label: '전송 시',
+      send_action_copy: '멘트복사',
+      send_action_invoke: 'AI호출',
+      send_action_none: '아무것도 안함',
+      send_action_invoke_disabled_hint: '사용 가능한 AI 프로바이더가 없어 선택할 수 없습니다.',
+      invoke_ai_running: 'AI 호출 중…',
+      invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',
     },
     review_reject_dialog: {
       title: '반려 처리',
