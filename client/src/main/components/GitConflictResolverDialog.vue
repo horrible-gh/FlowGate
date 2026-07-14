@@ -164,7 +164,7 @@
               <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
             </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke')">
-              <AppIcon name="sparkle" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
+              <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
             </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}

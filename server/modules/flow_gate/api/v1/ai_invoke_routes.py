@@ -17,10 +17,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
+from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import workflow_decision_service
+from modules.flow_gate.workflow import prompt_copy_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
@@ -42,6 +45,30 @@ class AiInvokeStartRequest(BaseModel):
     continuation_review_mode: bool = False
     provider_id: Optional[str] = None
     merge_id: Optional[int] = None
+    # Parallel-invoke extras (group 0223): context the matching copy-mention flow
+    # assembled in the browser, so the invoke prompt can stay byte-identical.
+    selected_docs: Optional[list[str]] = None      # next_step_message reference docs
+    messages: Optional[list[str]] = None           # next_step_message user messages
+    reject_reason: Optional[str] = None            # rework: live (possibly unsaved) reason
+    design_types: Optional[list[str]] = None       # design_handoff selected types
+    design_mode: Optional[str] = None              # design_handoff "batch" | "single"
+    design_first_label: Optional[str] = None       # design_handoff single-mode type label
+
+
+# Wire scope → token scope. The extra invoke scopes reuse the edit/new token
+# grants (the inbox only honours new/edit/review/workflow_decide); what differs
+# is the MENTION each scope feeds the worker.
+_TOKEN_SCOPE = {
+    "new": "new",
+    "edit": "edit",
+    "workflow_decide": "workflow_decide",
+    "chat": "edit",
+    "rework": "edit",
+    "vr_correction": "edit",
+    "next_step_message": "new",
+    "design_handoff": "new",
+}
+_ALLOWED_SCOPES = (*_TOKEN_SCOPE.keys(), "review", "resolve_conflict")
 
 
 def _err(exc: HTTPException) -> JSONResponse:
@@ -72,8 +99,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     errors: list[dict] = []
     if body.mode not in ("single", "continuous"):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
-    if body.action_scope not in ("new", "edit", "workflow_decide", "resolve_conflict"):
-        errors.append({"loc": "action_scope", "msg": "must be new, edit, workflow_decide, or resolve_conflict"})
+    if body.action_scope not in _ALLOWED_SCOPES:
+        errors.append({"loc": "action_scope", "msg": f"must be one of {', '.join(_ALLOWED_SCOPES)}"})
+    if body.mode == "continuous" and body.action_scope not in ("new", "edit", "workflow_decide"):
+        errors.append({"loc": "mode", "msg": "continuous mode is not available for this action_scope"})
     if body.mode == "continuous" and body.continuation_target_seq is None:
         errors.append({"loc": "continuation_target_seq", "msg": "required for continuous mode"})
     if (
@@ -123,8 +152,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
 
     locale = request.headers.get("x-locale") or "ko"
     is_continuous = body.mode == "continuous"
+    token_scope = _TOKEN_SCOPE.get(body.action_scope, body.action_scope)
 
-    def _mention_builder(raw_token: str, scratch_dir: str):
+    def _standard_mention(raw_token: str, scratch_dir: str, ref_doc_ids=None):
         return _token_routes._build_mention_for_token(
             doc_ref=body.doc_ref,
             group_id=group_id,
@@ -132,14 +162,91 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             scratch_dir=scratch_dir,
             raw_token=raw_token,
             request=request,
-            ref_doc_ids=None,
-            action_scope=body.action_scope,
+            ref_doc_ids=ref_doc_ids,
+            action_scope=token_scope,
             locale=locale,
             continuous=is_continuous,
             merge_id=body.merge_id,
         )
 
+    def _mention_builder(raw_token: str, scratch_dir: str):
+        # Each extra scope reproduces the text its [멘트복사] counterpart put on the
+        # clipboard (group 0223 parallel-invoke; builders in invoke_mention_service).
+        if body.action_scope == "chat":
+            return invoke_mention_service.build_conversation_mention(
+                doc_id=body.doc_ref,
+                project=body.project,
+                module=body.module,
+                group_name=group_id,
+                raw_token=raw_token,
+                api_base_url=_token_routes._build_api_base(request),
+            )
+        if body.action_scope == "rework":
+            doc = db_docs.get_by_id(body.doc_ref) or {}
+            history = doc.get("rejection_history") or []
+            if isinstance(history, str):
+                try:
+                    import json as _json
+                    history = _json.loads(history) or []
+                except Exception:
+                    history = []
+            last = body.reject_reason or doc.get("rejection_reason")
+            section = invoke_mention_service.build_rejection_section(history, last)
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            return section + "\n" + base if section else base
+        if body.action_scope == "vr_correction":
+            try:
+                prompt = prompt_copy_service.build_prompt(
+                    doc_id=body.doc_ref, actor_user_id=user_id, locale=locale,
+                ).get("prompt_text") or ""
+            except Exception:
+                prompt = ""
+            # The copied VR prompt carries no token; the invoked worker still needs
+            # credentials, so the standard edit mention follows the copy text.
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            return (prompt + invoke_mention_service.SECTION_SEPARATOR + base) if prompt else base
+        if body.action_scope == "next_step_message":
+            base = _standard_mention(raw_token, scratch_dir, ref_doc_ids=body.selected_docs)
+            if not base:
+                return None
+            return invoke_mention_service.prepend_messages_section(
+                base, body.messages or [], locale,
+            )
+        if body.action_scope == "design_handoff":
+            context = invoke_mention_service.build_design_handoff_context(
+                types=body.design_types or [],
+                mode=body.design_mode or "batch",
+                doc_ref=body.doc_ref,
+                locale=locale,
+                first_label=body.design_first_label,
+            )
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            return context + invoke_mention_service.SECTION_SEPARATOR + base
+        return _standard_mention(raw_token, scratch_dir)
+
     issue_builder = None
+    if body.action_scope == "review":
+        def _issue_review():
+            issued = workflow_decision_service.request_review(
+                doc_id=body.doc_ref,
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                ref_doc_ids=None,
+                locale=locale,
+            )
+            return {
+                "raw_token": issued["token"],
+                "token_id": issued["token_id"],
+                "scratch_dir": issued["scratch_dir"],
+                "mention": issued.get("mention") or "",
+            }
+        issue_builder = _issue_review
     if body.action_scope == "workflow_decide":
         def _issue_workflow_decision():
             return workflow_decision_service.request_workflow_decision(
@@ -158,7 +265,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             module=body.module,
             group_id=group_id,
             doc_ref=body.doc_ref or "",
-            action_scope=body.action_scope,
+            action_scope=token_scope,
             mode=body.mode,
             continuation_target_seq=body.continuation_target_seq,
             continuation_review_mode=body.continuation_review_mode,

@@ -105,7 +105,7 @@ def post_answer(
         return _fail(403, "You do not have permission to perform this action")
 
     # ── Step 5: Validate dispatch_mode ───────────────────────────────────
-    valid_modes = {"command", "ment_copy", "none"}
+    valid_modes = {"command", "ment_copy", "ai", "none"}
     if body.dispatch_mode not in valid_modes:
         return _fail(400, f"dispatch_mode must be one of {', '.join(valid_modes)}")
 
@@ -187,7 +187,8 @@ def post_answer(
     expires_at: Optional[str] = None
     ment_text: Optional[str] = None
 
-    if body.dispatch_mode in ("command", "ment_copy"):
+    ai_run_id: Optional[str] = None
+    if body.dispatch_mode in ("command", "ment_copy", "ai"):
         try:
             token_result = qa_service.issue_followup_token(
                 q_doc=q_doc,
@@ -211,7 +212,7 @@ def post_answer(
                 scratch_dir=scratch_dir,
             )
         else:
-            # ment_copy: Build ment body (per M020)
+            # ment_copy / ai: Build ment body (per M020)
             base = str(request.base_url).rstrip("/")
             context = settings.CONTEXT.rstrip("/")
             api_base_url = f"{base}{context}/api/v1"
@@ -223,6 +224,42 @@ def post_answer(
                 api_base_url=api_base_url,
                 raw_token=raw_token,
             )
+
+        if body.dispatch_mode == "ai":
+            # In-app invoke (group 0223): feed the run the SAME ment_copy text a human
+            # would have pasted, through the already-issued follow-up token. On this
+            # branch the raw token stays server-side (P0005 표기 규칙).
+            from modules.flow_gate.services import ai_invoke_service
+            try:
+                ai_run = ai_invoke_service.start_run(
+                    project_id=project_id,
+                    module=None,
+                    group_id=q_doc["group_id"],
+                    doc_ref=q_id,
+                    action_scope="edit",
+                    mode="single",
+                    continuation_target_seq=None,
+                    continuation_review_mode=False,
+                    continuation_locale=None,
+                    issued_to=actor_user_id,
+                    api_base_url=api_base_url,
+                    mention_builder=lambda _raw, _scratch: ment_text,
+                    issue_builder=lambda: {
+                        "raw_token": raw_token,
+                        "token_id": token_id,
+                        "scratch_dir": scratch_dir,
+                        "mention": ment_text,
+                    },
+                )
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+                return JSONResponse(status_code=exc.status_code, content={
+                    "ok": False, "a_doc_id": a_doc_id, "stored_path": stored_path,
+                    "dispatch_mode": body.dispatch_mode, **detail,
+                })
+            ai_run_id = ai_run.get("run_id")
+            raw_token = None
+            ment_text = None
 
     # ── Step 9: Return response ────────────────────────────────────────────────────
     resp: dict = {
@@ -237,6 +274,8 @@ def post_answer(
     }
     if ment_text is not None:
         resp["ment_text"] = ment_text
+    if ai_run_id is not None:
+        resp["ai_run_id"] = ai_run_id
     return JSONResponse(content=resp)
 
 

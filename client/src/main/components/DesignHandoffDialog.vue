@@ -125,6 +125,15 @@
           >
             <AppIcon name="copy" /> {{ t('main.design_handoff_dialog.copy_mention') }}
           </button>
+          <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="orderedChecked.length === 0"
+            @click="onInvokeAi"
+          >
+            <AppIcon name="robot" /> {{ t('main.design_handoff_dialog.invoke_ai') }}
+          </button>
         </div>
 
       </div>
@@ -154,6 +163,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   'copy-mention': [payload: { types: DesignType[]; mode: string; copied: boolean }]
+  'invoke-ai': [payload: { types: DesignType[]; mode: string; firstLabel: string }]
 }>()
 
 const docTypeStore = useDocTypeStore()
@@ -224,6 +234,16 @@ async function onCopyMention() {
   const copied = await copyToClipboard(mentionText.value)
   if (!copied) openClipboardFallback(mentionText.value)
   emit('copy-mention', { types, mode: mode.value, copied })
+  emit('update:visible', false)
+}
+
+// Group 0223: hand the same type pick to the in-app invoke path. The server rebuilds
+// the identical handoff text (invoke_mention_service.build_design_handoff_context);
+// single mode needs the localized first-type label, which only the client knows.
+function onInvokeAi() {
+  const types = orderedChecked.value
+  if (types.length === 0) return
+  emit('invoke-ai', { types, mode: mode.value, firstLabel: docTypeStore.getLabel(types[0]) })
   emit('update:visible', false)
 }
 </script>

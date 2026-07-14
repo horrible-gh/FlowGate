@@ -27,6 +27,15 @@
         >
           <AppIcon name="copy" /> {{ t('main.answer_editor.copy_message') }}
         </div>
+        <!-- Group 0223: in-app invoke beside the copy mode (병행, not either/or). The server
+             runs the same M020 ment text through the configured provider (qa dispatch 'ai'). -->
+        <div
+          class="answer-editor__dispatch-opt"
+          :class="{ selected: dispatchMode === 'ai' }"
+          @click="dispatchMode = 'ai'"
+        >
+          <AppIcon name="robot" /> {{ t('main.answer_editor.invoke_ai') }}
+        </div>
         <div
           class="answer-editor__dispatch-opt"
           :class="{ selected: dispatchMode === 'none' }"
@@ -117,10 +126,11 @@ interface AnswerResult {
   expires_at: string | null
   dispatch_mode: string
   ment_text?: string | null
+  ai_run_id?: string | null
 }
 
 const answerBody = ref('')
-const dispatchMode = ref<'command' | 'ment_copy' | 'none'>('ment_copy')
+const dispatchMode = ref<'command' | 'ment_copy' | 'ai' | 'none'>('ment_copy')
 const selectedCommandId = ref('')
 const submitting = ref(false)
 const submitError = ref('')
@@ -186,6 +196,10 @@ async function submit() {
       }
     } else if (dispatchMode.value === 'command') {
       showToast(t('main.answer_editor.submitted_invoked', { docId: result.a_doc_id }), 'success')
+    } else if (dispatchMode.value === 'ai') {
+      // The run continues server-side; the group view refreshes via the
+      // ai_invoke_finished SSE broadcast when the provider posts its follow-up.
+      showToast(t('main.answer_editor.submitted_ai_invoked', { docId: result.a_doc_id }), 'success')
     } else {
       showToast(t('main.answer_editor.submitted', { docId: result.a_doc_id }), 'success')
     }

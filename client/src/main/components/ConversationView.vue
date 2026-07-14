@@ -53,6 +53,17 @@
           <AppIcon name="copy" />
           {{ t('main.conversation_view.copy_mention') }}
         </button>
+        <!-- Group 0223: same chat-only mention, but fed to an in-app provider run —
+             the copy button stays as the external-AI fallback (병행, not either/or). -->
+        <button
+          type="button"
+          class="conv-assist-btn"
+          :title="t('main.conversation_view.invoke_ai_hint')"
+          @click="emit('invoke-ai')"
+        >
+          <AppIcon name="robot" />
+          {{ t('main.conversation_view.invoke_ai') }}
+        </button>
       </div>
       <div class="conv-pill">
         <textarea
@@ -104,6 +115,9 @@ const emit = defineEmits<{
   // 0085: the optional payload carries { auto: true } when the copy was triggered
   // automatically by a send (vs. a manual button click), so the parent can stay quiet.
   'copy-mention': [opts?: { auto?: boolean }]
+  // Group 0223: run the chat turn through the in-app AI provider instead of the
+  // manual copy-paste loop. Explicit click only — never fired by a send.
+  'invoke-ai': []
 }>()
 
 const { t } = useI18n()
