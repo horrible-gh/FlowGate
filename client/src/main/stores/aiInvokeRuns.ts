@@ -21,6 +21,12 @@ export interface AiInvokeProviderSwitch {
   attemptNo: number | null
 }
 
+export interface AiInvokeRegisterError {
+  status: number
+  reason: string
+  turn: number | null
+}
+
 export interface AiInvokeRunEntry {
   runId: string
   groupId: string
@@ -44,6 +50,10 @@ export interface AiInvokeRunEntry {
   lastMessage: string | null
   sourceDirty: boolean | null
   sourceDirtyFiles: string[]
+  registerErrors: AiInvokeRegisterError[]
+  toolCallMisses: number
+  turnLimitExhausted: boolean
+  oracleMismatch: boolean
 }
 
 type InvokeSseDetail = {
@@ -92,6 +102,16 @@ function normalizeSwitch(payload: Record<string, any>): AiInvokeProviderSwitch {
   }
 }
 
+function normalizeRegisterErrors(payload: unknown): AiInvokeRegisterError[] {
+  return Array.isArray(payload)
+    ? payload.map(item => ({
+        status: Number(item?.status ?? 0),
+        reason: String(item?.reason ?? ''),
+        turn: item?.turn == null ? null : Number(item.turn),
+      }))
+    : []
+}
+
 function normalizeSwitches(payload: unknown): AiInvokeProviderSwitch[] {
   return Array.isArray(payload)
     ? payload.map(item => normalizeSwitch((item ?? {}) as Record<string, any>))
@@ -126,6 +146,10 @@ function startedEntry(
     lastMessage: null,
     sourceDirty: null,
     sourceDirtyFiles: [],
+    registerErrors: [],
+    toolCallMisses: 0,
+    turnLimitExhausted: false,
+    oracleMismatch: false,
   }
 }
 
@@ -207,6 +231,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       lastMessage: nullableString(payload.last_message),
       sourceDirty: payload.source_dirty == null ? null : Boolean(payload.source_dirty),
       sourceDirtyFiles: stringArray(payload.source_dirty_files),
+      registerErrors: normalizeRegisterErrors(payload.register_errors),
+      toolCallMisses: Number(payload.tool_call_misses ?? 0),
+      turnLimitExhausted: Boolean(payload.turn_limit_exhausted),
+      oracleMismatch: Boolean(payload.oracle_mismatch),
     }
   }
 
