@@ -1291,6 +1291,13 @@ export default {
       auto_copy_hint: 'When checked, the mention is copied automatically every time you send a message.',
       invoke_ai: 'Invoke AI',
       invoke_ai_hint: 'Run the same chat mention through the in-app AI provider — no copy-paste needed for a reply.',
+      send_action_label: 'On send',
+      send_action_copy: 'Copy mention',
+      send_action_invoke: 'Call AI',
+      send_action_none: 'Do nothing',
+      send_action_invoke_disabled_hint: 'No AI provider is available.',
+      invoke_ai_running: 'Calling AI…',
+      invoke_ai_failed: 'AI call failed: {detail}',
     },
     review_reject_dialog: {
       title: 'Reject Document',

@@ -579,6 +579,43 @@ def _truncate_front(text: Optional[str], max_bytes: int = LAST_MESSAGE_MAX_BYTES
     return encoded[-max_bytes:].decode("utf-8", errors="replace")
 
 
+def _resolve_agent_api_base(operator_api_base: str) -> str:
+    """Agent-reachable inbox base for the EXTERNAL AGENT (CLI) path (D0005 §3-4 /
+    L0008 §2-5).
+
+    ``operator_api_base`` is the operator-facing base the mention was built with
+    ({scheme}://{host}:{port}{CONTEXT}/api/v1). Priority:
+      1. FLOWGATE_AGENT_API_BASE setting (origin) + the operator base's path.
+      2. Same-host loopback: swap the host for 127.0.0.1, keep scheme/port/path.
+      3. Fall back to the operator base unchanged.
+    Server-direct (exec_type=api) runs never call this - they post to themselves.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    if not operator_api_base:
+        return operator_api_base
+    parts = urlsplit(operator_api_base)
+
+    setting = ""
+    try:
+        from config import settings as _settings
+        setting = (getattr(_settings, "FLOWGATE_AGENT_API_BASE", None) or "").strip()
+    except Exception:
+        setting = ""
+    if setting:
+        if "://" not in setting:
+            setting = "http://" + setting
+        s = urlsplit(setting)
+        if s.netloc:
+            return urlunsplit((s.scheme or parts.scheme, s.netloc, parts.path, "", ""))
+
+    host = parts.hostname
+    if not host:
+        return operator_api_base
+    netloc = "127.0.0.1" + (f":{parts.port}" if parts.port else "")
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+
 # ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
 
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
@@ -596,11 +633,20 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         cmd = f'{cmd} --output-last-message "{last_message_file}"'
 
     source_root = Path(run["source_root"]) if run.get("source_root") else scratch
+    # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
+    # must post results to an address it can actually reach. The mention was built
+    # with the operator-facing base; rewrite it (and export it) to an agent-reachable
+    # base (configured setting -> same-host loopback -> operator base).
+    operator_api_base = run.get("api_base_url") or ""
+    agent_api_base = _resolve_agent_api_base(operator_api_base)
+    if agent_api_base and operator_api_base and agent_api_base != operator_api_base:
+        prompt = prompt.replace(operator_api_base, agent_api_base)
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
         "FLOWGATE_TOKEN": run["raw_token"],
         "FLOWGATE_SCRATCH": run["scratch_dir"],
+        "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
     kwargs = process_runner.popen_kwargs(source_root, env)
     kwargs["stdin"] = subprocess.PIPE

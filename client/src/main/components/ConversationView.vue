@@ -27,43 +27,66 @@
       </template>
     </div>
 
-    <!-- TR0044.0010 rev5: a clean, modern chat composer. The manual-delivery helper
-         ([Copy mention]) sits on its own subtle row above, so it no longer competes with the
-         primary input. The message bar itself is a single rounded "pill" holding the
-         textarea and a circular send button — input / copy-mention / send are visually
-         distinct layers instead of three controls jammed into one strip. -->
+    <!-- Group 0235 (D0005 / P0007 / L0008): the composer's helper row now separates
+         TWO independent features: (1) a "send-time action" radio — what happens
+         automatically on a successful send (copy mention / call AI / nothing) — and
+         (2) the manual [Copy mention] / [Call AI] buttons. Chat AI calls run
+         immediately with the header-selected provider (no settings dialog); the
+         button becomes a spinner while a run is in flight. -->
     <form class="conv-composer" @submit.prevent="send">
       <div class="conv-assist">
-        <!-- 0085: when "auto-copy" is checked, every successful send also copies the
-             mention so the user no longer has to click "Copy mention" each turn. The
-             checkbox sits to the LEFT of the copy button (per R0001). -->
-        <label class="conv-auto" :title="t('main.conversation_view.auto_copy_hint')">
-          <input type="checkbox" v-model="autoCopy" />
-          {{ t('main.conversation_view.auto_copy') }}
-        </label>
-        <!-- Real-time chat isn't wired yet, so the AI's turn is delivered by hand —
-             copy a chat-only mention and paste it to the AI worker, which reads this
-             conversation and posts its reply. -->
-        <button
-          type="button"
-          class="conv-assist-btn"
-          :title="t('main.conversation_view.copy_mention_hint')"
-          @click="emit('copy-mention')"
+        <!-- Send-time action (D0005 §3-2). Replaces the old "auto-copy" checkbox.
+             "Call AI" is disabled when no provider is available (single source of
+             truth: aiProvider store). -->
+        <div
+          class="conv-sendaction"
+          role="radiogroup"
+          :aria-label="t('main.conversation_view.send_action_label')"
         >
-          <AppIcon name="copy" />
-          {{ t('main.conversation_view.copy_mention') }}
-        </button>
-        <!-- Group 0223: same chat-only mention, but fed to an in-app provider run —
-             the copy button stays as the external-AI fallback (병행, not either/or). -->
-        <button
-          type="button"
-          class="conv-assist-btn"
-          :title="t('main.conversation_view.invoke_ai_hint')"
-          @click="emit('invoke-ai')"
-        >
-          <AppIcon name="robot" />
-          {{ t('main.conversation_view.invoke_ai') }}
-        </button>
+          <span class="conv-sendaction-label">{{ t('main.conversation_view.send_action_label') }}</span>
+          <label class="conv-radio">
+            <input type="radio" value="copy_mention" v-model="sendAction" />
+            {{ t('main.conversation_view.send_action_copy') }}
+          </label>
+          <label
+            class="conv-radio"
+            :class="{ 'is-disabled': !invokeSelectable }"
+            :title="!invokeSelectable ? t('main.conversation_view.send_action_invoke_disabled_hint') : ''"
+          >
+            <input type="radio" value="invoke_ai" v-model="sendAction" :disabled="!invokeSelectable" />
+            {{ t('main.conversation_view.send_action_invoke') }}
+          </label>
+          <label class="conv-radio">
+            <input type="radio" value="none" v-model="sendAction" />
+            {{ t('main.conversation_view.send_action_none') }}
+          </label>
+        </div>
+        <div class="conv-assist-btns">
+          <!-- Manual delivery fallback — copy a chat-only mention and paste it to the
+               AI worker. Always available (D0005 §3-3: [Copy mention] never hidden). -->
+          <button
+            type="button"
+            class="conv-assist-btn"
+            :title="t('main.conversation_view.copy_mention_hint')"
+            @click="emit('copy-mention')"
+          >
+            <AppIcon name="copy" />
+            {{ t('main.conversation_view.copy_mention') }}
+          </button>
+          <!-- Manual immediate AI call. Hidden (not disabled) when no provider exists
+               (D0005 §3-3); spinner while a run is in flight (중복 실행 방지). -->
+          <button
+            v-if="hasProviders"
+            type="button"
+            class="conv-assist-btn"
+            :disabled="invoking"
+            :title="invoking ? t('main.conversation_view.invoke_ai_running') : t('main.conversation_view.invoke_ai_hint')"
+            @click="invokeAi('manual')"
+          >
+            <AppIcon :name="invoking ? 'spinner' : 'robot'" :spin="invoking" />
+            {{ invoking ? t('main.conversation_view.invoke_ai_running') : t('main.conversation_view.invoke_ai') }}
+          </button>
+        </div>
       </div>
       <div class="conv-pill">
         <textarea
@@ -92,10 +115,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import { useAiProviderStore } from '../stores/aiProvider'
 import AppIcon from '@shared/AppIcon.vue'
 
 interface ConvTurn {
@@ -116,12 +140,14 @@ const emit = defineEmits<{
   // automatically by a send (vs. a manual button click), so the parent can stay quiet.
   'copy-mention': [opts?: { auto?: boolean }]
   // Group 0223: run the chat turn through the in-app AI provider instead of the
-  // manual copy-paste loop. Explicit click only — never fired by a send.
+  // manual copy-paste loop. Kept for backward-compat; group 0235 moved the actual
+  // immediate run in-component (invokeAi), so this is no longer fired for CH.
   'invoke-ai': []
 }>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const providerStore = useAiProviderStore()
 
 interface AccessTokenPayload {
   username?: string
@@ -164,24 +190,59 @@ function persistDraft(docId: string, value: string): void {
   }
 }
 
-// 0085: "auto-copy mention" toggle. When on, a successful send() also fires the same
-// copy-mention event the manual button does. Persisted as a single global user
-// preference in localStorage (matches the existing UI-toggle persistence pattern), so
-// "check once and it stays on" survives reloads and applies to every chat.
-const AUTO_COPY_KEY = 'flowgate.chat.autoCopyMention'
-function loadAutoCopy(): boolean {
+// ── Send-time action (D0005 §3-2, P0007 §0-1, L0008 §2-1) ────────────────────
+// One global user preference: what to do automatically on a successful send.
+// Stored under a new key; the old boolean "auto-copy" key is migrated once on read
+// ('1' → copy_mention, else → none) then removed so it never re-migrates.
+const SEND_ACTION_KEY = 'flowgate.chat.sendAction'
+const LEGACY_AUTOCOPY_KEY = 'flowgate.chat.autoCopyMention'
+const SEND_ACTIONS = ['copy_mention', 'invoke_ai', 'none'] as const
+type SendAction = (typeof SEND_ACTIONS)[number]
+
+function readSendAction(): SendAction {
   try {
-    return localStorage.getItem(AUTO_COPY_KEY) === '1'
+    const v = localStorage.getItem(SEND_ACTION_KEY)
+    if (v && (SEND_ACTIONS as readonly string[]).includes(v)) return v as SendAction
+    if (v !== null) return 'none' // present but out of domain
+    const legacy = localStorage.getItem(LEGACY_AUTOCOPY_KEY)
+    if (legacy === null) return 'none' // new user
+    const migrated: SendAction = legacy === '1' ? 'copy_mention' : 'none'
+    localStorage.setItem(SEND_ACTION_KEY, migrated)
+    localStorage.removeItem(LEGACY_AUTOCOPY_KEY)
+    return migrated
   } catch {
-    return false
+    return 'none'
   }
 }
-const autoCopy = ref(loadAutoCopy())
-watch(autoCopy, (v) => {
+
+const sendAction = ref<SendAction>(readSendAction())
+watch(sendAction, (v) => {
   try {
-    localStorage.setItem(AUTO_COPY_KEY, v ? '1' : '0')
+    localStorage.setItem(SEND_ACTION_KEY, v)
   } catch {
     /* ignore — best-effort persistence */
+  }
+})
+
+// ── Provider availability (D0005 §3-3, L0008 §2-4) — single source of truth ──
+function pid(): string {
+  return props.projectId ?? ''
+}
+const providersResolving = computed(
+  () => providerStore.loading || providerStore.loadedProjectId !== pid(),
+)
+const hasProviders = computed(
+  () => providerStore.loadedProjectId === pid() && providerStore.providers.length > 0,
+)
+// "Call AI" (radio + manual button) is selectable only when a provider exists.
+const invokeSelectable = computed(() => hasProviders.value)
+
+// Fallback (L0008 §4-3): once the provider list has resolved to EMPTY, a stale
+// "invoke_ai" selection reverts to "none". Never fires while still resolving, so a
+// transient empty list during load can't wipe a valid selection.
+watch([providersResolving, hasProviders], () => {
+  if (!providersResolving.value && !hasProviders.value && sendAction.value === 'invoke_ai') {
+    sendAction.value = 'none'
   }
 })
 
@@ -189,8 +250,10 @@ const turns = ref<ConvTurn[]>([])
 const draft = ref(loadDraft(props.docId))
 const loading = ref(false)
 const sending = ref(false)
+const invoking = ref(false)
 const scrollEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
+let disposed = false
 
 // ── Wire-format parser — the render side of L0044.0008 §6. Mirrors the server's
 // conversation.parse_conversation: lines matching the turn header are boundaries,
@@ -339,6 +402,87 @@ async function load(): Promise<void> {
   }
 }
 
+// ── Chat immediate AI call (D0005 §3-1, L0008 §2-3 / §3) ─────────────────────
+// Runs the header-selected provider directly (no settings dialog). Owns the spinner
+// state and prevents duplicate runs; the server also enforces one run per group
+// (409 run_in_progress), which we adopt rather than restart.
+async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
+  if (invoking.value) return // 중복 실행 방지 (client guard)
+  if (!hasProviders.value) {
+    if (trigger === 'manual') {
+      showToast(t('main.conversation_view.send_action_invoke_disabled_hint'), 'warning')
+    }
+    return
+  }
+  const parts = props.docId.split('.')
+  if (parts.length < 4) {
+    showToast(t('main.conversation_view.invoke_ai_failed', { detail: props.docId }), 'danger')
+    return
+  }
+  const project = props.projectId ?? parts[0]
+  const moduleCode = parts[1]
+  const groupCode = parts[2]
+  invoking.value = true
+  try {
+    const res = await postRequest<{ ok: boolean; run_id?: string }>('/api/v1/ai-invoke/start', {
+      project,
+      module: moduleCode,
+      group: groupCode,
+      doc_ref: props.docId,
+      action_scope: 'chat',
+      mode: 'single',
+      provider_id: providerStore.selectedProviderId || undefined,
+    })
+    const runId = (res.data as any)?.run_id
+    if (runId) void pollRun(runId)
+    else invoking.value = false
+  } catch (e: any) {
+    const data = e?.response?.data
+    // 409 run_in_progress: a run already exists for this group — adopt it and keep
+    // the spinner rather than surfacing an error or restarting (L0008 §5).
+    if (data?.code === 'run_in_progress' && data?.run_id) {
+      void pollRun(data.run_id)
+      return
+    }
+    invoking.value = false
+    const detail = describeErrorDetail(data?.detail ?? data ?? e)
+    showToast(t('main.conversation_view.invoke_ai_failed', { detail }), 'danger')
+  }
+}
+
+async function pollRun(runId: string): Promise<void> {
+  invoking.value = true
+  // Live SSE already reloads the conversation when the AI turn lands; polling here
+  // only drives the spinner's release and the "registered nothing" failure notice.
+  for (let i = 0; i < 480 && !disposed; i++) {
+    await new Promise((r) => setTimeout(r, 2500))
+    if (disposed) return
+    try {
+      const res = await getRequest<{ status?: string; docs_reached?: number }>(
+        `/api/v1/ai-invoke/${encodeURIComponent(runId)}`,
+      )
+      const data = res.data as any
+      if (data?.status === 'finished') {
+        invoking.value = false
+        void load()
+        if ((data?.docs_reached ?? 0) === 0) {
+          showToast(
+            t('main.conversation_view.invoke_ai_failed', { detail: t('main.conversation_view.speaker_ai') }),
+            'danger',
+          )
+        }
+        return
+      }
+    } catch {
+      // 404 (server restart / run evicted) — stop spinning, the conversation still
+      // reloads on any turn via SSE.
+      invoking.value = false
+      return
+    }
+  }
+  invoking.value = false
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   if (!text || sending.value) return
@@ -361,10 +505,14 @@ async function send(): Promise<void> {
         'info',
       )
     }
-    // 0085: auto-copy the mention only AFTER the turn was accepted (turns refreshed
-    // above), so the worker reads the latest conversation. Reuses the exact same
-    // copy-mention path as the manual button; never fires on a failed send (catch below).
-    if (autoCopy.value) emit('copy-mention', { auto: true })
+    // D0005 §3-2: dispatch the send-time action only AFTER the turn was accepted
+    // (turns refreshed above). Never fires on a failed send (catch below).
+    const action = sendAction.value
+    if (action === 'copy_mention') {
+      emit('copy-mention', { auto: true })
+    } else if (action === 'invoke_ai') {
+      void invokeAi('auto')
+    }
     void nextTick(() => inputEl.value?.focus())
   } catch (e: any) {
     const detail = describeErrorDetail(e?.response?.data?.detail ?? e?.response?.data ?? e)
@@ -390,13 +538,19 @@ watch(() => props.docId, (docId) => {
   void load()
 })
 
+watch(() => props.projectId, (projectId) => {
+  if (projectId) void providerStore.ensureLoaded(projectId)
+})
+
 onMounted(() => {
   void load()
   void nextTick(autoGrow)
+  if (props.projectId) void providerStore.ensureLoaded(props.projectId)
   window.addEventListener('fg:document_content_changed', onContentChanged)
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   window.removeEventListener('fg:document_content_changed', onContentChanged)
 })
 
@@ -499,8 +653,9 @@ defineExpose({ load })
   word-break: break-word;
 }
 
-/* Modern chat composer (rev5): a subtle helper row (Copy mention) above a single rounded
-   message pill that holds the textarea + a circular send button. */
+/* Modern chat composer (rev5): a subtle helper row above a single rounded message
+   pill that holds the textarea + a circular send button. Group 0235: the helper row
+   splits into a send-time action radio group (left) and the manual buttons (right). */
 .conv-composer {
   display: flex;
   flex-direction: column;
@@ -510,28 +665,54 @@ defineExpose({ load })
   background: var(--bg-card, #fff);
 }
 
-/* Helper row — manual delivery shortcut, kept quiet so it doesn't compete with the input.
-   0085: holds the auto-copy checkbox immediately to the LEFT of the copy button. */
 .conv-assist {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
-.conv-auto {
+/* Send-time action radio group (D0005 §3-2). */
+.conv-sendaction {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 10px;
   font-size: .7rem;
   color: var(--text-m);
+}
+
+.conv-sendaction-label {
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.conv-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   cursor: pointer;
   user-select: none;
 }
 
-.conv-auto input {
+.conv-radio input {
   cursor: pointer;
   margin: 0;
+}
+
+.conv-radio.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.conv-radio.is-disabled input {
+  cursor: not-allowed;
+}
+
+.conv-assist-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .conv-assist-btn {
@@ -549,9 +730,14 @@ defineExpose({ load })
   transition: background .12s, color .12s;
 }
 
-.conv-assist-btn:hover {
+.conv-assist-btn:hover:not(:disabled) {
   background: var(--bg, #f1f5f9);
   color: var(--primary);
+}
+
+.conv-assist-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* The message pill: textarea + send, framed as one rounded control. */

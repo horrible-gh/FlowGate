@@ -1291,6 +1291,13 @@ export default {
       auto_copy_hint: 'チェックしておくと、メッセージを送るたびにメントが自動的にコピーされます。',
       invoke_ai: 'AI呼び出し',
       invoke_ai_hint: '同じチャットメントをアプリ内AIプロバイダーで直接実行します。コピーせずに返信を受け取れます。',
+      send_action_label: '送信時',
+      send_action_copy: 'メントコピー',
+      send_action_invoke: 'AI呼び出し',
+      send_action_none: '何もしない',
+      send_action_invoke_disabled_hint: '利用可能なAIプロバイダーがありません。',
+      invoke_ai_running: 'AI呼び出し中…',
+      invoke_ai_failed: 'AI呼び出しに失敗しました: {detail}',
     },
     review_reject_dialog: {
       title: '差し戻し処理',
