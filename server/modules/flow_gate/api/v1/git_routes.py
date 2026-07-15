@@ -85,6 +85,11 @@ class GitConfigPut(BaseModel):
     # LibreTranslate base URL for commit-subject translation (0173 P0003 §4-1).
     # Omitted = keep stored; "" = clear (disable). exclude_unset preserves "omitted".
     translate_url: str | None = None
+    # Author of server-made commits (0237 R0001). Same omitted=keep / ""=clear
+    # protocol; cleared → commits fall back to the default FlowGate identity.
+    # Validated as a pair by the service (both set, or both cleared).
+    author_name: str | None = None
+    author_email: str | None = None
 
 
 @router.put("/projects/{project_id}/git/config")

@@ -129,7 +129,47 @@ DISCARDED_STATUS = "discarded"
 
 # Identity for commits the SERVER makes (auto-commit / merge commits). Without
 # an explicit identity `git commit` fails on hosts with no global user config.
+# This is the COMMITTER (and the author fallback) — it stays "FlowGate" because the
+# server really is what ran the commit.
 _GIT_IDENT = ["-c", "user.name=FlowGate", "-c", "user.email=flowgate@localhost"]
+# ── Configurable author (flowgate.default.0237 — R0001/NR0003) ────────────────
+# A project may override the AUTHOR of server-made commits so work does not land
+# under the FlowGate name (R0001). Only the author moves; the committer above stays
+# FlowGate, which is the GitHub-App convention and keeps the history honest —
+# contribution graphs key off the author, so this is what R0001 actually needs.
+# The override travels in GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL rather than `-c user.*`
+# (which would move the committer too) or `--author` (which `git merge` rejects —
+# NR0003 §4). Both fields are stored together or not at all; an empty ident makes
+# `git commit` fail with "Author identity unknown", so "" is normalized to NULL.
+GIT_AUTHOR_NAME_MAX = 100
+GIT_AUTHOR_EMAIL_MAX = 200
+
+
+def _author_env_for(project_id: Optional[str]) -> Optional[dict]:
+    """GIT_AUTHOR_* env for a project's configured author, or None to use the default.
+
+    Best-effort: a missing/partial config or an unreadable row simply falls back to
+    the FlowGate identity — an author override must never break a commit.
+    """
+    if not project_id:
+        return None
+    try:
+        cfg = db_git.get_config(project_id)
+    except Exception:
+        _log.warning("git author lookup failed for %s", project_id, exc_info=True)
+        return None
+    return _author_env_from_cfg(cfg)
+
+
+def _author_env_from_cfg(cfg: Optional[dict]) -> Optional[dict]:
+    """Same as _author_env_for but for an already-loaded config row."""
+    if not cfg:
+        return None
+    name = (cfg.get("author_name") or "").strip()
+    email = (cfg.get("author_email") or "").strip()
+    if not name or not email:   # partial rows are impossible via save_config (E-author)
+        return None             # but a hand-edited DB must still commit, not crash
+    return {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
 
 
 class GitServiceError(Exception):
@@ -480,12 +520,24 @@ def _run_git(
     timeout: int = GIT_LOCAL_TIMEOUT_SEC,
     username: Optional[str] = None,
     secret: Optional[str] = None,
+    author_env: Optional[dict] = None,
 ) -> subprocess.CompletedProcess:
-    """Run git with prompt-free auth injection and secret-scrubbed output."""
+    """Run git with prompt-free auth injection and secret-scrubbed output.
+
+    ``author_env`` carries GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL for a project-configured
+    commit author (0237); None keeps git's own default, which the `-c user.*` ident
+    on commit/merge argv resolves to the FlowGate identity.
+    """
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env.pop("GIT_ASKPASS", None)
     env.pop("SSH_ASKPASS", None)
+    # Never inherit an operator's ambient author from the server process env: the
+    # author is either the project's configured one or the FlowGate default.
+    env.pop("GIT_AUTHOR_NAME", None)
+    env.pop("GIT_AUTHOR_EMAIL", None)
+    if author_env:
+        env.update(author_env)
     askpass_dir: Optional[Path] = None
     if secret is not None:
         launcher, askpass_dir = _write_askpass()
@@ -672,6 +724,60 @@ def _validate_repo_url(repo_url: str) -> None:
         )
 
 
+def _resolve_author(
+    body: dict, existing: Optional[dict]
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve the commit-author override to store (0237 — R0001/NR0003 §5.3).
+
+    Same exclude_unset protocol as secret/translate_url: field omitted → keep the
+    stored value; sent → trim, "" → NULL (= revert to the FlowGate default).
+
+    Validated as a PAIR: a half-set identity would splice a configured name onto the
+    default email (or vice versa), and an empty ident makes every commit for the
+    project fail with "Author identity unknown" — so a bad value is rejected at the
+    door (422) rather than at finalize time, where it would strand the workflow.
+    """
+    def _field(key: str) -> Optional[str]:
+        if key in body:
+            return (body.get(key) or "").strip() or None
+        return (existing.get(key) or None) if existing else None
+
+    name = _field("author_name")
+    email = _field("author_email")
+
+    if (name is None) != (email is None):
+        raise GitServiceError(
+            422, "invalid_request",
+            "author_name and author_email must be set together (send both, or "
+            "clear both with \"\" to commit as the default FlowGate identity)",
+        )
+    if name is None:
+        return None, None
+    if len(name) > GIT_AUTHOR_NAME_MAX:
+        raise GitServiceError(
+            422, "invalid_request",
+            f"author_name must be at most {GIT_AUTHOR_NAME_MAX} characters",
+        )
+    if len(email) > GIT_AUTHOR_EMAIL_MAX:
+        raise GitServiceError(
+            422, "invalid_request",
+            f"author_email must be at most {GIT_AUTHOR_EMAIL_MAX} characters",
+        )
+    # git strips "<", ">" and newlines out of an ident itself (so this can never be
+    # an argv/config injection — NR0003 §4); reject them anyway so the operator gets
+    # the identity they typed instead of a silently mangled one.
+    if any(ch in name for ch in "<>\n\r"):
+        raise GitServiceError(
+            422, "invalid_request", "author_name must not contain '<', '>' or newlines",
+        )
+    if any(ch in email for ch in "<>\n\r ") or "@" not in email:
+        raise GitServiceError(
+            422, "invalid_request",
+            f"author_email must be an email address without spaces: {email!r}",
+        )
+    return name, email
+
+
 def _config_view(row: dict) -> dict:
     """Row → response config object (P0005 §1-1) with the secret masked."""
     has_secret = bool(row.get("secret_enc"))
@@ -692,6 +798,9 @@ def _config_view(row: dict) -> dict:
         "default_finalize_action": row.get("default_finalize_action") or "wait",
         "enabled": bool(row.get("enabled")),
         "translate_url": row.get("translate_url") or None,
+        # null = not overridden → server commits as the FlowGate default (0237).
+        "author_name": row.get("author_name") or None,
+        "author_email": row.get("author_email") or None,
         "updated_at": row.get("updated_at"),
     }
 
@@ -733,6 +842,8 @@ def save_config(project_id: str, body: dict) -> dict:
     else:
         translate_url = existing.get("translate_url") if existing else None
 
+    author_name, author_email = _resolve_author(body, existing)
+
     row = db_git.upsert_config(project_id, {
         "repo_url": (body.get("repo_url") or "").strip(),
         "provider": provider,
@@ -742,6 +853,8 @@ def save_config(project_id: str, body: dict) -> dict:
         "default_finalize_action": action,
         "enabled": bool(body.get("enabled")),
         "translate_url": translate_url,
+        "author_name": author_name,
+        "author_email": author_email,
     })
     return {"ok": True, "configured": True, "config": _config_view(row)}
 
@@ -1028,7 +1141,10 @@ def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict
         if proc.returncode != 0:
             return _provision_failed(proc)
         msg = ADOPT_SNAPSHOT_MSG.format(base_branch=base_branch, project_id=project_id)
-        proc = _run_git([*_GIT_IDENT, "commit", "-m", msg], cwd=base_root)
+        proc = _run_git(
+            [*_GIT_IDENT, "commit", "-m", msg], cwd=base_root,
+            author_env=_author_env_for(project_id),
+        )
         if proc.returncode != 0:
             return _provision_failed(proc)
         head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
@@ -2070,6 +2186,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         username = cfg.get("username")
         secret = _load_secret_for(cfg) or ""
+        author_env = _author_env_from_cfg(cfg)   # 0237 — configured commit author
         resolved_subject: Optional[str] = None
 
         def finalize_subject() -> str:
@@ -2092,7 +2209,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             if proc.returncode == 0:
                 proc = _run_git(
                     [*_GIT_IDENT, "commit", "-m", absorb_subject],
-                    cwd=wt_path,
+                    cwd=wt_path, author_env=author_env,
                 )
             if proc.returncode != 0:
                 raise GitServiceError(500, "git_error", _last_line(proc.stderr))
@@ -2172,7 +2289,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         proc = _run_git(
             [*_GIT_IDENT, "merge", "--no-ff", "-m",
              _merge_commit_subject(branch, base_branch), branch],
-            cwd=base_root,
+            cwd=base_root, author_env=author_env,
         )
         if proc.returncode == 0:
             wants_push = action == "merge"
@@ -2368,7 +2485,7 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
               or worktree_branch_name(project_id, _module_of(group_id), group_id))
     proc = _run_git(
         [*_GIT_IDENT, "commit", "-m", _merge_commit_subject(branch, base_branch)],
-        cwd=base_root,
+        cwd=base_root, author_env=_author_env_from_cfg(cfg),
     )
     if proc.returncode != 0:
         raise GitServiceError(500, "git_error", _last_line(proc.stderr))
@@ -3363,7 +3480,10 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
         # build artifacts — the exact E3/_dirty_files scope.
         proc = _run_git(["add", "-u"], cwd=base_root)
         if proc.returncode == 0:
-            proc = _run_git([*_GIT_IDENT, "commit", "-m", subject], cwd=base_root)
+            proc = _run_git(
+                [*_GIT_IDENT, "commit", "-m", subject], cwd=base_root,
+                author_env=_author_env_for(project_id),
+            )
         if proc.returncode != 0:
             # The checkout stays dirty (staged-but-uncommitted is still porcelain
             # output), so the E3 guard keeps holding and a retry re-stages.
