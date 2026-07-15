@@ -12,8 +12,7 @@ from fastapi.responses import JSONResponse
 
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
-
-_HELP_URL = "https://example.com/api/v1/help"
+from modules.flow_gate.utils.help_url import help_url
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -23,7 +22,7 @@ def _fail(status: int, message: str) -> JSONResponse:
             "ok": False,
             "http_status": status,
             "error_message": message,
-            "help_url": _HELP_URL,
+            "help_url": help_url(),
         },
     )
 

@@ -22,10 +22,10 @@ from pydantic import BaseModel
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["Modules"])
 
-_HELP_URL = "https://example.com/flowgate/api/help"
 _MODULE_NAME_RE = re.compile(r'^[a-z0-9_\-]+$')
 
 
@@ -43,7 +43,7 @@ def _fail(status: int, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         content={"ok": False, "http_status": status,
-                 "error_message": message, "help_url": _HELP_URL},
+                 "error_message": message, "help_url": help_url()},
     )
 
 

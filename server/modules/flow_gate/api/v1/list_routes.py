@@ -18,17 +18,16 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.utils.help_url import help_url
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundList"])
-
-_HELP_URL = "https://example.com/api/v1/help"
 
 
 def _fail(status: int, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         content={"ok": False, "http_status": status,
-                 "error_message": message, "help_url": _HELP_URL},
+                 "error_message": message, "help_url": help_url()},
     )
 
 
