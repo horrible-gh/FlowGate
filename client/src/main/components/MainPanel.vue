@@ -162,7 +162,6 @@
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
                 @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
-                @invoke-ai="onConversationInvokeAi(tab.id)"
               />
             </div>
           </div>
@@ -1068,7 +1067,7 @@ import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
 import MentionMessageDialog from './MentionMessageDialog.vue'
 import { buildCandidateList, type MessageEntry } from '../utils/mentionMessages'
-import { copyToClipboard, copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
+import { copyToClipboard, copyToClipboardDeferred, ClipboardAbort, consumeLastFailedCopyText } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
 import type { IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
@@ -3158,26 +3157,23 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     // doesn't spam a success toast each turn; the manual button still confirms with one.
     if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
     void recordMentionCopy(tabId, 'edit')
+  } else if (opts?.auto) {
+    // B0001 / group 0221 made auto-copy failures surface via notifyCopyFailure(), but that
+    // opens the full-screen manual-copy modal — and the auto copy runs AFTER the send's
+    // network round-trips, so on this HTTP origin (execCommand-only, activation long spent)
+    // it fails on virtually EVERY send. Result: a screen-covering dialog on each chat message
+    // (group 0235 regression report). The failure still surfaces, but as a toast; the modal
+    // stays reserved for the manual button, where a fresh click makes recovery meaningful.
+    // Discard the recorded failed text so a later unrelated failure with no text of its own
+    // can't resurface this turn's mention in the fallback modal.
+    consumeLastFailedCopyText()
+    showToast(t('main.conversation_view.auto_copy_failed'), 'warning')
   } else {
-    // B0001 / group 0221: an auto-copy failure used to be completely silent — the clipboard
+    // B0001 / group 0221: a manual-copy failure must not be silent — the clipboard
     // kept the PREVIOUS turn's mention and the user pasted it believing it was fresh ("AI
-    // processed my previous message"). Failures must surface even on the auto path.
+    // processed my previous message").
     notifyCopyFailure()
   }
-}
-
-// Group 0223: in-app counterpart of onConversationCopyMention. The server rebuilds the
-// same compact chat-only mention (invoke_mention_service.build_conversation_mention) and
-// feeds it to the provider run, so no copy-paste loop is needed to keep the chat going.
-function onConversationInvokeAi(tabId: string) {
-  const h = docHeaderRefs[tabId]
-  const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
-  const groupId = exposedValue<string>(h?.groupId) ?? ''
-  if (!project || !groupId) {
-    showToast(t('main.main_panel.error_info_unavailable'), 'danger')
-    return
-  }
-  openAiInvokeDialog(project, groupId, tabId, 'chat')
 }
 
 // Honest clipboard write of a ready string (B0001 / group 0133). Returns whether the

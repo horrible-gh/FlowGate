@@ -1297,6 +1297,7 @@ export default {
       invoke_ai_running: 'AI 호출 중…',
       invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',
       invoke_ai_no_docs: 'AI 응답이 문서로 등록되지 않았습니다.',
+      auto_copy_failed: '전송 후 자동 멘트 복사에 실패했습니다. [멘트 복사] 버튼으로 다시 복사하세요.',
     },
     review_reject_dialog: {
       title: '반려 처리',

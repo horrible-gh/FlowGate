@@ -1297,6 +1297,7 @@ export default {
       invoke_ai_running: 'AI呼び出し中…',
       invoke_ai_failed: 'AI呼び出しに失敗しました: {detail}',
       invoke_ai_no_docs: 'AIの応答がドキュメントに登録されませんでした。',
+      auto_copy_failed: '送信後の自動メントコピーに失敗しました。[メント コピー] ボタンでコピーしてください。',
     },
     review_reject_dialog: {
       title: '差し戻し処理',
