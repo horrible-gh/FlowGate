@@ -1300,6 +1300,7 @@ export default {
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',
       invoke_ai_no_docs: 'The AI reply was not registered to any document.',
+      auto_copy_failed: 'Auto-copying the mention after send failed. Use the [Copy Mention] button to copy it.',
     },
     review_reject_dialog: {
       title: 'Reject Document',
