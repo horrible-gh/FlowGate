@@ -4087,15 +4087,22 @@ watch(textWrapEnabled, (enabled) => {
 
 .document-editor {
   padding: 0;
-  /* The comfortable editor height (was on the textarea as `min-height: 62vh`)
-     lives on the body so the body itself defines the single scroll track. */
-  min-height: 62vh;
+  /* The comfortable editor height comes from `.document-modal`'s own height, not
+     from a minimum here. A vh minimum is a flex *shrink floor* decoupled from the
+     px-capped box track, so past ~1187px viewport height it pushes `.modal-ft`
+     out of `.modal-box { overflow: hidden }` and the save button is unreachable. */
+  min-height: 0;
   display: flex;
   /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
-     the inner textarea is the *sole* scroll container. With the height pinned
-     on the textarea (62vh) AND this body scrollable, both scrolled at once →
+     the inner textarea is the *sole* scroll container. With a height pinned on
+     the textarea AND this body scrollable, both scrolled at once →
      the reported double scrollbar. Clipping here leaves only the textarea. */
   overflow: hidden;
+}
+
+.document-modal--edit .modal-ft {
+  /* Chrome, not part of the scroll track: never let the body squeeze it out. */
+  flex-shrink: 0;
 }
 
 .document-editor__textarea {
