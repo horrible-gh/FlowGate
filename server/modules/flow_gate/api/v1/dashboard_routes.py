@@ -16,11 +16,11 @@ from modules.flow_gate.services.dashboard_service import (
     get_dashboard_summary,
     get_notification_feed,
 )
+from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import validate_project_id
 
 router = APIRouter(prefix="/api/v1", tags=["Dashboard"])
 
-_HELP_URL = "https://example.com/api/v1/help"
 _NO_STORE = {"Cache-Control": "no-store"}
 _log = logging.getLogger(__name__)
 _optional_bearer = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -34,7 +34,7 @@ def _fail(status: int, message: str) -> JSONResponse:
             "ok": False,
             "http_status": status,
             "error_message": message,
-            "help_url": _HELP_URL,
+            "help_url": help_url(),
         },
     )
 

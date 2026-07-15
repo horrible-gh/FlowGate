@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.utils.help_url import help_url, outbound_api_base
 
 router = APIRouter(prefix="/api/v1", tags=["Help"])
 
@@ -91,7 +92,7 @@ def get_help():
     return JSONResponse(content={
         "ok": True,
         "version": "v1",
-        "base_url": "/api/v1",
+        "base_url": outbound_api_base(),
         "endpoints": [
             {"method": "POST", "path": "/token/issue", "summary": "Issue a work token (screen action trigger)", "auth": "session_cookie"},
             {"method": "POST", "path": "/inbox", "summary": "Register/update an artifact (action: new | edit)", "auth": "bearer_token"},
@@ -124,10 +125,19 @@ def get_help():
             {"method": "GET", "path": "/help/question", "summary": "Query registration guide (register as document-bound query data, not a Q document)", "auth": "bearer_token"},
             {"method": "GET", "path": "/events/stream", "summary": "SSE screen push stream (screen only)", "auth": "session_cookie"},
         ],
+        "notes": [
+            "Every path above is relative to base_url.",
+            "A worker token may call any endpoint listed here with auth=bearer_token; there is no "
+            "per-path scope allowlist. Read a document body with GET /document/{id} — singular.",
+            "The console UI is served by a separate, unlisted API under the same base_url whose "
+            "paths are PLURAL (/documents/…). It accepts only a signed-in user session and answers "
+            "a worker token with 401 'Invalid authentication credentials'. That 401 means the wrong "
+            "API was called, not that the token lacks a scope.",
+        ],
         "error_format": {
             "ok": False,
             "http_status": "<int>",
             "error_message": "<string>",
-            "help_url": "/api/v1/help",
+            "help_url": help_url(),
         },
     })

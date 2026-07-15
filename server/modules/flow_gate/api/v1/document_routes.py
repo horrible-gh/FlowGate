@@ -18,6 +18,7 @@ from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.storage.paths import resolve_storage_path
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.q_service import get_answers_for_document
+from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_project_id,
     validate_group_id,
@@ -26,8 +27,6 @@ from modules.flow_gate.utils.id_validators import (
 import LogAssist.log as logger
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundDocument"])
-
-_HELP_URL = "https://example.com/api/v1/help"
 
 
 def _parse_rejection_history(raw: Any) -> list:
@@ -45,7 +44,7 @@ def _fail(status: int, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
         content={"ok": False, "http_status": status,
-                 "error_message": message, "help_url": _HELP_URL},
+                 "error_message": message, "help_url": help_url()},
     )
 
 

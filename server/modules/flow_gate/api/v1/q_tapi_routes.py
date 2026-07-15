@@ -26,6 +26,7 @@ from modules.flow_gate.auth.middleware import get_current_user, verify_token
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.services import q_service, token_service
+from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
     validate_group_id,
@@ -33,8 +34,6 @@ from modules.flow_gate.utils.id_validators import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["QTapi"])
-
-_HELP_URL = "https://example.com/api/v1/help"
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -44,7 +43,7 @@ def _fail(status: int, message: str) -> JSONResponse:
             "ok": False,
             "http_status": status,
             "error_message": message,
-            "help_url": _HELP_URL,
+            "help_url": help_url(),
         },
     )
 

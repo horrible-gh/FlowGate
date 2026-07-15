@@ -18,6 +18,36 @@ from .token_store import is_blacklisted
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
+def _worker_token_detail(token: str) -> str | None:
+    """Return a corrective 401 message when `token` is a valid WORKER token.
+
+    The internal UI API and the worker-facing outbound API sit one character
+    apart ({ctx}/api/v1/documents/... vs .../document/...), and only the former
+    reaches this dependency. A worker token is not a JWT, so presenting it to a
+    UI route fails signature decoding and yields a bare "Invalid authentication
+    credentials" — indistinguishable from an expired or revoked token. In group
+    0238 a worker read that 401 as proof its token lacked a document-read scope
+    and reported a nonexistent bug (NR0003). Name the real cause instead.
+
+    Returns None for anything that is not a live worker token, so a genuinely
+    bad credential still gets the generic message and leaks nothing.
+    """
+    try:
+        from modules.flow_gate.services import token_service
+        token_service.verify(token)  # read-only; consumption is a separate call
+    except Exception:
+        return None
+
+    from modules.flow_gate.utils.help_url import help_url, outbound_api_base
+    base = outbound_api_base()
+    return (
+        "This is a FlowGate worker token, which the internal UI API does not accept — "
+        "it requires a signed-in user session. Worker tokens authenticate the outbound "
+        f"API instead: use GET {base}/document/{{doc_id}} (singular 'document') to read a "
+        f"document body. See {help_url()} for the endpoints a worker token can call."
+    )
+
+
 def verify_token(token: str = Depends(oauth2_scheme)) -> dict:
     """Validate the JWT and return its payload.
 
@@ -41,6 +71,14 @@ def verify_token(token: str = Depends(oauth2_scheme)) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.InvalidTokenError:
+        # Not a JWT at all — most often a worker token aimed at the wrong API.
+        detail = _worker_token_detail(token)
+        if detail is not None:
+            raise HTTPException(
+                status_code=401,
+                detail=detail,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         raise credentials_exc
 
     if payload.get("type") != "access":

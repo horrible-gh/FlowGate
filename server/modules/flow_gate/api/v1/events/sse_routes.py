@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from modules.flow_gate.auth.jwt_service import decode_token
 from modules.flow_gate.auth.token_store import is_blacklisted
 from modules.flow_gate.api.v1.events.publisher import subscribe, unsubscribe
+from modules.flow_gate.utils.help_url import help_url
 import LogAssist.log as logger
 
 router = APIRouter(prefix="/api/v1", tags=["SSE"])
@@ -101,7 +102,7 @@ async def sse_stream(request: Request, token: Optional[str] = None):
             status_code=401,
             content={"ok": False, "http_status": 401,
                      "error_message": "Authentication required",
-                     "help_url": "https://example.com/api/v1/help"}
+                     "help_url": help_url()}
         )
 
     user_id = _authenticate(jwt_token)
@@ -110,7 +111,7 @@ async def sse_stream(request: Request, token: Optional[str] = None):
             status_code=401,
             content={"ok": False, "http_status": 401,
                      "error_message": "Session is invalid",
-                     "help_url": "https://example.com/api/v1/help"}
+                     "help_url": help_url()}
         )
 
     q = await subscribe(user_id)

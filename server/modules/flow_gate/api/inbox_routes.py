@@ -39,6 +39,7 @@ from modules.flow_gate.storage.paths import (
     resolve_storage_path,
     resolve_storage_dir,
 )
+from modules.flow_gate.utils.help_url import help_url as _help_url
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
     validate_group_id,
@@ -119,7 +120,7 @@ def _maybe_dry_run(
             "error_message": (
                 f"Dry-run 한도({limit}회) 도달. 실제 제출하거나 새 토큰을 요청하세요."
             ),
-            "help_url": "https://example.com/api/v1/help",
+            "help_url": _help_url(),
             "dry_run_count": cnt,
             "dry_run_remaining": 0,
         })
@@ -465,7 +466,8 @@ def _frontmatter_identity_mismatch(
     return "; ".join(mismatches) if mismatches else None
 
 
-def _fail(status: int, message: str, help_url: str = "https://example.com/api/v1/help") -> JSONResponse:
+def _fail(status: int, message: str, help_url: str | None = None) -> JSONResponse:
+    help_url = help_url or _help_url()
     return JSONResponse(
         status_code=status,
         content={
