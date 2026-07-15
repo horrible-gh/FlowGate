@@ -205,6 +205,12 @@ class TestMigration:
         cols = [r["name"] for r in mock_db.fetch_all("PRAGMA table_info(git_merge_session)")]
         assert "finalize_action" in cols
 
+    def test_project_git_config_author_columns(self, tmp_db):
+        # 065_git_author.sql (0237) — configurable commit author
+        mock_db, _ = tmp_db
+        cols = [r["name"] for r in mock_db.fetch_all("PRAGMA table_info(project_git_config)")]
+        assert "author_name" in cols and "author_email" in cols
+
 
 # ── branch naming (L0006 §2.1) ───────────────────────────────────────────────
 
@@ -388,6 +394,83 @@ class TestConfig:
             "enabled": True,
         })
         assert db_git.get_config("gitprj")["secret_enc"] is None
+
+    # ── configurable commit author (0237 — R0001/NR0003) ─────────────────────
+
+    def test_author_unset_by_default(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        out = svc.save_config("gitprj", {"repo_url": "https://example.com/team/repo.git"})
+        assert out["config"]["author_name"] is None
+        assert out["config"]["author_email"] is None
+        # no override → the built-in FlowGate identity, i.e. no GIT_AUTHOR_* env
+        assert svc._author_env_for("gitprj") is None
+
+    def test_author_save_keep_and_clear(self, seed):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        out = svc.save_config("gitprj", {
+            "repo_url": "https://example.com/team/repo.git",
+            "author_name": "  Shin  ",          # trimmed
+            "author_email": " shin@example.com ",
+        })
+        assert out["config"]["author_name"] == "Shin"
+        assert out["config"]["author_email"] == "shin@example.com"
+        assert svc._author_env_for("gitprj") == {
+            "GIT_AUTHOR_NAME": "Shin", "GIT_AUTHOR_EMAIL": "shin@example.com",
+        }
+
+        # omitted → keep (same protocol as secret/translate_url)
+        svc.save_config("gitprj", {"repo_url": "https://example.com/team/repo.git"})
+        assert db_git.get_config("gitprj")["author_name"] == "Shin"
+
+        # "" on both → clear, back to the FlowGate default
+        out = svc.save_config("gitprj", {
+            "repo_url": "https://example.com/team/repo.git",
+            "author_name": "", "author_email": "",
+        })
+        assert out["config"]["author_name"] is None
+        assert db_git.get_config("gitprj")["author_email"] is None
+        assert svc._author_env_for("gitprj") is None
+
+    def test_author_must_be_set_as_a_pair(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        for half in ({"author_name": "Shin"}, {"author_email": "shin@example.com"}):
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.save_config("gitprj", {
+                    "repo_url": "https://example.com/team/repo.git", **half,
+                })
+            assert exc.value.status == 422
+
+    def test_author_value_validation(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        bad = [
+            {"author_name": "Bad <hack>", "author_email": "a@b.com"},   # git would mangle
+            {"author_name": "Bad\nName", "author_email": "a@b.com"},
+            {"author_name": "Shin", "author_email": "not-an-email"},    # no @
+            {"author_name": "Shin", "author_email": "a b@c.com"},       # space
+            {"author_name": "x" * 101, "author_email": "a@b.com"},
+        ]
+        for case in bad:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.save_config("gitprj", {
+                    "repo_url": "https://example.com/team/repo.git", **case,
+                })
+            assert exc.value.status == 422
+        # a bad value never reaches storage
+        assert svc._author_env_for("gitprj") is None
+
+    def test_author_partial_db_row_falls_back(self, seed):
+        """A hand-edited/legacy half-set row must still commit, not crash."""
+        from modules.flow_gate.services import git_service as svc
+
+        assert svc._author_env_from_cfg({"author_name": "Shin"}) is None
+        assert svc._author_env_from_cfg({"author_email": "shin@example.com"}) is None
+        assert svc._author_env_from_cfg({}) is None
+        assert svc._author_env_from_cfg(None) is None
 
     def test_url_validation(self, seed):
         from modules.flow_gate.services import git_service as svc
@@ -1336,6 +1419,133 @@ class TestBaseCommitRevert0177:
 
 
 # ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
+
+@pytest.fixture(scope="class")
+def author_origin(seed):
+    """Dedicated origin + provisioned base for the configurable-author E2E (0237)."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "authprj", "project_name": "AuthProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0237-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "a.txt").write_text("alpha\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("authprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("authprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "tmp": tmp, "base": src_root("AuthProj", "main")}
+    svc.delete_config("authprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _ident_of(base, ref="HEAD"):
+    out = _git(["log", "-1", "--format=%an|%ae|%cn|%ce", ref], cwd=base).strip()
+    an, ae, cn, ce = out.split("|")
+    return {"author": f"{an} <{ae}>", "committer": f"{cn} <{ce}>"}
+
+
+@needs_git
+class TestConfigurableAuthor0237:
+    """R0001: server commits must be attributable to a configured person, not
+    unconditionally to FlowGate. Author moves; committer stays FlowGate."""
+
+    FLOWGATE = "FlowGate <flowgate@localhost>"
+
+    def _set_author(self, name, email):
+        from modules.flow_gate.services import git_service as svc
+
+        cfg = svc.get_config_view("authprj")["config"]
+        svc.save_config("authprj", {
+            "repo_url": cfg["repo_url"], "base_branch": "main",
+            "enabled": True, "author_name": name, "author_email": email,
+        })
+
+    def test_default_commits_as_flowgate(self, author_origin):
+        """Unconfigured author = the pre-0237 behavior, unchanged."""
+        from modules.flow_gate.services import git_service as svc
+
+        base = author_origin["base"]
+        (base / "a.txt").write_text("edit 1\n", encoding="utf-8")
+        assert svc.base_commit("authprj", "fix: a.txt")["result"]["committed"] is True
+
+        ident = _ident_of(base)
+        assert ident["author"] == self.FLOWGATE
+        assert ident["committer"] == self.FLOWGATE
+
+    def test_configured_author_on_commit(self, author_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        base = author_origin["base"]
+        self._set_author("Shin", "shin@example.com")
+        (base / "a.txt").write_text("edit 2\n", encoding="utf-8")
+        assert svc.base_commit("authprj", "fix: a.txt again")["result"]["committed"] is True
+
+        ident = _ident_of(base)
+        assert ident["author"] == "Shin <shin@example.com>"
+        # the server really made this commit — the committer stays honest
+        assert ident["committer"] == self.FLOWGATE
+
+    def test_configured_author_on_finalize_merge_commit(self, author_origin):
+        """The `--author` flag does not exist for `git merge` (NR0003 §4), so the
+        merge commit is the regression-prone one: pin it explicitly."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        self._set_author("Shin", "shin@example.com")
+        group = "authprj.default.0300"
+        assert svc.ensure_worktree("authprj", "default", group) == "ok"
+        wt = src_root("AuthProj", "authprj_default_0300")
+        (wt / "feature.txt").write_text("work\n", encoding="utf-8")
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "merged"
+
+        base = author_origin["base"]
+        # the merge commit itself …
+        merge_ident = _ident_of(base)
+        assert merge_ident["author"] == "Shin <shin@example.com>"
+        assert merge_ident["committer"] == self.FLOWGATE
+        # … and the absorb commit it merged in (the work commit on the branch)
+        absorb_ident = _ident_of(base, "HEAD^2")
+        assert absorb_ident["author"] == "Shin <shin@example.com>"
+        assert absorb_ident["committer"] == self.FLOWGATE
+
+    def test_cleared_author_reverts_to_flowgate(self, author_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        base = author_origin["base"]
+        self._set_author("", "")
+        (base / "a.txt").write_text("edit 3\n", encoding="utf-8")
+        assert svc.base_commit("authprj", "fix: back to default")["result"]["committed"] is True
+        assert _ident_of(base)["author"] == self.FLOWGATE
+
+    def test_ambient_author_env_is_not_inherited(self, author_origin, monkeypatch):
+        """An operator's GIT_AUTHOR_* in the server env must never leak into a commit."""
+        from modules.flow_gate.services import git_service as svc
+
+        base = author_origin["base"]
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "Ambient")
+        monkeypatch.setenv("GIT_AUTHOR_EMAIL", "ambient@leak")
+        (base / "a.txt").write_text("edit 4\n", encoding="utf-8")
+        assert svc.base_commit("authprj", "fix: no ambient leak")["result"]["committed"] is True
+        assert _ident_of(base)["author"] == self.FLOWGATE
+
 
 @pytest.fixture(scope="class")
 def noop_origin(seed):

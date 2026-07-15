@@ -43,27 +43,31 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
         store._execute(
             "INSERT INTO project_git_config "
             "(project_id, repo_url, provider, username, secret_enc, base_branch, "
-            "default_finalize_action, enabled, translate_url, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "default_finalize_action, enabled, translate_url, author_name, author_email, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 project_id, data["repo_url"], data.get("provider") or "generic",
                 data.get("username"), data.get("secret_enc"),
                 data.get("base_branch") or "main",
                 data.get("default_finalize_action") or "wait",
-                1 if data.get("enabled") else 0, data.get("translate_url"), now, now,
+                1 if data.get("enabled") else 0, data.get("translate_url"),
+                data.get("author_name"), data.get("author_email"), now, now,
             ],
         )
     else:
         store._execute(
             "UPDATE project_git_config SET repo_url = ?, provider = ?, username = ?, "
             "secret_enc = ?, base_branch = ?, default_finalize_action = ?, enabled = ?, "
-            "translate_url = ?, updated_at = ? WHERE project_id = ?",
+            "translate_url = ?, author_name = ?, author_email = ?, updated_at = ? "
+            "WHERE project_id = ?",
             [
                 data["repo_url"], data.get("provider") or "generic",
                 data.get("username"), data.get("secret_enc"),
                 data.get("base_branch") or "main",
                 data.get("default_finalize_action") or "wait",
-                1 if data.get("enabled") else 0, data.get("translate_url"), now, project_id,
+                1 if data.get("enabled") else 0, data.get("translate_url"),
+                data.get("author_name"), data.get("author_email"), now, project_id,
             ],
         )
     return get_config(project_id)  # type: ignore[return-value]

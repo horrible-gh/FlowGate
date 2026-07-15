@@ -86,6 +86,30 @@
           </div>
 
           <div class="form-group">
+            <label class="form-label">{{ $t('settings.project.git.author_name') }}</label>
+            <input
+              class="form-ctrl"
+              v-model="form.author_name"
+              type="text"
+              placeholder="FlowGate"
+              style="max-width:320px;"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ $t('settings.project.git.author_email') }}</label>
+            <input
+              class="form-ctrl"
+              v-model="form.author_email"
+              type="text"
+              autocomplete="off"
+              placeholder="flowgate@localhost"
+              style="max-width:320px;"
+            />
+            <p class="form-hint">{{ $t('settings.project.git.author_hint') }}</p>
+          </div>
+
+          <div class="form-group">
             <label class="form-label" style="display:flex; align-items:center; gap:8px;">
               <input type="checkbox" v-model="form.enabled" />
               {{ $t('settings.project.git.enable') }}
@@ -197,6 +221,9 @@ const form = ref({
   base_branch: 'main',
   default_finalize_action: 'wait',
   enabled: false,
+  translate_url: '',
+  author_name: '',
+  author_email: '',
 });
 
 const secretPlaceholder = computed(() =>
@@ -251,6 +278,9 @@ function applyConfig(cfg) {
     default_finalize_action: cfg.default_finalize_action || 'wait',
     enabled: !!cfg.enabled,
     translate_url: cfg.translate_url || '',
+    // Empty = not overridden; the placeholder shows the FlowGate default (0237).
+    author_name: cfg.author_name || '',
+    author_email: cfg.author_email || '',
   };
   secretInput.value = '';
   clearSecret.value = false;
@@ -270,6 +300,8 @@ function resetForm() {
     default_finalize_action: 'wait',
     enabled: false,
     translate_url: '',
+    author_name: '',
+    author_email: '',
   };
 }
 
