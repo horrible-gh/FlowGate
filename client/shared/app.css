@@ -157,6 +157,16 @@ ul, ol { list-style: none; }
 }
 .sidebar-backdrop { display: none; }
 .sdb-panel { display: flex; flex-direction: column; overflow: hidden; flex: 1; min-height: 80px; }
+/* The outer frame owns vertical geometry; explorer roots only lay out their content. */
+.sdb-panel-frame > .sdb-panel { min-height: 0; }
+.sdb-panel-frame.is-collapsed { min-height: 35px; }
+.sdb-panel-frame.is-collapsed > .sdb-panel { min-height: 35px; }
+.sdb-panel-frame.is-collapsed .sdb-ph {
+  height: 35px;
+  border-bottom: 0;
+  background: rgba(0,0,0,.3);
+}
+.sdb-panel-frame.is-collapsed .sdb-ph-title { color: rgba(255,255,255,.55); }
 .sdb-panel + .sdb-panel { border-top: 1px solid var(--sdb-bdr); }
 .sdb-ph {
   display: flex; align-items: center; justify-content: space-between;
@@ -165,6 +175,17 @@ ul, ol { list-style: none; }
 }
 .sdb-ph-title { font-size: .67rem; font-weight: 700; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .1em; }
 .sdb-ph-acts { display: flex; gap: 3px; }
+/* The frame toggle and the tree accordion both render a caret and sit side by side
+   in the same header, so on the document panel (expanded frame + expanded groups)
+   they resolve to the identical caret-down glyph. The caret directions themselves
+   are required — they encode which way each frame folds — so separate the frame
+   toggle into its own control group instead of re-skinning either caret (NR0004 §8). */
+.sdb-frame-toggle {
+  margin-left: 3px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255,255,255,.14);
+  border-radius: 0 3px 3px 0;
+}
 .sdb-act-btn {
   width: 20px; height: 20px; border-radius: 3px;
   display: flex; align-items: center; justify-content: center;

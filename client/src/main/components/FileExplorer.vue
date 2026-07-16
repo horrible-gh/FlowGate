@@ -20,7 +20,7 @@
              control stays the rightmost anchor it has always been. Hidden while the
              panel is folded (no tree to act on) or when the tree has no folders. -->
         <button
-          v-if="!collapsed && expandableFolderIds.length > 0"
+          v-if="!layoutStore.fileExplorerCollapsed && expandableFolderIds.length > 0"
           class="sdb-act-btn"
           type="button"
           data-test="file-explorer-accordion"
@@ -32,15 +32,19 @@
           <AppIcon :name="anyFolderExpanded ? 'caret-down' : 'caret-right'" />
         </button>
         <button
-          class="sdb-act-btn"
-          :aria-label="collapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
-          @click="collapsed = !collapsed"
+          class="sdb-act-btn sdb-frame-toggle"
+          type="button"
+          data-test="file-explorer-panel-toggle"
+          :aria-expanded="!layoutStore.fileExplorerCollapsed"
+          :aria-label="layoutStore.fileExplorerCollapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
+          :title="layoutStore.fileExplorerCollapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
+          @click="layoutStore.toggleFileExplorer"
         >
-          <AppIcon :name="collapsed ? 'corners-out' : 'corners-in'" />
+          <AppIcon :name="layoutStore.fileExplorerCollapsed ? 'caret-down' : 'caret-up'" />
         </button>
       </div>
     </div>
-    <template v-if="!collapsed">
+    <template v-if="!layoutStore.fileExplorerCollapsed">
       <div v-if="selectedGroup" class="fx-readonly-badge">
         <AppIcon name="eye" />
         <span>{{ t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
@@ -128,6 +132,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useExplorerStore, type FileNode } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
+import { useLayoutStore } from '../stores/layout'
 import { useTabsStore } from '../stores/tabs'
 import { useFileUpload } from '../composables/useFileUpload'
 import api from '@shared/api'
@@ -140,6 +145,7 @@ import AppIcon from '@shared/AppIcon.vue'
 const props = defineProps<{ projectId: string | null }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
+const layoutStore = useLayoutStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
 const { collectDropFiles, uploadFiles } = useFileUpload()
@@ -147,7 +153,6 @@ const { collectDropFiles, uploadFiles } = useFileUpload()
 const nodes = ref<FileNode[]>([])
 const loading = ref(false)
 const error = ref(false)
-const collapsed = ref(false)
 const showRootCtx = ref(false)
 const rootCtxX = ref(0)
 const rootCtxY = ref(0)

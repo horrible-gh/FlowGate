@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import FileExplorer from '@main/components/FileExplorer.vue'
+import { useLayoutStore } from '@main/stores/layout'
 
 // 0245 R0001 / NR0003 §F4 — the accordion's whole difficulty is the cascade: a
 // folder's children are only mounted while it is expanded, so "expand all" cannot
@@ -34,6 +35,9 @@ const NODES = [
 ]
 
 async function mountExplorer() {
+  // Tree-accordion cases exercise the expanded frame explicitly; the application
+  // default is intentionally folded by the approved vertical-panel prototype.
+  useLayoutStore().setFileExplorerCollapsed(false)
   getRequest.mockResolvedValue({ data: { data: { nodes: NODES } } })
   apiGet.mockResolvedValue({ data: { status: { slots: [] } } })
   const wrapper = mount(FileExplorer, {
@@ -96,12 +100,18 @@ describe('FileExplorer tree accordion (0245 R0001)', () => {
     expect(btn().attributes('aria-pressed')).toBe('true')
   })
 
-  it('hides the accordion while the panel itself is folded (no tree to act on)', async () => {
+  it('folds only the file frame and hides its tree accordion', async () => {
     const wrapper = await mountExplorer()
-    // The panel toggle is the rightmost control and stays independent of the accordion.
-    const panelToggle = wrapper.findAll('.sdb-act-btn').at(-1)!
+    const layout = useLayoutStore()
+    const documentState = layout.documentExplorerCollapsed
+    const panelToggle = wrapper.get('[data-test="file-explorer-panel-toggle"]')
+
     await panelToggle.trigger('click')
     await flushPromises()
+
+    expect(layout.fileExplorerCollapsed).toBe(true)
+    expect(layout.documentExplorerCollapsed).toBe(documentState)
+    expect(panelToggle.attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('[data-test="file-explorer-accordion"]').exists()).toBe(false)
   })
 

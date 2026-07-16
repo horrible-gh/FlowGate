@@ -58,6 +58,36 @@ describe('useLayoutStore', () => {
     store.setSidebarWidth(350)
     expect(localStorage.getItem('flowgate.user.guest.layout.sidebarWidth')).toBe('350')
   })
+
+  it('defaults to the approved frame layout: files folded and documents expanded', () => {
+    const store = useLayoutStore()
+    expect(store.fileExplorerCollapsed).toBe(true)
+    expect(store.documentExplorerCollapsed).toBe(false)
+  })
+
+  it('toggles explorer frames independently and persists both states', () => {
+    const store = useLayoutStore()
+    store.toggleFileExplorer()
+    expect(store.fileExplorerCollapsed).toBe(false)
+    expect(store.documentExplorerCollapsed).toBe(false)
+
+    store.toggleDocumentExplorer()
+    expect(store.fileExplorerCollapsed).toBe(false)
+    expect(store.documentExplorerCollapsed).toBe(true)
+    expect(localStorage.getItem('flowgate.user.guest.layout.fileExplorerCollapsed')).toBe('0')
+    expect(localStorage.getItem('flowgate.user.guest.layout.documentExplorerCollapsed')).toBe('1')
+  })
+
+  it('restores explorer frame states in a fresh store', () => {
+    const store = useLayoutStore()
+    store.setFileExplorerCollapsed(false)
+    store.setDocumentExplorerCollapsed(true)
+
+    setActivePinia(createPinia())
+    const restored = useLayoutStore()
+    expect(restored.fileExplorerCollapsed).toBe(false)
+    expect(restored.documentExplorerCollapsed).toBe(true)
+  })
 })
 
 // ─── useTabsStore ──────────────────────────────────────────────────────────────
