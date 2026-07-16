@@ -40,12 +40,17 @@ def insert(
     body: str,
     title: Optional[str] = None,
     asker_kind: str = "human",
+    options: str = "[]",
 ) -> None:
-    """question_items INSERT (DB0006 §3.3 — title + asker_kind)."""
+    """question_items INSERT (DB0006 §3.3 — title + asker_kind; DB0007 §4 — options).
+
+    ``options`` is the serialized [{"id", "label"}] JSON array (DB0007 §2); the caller
+    validates and serializes it (L0008 §2.2/§2.3).
+    """
     store = get_store()
     store._execute(
         store._sql("question_items.insert_question_item"),
-        [question_pk, seq, title, body, asker_kind],
+        [question_pk, seq, title, body, asker_kind, options],
     )
 
 
@@ -64,8 +69,9 @@ def list_by_doc(doc_id: str) -> list[dict]:
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:
     """Flattened question + answer rows for a document (ment 조립 데이터 제공자, L0007 §6).
 
-    Each row: {seq, title, body, asker_kind, author_kind, answer_body}. A question with
-    no answer yields one row with answer_body/author_kind = NULL (LEFT JOIN).
+    Each row: {seq, title, body, asker_kind, options, author_kind, answer_body,
+    answer_selected_options}. A question with no answer yields one row with
+    answer_body/author_kind = NULL (LEFT JOIN).
     """
     store = get_store()
     return store._fetch_all(store._sql("question_items.qa_bundle_by_doc"), [doc_id])

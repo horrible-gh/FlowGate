@@ -42,6 +42,7 @@ def test_register_answer_human_transitions_done_when_all_answered():
     }
     insert_answer.assert_called_once_with(
         question_item_id=10, body="Answer", author_kind="human", author_id="usr_test",
+        selected_options="[]",
     )
     inc.assert_called_once_with(pk=10)
     update_status.assert_called_once_with(doc_id, "done")
@@ -72,6 +73,7 @@ def test_register_answer_ai_nulls_author_id_and_stays_pending():
     assert result["status"] == "pending"
     insert_answer.assert_called_once_with(
         question_item_id=10, body="AI answer", author_kind="ai", author_id=None,
+        selected_options="[]",
     )
     update_status.assert_not_called()
 

@@ -151,7 +151,10 @@ def _include_remote_source_crud(project: str) -> bool:
 # force-terminated / register a Q / definite answer / next action) are kept in EVERY
 # locale so the guard reads and asserts identically regardless of language.
 
-# Placeholder question (title/body) the worker copies into the embedded POST.
+# Placeholder question (title/body/options) the worker copies into the embedded POST.
+# `options` is optional — a Q without it is exactly the pre-extension Q (L0008 §2.6). It is
+# shown here so the copy-paste POST itself advertises the field the prescription tells the
+# worker to use, instead of only naming it in prose.
 _Q_PLACEHOLDER = {
     "ko": {
         "title": "<짧은 제목 / short title>",
@@ -159,6 +162,7 @@ _Q_PLACEHOLDER = {
             "<무엇이 모호한지 + 진행하려면 무엇이 필요한지 / "
             "what is ambiguous and what you need in order to proceed>"
         ),
+        "options": ["<옵션1 / option 1 — 선택 · 없으면 생략>", "<옵션2 / option 2>"],
     },
     "ja": {
         "title": "<短いタイトル / short title>",
@@ -166,10 +170,12 @@ _Q_PLACEHOLDER = {
             "<何が曖昧か + 進めるために何が必要か / "
             "what is ambiguous and what you need in order to proceed>"
         ),
+        "options": ["<選択肢1 / option 1 — 任意 · 不要なら省略>", "<選択肢2 / option 2>"],
     },
     "en": {
         "title": "<short title>",
         "body": "<what is ambiguous and what you need in order to proceed>",
+        "options": ["<option 1 — optional, omit if not needed>", "<option 2>"],
     },
 }
 
@@ -190,8 +196,9 @@ _CLARIFY_TEXT = {
         "positive": (
             "✅ 확실한 답(definite answer)을 받으려면 선택지를 제시하지 말고 반드시 "
             "Q(질의)를 등록(register a Q)해야 합니다.\n"
-            "옵션 중 선택을 요청하려는 자신을 발견하면 STOP — 각 옵션을 질문으로 변환해 위 POST를 "
-            "전송하십시오. Q 작성이 이 시스템에서 답을 받는 유일한 방법이며, 항상 선택지 대신 "
+            "옵션 중 선택을 요청하려는 자신을 발견하면 STOP — 그 옵션들을 options 배열에 담아 "
+            "Q 1건으로 등록하십시오(사용자는 문서의 [질의 응답] 패널에서 보기를 고르거나 자유 "
+            "서술로 답합니다). Q 작성이 이 시스템에서 답을 받는 유일한 방법이며, 항상 선택지 대신 "
             "다음 행동(next action)으로 남기십시오."
         ),
     },
@@ -210,8 +217,9 @@ _CLARIFY_TEXT = {
         "positive": (
             "✅ 確実な回答(definite answer)を得るには、選択肢を提示せず必ず "
             "Q(質問)を登録(register a Q)してください。\n"
-            "オプションの選択を求めようとしている自分に気づいたらSTOP — 各オプションを質問に変換して "
-            "上のPOSTを送信してください。Qの作成がこのシステムで回答を得る唯一の方法であり、常に "
+            "オプションの選択を求めようとしている自分に気づいたらSTOP — その選択肢をoptions配列に入れた "
+            "Q 1件として登録してください(ユーザーは文書の[質疑応答]パネルで選択肢を選ぶか、自由記述で "
+            "回答します)。Qの作成がこのシステムで回答を得る唯一の方法であり、常に "
             "選択肢ではなく次の行動(next action)として残してください。"
         ),
     },
@@ -230,7 +238,8 @@ _CLARIFY_TEXT = {
         "positive": (
             "✅ To get a definite answer you MUST register a Q, not offer a choice.\n"
             "If you find yourself about to ask the user to pick between options, STOP and\n"
-            "convert it: turn each option into a question and send the POST above. Writing\n"
+            "convert it: register ONE Q carrying those options in its options array (the\n"
+            "user picks an option or writes freely in the document's Q&A panel). Writing\n"
             "a Q is the ONLY way to get an answer from this system — always leave it as the\n"
             "next action instead of a choice."
         ),
@@ -245,15 +254,16 @@ _REMINDER_TEXT = {
         "사용자에게 대화형 질문을 하지 마십시오. 이것은 무인 시스템이므로 원격 실행은 답을 받지 못하고 "
         "강제 종료됩니다. 확신이 서지 않으면, 확실한 답(definite answer)을 받는 유일한 방법은 "
         "Q(질의)를 작성(register a Q)하는 것입니다: {post} 로 등록하십시오 "
-        "(위 Clarification guide 참조). 항상 선택지가 아니라 다음 행동(next action)으로 'Q 작성'을 "
-        "남기십시오."
+        "(위 Clarification guide 참조). 보기가 필요하면 그 옵션들을 options 배열에 담아 Q 1건으로 "
+        "등록하십시오. 항상 선택지가 아니라 다음 행동(next action)으로 'Q 작성'을 남기십시오."
     ),
     "ja": (
         "⚠️ 行動する前にもう一度読んでください — do NOT present choices: 選択肢/オプションを提示せず、"
         "ユーザーに対話的な質問をしないでください。これは無人システムなので、リモート実行は回答を得られず "
         "強制終了されます。不明な場合、確実な回答(definite answer)を得る唯一の方法は "
         "Q(質問)を作成(register a Q)することです: {post} で登録してください "
-        "(上記 Clarification guide 参照)。常に選択肢ではなく次の行動(next action)として「Qの作成」を "
+        "(上記 Clarification guide 参照)。選択肢が必要な場合は、その選択肢をoptions配列に入れた "
+        "Q 1件として登録してください。常に選択肢ではなく次の行動(next action)として「Qの作成」を "
         "残してください。"
     ),
     "en": (
@@ -261,7 +271,8 @@ _REMINDER_TEXT = {
         "the user an interactive question — this is an unmanned system, so a remote run "
         "gets no answer and is force-terminated. If you are unsure, the ONLY way to get a "
         "definite answer is to write a Q: register it with {post} "
-        "(see the Clarification guide above). "
+        "(see the Clarification guide above). If you need to offer alternatives, register "
+        "ONE Q carrying them in its options array. "
         "Leave 'write a Q' as the next action — never a choice."
     ),
 }
@@ -339,7 +350,8 @@ _CONTINUOUS_REVIEW_TEXT = {
         "- 먼저 참조 문서(요건·이전 단계 산출물·결정된 시퀀스)를 끝까지 읽고, 무인으로 진행하기 전에 사람이 "
         "풀어줘야 할 의문·모호함·결함을 찾으십시오.\n"
         "- 막는 의문이 있으면 추측하지 말고 q 엔드포인트(POST .../q/<문서>/questions)로 **Q(질의)를 등록**하십시오. "
-        "선택지를 제시하지 말고 각 옵션을 Q로 변환하십시오. 체인은 사람이 답할 때까지 멈춰 기다립니다.\n"
+        "선택지를 제시하지 말고, 보기가 필요하면 `options`를 가진 Q 1건으로 등록하십시오. "
+        "체인은 사람이 답할 때까지 멈춰 기다립니다.\n"
         "- 막는 의문이 **하나도 없더라도** 임의로 진행하지 말고, 같은 q 엔드포인트로 **'검토 완료 — 막는 의문 없음 — "
         "이대로 진행해도 되는지 확인 요청'** Q를 한 건 등록하십시오(검토 요약과 진행 계획을 본문에 담아). 그러면 "
         "사람이 검토 결과를 보고 **명시적으로 go**(검토 모드 해제 후 진행)를 줄 수 있습니다.\n"
@@ -353,7 +365,8 @@ _CONTINUOUS_REVIEW_TEXT = {
         "- まず参照文書(要件・前ステップの成果物・決定済みシーケンス)を最後まで読み、無人で進める前に人が"
         "解消すべき疑問・曖昧さ・欠陥を洗い出してください。\n"
         "- 行き詰まる疑問があれば推測せず、qエンドポイント(POST .../q/<文書>/questions)で**Q(質問)を登録**してください。"
-        "選択肢を提示せず各選択肢をQに変換してください。チェーンは人が答えるまで停止して待機します。\n"
+        "選択肢を提示せず、選択肢が必要な場合は`options`を持つQ 1件として登録してください。"
+        "チェーンは人が答えるまで停止して待機します。\n"
         "- 行き詰まる疑問が**一つも無くても**勝手に進めず、同じqエンドポイントで**「レビュー完了 — 阻む疑問なし — "
         "このまま進めてよいか確認依頼」**のQを1件登録してください(レビュー要約と進行計画を本文に含めて)。そうすれば"
         "人がレビュー結果を見て**明示的にgo**(レビューモード解除後に進行)を出せます。\n"
@@ -371,7 +384,8 @@ _CONTINUOUS_REVIEW_TEXT = {
         "sequence) end to end, and surface any ambiguity/defect a human should resolve before "
         "the run proceeds unmanned.\n"
         "- If a blocking question remains, do NOT guess — register a Q at the q endpoint "
-        "(POST .../q/<doc>/questions). Do not present choices; convert each option into a Q. "
+        "(POST .../q/<doc>/questions). Do not present choices; if alternatives are needed, "
+        "register ONE Q carrying them in its `options`. "
         "The chain idles until the human answers.\n"
         "- Even if you have NO blocking question, do NOT proceed on your own: register a single "
         "'review complete — no blockers — requesting confirmation to proceed' Q at the same q "
@@ -429,7 +443,7 @@ def _continuous_review_guide_body(
     ph = _Q_PLACEHOLDER[loc]
     q_post_body = {
         "asker_kind": "ai",
-        "questions": [{"title": ph["title"], "body": ph["body"]}],
+        "questions": [{"title": ph["title"], "body": ph["body"], "options": ph["options"]}],
     }
     q_json = json.dumps(q_post_body, ensure_ascii=False, indent=2)
     return (
@@ -456,7 +470,7 @@ def _clarification_guide_body(
     txt = _CLARIFY_TEXT[loc]
     q_post_body = {
         "asker_kind": "ai",
-        "questions": [{"title": ph["title"], "body": ph["body"]}],
+        "questions": [{"title": ph["title"], "body": ph["body"], "options": ph["options"]}],
     }
     q_json = json.dumps(q_post_body, ensure_ascii=False, indent=2)
     return (

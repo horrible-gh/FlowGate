@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from modules.flow_gate.auth.middleware import get_current_user, verify_token
 from modules.flow_gate.rbac.permission_service import has_permission
@@ -133,12 +133,23 @@ def _resolve_writer(request: Request, doc_id: str) -> Union[Tuple[str, Optional[
 class QuestionItemIn(BaseModel):
     title: Optional[str] = None
     body: str
+    # Plain label strings — ids are always server-assigned (L0008 §2.1/§2.3), so the
+    # request surface never takes one. q_service re-validates: it is the final gate for
+    # callers that reach the service without passing through this route.
+    options: List[str] = []
 
     @field_validator("body")
     @classmethod
     def body_not_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("body must not be empty")
+        return v
+
+    @field_validator("options")
+    @classmethod
+    def options_within_limits(cls, v: list) -> list:
+        if len(v) > q_service.MAX_OPTIONS:
+            raise ValueError(f"options must contain at most {q_service.MAX_OPTIONS} items")
         return v
 
 
@@ -162,15 +173,21 @@ class AddQuestionsRequest(BaseModel):
 
 
 class RegisterAnswerRequest(BaseModel):
-    body: str
+    body: str = ""
     author_kind: str = "human"
+    selected_option_ids: List[str] = []
 
-    @field_validator("body")
-    @classmethod
-    def body_not_empty(cls, v: str) -> str:
-        if not v or not v.strip():
+    @model_validator(mode="after")
+    def body_or_selection_present(self) -> "RegisterAnswerRequest":
+        """A blank body is only allowed when an option was picked (L0008 §2.1).
+
+        The field-level non-blank rule this replaces predates options. Picking an option
+        without typing anything is now a valid answer — q_service fills body with the
+        chosen label before storing, so answers.body is still never blank.
+        """
+        if (not self.body or not self.body.strip()) and not self.selected_option_ids:
             raise ValueError("body must not be empty")
-        return v
+        return self
 
     @field_validator("author_kind")
     @classmethod
@@ -214,6 +231,7 @@ def _register_answer_response(
             body=body.body,
             author_kind=body.author_kind,
             author_id=user_id if body.author_kind == "human" else None,
+            selected_option_ids=body.selected_option_ids,
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)

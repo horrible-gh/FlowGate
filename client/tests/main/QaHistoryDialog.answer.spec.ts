@@ -49,7 +49,7 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     expect(buttons.length).toBe(2)
   })
 
-  it('calls submitAnswer with (itemId, body) and closes the form on success', async () => {
+  it('calls submitAnswer with (itemId, body, selectedOptionIds) and closes the form on success', async () => {
     const submitAnswer = vi.fn().mockResolvedValue(true)
     const wrapper = mountDialog({ docId: 'd1', submitAnswer, requestAiAnswer: vi.fn() })
     await flushPromises()
@@ -70,7 +70,8 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     submitBtn.click()
     await flushPromises()
 
-    expect(submitAnswer).toHaveBeenCalledWith(7, '내 답변')
+    // no option picked (this query carries none) → empty selection (group 0243 R0001)
+    expect(submitAnswer).toHaveBeenCalledWith(7, '내 답변', [])
     // form closes after a successful submit
     expect(document.body.querySelector('.qhd-answer-form')).toBeNull()
     wrapper.unmount()
