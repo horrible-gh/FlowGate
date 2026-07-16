@@ -495,8 +495,8 @@ function scrollToBottom() {
   })
 }
 
-async function load(): Promise<void> {
-  if (!props.docId) return
+async function load(): Promise<ConvTurn[]> {
+  if (!props.docId) return []
   loading.value = true
   try {
     const res = await getRequest<{ content: string }>(
@@ -506,9 +506,11 @@ async function load(): Promise<void> {
     const p = parseConversation(content)
     turns.value = p.turns
     scrollToBottom()
+    return p.turns
   } catch {
     // A fresh CH doc may have no file yet (404) — treat as an empty conversation.
     turns.value = []
+    return []
   } finally {
     loading.value = false
   }
@@ -546,14 +548,14 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
       provider_id: providerStore.selectedProviderId || undefined,
     })
     const runId = (res.data as any)?.run_id
-    if (runId) void pollRun(runId)
+    if (runId) void pollRun(runId, turns.value.filter((turn) => turn.speaker === 'ai').length)
     else invoking.value = false
   } catch (e: any) {
     const data = e?.response?.data
     // 409 run_in_progress: a run already exists for this group — adopt it and keep
     // the spinner rather than surfacing an error or restarting (L0008 §5).
     if (data?.code === 'run_in_progress' && data?.run_id) {
-      void pollRun(data.run_id)
+      void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
       return
     }
     invoking.value = false
@@ -562,34 +564,87 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
   }
 }
 
-async function pollRun(runId: string): Promise<void> {
+// Re-attach to a chat AI call that is still running server-side but whose poll loop died
+// with a previous instance of this component — a tab switch or an F5 unmounts the card
+// outright, and the spinner state lives only here (0251 B0001 / NR0003 §5, B안). Without
+// this the surface comes back idle and the docs_reached==0 notice is lost, until the user
+// happens to press [Call AI] again and adopts the run through the 409 path.
+// Only this chat's own run is adopted (doc_ref match) — the group-scoped runs of other
+// surfaces already have their own indicator in AiInvokeInline.
+async function adoptActiveRun(): Promise<void> {
+  if (invoking.value) return
+  const parts = props.docId.split('.')
+  if (parts.length < 4) return
+  const groupId = `${projectCode.value || parts[0]}.${parts[1]}.${parts[2]}`
+  try {
+    const res = await getRequest<{
+      active?: boolean
+      run_id?: string
+      status?: string
+      doc_ref?: string
+    }>('/api/v1/ai-invoke/active', { group_id: groupId })
+    const data = res.data as any
+    if (disposed || invoking.value) return
+    if (!data?.active || !data?.run_id) return
+    if (data.doc_ref !== props.docId) return
+    if (data.status === 'finished') return
+    void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
+  } catch {
+    // Best effort: an idle surface is the status quo, and a manual [Call AI] still adopts
+    // the run through the 409 run_in_progress path.
+  }
+}
+
+function chatRunFailureDetail(data: Record<string, any>): string {
+  const registerErrors = Array.isArray(data.register_errors) ? data.register_errors : []
+  if (registerErrors.length > 0) {
+    return registerErrors
+      .map((error: any) => `${error?.reason || 'registration error'}${error?.status ? ` (HTTP ${error.status})` : ''}`)
+      .join('; ')
+  }
+  if (data.turn_limit_exhausted) return t('main.ai_invoke_dialog.turn_limit_exhausted')
+  if (Number(data.tool_call_misses) > 0) {
+    return t('main.ai_invoke_dialog.tool_not_called', { count: Number(data.tool_call_misses) })
+  }
+  if (data.end_reason === 'cancelled') return t('main.ai_invoke_dialog.end_cancelled')
+  if (data.end_reason === 'timeout') return t('main.ai_invoke_dialog.end_timeout')
+  if (data.end_reason === 'all_failed') return t('main.ai_invoke_dialog.end_all_failed')
+  if (data.exit_code != null && Number(data.exit_code) !== 0) return `exit code ${data.exit_code}`
+  if (!data.last_message_received) return t('main.ai_invoke_dialog.last_message_none')
+  return t('main.ai_invoke_dialog.oracle_no_documents')
+}
+
+async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
   invoking.value = true
-  // Live SSE already reloads the conversation when the AI turn lands; polling here
-  // only drives the spinner's release and the "registered nothing" failure notice.
+  // docs_reached counts newly created documents and is not a chat success signal. Chat
+  // success is verified against the existing CH document: at least one new AI turn must
+  // appear after this run started. If it does not, keep the toast and include the run's
+  // concrete terminal cause instead of hiding the failure or showing a false generic one.
   for (let i = 0; i < 480 && !disposed; i++) {
     await new Promise((r) => setTimeout(r, 2500))
     if (disposed) return
     try {
-      const res = await getRequest<{ status?: string; docs_reached?: number }>(
+      const res = await getRequest<Record<string, any>>(
         `/api/v1/ai-invoke/${encodeURIComponent(runId)}`,
       )
       const data = res.data as any
       if (data?.status === 'finished') {
         invoking.value = false
-        void load()
-        if ((data?.docs_reached ?? 0) === 0) {
-          // The run finished but registered nothing (L0008 §2-3 notify_fail,
-          // reason=not_registered) — a dedicated "nothing registered" notice, not the
-          // generic call-failed toast with a meaningless {detail}.
-          showToast(t('main.conversation_view.invoke_ai_no_docs'), 'danger')
+        const loadedTurns = await load()
+        const aiTurns = loadedTurns.filter((turn) => turn.speaker === 'ai').length
+        if (aiTurns <= baselineAiTurns) {
+          showToast(
+            t('main.conversation_view.invoke_ai_no_docs', { detail: chatRunFailureDetail(data) }),
+            'danger',
+          )
         }
         return
       }
     } catch (e: any) {
       // Only a gone run is terminal: 404 (server restart / run evicted) or 410. A
-      // transient network error or a one-off 5xx must NOT release the spinner or
-      // swallow the docs_reached==0 notice — keep polling (L0008 §3: RUNNING→IDLE
-      // only on a finished run). The conversation also still reloads on any turn via SSE.
+      // transient network error or a one-off 5xx must NOT release the spinner — keep
+      // polling (L0008 §3: RUNNING→IDLE only on a finished run). The conversation also
+      // still reloads on any turn via SSE.
       const status = e?.response?.status
       if (status === 404 || status === 410) {
         invoking.value = false
@@ -667,6 +722,7 @@ onMounted(() => {
   void load()
   void nextTick(autoGrow)
   if (projectCode.value) void providerStore.ensureLoaded(projectCode.value)
+  void adoptActiveRun()
   window.addEventListener('fg:document_content_changed', onContentChanged)
 })
 

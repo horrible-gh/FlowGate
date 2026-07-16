@@ -26,8 +26,13 @@
             :class="['doc-with-panel', { 'panel-collapsed': canShowDocInfoPanel(tab.id) && docInfoCollapsed }]"
           >
           <div class="doc-main">
+          <!-- CH is dialog-free (0235 R0001), and .aiv-inline-layer is not a strip: it is an
+               inset:0 backdrop over .doc-main. A chat run is group-scoped like any other, so
+               sending a message covered the whole chat document with "AI가 실행 중입니다"
+               (0251 B0001). Chat progress belongs on the send button, so the layer is not
+               mounted over a chat; every other doc type keeps it. -->
           <AiInvokeInline
-            v-if="activeAiInvokeGroupId"
+            v-if="activeAiInvokeGroupId && tab.typeCode !== 'CH'"
             :group-id="activeAiInvokeGroupId"
           />
           <!-- 0155: test-failure strip (confirmed design B) — self-hides unless the
@@ -156,15 +161,11 @@
                 <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
                 {{ t('main.conversation_view.title') }}
               </span>
-              <div class="card-actions">
-                <button class="btn btn-secondary btn-sm" type="button" :title="t('main.document_preview.full_view')" :aria-label="t('main.document_preview.full_view')" @click="openFullView(tab)">
-                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
-                </button>
-              </div>
             </div>
             <div class="card-bd conv-card-bd">
+              <!-- 0251 B0001: the chat stays here while sending and while its AI call runs.
+                   Nothing moves it and nothing covers it — progress is the send button. -->
               <ConversationView
-                v-if="!(fullViewVisible && fullViewTab?.id === tab.id)"
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
                 :manual-copy-text="convManualCopy[tab.id] ?? null"
@@ -770,31 +771,30 @@
               </button>
             </div>
           </div>
-          <div class="modal-bd document-modal__body" :class="{ 'document-modal__body--conversation': fullViewTab.typeCode === 'CH' }">
-            <ConversationView
-              v-if="fullViewTab.typeCode === 'CH'"
-              :doc-id="fullViewTab.id"
-              :project-id="fullViewTab.projectId ?? null"
-              :manual-copy-text="convManualCopy[fullViewTab.id] ?? null"
-              @copy-mention="(opts) => fullViewTab && onConversationCopyMention(fullViewTab.id, opts)"
-              @manual-copy-dismiss="setConvManualCopy(fullViewTab.id, null)"
-            />
-            <TextViewer
-              v-else-if="fullViewTab.type === 'text'"
-              :path="fullViewTab.path"
-              :project-id="fullViewTab.projectId ?? null"
-              :wrap-lines="textWrapEnabled"
-              :git-group-id="fullViewTab.gitGroupId ?? null"
-              :git-commit="fullViewTab.gitCommit ?? null"
-            />
-            <MdViewer
-              v-else
-              :path="fullViewTab.mdPath ?? fullViewTab.path"
-              :doc-id="fullViewTab.typeCode ? fullViewTab.id : null"
-              :project-id="fullViewTab.projectId ?? null"
-              :git-group-id="fullViewTab.gitGroupId ?? null"
-              :git-commit="fullViewTab.gitCommit ?? null"
-            />
+          <!-- CH is unreachable here (openFullView refuses it) and renders nothing: a chat
+               is never lifted out of its card into a dialog. -->
+          <div
+            class="modal-bd document-modal__body"
+            :class="{ 'document-modal__body--conversation': fullViewTab.typeCode === 'CH' }"
+          >
+            <template v-if="fullViewTab.typeCode !== 'CH'">
+              <TextViewer
+                v-if="fullViewTab.type === 'text'"
+                :path="fullViewTab.path"
+                :project-id="fullViewTab.projectId ?? null"
+                :wrap-lines="textWrapEnabled"
+                :git-group-id="fullViewTab.gitGroupId ?? null"
+                :git-commit="fullViewTab.gitCommit ?? null"
+              />
+              <MdViewer
+                v-else
+                :path="fullViewTab.mdPath ?? fullViewTab.path"
+                :doc-id="fullViewTab.typeCode ? fullViewTab.id : null"
+                :project-id="fullViewTab.projectId ?? null"
+                :git-group-id="fullViewTab.gitGroupId ?? null"
+                :git-commit="fullViewTab.gitCommit ?? null"
+              />
+            </template>
           </div>
         </div>
       </div>
@@ -3277,6 +3277,8 @@ async function copyMentionDeferred(
 }
 
 function openFullView(tab: Tab) {
+  // CH remains an inline interactive surface; sending/running AI must not cover the document.
+  if (tab.typeCode === 'CH') return
   fullViewTab.value = tab
   fullViewVisible.value = true
 }
@@ -4278,5 +4280,7 @@ watch(textWrapEnabled, (enabled) => {
   position: relative;
 }
 </style>
+
+
 
 
