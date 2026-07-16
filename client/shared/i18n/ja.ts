@@ -1093,6 +1093,8 @@ export default {
       save_failed: '保存中にエラーが発生しました。',
     },
     doc_header: {
+      collapse: '文書情報を折りたたむ',
+      expand: '文書情報を展開',
       label_created_date: '作成日',
       label_author: '作成者',
       label_group: 'グループ',
@@ -1812,6 +1814,8 @@ export default {
       title: 'ワークフロー',
       undecided: '未決定',
       edit_btn: 'シーケンス編集',
+      collapse: 'シーケンスを折りたたむ',
+      expand: 'シーケンスを展開',
       decided_empty: 'すべてのステップが削除されました。[シーケンス編集]からステップを再追加してください。',
       time_machine_hint: 'このステップに差し戻す',
       time_machine_return_hint: 'このステップに復帰（元の位置へ）',

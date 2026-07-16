@@ -1093,6 +1093,8 @@ export default {
       save_failed: '저장 중 오류가 발생했습니다.',
     },
     doc_header: {
+      collapse: '문서 정보 접기',
+      expand: '문서 정보 펼치기',
       label_created_date: '작성일',
       label_author: '작성자',
       label_group: '그룹',
@@ -1812,6 +1814,8 @@ export default {
       title: '워크플로',
       undecided: '미정',
       edit_btn: '시퀀스 수정',
+      collapse: '시퀀스 접기',
+      expand: '시퀀스 펼치기',
       decided_empty: '모든 단계가 삭제되었습니다. [시퀀스 수정]으로 단계를 다시 추가하세요.',
       time_machine_hint: '이 단계로 되돌리기',
       time_machine_return_hint: '이 단계로 복귀 (원위치로)',

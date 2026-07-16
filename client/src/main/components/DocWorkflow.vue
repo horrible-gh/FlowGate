@@ -1,5 +1,9 @@
 <template>
-  <div v-if="stepStates.length > 0 || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))" class="wf-section">
+  <div
+    v-if="stepStates.length > 0 || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))"
+    class="wf-section"
+    :class="{ collapsed: sequenceCollapsed }"
+  >
     <div class="sec-title">
       <AppIcon name="flow-arrow" /> {{ t('main.doc_workflow.title') }}
       <button
@@ -10,6 +14,15 @@
       >
         <AppIcon name="note-pencil" />
         {{ t('main.doc_workflow.edit_btn') }}
+      </button>
+      <button
+        type="button"
+        class="wf-collapse-btn"
+        :aria-expanded="!sequenceCollapsed"
+        :title="sequenceCollapsed ? t('main.doc_workflow.expand') : t('main.doc_workflow.collapse')"
+        @click.stop="toggleSequenceCollapsed"
+      >
+        <AppIcon name="caret-down" class="wf-caret" />
       </button>
     </div>
     <div class="wf-flow">
@@ -75,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Tab } from '../stores/tabs'
 import type { StepState } from '../workflow/workflowViewState'
@@ -150,6 +163,29 @@ function onStepClick(s: StepState, idx: number) {
 }
 
 const showEditModal = ref(false)
+
+// ── Sequence accordion (R0001 group 0244) — persisted for the same reason as the
+// document header: the tablet constraint does not go away on reload.
+const SEQ_COLLAPSED_KEY = 'flowgate:doc-workflow:collapsed'
+
+function readSequenceCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SEQ_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const sequenceCollapsed = ref(readSequenceCollapsed())
+watch(sequenceCollapsed, (val) => {
+  try {
+    localStorage.setItem(SEQ_COLLAPSED_KEY, val ? '1' : '0')
+  } catch { /* ignore — e.g. private mode quota */ }
+})
+
+function toggleSequenceCollapsed() {
+  sequenceCollapsed.value = !sequenceCollapsed.value
+}
 </script>
 
 <style scoped>
@@ -260,5 +296,52 @@ const showEditModal = ref(false)
    Reorder so the decorative line (::after) sits between the title and the button. */
 .sec-title::after {
   order: 1;
+}
+
+/* ── Sequence accordion (R0001 group 0244 / NR0003 §8) — .wf-flow wraps and has
+   no height cap, so a long sequence is the worst vertical offender on tablet.
+   order: 3 keeps this at the far right, past .wf-edit-btn (order: 2). It is a
+   sibling of that button, not a wrapper: nesting would both be invalid HTML and
+   make [시퀀스 수정] fold the section. ── */
+.wf-collapse-btn {
+  order: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-s);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.wf-collapse-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-l);
+}
+.wf-collapse-btn:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+}
+.wf-caret {
+  font-size: .7rem;
+  transition: transform .18s ease;
+}
+.wf-section.collapsed .wf-caret {
+  transform: rotate(-90deg);
+}
+.wf-section.collapsed .wf-flow {
+  display: none;
+}
+.wf-section.collapsed .sec-title {
+  margin-bottom: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-caret {
+    transition-duration: .1s;
+  }
 }
 </style>

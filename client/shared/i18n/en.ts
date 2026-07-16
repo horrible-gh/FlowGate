@@ -1093,6 +1093,8 @@ export default {
       save_failed: 'An error occurred while saving.',
     },
     doc_header: {
+      collapse: 'Collapse document info',
+      expand: 'Expand document info',
       label_created_date: 'Created',
       label_author: 'Author',
       label_group: 'Group',
@@ -1812,6 +1814,8 @@ export default {
       title: 'Workflow',
       undecided: 'Undecided',
       edit_btn: 'Edit Sequence',
+      collapse: 'Collapse sequence',
+      expand: 'Expand sequence',
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
       time_machine_hint: 'Roll back to this step',
       time_machine_return_hint: 'Return to this step (original position)',
