@@ -277,6 +277,11 @@
       :start-answer="qaStartAnswer"
       :submit-answer="submitAnswerCore"
       :request-ai-answer="requestAiAnswer"
+      :ai-providers="aiProviderStore.providers"
+      :selected-provider-id="aiProviderStore.selectedProviderId"
+      :provider-loading="aiProviderStore.loading"
+      :provider-errored="!!aiProviderStore.error"
+      :select-provider="aiProviderStore.selectProvider"
       :copy-answer-mention="copyAnswerMention"
       :ai-run-item-id="aiRunItemId"
     />
@@ -290,6 +295,7 @@ import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
 import { useQaAnswers } from '../composables/useQaAnswers'
+import { useAiProviderStore } from '../stores/aiProvider'
 import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
@@ -298,6 +304,7 @@ import type { AiReview, AiReviewFinding } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 
 const { t } = useI18n()
+const aiProviderStore = useAiProviderStore()
 
 const props = defineProps<{
   docId: string
@@ -542,6 +549,11 @@ const {
   fetchAnswerMention,
   requestAiAnswer,
 } = useQaAnswers(toRef(props, 'docId'))
+
+const qaProjectId = computed(() => props.docId.split('.')[0] || '')
+watch(qaProjectId, (projectId) => {
+  if (projectId) void aiProviderStore.ensureLoaded(projectId)
+}, { immediate: true })
 
 const { showToast } = useToast()
 const { recordMentionCopy } = useMentionCopy()
