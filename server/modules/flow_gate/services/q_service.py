@@ -10,8 +10,9 @@ sqloader rule: no inline SQL. Go through queries.json + the db module.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from fastapi import HTTPException
 
@@ -30,6 +31,14 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, publish_event_t
 AI_SYSTEM_USER = "u-system"
 
 QuestionInput = Union[str, dict]
+
+# ── Option limits (L0008 §1) ─────────────────────────────────────────────────────
+# question_items.options / answers.selected_options carry no DB-level CHECK — JSON
+# validation has no common syntax across the three dialects (DB0007 §2) — so the
+# validation below is the ONLY enforcement of every invariant in DB0007 §5.
+MAX_OPTIONS = 10          # 질의 항목당 선택지 하드 캡 (남용 방지 가드)
+MAX_OPTION_LABEL = 200    # label 최대 길이(strip 후 기준). 장문 후보안은 질의 body에 서술
+MAX_SELECTED = 1          # v1 단일선택
 
 
 # ── SSE notifications ────────────────────────────────────────────────────────────
@@ -63,21 +72,98 @@ def _notify_q_registered(
 
 # ── Input normalization ──────────────────────────────────────────────────────────
 
-def _normalize_questions(questions: list[QuestionInput]) -> list[tuple[Optional[str], str]]:
-    """[{title?, body}|str, ...] → [(title, body), ...]. body is required."""
-    out: list[tuple[Optional[str], str]] = []
+def _validate_options(raw_options: Any) -> list[str]:
+    """Validate a query item's raw options payload → list of stripped labels (L0008 §2.2).
+
+    The request carries plain label strings; ids are always server-assigned
+    (_assign_option_ids), so the request surface never accepts one.
+    """
+    if not isinstance(raw_options, list):
+        raise HTTPException(status_code=400, detail="options must be an array of strings")
+    if len(raw_options) > MAX_OPTIONS:
+        raise HTTPException(
+            status_code=400, detail=f"options must contain at most {MAX_OPTIONS} items"
+        )
+    labels: list[str] = []
+    for item in raw_options:
+        if not isinstance(item, str):
+            raise HTTPException(status_code=400, detail="each option must be a string label")
+        label = item.strip()
+        if not label:
+            raise HTTPException(status_code=400, detail="option label must not be empty")
+        if len(label) > MAX_OPTION_LABEL:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"option label must be {MAX_OPTION_LABEL} characters or fewer; "
+                    "describe a long alternative in the question body instead"
+                ),
+            )
+        if label in labels:
+            raise HTTPException(status_code=400, detail=f"duplicate option label: {label}")
+        labels.append(label)
+    return labels
+
+
+def _assign_option_ids(labels: list[str]) -> list[dict]:
+    """Labels → [{"id": "o1", "label": ...}, ...] (L0008 §2.3).
+
+    An id only has to be unique within its item (an answer references it in item scope),
+    and the 1-based position makes that structural. Options are immutable once registered
+    — v1 has no edit/delete API — so ids are never reassigned and selected_options keeps
+    referential integrity over time (DB0007 §5).
+    """
+    return [{"id": f"o{n}", "label": label} for n, label in enumerate(labels, start=1)]
+
+
+def _dump_json(value: Any) -> str:
+    """Serialize to compact JSON, keeping non-ASCII as-is so a stored label matches its
+    original text byte for byte (L0008 §2.4)."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _normalize_questions(
+    questions: list[QuestionInput],
+) -> list[tuple[Optional[str], str, list[dict]]]:
+    """[{title?, body, options?}|str, ...] → [(title, body, options), ...]. body is required.
+
+    Options are normalized HERE rather than at the call site: the tuple this returns is the
+    only thing add_questions writes, so an option normalized anywhere else would be dropped
+    silently instead of raising (NR0004 §6). A plain-string question (legacy worker payload)
+    normalizes to options=[] — byte-identical behaviour to before this extension.
+    """
+    out: list[tuple[Optional[str], str, list[dict]]] = []
     for q in questions:
         if isinstance(q, str):
-            title, body = None, q
+            title, body, raw_options = None, q, []
         elif isinstance(q, dict):
             title = (q.get("title") or None)
             body = q.get("body") or ""
+            raw_options = q.get("options") or []
         else:
-            raise HTTPException(status_code=400, detail="question must be a string or {title, body}")
+            raise HTTPException(
+                status_code=400, detail="question must be a string or {title, body, options}"
+            )
         if not body or not body.strip():
             raise HTTPException(status_code=400, detail="question body must not be empty")
-        out.append((title, body))
+        out.append((title, body, _assign_option_ids(_validate_options(raw_options))))
     return out
+
+
+def _parse_options(item: dict) -> list[dict]:
+    """Stored options JSON → [{"id", "label"}]. Unparseable → [] (L0008 §5).
+
+    Unreachable on the live path (the single write gate validates before storing), but a
+    malformed row must not take down a read.
+    """
+    raw = item.get("options")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 # ── Lazy container creation (keyed by doc_id, L0007 §3.1) ────────────────────────
@@ -184,10 +270,10 @@ def add_questions(
 
     store = get_store()
     with store.transaction():
-        for offset, (title, body) in enumerate(normalized, start=1):
+        for offset, (title, body, options) in enumerate(normalized, start=1):
             db_question_items.insert(
                 question_pk=qpk, seq=max_seq + offset, body=body,
-                title=title, asker_kind=asker_kind,
+                title=title, asker_kind=asker_kind, options=_dump_json(options),
             )
         # Re-query: revert done → pending (consistent with D0005 §4 "re-query = new item")
         if container.get("status") == "done":
@@ -201,7 +287,9 @@ def add_questions(
             audience=notify_audience or container.get("pm_id"),
             doc_id=doc_id,
             project_id=container.get("project_id"),
-            titles=[t or b[:40] for t, b in normalized],
+            # Options are deliberately absent from the notice — it announces only that a
+            # query was registered, never the choices themselves (D0006 §3, 0022 rule A).
+            titles=[t or b[:40] for t, b, _ in normalized],
         )
 
     return {"doc_id": doc_id, "added_item_ids": added_ids}
@@ -215,12 +303,17 @@ def register_answer(
     body: str,
     author_kind: str = "human",
     author_id: Optional[str] = None,
+    selected_option_ids: Optional[list[str]] = None,
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
     Wraps the four writes (insert answer → increment answer_count → status transition)
     in a single transaction to block partial commits. When author_kind='ai', author_id
     is NULL. When every item has answer_count≥1, status=done.
+
+    An answer may pick an option, write freely, or do both (L0008 §4). Picking alone fills
+    body with the chosen option's label, so answers.body stays non-blank and every existing
+    body-only reader (ment assembly, the answer list) works unchanged (DB0007 §5).
     """
     if author_kind not in ("human", "ai"):
         raise HTTPException(status_code=400, detail="author_kind must be 'human' or 'ai'")
@@ -242,12 +335,31 @@ def register_answer(
             detail=f"question_item {item_id} does not belong to document {doc_id}",
         )
 
+    selected = list(selected_option_ids or [])
+    if len(selected) > MAX_SELECTED:
+        raise HTTPException(status_code=400, detail="only one option may be selected")
+    options = _parse_options(item)
+    labels_by_id = {o.get("id"): o.get("label", "") for o in options if isinstance(o, dict)}
+    for oid in selected:
+        # Covers items with no options at all — every id is unknown there.
+        if oid not in labels_by_id:
+            raise HTTPException(status_code=400, detail=f"unknown option id: {oid}")
+
+    if not body or not body.strip():
+        if not selected:
+            raise HTTPException(status_code=400, detail="body must not be empty")
+        # Picked-only: the label verbatim becomes the body (BODY_FILL, L0008 §1).
+        body = labels_by_id[selected[0]]
+    # A body that is already written stays as written: submitting a pick alongside prose
+    # keeps the prose as the body and records the pick in selected_options only.
+
     q_status = container["status"]
     store = get_store()
     with store.transaction():
         db_answers.insert(
             question_item_id=item_id, body=body,
             author_kind=author_kind, author_id=author_id,
+            selected_options=_dump_json(selected),
         )
         db_question_items.increment_answer_count(pk=item_id)
         unanswered = db_question_items.list_unanswered(container["id"])
@@ -269,10 +381,23 @@ def register_answer(
 
 # ── Lookup ───────────────────────────────────────────────────────────────────────
 
+def _parse_selected_options(answer: dict) -> list[str]:
+    """Stored selected_options JSON → list of option ids. Unparseable → [] (L0008 §5)."""
+    raw = answer.get("selected_options")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    return [o for o in parsed if isinstance(o, str)] if isinstance(parsed, list) else []
+
+
 def get_qa_detail(doc_id: str) -> dict:
     """The document's query container + items + answers tree. Empty structure if no container.
 
-    Returns {doc_id, status, items: [{...item, answers: [...]}]}.
+    Returns {doc_id, status, items: [{...item, options: [{id, label}], answers: [...]}]}.
+    options / selected_options are handed to the UI parsed, never as the stored JSON text.
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
@@ -284,7 +409,13 @@ def get_qa_detail(doc_id: str) -> dict:
     result["items"] = []
     for item in items:
         item_dict = dict(item)
-        item_dict["answers"] = db_answers.list_by_question_item(item["id"])
+        item_dict["options"] = _parse_options(item)
+        answers = []
+        for answer in db_answers.list_by_question_item(item["id"]):
+            answer_dict = dict(answer)
+            answer_dict["selected_options"] = _parse_selected_options(answer)
+            answers.append(answer_dict)
+        item_dict["answers"] = answers
         result["items"].append(item_dict)
     return result
 

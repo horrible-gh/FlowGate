@@ -104,7 +104,7 @@
         "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id JOIN documents d ON d.doc_id = q.doc_id LEFT JOIN groups g ON g.group_id = d.group_id WHERE qi.answer_count = 0 AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) AND COALESCE(d.doc_review_status, '') <> 'wf_done' AND COALESCE(UPPER(g.status), '') NOT IN ('CLOSED', 'DISCARDED') AND g.closed_at IS NULL AND g.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM documents rd WHERE rd.group_id = d.group_id AND ((rd.type_code IN ('R', 'B') AND rd.doc_review_status = 'wf_done') OR rd.type_code = 'DC')) ORDER BY q.updated_at DESC"
     },
     "question_items": {
-        "insert_question_item": "INSERT INTO question_items (question_id, seq, title, body, asker_kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "insert_question_item": "INSERT INTO question_items (question_id, seq, title, body, asker_kind, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         "get_question_items": "SELECT * FROM question_items WHERE question_id = ? ORDER BY seq ASC",
         "get_question_item_by_pk": "SELECT * FROM question_items WHERE id = ?",
         "get_unanswered_items": "SELECT * FROM question_items WHERE question_id = ? AND answer_count = 0 ORDER BY seq ASC",
@@ -112,10 +112,10 @@
         "increment_answer_count": "UPDATE question_items SET answer_count = answer_count + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
         "decrement_answer_count": "UPDATE question_items SET answer_count = MAX(0, answer_count - 1), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
         "list_by_doc": "SELECT qi.* FROM question_items qi JOIN questions q ON qi.question_id = q.id WHERE q.doc_id = ? ORDER BY qi.seq",
-        "qa_bundle_by_doc": "SELECT qi.seq, qi.title, qi.body, qi.asker_kind, a.author_kind, a.body AS answer_body FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN answers a ON a.question_item_id = qi.id WHERE q.doc_id = ? ORDER BY qi.seq, a.created_at"
+        "qa_bundle_by_doc": "SELECT qi.seq, qi.title, qi.body, qi.asker_kind, qi.options, a.author_kind, a.body AS answer_body, a.selected_options AS answer_selected_options FROM question_items qi JOIN questions q ON qi.question_id = q.id LEFT JOIN answers a ON a.question_item_id = qi.id WHERE q.doc_id = ? ORDER BY qi.seq, a.created_at"
     },
     "answers": {
-        "insert_answer": "INSERT INTO answers (question_item_id, body, author_kind, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        "insert_answer": "INSERT INTO answers (question_item_id, body, author_kind, author_id, selected_options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         "get_answers_by_question_item": "SELECT * FROM answers WHERE question_item_id = ? ORDER BY created_at ASC",
         "get_answer_by_pk": "SELECT * FROM answers WHERE id = ?",
         "get_answers_by_author": "SELECT * FROM answers WHERE author_id = ? ORDER BY created_at DESC",

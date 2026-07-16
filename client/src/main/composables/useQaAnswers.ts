@@ -9,9 +9,17 @@ import { ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 
+// group 0243 R0001: a query may carry reference options the answerer can click instead of
+// writing prose. ids are server-assigned and unique within their item; the array order is
+// the display order.
+export interface QaOption {
+  id: string
+  label: string
+}
 export interface QaAnswer {
   body: string
   author_kind: string
+  selected_options?: string[]
 }
 export interface QaItem {
   id: number
@@ -19,6 +27,7 @@ export interface QaItem {
   title: string | null
   body: string
   asker_kind: string
+  options?: QaOption[]
   answer_count?: number
   answers?: QaAnswer[]
 }
@@ -49,13 +58,20 @@ export function useQaAnswers(docId: Ref<string>) {
     }
   }
 
-  async function submitQuestion(title: string, body: string): Promise<boolean> {
+  // `options` are plain labels — the server assigns each an id (L0008 §2.3). Blank entries
+  // are dropped here so a half-filled option row in the compose form is simply ignored
+  // rather than rejected as an empty label.
+  async function submitQuestion(title: string, body: string, options: string[] = []): Promise<boolean> {
     if (!body.trim() || qaBusy.value) return false
     qaBusy.value = true
     try {
       await postRequest(`/api/v1/q/${encodeURIComponent(docId.value)}/questions`, {
         asker_kind: 'human',
-        questions: [{ title: title.trim() || null, body: body.trim() }],
+        questions: [{
+          title: title.trim() || null,
+          body: body.trim(),
+          options: options.map((o) => o.trim()).filter(Boolean),
+        }],
       })
       await fetchQa()
       return true
@@ -67,13 +83,20 @@ export function useQaAnswers(docId: Ref<string>) {
     }
   }
 
-  async function submitAnswer(itemId: number, body: string): Promise<boolean> {
-    if (!body.trim() || qaBusy.value) return false
+  // An answer picks an option, writes prose, or does both — so a blank body is valid as long
+  // as something was picked (the server then fills the body with the chosen label, L0008 §2.4).
+  async function submitAnswer(
+    itemId: number,
+    body: string,
+    selectedOptionIds: string[] = [],
+  ): Promise<boolean> {
+    if ((!body.trim() && selectedOptionIds.length === 0) || qaBusy.value) return false
     qaBusy.value = true
     try {
       await postRequest(`/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers`, {
         body: body.trim(),
         author_kind: 'human',
+        selected_option_ids: selectedOptionIds,
       })
       await fetchQa()
       return true

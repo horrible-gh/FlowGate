@@ -29,12 +29,17 @@ def insert(
     body: str,
     author_kind: str = "human",
     author_id: Optional[str] = None,
+    selected_options: str = "[]",
 ) -> None:
-    """answers INSERT (DB0006 §4.2 — author_kind/author_id; author_id NULL for AI)."""
+    """answers INSERT (DB0006 §4.2 — author_kind/author_id; author_id NULL for AI).
+
+    ``selected_options`` is the serialized JSON array of chosen option ids (DB0007 §2);
+    the caller validates it against the item's options (L0008 §2.4).
+    """
     store = get_store()
     store._execute(
         store._sql("answers.insert_answer"),
-        [question_item_id, body, author_kind, author_id],
+        [question_item_id, body, author_kind, author_id, selected_options],
     )
 
 

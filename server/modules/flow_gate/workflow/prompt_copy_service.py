@@ -10,6 +10,7 @@ Clipboard copy is handled on the frontend.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from modules.flow_gate.db import documents as db_docs
@@ -233,9 +234,15 @@ def _append_qa_block(lines: list[str], doc_id: str) -> None:
     """Append the '## 사용자 질의응답' (User Q&A) block (D0005 §3.5) for the document, if any.
 
     Answered = question title + answer body; in-progress = (undecided). Human/AI distinction
-    is text-only in the ment. qa_bundle rows: {seq, title, body, asker_kind, author_kind,
-    answer_body}; a question with
+    is text-only in the ment. qa_bundle rows: {seq, title, body, asker_kind, options,
+    author_kind, answer_body, answer_selected_options}; a question with
     multiple answers yields multiple rows (one per answer), so group by seq.
+
+    An unanswered query with options gets a '보기:' line listing them WITH their ids, so a
+    worker answering via the ai-request path can echo an id straight back in
+    selected_option_ids. An answered one needs no such line — the pick is already in the
+    answer body as its label. The machine-readable answer_selected_options stays out of the
+    ment entirely: the ment is a human-readable surface (L0008 §2.5).
     """
     try:
         from modules.flow_gate.services import q_service
@@ -253,6 +260,7 @@ def _append_qa_block(lines: list[str], doc_id: str) -> None:
         if seq not in grouped:
             grouped[seq] = {
                 "title": r.get("title") or r.get("body") or "",
+                "options": _parse_ment_options(r.get("options")),
                 "answers": [],
             }
             order.append(seq)
@@ -271,6 +279,29 @@ def _append_qa_block(lines: list[str], doc_id: str) -> None:
                 lines.append(f"    답: {ans}")
         else:
             lines.append(f"- [답변중]   Q{seq} {label}            (미정)")
+            if info["options"]:
+                shown = " / ".join(
+                    f"[{o.get('id')}] {o.get('label')}" for o in info["options"]
+                )
+                lines.append(f"    보기: {shown}")
+
+
+def _parse_ment_options(raw: object) -> list[dict]:
+    """Stored options JSON → [{"id", "label"}] for the ment. Anything unparseable → [].
+
+    A malformed row (unreachable while the single write gate holds) then just renders in the
+    pre-options format rather than costing the whole Q&A block: this is a supplementary block
+    already wrapped in a try/except, and failing to assemble it must not block the ment.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [o for o in parsed if isinstance(o, dict) and o.get("id")]
 
 
 def _append_next_actions(lines: list[str], doc: dict, group: dict | None) -> None:

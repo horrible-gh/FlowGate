@@ -56,6 +56,34 @@
         <div v-if="newQOpen" class="dip-qa-form">
           <input v-model="newQTitle" class="dip-qa-input" :placeholder="t('main.doc_info_panel.qa_title_ph')" />
           <textarea v-model="newQBody" class="dip-qa-textarea" rows="3" :placeholder="t('main.doc_info_panel.qa_body_ph')"></textarea>
+          <!-- group 0243 R0001: optional option editor. Add none and the query is the
+               pre-extension one. -->
+          <div class="dip-qa-opt-edit">
+            <div v-for="(_, idx) in newQOptions" :key="idx" class="dip-qa-opt-row">
+              <input
+                v-model="newQOptions[idx]"
+                class="dip-qa-input"
+                :placeholder="t('main.doc_info_panel.qa_option_ph', { n: idx + 1 })"
+                :maxlength="200"
+              />
+              <button
+                class="dip-qa-opt-del"
+                type="button"
+                :title="t('main.doc_info_panel.qa_option_remove')"
+                @click="removeQOption(idx)"
+              >
+                <AppIcon name="x" />
+              </button>
+            </div>
+            <button
+              v-if="newQOptions.length < QA_MAX_OPTIONS"
+              class="dip-qa-opt-add"
+              type="button"
+              @click="addQOption"
+            >
+              <AppIcon name="plus" /> {{ t('main.doc_info_panel.qa_option_add') }}
+            </button>
+          </div>
           <div class="dip-qa-form-actions">
             <button class="btn btn-sm btn-outline" type="button" @click="toggleNewQ">{{ t('common.cancel') }}</button>
             <button class="btn btn-sm btn-primary" type="button" :disabled="!newQBody.trim() || qaBusy" @click="submitNewQ">{{ t('main.doc_info_panel.qa_register') }}</button>
@@ -77,6 +105,11 @@
           >
             <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
             <p class="dip-qa-card-body">{{ item.body }}</p>
+            <!-- group 0243 R0001: the card previews the options; picking one happens in the
+                 full view, which [답변] opens. -->
+            <ul v-if="(item.options?.length ?? 0) > 0" class="dip-qa-opt-list">
+              <li v-for="opt in item.options" :key="opt.id" class="dip-qa-opt">{{ opt.label }}</li>
+            </ul>
             <div class="dip-qa-card-actions">
               <button class="mini-action primary" type="button" @click="openQaFull(item.id, true)">
                 <AppIcon name="arrow-bend-up-left" />
@@ -506,6 +539,17 @@ const {
 const newQOpen = ref(false)
 const newQTitle = ref('')
 const newQBody = ref('')
+// group 0243 R0001: optional reference options on a human-written query. Leaving every row
+// blank yields exactly the pre-extension query — blank rows are dropped on submit.
+const newQOptions = ref<string[]>([])
+const QA_MAX_OPTIONS = 10  // mirrors q_service.MAX_OPTIONS (L0008 §1)
+
+function addQOption() {
+  if (newQOptions.value.length < QA_MAX_OPTIONS) newQOptions.value.push('')
+}
+function removeQOption(idx: number) {
+  newQOptions.value.splice(idx, 1)
+}
 
 // group 0126 / C안: unanswered count shown on the Q&A headline badge (matches the
 // prototype's "미응답 N" pill — and the same count the header counter would show).
@@ -525,12 +569,12 @@ function openQaFull(focusId: number | null = null, startAnswer = false) {
 
 function toggleNewQ() {
   newQOpen.value = !newQOpen.value
-  if (!newQOpen.value) { newQTitle.value = ''; newQBody.value = '' }
+  if (!newQOpen.value) { newQTitle.value = ''; newQBody.value = ''; newQOptions.value = [] }
 }
 
 async function submitNewQ() {
-  if (await submitQuestion(newQTitle.value, newQBody.value)) {
-    newQTitle.value = ''; newQBody.value = ''; newQOpen.value = false
+  if (await submitQuestion(newQTitle.value, newQBody.value, newQOptions.value)) {
+    newQTitle.value = ''; newQBody.value = ''; newQOptions.value = []; newQOpen.value = false
   }
 }
 
@@ -617,6 +661,27 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
 }
 .dip-qa-textarea { resize: vertical; }
 .dip-qa-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* group 0243 R0001: option editor in the new-query form + option preview on a card. The
+   preview is inert text — no recommendation accent, nothing preselected (0022 rule). */
+.dip-qa-opt-edit { display: flex; flex-direction: column; gap: 4px; }
+.dip-qa-opt-row { display: flex; align-items: center; gap: 4px; }
+.dip-qa-opt-row .dip-qa-input { flex: 1; }
+.dip-qa-opt-del {
+  border: none; background: none; cursor: pointer; color: #9ca3af;
+  padding: 2px 4px; line-height: 1; font-size: .7rem;
+}
+.dip-qa-opt-del:hover { color: var(--danger); }
+.dip-qa-opt-add {
+  align-self: flex-start; border: none; background: none; cursor: pointer;
+  color: var(--primary); font-size: .7rem; padding: 2px 0;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.dip-qa-opt-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.dip-qa-opt {
+  font-size: .7rem; color: #6b7280;
+  padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px; background: #f8fafc;
+}
 
 /* group 0126: prototype card layout for the Q&A section. The headline carries a
    caret-title toggle plus an unanswered-count pill and a compact [+ add] button; the

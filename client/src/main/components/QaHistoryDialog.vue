@@ -47,6 +47,22 @@
                    surface (mirrors ReviewHistoryDialog's full-content view). -->
               <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_question') }}</div>
               <p class="qhd-box">{{ item.body }}</p>
+              <!-- group 0243 R0001: an answered query shows its options read-only, marking
+                   which one the answer picked (a free-form answer marks none). -->
+              <template v-if="(item.options?.length ?? 0) > 0 && answered(item)">
+                <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_options') }}</div>
+                <ul class="qhd-opts">
+                  <li
+                    v-for="opt in item.options"
+                    :key="opt.id"
+                    class="qhd-opt-read"
+                    :class="{ picked: pickedIds(item).includes(opt.id) }"
+                  >
+                    <AppIcon v-if="pickedIds(item).includes(opt.id)" name="check-circle" />
+                    {{ opt.label }}
+                  </li>
+                </ul>
+              </template>
               <template v-if="(item.answers?.length ?? 0) > 0">
                 <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_answer') }}</div>
                 <p v-for="(a, ai) in item.answers" :key="ai" class="qhd-box qhd-answer">
@@ -61,6 +77,23 @@
                    the side panel in sync. Only shown when the dialog is given a docId. -->
               <template v-if="docId">
                 <div v-if="answerOpenId === item.id" class="qhd-answer-form">
+                  <!-- group 0243 R0001: options are reference only — nothing is preselected
+                       and none is marked recommended (0022 rule, kept). Clicking a picked
+                       option unpicks it, so a user who changes their mind can still answer
+                       freely. The free-text box shows regardless of whether options exist. -->
+                  <template v-if="(item.options?.length ?? 0) > 0">
+                    <div class="qhd-opts">
+                      <button
+                        v-for="opt in item.options"
+                        :key="opt.id"
+                        type="button"
+                        class="qhd-opt-btn"
+                        :class="{ picked: picked === opt.id }"
+                        :aria-pressed="picked === opt.id"
+                        @click="togglePick(opt.id)"
+                      >{{ opt.label }}</button>
+                    </div>
+                  </template>
                   <textarea
                     v-model="answerBody"
                     class="qhd-answer-textarea"
@@ -72,7 +105,7 @@
                     <button
                       type="button"
                       class="btn btn-primary btn-sm"
-                      :disabled="!answerBody.trim() || busy"
+                      :disabled="!canSubmit || busy"
                       @click="onSubmitAnswer(item.id)"
                     >{{ t('main.doc_info_panel.qa_answer_submit') }}</button>
                   </div>
@@ -100,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
 import AppIcon from '@shared/AppIcon.vue'
@@ -116,7 +149,7 @@ const props = withDefaults(defineProps<{
   // scrolls it into view, [Answer] also opens its inline answer form.
   focusId?: number | null
   startAnswer?: boolean
-  submitAnswer?: (itemId: number, body: string) => Promise<boolean>
+  submitAnswer?: (itemId: number, body: string, selectedOptionIds?: string[]) => Promise<boolean>
   requestAiAnswer?: (itemId: number) => Promise<boolean>
 }>(), {
   docId: '',
@@ -133,6 +166,11 @@ const { t } = useI18n()
 
 const answerOpenId = ref<number | null>(null)
 const answerBody = ref('')
+// v1 is single-select (L0008 §1 MAX_SELECTED), so one id — not a set — is enough.
+const picked = ref<string | null>(null)
+
+// Picking alone is a complete answer: the server fills the body with the label.
+const canSubmit = computed(() => !!answerBody.value.trim() || picked.value !== null)
 
 // group 0126 / C안: per-entry element refs so an opened-with-focus query can be
 // scrolled into view (the panel cards open this dialog targeting one query).
@@ -147,18 +185,29 @@ function answered(item: QaItem): boolean {
   return (item.answer_count ?? item.answers?.length ?? 0) > 0
 }
 
+// Option ids the answers on this item picked — used to mark them in the read-only view.
+function pickedIds(item: QaItem): string[] {
+  return (item.answers ?? []).flatMap((a) => a.selected_options ?? [])
+}
+
+function togglePick(id: string) {
+  picked.value = picked.value === id ? null : id
+}
+
 function openAnswer(id: number) {
   answerOpenId.value = id
   answerBody.value = ''
+  picked.value = null
 }
 function closeAnswer() {
   answerOpenId.value = null
   answerBody.value = ''
+  picked.value = null
 }
 
 async function onSubmitAnswer(itemId: number) {
-  if (!props.submitAnswer || !answerBody.value.trim() || props.busy) return
-  if (await props.submitAnswer(itemId, answerBody.value)) {
+  if (!props.submitAnswer || !canSubmit.value || props.busy) return
+  if (await props.submitAnswer(itemId, answerBody.value, picked.value ? [picked.value] : [])) {
     closeAnswer()
   }
 }
@@ -229,6 +278,24 @@ function onClose() {
   padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; resize: vertical;
 }
 .qhd-answer-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+
+/* group 0243 R0001: reference options — a plain vertical stack of neutral buttons, with no
+   recommendation accent and nothing preselected (0022 rule). Only the user's own pick is
+   accented, and only after they click it. */
+.qhd-opts { display: flex; flex-direction: column; gap: 4px; margin: 0 0 2px; padding: 0; list-style: none; }
+.qhd-opt-btn {
+  text-align: left; font-size: .78rem; font-family: inherit; cursor: pointer;
+  padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px;
+  background: #fff; color: var(--text);
+}
+.qhd-opt-btn:hover { border-color: #94a3b8; background: #f8fafc; }
+.qhd-opt-btn.picked { border-color: var(--primary, #2563eb); background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.qhd-opt-read {
+  display: flex; align-items: center; gap: 5px;
+  font-size: .76rem; color: var(--text-m);
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: #f8fafc;
+}
+.qhd-opt-read.picked { border-color: #86efac; background: #f0fdf4; color: #15803d; font-weight: 600; }
 
 /* Theme the single scroll surface to match ReviewHistoryDialog (14px, tinted). */
 .qhd-body { scrollbar-width: thin; scrollbar-color: #b8c4d6 #eef2f8; }
