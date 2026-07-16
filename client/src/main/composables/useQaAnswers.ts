@@ -5,7 +5,7 @@
 // add one. Extracting the data + actions here lets DocInfoPanel own a single source
 // of truth and hand the SAME qaItems ref and bound action functions to the dialog,
 // so answering in either surface refetches once and both views stay in sync.
-import { ref, type Ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 
@@ -39,6 +39,11 @@ export function useQaAnswers(docId: Ref<string>) {
   const qaLoading = ref(false)
   const qaError = ref('')
   const qaBusy = ref(false)
+  // In-flight [Request AI answer] run (0248 B0001). qaBusy only covers the POST itself;
+  // these outlive it — the run keeps going after the request returns, and the item stays
+  // marked as being answered until its ai_invoke_finished event arrives.
+  const aiRunId = ref<string | null>(null)
+  const aiRunItemId = ref<number | null>(null)
 
   function itemAnswered(item: QaItem): boolean {
     return (item.answer_count ?? item.answers?.length ?? 0) > 0
@@ -108,16 +113,49 @@ export function useQaAnswers(docId: Ref<string>) {
     }
   }
 
-  // [Request AI answer] — hands the item to an AI worker; the answer lands later as
-  // author_kind='ai' (group 0022 D0005 §3.2). Dispatch wiring is server-side.
-  async function requestAiAnswer(itemId: number): Promise<boolean> {
-    if (qaBusy.value) return false
-    qaBusy.value = true
+  // [멘트 복사] — mint this item's worker mention so the user can paste it into their own
+  // AI session (0248 B0001 rework). The document-bound Q&A had no hand-off at all: the only
+  // button was [답변], so whoever asked the question was left answering it themselves. The
+  // legacy Q-document flow has offered ment_copy alongside ai since the start (AnswerEditor);
+  // this is that path. It is also the ONLY one that works with no provider configured.
+  //
+  // Returns the mention text, or null if the request failed (qaError carries the reason).
+  // The caller hands this to copyToClipboardDeferred, so it must not be awaited behind
+  // anything else — the click's transient activation has to survive to the clipboard write.
+  async function fetchAnswerMention(itemId: number): Promise<string | null> {
+    qaError.value = ''
     try {
-      await postRequest(`/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers/ai-request`, {})
-      await fetchQa()
+      const res = await postRequest<any>(
+        `/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers/ai-mention`, {},
+      )
+      return ((res as any)?.data?.mention as string) || null
+    } catch (e: any) {
+      qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
+      return null
+    }
+  }
+
+  // [Request AI answer] — starts a server-side AI run that answers this item; the answer
+  // lands later as author_kind='ai' (group 0022 D0005 §3.2).
+  //
+  // 0248 B0001: the run is ASYNCHRONOUS. This used to refetch once, immediately, which was
+  // guaranteed to be too early — the answer cannot exist yet when the POST returns. Hold the
+  // run id instead and refetch when its ai_invoke_finished event arrives (onAiInvoke below).
+  async function requestAiAnswer(itemId: number): Promise<boolean> {
+    if (qaBusy.value || aiRunItemId.value !== null) return false
+    qaBusy.value = true
+    qaError.value = ''
+    try {
+      const res = await postRequest<any>(
+        `/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers/ai-request`, {},
+      )
+      const data = (res as any)?.data ?? {}
+      aiRunId.value = data.run_id ?? null
+      aiRunItemId.value = itemId
       return true
     } catch (e: any) {
+      // Run admission failures carry the ai-invoke envelope (no_enabled_provider /
+      // run_in_progress); error_message is set for both those and the plain _fail() shape.
       qaError.value = e?.response?.data?.error_message ?? t('main.doc_info_panel.qa_error')
       return false
     } finally {
@@ -125,15 +163,41 @@ export function useQaAnswers(docId: Ref<string>) {
     }
   }
 
+  // The run finished somewhere on the server — refetch so the new AI answer shows without
+  // an F5. useFlowGateSse re-broadcasts every ai_invoke_* SSE frame as this window event.
+  function onAiInvoke(e: Event) {
+    const detail = (e as CustomEvent).detail
+    if (!detail || detail.kind !== 'finished') return
+    const payload = detail.payload ?? {}
+    // Match on run_id: any group can have a run in flight, and only ours touches this Q&A.
+    if (aiRunId.value === null || payload.run_id !== aiRunId.value) return
+    const failed = payload.outcome !== 'complete'
+    aiRunId.value = null
+    aiRunItemId.value = null
+    // Refetch even on a failed outcome: it costs one GET and keeps the list truthful if
+    // the worker did land an answer the oracle happened to miss. Report the failure only
+    // AFTER it settles — fetchQa clears qaError on entry, so setting it first would wipe
+    // the message. A real fetch error wins: it is the more immediate problem.
+    void fetchQa().then(() => {
+      if (failed && !qaError.value) qaError.value = t('main.doc_info_panel.qa_answer_ai_failed')
+    })
+  }
+
+  onMounted(() => window.addEventListener('fg:ai_invoke', onAiInvoke))
+  onBeforeUnmount(() => window.removeEventListener('fg:ai_invoke', onAiInvoke))
+
   return {
     qaItems,
     qaLoading,
     qaError,
     qaBusy,
+    aiRunId,
+    aiRunItemId,
     itemAnswered,
     fetchQa,
     submitQuestion,
     submitAnswer,
+    fetchAnswerMention,
     requestAiAnswer,
   }
 }

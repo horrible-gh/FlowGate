@@ -295,11 +295,19 @@ def start_run(
     provider_id: Optional[str] = None,
     issue_builder: Optional[Callable[[], dict]] = None,
     merge_id: Optional[int] = None,
+    completion_oracle: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
     is byte-identical to the copy-mention flow (the raw token never leaves the
-    server — it is consumed only as the run's FLOWGATE_TOKEN env)."""
+    server — it is consumed only as the run's FLOWGATE_TOKEN env).
+
+    completion_oracle (0248 B0001): a caller-supplied "did the work land?" predicate for
+    runs whose result is NOT a new document, so the document-reach oracle cannot see it.
+    The Q&A [Request AI answer] run writes an answer row onto an existing document — under
+    the default oracle it would settle as outcome='none' (docs_reached 0 < docs_target 1)
+    no matter how well the worker did. Supplying an oracle switches the run to that scoped
+    judge and pins docs_target to 0, mirroring the resolve_conflict branch below."""
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
@@ -325,7 +333,10 @@ def start_run(
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     target_to_end = mode == "continuous" and continuation_target_seq == -1
-    if action_scope in ("workflow_decide", "resolve_conflict"):
+    if completion_oracle is not None:
+        # Scoped-oracle run: success is judged by the caller's predicate, not by documents.
+        docs_target = 0
+    elif action_scope in ("workflow_decide", "resolve_conflict"):
         docs_target = 0
     elif mode == "single":
         docs_target = 1
@@ -435,6 +446,7 @@ def start_run(
         ),
         "raw_token": issue["raw_token"],
         "merge_id": merge_id,
+        "completion_oracle": completion_oracle,
     }
     with _runs_lock:
         _runs[run_id] = run
@@ -1120,6 +1132,30 @@ def _settle_and_judge(run: dict) -> None:
         _finish_run_record(run)
         return
 
+    oracle = run.get("completion_oracle")
+    if oracle is not None:
+        # 0248 B0001: the run's product is not a document (Q&A answer row), so the
+        # document-reach oracle would judge every run 'none'. Ask the caller instead.
+        try:
+            satisfied = bool(oracle())
+        except Exception:
+            logger.warning("ai-invoke scoped oracle failed for %s", run["run_id"], exc_info=True)
+            satisfied = False
+        run["docs_reached"] = 0
+        run["reached_doc_ids"] = []
+        run["outcome"] = "complete" if satisfied else "none"
+        # Same "exited cleanly but produced nothing" signal the document oracle raises —
+        # here it means the worker returned without ever posting the answer.
+        run["oracle_mismatch"] = bool(
+            not satisfied
+            and run.get("end_reason") == "exited"
+            and not run.get("register_errors")
+            and not run.get("tool_call_misses")
+            and not run.get("turn_limit_exhausted")
+        )
+        _finish_run_record(run)
+        return
+
     new_docs: list[dict] = []
     try:
         new_docs = _oracle_new_docs(run)
@@ -1265,10 +1301,13 @@ def get_status(run_id: str) -> dict:
     # final judge uses) instead of the raw group max-seq delta, which inflated the
     # live counter with drafts (auto-created N/T) and documents outside this run.
     docs_so_far = 0
-    try:
-        docs_so_far = len(_oracle_new_docs(run))
-    except Exception:
-        pass
+    if run.get("completion_oracle") is None:
+        # A scoped-oracle run targets 0 documents; counting group documents here would
+        # report progress like 1/0 against work it does not measure (0248 B0001).
+        try:
+            docs_so_far = len(_oracle_new_docs(run))
+        except Exception:
+            pass
     return {
         "ok": True,
         "run_id": run_id,

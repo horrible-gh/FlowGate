@@ -111,11 +111,38 @@
                   </div>
                 </div>
                 <div v-else class="qhd-answer-actions">
-                  <button type="button" class="btn btn-outline btn-sm" @click="openAnswer(item.id)">
+                  <button type="button" class="btn btn-outline btn-sm qhd-act-write" @click="openAnswer(item.id)">
                     {{ t('main.doc_info_panel.qa_answer_write') }}
                   </button>
-                  <button type="button" class="btn btn-outline btn-sm" :disabled="busy" @click="onRequestAi(item.id)">
-                    <AppIcon name="robot" /> {{ t('main.doc_info_panel.qa_answer_ai') }}
+                </div>
+                <!-- 0248 B0001 rework: the AI hand-off sits OUTSIDE the compose branch.
+                     It used to live in the v-else above, so opening the compose box hid it —
+                     and the panel card's [답변] opens this dialog with the box already open.
+                     A user who registered a query therefore landed on a bare textarea with no
+                     way to hand it to an AI, and could only answer their own question. Writing
+                     an answer and asking an AI are not alternatives; both stay reachable.
+                     Mirrors the legacy Q flow's ment_copy / ai pair (AnswerEditor.vue). -->
+                <div class="qhd-answer-actions qhd-handoff">
+                  <span class="qhd-handoff-label">{{ t('main.doc_info_panel.qa_answer_handoff') }}</span>
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm qhd-act-mention"
+                    :disabled="busy"
+                    @click="onCopyMention(item.id)"
+                  >
+                    <AppIcon name="copy" />
+                    {{ t('main.doc_info_panel.qa_answer_mention_copy') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-outline btn-sm qhd-act-ai"
+                    :disabled="busy || aiRunItemId !== null"
+                    @click="onRequestAi(item.id)"
+                  >
+                    <AppIcon name="robot" />
+                    {{ aiRunItemId === item.id
+                      ? t('main.doc_info_panel.qa_answer_ai_running')
+                      : t('main.doc_info_panel.qa_answer_ai') }}
                   </button>
                 </div>
               </template>
@@ -151,6 +178,13 @@ const props = withDefaults(defineProps<{
   startAnswer?: boolean
   submitAnswer?: (itemId: number, body: string, selectedOptionIds?: string[]) => Promise<boolean>
   requestAiAnswer?: (itemId: number) => Promise<boolean>
+  // [멘트 복사]. The parent owns the clipboard write + toast (it is the same copy the panel
+  // does); this must be called straight from the click with nothing awaited in front of it,
+  // or the clipboard loses the gesture's transient activation (group 0133 NR0003).
+  copyAnswerMention?: (itemId: number) => Promise<boolean>
+  // 0248 B0001: the AI answer run is async, so the item it is answering stays marked
+  // until the run finishes. null = no run in flight.
+  aiRunItemId?: number | null
 }>(), {
   docId: '',
   busy: false,
@@ -158,6 +192,8 @@ const props = withDefaults(defineProps<{
   startAnswer: false,
   submitAnswer: undefined,
   requestAiAnswer: undefined,
+  copyAnswerMention: undefined,
+  aiRunItemId: null,
 })
 
 const emit = defineEmits<{ 'update:visible': [value: boolean] }>()
@@ -215,6 +251,12 @@ async function onSubmitAnswer(itemId: number) {
 async function onRequestAi(itemId: number) {
   if (!props.requestAiAnswer || props.busy) return
   await props.requestAiAnswer(itemId)
+}
+
+// No await before the parent's call — see the copyAnswerMention prop note.
+async function onCopyMention(itemId: number) {
+  if (!props.copyAnswerMention || props.busy) return
+  await props.copyAnswerMention(itemId)
 }
 
 // Reset any open answer form when the dialog is closed so it reopens clean. When opened
@@ -278,6 +320,9 @@ function onClose() {
   padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; resize: vertical;
 }
 .qhd-answer-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+/* The hand-off row reads as a separate offer from [답변 작성], not another submit button. */
+.qhd-handoff { align-items: center; border-top: 1px dashed var(--border, #e5e7eb); padding-top: 8px; }
+.qhd-handoff-label { margin-right: auto; font-size: .72rem; color: #6b7280; }
 
 /* group 0243 R0001: reference options — a plain vertical stack of neutral buttons, with no
    recommendation accent and nothing preselected (0022 rule). Only the user's own pick is

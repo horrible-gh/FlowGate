@@ -25,7 +25,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from modules.flow_gate.auth.middleware import get_current_user, verify_token
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import q_service, token_service
+from modules.flow_gate.services import q_answer_invoke_service, q_service, token_service
 from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_doc_id,
@@ -170,6 +170,11 @@ class AddQuestionsRequest(BaseModel):
         if v not in ("human", "ai"):
             raise ValueError("asker_kind must be 'human' or 'ai'")
         return v
+
+
+class AiAnswerRequest(BaseModel):
+    """[Request AI answer] body — optional. Omitted/empty ⇒ the project's provider chain."""
+    provider_id: Optional[str] = None
 
 
 class RegisterAnswerRequest(BaseModel):
@@ -320,42 +325,78 @@ def post_register_answer(
     return _register_answer_response(doc_id, item_id, body, user_id)
 
 
-# ── POST /q/{doc_id}/items/{item_id}/answers/ai-request — [Request AI answer] ───────
-# D0005 §3.2 / L0007 §3.4: issue an edit-scoped token to hand the query off to the AI worker.
-# The worker posts the answer with that token via POST /answers (author_kind='ai'); no separate A document.
+# ── Answer hand-off — give one query item to an AI worker ────────────────────────────
+# D0005 §3.2 / L0007 §3.4: hand the query to an AI worker and let the answer land back on
+# the same item as author_kind='ai' via POST /answers; no separate A document.
+#
+# Two routes, the same pair the legacy Q-document flow offers via qa_routes `dispatch_mode`:
+#   /answers/ai-mention → mint the token, return the mention for the user's own worker.
+#   /answers/ai-request → run it in-app through the shared ai_invoke engine.
+#
+# 0248 B0001: ai-request used to stop at token_service.issue and return the raw token to a
+# browser that had nowhere to show it — no worker was launched and no UI surfaced the token,
+# so the click returned 200 and did nothing (NR0003). Its response now carries the run handle
+# only; the token is injected into the run server-side. ai-mention is the copy path that was
+# missing altogether, which left a user with no provider configured no way to get an answer
+# except to write it themselves.
 
-@router.post("/q/{doc_id}/items/{item_id}/answers/ai-request")
-def post_request_ai_answer(
-    doc_id: str,
-    item_id: int,
-    current_user: dict = Depends(get_current_user),
-):
-    user_id: str = current_user["user_id"]
+def _resolve_dispatch_target(doc_id: str, item_id: int, user_id: str):
+    """Shared guard for both hand-off routes: the document exists, its group is live, the
+    caller may dispatch, and the item really belongs to this document.
+
+    Returns (doc, item, None) to proceed, else (None, None, error_response). Both routes
+    mint a worker token bound to the document, so neither may skip any of these.
+    """
     doc = db_documents.get_by_id(doc_id)
     if doc is None:
-        return _fail(404, f"Document {doc_id} does not exist")
-    # TR0079.0003 rework (3rd pass): do not hand out an edit-scoped token for a disposed
-    # group — that would let an AI worker answer into the discarded group's Q&A.
+        return None, None, _fail(404, f"Document {doc_id} does not exist")
+    # TR0079.0003 rework (3rd pass): do not hand out a token for a disposed group — that
+    # would let an AI worker answer into the discarded group's Q&A.
     from modules.flow_gate import process_service as _process_service
     if _process_service.is_group_disposed(doc.get("group_id")):
-        return _fail(409, "Modification not allowed: the group has been disposed.")
+        return None, None, _fail(409, "Modification not allowed: the group has been disposed.")
     project_id = doc.get("project_id")
     if project_id and not has_permission(user_id, project_id, "perm_document_create"):
-        return _fail(403, "Insufficient permissions for this operation (perm_document_create required)")
-    # Verify the item belongs to this document's container
-    container = q_service.get_qa_detail(doc_id)
-    if not any(it.get("id") == item_id for it in container.get("items", [])):
-        return _fail(404, f"question_item {item_id} does not belong to document {doc_id}")
+        return None, None, _fail(
+            403, "Insufficient permissions for this operation (perm_document_create required)")
     try:
-        issued = token_service.issue(
-            project=project_id or "",
-            group_id=doc.get("group_id"),
-            action_scope="edit",
-            doc_ref=doc_id,
+        item = q_answer_invoke_service.resolve_item(doc_id, item_id)
+    except HTTPException as exc:
+        return None, None, _fail(exc.status_code, exc.detail)
+    return {**doc, "doc_id": doc_id}, item, None
+
+
+@router.post("/q/{doc_id}/items/{item_id}/answers/ai-mention")
+def post_answer_ai_mention(
+    doc_id: str,
+    item_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """[멘트 복사] — mint the item-bound token and return the worker mention verbatim.
+
+    The raw token is the point of this response: the user pastes it into their own AI
+    session, exactly as /token/issue serves every other copy-mention site. This is the only
+    answer path that works when the project has no AI provider configured.
+    """
+    user_id: str = current_user["user_id"]
+    doc, item, denied = _resolve_dispatch_target(doc_id, item_id, user_id)
+    if denied is not None:
+        return denied
+
+    # Local import mirrors ai_invoke_routes: token_routes pulls in the whole workflow
+    # stack, so it is imported at call time rather than at module import.
+    from modules.flow_gate.api import token_routes as _token_routes
+
+    try:
+        issued = q_answer_invoke_service.issue_answer_token(
+            doc=doc,
+            item=item,
             issued_to=user_id,
+            api_base_url=_token_routes._build_api_base(request),
         )
     except Exception as exc:  # noqa: BLE001
-        return _fail(500, f"Failed to issue AI dispatch token: {exc}")
+        return _fail(500, f"Failed to issue the answer mention token: {exc}")
     return JSONResponse(content={
         "ok": True,
         "doc_id": doc_id,
@@ -364,6 +405,57 @@ def post_request_ai_answer(
         "token_id": issued.get("token_id"),
         "expires_at": issued.get("expires_at"),
         "scratch_dir": issued.get("scratch_dir"),
+        "mention": issued.get("mention"),
+    })
+
+
+@router.post("/q/{doc_id}/items/{item_id}/answers/ai-request")
+def post_request_ai_answer(
+    doc_id: str,
+    item_id: int,
+    request: Request,
+    body: Optional[AiAnswerRequest] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id: str = current_user["user_id"]
+    doc, item, denied = _resolve_dispatch_target(doc_id, item_id, user_id)
+    if denied is not None:
+        return denied
+
+    # Local import mirrors ai_invoke_routes: token_routes pulls in the whole workflow
+    # stack, so it is imported at call time rather than at module import.
+    from modules.flow_gate.api import token_routes as _token_routes
+
+    try:
+        run = q_answer_invoke_service.dispatch_answer_run(
+            doc=doc,
+            item=item,
+            issued_to=user_id,
+            api_base_url=_token_routes._build_api_base(request),
+            provider_id=(body.provider_id if body else None),
+        )
+    except HTTPException as exc:
+        # Admission failures (no_enabled_provider / run_in_progress / provider_unavailable)
+        # arrive as the ai-invoke error envelope — pass it through unflattened so the UI
+        # can branch on `code`, exactly as it does for /ai-invoke/start.
+        detail = exc.detail if isinstance(exc.detail, dict) else {
+            "code": "ai_dispatch_failed", "message": str(exc.detail)}
+        return JSONResponse(status_code=exc.status_code, content={
+            "ok": False,
+            "http_status": exc.status_code,
+            "error_message": detail.get("message") or "Failed to start the AI answer run.",
+            "help_url": help_url(),
+            "doc_id": doc_id,
+            "item_id": item_id,
+            **detail,
+        })
+    return JSONResponse(content={
+        "ok": True,
+        "doc_id": doc_id,
+        "item_id": item_id,
+        "run_id": run.get("run_id"),
+        "status": run.get("status"),
+        "provider": run.get("provider"),
     })
 
 
