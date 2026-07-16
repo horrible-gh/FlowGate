@@ -1,5 +1,5 @@
 <template>
-  <div v-if="doc" class="doc-header">
+  <div v-if="doc" class="doc-header" :class="{ collapsed: headerCollapsed }">
     <div class="doc-meta">
       <span class="doc-chip" :class="`c-${headerTypeCode}`">
         <AppIcon :name="typeIcon" /> {{ typeLabel }}
@@ -34,15 +34,26 @@
         <AppIcon name="clipboard-text" />
         {{ mentionCopyLabel }} · {{ t('main.doc_header.mention_copied_at', { time: mentionCopyTime }) }}
       </span>
-      <div v-if="hasGroup && headerTypeCode !== 'DC'" class="doc-hdr-more">
+      <div class="doc-hdr-actions">
+        <div v-if="hasGroup && headerTypeCode !== 'DC'" class="doc-hdr-more">
+          <button
+            class="doc-hdr-more-btn"
+            :class="{ open: showGroupMenu }"
+            type="button"
+            :title="t('main.group_actions.more_title')"
+            @click.stop="openGroupMenu"
+          >
+            <AppIcon name="dots-three" />
+          </button>
+        </div>
         <button
-          class="doc-hdr-more-btn"
-          :class="{ open: showGroupMenu }"
+          class="doc-hdr-collapse-btn"
           type="button"
-          :title="t('main.group_actions.more_title')"
-          @click.stop="openGroupMenu"
+          :aria-expanded="!headerCollapsed"
+          :title="headerCollapsed ? t('main.doc_header.expand') : t('main.doc_header.collapse')"
+          @click.stop="toggleHeaderCollapsed"
         >
-          <AppIcon name="dots-three" />
+          <AppIcon name="caret-down" class="doc-hdr-caret" />
         </button>
       </div>
     </div>
@@ -293,6 +304,29 @@ const mentionCopy = ref<{ kind: string; copiedAt: string } | null>(null)
 const showUploadModal = ref(false)
 const showRelatedDocModal = ref(false)
 const showWorkflowDecisionModal = ref(false)
+
+// ── Header accordion (R0001 group 0244) — persisted, because the tablet screens
+// that need it are always short: re-expanding on every reload would defeat it.
+const HEADER_COLLAPSED_KEY = 'flowgate:doc-header:collapsed'
+
+function readHeaderCollapsed(): boolean {
+  try {
+    return localStorage.getItem(HEADER_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const headerCollapsed = ref(readHeaderCollapsed())
+watch(headerCollapsed, (val) => {
+  try {
+    localStorage.setItem(HEADER_COLLAPSED_KEY, val ? '1' : '0')
+  } catch { /* ignore — e.g. private mode quota */ }
+})
+
+function toggleHeaderCollapsed() {
+  headerCollapsed.value = !headerCollapsed.value
+}
 
 // ── Group actions (⋯ header menu): info / rename / discard — R0029.0001 / NR0029.0006 ──
 const showGroupMenu = ref(false)
@@ -1442,10 +1476,58 @@ const statusLabel = computed(() => {
   font-weight: 600;
 }
 
+/* ── Header accordion (R0001 group 0244 / NR0003 §8) — tablet vertical space is
+   tight, so the metadata grid folds away. The identity row, title and rejection
+   banner deliberately stay visible while collapsed: you must still be able to
+   tell which document you are looking at, and a rejection must not be foldable
+   out of sight. ── */
+.doc-hdr-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.doc-hdr-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-s);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.doc-hdr-collapse-btn:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-l);
+}
+.doc-hdr-collapse-btn:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+}
+.doc-hdr-caret {
+  font-size: 0.7rem;
+  transition: transform 0.18s ease;
+}
+.doc-header.collapsed .doc-hdr-caret {
+  transform: rotate(-90deg);
+}
+.doc-header.collapsed .doc-mg {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-hdr-caret {
+    transition-duration: 0.1s;
+  }
+}
+
 /* ── Group disposal entry point — the more (⋯) menu at the far right of the document header's first row (TR0029.0004 approved location) ── */
 .doc-hdr-more {
   position: relative;
-  margin-left: auto;
 }
 .doc-hdr-more-btn {
   display: inline-flex;
