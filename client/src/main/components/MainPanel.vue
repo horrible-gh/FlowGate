@@ -26,14 +26,14 @@
             :class="['doc-with-panel', { 'panel-collapsed': canShowDocInfoPanel(tab.id) && docInfoCollapsed }]"
           >
           <div class="doc-main">
-          <!-- CH is dialog-free (0235 R0001), and .aiv-inline-layer is not a strip: it is an
-               inset:0 backdrop over .doc-main. A chat run is group-scoped like any other, so
-               sending a message covered the whole chat document with "AI가 실행 중입니다"
-               (0251 B0001). Chat progress belongs on the send button, so the layer is not
-               mounted over a chat; every other doc type keeps it. -->
+          <!-- CH chat runs keep progress on the send button, but a group run that targets
+               another document is a next-document transition and must still cover the
+               current chat. Keep the component mounted so it can discover active runs;
+               AiInvokeInline suppresses only the run whose docRef is this CH document. -->
           <AiInvokeInline
-            v-if="activeAiInvokeGroupId && tab.typeCode !== 'CH'"
+            v-if="activeAiInvokeGroupId"
             :group-id="activeAiInvokeGroupId"
+            :suppress-doc-ref="tab.typeCode === 'CH' ? tab.id : undefined"
           />
           <!-- 0155: test-failure strip (confirmed design B) — self-hides unless the
                viewed doc's latest test run failed. Sits above DocHeader as the first
