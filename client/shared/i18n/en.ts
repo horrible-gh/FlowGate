@@ -1300,7 +1300,14 @@ export default {
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',
       invoke_ai_no_docs: 'The AI reply was not registered to any document.',
-      auto_copy_failed: 'Auto-copying the mention after send failed. Use the [Copy Mention] button to copy it.',
+      auto_copy_failed: 'Auto-copying the mention after send failed. Copy it from the [Copy Mention Manually] panel below.',
+      // Inline manual-copy panel (B0001 / group 0240) — the CH-only replacement for the
+      // full-screen clipboard fallback modal.
+      manual_copy_title: 'Copy Mention Manually',
+      manual_copy_hint: 'On this (HTTP) origin the browser can block automatic copying. Press [Copy again] below, or select the text and copy it yourself (Ctrl+C).',
+      manual_copy_again: 'Copy again',
+      manual_copy_copied: 'Mention copied.',
+      manual_copy_retry_failed: 'The copy failed. Select the text below and copy it yourself.',
     },
     review_reject_dialog: {
       title: 'Reject Document',

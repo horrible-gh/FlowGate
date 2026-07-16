@@ -161,7 +161,9 @@
               <ConversationView
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
+                :manual-copy-text="convManualCopy[tab.id] ?? null"
                 @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
+                @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
               />
             </div>
           </div>
@@ -3122,6 +3124,18 @@ async function onActionBarCreateConversation(tabId: string) {
 // chat-only mention (buildConversationMention) with just: read the conversation, append
 // one AI turn (§6), submit via inbox edit. The AI reads the conversation and appends its
 // reply turn, the same inbox-edit path AI turns already use.
+// Text of the last failed mention copy, per CH tab (B0001 / group 0240). Feeds
+// ConversationView's inline manual-copy panel — the CH-only replacement for the
+// full-screen ClipboardFallbackModal. Keyed by tab so two open chats can't cross-feed.
+const convManualCopy = ref<Record<string, string>>({})
+
+function setConvManualCopy(tabId: string, text: string | null) {
+  const next = { ...convManualCopy.value }
+  if (text) next[tabId] = text
+  else delete next[tabId]
+  convManualCopy.value = next
+}
+
 async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean }) {
   const h = docHeaderRefs[tabId]
   const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
@@ -3156,24 +3170,35 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     // 0085: an auto-copy (fired by every send when the toggle is on) stays silent so it
     // doesn't spam a success toast each turn; the manual button still confirms with one.
     if (!opts?.auto) showToast(t('main.main_panel.toast_mention_copied'), 'success')
+    setConvManualCopy(tabId, null)
     void recordMentionCopy(tabId, 'edit')
-  } else if (opts?.auto) {
-    // B0001 / group 0221 made auto-copy failures surface via notifyCopyFailure(), but that
-    // opens the full-screen manual-copy modal — and the auto copy runs AFTER the send's
-    // network round-trips, so on this HTTP origin (execCommand-only, activation long spent)
-    // it fails on virtually EVERY send. Result: a screen-covering dialog on each chat message
-    // (group 0235 regression report). The failure still surfaces, but as a toast; the modal
-    // stays reserved for the manual button, where a fresh click makes recovery meaningful.
-    // Discard the recorded failed text so a later unrelated failure with no text of its own
-    // can't resurface this turn's mention in the fallback modal.
-    consumeLastFailedCopyText()
-    showToast(t('main.conversation_view.auto_copy_failed'), 'warning')
-  } else {
-    // B0001 / group 0221: a manual-copy failure must not be silent — the clipboard
-    // kept the PREVIOUS turn's mention and the user pasted it believing it was fresh ("AI
-    // processed my previous message").
-    notifyCopyFailure()
+    return
   }
+  // Copy failed. NEITHER path may call notifyCopyFailure() here: it opens the full-screen
+  // ClipboardFallbackModal, and R0001 asked for CH to stay dialog-free.
+  //
+  // Group 0221 routed failures to that modal; group 0235 carved the AUTO path out to a
+  // toast but left the MANUAL path on the modal, betting that "the manual button is a fresh
+  // click, so re-copying from the modal is meaningful". That bet was wrong (group 0240
+  // NR0003): the manual click ALSO awaits issueToken() before the write, so on this HTTP
+  // origin it fails exactly as reliably as the auto copy — and the auto-failure toast sent
+  // the user straight to that button, producing a toast → click → fail → full-screen modal
+  // loop on every single send. Both paths now recover through ConversationView's inline
+  // panel: identical affordance (pre-selected text + fresh-click re-copy that DOES land,
+  // because the text is already resolved), zero screen coverage.
+  //
+  // consumeLastFailedCopyText() also clears the record so a later unrelated failure with no
+  // text of its own can't pull this mention back into the modal on some other surface.
+  const failedText = consumeLastFailedCopyText()
+  if (!failedText) {
+    // The producer never yielded text, so there is nothing to hand-copy — just report it.
+    showToast(t('main.main_panel.toast_copy_failed'), 'warning')
+    return
+  }
+  setConvManualCopy(tabId, failedText)
+  // The inline panel is its own (non-silent) notice for a manual click the user is watching;
+  // an auto copy fires unattended after a send, so that one still says what happened.
+  if (opts?.auto) showToast(t('main.conversation_view.auto_copy_failed'), 'warning')
 }
 
 // Honest clipboard write of a ready string (B0001 / group 0133). Returns whether the
