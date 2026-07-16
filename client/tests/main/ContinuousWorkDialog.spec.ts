@@ -61,7 +61,7 @@ describe('ContinuousWorkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    const steps = document.querySelectorAll('.cwd-step')
+    const steps = document.querySelectorAll('.wsp-step')
     expect(steps).toHaveLength(6)
     // The two done (pre-head) steps are disabled — no skipping / no mid-start.
     expect((steps[0] as HTMLButtonElement).disabled).toBe(true)
@@ -90,7 +90,7 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
     await nextTick()
 
-    const container = document.querySelector('.cwd-steps') as HTMLElement
+    const container = document.querySelector('.wsp-steps') as HTMLElement
     // The two done steps (idx 0,1) scroll off the top; the head row (idx 2, offsetTop 80) is
     // aligned to the container top → scrollTop is 80 instead of staying parked at 0.
     expect(container.scrollTop).toBe(80)
@@ -121,7 +121,7 @@ describe('ContinuousWorkDialog', () => {
     const scrollHeightSpy = vi
       .spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
       .mockImplementation(function (this: HTMLElement) {
-        return this.classList.contains('cwd-steps') ? 360 : 0
+        return this.classList.contains('wsp-steps') ? 360 : 0
       })
 
     const wrapper = mountDialog()
@@ -129,15 +129,15 @@ describe('ContinuousWorkDialog', () => {
     await nextTick()
 
     // No bare error state — the step list is rendered so the user can see what ran.
-    expect(document.querySelector('.cwd-state--error')).toBeNull()
-    const steps = document.querySelectorAll('.cwd-step')
+    expect(document.querySelector('.wsp-state--error')).toBeNull()
+    const steps = document.querySelectorAll('.wsp-step')
     expect(steps).toHaveLength(4)
     // All done (head=null) → the list is scrolled to the very bottom (scrollHeight) so the most
     // recent step shows instead of leaving the user parked on the completed steps at the top.
-    expect((document.querySelector('.cwd-steps') as HTMLElement).scrollTop).toBe(360)
+    expect((document.querySelector('.wsp-steps') as HTMLElement).scrollTop).toBe(360)
     // All four are shown as done (read-only) and the all-done note is visible.
-    expect(document.querySelectorAll('.cwd-step--done')).toHaveLength(4)
-    expect(document.querySelector('.cwd-note--info')?.textContent).toContain(
+    expect(document.querySelectorAll('.wsp-step--done')).toHaveLength(4)
+    expect(document.querySelector('.wsp-note--info')?.textContent).toContain(
       i18n.global.t('main.continuous_work.all_done_note'),
     )
     // Nothing left to continue → [Next] disabled, review-mode toggle hidden.
@@ -155,7 +155,7 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
 
     // Pick the 4th item (TR, item_seq 4) as the stop point.
-    const steps = document.querySelectorAll('.cwd-step')
+    const steps = document.querySelectorAll('.wsp-step')
     ;(steps[3] as HTMLButtonElement).click()
     // Enable AI review mode.
     const toggle = document.querySelector('.cwd-toggle input') as HTMLInputElement
@@ -184,11 +184,11 @@ describe('ContinuousWorkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    expect(document.querySelector('.cwd-state--error')).toBeNull()
-    expect(document.querySelector('.cwd-note--info')?.textContent).toContain(
+    expect(document.querySelector('.wsp-state--error')).toBeNull()
+    expect(document.querySelector('.wsp-note--info')?.textContent).toContain(
       i18n.global.t('main.continuous_work.from_decision_note'),
     )
-    const steps = document.querySelectorAll('.cwd-step')
+    const steps = document.querySelectorAll('.wsp-step')
     expect(steps).toHaveLength(1)
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -211,11 +211,11 @@ describe('ContinuousWorkDialog', () => {
 
     // Not blocked: the dialog offers to start FROM the workflow-decision step. The
     // pre-decision note is shown and there is exactly one (static) head step.
-    expect(document.querySelector('.cwd-state--error')).toBeNull()
-    expect(document.querySelector('.cwd-note--info')?.textContent).toContain(
+    expect(document.querySelector('.wsp-state--error')).toBeNull()
+    expect(document.querySelector('.wsp-note--info')?.textContent).toContain(
       i18n.global.t('main.continuous_work.from_decision_note'),
     )
-    const steps = document.querySelectorAll('.cwd-step')
+    const steps = document.querySelectorAll('.wsp-step')
     expect(steps).toHaveLength(1)
 
     // [Next] is enabled and confirm emits the run-to-end sentinel + fromDecision flag.
