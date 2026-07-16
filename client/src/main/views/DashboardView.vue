@@ -8,13 +8,13 @@
     <ResizableSidebar>
       <template #top>
         <FileExplorer
-          :key="`files-${currentProjectId ?? 'none'}-${explorerRefreshKey}`"
+          :refresh-token="explorerRefreshToken"
           :project-id="currentProjectId"
         />
       </template>
       <template #bottom>
         <GroupExplorer
-          :key="`groups-${currentProjectId ?? 'none'}-${explorerRefreshKey}`"
+          :refresh-token="explorerRefreshToken"
           :project-id="currentProjectId"
           @create-requirement="openRequirementModal"
         />
@@ -70,13 +70,13 @@ const shellStyle = computed(() => ({
 }))
 const showRequirementModal = ref(false)
 const initialRequirementGroupId = ref<string | null>(null)
-const explorerRefreshKey = ref(0)
+const explorerRefreshToken = ref(0)
 const overviewRefreshToken = ref(0)
 
 function refreshAll() {
   const pid = projectStore.currentProjectId
   if (pid) explorerStore.invalidateProject(pid)
-  explorerRefreshKey.value += 1
+  explorerRefreshToken.value += 1
 }
 
 // Manual overview refresh (button in the overview header). Unlike refreshAll(),
@@ -87,7 +87,7 @@ function manualRefresh() {
   const pid = projectStore.currentProjectId
   if (!pid) return
   explorerStore.invalidateProject(pid)
-  explorerRefreshKey.value += 1
+  explorerRefreshToken.value += 1
   dashboardStore.invalidate(pid, true)
   overviewRefreshToken.value += 1
 }
@@ -154,7 +154,7 @@ async function handleRequirementCreated(payload?: { docId?: string; openAfter?: 
 
   if (pid) {
     explorerStore.invalidateProject(pid)
-    explorerRefreshKey.value += 1
+    explorerRefreshToken.value += 1
   }
 }
 
@@ -188,7 +188,7 @@ async function handleRelatedDocCreated(payload: { docId: string; openAfter: bool
 
   if (pid) {
     explorerStore.invalidateProject(pid)
-    explorerRefreshKey.value += 1
+    explorerRefreshToken.value += 1
   }
 }
 

@@ -169,7 +169,7 @@ import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
-const props = defineProps<{ projectId: string | null }>()
+const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
 defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
@@ -430,7 +430,13 @@ function expandAncestors(targetNodeId: string, nextNodes: GroupNode[]) {
 
 async function reload(revealNodeId?: string) {
   if (!props.projectId) return
-  loading.value = true
+  // Keep an already-rendered tree mounted during background/SSE refreshes. Setting
+  // loading=true unconditionally replaces the tree with the loading branch, which
+  // unmounts GroupTreeNode and destroys any dialog/input it owns even though the
+  // GroupExplorer instance itself survives. Only the initial empty load needs the
+  // blocking loading state.
+  const silent = nodes.value.length > 0
+  if (!silent) loading.value = true
   error.value = false
   try {
     const nextNodes = await explorerStore.fetchGroupTree(props.projectId, true)
@@ -501,6 +507,14 @@ watch(() => props.projectId, async (pid) => {
     loading.value = false
   }
 }, { immediate: true })
+
+// SSE refreshes must update tree data without replacing this component instance.
+// Keeping the instance alive preserves search/filter state and dialogs owned by tree nodes.
+watch(() => props.refreshToken, (next, prev) => {
+  if (next === prev || !props.projectId) return
+  void reload()
+})
+
 </script>
 
 <style scoped>

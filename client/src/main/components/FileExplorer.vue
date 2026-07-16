@@ -137,7 +137,7 @@ import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
-const props = defineProps<{ projectId: string | null }>()
+const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
@@ -495,6 +495,14 @@ watch(() => props.projectId, async (pid, prevPid) => {
     loading.value = false
   }
 }, { immediate: true })
+
+// SSE refreshes must update tree data without replacing this component instance.
+// Keeping the instance alive preserves open create dialogs and their in-progress input.
+watch(() => props.refreshToken, (next, prev) => {
+  if (next === prev || !props.projectId) return
+  void reload()
+})
+
 </script>
 
 <style scoped>
