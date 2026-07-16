@@ -36,6 +36,41 @@
          "make the send button a rotating icon" — no dialog for chat), and the manual
          [Call AI] button spins in lockstep. -->
     <form class="conv-composer" @submit.prevent="send">
+      <!-- Inline manual-copy panel (B0001 / group 0240 — third recurrence of "a dialog
+           covers the whole screen in chat"). A failed mention copy used to surface through
+           notifyCopyFailure() → ClipboardFallbackModal, a fixed inset:0 overlay. On this
+           HTTP LAN origin the manual [Copy mention] click fails just as reliably as the
+           auto copy (token round-trip spends the click's activation before execCommand),
+           so that modal appeared on essentially every attempt. R0001 asked for chat to
+           stay dialog-free, so CH recovers HERE instead: same affordance as the modal —
+           pre-selected text + a fresh-click [Copy again] that succeeds because the text is
+           already in hand — but in the composer's flow, covering nothing. Other document
+           surfaces keep the modal (0235 R0001: only CH is dialog-free). -->
+      <div v-if="manualCopyText" class="conv-manualcopy">
+        <div class="conv-manualcopy-hd">
+          <span class="conv-manualcopy-title">
+            <AppIcon name="warning" />
+            {{ t('main.conversation_view.manual_copy_title') }}
+          </span>
+          <button type="button" class="conv-assist-btn" @click="onManualCopyAgain">
+            <AppIcon name="copy" />
+            {{ t('main.conversation_view.manual_copy_again') }}
+          </button>
+          <button type="button" class="conv-assist-btn" @click="emit('manual-copy-dismiss')">
+            <AppIcon name="x" />
+            {{ t('common.close') }}
+          </button>
+        </div>
+        <p class="conv-manualcopy-hint">{{ t('main.conversation_view.manual_copy_hint') }}</p>
+        <textarea
+          ref="manualCopyEl"
+          class="conv-manualcopy-text"
+          readonly
+          spellcheck="false"
+          :value="manualCopyText"
+          @focus="selectManualCopy"
+        ></textarea>
+      </div>
       <div class="conv-assist">
         <!-- Send-time action (D0005 §3-2). Replaces the old "auto-copy" checkbox.
              "Call AI" is disabled when no provider is available (single source of
@@ -127,6 +162,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
 
 interface ConvTurn {
@@ -138,6 +174,10 @@ interface ConvTurn {
 const props = defineProps<{
   docId: string
   projectId?: string | null
+  // Text of a mention copy that failed to reach the clipboard (B0001 / group 0240). The
+  // parent (MainPanel.onConversationCopyMention) hands it over instead of opening the
+  // full-screen fallback modal; null/empty hides the inline panel.
+  manualCopyText?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -150,6 +190,9 @@ const emit = defineEmits<{
   // manual copy-paste loop. Kept for backward-compat; group 0235 moved the actual
   // immediate run in-component (invokeAi), so this is no longer fired for CH.
   'invoke-ai': []
+  // Group 0240: the inline manual-copy panel is done (copied or dismissed) — the parent
+  // owns the failed text, so it clears it.
+  'manual-copy-dismiss': []
 }>()
 
 const { t } = useI18n()
@@ -273,6 +316,46 @@ const sendButtonTitle = computed(() =>
 const scrollEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 let disposed = false
+
+// ── Inline manual-copy recovery (B0001 / group 0240) ─────────────────────────
+const manualCopyEl = ref<HTMLTextAreaElement | null>(null)
+
+// Pre-select the text when the panel opens so a bare Ctrl+C already works — the one
+// recovery that never depends on transient activation.
+watch(
+  () => props.manualCopyText,
+  async (text) => {
+    if (!text) return
+    await nextTick()
+    manualCopyEl.value?.focus()
+    manualCopyEl.value?.select()
+  },
+)
+
+function selectManualCopy() {
+  manualCopyEl.value?.select()
+}
+
+async function onManualCopyAgain() {
+  const text = props.manualCopyText ?? ''
+  if (!text) return
+  // The text is already in hand, so the write happens in this click's synchronous stack —
+  // no token round-trip in between. That is exactly why the modal's [Copy again] worked
+  // where the original deferred write failed, and it works the same inline.
+  const ok = await copyToClipboard(text)
+  if (ok) {
+    showToast(t('main.conversation_view.manual_copy_copied'), 'success')
+    emit('manual-copy-dismiss')
+    return
+  }
+  // Still failed: keep the panel open with the text selected for a hand copy, and discard
+  // the recorded failed text so an unrelated later failure elsewhere (which pulls the last
+  // failed text when it has none of its own) can't resurface this mention in the modal.
+  consumeLastFailedCopyText()
+  showToast(t('main.conversation_view.manual_copy_retry_failed'), 'warning')
+  manualCopyEl.value?.focus()
+  manualCopyEl.value?.select()
+}
 
 // ── Wire-format parser — the render side of L0044.0008 §6. Mirrors the server's
 // conversation.parse_conversation: lines matching the turn header are boundaries,
@@ -699,6 +782,61 @@ defineExpose({ load })
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* Inline manual-copy panel (B0001 / group 0240) — in the composer's flow, NOT an
+   overlay: no position:fixed, no inset:0, no backdrop. It pushes the composer up a
+   little and the conversation stays readable and interactive behind/above it. */
+.conv-manualcopy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning, #f59e0b);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 8%, transparent);
+}
+
+.conv-manualcopy-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-manualcopy-title {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .72rem;
+  font-weight: 700;
+  color: var(--text-m);
+}
+
+.conv-manualcopy-title i {
+  color: var(--warning, #f59e0b);
+}
+
+.conv-manualcopy-hint {
+  margin: 0;
+  font-size: .68rem;
+  line-height: 1.5;
+  color: var(--text-m);
+}
+
+.conv-manualcopy-text {
+  width: 100%;
+  height: 84px;
+  resize: vertical;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .7rem;
+  line-height: 1.45;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text);
+  white-space: pre;
 }
 
 /* Send-time action radio group (D0005 §3-2). */

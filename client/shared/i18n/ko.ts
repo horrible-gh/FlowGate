@@ -1300,7 +1300,14 @@ export default {
       invoke_ai_running: 'AI 호출 중…',
       invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',
       invoke_ai_no_docs: 'AI 응답이 문서로 등록되지 않았습니다.',
-      auto_copy_failed: '전송 후 자동 멘트 복사에 실패했습니다. [멘트 복사] 버튼으로 다시 복사하세요.',
+      auto_copy_failed: '전송 후 자동 멘트 복사에 실패했습니다. 아래 [멘트 수동 복사] 영역에서 복사하세요.',
+      // Inline manual-copy panel (B0001 / group 0240) — the CH-only replacement for the
+      // full-screen clipboard fallback modal.
+      manual_copy_title: '멘트 수동 복사',
+      manual_copy_hint: '이 접속 환경(HTTP)에서는 브라우저가 자동 복사를 차단할 수 있습니다. 아래 [다시 복사]를 누르거나, 텍스트를 직접 선택해(Ctrl+C) 복사하세요.',
+      manual_copy_again: '다시 복사',
+      manual_copy_copied: '멘트를 복사했습니다.',
+      manual_copy_retry_failed: '복사에 실패했습니다. 아래 텍스트를 직접 선택해 복사하세요.',
     },
     review_reject_dialog: {
       title: '반려 처리',

@@ -1300,7 +1300,14 @@ export default {
       invoke_ai_running: 'AI呼び出し中…',
       invoke_ai_failed: 'AI呼び出しに失敗しました: {detail}',
       invoke_ai_no_docs: 'AIの応答がドキュメントに登録されませんでした。',
-      auto_copy_failed: '送信後の自動メントコピーに失敗しました。[メント コピー] ボタンでコピーしてください。',
+      auto_copy_failed: '送信後の自動メントコピーに失敗しました。下の [メント手動コピー] からコピーしてください。',
+      // Inline manual-copy panel (B0001 / group 0240) — the CH-only replacement for the
+      // full-screen clipboard fallback modal.
+      manual_copy_title: 'メント手動コピー',
+      manual_copy_hint: 'この接続環境(HTTP)ではブラウザが自動コピーをブロックすることがあります。下の [再コピー] を押すか、テキストを選択してご自身でコピー(Ctrl+C)してください。',
+      manual_copy_again: '再コピー',
+      manual_copy_copied: 'メントをコピーしました。',
+      manual_copy_retry_failed: 'コピーに失敗しました。下のテキストを選択してコピーしてください。',
     },
     review_reject_dialog: {
       title: '差し戻し処理',
