@@ -90,6 +90,15 @@ export const useExplorerStore = defineStore('explorer', () => {
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
   const groupError = ref<string | null>(null)
+  // 0245 R0001 / NR0003 §1 — tree expansion state for both explorers. It lives here
+  // rather than in the recursive node components because a node's children are only
+  // mounted while that node is expanded: a header "expand all" button can therefore
+  // never reach a collapsed node's descendants by prop or event, and would open just
+  // one level per press. A child instead reads its own expansion from this store as
+  // it mounts, so expanding a parent cascades into the subtree that appears with it.
+  // Keys are `${projectId}:${nodeId}`.
+  const expandedFileNodes = ref<Record<string, boolean>>({})
+  const expandedGroupNodes = ref<Record<string, boolean>>({})
 
   async function fetchFileTree(pid: string, force = false): Promise<FileNode[]> {
     const key = cacheKey(pid)
@@ -288,6 +297,79 @@ export const useExplorerStore = defineStore('explorer', () => {
     return _anyUnder(baseDirtyFiles.value[pid], folderPath)
   }
 
+  // ── Explorer tree expansion (0245 R0001 / NR0003 §1) ────────────────────────
+
+  const expandKey = (pid: string, nodeId: string) => `${pid}:${nodeId}`
+  // The document tree keeps its established per-node localStorage key, so expansion
+  // still survives a reload and the ancestor-reveal writers below stay compatible.
+  const groupExpandStorageKey = (pid: string, nodeId: string) => `flowgate:grp-exp:${pid}:${nodeId}`
+
+  // The file tree was never persisted (FileTreeNode held a plain ref(false)); that
+  // session-only behaviour is kept deliberately — only the owner of the state moved.
+  function isFileNodeExpanded(pid: string, nodeId: string): boolean {
+    return expandedFileNodes.value[expandKey(pid, nodeId)] === true
+  }
+
+  function setFileNodesExpanded(pid: string, nodeIds: string[], expanded: boolean) {
+    const next = { ...expandedFileNodes.value }
+    for (const nodeId of nodeIds) next[expandKey(pid, nodeId)] = expanded
+    expandedFileNodes.value = next
+  }
+
+  function setFileNodeExpanded(pid: string, nodeId: string, expanded: boolean) {
+    setFileNodesExpanded(pid, [nodeId], expanded)
+  }
+
+  /** Reads the store first and falls back to localStorage for a node this session
+   *  has not touched. The store read is what Vue tracks, so a later set re-renders
+   *  the node; no write happens here (a side effect in a getter would be a reactivity
+   *  trap). Every writer goes through setGroupNodesExpanded, which updates both, so
+   *  the cached value can never drift from the stored one. */
+  function isGroupNodeExpanded(pid: string, nodeId: string): boolean {
+    const cached = expandedGroupNodes.value[expandKey(pid, nodeId)]
+    if (cached !== undefined) return cached
+    try {
+      return localStorage.getItem(groupExpandStorageKey(pid, nodeId)) === '1'
+    } catch {
+      return false
+    }
+  }
+
+  function setGroupNodesExpanded(pid: string, nodeIds: string[], expanded: boolean) {
+    const next = { ...expandedGroupNodes.value }
+    for (const nodeId of nodeIds) {
+      next[expandKey(pid, nodeId)] = expanded
+      try {
+        localStorage.setItem(groupExpandStorageKey(pid, nodeId), expanded ? '1' : '0')
+      } catch { /* ignore — e.g. private mode quota */ }
+    }
+    expandedGroupNodes.value = next
+  }
+
+  function setGroupNodeExpanded(pid: string, nodeId: string, expanded: boolean) {
+    setGroupNodesExpanded(pid, [nodeId], expanded)
+  }
+
+  /** Reveal a node by expanding every ancestor group. Previously each caller wrote
+   *  the localStorage keys by hand, which only took effect once the explorer
+   *  remounted ("...so they're open after remount"). Going through the store makes
+   *  the reveal apply immediately, and keeps the store and localStorage in step. */
+  function expandGroupAncestors(
+    pid: string,
+    nodes: Array<{ id: string; parent_id: string | null }>,
+    nodeId: string,
+  ) {
+    const ancestors: string[] = []
+    let node = nodes.find((n) => n.id === nodeId)
+    let parentId = node?.parent_id ?? null
+    while (parentId) {
+      ancestors.push(parentId)
+      node = nodes.find((n) => n.id === parentId)
+      parentId = node?.parent_id ?? null
+    }
+    if (ancestors.length) setGroupNodesExpanded(pid, ancestors, true)
+  }
+
   function setWorkflowNodeState(docId: string, state: WorkflowNodeState) {
     workflowNodeStates.value[docId] = state
   }
@@ -306,6 +388,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
     currentGroupCommit, groupChangedFiles, isGroupChangedPath, isGroupChangedDir,
+    expandedFileNodes, expandedGroupNodes,
+    isFileNodeExpanded, setFileNodeExpanded, setFileNodesExpanded,
+    isGroupNodeExpanded, setGroupNodeExpanded, setGroupNodesExpanded, expandGroupAncestors,
     setWorkflowNodeState, clearWorkflowNodeState,
   }
 })

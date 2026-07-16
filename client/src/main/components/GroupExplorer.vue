@@ -21,6 +21,20 @@
         >
           <AppIcon :name="showFinalApprovedGroups ? 'eye' : 'eye-slash'" />
         </button>
+        <!-- Tree accordion (0245 R0001) — same idiom as the file explorer's. Hidden
+             while a search replaces the tree with a flat result list. -->
+        <button
+          v-if="!isSearching && expandableGroupIds.length > 0"
+          class="sdb-act-btn"
+          type="button"
+          data-test="group-explorer-accordion"
+          :aria-pressed="anyGroupExpanded"
+          :aria-label="accordionLabel"
+          :title="accordionLabel"
+          @click="toggleAllGroups"
+        >
+          <AppIcon :name="anyGroupExpanded ? 'caret-down' : 'caret-right'" />
+        </button>
         <button
           class="sdb-act-btn"
           type="button"
@@ -387,18 +401,31 @@ const filteredNodes = computed(() => {
 
 const rootNodes = computed(() => filteredNodes.value.filter((n) => n.parent_id === null))
 
+// ── Tree accordion (0245 R0001 / NR0003 §2) ──────────────────────────────────
+// Acts on what is actually rendered: filteredNodes already has the hidden
+// final-approved/discarded groups and the type filter applied. Documents are leaves.
+const expandableGroupIds = computed(() =>
+  filteredNodes.value.filter((n) => n.node_type !== 'document').map((n) => n.id),
+)
+
+const anyGroupExpanded = computed(() => {
+  const pid = props.projectId
+  if (!pid) return false
+  return expandableGroupIds.value.some((id) => explorerStore.isGroupNodeExpanded(pid, id))
+})
+
+const accordionLabel = computed(() =>
+  anyGroupExpanded.value ? t('main.explorer.collapse_all') : t('main.explorer.expand_all'),
+)
+
+function toggleAllGroups() {
+  if (!props.projectId) return
+  explorerStore.setGroupNodesExpanded(props.projectId, expandableGroupIds.value, !anyGroupExpanded.value)
+}
+
 function expandAncestors(targetNodeId: string, nextNodes: GroupNode[]) {
-  let node = nextNodes.find((n) => n.id === targetNodeId)
-  let parentId = node?.parent_id ?? null
-  while (parentId) {
-    try {
-      localStorage.setItem(`flowgate:grp-exp:${props.projectId}:${parentId}`, '1')
-    } catch {
-      /* ignore */
-    }
-    node = nextNodes.find((n) => n.id === parentId)
-    parentId = node?.parent_id ?? null
-  }
+  if (!props.projectId) return
+  explorerStore.expandGroupAncestors(props.projectId, nextNodes, targetNodeId)
 }
 
 async function reload(revealNodeId?: string) {

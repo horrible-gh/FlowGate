@@ -18,22 +18,14 @@ export function useDashboardNavigation() {
   const { showToast } = useToast()
   const { t } = useI18n()
 
+  // 0245 R0001 / NR0003 §1 — the ancestor walk moved into the explorer store, which
+  // owns tree expansion now and still persists it under the same localStorage keys.
   function expandGroupAncestors(
     projectId: string,
     nodes: Array<{ id: string; parent_id: string | null }>,
     nodeId: string,
   ) {
-    let current = nodes.find((node) => node.id === nodeId)
-    let parentId = current?.parent_id ?? null
-    while (parentId) {
-      try {
-        localStorage.setItem(`flowgate:grp-exp:${projectId}:${parentId}`, '1')
-      } catch {
-        /* ignore storage errors */
-      }
-      current = nodes.find((node) => node.id === parentId)
-      parentId = current?.parent_id ?? null
-    }
+    explorerStore.expandGroupAncestors(projectId, nodes, nodeId)
   }
 
   async function openDashboardTarget(navigation: DashboardNavigation) {

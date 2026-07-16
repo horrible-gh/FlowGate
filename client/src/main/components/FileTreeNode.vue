@@ -125,7 +125,13 @@ const { t } = useI18n()
 const explorerStore = useExplorerStore()
 const { showToast } = useToast()
 const { collectDropFiles, uploadFiles } = useFileUpload()
-const expanded = ref(false)
+// 0245 R0001 / NR0003 §1 — expansion is owned by the store so that a folder opened
+// by "expand all" cascades into children that mount only at that moment. Still
+// session-scoped: the file tree has never persisted its open folders.
+const expanded = computed({
+  get: () => explorerStore.isFileNodeExpanded(props.projectId, props.node.id),
+  set: (val: boolean) => explorerStore.setFileNodeExpanded(props.projectId, props.node.id, val),
+})
 const showCtx = ref(false)
 const ctxX = ref(0)
 const ctxY = ref(0)

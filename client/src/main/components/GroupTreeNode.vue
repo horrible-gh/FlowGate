@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { hasDocumentReadPermission } from '@shared/auth'
@@ -145,29 +145,17 @@ const isSelected = computed(() =>
   props.node.node_type === 'document' && explorerStore.selectedGroupNodeId === props.node.id,
 )
 
-function _lsKey() {
-  return `flowgate:grp-exp:${props.projectId}:${props.node.id}`
-}
-
-function _readExpanded(): boolean {
-  if (props.node.node_type === 'document') return false
-  try {
-    const v = localStorage.getItem(_lsKey())
-    return v === null ? false : v === '1'
-  } catch {
-    return false
-  }
-}
-
-function _saveExpanded(val: boolean): void {
-  try {
-    localStorage.setItem(_lsKey(), val ? '1' : '0')
-  } catch { /* ignore — e.g. private mode quota */ }
-}
-
-const expanded = ref(_readExpanded())
-watch(expanded, (val) => {
-  if (props.node.node_type !== 'document') _saveExpanded(val)
+// 0245 R0001 / NR0003 §1 — expansion moved into the explorer store, which persists
+// it under the same `flowgate:grp-exp:{pid}:{nodeId}` key as before. Reading it from
+// the store rather than from a mount-time localStorage snapshot is what lets "expand
+// all" (and the ancestor reveal) cascade into children as they mount.
+const expanded = computed({
+  get: () => props.node.node_type !== 'document'
+    && explorerStore.isGroupNodeExpanded(props.projectId, props.node.id),
+  set: (val: boolean) => {
+    if (props.node.node_type === 'document') return
+    explorerStore.setGroupNodeExpanded(props.projectId, props.node.id, val)
+  },
 })
 const showCtx = ref(false)
 const ctxX = ref(0)
@@ -360,8 +348,8 @@ function openIssueToken() {
 }
 
 function onGroupSaved(groupId: string) {
+  // The setter persists, so the separate save the old local ref needed is gone.
   expanded.value = true
-  _saveExpanded(true)
   emit('tree-changed', groupId)
 }
 

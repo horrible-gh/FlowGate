@@ -130,15 +130,10 @@ async function handleRequirementCreated(payload?: { docId?: string; openAfter?: 
       const node = nodes.find((n) => n.id === payload.docId)
 
       if (node) {
-        // Expand all ancestor groups in localStorage so they're open after remount
-        let parentId = node.parent_id
-        while (parentId) {
-          try {
-            localStorage.setItem(`flowgate:grp-exp:${pid}:${parentId}`, '1')
-          } catch { /* ignore */ }
-          const parent = nodes.find((n) => n.id === parentId)
-          parentId = parent?.parent_id ?? null
-        }
+        // Expand every ancestor group so the document is revealed (0245 R0001: the
+        // store owns tree expansion and persists it, so this no longer waits for the
+        // remount below to take effect).
+        explorerStore.expandGroupAncestors(pid, nodes, node.id)
         explorerStore.selectedGroupNodeId = payload.docId
 
         if (payload.openAfter && node.node_type === 'document') {
@@ -172,14 +167,7 @@ async function handleRelatedDocCreated(payload: { docId: string; openAfter: bool
       const node = nodes.find((n) => n.id === payload.docId)
 
       if (node) {
-        let parentId = node.parent_id
-        while (parentId) {
-          try {
-            localStorage.setItem(`flowgate:grp-exp:${pid}:${parentId}`, '1')
-          } catch { /* ignore */ }
-          const parent = nodes.find((n) => n.id === parentId)
-          parentId = parent?.parent_id ?? null
-        }
+        explorerStore.expandGroupAncestors(pid, nodes, node.id)
         explorerStore.selectedGroupNodeId = payload.docId
 
         if (payload.openAfter && node.node_type === 'document') {
