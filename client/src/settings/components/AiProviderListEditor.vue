@@ -154,6 +154,14 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppIcon from '@shared/AppIcon.vue';
+import {
+  NAME_MAX,
+  CLI_COMMAND_MAX,
+  API_BASE_URL_MAX,
+  API_MODEL_MAX,
+  API_KEY_MAX,
+  PROVIDERS_MAX,
+} from './aiProviderLimits';
 
 const { t, te } = useI18n();
 
@@ -274,6 +282,15 @@ function closeForm() {
   formError.value = '';
 }
 
+function tooLong(fieldKey, value, max) {
+  if (value.length <= max) return '';
+  return t('settings.ai.err_too_long', {
+    field: t(`settings.ai.field.${fieldKey}`),
+    max,
+    len: value.length,
+  });
+}
+
 function confirmForm() {
   if (!form.name.trim()) {
     formError.value = t('settings.ai.err_name_required');
@@ -292,10 +309,36 @@ function confirmForm() {
     return;
   }
 
+  // Length/duplicate/count are checked here rather than with a maxlength attribute: silently
+  // truncating a pasted CLI command can leave a shorter command that still runs.
+  const name = form.name.trim();
+  const overLimit =
+    tooLong('name', name, NAME_MAX) ||
+    (form.exec_type === 'cli'
+      ? tooLong('cli_command', form.cli_command.trim(), CLI_COMMAND_MAX)
+      : tooLong('api_model', form.api_model.trim(), API_MODEL_MAX) ||
+        tooLong('api_base_url', form.api_base_url.trim(), API_BASE_URL_MAX) ||
+        tooLong('api_key', form.keyInput, API_KEY_MAX));
+  if (overLimit) {
+    formError.value = overLimit;
+    return;
+  }
+  const duplicate = props.providers.some(
+    (p, i) => i !== editIndex.value && (p.name || '').trim().toLowerCase() === name.toLowerCase(),
+  );
+  if (duplicate) {
+    formError.value = t('settings.ai.err_duplicate_name');
+    return;
+  }
+  if (editIndex.value === null && props.providers.length >= PROVIDERS_MAX) {
+    formError.value = t('settings.ai.err_too_many', { max: PROVIDERS_MAX });
+    return;
+  }
+
   const base = editingRow.value;
   const row = {
     id: base?.id ?? null,
-    name: form.name.trim(),
+    name,
     exec_type: form.exec_type,
     kind: form.kind,
     enabled: form.enabled,

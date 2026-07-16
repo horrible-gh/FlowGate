@@ -117,6 +117,20 @@ def _cli(name="claude cli", command="claude -p", **kw):
     return p
 
 
+# The command verbatim from 0241 B0001 (524 chars): a sandboxed `claude` run whose inline
+# settings JSON pushed it past the old 500-char cli_command cap.
+_B0001_CLI_COMMAND = (
+    'D="$(mktemp -d /tmp/claude-XXXXXX)"; F="$D/settings.json"; printf \'%s\' '
+    '\'{"permissions":{"deny":["Write(//home/sjm/**)","Edit(//home/sjm/**)",'
+    '"NotebookEdit(//home/sjm/**)"]},"sandbox":{"enabled":true,'
+    '"failIfUnavailable":true,"enableWeakerNestedSandbox":true,'
+    '"allowUnsandboxedCommands":false,"network":{"allowedDomains":["127.0.0.1",'
+    '"localhost"]},"filesystem":{"allowWrite":["/tmp"]}}}\' > "$F"; cd "$D" && '
+    'echo "질문" | claude --model claude-opus-4-8 --permission-mode '
+    'bypassPermissions --settings "$F" --output-format json -p -'
+)
+
+
 def _api(name="claude api", key="sk-ant-api03-EXAMPLEKEY-J3zQ", **kw):
     p = {
         "id": None, "name": name, "exec_type": "api", "kind": "claude",
@@ -250,6 +264,26 @@ class TestValidation:
         assert any(e["reason"] == "bad_default" for e in errors)
         errors = validate_settings([_cli()], "aip_zzzzzz", None, None)
         assert any(e["reason"] == "bad_default" for e in errors)
+
+    def test_cli_command_length_boundary(self):
+        # 0241 B0001: the cap was 500, which a real `claude` one-liner carrying sandbox
+        # settings already exceeded. Pin both sides of the raised limit.
+        from modules.flow_gate.settings.ai_settings_service import (
+            CLI_COMMAND_MAX,
+            validate_settings,
+        )
+
+        assert CLI_COMMAND_MAX == 4000
+        at_limit = validate_settings([_cli(command="c" * CLI_COMMAND_MAX)], None, 0, None)
+        assert at_limit == []
+        over = validate_settings([_cli(command="c" * (CLI_COMMAND_MAX + 1))], None, 0, None)
+        assert over == [{"index": 0, "field": "cli_command", "reason": "too_long"}]
+
+    def test_cli_command_accepts_sandboxed_claude_oneliner(self):
+        from modules.flow_gate.settings.ai_settings_service import validate_settings
+
+        assert len(_B0001_CLI_COMMAND) == 524  # the length that used to trip the cap
+        assert validate_settings([_cli(command=_B0001_CLI_COMMAND)], None, 0, None) == []
 
     def test_too_many_providers(self):
         from modules.flow_gate.settings.ai_settings_service import validate_settings
@@ -412,6 +446,22 @@ class TestRouterContract:
         assert body["default_provider_id"] == body["providers"][0]["id"]
         assert "api_key" not in body["providers"][1]
         assert body["providers"][1]["api_key_hint"] == "J3zQ"
+
+    def test_b0001_sandboxed_claude_command_saves(self):
+        # 0241 B0001 end to end: this exact PUT answered 422; it must now round-trip and
+        # come back with the command stored whole (no silent truncation).
+        client = self._make_client()
+        command = _B0001_CLI_COMMAND
+        resp = client.put("/api/v1/system/ai-settings", json={
+            "providers": [_cli(name="claude sandbox", command=command)],
+            "default_provider_id": None,
+            "default_provider_index": 0,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["providers"][0]["cli_command"] == command
+
+        resp = client.get("/api/v1/system/ai-settings")
+        assert resp.json()["providers"][0]["cli_command"] == command
 
     def test_validation_failure_format(self):
         client = self._make_client()

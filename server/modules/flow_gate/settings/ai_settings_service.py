@@ -21,7 +21,10 @@ from modules.flow_gate.db import projects as _projects_db
 
 # ── Parameters (L0004 §1) ────────────────────────────────────────────────────
 NAME_MAX = 100
-CLI_COMMAND_MAX = 500
+# Raised 500 -> 4000 (0241 CH0004): real commands (a `claude` one-liner carrying sandbox
+# settings) run past 500. The DB column is TEXT, so this cap is policy only — it exists to
+# keep the value renderable in the UI/logs, not because storage or the shell needs it.
+CLI_COMMAND_MAX = 4000
 API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000

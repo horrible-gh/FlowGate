@@ -43,6 +43,17 @@
       </div>
     </div>
 
+    <div v-if="saveErrors.length" class="alert alert-danger mb-4">
+      <div>
+        <p style="margin:0 0 6px;">
+          <AppIcon name="warning" /> {{ $t('settings.ai.saveerr_title') }}
+        </p>
+        <ul style="margin:0; padding-left:18px;">
+          <li v-for="(msg, i) in saveErrors" :key="i">{{ msg }}</li>
+        </ul>
+      </div>
+    </div>
+
     <div class="flex" style="justify-content:flex-end; align-items:center; gap:10px;">
       <span v-if="dirty" class="badge badge-yellow" style="margin-right:2px;">{{ $t('settings.ai.unsaved_badge') }}</span>
       <button class="btn btn-secondary" @click="load">
@@ -65,11 +76,12 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
+import { formatErrors } from '../../components/aiProviderLimits';
 import AppIcon from '@shared/AppIcon.vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const settings = useSettingsStore();
 const { showToast } = useToast();
 
@@ -79,6 +91,8 @@ const providers = ref([]);
 const defaultIndex = ref(-1);
 const effective = ref({ source: 'system', providers: [], default_provider_id: null });
 const catalog = ref({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } });
+// Rendered P0003 422 `errors` (index/field/reason) from the last save attempt.
+const saveErrors = ref([]);
 
 function snapshot() {
   return JSON.stringify({ mode: mode.value, providers: providers.value, defaultIndex: defaultIndex.value });
@@ -103,6 +117,7 @@ const badgeClass = computed(() => {
 });
 
 function applyResponse(data) {
+  saveErrors.value = [];
   mode.value = data.mode || 'inherit';
   savedMode.value = mode.value;
   providers.value = data.providers || [];
@@ -151,13 +166,19 @@ function buildPayload() {
 
 async function save() {
   if (!projectId.value) return;
+  saveErrors.value = [];
   try {
     const { data } = await putRequest(`/api/v1/projects/${projectId.value}/ai-settings`, buildPayload());
     applyResponse(data);
     showToast(t('common.toast.settings_saved'), 'success');
   } catch (e) {
-    if (e?.response?.status === 422) showToast(t('settings.ai.toast_invalid'), 'danger');
-    else showToast(t('common.toast.settings_save_failed'), 'danger');
+    if (e?.response?.status === 422) {
+      // The server collects every offending row/field; surface them instead of only the toast.
+      saveErrors.value = formatErrors(e.response.data?.detail?.errors, providers.value, { t, te });
+      showToast(t('settings.ai.toast_invalid'), 'danger');
+    } else {
+      showToast(t('common.toast.settings_save_failed'), 'danger');
+    }
   }
 }
 
