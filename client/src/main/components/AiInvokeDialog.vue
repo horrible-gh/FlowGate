@@ -45,23 +45,20 @@
                 <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_continuous_desc') }}</span>
               </span>
             </label>
-            <div v-if="canContinuous && mode === 'continuous'" class="aiv-seq-row">
-              <template v-if="actionScope === 'workflow_decide'">
-                <AppIcon name="fast-forward" />
-                <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
-              </template>
-              <template v-else>
-                <label class="aiv-seq-label" for="aiv-target-seq">{{ t('main.ai_invoke_dialog.target_seq_label') }}</label>
-                <input
-                  id="aiv-target-seq"
-                  v-model.number="targetSeq"
-                  type="number"
-                  class="form-ctrl aiv-seq-input"
-                  min="1"
-                />
-                <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_seq_hint') }}</span>
-              </template>
+            <div v-if="canContinuous && mode === 'continuous' && actionScope === 'workflow_decide'" class="aiv-seq-row">
+              <AppIcon name="fast-forward" />
+              <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
             </div>
+            <!-- 0242 NR0003: how far the chain runs is picked from the real sequence, not typed
+                 as a raw `목표 seq` number. Same picker the action-bar 연속 작업 path uses. -->
+            <template v-if="pickerActive">
+              <WorkflowStepPicker
+                :doc-ref="sequenceDocRef || docRef"
+                :active="pickerActive"
+                @change="onPickerChange"
+              />
+              <div v-if="pickerSummary" class="aiv-seq-summary">{{ pickerSummary }}</div>
+            </template>
             <div v-if="startError" class="aiv-error">
               <AppIcon name="warning" /> {{ startError }}
             </div>
@@ -85,8 +82,10 @@ import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
+import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import type { WorkflowStepPickerState } from '../types/workflowStepPicker'
 
 const props = defineProps<{
   visible: boolean
@@ -94,6 +93,13 @@ const props = defineProps<{
   module?: string | null
   group: string
   docRef: string
+  /**
+   * Sequence-owning root (R/B) doc id for the continuous-target picker. Distinct from
+   * `docRef`, which is the document the run ACTS on and may be a member doc (T/TR/…) —
+   * /workflow/sequence is keyed by the root only, so a member doc there returns no sequence
+   * (0242 NR0003 권고 2). Defaults to `docRef` for callers that already pass a root.
+   */
+  sequenceDocRef?: string
   actionScope: 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
@@ -119,24 +125,63 @@ const aiProviderStore = useAiProviderStore()
 const aiInvokeStore = useAiInvokeRunsStore()
 
 const mode = ref<'single' | 'continuous'>('single')
-const targetSeq = ref<number | null>(null)
 const starting = ref(false)
 const startError = ref('')
+const picker = ref<WorkflowStepPickerState>({
+  loading: true,
+  errorKey: null,
+  allDone: false,
+  fromDecision: false,
+  selection: null,
+})
 
 // Continuous chains only make sense for the scopes the server can chain
 // (group 0223): the parallel-invoke extras are one-shot actions.
 const canContinuous = computed(() =>
   props.actionScope === 'new' || props.actionScope === 'edit' || props.actionScope === 'workflow_decide',
 )
-const canStart = computed(() =>
-  mode.value === 'single' ||
-  props.actionScope === 'workflow_decide' ||
-  (targetSeq.value != null && targetSeq.value > 0),
+
+// Show the picker only where the user actually chooses a target: a workflow_decide run has no
+// sequence to pick from (it runs to the end of whatever the AI decides), and an autoStart run
+// (the action-bar 연속 작업 path) already picked its target in ContinuousWorkDialog and closes
+// immediately — mounting the picker there would refetch the sequence and clobber that choice.
+const pickerActive = computed(() =>
+  canContinuous.value &&
+  mode.value === 'continuous' &&
+  props.actionScope !== 'workflow_decide' &&
+  !props.autoStart,
 )
+
+/** The chain's stop point, or null when nothing runnable is chosen yet. */
+const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>(() => {
+  if (props.actionScope === 'workflow_decide') return { seq: -1, fromDecision: true }
+  if (pickerActive.value) {
+    const sel = picker.value.selection
+    return sel ? { seq: sel.targetSeq, fromDecision: sel.fromDecision } : null
+  }
+  // autoStart: the target came in as a preset from the ContinuousWorkDialog path.
+  return props.initialTargetSeq != null
+    ? { seq: props.initialTargetSeq, fromDecision: props.initialTargetSeq === -1 }
+    : null
+})
+
+const canStart = computed(() => mode.value === 'single' || resolvedTarget.value != null)
+
+const pickerSummary = computed(() => {
+  if (picker.value.loading || picker.value.errorKey) return ''
+  if (picker.value.allDone) return t('main.continuous_work.all_done_summary')
+  if (picker.value.fromDecision) return t('main.continuous_work.from_decision_summary')
+  const sel = picker.value.selection
+  if (!sel) return ''
+  return t('main.continuous_work.summary', { count: sel.stepCount, target: sel.targetLabel })
+})
+
+function onPickerChange(state: WorkflowStepPickerState) {
+  picker.value = state
+}
 
 function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
-  targetSeq.value = props.initialTargetSeq ?? (props.actionScope === 'workflow_decide' ? -1 : null)
   starting.value = false
   startError.value = ''
 }
@@ -147,11 +192,18 @@ async function start() {
   startError.value = ''
   try {
     await aiProviderStore.ensureLoaded(props.project)
+    const target = resolvedTarget.value
+    // A continuous run picked before the workflow is decided must start FROM the decision step,
+    // exactly as the ContinuousWorkDialog path does (MainPanel.onContinuousWarnConfirm): the
+    // scope becomes workflow_decide and the run-to-end sentinel stands in for a target that
+    // does not exist yet. workflow_decide is keyed by the sequence ROOT, not the acted-on doc.
+    const preDecision = mode.value === 'continuous' && !!target?.fromDecision
+    const scope = preDecision ? 'workflow_decide' : props.actionScope
     const body: Record<string, unknown> = {
       project: props.project,
       group: props.group,
-      doc_ref: props.docRef,
-      action_scope: props.actionScope,
+      doc_ref: preDecision ? (props.sequenceDocRef || props.docRef) : props.docRef,
+      action_scope: scope,
       mode: mode.value,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
@@ -163,7 +215,7 @@ async function start() {
     if (props.designMode) body.design_mode = props.designMode
     if (props.designFirstLabel) body.design_first_label = props.designFirstLabel
     if (mode.value === 'continuous') {
-      body.continuation_target_seq = props.actionScope === 'workflow_decide' ? -1 : targetSeq.value
+      body.continuation_target_seq = target?.seq ?? null
       body.continuation_review_mode = !!props.continuationReviewMode
       body.continuation_instruction_mode = props.continuationInstructionMode ?? 'auto_approved'
     }
@@ -277,9 +329,15 @@ watch(
   gap: 8px;
   padding-left: 4px;
 }
-.aiv-seq-label { font-size: .8rem; color: var(--text); }
-.aiv-seq-input { width: 90px; }
 .aiv-seq-hint { font-size: .72rem; color: var(--text-m); }
+.aiv-seq-summary {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-h);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
 .aiv-error {
   font-size: .8rem;
   color: var(--danger);

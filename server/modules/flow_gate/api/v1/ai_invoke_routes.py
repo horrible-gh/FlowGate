@@ -81,6 +81,48 @@ def _validation_failed(errors: list[dict]) -> JSONResponse:
     return JSONResponse(status_code=422, content={"code": "validation_failed", "errors": errors})
 
 
+def _continuation_target_error(doc_ref: str, target_seq: int) -> Optional[dict]:
+    """Reject a continuation target that is not a remaining step of the real sequence.
+
+    0242 NR0003 발견 4: the only checks here used to be "not null" and "-1 for a pre-decision
+    run", so any other number was accepted and failed SILENTLY at chain-termination time
+    (inbox_routes: ``completed_seq >= target_seq``) — an already-done seq stopped the chain
+    after one document, and a too-large seq ran the sequence to its end. Neither surfaced an
+    error, which for an UNMANNED run is a safety problem, not just a UX one.
+
+    The UI now picks the target from the live sequence, but /ai-invoke/start is reachable
+    without it, so the rule the hint text only ever *described* is enforced here.
+
+    Returns an error dict for :func:`_validation_failed`, or None when the target is fine.
+    """
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+    except Exception:  # noqa: BLE001
+        # This is a typo guard, not a security control — the run's own DB work would surface a
+        # real outage anyway. Fail OPEN so a lookup failure cannot turn a start that worked
+        # before 0242 into a 500 from a validation helper.
+        return None
+    if seq is None:
+        # Undecided (or non-sequence) document: there are no item_seqs to validate against.
+        # The pre-decision run is already covered by the -1 sentinel rule above.
+        return None
+    if not items:
+        return None
+    match = next((i for i in items if i.get("item_seq") == target_seq), None)
+    if match is None:
+        return {"loc": "continuation_target_seq",
+                "msg": f"step {target_seq} does not exist in this workflow sequence"}
+    # Slot status per D030 §2 SSOT (mirrors workflow_head_routes._derive_status): a slot is
+    # done once its result document exists AND is approved.
+    if match.get("result_doc_id") is not None and match.get("result_doc_review_status") == "approved":
+        return {"loc": "continuation_target_seq",
+                "msg": f"step {target_seq} is already complete — pick a remaining step"}
+    return None
+
+
 def _require_user(request: Request):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -146,6 +188,17 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
+
+    # Needs the DB, so it runs after the cheap field checks above (0242 NR0003 권고 3).
+    if (
+        body.mode == "continuous"
+        and body.action_scope != "workflow_decide"
+        and body.doc_ref
+        and body.continuation_target_seq is not None
+    ):
+        target_error = _continuation_target_error(body.doc_ref, body.continuation_target_seq)
+        if target_error:
+            return _validation_failed([target_error])
 
     # The mention is built through the exact token_routes path so the prompt the
     # invoked AI reads stays byte-identical to the copy-mention flow.

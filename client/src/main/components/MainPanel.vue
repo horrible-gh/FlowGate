@@ -988,6 +988,7 @@
       :module="aiInvokeModule"
       :group="aiInvokeGroup"
       :doc-ref="aiInvokeDocRef"
+      :sequence-doc-ref="aiInvokeSequenceDocRef"
       :action-scope="aiInvokeActionScope"
       :initial-mode="aiInvokeInitialMode"
       :initial-target-seq="aiInvokeInitialTargetSeq"
@@ -1277,6 +1278,7 @@ const aiInvokeProject = ref('')
 const aiInvokeModule = ref<string | null>(null)
 const aiInvokeGroup = ref('')
 const aiInvokeDocRef = ref('')
+const aiInvokeSequenceDocRef = ref('')
 const aiInvokeActionScope = ref<AiInvokeScope>('new')
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
@@ -1526,6 +1528,9 @@ function openAiInvokeDialog(
     reviewMode?: boolean
     instructionMode?: 'auto_approved' | 'ai_direct'
     autoStart?: boolean
+    // 0242 NR0003 권고 2: sequence-owning root for the continuous-target picker, when it is
+    // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
+    sequenceDocRef?: string
   },
   extras?: {
     selectedDocs?: string[] | null
@@ -1541,6 +1546,7 @@ function openAiInvokeDialog(
   aiInvokeModule.value = gParts?.module ?? null
   aiInvokeGroup.value = gParts?.groupCode ?? groupId
   aiInvokeDocRef.value = docRef
+  aiInvokeSequenceDocRef.value = preset?.sequenceDocRef ?? docRef
   aiInvokeActionScope.value = actionScope
   aiInvokeInitialMode.value = preset?.mode ?? 'single'
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
@@ -1564,7 +1570,13 @@ function onEditInvokeAi(tab: Tab) {
     showToast(t('main.main_panel.error_info_unavailable'), 'danger')
     return
   }
-  openAiInvokeDialog(project, groupId as string, tab.id, 'edit')
+  // 0242 NR0003 권고 2: the run edits THIS document (tab.id), but the continuous-target picker
+  // reads /workflow/sequence, which only answers for the sequence root. Resolve the root the
+  // same way every other workflow entry point does — a member doc (T/TR/…) would find no
+  // sequence and the picker would fall back to "start from the workflow decision".
+  openAiInvokeDialog(project, groupId as string, tab.id, 'edit', {
+    sequenceDocRef: nextActionDocRef(tab.id),
+  })
 }
 
 function onNextActionInvokeAi(_selectedDocs?: string[]) {
@@ -2364,7 +2376,11 @@ function onReviewInvokeAiEntry(payload: ReviewActionPayload) {
     designHandoffVisible.value = true
     return
   }
-  openAiInvokeDialog(project, groupId, payload.docRef, 'new')
+  // ReviewActionBar hands us the viewed tab as docRef, which for a member doc (T/TR/…) is not
+  // the sequence root the continuous-target picker needs (0242 NR0003 권고 2).
+  openAiInvokeDialog(project, groupId, payload.docRef, 'new', {
+    sequenceDocRef: nextActionDocRef(payload.docId),
+  })
 }
 
 async function onReviewInvokeCommand(payload: ReviewActionPayload) {
