@@ -32,19 +32,21 @@ function draftKey(docId = DOC_ID, userId = 'guest') {
   return 'flowgate.user.' + userId + '.chat.drafts.' + docId
 }
 
+const PROVIDERS_RESPONSE = {
+  data: {
+    ok: true,
+    project: 'flowgate',
+    providers: [{ id: 'p1', name: 'P1', exec_type: 'api', kind: 'openai' }],
+    default_provider_id: 'p1',
+  },
+}
+
 // getRequest serves BOTH the conversation content load and the provider list. Default:
 // one enabled provider present, so the "Call AI" radio/button is available.
 function withProviders() {
   getRequest.mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
-      return Promise.resolve({
-        data: {
-          ok: true,
-          project: 'flowgate',
-          providers: [{ id: 'p1', name: 'P1', exec_type: 'api', kind: 'openai' }],
-          default_provider_id: 'p1',
-        },
-      })
+      return Promise.resolve(PROVIDERS_RESPONSE)
     }
     return Promise.resolve({ data: { content: '' } })
   })
@@ -357,6 +359,74 @@ describe('ConversationView chat AI invoke', () => {
     await flushPromises()
     expect(postRequest).not.toHaveBeenCalled()
   })
+
+  it('treats docs_reached 0 as success when the finished run appended an AI turn', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({ data: { status: 'finished', docs_reached: 0, last_message_received: true } })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+          return Promise.resolve(PROVIDERS_RESPONSE)
+        }
+        return Promise.resolve({ data: { content: '## AI · 2026-07-16T13:00:00Z\n\nreply\n' } })
+      })
+      postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r1')
+      expect(showToast).not.toHaveBeenCalled()
+      expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the failure toast and includes the terminal cause when no AI turn was appended', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({
+            data: {
+              status: 'finished',
+              docs_reached: 0,
+              last_message_received: false,
+              end_reason: 'timeout',
+            },
+          })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+          return Promise.resolve(PROVIDERS_RESPONSE)
+        }
+        return Promise.resolve({ data: { content: '' } })
+      })
+      postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(showToast).toHaveBeenCalledWith(
+        'The AI reply was not added to the chat: The run exceeded its time limit and was terminated.',
+        'danger',
+      )
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('ConversationView draft persistence', () => {
@@ -445,5 +515,77 @@ describe('ConversationView draft persistence', () => {
       '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
       { body: 'still sends', speaker: 'user' },
     )
+  })
+})
+
+// 0251 B0001 (NR0003 §5, B안): a chat AI call's spinner and its poll loop live only in
+// this component, so every remount — opening the full view, switching tabs, F5 — used to
+// hand the user an idle-looking chat while the call was still running server-side, and
+// lost the "registered nothing" notice with it. On mount the view re-discovers its own
+// still-running run and re-attaches to it.
+describe('ConversationView running-call recovery on mount', () => {
+  function withActiveRun(payload: Record<string, unknown>) {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+        return Promise.resolve(PROVIDERS_RESPONSE)
+      }
+      if (typeof url === 'string' && url.includes('ai-invoke/active')) {
+        return Promise.resolve({ data: payload })
+      }
+      return Promise.resolve({ data: { content: '' } })
+    })
+  }
+
+  it('restores the spinner for a run that is still running for THIS chat', async () => {
+    withActiveRun({ ok: true, active: true, run_id: 'r7', status: 'running', doc_ref: DOC_ID })
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/active', {
+      group_id: 'flowgate.default.0085',
+    })
+    // Adopted: the poll loop holds invoking=true (its first tick is behind a 2.5s timer),
+    // so the send button shows the in-flight call exactly as if this instance started it.
+    const send = wrapper.find('.conv-send')
+    expect(send.attributes('disabled')).toBeDefined()
+    expect(send.attributes('title')).toBe('Calling AI…')
+  })
+
+  it('stays idle when the group\'s active run belongs to another document', async () => {
+    withActiveRun({ ok: true, active: true, run_id: 'r7', status: 'running', doc_ref: OTHER_DOC_ID })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+  })
+
+  it('stays idle when the run has already finished', async () => {
+    withActiveRun({ ok: true, active: true, run_id: 'r7', status: 'finished', doc_ref: DOC_ID })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+  })
+
+  it('stays idle when no run is active', async () => {
+    withActiveRun({ ok: true, active: false })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+  })
+
+  it('keeps the chat usable when the discovery request fails', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+        return Promise.resolve(PROVIDERS_RESPONSE)
+      }
+      if (typeof url === 'string' && url.includes('ai-invoke/active')) {
+        return Promise.reject({ response: { status: 500 } })
+      }
+      return Promise.resolve({ data: { content: '' } })
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    // Best effort: an idle surface is the status quo, and never an error toast.
+    expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+    expect(showToast).not.toHaveBeenCalled()
   })
 })

@@ -1333,7 +1333,7 @@ export default {
       send_action_invoke_disabled_hint: 'No AI provider is available.',
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',
-      invoke_ai_no_docs: 'The AI reply was not registered to any document.',
+      invoke_ai_no_docs: 'The AI reply was not added to the chat: {detail}',
       auto_copy_failed: 'Auto-copying the mention after send failed. Copy it from the [Copy Mention Manually] panel below.',
       // Inline manual-copy panel (B0001 / group 0240) — the CH-only replacement for the
       // full-screen clipboard fallback modal.

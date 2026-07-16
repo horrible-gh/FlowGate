@@ -1333,7 +1333,7 @@ export default {
       send_action_invoke_disabled_hint: '사용 가능한 AI 프로바이더가 없어 선택할 수 없습니다.',
       invoke_ai_running: 'AI 호출 중…',
       invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',
-      invoke_ai_no_docs: 'AI 응답이 문서로 등록되지 않았습니다.',
+      invoke_ai_no_docs: 'AI 응답이 채팅에 등록되지 않았습니다: {detail}',
       auto_copy_failed: '전송 후 자동 멘트 복사에 실패했습니다. 아래 [멘트 수동 복사] 영역에서 복사하세요.',
       // Inline manual-copy panel (B0001 / group 0240) — the CH-only replacement for the
       // full-screen clipboard fallback modal.
