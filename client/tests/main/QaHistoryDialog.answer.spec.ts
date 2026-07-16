@@ -87,7 +87,43 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     aiBtn.click()
     await flushPromises()
 
-    expect(requestAiAnswer).toHaveBeenCalledWith(7)
+    expect(requestAiAnswer).toHaveBeenCalledWith(7, undefined)
+    wrapper.unmount()
+  })
+
+
+  it('places the provider selector on the left and groups action buttons on the right', async () => {
+    const wrapper = mountDialog({ docId: 'd1', submitAnswer: vi.fn(), requestAiAnswer: vi.fn() })
+    await flushPromises()
+
+    const handoff = document.body.querySelector<HTMLElement>('.qhd-handoff')!
+    expect(handoff.firstElementChild?.classList.contains('qhd-provider-select')).toBe(true)
+    expect(handoff.lastElementChild?.classList.contains('qhd-handoff-actions')).toBe(true)
+    expect(handoff.querySelectorAll('.qhd-handoff-actions > button')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+
+  it('shows the provider selector and forwards the selected provider to the AI request', async () => {
+    const requestAiAnswer = vi.fn().mockResolvedValue(true)
+    const selectProvider = vi.fn()
+    const wrapper = mountDialog({
+      docId: 'd1',
+      submitAnswer: vi.fn(),
+      requestAiAnswer,
+      aiProviders: [{ id: 'provider-a', name: 'Provider A' }, { id: 'provider-b', name: 'Provider B' }],
+      selectedProviderId: 'provider-b',
+      selectProvider,
+    })
+    await flushPromises()
+
+    const select = document.body.querySelector<HTMLSelectElement>('.qhd-provider-select select')!
+    expect(select).toBeTruthy()
+    expect(select.value).toBe('provider-b')
+    document.body.querySelector<HTMLButtonElement>('.qhd-act-ai')!.click()
+    await flushPromises()
+
+    expect(requestAiAnswer).toHaveBeenCalledWith(7, 'provider-b')
     wrapper.unmount()
   })
 

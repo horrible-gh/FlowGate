@@ -141,13 +141,14 @@ export function useQaAnswers(docId: Ref<string>) {
   // 0248 B0001: the run is ASYNCHRONOUS. This used to refetch once, immediately, which was
   // guaranteed to be too early — the answer cannot exist yet when the POST returns. Hold the
   // run id instead and refetch when its ai_invoke_finished event arrives (onAiInvoke below).
-  async function requestAiAnswer(itemId: number): Promise<boolean> {
+  async function requestAiAnswer(itemId: number, providerId?: string): Promise<boolean> {
     if (qaBusy.value || aiRunItemId.value !== null) return false
     qaBusy.value = true
     qaError.value = ''
     try {
       const res = await postRequest<any>(
-        `/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers/ai-request`, {},
+        `/api/v1/q/${encodeURIComponent(docId.value)}/items/${itemId}/answers/ai-request`,
+        providerId ? { provider_id: providerId } : {},
       )
       const data = (res as any)?.data ?? {}
       aiRunId.value = data.run_id ?? null

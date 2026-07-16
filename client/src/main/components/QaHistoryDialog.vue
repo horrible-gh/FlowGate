@@ -123,8 +123,17 @@
                      an answer and asking an AI are not alternatives; both stay reachable.
                      Mirrors the legacy Q flow's ment_copy / ai pair (AnswerEditor.vue). -->
                 <div class="qhd-answer-actions qhd-handoff">
-                  <span class="qhd-handoff-label">{{ t('main.doc_info_panel.qa_answer_handoff') }}</span>
-                  <button
+                  <AiProviderSelect
+                    class="qhd-provider-select"
+                    :providers="aiProviders"
+                    :model-value="selectedProviderId"
+                    :loading="providerLoading"
+                    :errored="providerErrored"
+                    hide-label
+                    @update:model-value="onSelectProvider"
+                  />
+                  <div class="qhd-handoff-actions">
+                    <button
                     type="button"
                     class="btn btn-outline btn-sm qhd-act-mention"
                     :disabled="busy"
@@ -133,7 +142,7 @@
                     <AppIcon name="copy" />
                     {{ t('main.doc_info_panel.qa_answer_mention_copy') }}
                   </button>
-                  <button
+                    <button
                     type="button"
                     class="btn btn-outline btn-sm qhd-act-ai"
                     :disabled="busy || aiRunItemId !== null"
@@ -144,6 +153,7 @@
                       ? t('main.doc_info_panel.qa_answer_ai_running')
                       : t('main.doc_info_panel.qa_answer_ai') }}
                   </button>
+                  </div>
                 </div>
               </template>
             </li>
@@ -164,6 +174,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -177,7 +188,12 @@ const props = withDefaults(defineProps<{
   focusId?: number | null
   startAnswer?: boolean
   submitAnswer?: (itemId: number, body: string, selectedOptionIds?: string[]) => Promise<boolean>
-  requestAiAnswer?: (itemId: number) => Promise<boolean>
+  requestAiAnswer?: (itemId: number, providerId?: string) => Promise<boolean>
+  aiProviders?: Array<{ id: string; name: string }>
+  selectedProviderId?: string
+  providerLoading?: boolean
+  providerErrored?: boolean
+  selectProvider?: (providerId: string) => void
   // [멘트 복사]. The parent owns the clipboard write + toast (it is the same copy the panel
   // does); this must be called straight from the click with nothing awaited in front of it,
   // or the clipboard loses the gesture's transient activation (group 0133 NR0003).
@@ -192,6 +208,11 @@ const props = withDefaults(defineProps<{
   startAnswer: false,
   submitAnswer: undefined,
   requestAiAnswer: undefined,
+  aiProviders: () => [],
+  selectedProviderId: '',
+  providerLoading: false,
+  providerErrored: false,
+  selectProvider: undefined,
   copyAnswerMention: undefined,
   aiRunItemId: null,
 })
@@ -250,7 +271,11 @@ async function onSubmitAnswer(itemId: number) {
 
 async function onRequestAi(itemId: number) {
   if (!props.requestAiAnswer || props.busy) return
-  await props.requestAiAnswer(itemId)
+  await props.requestAiAnswer(itemId, props.selectedProviderId || undefined)
+}
+
+function onSelectProvider(providerId: string) {
+  props.selectProvider?.(providerId)
 }
 
 // No await before the parent's call — see the copyAnswerMention prop note.
@@ -321,8 +346,10 @@ function onClose() {
 }
 .qhd-answer-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 /* The hand-off row reads as a separate offer from [답변 작성], not another submit button. */
-.qhd-handoff { align-items: center; border-top: 1px dashed var(--border, #e5e7eb); padding-top: 8px; }
-.qhd-handoff-label { margin-right: auto; font-size: .72rem; color: #6b7280; }
+.qhd-handoff { align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px dashed var(--border, #e5e7eb); padding-top: 8px; }
+.qhd-provider-select { min-width: 150px; flex: 1 1 180px; max-width: 260px;
+}
+.qhd-handoff-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; }
 
 /* group 0243 R0001: reference options — a plain vertical stack of neutral buttons, with no
    recommendation accent and nothing preselected (0022 rule). Only the user's own pick is
