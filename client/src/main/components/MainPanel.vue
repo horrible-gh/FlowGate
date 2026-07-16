@@ -156,9 +156,15 @@
                 <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
                 {{ t('main.conversation_view.title') }}
               </span>
+              <div class="card-actions">
+                <button class="btn btn-secondary btn-sm" type="button" :title="t('main.document_preview.full_view')" :aria-label="t('main.document_preview.full_view')" @click="openFullView(tab)">
+                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
+                </button>
+              </div>
             </div>
             <div class="card-bd conv-card-bd">
               <ConversationView
+                v-if="!(fullViewVisible && fullViewTab?.id === tab.id)"
                 :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
                 :manual-copy-text="convManualCopy[tab.id] ?? null"
@@ -752,6 +758,7 @@
             </span>
             <div class="modal-hd-actions">
               <button
+                v-if="fullViewTab.typeCode !== 'CH'"
                 class="btn btn-outline btn-sm"
                 type="button"
                 @click="editFromFullView(fullViewTab)"
@@ -763,9 +770,17 @@
               </button>
             </div>
           </div>
-          <div class="modal-bd document-modal__body">
+          <div class="modal-bd document-modal__body" :class="{ 'document-modal__body--conversation': fullViewTab.typeCode === 'CH' }">
+            <ConversationView
+              v-if="fullViewTab.typeCode === 'CH'"
+              :doc-id="fullViewTab.id"
+              :project-id="fullViewTab.projectId ?? null"
+              :manual-copy-text="convManualCopy[fullViewTab.id] ?? null"
+              @copy-mention="(opts) => fullViewTab && onConversationCopyMention(fullViewTab.id, opts)"
+              @manual-copy-dismiss="setConvManualCopy(fullViewTab.id, null)"
+            />
             <TextViewer
-              v-if="fullViewTab.type === 'text'"
+              v-else-if="fullViewTab.type === 'text'"
               :path="fullViewTab.path"
               :project-id="fullViewTab.projectId ?? null"
               :wrap-lines="textWrapEnabled"
@@ -4082,6 +4097,29 @@ watch(textWrapEnabled, (enabled) => {
   height: 100%;
 }
 
+/* CH full view keeps the same single-scroll flex chain as the inline card. */
+.document-modal__body--conversation {
+  display: flex;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.document-modal__body--conversation :deep(.conv-view) {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 820px) {
+  .document-modal:has(.document-modal__body--conversation) {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    max-width: none;
+    max-height: none;
+  }
+}
+
 .card-actions {
   display: flex;
   align-items: center;
@@ -4240,3 +4278,5 @@ watch(textWrapEnabled, (enabled) => {
   position: relative;
 }
 </style>
+
+
