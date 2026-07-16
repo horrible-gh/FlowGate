@@ -126,6 +126,15 @@
         </div>
       </div>
       <div class="conv-pill">
+        <AiProviderSelect
+          class="conv-provider-select"
+          :providers="providerStore.providers"
+          :model-value="providerStore.selectedProviderId"
+          :loading="providersResolving"
+          :errored="Boolean(providerStore.error)"
+          hide-label
+          @update:model-value="providerStore.selectProvider"
+        />
         <textarea
           ref="inputEl"
           v-model="draft"
@@ -164,6 +173,7 @@ import { useToast } from './common/useToast'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 
 interface ConvTurn {
   speaker: string // 'user' | 'ai' | raw label
@@ -921,6 +931,24 @@ defineExpose({ load })
 .conv-pill:focus-within {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.conv-provider-select {
+  flex: 0 1 160px;
+  min-width: 96px;
+  max-width: 180px;
+}
+
+.conv-provider-select :deep(.aip-select-input) {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .conv-provider-select {
+    flex-basis: 112px;
+    max-width: 112px;
+  }
 }
 
 .conv-input {

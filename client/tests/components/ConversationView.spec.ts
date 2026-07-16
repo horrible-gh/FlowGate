@@ -76,6 +76,48 @@ beforeEach(() => {
   showToast.mockReset()
 })
 
+describe('ConversationView inline provider selector', () => {
+  it('renders the shared provider selector immediately before the message input', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const selector = wrapper.find('.conv-provider-select')
+    const input = wrapper.find('.conv-input')
+    expect(selector.exists()).toBe(true)
+    expect(selector.element.nextElementSibling).toBe(input.element)
+    expect((selector.find('select').element as HTMLSelectElement).value).toBe('p1')
+  })
+
+  it('uses a provider selected beside the input for the next chat AI call', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            project: 'flowgate',
+            providers: [
+              { id: 'p1', name: 'P1', exec_type: 'api', kind: 'openai' },
+              { id: 'p2', name: 'P2', exec_type: 'cli', kind: 'codex' },
+            ],
+            default_provider_id: 'p1',
+          },
+        })
+      }
+      return Promise.resolve({ data: { content: '' } })
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('.conv-provider-select select').setValue('p2')
+    postRequest.mockReset().mockRejectedValueOnce({ response: { data: { code: 'run_in_progress', run_id: 'r9' } } })
+    const buttons = wrapper.findAll('.conv-assist-btn')
+    await buttons[buttons.length - 1].trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/ai-invoke/start',
+      expect.objectContaining({ provider_id: 'p2', action_scope: 'chat' }),
+    )
+  })
+})
+
 describe('ConversationView send-time action', () => {
   it('renders the send-time action radios instead of a checkbox', async () => {
     const wrapper = mountView()
