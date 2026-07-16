@@ -24,7 +24,7 @@
         <!-- Tree accordion (0245 R0001) — same idiom as the file explorer's. Hidden
              while a search replaces the tree with a flat result list. -->
         <button
-          v-if="!isSearching && expandableGroupIds.length > 0"
+          v-if="!layoutStore.documentExplorerCollapsed && !isSearching && expandableGroupIds.length > 0"
           class="sdb-act-btn"
           type="button"
           data-test="group-explorer-accordion"
@@ -35,7 +35,12 @@
         >
           <AppIcon :name="anyGroupExpanded ? 'caret-down' : 'caret-right'" />
         </button>
+        <!-- Folding hides the body this button's box lives in, so pressing it while
+             folded would flip showSearch invisibly, light the .active highlight and
+             drop the nextTick focus on a null input. Hide it while folded, like the
+             tree accordion above (NR0004 §5.4 — one exposure policy per panel). -->
         <button
+          v-if="!layoutStore.documentExplorerCollapsed"
           class="sdb-act-btn"
           type="button"
           data-test="explorer-search-toggle"
@@ -47,8 +52,20 @@
         >
           <AppIcon name="funnel" />
         </button>
+        <button
+          class="sdb-act-btn sdb-frame-toggle"
+          type="button"
+          data-test="document-explorer-panel-toggle"
+          :aria-expanded="!layoutStore.documentExplorerCollapsed"
+          :aria-label="layoutStore.documentExplorerCollapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
+          :title="layoutStore.documentExplorerCollapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
+          @click="layoutStore.toggleDocumentExplorer"
+        >
+          <AppIcon :name="layoutStore.documentExplorerCollapsed ? 'caret-up' : 'caret-down'" />
+        </button>
       </div>
     </div>
+    <template v-if="!layoutStore.documentExplorerCollapsed">
     <!-- In-explorer document search (group 0123 R0001). Hidden by default; the
          filter button above reveals this box (rev2). Typing filters the explorer to
          the matched documents directly — no separate header page. By default it
@@ -157,6 +174,7 @@
         </ul>
       </template>
     </div>
+    </template>
   </div>
 </template>
 
@@ -165,6 +183,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useExplorerStore, type GroupNode } from '../stores/explorer'
 import { useTabsStore } from '../stores/tabs'
+import { useLayoutStore } from '../stores/layout'
 import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
 import AppIcon from '@shared/AppIcon.vue'
@@ -174,6 +193,7 @@ defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
 const tabsStore = useTabsStore()
+const layoutStore = useLayoutStore()
 
 const nodes = ref<GroupNode[]>([])
 const loading = ref(false)

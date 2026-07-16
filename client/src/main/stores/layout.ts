@@ -16,6 +16,12 @@ function makeKey(suffix: string): string {
   return `flowgate.user.${getUserIdFromToken()}.layout.${suffix}`
 }
 
+function readBoolean(suffix: string, fallback: boolean): boolean {
+  const stored = localStorage.getItem(makeKey(suffix))
+  if (stored === null) return fallback
+  return stored === '1' || stored === 'true'
+}
+
 export const useLayoutStore = defineStore('layout', () => {
   const sidebarWidth = ref(
     parseInt(localStorage.getItem(makeKey('sidebarWidth')) || '') || 280,
@@ -23,6 +29,11 @@ export const useLayoutStore = defineStore('layout', () => {
   const fileExplorerRatio = ref(
     parseFloat(localStorage.getItem(makeKey('fileExplorerRatio')) || '') || 0.5,
   )
+  // Frame accordions are independent. Defaults mirror the approved prototype:
+  // files folded, documents expanded. Keeping them in this user-scoped store also
+  // survives project/SSE-driven explorer remounts.
+  const fileExplorerCollapsed = ref(readBoolean('fileExplorerCollapsed', true))
+  const documentExplorerCollapsed = ref(readBoolean('documentExplorerCollapsed', false))
   const sidebarOpen = ref(false)
 
   function setSidebarWidth(w: number) {
@@ -35,9 +46,40 @@ export const useLayoutStore = defineStore('layout', () => {
     localStorage.setItem(makeKey('fileExplorerRatio'), String(fileExplorerRatio.value))
   }
 
+  function setFileExplorerCollapsed(collapsed: boolean) {
+    fileExplorerCollapsed.value = collapsed
+    localStorage.setItem(makeKey('fileExplorerCollapsed'), collapsed ? '1' : '0')
+  }
+
+  function setDocumentExplorerCollapsed(collapsed: boolean) {
+    documentExplorerCollapsed.value = collapsed
+    localStorage.setItem(makeKey('documentExplorerCollapsed'), collapsed ? '1' : '0')
+  }
+
+  function toggleFileExplorer() {
+    setFileExplorerCollapsed(!fileExplorerCollapsed.value)
+  }
+
+  function toggleDocumentExplorer() {
+    setDocumentExplorerCollapsed(!documentExplorerCollapsed.value)
+  }
+
   function toggleSidebar() {
     sidebarOpen.value = !sidebarOpen.value
   }
 
-  return { sidebarWidth, fileExplorerRatio, sidebarOpen, setSidebarWidth, setFileExplorerRatio, toggleSidebar }
+  return {
+    sidebarWidth,
+    fileExplorerRatio,
+    fileExplorerCollapsed,
+    documentExplorerCollapsed,
+    sidebarOpen,
+    setSidebarWidth,
+    setFileExplorerRatio,
+    setFileExplorerCollapsed,
+    setDocumentExplorerCollapsed,
+    toggleFileExplorer,
+    toggleDocumentExplorer,
+    toggleSidebar,
+  }
 })

@@ -4,22 +4,34 @@
     :class="{ open: layoutStore.sidebarOpen }"
   >
     <!-- Top panel: File Explorer -->
-    <div class="sdb-panel sdb-panel-top" :style="{ flex: layoutStore.fileExplorerRatio * 10 }">
+    <div
+      class="sdb-panel sdb-panel-frame sdb-panel-top"
+      :class="{ 'is-collapsed': layoutStore.fileExplorerCollapsed }"
+      :style="topPanelStyle"
+      data-test="file-explorer-frame"
+    >
       <slot name="top" />
     </div>
 
-    <!-- Horizontal resizer -->
+    <!-- The split ratio only has meaning while both frames are expanded. -->
     <div
+      v-if="bothExpanded"
       class="sdb-resizer"
       role="separator"
       aria-orientation="horizontal"
+      data-test="explorer-frame-resizer"
       @mousedown="startHResize"
     >
       <div class="sdb-rgrip"></div>
     </div>
 
-    <!-- Bottom panel: Group Explorer -->
-    <div class="sdb-panel sdb-panel-bottom" :style="{ flex: (1 - layoutStore.fileExplorerRatio) * 10 }">
+    <!-- Bottom panel: Document Explorer -->
+    <div
+      class="sdb-panel sdb-panel-frame sdb-panel-bottom"
+      :class="{ 'is-collapsed': layoutStore.documentExplorerCollapsed }"
+      :style="bottomPanelStyle"
+      data-test="document-explorer-frame"
+    >
       <slot name="bottom" />
     </div>
 
@@ -34,9 +46,25 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useLayoutStore } from '../stores/layout'
 
 const layoutStore = useLayoutStore()
+const bothExpanded = computed(
+  () => !layoutStore.fileExplorerCollapsed && !layoutStore.documentExplorerCollapsed,
+)
+
+const topPanelStyle = computed(() => {
+  if (layoutStore.fileExplorerCollapsed) return { flex: '0 0 35px' }
+  if (layoutStore.documentExplorerCollapsed) return { flex: '1 1 auto' }
+  return { flex: layoutStore.fileExplorerRatio * 10 }
+})
+
+const bottomPanelStyle = computed(() => {
+  if (layoutStore.documentExplorerCollapsed) return { flex: '0 0 35px' }
+  if (layoutStore.fileExplorerCollapsed) return { flex: '1 1 auto' }
+  return { flex: (1 - layoutStore.fileExplorerRatio) * 10 }
+})
 
 function startVResize(e: MouseEvent) {
   e.preventDefault()
@@ -57,6 +85,7 @@ function startVResize(e: MouseEvent) {
 }
 
 function startHResize(e: MouseEvent) {
+  if (!bothExpanded.value) return
   e.preventDefault()
   const sidebar = (e.target as HTMLElement).closest('.app-sidebar') as HTMLElement | null
   if (!sidebar) return

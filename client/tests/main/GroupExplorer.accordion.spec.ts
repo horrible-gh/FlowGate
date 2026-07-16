@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import GroupExplorer from '@main/components/GroupExplorer.vue'
 import { useExplorerStore } from '@main/stores/explorer'
+import { useLayoutStore } from '@main/stores/layout'
 
 // 0245 R0001 / NR0003 §F4·§F5 — as in the file explorer, these mount the REAL
 // recursive GroupTreeNode so the cascade is exercised. The document tree also
@@ -46,11 +47,14 @@ const NODES = [
   }),
 ]
 
-async function mountExplorer() {
+// attachTo is opt-in: only the focus case needs a real document.activeElement, and
+// attaching leaks DOM between cases unless the caller unmounts.
+async function mountExplorer(opts: { attach?: boolean } = {}) {
   getRequest.mockResolvedValue({ data: { data: { nodes: NODES } } })
   const wrapper = mount(GroupExplorer, {
     props: { projectId: 'p' },
     global: { plugins: [i18n] },
+    ...(opts.attach ? { attachTo: document.body } : {}),
   })
   await flushPromises()
   return wrapper
@@ -115,6 +119,91 @@ describe('GroupExplorer tree accordion (0245 R0001)', () => {
 
     expect(labels(wrapper)).toContain('G1')
     expect(labels(wrapper)).toContain('[R]: r1')
+  })
+
+  it('folds only the document frame and restores its body independently', async () => {
+    const wrapper = await mountExplorer()
+    const layout = useLayoutStore()
+    const fileState = layout.fileExplorerCollapsed
+    const panelToggle = wrapper.get('[data-test="document-explorer-panel-toggle"]')
+
+    await panelToggle.trigger('click')
+    await flushPromises()
+    expect(layout.documentExplorerCollapsed).toBe(true)
+    expect(layout.fileExplorerCollapsed).toBe(fileState)
+    expect(panelToggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('[data-test="group-explorer-accordion"]').exists()).toBe(false)
+    expect(wrapper.find('.sdb-scroll').exists()).toBe(false)
+
+    await panelToggle.trigger('click')
+    await flushPromises()
+    expect(layout.documentExplorerCollapsed).toBe(false)
+    expect(wrapper.find('.sdb-scroll').exists()).toBe(true)
+  })
+
+  // NR0004 §5.4 — one exposure policy per panel: an action whose effect is invisible
+  // or broken while folded is hidden. The search toggle reveals a box that lives in
+  // the folded-away body, so it hides alongside the tree accordion. The refresh and
+  // show-final-approved controls stay: they act on data, and the result is simply
+  // there on re-expand.
+  it('hides the search toggle while the frame is folded', async () => {
+    const wrapper = await mountExplorer()
+    expect(wrapper.find('[data-test="explorer-search-toggle"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="document-explorer-panel-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="explorer-search-toggle"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="document-explorer-panel-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="explorer-search-toggle"]').exists()).toBe(true)
+  })
+
+  // NR0004 §7.9 — folding unmounts the body but not the component, so an active
+  // search survives the round-trip and comes back with its query and results.
+  it('keeps an active search across a fold/unfold round-trip', async () => {
+    const wrapper = await mountExplorer()
+    await wrapper.get('[data-test="explorer-search-toggle"]').trigger('click')
+    await wrapper.get('[data-test="explorer-search-input"]').setValue('r1')
+    await flushPromises()
+    expect(wrapper.find('[data-test="explorer-search-input"]').exists()).toBe(true)
+
+    const toggle = () => wrapper.get('[data-test="document-explorer-panel-toggle"]')
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="explorer-search-input"]').exists()).toBe(false)
+
+    await toggle().trigger('click')
+    await flushPromises()
+    const input = wrapper.get('[data-test="explorer-search-input"]')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('r1')
+    // Still in search mode: the results list, not the tree, owns the body.
+    expect(wrapper.find('[data-test="group-explorer-accordion"]').exists()).toBe(false)
+  })
+
+  // NR0004 §7.11 — the frame toggle is the one control that must never be v-if'd away,
+  // or folding by keyboard would drop focus to <body> and strand the user.
+  it('keeps keyboard focus on the frame toggle across a fold/unfold', async () => {
+    const wrapper = await mountExplorer({ attach: true })
+    try {
+      const toggle = wrapper.get('[data-test="document-explorer-panel-toggle"]')
+      const el = toggle.element as HTMLButtonElement
+      el.focus()
+      expect(document.activeElement).toBe(el)
+
+      await toggle.trigger('click')
+      await flushPromises()
+      expect(document.activeElement).toBe(el)
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+
+      await toggle.trigger('click')
+      await flushPromises()
+      expect(document.activeElement).toBe(el)
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('hides the accordion while search results replace the tree', async () => {
