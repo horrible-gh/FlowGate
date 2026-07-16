@@ -42,11 +42,12 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     expect(document.body.querySelector('.qhd-answer-form')).toBeNull()
   })
 
-  it('exposes [답변 작성] / [AI에게 답변 요청] when a docId is supplied', async () => {
+  it('exposes [답변 작성] / [멘트 복사] / [AI에게 답변 요청] when a docId is supplied', async () => {
     mountDialog({ docId: 'test.test.0093.0001-R', submitAnswer: vi.fn(), requestAiAnswer: vi.fn() })
     await flushPromises()
-    const buttons = Array.from(document.body.querySelectorAll('.qhd-answer-actions .btn'))
-    expect(buttons.length).toBe(2)
+    expect(document.body.querySelector('.qhd-act-write')).toBeTruthy()
+    expect(document.body.querySelector('.qhd-act-mention')).toBeTruthy()
+    expect(document.body.querySelector('.qhd-act-ai')).toBeTruthy()
   })
 
   it('calls submitAnswer with (itemId, body, selectedOptionIds) and closes the form on success', async () => {
@@ -54,8 +55,8 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     const wrapper = mountDialog({ docId: 'd1', submitAnswer, requestAiAnswer: vi.fn() })
     await flushPromises()
 
-    // open the answer form — [Write answer] is the first action button
-    const writeBtn = document.body.querySelectorAll<HTMLButtonElement>('.qhd-answer-actions .btn')[0]
+    // open the answer form
+    const writeBtn = document.body.querySelector<HTMLButtonElement>('.qhd-act-write')!
     writeBtn.click()
     await flushPromises()
 
@@ -82,12 +83,108 @@ describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {
     const wrapper = mountDialog({ docId: 'd1', submitAnswer: vi.fn(), requestAiAnswer })
     await flushPromises()
 
-    // [Ask AI to answer] is the second action button
-    const aiBtn = document.body.querySelectorAll<HTMLButtonElement>('.qhd-answer-actions .btn')[1]
+    const aiBtn = document.body.querySelector<HTMLButtonElement>('.qhd-act-ai')!
     aiBtn.click()
     await flushPromises()
 
     expect(requestAiAnswer).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  // group 0248 B0001: the AI answer arrives from an async server run, so the button must
+  // show that the run is live and refuse a second click. Before the fix there was no run
+  // to be in — the click was a no-op — so nothing conveyed "working on it".
+  it('marks the item as in progress and blocks re-clicks while its AI run is live', async () => {
+    const requestAiAnswer = vi.fn().mockResolvedValue(true)
+    const wrapper = mountDialog({
+      docId: 'd1', submitAnswer: vi.fn(), requestAiAnswer, aiRunItemId: 7,
+    })
+    await flushPromises()
+
+    const aiBtn = document.body.querySelector<HTMLButtonElement>('.qhd-act-ai')!
+    expect(aiBtn.disabled).toBe(true)
+    // Compare against the active locale's string — this suite does not pin a locale.
+    expect(aiBtn.textContent).toContain(i18n.global.t('main.doc_info_panel.qa_answer_ai_running'))
+
+    aiBtn.click()
+    await flushPromises()
+    expect(requestAiAnswer).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('leaves the button idle when no AI run is in flight', async () => {
+    const wrapper = mountDialog({
+      docId: 'd1', submitAnswer: vi.fn(), requestAiAnswer: vi.fn(), aiRunItemId: null,
+    })
+    await flushPromises()
+
+    const aiBtn = document.body.querySelector<HTMLButtonElement>('.qhd-act-ai')!
+    expect(aiBtn.disabled).toBe(false)
+    expect(aiBtn.textContent).toContain(i18n.global.t('main.doc_info_panel.qa_answer_ai'))
+    wrapper.unmount()
+  })
+})
+
+// 0248 B0001 rework — the rejected behaviour, pinned.
+//
+// Reviewer: "질문을 등록했는데 AI가 답변이 불가능하다. 멘트복사도 없고 AI호출도 없고
+// 사용자가 질문하고 사용자가 답하는 자문자답?"
+//
+// The panel card's [답변] opens this dialog with startAnswer=true, which opens the compose
+// form. The hand-off buttons used to live in that form's v-else, so arriving from the card —
+// the ONLY route a user takes after registering a query — rendered a bare textarea and no way
+// to reach an AI at all. Writing an answer and handing it off are not alternatives.
+describe('QaHistoryDialog AI hand-off reachability (0248 B0001 rework)', () => {
+  it('keeps [멘트 복사] and [AI에게 답변 요청] reachable while the compose form is open', async () => {
+    // Drive it exactly as the panel card does: the dialog is mounted closed and opened with
+    // a focus target + startAnswer. (The form-opening watcher fires on the visible
+    // transition, so mounting with visible:true would never open the box.)
+    const wrapper = mountDialog({
+      visible: false,
+      docId: 'd1',
+      submitAnswer: vi.fn(),
+      requestAiAnswer: vi.fn(),
+      copyAnswerMention: vi.fn(),
+      focusId: 7,
+      startAnswer: true,
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    // The compose box is open — this is the state the reviewer was stuck in.
+    expect(document.body.querySelector('.qhd-answer-textarea')).toBeTruthy()
+    // ...and the hand-off must still be right there.
+    expect(document.body.querySelector('.qhd-act-mention')).toBeTruthy()
+    expect(document.body.querySelector('.qhd-act-ai')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('calls copyAnswerMention with the item id', async () => {
+    const copyAnswerMention = vi.fn().mockResolvedValue(true)
+    const wrapper = mountDialog({
+      docId: 'd1', submitAnswer: vi.fn(), requestAiAnswer: vi.fn(), copyAnswerMention,
+    })
+    await flushPromises()
+
+    document.body.querySelector<HTMLButtonElement>('.qhd-act-mention')!.click()
+    await flushPromises()
+
+    expect(copyAnswerMention).toHaveBeenCalledWith(7)
+    wrapper.unmount()
+  })
+
+  it('offers the hand-off even to an item that already has an answer (re-request)', async () => {
+    const wrapper = mountDialog({
+      docId: 'd1',
+      items: [{ ...items()[0], answer_count: 1, answers: [{ body: '사람 답변', author_kind: 'human' }] }],
+      submitAnswer: vi.fn(),
+      requestAiAnswer: vi.fn(),
+      copyAnswerMention: vi.fn(),
+    })
+    await flushPromises()
+
+    expect(document.body.querySelector('.qhd-act-mention')).toBeTruthy()
+    expect(document.body.querySelector('.qhd-act-ai')).toBeTruthy()
     wrapper.unmount()
   })
 })

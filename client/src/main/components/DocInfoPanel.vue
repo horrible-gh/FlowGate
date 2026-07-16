@@ -277,6 +277,8 @@
       :start-answer="qaStartAnswer"
       :submit-answer="submitAnswerCore"
       :request-ai-answer="requestAiAnswer"
+      :copy-answer-mention="copyAnswerMention"
+      :ai-run-item-id="aiRunItemId"
     />
   </aside>
 </template>
@@ -288,6 +290,9 @@ import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
 import { useQaAnswers } from '../composables/useQaAnswers'
+import { useToast } from './common/useToast'
+import { useMentionCopy } from '../composables/useMentionCopy'
+import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiReviewFinding } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
@@ -529,12 +534,41 @@ const {
   qaLoading,
   qaError,
   qaBusy,
+  aiRunItemId,
   itemAnswered,
   fetchQa,
   submitQuestion,
   submitAnswer: submitAnswerCore,
+  fetchAnswerMention,
   requestAiAnswer,
 } = useQaAnswers(toRef(props, 'docId'))
+
+const { showToast } = useToast()
+const { recordMentionCopy } = useMentionCopy()
+
+// [멘트 복사] for one query item (0248 B0001 rework). The mention is fetched INSIDE the
+// deferred producer, not awaited before it: the token round-trip would otherwise outlive the
+// click's transient activation and the clipboard write would silently reject (group 0133
+// NR0003). ClipboardAbort keeps a failed fetch from also reporting a copy failure — the
+// composable has already put the reason in qaError.
+async function copyAnswerMention(itemId: number): Promise<boolean> {
+  const ok = await copyToClipboardDeferred(async () => {
+    const mention = await fetchAnswerMention(itemId)
+    if (!mention) throw new ClipboardAbort()
+    return mention
+  })
+  if (ok) {
+    showToast(t('main.doc_info_panel.qa_answer_mention_copied'), 'success')
+    // 'qa_answer' is the mention kind this exact hand-off was registered as (useMentionCopy);
+    // the document-bound panel is simply the second producer of it.
+    void recordMentionCopy(props.docId, 'qa_answer')
+  } else if (qaError.value) {
+    showToast(qaError.value, 'danger')
+  } else {
+    showToast(t('main.doc_info_panel.qa_answer_mention_copy_failed'), 'danger')
+  }
+  return ok
+}
 
 const newQOpen = ref(false)
 const newQTitle = ref('')

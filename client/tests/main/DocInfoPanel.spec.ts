@@ -17,6 +17,7 @@ vi.mock('@shared/api', () => ({
 }))
 
 import DocInfoPanel from '@main/components/DocInfoPanel.vue'
+import QaHistoryDialog from '@main/components/QaHistoryDialog.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
 beforeEach(() => {
@@ -249,23 +250,34 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
   })
 
   // group 0126 / C안: answering moved out of the panel into the full-view dialog
-  // (QaHistoryDialog), where the answer POST + AI-request behaviour is covered by
-  // QaHistoryDialog.answer.spec.ts. The panel now only opens that dialog (above).
-  it.skip('answering an item POSTs author_kind=human; AI request hits ai-request', async () => {
+  // (QaHistoryDialog), so this asserts the panel hands the dialog working actions rather
+  // than clicking panel buttons that no longer exist.
+  //
+  // 0248 B0001 / NR0003 "테스트 공백": this was left as it.skip against the pre-0126 DOM,
+  // so the ONE test that would have exercised the real ai-request POST never ran — the
+  // endpoint being a no-op went unnoticed. Re-activated against the current structure.
+  it('hands the dialog an AI request action that POSTs ai-request and tracks the run', async () => {
     getRequest.mockResolvedValue({
       data: { qa: { items: [
         { id: 9, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
       ] } },
     })
+    postRequest.mockResolvedValue({ data: { ok: true, run_id: 'run-7', status: 'running' } })
     const wrapper = mountPanel()
     await flushPromises()
-    const actionBtns = wrapper.findAll('.dip-qa-actions .btn-outline')
-    await actionBtns[1].trigger('click') // [AI에게 답변 요청]
+
+    const dialog = wrapper.findComponent(QaHistoryDialog)
+    expect(dialog.props('aiRunItemId')).toBeNull()
+
+    await (dialog.props('requestAiAnswer') as (id: number) => Promise<boolean>)(9)
     await flushPromises()
+
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/q/p.none.0001.0001-D/items/9/answers/ai-request',
       {},
     )
+    // The panel must reflect the live run, so the dialog can show it (0248 B0001).
+    expect(dialog.props('aiRunItemId')).toBe(9)
   })
 
   // 0059 B0001 rework: a worker registering a Q on the doc on screen arrives via SSE
