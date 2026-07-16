@@ -16,6 +16,21 @@
         <button class="sdb-act-btn" :aria-label="t('main.explorer.retry')" @click="reload">
           <AppIcon name="arrow-clockwise" />
         </button>
+        <!-- Tree accordion (0245 R0001). Sits left of the panel toggle so that
+             control stays the rightmost anchor it has always been. Hidden while the
+             panel is folded (no tree to act on) or when the tree has no folders. -->
+        <button
+          v-if="!collapsed && expandableFolderIds.length > 0"
+          class="sdb-act-btn"
+          type="button"
+          data-test="file-explorer-accordion"
+          :aria-pressed="anyFolderExpanded"
+          :aria-label="accordionLabel"
+          :title="accordionLabel"
+          @click="toggleAllFolders"
+        >
+          <AppIcon :name="anyFolderExpanded ? 'caret-down' : 'caret-right'" />
+        </button>
         <button
           class="sdb-act-btn"
           :aria-label="collapsed ? t('main.explorer.expand') : t('main.explorer.collapse')"
@@ -226,6 +241,30 @@ onBeforeUnmount(() => {
 
 const rootNodes = computed(() => nodes.value.filter((n) => n.parent_id === null))
 const projectName = computed(() => projectStore.currentProject?.project_name ?? '')
+
+// ── Tree accordion (0245 R0001 / NR0003 §2) ──────────────────────────────────
+// One toggle rather than a separate expand and collapse button: the header row
+// already carries three controls at 20px each. Its direction follows the tree's
+// real state (anything open → collapse), so the button never lies about what a
+// press will do. The static project root row is not a FileTreeNode and stays open.
+const expandableFolderIds = computed(() =>
+  nodes.value.filter((n) => n.type === 'folder').map((n) => n.id),
+)
+
+const anyFolderExpanded = computed(() => {
+  const pid = props.projectId
+  if (!pid) return false
+  return expandableFolderIds.value.some((id) => explorerStore.isFileNodeExpanded(pid, id))
+})
+
+const accordionLabel = computed(() =>
+  anyFolderExpanded.value ? t('main.explorer.collapse_all') : t('main.explorer.expand_all'),
+)
+
+function toggleAllFolders() {
+  if (!props.projectId) return
+  explorerStore.setFileNodesExpanded(props.projectId, expandableFolderIds.value, !anyFolderExpanded.value)
+}
 
 function normPath(p: string): string {
   return p.replace(/\\/g, '/')
