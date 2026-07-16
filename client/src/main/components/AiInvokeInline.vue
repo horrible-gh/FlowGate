@@ -1,5 +1,5 @@
 <template>
-  <div v-if="run" class="aiv-inline-layer">
+  <div v-if="run && run.docRef !== suppressDocRef" class="aiv-inline-layer">
     <section
       class="aiv-inline"
       :class="`aiv-inline--${run.phase}`"
@@ -137,7 +137,7 @@ import {
 } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 
-const props = defineProps<{ groupId: string }>()
+const props = defineProps<{ groupId: string; suppressDocRef?: string }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const store = useAiInvokeRunsStore()
