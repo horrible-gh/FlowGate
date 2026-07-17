@@ -231,7 +231,7 @@
 
           <!-- Review request ▼ split button (excluding R type) -->
           <div v-if="canShowReviewRequestAction" class="ab-split-wrap">
-            <button :class="reviewRequestMainClass" @click="onMentionCopyClick">
+            <button :class="reviewRequestMainClass" @click="onReviewRequestMainClick">
               <AppIcon :name="reviewRequestIconClass" /> {{ reviewRequestButtonLabel }}
             </button>
             <button :class="reviewRequestCaretClass" @click.stop="toggleDropdown">
@@ -332,6 +332,8 @@ const props = defineProps<{
   reviewStatus: string | null
   /** Variant C: whether AI review feedback exists; shows an "AI review arrived" pill in the pending-review footer. */
   aiReviewArrived?: boolean
+  /** Whether the active document's project has at least one resolved runtime AI provider. */
+  hasAiProvider?: boolean
   nextStepLabel?: string
   /** R0001 #2 (0048): next workflow step type code, used to gate the "create approved doc" item to N/T/TS. */
   nextStepCode?: string
@@ -521,13 +523,14 @@ const defaultReviewRequestLabel = computed(() => t('main.review_action_bar.btn_r
 const isPreApprovalReview = computed(() =>
   normalizedStatus.value === 'pending_review' || normalizedStatus.value === 'revised',
 )
-const reviewRequestButtonLabel = computed(() =>
+const baseReviewRequestButtonLabel = computed(() =>
   isPreApprovalReview.value
     ? defaultReviewRequestLabel.value
     : (props.reviewRequestLabel || defaultReviewRequestLabel.value),
 )
+const reviewRequestButtonLabel = baseReviewRequestButtonLabel
 const isNextStageRequest = computed(() =>
-  reviewRequestButtonLabel.value !== defaultReviewRequestLabel.value,
+  baseReviewRequestButtonLabel.value !== defaultReviewRequestLabel.value,
 )
 const reviewRequestVariantClass = computed(() =>
   // Review request (default) uses amber for AI worker actions; next-step advancement uses primary emphasis.
@@ -789,6 +792,14 @@ function onReviewInvokeAiClick() {
   emit('invoke-review-ai', reworkPayload())
 }
 
+function onReviewRequestMainClick() {
+  if (props.hasAiProvider) {
+    onReviewInvokeAiClick()
+    return
+  }
+  onMentionCopyClick()
+}
+
 function onMentionCopyClick() {
   dropdownOpen.value = false
   emit('open-mention-dialog', {
@@ -949,6 +960,7 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   border-color: #94a3b8;
 }
+
 
 .ab-split-main {
   border-radius: 6px 0 0 6px;

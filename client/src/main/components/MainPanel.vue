@@ -715,6 +715,7 @@
       :doc-title="activeTab.title"
       :review-status="exposedValue(docHeaderRefs[activeTabId]?.docReviewStatus) ?? null"
       :ai-review-arrived="!!exposedValue(docHeaderRefs[activeTabId]?.aiReview)"
+      :has-ai-provider="activeProjectHasAiProvider"
       :doc-type="getTabTypeCode(activeTabId) ?? undefined"
       :next-step-label="getNextStepLabel(activeTabId)"
       :next-step-code="getWorkflowViewState(activeTabId).nextStepCode ?? undefined"
@@ -1138,6 +1139,32 @@ const mdViewerRefs = reactive<Record<string, any>>({})
 const textViewerRefs = reactive<Record<string, any>>({})
 const qStatuses = reactive<Record<string, string>>({})
 const headerRevision = ref(0)
+
+// 0260: load providers for the active document project instead of relying on AppHeader order.
+// The review-request button label stays unchanged; only its primary click action switches.
+const activeDocProjectId = computed(() => {
+  const tabId = activeTabId.value
+  if (!tabId) return ''
+  return exposedValue<string>(docHeaderRefs[tabId]?.docProjectId)
+    ?? tabId.split('.')[0]
+    ?? ''
+})
+// Per R0001 ("존재하지 않을 경우 기존과 같다") and NR0003 (권고 2·주의사항), mention-copy is
+// the default in every state EXCEPT a confirmed provider. AI invoke becomes the default only
+// once the active document project's provider request has completed successfully with a
+// non-empty result — loading, a query error, a project mismatch, or an empty result all keep
+// the existing mention-copy behavior so an unresolved/errored lookup never routes to AI.
+const activeProjectHasAiProvider = computed(() => {
+  const projectId = activeDocProjectId.value
+  if (!projectId) return false
+  return aiProviderStore.loadedProjectId === projectId
+    && !aiProviderStore.loading
+    && !aiProviderStore.error
+    && aiProviderStore.providers.length > 0
+})
+watch(activeDocProjectId, (projectId) => {
+  if (projectId) void aiProviderStore.ensureLoaded(projectId)
+}, { immediate: true })
 
 function resolveTemplateRef(el: any) {
   return Array.isArray(el) ? el.find(Boolean) ?? null : el

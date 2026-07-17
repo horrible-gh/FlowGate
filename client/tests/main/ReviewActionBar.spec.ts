@@ -476,6 +476,48 @@ describe('ReviewActionBar', () => {
     expect(wrapper.text()).toContain('Reject')
   })
 
+  it('R5-1. uses AI invoke as the review split-button default when a provider exists', async () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'test.p.0001.0003-D',
+        docType: 'D',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+        hasAiProvider: true,
+      },
+      global: { plugins: [i18n] },
+    })
+
+    const mainButton = wrapper.find('.ab-split-main')
+    expect(mainButton.text()).toContain('Request Review')
+
+    await mainButton.trigger('click')
+    expect(wrapper.emitted('invoke-review-ai')).toHaveLength(1)
+    expect(wrapper.emitted('open-mention-dialog')).toBeFalsy()
+  })
+
+  it('R5-2. preserves mention copy as the review split-button default without a provider', async () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'test.p.0001.0003-D',
+        docType: 'D',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+        hasAiProvider: false,
+      },
+      global: { plugins: [i18n] },
+    })
+
+    const mainButton = wrapper.find('.ab-split-main')
+    expect(mainButton.text()).toContain('Request Review')
+
+    await mainButton.trigger('click')
+    expect(wrapper.emitted('open-mention-dialog')).toHaveLength(1)
+    expect(wrapper.emitted('invoke-review-ai')).toBeFalsy()
+  })
+
   it('R6. non-R approved + next step → [다음 단계] enabled', () => {
     const wrapper = mount(ReviewActionBar, {
       props: {
