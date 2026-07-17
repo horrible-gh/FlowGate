@@ -39,6 +39,13 @@ function createWrapper(Component, permissions = []) {
 }
 
 describe('SettingsNav — permission branching', () => {
+  it('renders the security and sessions icon', () => {
+    const wrapper = createWrapper(SettingsNav);
+    const icon = wrapper.find('a .app-icon svg');
+    expect(icon.exists()).toBe(true);
+    expect(icon.element.innerHTML).not.toBe('');
+  });
+
   it('hides the user section when system.user.read permission is absent', () => {
     const wrapper = createWrapper(SettingsNav, ['system.settings.manage']);
     expect(wrapper.text()).not.toContain(i18n.global.t('settings.nav.users'));

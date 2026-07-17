@@ -1,5 +1,5 @@
 <template><nav class="settings-nav">
-<div class="nav-group">{{ labels.account }}</div><RouterLink to="/settings/security" class="nav-item" active-class="active"><AppIcon name="shield-check" /> {{ labels.security }}</RouterLink>
+<div class="nav-group">{{ labels.account }}</div><RouterLink to="/settings/security" class="nav-item" active-class="active"><AppIcon name="shield-checkered" /> {{ labels.security }}</RouterLink>
 <template v-if="auth.user?.is_admin"><div class="nav-divider"></div><div class="nav-group">{{ t('settings.nav.system') }}</div>
 <RouterLink to="/settings/system" class="nav-item" active-class="active"><AppIcon name="sliders-horizontal" /> {{ t('settings.system.title') }}</RouterLink>
 <RouterLink to="/settings/system/env-vars" class="nav-item" active-class="active"><AppIcon name="code" /> {{ t('settings.system.env_variables.title') }}</RouterLink>
