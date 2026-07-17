@@ -161,17 +161,32 @@
                 <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
                 {{ t('main.conversation_view.title') }}
               </span>
+              <div class="card-actions">
+                <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
+                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
+                </button>
+              </div>
             </div>
             <div class="card-bd conv-card-bd">
-              <!-- 0251 B0001: the chat stays here while sending and while its AI call runs.
-                   Nothing moves it and nothing covers it — progress is the send button. -->
-              <ConversationView
-                :doc-id="tab.id"
-                :project-id="tab.projectId ?? null"
-                :manual-copy-text="convManualCopy[tab.id] ?? null"
-                @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
-                @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
-              />
+              <!-- 0263 R0001: [full view] hands this very instance to the dialog through a
+                   Teleport rather than mounting a second ConversationView there. A chat holds
+                   live state the markup cannot re-create — an in-flight AI call's poll loop and
+                   spinner, plus the unsent draft — so unmounting it to re-mount elsewhere is
+                   exactly what dropped the progress in 0251 NR0003 §4. Moving the node keeps one
+                   instance, and with it one source of truth, on both sides of the transition.
+                   0251 B0001 still holds either way: nothing covers the chat while its own AI
+                   call runs (AiInvokeInline suppresses this doc's run) — progress is the send
+                   button. -->
+              <Teleport :to="convFullViewHost" :disabled="!convFullViewOn">
+                <ConversationView
+                  :ref="(el) => bindActiveRef(convViewRefs, tab.id, el)"
+                  :doc-id="tab.id"
+                  :project-id="tab.projectId ?? null"
+                  :manual-copy-text="convManualCopy[tab.id] ?? null"
+                  @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
+                  @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
+                />
+              </Teleport>
             </div>
           </div>
           <div v-else-if="tab.type === 'qtui'" class="card md-preview-card">
@@ -754,10 +769,12 @@
         <div class="modal-box document-modal">
           <div class="modal-hd">
             <span class="modal-title">
-              <AppIcon :name="fullViewTab.type === 'text' ? 'file-text' : 'markdown-logo'" style="color:var(--text-m);" />
+              <AppIcon :name="fullViewIcon" style="color:var(--text-m);" />
               {{ fullViewTab.title }}
             </span>
             <div class="modal-hd-actions">
+              <!-- CH has no [edit]: a chat is written through its composer, not by hand-editing
+                   the transcript, and its card offers no [edit] either. -->
               <button
                 v-if="fullViewTab.typeCode !== 'CH'"
                 class="btn btn-outline btn-sm"
@@ -771,8 +788,9 @@
               </button>
             </div>
           </div>
-          <!-- CH is unreachable here (openFullView refuses it) and renders nothing: a chat
-               is never lifted out of its card into a dialog. -->
+          <!-- CH mounts no viewer of its own here. This body is the teleport target: the chat
+               card moves its live ConversationView in, so the dialog shows the same instance the
+               card held — running spinner and unsent draft included. -->
           <div
             class="modal-bd document-modal__body"
             :class="{ 'document-modal__body--conversation': fullViewTab.typeCode === 'CH' }"
@@ -1136,6 +1154,7 @@ const activeTab = computed(() => tabsStore.activeTab)
 const docHeaderRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
 const textViewerRefs = reactive<Record<string, any>>({})
+const convViewRefs = reactive<Record<string, any>>({})
 const qStatuses = reactive<Record<string, string>>({})
 const headerRevision = ref(0)
 
@@ -1226,6 +1245,25 @@ function onDocHeaderUpdated(payload?: { docId: string }) {
 
 const fullViewVisible = ref(false)
 const fullViewTab = ref<Tab | null>(null)
+// The chat's full view is a move, not a second mount: the card teleports its ConversationView
+// into the dialog body below. The target only exists while the dialog is open, so the flag is
+// raised a tick after opening (target rendered) and lowered a tick before closing (so the node
+// is back in its card before the dialog's DOM — and anything still inside it — is removed).
+const CONV_FULL_VIEW_HOST = '.document-modal__body--conversation'
+const convFullViewActive = ref(false)
+// Teleport resolves `to` when it mounts and then reuses that result; it only re-resolves when
+// `to` itself changes. The chat card mounts long before any dialog exists, so a constant
+// selector would have been resolved to null back then and toggling `disabled` alone would move
+// the chat into nothing. Swinging `to` null<->selector forces the fresh lookup. Both props read
+// the same flag so they can never disagree — an enabled teleport always has a target.
+const convFullViewOn = computed(
+  () => convFullViewActive.value && fullViewTab.value?.typeCode === 'CH',
+)
+const convFullViewHost = computed(() => (convFullViewOn.value ? CONV_FULL_VIEW_HOST : null))
+const fullViewIcon = computed(() => {
+  if (fullViewTab.value?.typeCode === 'CH') return 'chats'
+  return fullViewTab.value?.type === 'text' ? 'file-text' : 'markdown-logo'
+})
 const editVisible = ref(false)
 const editTab = ref<Tab | null>(null)
 const editContent = ref('')
@@ -3276,19 +3314,45 @@ async function copyMentionDeferred(
   return ok
 }
 
-function openFullView(tab: Tab) {
-  // CH remains an inline interactive surface; sending/running AI must not cover the document.
-  if (tab.typeCode === 'CH') return
+// A teleported chat is re-attached under a new parent, and a re-attached scroll container
+// comes back at the top. Pin it to the newest message again once the move has landed, on both
+// legs — the chat should open and close showing where the conversation actually is.
+function repinChat(tabId: string) {
+  void nextTick(() => convViewRefs[tabId]?.scrollToBottom?.())
+}
+async function openFullView(tab: Tab) {
   fullViewTab.value = tab
   fullViewVisible.value = true
+  if (tab.typeCode === 'CH') {
+    // The dialog body is the teleport target, so it has to be in the DOM before the move.
+    await nextTick()
+    if (fullViewVisible.value && fullViewTab.value?.id === tab.id) {
+      convFullViewActive.value = true
+      repinChat(tab.id)
+    }
+  }
 }
-function closeFullView() {
+async function closeFullView() {
+  if (convFullViewActive.value) {
+    // Give the chat back to its card while the dialog still stands: removing the dialog first
+    // would tear the teleported node out of the document along with it.
+    const chatTabId = fullViewTab.value?.id
+    convFullViewActive.value = false
+    await nextTick()
+    if (chatTabId) repinChat(chatTabId)
+  }
   fullViewVisible.value = false
   fullViewTab.value = null
 }
-function editFromFullView(tab: Tab) {
-  closeFullView()
-  openEditModal(tab)
+// The teleported chat lives in the active tab's card, so a tab switch would unmount it and
+// leave the dialog empty. Nothing can reach the tab bar while the modal covers it today; this
+// keeps the two consistent regardless.
+watch(activeTabId, () => {
+  if (convFullViewActive.value) void closeFullView()
+})
+async function editFromFullView(tab: Tab) {
+  await closeFullView()
+  await openEditModal(tab)
 }
 async function openEditModal(tab: Tab) {
   editTab.value = tab

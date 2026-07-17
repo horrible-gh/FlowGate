@@ -804,7 +804,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:document_content_changed', onContentChanged)
 })
 
-defineExpose({ load })
+// scrollToBottom is exposed for the CH full view (0263 R0001): teleporting this component
+// between the card and the dialog detaches and re-attaches .conv-scroll, and a re-attached
+// element comes back at scrollTop 0 — the log stuck at the TOP, the same symptom rev8 fixed
+// for new turns. The mover re-pins once the node lands.
+defineExpose({ load, scrollToBottom })
 </script>
 
 <style scoped>
