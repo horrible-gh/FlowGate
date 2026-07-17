@@ -98,6 +98,18 @@
                the tree the tab type resolves to 'unsupported' (no md), which would
                otherwise fall through to the unsupported-view. -->
           <template v-if="tab.typeCode === 'AC'">
+            <!-- 0265 R0001: once the document is finally approved, the [Git 반영]
+                 finalize panel rises ABOVE the [최종 승인] card — after approval
+                 the merge/push is the remaining action, so it leads. Before
+                 approval the approval card stays on top (approving is the primary
+                 action) and the panel mounts below, as before. isCompletedDoc
+                 (approved | wf_done) is the same signal the card body uses for its
+                 done state, so the reorder tracks it exactly. The two mounts are
+                 mutually exclusive (v-if / !v-if): only one panel exists at a time. -->
+            <GitFinalizePanel
+              v-if="isCompletedDoc(tab.id)"
+              :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
+            />
             <div class="card md-preview-card">
               <div class="card-hd">
                 <span class="card-title">
@@ -127,8 +139,11 @@
                  resolution no longer force-renders cramped inside the document
                  column. The panel now shows the status summary + a [conflict
                  resolve] button that opens the shared 1180×820 overlay resolver,
-                 identical to the R/B root path. -->
+                 identical to the R/B root path.
+                 0265 R0001: this below-the-card mount is now the PRE-approval
+                 position only; the post-approval mount above leads instead. -->
             <GitFinalizePanel
+              v-if="!isCompletedDoc(tab.id)"
               :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
             />
           </template>
