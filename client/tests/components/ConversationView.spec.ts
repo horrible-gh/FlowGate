@@ -321,15 +321,16 @@ describe('ConversationView chat AI invoke', () => {
     expect(showToast).toHaveBeenCalledWith('AI call failed: server exploded', 'danger')
   })
 
-  // R0001: chat AI progress must show on the SEND button (no dialog). While a chat AI
-  // run is in flight, the send button itself spins and stays disabled — not just the
-  // separate [Call AI] button.
-  it('spins and disables the SEND button itself while a chat AI call is running', async () => {
+  // 0264 R0001: chat AI progress must show on the SEND button (no dialog), and it must be
+  // actionable rather than a passive spinner — while a chat AI run is in flight the send
+  // button becomes a STOP button that stays ENABLED so the run can be cancelled.
+  it('turns the SEND button into an enabled STOP button while a chat AI call is running', async () => {
     const wrapper = mountView()
     await flushPromises()
     // Send button idle before any run: enabled once a draft exists, plane icon.
     await wrapper.find('textarea').setValue('review this')
     expect(wrapper.find('.conv-send').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.conv-send').classes()).not.toContain('is-stop')
 
     postRequest.mockReset()
     postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } }) // start → run in flight
@@ -338,10 +339,153 @@ describe('ConversationView chat AI invoke', () => {
     await flushPromises()
 
     // The polling loop keeps invoking=true (its first tick is behind a 2.5s timer), so
-    // the send button reflects the in-flight AI call: disabled + "Calling AI…" title.
+    // the send button reflects the in-flight AI call as a live stop control.
+    const send = wrapper.find('.conv-send')
+    expect(send.classes()).toContain('is-stop')
+    expect(send.attributes('disabled')).toBeUndefined()
+    expect(send.attributes('type')).toBe('button') // must not fall through to a send
+    expect(send.attributes('title')).toBe('Cancel run')
+  })
+
+  it('cancels the running chat AI call when the STOP button is clicked', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } }) // start
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click') // manual [Call AI] → invoking
+    await flushPromises()
+
+    postRequest.mockClear()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1', status: 'cancelling' } })
+    await wrapper.find('.conv-send').trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r1/cancel', {})
+    // Cancelling is an interim state: the button waits for the run to actually finish.
     const send = wrapper.find('.conv-send')
     expect(send.attributes('disabled')).toBeDefined()
-    expect(send.attributes('title')).toBe('Calling AI…')
+    expect(send.attributes('title')).toBe('Cancelling — terminating the process tree…')
+  })
+
+  it('stops a run it adopted rather than started, using the adopted run id', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    // 409: the group already has a run — adopted through the run_in_progress path.
+    postRequest.mockRejectedValueOnce({ response: { data: { code: 'run_in_progress', run_id: 'r9' } } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click')
+    await flushPromises()
+
+    postRequest.mockClear()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r9', status: 'cancelling' } })
+    await wrapper.find('.conv-send').trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r9/cancel', {})
+  })
+
+  it('re-enables the STOP button and toasts when the cancel request fails', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    postRequest.mockReset()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click')
+    await flushPromises()
+
+    postRequest.mockClear()
+    postRequest.mockRejectedValueOnce({ response: { status: 500 } })
+    await wrapper.find('.conv-send').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledWith('Failed to cancel the run.', 'danger')
+    // The run is still up, so the user must be able to try again.
+    const send = wrapper.find('.conv-send')
+    expect(send.classes()).toContain('is-stop')
+    expect(send.attributes('disabled')).toBeUndefined()
+  })
+
+  it('does not report a user-initiated stop as a failure', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      // A killed run finishes with no new AI turn — the exact shape of a failed run.
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({
+            data: { status: 'finished', end_reason: 'cancelled', docs_reached: 0, last_message_received: false },
+          })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+          return Promise.resolve(PROVIDERS_RESPONSE)
+        }
+        return Promise.resolve({ data: { content: '' } })
+      })
+      postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click')
+      await flushPromises()
+
+      postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1', status: 'cancelling' } })
+      await wrapper.find('.conv-send').trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      // Never the danger "not registered" toast — the user asked for this outcome.
+      expect(showToast).toHaveBeenCalledWith('The run was cancelled by the user.', 'info')
+      expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('was not added'), 'danger')
+      // And the button is a send button again.
+      const send = wrapper.find('.conv-send')
+      expect(send.classes()).not.toContain('is-stop')
+      expect(send.attributes('title')).toBe('Send')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  // A cancel can lose the race to a natural finish: the reply lands and the server never
+  // stamps end_reason='cancelled'. The terminal payload decides, so the delivered reply
+  // must NOT be reported as cancelled just because a cancel was in flight.
+  it('reports a delivered reply as success when the cancel lost the race', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({
+            data: { status: 'finished', end_reason: 'completed', docs_reached: 0, last_message_received: true },
+          })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+          return Promise.resolve(PROVIDERS_RESPONSE)
+        }
+        return Promise.resolve({ data: { content: '## AI · 2026-07-16T13:00:00Z\n\nreply\n' } })
+      })
+      postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click')
+      await flushPromises()
+
+      // The server had already finished; cancel comes back 'finished', not 'cancelling'.
+      postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1', status: 'finished' } })
+      await wrapper.find('.conv-send').trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      // The reply arrived, so no cancellation notice and no failure toast.
+      expect(showToast).not.toHaveBeenCalled()
+      expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('blocks a new send while a chat AI call is still in flight', async () => {
@@ -536,7 +680,7 @@ describe('ConversationView running-call recovery on mount', () => {
     })
   }
 
-  it('restores the spinner for a run that is still running for THIS chat', async () => {
+  it('restores the STOP button for a run that is still running for THIS chat', async () => {
     withActiveRun({ ok: true, active: true, run_id: 'r7', status: 'running', doc_ref: DOC_ID })
     const wrapper = mountView()
     await flushPromises()
@@ -545,10 +689,18 @@ describe('ConversationView running-call recovery on mount', () => {
       group_id: 'flowgate.default.0085',
     })
     // Adopted: the poll loop holds invoking=true (its first tick is behind a 2.5s timer),
-    // so the send button shows the in-flight call exactly as if this instance started it.
+    // so the send button shows the in-flight call exactly as if this instance started it —
+    // including the ability to stop a run this instance never started (0264 R0001).
     const send = wrapper.find('.conv-send')
-    expect(send.attributes('disabled')).toBeDefined()
-    expect(send.attributes('title')).toBe('Calling AI…')
+    expect(send.classes()).toContain('is-stop')
+    expect(send.attributes('disabled')).toBeUndefined()
+    expect(send.attributes('title')).toBe('Cancel run')
+
+    postRequest.mockClear()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r7', status: 'cancelling' } })
+    await send.trigger('click')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r7/cancel', {})
   })
 
   it('stays idle when the group\'s active run belongs to another document', async () => {

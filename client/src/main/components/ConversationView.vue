@@ -32,9 +32,9 @@
          automatically on a successful send (copy mention / call AI / nothing) — and
          (2) the manual [Copy mention] / [Call AI] buttons. Chat AI calls run
          immediately with the header-selected provider (no settings dialog); the
-         SEND button itself becomes a spinner while that run is in flight (R0001:
-         "make the send button a rotating icon" — no dialog for chat), and the manual
-         [Call AI] button spins in lockstep. -->
+         SEND button carries that run's progress (0235 R0001: no dialog for chat) and,
+         since 0264 R0001, carries it as a STOP button rather than a passive spinner —
+         the manual [Call AI] button still spins in lockstep. -->
     <form class="conv-composer" @submit.prevent="send">
       <!-- Inline manual-copy panel (B0001 / group 0240 — third recurrence of "a dialog
            covers the whole screen in chat"). A failed mention copy used to surface through
@@ -145,20 +145,25 @@
           @input="onDraftInput"
           @keydown.enter.exact.prevent="send"
         ></textarea>
-        <!-- R0001: for CH docs the AI call must NOT open a settings dialog; its
-             progress shows on the SEND button itself ("보내기버튼을 회전아이콘으로").
-             So the send button spins for BOTH the turn POST (sending) and the ensuing
-             chat AI call (invoking) — a single, unified busy indicator — and stays
-             disabled until the in-flight work settles. -->
+        <!-- 0264 R0001: a chat AI run can hold this surface for up to 20 minutes, and a
+             bare spinner left the user with nothing to do but wait ("멍때리는"). So the
+             send button is a TWO-MODE button: the plane sends, and while a run is in
+             flight it turns into a STOP button that cancels the run. Chat progress still
+             lives on the send button with no dialog (0235 R0001) — the passive spinner is
+             simply replaced by an actionable control.
+             The short turn POST (sending) keeps the old spinner: it is sub-second, has no
+             cancel endpoint, and is already committed server-side, so there is nothing to
+             stop. Only the AI run (invoking) is cancellable. -->
         <button
-          type="submit"
+          :type="stopMode ? 'button' : 'submit'"
           class="conv-send"
-          :class="{ 'is-sending': busy }"
+          :class="{ 'is-sending': sending && !stopMode, 'is-stop': stopMode }"
           :title="sendButtonTitle"
-          :aria-label="t('main.conversation_view.send')"
-          :disabled="busy || draft.trim().length === 0"
+          :aria-label="stopMode ? t('main.ai_invoke_dialog.btn_cancel_run') : t('main.conversation_view.send')"
+          :disabled="stopMode ? cancelling : sending || draft.trim().length === 0"
+          @click="onSendButtonClick"
         >
-          <AppIcon :name="busy ? 'spinner' : 'paper-plane-tilt'" :spin="busy" />
+          <AppIcon :name="sendButtonIcon" :spin="sending && !stopMode" />
         </button>
       </div>
     </form>
@@ -315,14 +320,27 @@ const draft = ref(loadDraft(props.docId))
 const loading = ref(false)
 const sending = ref(false)
 const invoking = ref(false)
-// R0001: chat AI progress is shown on the SEND button (no dialog), so the send
-// button is "busy" while EITHER the turn is posting OR a chat AI call is running.
+// 0264 R0001: the run id the STOP button cancels. Set by pollRun — the single choke
+// point every run reaches, whether it came from our own start, from the 409
+// run_in_progress adoption, or from adoptActiveRun() after a tab switch / F5 — so the
+// button can stop a run this component did not itself start.
+const activeRunId = ref<string | null>(null)
+const cancelling = ref(false)
+// One turn at a time: a new send is blocked while EITHER the turn is posting OR a chat
+// AI call is running. This guards send() only — the button's own appearance is driven by
+// sending/stopMode, which distinguish the two states the user can act on.
 const busy = computed(() => sending.value || invoking.value)
-const sendButtonTitle = computed(() =>
-  invoking.value
-    ? t('main.conversation_view.invoke_ai_running')
-    : t('main.conversation_view.send'),
-)
+// The button is a STOP button exactly while a cancellable AI run is in flight.
+const stopMode = computed(() => invoking.value)
+const sendButtonIcon = computed(() => {
+  if (stopMode.value) return 'prohibit'
+  return sending.value ? 'spinner' : 'paper-plane-tilt'
+})
+const sendButtonTitle = computed(() => {
+  if (cancelling.value) return t('main.ai_invoke_dialog.cancelling')
+  if (stopMode.value) return t('main.ai_invoke_dialog.btn_cancel_run')
+  return t('main.conversation_view.send')
+})
 const scrollEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 let disposed = false
@@ -516,6 +534,47 @@ async function load(): Promise<ConvTurn[]> {
   }
 }
 
+// Back to IDLE: no run is in flight, so the button is a send button again.
+function releaseRun(): void {
+  invoking.value = false
+  cancelling.value = false
+  activeRunId.value = null
+}
+
+// ── STOP (0264 R0001) ────────────────────────────────────────────────────────
+// The run lives in a server-side worker thread, not in this request, so stopping it
+// means asking the server to kill it — there is no XHR to abort and no token stream to
+// interrupt. Mirrors aiInvokeRuns.cancel(), including the race where the run finishes
+// naturally between our click and the server handling it.
+async function cancelRun(): Promise<void> {
+  const runId = activeRunId.value
+  if (!runId || cancelling.value) return
+  cancelling.value = true
+  try {
+    await postRequest(`/api/v1/ai-invoke/${encodeURIComponent(runId)}/cancel`, {})
+    // 200 with status 'cancelling' OR 'finished' (cancel raced the natural finish):
+    // either way the run is settled server-side. Let pollRun observe the finish and
+    // release the button, so the terminal payload drives the outcome exactly once.
+  } catch (e: any) {
+    const status = e?.response?.status
+    if (status === 404 || status === 410) {
+      // The run is already gone (server restart / evicted). Nothing to kill; pollRun
+      // hits the same 404 and releases the button.
+      return
+    }
+    // The run is still up — let the user try again rather than stranding the button
+    // in a cancelling state that will never resolve.
+    cancelling.value = false
+    showToast(t('main.ai_invoke_dialog.error_cancel_failed'), 'danger')
+  }
+}
+
+// The send button submits the form in send mode; in stop mode it is type="button", so
+// this is the only path that fires and it cannot fall through to a send.
+function onSendButtonClick(): void {
+  if (stopMode.value) void cancelRun()
+}
+
 // ── Chat immediate AI call (D0005 §3-1, L0008 §2-3 / §3) ─────────────────────
 // Runs the header-selected provider directly (no settings dialog). Owns the spinner
 // state and prevents duplicate runs; the server also enforces one run per group
@@ -549,16 +608,16 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
     })
     const runId = (res.data as any)?.run_id
     if (runId) void pollRun(runId, turns.value.filter((turn) => turn.speaker === 'ai').length)
-    else invoking.value = false
+    else releaseRun()
   } catch (e: any) {
     const data = e?.response?.data
     // 409 run_in_progress: a run already exists for this group — adopt it and keep
-    // the spinner rather than surfacing an error or restarting (L0008 §5).
+    // the stop button rather than surfacing an error or restarting (L0008 §5).
     if (data?.code === 'run_in_progress' && data?.run_id) {
       void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
       return
     }
-    invoking.value = false
+    releaseRun()
     const detail = describeErrorDetail(data?.detail ?? data ?? e)
     showToast(t('main.conversation_view.invoke_ai_failed', { detail }), 'danger')
   }
@@ -616,6 +675,9 @@ function chatRunFailureDetail(data: Record<string, any>): string {
 
 async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
   invoking.value = true
+  // Every route to a live run funnels through here (own start / 409 adoption /
+  // adoptActiveRun), so this is where the STOP button gets its target.
+  activeRunId.value = runId
   // docs_reached counts newly created documents and is not a chat success signal. Chat
   // success is verified against the existing CH document: at least one new AI turn must
   // appear after this run started. If it does not, keep the toast and include the run's
@@ -629,9 +691,20 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
       )
       const data = res.data as any
       if (data?.status === 'finished') {
-        invoking.value = false
+        // A stop kills the worker, so the run ends with no new AI turn — the exact shape
+        // of a failed run. The terminal payload, not our local cancelling flag, decides:
+        // a cancel that LOST the race to a natural finish leaves end_reason untouched and
+        // the reply still lands, so keying off the flag would report a delivered reply as
+        // cancelled. The server always stamps end_reason='cancelled' on a real kill.
+        const stopped = data?.end_reason === 'cancelled'
+        releaseRun()
         const loadedTurns = await load()
         const aiTurns = loadedTurns.filter((turn) => turn.speaker === 'ai').length
+        // A run the user stopped on purpose is not a failure (0264 R0001).
+        if (stopped) {
+          showToast(t('main.ai_invoke_dialog.end_cancelled'), 'info')
+          return
+        }
         if (aiTurns <= baselineAiTurns) {
           showToast(
             t('main.conversation_view.invoke_ai_no_docs', { detail: chatRunFailureDetail(data) }),
@@ -647,12 +720,12 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
       // still reloads on any turn via SSE.
       const status = e?.response?.status
       if (status === 404 || status === 410) {
-        invoking.value = false
+        releaseRun()
         return
       }
     }
   }
-  invoking.value = false
+  releaseRun()
 }
 
 async function send(): Promise<void> {
@@ -1047,6 +1120,15 @@ defineExpose({ load })
 
 .conv-send:hover:not(:disabled) {
   background: var(--primary-dark, #1d4ed8);
+}
+
+/* Stop mode (0264 R0001): reads as an interrupt, not as another way to send. */
+.conv-send.is-stop {
+  background: var(--danger, #dc2626);
+}
+
+.conv-send.is-stop:hover:not(:disabled) {
+  background: #b91c1c;
 }
 
 .conv-send:active:not(:disabled) {
