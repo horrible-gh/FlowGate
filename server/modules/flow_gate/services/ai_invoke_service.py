@@ -128,6 +128,19 @@ _runs: dict[str, dict] = {}
 _runs_lock = threading.Lock()
 _run_counter = 0
 
+# Per-group resume serialization (0252 L0009 §2.4 step 1): the FIRST line of defense
+# against double resume. The atomic paused-row delete (delete_and_return) is the second.
+_group_resume_locks: dict[str, threading.Lock] = {}
+_group_resume_locks_guard = threading.Lock()
+
+
+def _group_resume_lock(group_id: str) -> threading.Lock:
+    with _group_resume_locks_guard:
+        lock = _group_resume_locks.get(group_id)
+        if lock is None:
+            lock = _group_resume_locks[group_id] = threading.Lock()
+        return lock
+
 
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
@@ -444,6 +457,15 @@ def start_run(
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
         ),
+        # 0252 L0009 §2.8: keep the requester on the record so the global active list
+        # (active_all) can filter runs per user, and §2.1: the continuation target for
+        # the paused-row snapshot (None = to-end, resolved again at resume time).
+        "issued_to": issued_to,
+        "continuation_target_seq": (
+            None if target_to_end or mode != "continuous" else continuation_target_seq
+        ),
+        "pause_requested": False,
+        "user_paused": False,
         "raw_token": issue["raw_token"],
         "merge_id": merge_id,
         "completion_oracle": completion_oracle,
@@ -550,12 +572,17 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             run["provider"] = None
 
         # end_reason classification (L0006 §4.1) — default "exited".
+        # "user_paused" (0252 P0008 S4): the inbox self-chain hit the user's pause flag
+        # at a step boundary and withheld the next token; the worker then exits normally,
+        # so the flag — not the exit itself — is what distinguishes a boundary stop.
         if not started_ok and not run["cancel_event"].is_set():
             run["end_reason"] = "all_providers_failed"
         elif run["cancel_event"].is_set():
             run["end_reason"] = "cancelled"
         elif run["timed_out"]:
             run["end_reason"] = "timeout"
+        elif run.get("user_paused"):
+            run["end_reason"] = "user_paused"
         else:
             run["end_reason"] = "exited"
 
@@ -1252,6 +1279,19 @@ def _finish_run_record(run: dict) -> None:
     run["finished_at"] = now_iso()
     run["status"] = "finished"
 
+    # Chain-termination cleanup (0252 L0009 §3 / §5): a continuous run that ends for any
+    # reason OTHER than the boundary pause (natural finish, cancel, worker failure before
+    # the boundary) must not leave the paused row behind, or the bootstrap would revive a
+    # ghost "paused" card for a chain that is actually over.
+    if run["mode"] == "continuous" and run.get("end_reason") != "user_paused":
+        try:
+            from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+            db_paused.delete_by_group(run["group_id"])
+        except Exception:
+            logger.warning(
+                "ai-invoke paused-row cleanup failed for %s", run["run_id"], exc_info=True
+            )
+
     _broadcast(run, "ai_invoke_finished", finished_payload(run))
     _broadcast(run, "group_view_refresh", {
         "group_id": run["group_id"],
@@ -1308,10 +1348,15 @@ def get_status(run_id: str) -> dict:
             docs_so_far = len(_oracle_new_docs(run))
         except Exception:
             pass
+    # 0252 P0008 S4: surface the accepted pause request so a reload/poll does not
+    # silently revert the card from "정지 예약됨" back to plain running.
+    status = run["status"]
+    if status == "running" and run.get("pause_requested"):
+        status = "pause_requested"
     return {
         "ok": True,
         "run_id": run_id,
-        "status": run["status"],
+        "status": status,
         "mode": run["mode"],
         "group_id": run["group_id"],
         "docs_target": run["docs_target"],
@@ -1339,6 +1384,244 @@ def cancel_run(run_id: str) -> dict:
         except Exception:
             logger.warning("ai-invoke cancel kill failed for %s", run_id, exc_info=True)
     return {"ok": True, "run_id": run_id, "status": "cancelling"}
+
+
+# ── Pause / resume / global active list (group 0252 D0007·P0008·L0009) ──────
+
+
+def pause_run(run_id: str, user_id: str) -> dict:
+    """Accept a user pause for a continuous run (L0009 §2.1).
+
+    The run is NOT interrupted: the in-flight step runs to completion and the inbox
+    self-chain withholds the next token at the step boundary (P0008 S4). The paused
+    row is persisted immediately so a server restart cannot lose the user's intent
+    (D0007 decision 2). Repeat pause is idempotent (upsert).
+    """
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+    run = get_run_record(run_id)
+    if run is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    if run["mode"] != "continuous":
+        raise _http_error(422, "pause_not_supported",
+                          "Single-mode runs cannot be paused. Use cancel instead.",
+                          run_id=run_id)
+    if run["status"] == "finished":
+        raise _http_error(409, "run_already_finished", "The run has already finished.",
+                          run_id=run_id)
+    run["pause_requested"] = True
+    docs_reached = 0
+    try:
+        docs_reached = len(_oracle_new_docs(run))
+    except Exception:
+        logger.warning("ai-invoke pause oracle query failed for %s", run_id, exc_info=True)
+    db_paused.upsert(
+        group_id=run["group_id"],
+        doc_ref=run["doc_ref"],
+        paused_by=user_id,
+        paused_at=now_iso(),
+        continuation_target_seq=run.get("continuation_target_seq"),
+        docs_target=run.get("docs_target"),
+        docs_reached=docs_reached,
+    )
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "group_id": run["group_id"],
+        "status": "pause_requested",
+        "effective_at": "step_boundary",
+    }
+
+
+def mark_user_paused(group_id: str) -> None:
+    """Called by the inbox self-chain when the boundary check withheld the next token:
+    tag the live run so its end_reason classifies as "user_paused" (P0008 S4)."""
+    run = _active_run_for_group(group_id)
+    if run is not None:
+        run["user_paused"] = True
+
+
+def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
+    """First workflow slot that is not complete (L0009 §2.3). Completion uses the
+    existing slot definition — result document exists AND is approved — exactly as
+    ai_invoke_routes._continuation_target_error judges it."""
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    if seq is None:
+        return None
+    for item in sorted(
+        db_wfseq.get_sequence_items(seq["id"]) or [],
+        key=lambda i: i.get("item_seq") or 0,
+    ):
+        if item.get("result_doc_id") is None or item.get("result_doc_review_status") != "approved":
+            return item.get("item_seq")
+    return None
+
+
+def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str = "ko") -> dict:
+    """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
+
+    The ORDER is the overlap protection: (1) group lock → (2) active-run check →
+    (3) atomic paused-row consumption → (4) start. A row consumed by another path
+    (auto-resume, another session, an external worker) surfaces as resume_conflict,
+    never as a second concurrent run.
+    """
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+    from modules.flow_gate.services import workflow_decision_service
+
+    with _group_resume_lock(group_id):
+        active = _active_run_for_group(group_id)
+        if active is not None:
+            raise _http_error(409, "run_already_active",
+                              "An active run already exists for this group.",
+                              run_id=active["run_id"])
+        row = db_paused.delete_and_return(group_id)
+        if row is None:
+            raise _http_error(409, "resume_conflict",
+                              "This chain was already resumed by another path.",
+                              group_id=group_id)
+
+        def _restore_row() -> None:
+            # The resume did not happen — put the consumed row back so the paused
+            # card survives and the user can retry (L0009 §5: 행 보존).
+            try:
+                db_paused.upsert(
+                    group_id=row["group_id"],
+                    doc_ref=row["doc_ref"],
+                    paused_by=row["paused_by"],
+                    paused_at=row["paused_at"],
+                    continuation_target_seq=row.get("continuation_target_seq"),
+                    docs_target=row.get("docs_target"),
+                    docs_reached=int(row.get("docs_reached") or 0),
+                )
+            except Exception:
+                logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
+
+        try:
+            target_seq = row.get("continuation_target_seq")
+            if target_seq is None:
+                # NULL target = "to the end" (DB0010 §2): resolve against the decided
+                # sequence, which must exist by now (documents were being produced).
+                seq = db_wfseq.get_sequence_for_member_doc(row["doc_ref"])
+                items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+                target_seq = max(
+                    (i["item_seq"] for i in items or [] if i.get("item_seq") is not None),
+                    default=None,
+                )
+            next_seq = _next_incomplete_item_seq(row["doc_ref"])
+        except Exception:
+            _restore_row()
+            logger.exception("ai-invoke resume lookup failed for %s", group_id)
+            raise _http_error(500, "resume_lookup_failed",
+                              "Could not read the workflow sequence to resume. Retry later.")
+        if next_seq is None or target_seq is None or int(next_seq) > int(target_seq):
+            # Every step at or below the stored target is already complete; the consumed
+            # row stays deleted on purpose (self-cleaning, L0009 §2.4).
+            raise _http_error(409, "nothing_to_resume",
+                              "No remaining workflow step to resume.", group_id=group_id)
+
+        def _issue_resume() -> dict:
+            # Same advance_workflow path as the continuous first hop / every inbox
+            # self-chain hop, so instruction heads (N/T) keep their server-side
+            # auto-creation instead of being handed to the AI to write (0226 B0001 ④).
+            adv = workflow_decision_service.advance_workflow(
+                doc_id=row["doc_ref"],
+                issued_to=user_id,
+                api_base_url=api_base_url,
+                locale=locale,
+                continuous=True,
+                continuation_target_seq=target_seq,
+                continuation_review_mode=False,
+            )
+            return {
+                "raw_token": adv["token"],
+                "token_id": adv["token_id"],
+                "scratch_dir": adv["scratch_dir"],
+                "mention": adv["mention"],
+            }
+
+        parts = group_id.split(".")
+        project_id = parts[0]
+        module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
+        try:
+            return start_run(
+                project_id=project_id,
+                module=module,
+                group_id=group_id,
+                doc_ref=row["doc_ref"],
+                action_scope="new",
+                mode="continuous",
+                continuation_target_seq=target_seq,
+                continuation_review_mode=False,
+                continuation_instruction_mode="auto_approved",
+                continuation_locale=locale,
+                issued_to=user_id,
+                api_base_url=api_base_url,
+                mention_builder=lambda _raw, _scratch: None,
+                issue_builder=_issue_resume,
+            )
+        except HTTPException:
+            _restore_row()
+            raise
+        except LookupError as exc:
+            _restore_row()
+            raise _http_error(404, "resume_advance_unavailable", str(exc))
+        except ValueError as exc:
+            _restore_row()
+            raise _http_error(409, "resume_advance_blocked", str(exc))
+
+
+def _open_q_doc_ids(group_id: str) -> list[str]:
+    """Open Q documents of the group — the live source for pending_q_doc_ids
+    (DB0010 §4: derived, never stored; answering flips the Q doc to 'answered')."""
+    try:
+        docs = db_docs.get_documents_by_group_id(group_id)
+    except Exception:
+        logger.warning("open-Q lookup failed for %s", group_id, exc_info=True)
+        return []
+    return sorted(
+        d["doc_id"] for d in docs
+        if (d.get("type_code") or "").upper() == "Q" and (d.get("status") or "") == "open"
+    )
+
+
+def active_all(user_id: str) -> dict:
+    """Global widget bootstrap (P0008 S1): every live run the user started plus every
+    chain the user paused — the refresh-proof source the miniplayer restores from."""
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+    with _runs_lock:
+        candidates = [
+            run for run in _runs.values()
+            if run.get("issued_to") == user_id and run["status"] != "finished"
+        ]
+    runs = []
+    for run in candidates:
+        try:
+            status = get_status(run["run_id"])
+        except HTTPException:
+            continue  # finished/expired between the snapshot and the status read
+        status["doc_ref"] = run["doc_ref"]
+        runs.append(status)
+
+    paused = []
+    try:
+        rows = db_paused.list_by_user(user_id)
+    except Exception:
+        logger.warning("paused-chain list failed for %s", user_id, exc_info=True)
+        rows = []
+    for row in rows:
+        paused.append({
+            "group_id": row["group_id"],
+            "doc_ref": row["doc_ref"],
+            "mode": row.get("mode") or "continuous",
+            "paused_by": row["paused_by"],
+            "paused_at": row["paused_at"],
+            "continuation_target_seq": row.get("continuation_target_seq"),
+            "docs_target": row.get("docs_target"),
+            "docs_reached": int(row.get("docs_reached") or 0),
+            "pending_q_doc_ids": _open_q_doc_ids(row["group_id"]),
+        })
+    return {"ok": True, "runs": runs, "paused": paused}
 
 
 # ── SSE ──────────────────────────────────────────────────────────────────────

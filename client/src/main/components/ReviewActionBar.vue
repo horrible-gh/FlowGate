@@ -220,7 +220,7 @@
 
         <div v-else class="sfb-actions">
           <!-- Approve -->
-          <button class="btn btn-success btn-sm" :disabled="approving" @click="onApproveClick">
+          <button class="btn btn-success btn-sm" :disabled="!canApprove" @click="onApproveClick">
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
 
@@ -631,12 +631,46 @@ function onOpenHeadDocClick() {
   })
 }
 
+// 0257 NR0003 §3 / §5: the stale-state path this guards. A tab whose reviewStatus never
+// refreshed keeps this bar in review mode after the server already approved, so the local
+// status alone cannot gate the button — it is exactly the value that is wrong. Remember the
+// doc this bar approved and refuse a second POST for it. Any real prop change (another doc,
+// or a fresh cycle after a reopen) clears the pin; a stale prop never changes, so only the
+// stale case stays blocked.
+const approvedDocId = ref<string | null>(null)
+watch(
+  () => [props.docId, props.reviewStatus],
+  () => {
+    approvedDocId.value = null
+  },
+)
+
+const canApprove = computed(
+  () =>
+    !approving.value &&
+    approvedDocId.value !== props.docId &&
+    ['pending_review', 'revised'].includes(normalizedStatus.value),
+)
+
+async function fetchServerReviewStatus(): Promise<string | null> {
+  try {
+    const res = await getRequest<any>(
+      `/api/v1/documents/detail?doc_id=${encodeURIComponent(props.docId)}`,
+    )
+    const doc = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    return typeof doc?.doc_review_status === 'string' ? doc.doc_review_status : null
+  } catch {
+    return null
+  }
+}
+
 function onApproveClick() {
+  if (!canApprove.value) return
   showApproveConfirm.value = true
 }
 
 async function doApprove() {
-  if (approving.value) return
+  if (!canApprove.value) return
   approving.value = true
   try {
     // §3.1: the git finalize choice rides on the approve request only when the
@@ -691,9 +725,21 @@ async function doApprove() {
     // Pass the server-confirmed status up so DocHeader can optimistically flip the
     // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    approvedDocId.value = props.docId
     emit('approve', updated?.doc_review_status ?? 'approved')
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? e
+    // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
+    // stays untouched. Re-read the document rather than pattern-matching that message — the
+    // wording is not an API contract. If the server says it is already approved, this click
+    // was a stale duplicate of work that succeeded, so converge the UI to the server's state
+    // instead of reporting a failure. Any other error still surfaces.
+    const serverStatus = await fetchServerReviewStatus()
+    if (serverStatus === 'approved') {
+      approvedDocId.value = props.docId
+      emit('approve', 'approved')
+      return
+    }
     console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
     showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
   } finally {
@@ -1080,5 +1126,6 @@ onBeforeUnmount(() => {
   color: var(--primary);
 }
 </style>
+
 
 

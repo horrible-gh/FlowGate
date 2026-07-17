@@ -415,6 +415,52 @@ def get_active_ai_invoke(group_id: str, request: Request):
     return JSONResponse(status_code=200, content=ai_invoke_service.get_active_status(group_id))
 
 
+@router.get("/active-all")
+def get_active_all_ai_invoke(request: Request):
+    """Miniplayer bootstrap (group 0252 P0008 S1): every live run the requesting user
+    started plus every chain they paused, in one shot — restores the widget list after
+    a reload or a server restart (runs are in-memory, paused rows are DB-persisted)."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    return JSONResponse(status_code=200, content=ai_invoke_service.active_all(auth["issued_to"]))
+
+
+@router.post("/resume")
+def resume_ai_invoke(body: dict, request: Request):
+    """Resume a user-paused continuous chain (group 0252 P0008 S5). Group-keyed:
+    a paused chain has no live run to address."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    group_id = str(body.get("group_id") or "")
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    project = group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    from modules.flow_gate.api import token_routes as _token_routes
+
+    locale = request.headers.get("x-locale") or "ko"
+    try:
+        result = ai_invoke_service.resume_chain(
+            group_id=group_id,
+            user_id=user_id,
+            api_base_url=_token_routes._build_api_base(request),
+            locale=locale,
+        )
+    except HTTPException as exc:
+        return _err(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
 @router.get("/{run_id}")
 def get_ai_invoke_status(run_id: str, request: Request):
     auth = _require_user(request)
@@ -422,6 +468,20 @@ def get_ai_invoke_status(run_id: str, request: Request):
         return auth
     try:
         return JSONResponse(status_code=200, content=ai_invoke_service.get_status(run_id))
+    except HTTPException as exc:
+        return _err(exc)
+
+
+@router.post("/{run_id}/pause")
+def pause_ai_invoke(run_id: str, request: Request):
+    """Boundary pause for a continuous run (group 0252 P0008 S4): the in-flight step
+    completes, the chain stops before the next token — never a mid-step freeze."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        return JSONResponse(status_code=200,
+                            content=ai_invoke_service.pause_run(run_id, auth["issued_to"]))
     except HTTPException as exc:
         return _err(exc)
 
