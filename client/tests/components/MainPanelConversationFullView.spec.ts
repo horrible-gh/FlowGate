@@ -61,15 +61,22 @@ function seedTabs(tabs: Record<string, unknown>[] = [CH_TAB], activeTabId = tabs
 
 // AiInvokeInline is deliberately NOT stubbed: the point of these tests is whether the layer
 // actually covers the chat, not whether a prop was handed over. Its own children stay stubbed.
-function mountPanel() {
+function mountPanel(stubs: Record<string, unknown> = {}) {
   return mount(MainPanel, {
     attachTo: document.body,
     shallow: true,
     global: {
       plugins: [i18n],
-      stubs: { teleport: false, DocHeader: DocHeaderStub, AiInvokeInline: false },
+      stubs: { teleport: false, DocHeader: DocHeaderStub, AiInvokeInline: false, ...stubs },
     },
   })
+}
+
+// The real ConversationView, so the re-pin below travels the actual seam (MainPanel's ref ->
+// the component's exposed scrollToBottom -> a write to .conv-scroll) instead of a stub's
+// say-so. Its own children stay stubbed.
+function mountPanelWithRealChat() {
+  return mountPanel({ ConversationView: false })
 }
 
 function startRun(docRef: string, runId = 'run-1') {
@@ -94,7 +101,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('MainPanel CH stays inline', () => {
+describe('MainPanel CH full view', () => {
   it('renders exactly one ConversationView inside the chat card', async () => {
     const wrapper = mountPanel()
     await flushPromises()
@@ -105,24 +112,93 @@ describe('MainPanel CH stays inline', () => {
     expect(conversation!.parentElement!.className).toContain('conv-card-bd')
   })
 
-  it('does not offer a full-screen action for chat', async () => {
+  // 0263 R0001: the chat had a [Full View] button (0246), which 0251 rev1 removed while chasing
+  // an unrelated overlay bug. The chat is the surface that needs the height most — the original
+  // ask was a tablet screen too short to hold a conversation.
+  it('offers a full view action on the chat card', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.find('.conv-card .card-actions').exists()).toBe(false)
-    expect(wrapper.find('.conv-card [aria-label]').exists()).toBe(false)
+    const action = wrapper.find('.conv-card .card-actions button')
+    expect(action.exists()).toBe(true)
+    expect(action.text()).toContain('Full View')
   })
 
-  it('guards the full-view handler from opening a modal for CH', async () => {
+  // The heart of the fix, and why this is a Teleport rather than a second ConversationView in
+  // the dialog: a chat holds state no re-mount can reproduce — the poll loop of an in-flight AI
+  // call, its spinner, the unsent draft. Asserting the very same DOM node lands in the dialog is
+  // what pins "moved, not re-created"; a fresh mount would satisfy any weaker check.
+  it('moves the live chat instance into the dialog instead of mounting a second one', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    ;(wrapper.vm as any).openFullView(CH_TAB)
+    const chatEl = wrapper.findComponent(ConversationView).element
+
+    await wrapper.find('.conv-card .card-actions button').trigger('click')
+    await flushPromises()
+
+    expect(document.body.querySelector('.document-modal')).not.toBeNull()
+    const mounted = document.body.querySelectorAll('conversation-view-stub')
+    expect(mounted).toHaveLength(1)
+    expect(mounted[0]).toBe(chatEl)
+    expect(mounted[0].parentElement!.className).toContain('document-modal__body--conversation')
+    expect(wrapper.findAllComponents(ConversationView)).toHaveLength(1)
+  })
+
+  it('returns that same chat instance to its card when the full view closes', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const chatEl = wrapper.findComponent(ConversationView).element
+
+    await wrapper.find('.conv-card .card-actions button').trigger('click')
+    await flushPromises()
+    expect(chatEl.parentElement!.className).toContain('document-modal__body--conversation')
+
+    ;(document.body.querySelector('.document-modal .modal-close') as HTMLElement).click()
     await flushPromises()
 
     expect(document.body.querySelector('.document-modal')).toBeNull()
-    expect(document.body.querySelector('conversation-view-stub')!.parentElement!.className)
-      .toContain('conv-card-bd')
+    const mounted = document.body.querySelectorAll('conversation-view-stub')
+    expect(mounted).toHaveLength(1)
+    expect(mounted[0]).toBe(chatEl)
+    expect(mounted[0].parentElement!.className).toContain('conv-card-bd')
+  })
+
+  // Moving a node re-attaches it, and a re-attached scroll container comes back at the top —
+  // so the full view would open on the OLDEST message, the "it updates to the top" symptom
+  // TR0044.0010 rev8 already fixed once for new turns. jsdom has no layout engine and never
+  // resets scrollTop, so the reset itself cannot be reproduced here; what is asserted is the
+  // repair that answers it — after the move the chat really is pinned to the bottom, through
+  // the real component's exposed scrollToBottom. Only the geometry (scrollHeight) is supplied,
+  // since jsdom reports 0 for every element.
+  it('pins the chat to the newest message after the move', async () => {
+    const wrapper = mountPanelWithRealChat()
+    await flushPromises()
+
+    const scroll = document.body.querySelector('.conv-scroll') as HTMLElement
+    expect(scroll).not.toBeNull()
+    Object.defineProperty(scroll, 'scrollHeight', { value: 900, configurable: true })
+    scroll.scrollTop = 0
+
+    await wrapper.find('.conv-card .card-actions button').trigger('click')
+    await flushPromises()
+
+    expect(scroll.parentElement!.closest('.document-modal__body--conversation')).not.toBeNull()
+    expect(scroll.scrollTop).toBe(900)
+  })
+
+  // The chat is not an editable transcript — it is written through its composer — so the
+  // dialog's [Edit] stays off for CH, exactly as the card offers no [Edit].
+  it('offers no edit action in the chat full view', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('.conv-card .card-actions button').trigger('click')
+    await flushPromises()
+
+    const buttons = [...document.body.querySelectorAll('.document-modal .modal-hd-actions button')]
+    expect(buttons.some((b) => b.textContent!.includes('Edit'))).toBe(false)
   })
 
   // 0251 B0001: the chat's own AI call is a group-scoped run, so the group's AI-run layer
