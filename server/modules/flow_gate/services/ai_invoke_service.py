@@ -3,11 +3,16 @@
 First real consumer of the 0164 AI-provider settings: starts an AI run for a
 document, walks the default provider chain (list order = fallback order, startup/
 transport failures only), watches it with the process_runner primitives
-(process-group spawn, tree kill, timeout), and judges success by the
-document-reach oracle — "did documents actually land in the group past the
-baseline seq" — never by exit codes. Exit code / last (dying) message are
-recorded as auxiliary observations only, and document-reach vs message-receipt
-are independent columns (a killed run keeps its already-registered docs).
+(process-group spawn, tree kill, timeout), and judges success by an oracle —
+"did the work actually land?" — never by exit codes. Exit code / last (dying)
+message are recorded as auxiliary observations only, and work-landed vs
+message-receipt are independent columns (a killed run keeps what it registered).
+
+Which oracle depends on what the run's token can produce (0259 B0001): a `new`
+token registers documents, so it is judged by document-reach ("did documents land
+in the group past the baseline seq"); every other scope is judged by the row IT is
+allowed to write (`_SCOPE_PROBES`), because the inbox forbids it from creating a
+document at all — judging those by document-reach made success unreachable.
 
 Run state lives in an in-memory registry for the server's lifetime (history
 persistence is DEFERRED per D0004); a restart loses in-flight runs, which the
@@ -29,8 +34,10 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 
+from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import git_service, process_runner, token_service
@@ -264,6 +271,98 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
         return None
 
 
+# ── Default completion oracle per token scope (0259 B0001) ───────────────────
+#
+# Only a `new`-scope token can register a document, so only a `new` run may be judged by
+# the document-reach oracle. The inbox rejects `action:'new'` from any other token
+# outright (inbox_routes `_handle_new`/`_handle_edit`/`_handle_review` scope guards), so
+# "docs_reached >= docs_target=1" was an UNREACHABLE success condition for every other
+# single-mode scope — review/edit/rework/vr_correction/chat runs settled 'none' no matter
+# how well the worker did. Each scope is judged by the row its own token may write.
+#
+# 0248 added `completion_oracle` for the same defect but left it opt-in per call site, and
+# the very call sites it cited were never migrated. The default now lives in the engine and
+# is keyed by the scope, so a scope that registers no judge cannot silently inherit the
+# document oracle; `completion_oracle` stays as the per-call override.
+
+
+def _probe_doc_revision(doc_id: str) -> int:
+    """Revisions of the bound document. `_handle_edit` does `revision_no = revision_no + 1`."""
+    return int((db_docs.get_by_id(doc_id) or {}).get("revision_no") or 0)
+
+
+def _probe_doc_reviews(doc_id: str) -> int:
+    """Review rows on the bound document. `_handle_review` INSERTs one child row per review."""
+    return len(db_reviews.list_by_doc(doc_id) or [])
+
+
+# Keyed by TOKEN scope — the value `start_run` actually receives. The route maps
+# chat/rework/vr_correction onto `edit` before calling, and all three land as an in-place
+# revision of the bound document (chat included: the conversation worker submits the whole
+# CH body via inbox action:'edit', see invoke_mention_service.build_conversation_mention),
+# so the `edit` probe covers them. A `chat` key here would be dead code.
+_SCOPE_PROBES: dict[str, Callable[[str], int]] = {
+    "edit": _probe_doc_revision,
+    "review": _probe_doc_reviews,
+}
+
+
+def _oracle_doc_id(token_id: Optional[str], fallback: str) -> str:
+    """The document the run's TOKEN binds to — the only one its worker may write.
+
+    Not the run's own doc_ref: the two differ on the legacy Q&A follow-up, which starts the
+    run on the Q document while `qa_service.issue_followup_token` binds the token to the
+    parent work item. The inbox honours the token (`token_rec['doc_ref'] != doc_id` ⇒ 403),
+    so a judge that watched the run's doc_ref would watch a document the worker cannot touch.
+    """
+    if not token_id:
+        return fallback
+    try:
+        token = db_tokens.get_by_id(token_id)
+    except Exception:
+        logger.warning("ai-invoke token lookup failed for %s", token_id, exc_info=True)
+        return fallback
+    return (token or {}).get("doc_ref") or fallback
+
+
+def _probe(probe: Callable[[str], int], doc_id: str) -> Optional[int]:
+    try:
+        return probe(doc_id)
+    except Exception:
+        logger.warning("ai-invoke scope probe failed for %s", doc_id, exc_info=True)
+        return None
+
+
+def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> Optional[Callable[[], bool]]:
+    """The scope's default "did the work land?" predicate, or None to keep the document oracle.
+
+    Returning None here means `new` (and any future document-producing scope): those are
+    judged by documents, which is what the document oracle is for.
+    """
+    probe = _SCOPE_PROBES.get(action_scope)
+    if probe is None:
+        return None
+    doc_id = _oracle_doc_id(token_id, doc_ref)
+    # Baseline BEFORE the worker starts, so the oracle only credits this run's work.
+    baseline = _probe(probe, doc_id)
+
+    def _oracle() -> bool:
+        current = _probe(probe, doc_id)
+        # An unresolvable baseline/probe cannot confirm the work landed. This is not the
+        # old unreachable case — a missing target means the worker had nothing it could
+        # write, and the inbox would have refused it too.
+        return baseline is not None and current is not None and current > baseline
+
+    return _oracle
+
+
+def _uses_scope_oracle(action_scope: str, mode: str, completion_oracle: Optional[Callable]) -> bool:
+    """mode='single' only: a continuous run's scope is new/workflow_decide, and its
+    docs_target is derived from the sequence's pending worker items, which do make
+    documents — the document oracle can see those, so it was never wrong for them."""
+    return completion_oracle is None and mode == "single" and action_scope in _SCOPE_PROBES
+
+
 # ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
 
 def list_runtime_providers(project_id: str) -> dict:
@@ -305,9 +404,13 @@ def start_run(
     completion_oracle (0248 B0001): a caller-supplied "did the work land?" predicate for
     runs whose result is NOT a new document, so the document-reach oracle cannot see it.
     The Q&A [Request AI answer] run writes an answer row onto an existing document — under
-    the default oracle it would settle as outcome='none' (docs_reached 0 < docs_target 1)
+    the document oracle it would settle as outcome='none' (docs_reached 0 < docs_target 1)
     no matter how well the worker did. Supplying an oracle switches the run to that scoped
-    judge and pins docs_target to 0, mirroring the resolve_conflict branch below."""
+    judge and pins docs_target to 0, mirroring the resolve_conflict branch below.
+
+    0259 B0001: that opt-in is now only an OVERRIDE. A scope that produces no document gets
+    its default judge from `_SCOPE_PROBES` here in the engine, so forgetting to pass one no
+    longer silently falls back to the unreachable document oracle."""
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
@@ -333,10 +436,15 @@ def start_run(
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     target_to_end = mode == "continuous" and continuation_target_seq == -1
+    scope_oracle_run = _uses_scope_oracle(action_scope, mode, completion_oracle)
     if completion_oracle is not None:
         # Scoped-oracle run: success is judged by the caller's predicate, not by documents.
         docs_target = 0
     elif action_scope in ("workflow_decide", "resolve_conflict"):
+        docs_target = 0
+    elif scope_oracle_run:
+        # 0259 B0001: this scope's token cannot register a document, so targeting one made
+        # success unreachable. Its default scope oracle is built below (it needs the token).
         docs_target = 0
     elif mode == "single":
         docs_target = 1
@@ -386,6 +494,11 @@ def start_run(
             logger.warning("token revoke failed after mention_unavailable", exc_info=True)
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
+
+    if scope_oracle_run:
+        # After issue() (the judge target comes from the token) but before the worker is
+        # launched below, so the baseline cannot include the work this run is about to do.
+        completion_oracle = _scope_oracle(action_scope, issue.get("token_id"), doc_ref)
 
     _cleanup_retained_scratches(project_id)
     run_id = _next_run_id()
@@ -574,7 +687,27 @@ def _remaining_sec(run: dict) -> float:
     return run["timeout_sec"] - (time.monotonic() - run["started_mono"])
 
 
-def _new_docs_registered(run: dict) -> bool:
+def _work_landed(run: dict) -> bool:
+    """Did this run already produce something? Fast-fail's "nothing was lost" check.
+
+    0259 B0001 §3: this used to be a raw group max-seq delta for every run. On a run whose
+    product is not a document that is False however well the worker did, so a worker that
+    finished its edit and then exited nonzero inside the fast-fail window was re-run on the
+    next provider. Ask the run's own judge — the scope default or the caller's override —
+    and only fall back to the seq delta for the document-producing scopes it is true for.
+
+    NOTE this is deliberately NOT the judge's `_oracle_new_docs` (non-draft docs past the
+    baseline): the seq delta is the wider net, and counting a stray draft here only makes
+    fast-fail more conservative, which is the safe direction for a "may I discard this
+    attempt?" question.
+    """
+    oracle = run.get("completion_oracle")
+    if oracle is not None:
+        try:
+            return bool(oracle())
+        except Exception:
+            logger.warning("ai-invoke fast-fail oracle failed for %s", run["run_id"], exc_info=True)
+            return False
     try:
         return db_docs.get_group_max_seq(run["group_id"]) > run["baseline_seq"]
     except Exception:
@@ -694,7 +827,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         except Exception:
             stdout, stderr = None, None
         elapsed = time.monotonic() - launched
-        if elapsed < FAST_FAIL_WINDOW_SEC and not _new_docs_registered(run):
+        if elapsed < FAST_FAIL_WINDOW_SEC and not _work_landed(run):
             return "spawn_failed", str(exc)[:500]
     finally:
         run["proc"] = None
@@ -717,7 +850,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         and proc.returncode is not None
         and proc.returncode != 0
         and elapsed < FAST_FAIL_WINDOW_SEC
-        and not _new_docs_registered(run)
+        and not _work_landed(run)
     ):
         detail = (err_text or out_text).strip()[-500:] or f"exit {proc.returncode} within {int(elapsed)}s"
         return "fast_fail", detail
@@ -1134,8 +1267,10 @@ def _settle_and_judge(run: dict) -> None:
 
     oracle = run.get("completion_oracle")
     if oracle is not None:
-        # 0248 B0001: the run's product is not a document (Q&A answer row), so the
-        # document-reach oracle would judge every run 'none'. Ask the caller instead.
+        # The run's product is not a document (a Q&A answer row, an in-place revision, a
+        # review row), so the document-reach oracle would judge every such run 'none'. Ask
+        # the scoped judge instead — the scope default from `_SCOPE_PROBES` (0259 B0001) or
+        # the caller's `completion_oracle` override (0248 B0001).
         try:
             satisfied = bool(oracle())
         except Exception:
@@ -1145,7 +1280,7 @@ def _settle_and_judge(run: dict) -> None:
         run["reached_doc_ids"] = []
         run["outcome"] = "complete" if satisfied else "none"
         # Same "exited cleanly but produced nothing" signal the document oracle raises —
-        # here it means the worker returned without ever posting the answer.
+        # here it means the worker returned without ever writing its scope's row.
         run["oracle_mismatch"] = bool(
             not satisfied
             and run.get("end_reason") == "exited"

@@ -670,7 +670,9 @@ function chatRunFailureDetail(data: Record<string, any>): string {
   if (data.end_reason === 'all_failed') return t('main.ai_invoke_dialog.end_all_failed')
   if (data.exit_code != null && Number(data.exit_code) !== 0) return `exit code ${data.exit_code}`
   if (!data.last_message_received) return t('main.ai_invoke_dialog.last_message_none')
-  return t('main.ai_invoke_dialog.oracle_no_documents')
+  // A chat run never registers a document, so the document-flavoured wording never applied
+  // to this last-resort branch (0259 B0001).
+  return t('main.ai_invoke_dialog.oracle_no_result')
 }
 
 async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
