@@ -82,6 +82,36 @@ def _doc_project_or_403(
     return project_id or ""
 
 
+def _reject_conversation_doc(doc_id: str) -> Optional[JSONResponse]:
+    """Reject query registration against a CH (conversation) document — B0001 / NR0004 (group 0261).
+
+    Gate on the TARGET DOCUMENT, not on the credential, because a "chat token" does not exist
+    on this side: the invoke path folds "chat" into the edit grant before issuing
+    (ai_invoke_routes._TOKEN_SCOPE), and the manual [멘트복사] path asks /token/issue for
+    action_scope='edit' outright, so nothing on the token records that it was minted for a
+    conversation. What both chat paths do share is the document they are bound to.
+
+    CH has no Q surface at all — DocInfoPanel is switched off for CH (MainPanel.
+    canShowDocInfoPanel, TR0044.0010 rev8), so a query registered here is stored and then
+    rendered nowhere. That is true regardless of who registered it, which is why this rejects
+    a human [+query] as well; that path is unreachable in the UI for exactly the same reason.
+
+    Callers must run this BEFORE resolve_question_anchor() so the check sees the document the
+    writer aimed at rather than a re-aimed anchor.
+    """
+    doc = db_documents.get_by_id(doc_id)
+    if doc is None:
+        return None  # not ours to report — _doc_project_or_403 raises the 404 downstream
+    if doc.get("type_code") != "CH":
+        return None
+    return _fail(
+        400,
+        "This is a conversation (CH) document and has no Q container. You are talking to a "
+        "person right now — ask your question directly in your reply turn instead of "
+        "registering a query.",
+    )
+
+
 def _extract_bearer(request: Request) -> Optional[str]:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
@@ -263,11 +293,17 @@ def post_add_questions(
     asker_kind='human' ([+query], login session) or 'ai' (AI worker registers ambiguities
     as document queries, §4). The AI worker has no login session, so it calls with an
     inbox/edit token, in which case asker_kind is forced to 'ai'.
+
+    A CH (conversation) document takes no queries at all (B0001 / NR0004) — see
+    _reject_conversation_doc.
     """
     auth = _resolve_writer(request, doc_id)
     if isinstance(auth, JSONResponse):
         return auth
     user_id, forced_kind = auth
+    ch_rejected = _reject_conversation_doc(doc_id)
+    if ch_rejected is not None:
+        return ch_rejected
     if forced_kind is not None:
         body.asker_kind = forced_kind
         # B0001 / NR0003 (group 0059): the worker token is bound to the workflow spine
