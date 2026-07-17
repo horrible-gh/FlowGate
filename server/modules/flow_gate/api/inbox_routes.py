@@ -1009,6 +1009,17 @@ def _continuation_self_chain(
     if completed_seq is not None and completed_seq >= target_seq:
         envelope["continuation_remaining"] = 0
         envelope["continuation_done"] = True
+        # 0252 L0009 §3: a pause that never got its boundary (the target landed first)
+        # must not survive chain termination — a leftover row would revive a ghost
+        # "paused" card on the next miniplayer bootstrap. Best-effort, like the signal.
+        try:
+            from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
+            _chain_group = token_rec.get("group_id")
+            if _chain_group:
+                _db_paused.delete_by_group(_chain_group)
+        except Exception:
+            import LogAssist.log as logger
+            logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
         # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
         # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
         # never a notification-feed event. Best-effort: a logging failure must not turn the
@@ -1031,6 +1042,34 @@ def _continuation_self_chain(
             logger.warning(
                 f"[inbox] continuous_work_ended signal failed (ignored): {_sig_exc}"
             )
+        return envelope
+
+    # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
+    # token would be minted, and BEFORE the advance-blocked pause below so a user pause is
+    # never mis-reported as a generic block. Runs AFTER the auto-approve so the finished
+    # step ends approved — "진행 중 단계는 끝까지" includes its approval (P0008 S4/S5). The
+    # row is NOT deleted here; the resume path consumes it (L0009 §2.4). Fail-open on a
+    # lookup error: a pause probe must never stall a healthy unmanned chain with a 500.
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
+        _chain_group = token_rec.get("group_id")
+        _user_paused = bool(_chain_group and _db_paused.get_by_group(_chain_group))
+    except Exception:
+        import LogAssist.log as logger
+        logger.warning("[inbox] boundary pause probe failed (ignored)")
+        _user_paused = False
+    if _user_paused:
+        try:
+            from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+            _ai_invoke.mark_user_paused(_chain_group)
+        except Exception:
+            import LogAssist.log as logger
+            logger.warning("[inbox] user-paused run tagging failed (ignored)")
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = (
+            "paused by user at the step boundary; resume from the miniplayer "
+            "(or the answer/ment-copy path) to continue."
+        )
         return envelope
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the

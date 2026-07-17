@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { getRequest } from '@shared/api'
-import { useAiInvokeRunsStore } from './aiInvokeRuns'
+import { getRequest, postRequest } from '@shared/api'
+import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from './aiInvokeRuns'
 
 vi.mock('@shared/api', () => ({
   getRequest: vi.fn(),
@@ -140,5 +140,175 @@ describe('aiInvokeRuns store', () => {
 
     expect(store.runsByGroup[groupA].phase).toBe('lost')
     expect(store.runsByGroup[groupB].phase).toBe('running')
+  })
+
+  // ── 미니플레이어 (group 0252) ────────────────────────────────────────────────
+
+  it('turns a user_paused finish into a paused card instead of a finished one', () => {
+    const groupId = 'flowgate.default.2001'
+    store.trackStarted({ run_id: 'run-p', group_id: groupId, doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({
+      run_id: 'run-p', group_id: groupId, outcome: 'partial',
+      docs_reached: 4, docs_target: 6, end_reason: 'user_paused',
+    })
+
+    const run = store.runsByGroup[groupId]
+    expect(run.phase).toBe('paused')
+    expect(run.endReason).toBe('user_paused')
+    expect(run.finishedAtMs).toBeNull()
+    // Paused cards are not dismissible — resume (or another path) owns their removal.
+    store.dismiss(groupId)
+    expect(store.runsByGroup[groupId]).toBeDefined()
+  })
+
+  it('bootstraps running and paused cards from active-all and drops stale paused ones', async () => {
+    const staleGroup = 'flowgate.default.2002'
+    store.trackStarted({ run_id: 'run-x', group_id: staleGroup, doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-x', group_id: staleGroup, end_reason: 'user_paused' })
+    expect(store.runsByGroup[staleGroup].phase).toBe('paused')
+
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [{
+          run_id: 'run-live', group_id: 'flowgate.default.2003', status: 'running',
+          mode: 'continuous', doc_ref: 'flowgate.default.2003.0001-R',
+          docs_target: 6, docs_reached_so_far: 2,
+        }],
+        paused: [{
+          group_id: 'flowgate.default.2004', doc_ref: 'flowgate.default.2004.0001-R',
+          mode: 'continuous', paused_by: 'u1', paused_at: '2026-07-17T00:00:00+09:00',
+          docs_target: 6, docs_reached: 3,
+          pending_q_doc_ids: ['flowgate.default.2004.0005-Q'],
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup['flowgate.default.2003'].phase).toBe('running')
+    const paused = store.runsByGroup['flowgate.default.2004']
+    expect(paused.phase).toBe('paused')
+    expect(paused.docsReachedSoFar).toBe(3)
+    expect(paused.pendingQDocIds).toEqual(['flowgate.default.2004.0005-Q'])
+    // The stale paused card the server no longer reports is gone (P0008 실패 2 재조회).
+    expect(store.runsByGroup[staleGroup]).toBeUndefined()
+  })
+
+  it('requests a boundary pause and reflects pause_requested', async () => {
+    const groupId = 'flowgate.default.2005'
+    store.trackStarted({ run_id: 'run-c', group_id: groupId, doc_ref: 'r', mode: 'continuous' })
+    vi.mocked(postRequest).mockResolvedValueOnce({
+      data: { ok: true, run_id: 'run-c', status: 'pause_requested', effective_at: 'step_boundary' },
+    } as any)
+
+    await store.pause(groupId)
+
+    expect(vi.mocked(postRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/run-c/pause', {})
+    expect(store.runsByGroup[groupId].phase).toBe('pause_requested')
+  })
+
+  it('never requests pause for a single-mode run', async () => {
+    const groupId = 'flowgate.default.2006'
+    store.trackStarted({ run_id: 'run-s', group_id: groupId, doc_ref: 'r', mode: 'single' })
+
+    await store.pause(groupId)
+
+    expect(vi.mocked(postRequest)).not.toHaveBeenCalled()
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+  })
+
+  it('replaces the paused card with the new run on resume', async () => {
+    const groupId = 'flowgate.default.2007'
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
+    })
+    vi.mocked(postRequest).mockResolvedValueOnce({
+      data: { ok: true, run_id: 'run-new', status: 'running', mode: 'continuous', docs_target: 2 },
+    } as any)
+
+    await store.resume(groupId)
+
+    const run = store.runsByGroup[groupId]
+    expect(run.runId).toBe('run-new')
+    expect(run.phase).toBe('running')
+    expect(run.docsTarget).toBe(2)
+  })
+
+  it('adopts the already-active run on resume 409 run_already_active', async () => {
+    const groupId = 'flowgate.default.2008'
+    store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+    vi.mocked(postRequest).mockRejectedValueOnce({
+      response: { status: 409, data: { code: 'run_already_active', run_id: 'run-live' } },
+    })
+    vi.mocked(getRequest).mockResolvedValue({ data: { status: 'running', run_id: 'run-live' } } as any)
+
+    await store.resume(groupId)
+
+    expect(store.runsByGroup[groupId].runId).toBe('run-live')
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+  })
+
+  it('drops the card and re-bootstraps on resume 409 resume_conflict', async () => {
+    const groupId = 'flowgate.default.2009'
+    store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+    vi.mocked(postRequest).mockRejectedValueOnce({
+      response: { status: 409, data: { code: 'resume_conflict' } },
+    })
+    vi.mocked(getRequest).mockResolvedValue({ data: { ok: true, runs: [], paused: [] } } as any)
+
+    await store.resume(groupId)
+
+    expect(store.runsByGroup[groupId]).toBeUndefined()
+    expect(vi.mocked(getRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+  })
+
+  it('correlates registered and answered questions to the group card', () => {
+    const groupId = 'flowgate.default.2010'
+    const qDocId = `${groupId}.0005-Q`
+    store.trackStarted({ run_id: 'run-q', group_id: groupId, doc_ref: 'r', mode: 'continuous' })
+
+    store.trackQuestionRegistered(qDocId)
+    store.trackQuestionRegistered(qDocId) // duplicate signal folds
+    expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([qDocId])
+    expect(store.awaitingQCount).toBe(1)
+
+    // A Q for a group without a card is ignored (the document panel owns it).
+    store.trackQuestionRegistered('flowgate.default.9999.0001-Q')
+    expect(store.runsByGroup['flowgate.default.9999']).toBeUndefined()
+
+    store.trackQuestionAnswered(qDocId)
+    expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([])
+    expect(store.awaitingQCount).toBe(0)
+  })
+})
+
+describe('aiInvokeRuns store — finished-card TTL sweep', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('auto-removes finished cards after the TTL but never paused ones', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-f', group_id: 'g.finished.1', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-f', group_id: 'g.finished.1', outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-p', group_id: 'g.paused.1', doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-p', group_id: 'g.paused.1', end_reason: 'user_paused' })
+
+    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    expect(store.runsByGroup['g.finished.1']).toBeDefined()
+
+    vi.advanceTimersByTime(3_000)
+    expect(store.runsByGroup['g.finished.1']).toBeUndefined()
+    expect(store.runsByGroup['g.paused.1']?.phase).toBe('paused')
+
+    store.$dispose()
   })
 })

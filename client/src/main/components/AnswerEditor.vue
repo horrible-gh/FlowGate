@@ -205,6 +205,13 @@ async function submit() {
     }
 
     answerBody.value = ''
+    // Miniplayer correlation (0252 L0009 §2.7): clear the Q from the group card's
+    // pending set the moment the answer lands — the store listens for this event.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('fg:q_answered', {
+        detail: { doc_id: props.qDocId, ai_run_id: result.ai_run_id ?? null },
+      }))
+    }
     emit('submitted', result)
   } catch (e: any) {
     const msg = e?.response?.data?.error_message

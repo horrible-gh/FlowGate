@@ -229,6 +229,60 @@ def post_answer(
             # would have pasted, through the already-issued follow-up token. On this
             # branch the raw token stays server-side (P0005 표기 규칙).
             from modules.flow_gate.services import ai_invoke_service
+
+            # Auto-resume (group 0252 L0009 §2.5 / P0008 S7): when the group holds a
+            # user-paused CONTINUOUS chain, the in-app answer resumes that chain instead
+            # of the single follow-up run. A resume conflict never fails the answer —
+            # the A document is already registered — it returns ok with resume_code and
+            # no re-run (답변 유실 금지, and no silent fallback to a single run either).
+            from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+            paused_row = None
+            try:
+                paused_row = db_paused.get_by_group(q_doc["group_id"])
+            except Exception:
+                import LogAssist.log as logger
+                logger.warning("[qa answer] paused-chain probe failed (ignored)")
+            if paused_row is not None and (paused_row.get("mode") or "continuous") == "continuous":
+                resume_code: Optional[str] = None
+                try:
+                    resumed = ai_invoke_service.resume_chain(
+                        group_id=q_doc["group_id"],
+                        user_id=actor_user_id,
+                        api_base_url=api_base_url,
+                        locale=request.headers.get("x-locale") or "ko",
+                    )
+                    ai_run_id = resumed.get("run_id")
+                except HTTPException as exc:
+                    detail = exc.detail if isinstance(exc.detail, dict) else {}
+                    resume_code = str(detail.get("code") or "resume_failed")
+                # The follow-up token minted above is not used on this path; retire it
+                # so no live single-run credential lingers behind the resumed chain.
+                try:
+                    from modules.flow_gate.services import token_service
+                    token_service.revoke(token_id, reason="qa_auto_resume")
+                except Exception:
+                    import LogAssist.log as logger
+                    logger.warning("[qa answer] follow-up token revoke failed (ignored)")
+                raw_token = None
+                ment_text = None
+                resp_extra: dict = {"ai_run_mode": "continuous" if ai_run_id else None}
+                if resume_code is not None:
+                    resp_extra["resume_code"] = resume_code
+                resp = {
+                    "ok": True,
+                    "a_doc_id": a_doc_id,
+                    "stored_path": stored_path,
+                    "raw_token": raw_token,
+                    "token_id": token_id,
+                    "scratch_dir": scratch_dir,
+                    "expires_at": expires_at,
+                    "dispatch_mode": body.dispatch_mode,
+                    **resp_extra,
+                }
+                if ai_run_id is not None:
+                    resp["ai_run_id"] = ai_run_id
+                return JSONResponse(content=resp)
+
             try:
                 ai_run = ai_invoke_service.start_run(
                     project_id=project_id,
@@ -275,6 +329,9 @@ def post_answer(
         resp["ment_text"] = ment_text
     if ai_run_id is not None:
         resp["ai_run_id"] = ai_run_id
+        # 0252 P0008 S7: tell the widget whether the answer resumed a chain or started
+        # the existing single follow-up (the resume path returns "continuous" above).
+        resp["ai_run_mode"] = "single"
     return JSONResponse(content=resp)
 
 

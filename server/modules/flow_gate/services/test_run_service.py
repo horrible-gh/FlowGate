@@ -676,15 +676,22 @@ def _execute_run_inner(run: dict) -> None:
     failed = sum(1 for case in final_cases if case.get("result") in {"fail", "timeout"})
     status = "passed" if failed == 0 else "failed"
     tsr_doc_id = None
+    report_error = None
     if status == "passed" and not process_service.is_group_disposed(doc.get("group_id")):
         try:
             all_final_items = db_test_runs.list_cases(run["run_id"])
             tsr_doc_id = assemble_tsr(doc, db_test_runs.get_run(run["run_id"]) or run, all_final_items)
         except Exception as exc:
+            # 0257 NR0003 §2: a passed run with no report is not a success — record it as a
+            # distinct terminal error rather than leaving a green run whose TSR never existed.
             logger.warning("TSR assembly failed for %s: %s", run["run_id"], exc, exc_info=True)
+            status = "failed"
+            report_error = "report_assembly_failed"
         # flowgate.default.0152: reflect this passed run's setup/case commands into the project's
         # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
         # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
+        # Still reflected on report_assembly_failed by intent: every case passed, so the commands
+        # are verified — only the report write failed, which says nothing about the commands.
         try:
             passed_items = db_test_runs.list_cases(run["run_id"])
             test_command_service.reflect_from_passed_run(doc, passed_items)
@@ -704,10 +711,16 @@ def _execute_run_inner(run: dict) -> None:
         case_passed=passed,
         case_failed=failed,
         tsr_doc_id=tsr_doc_id,
+        error=report_error,
     )
     finished_run = db_test_runs.get_run(run["run_id"]) or run
     _emit_finished(doc, finished_run, tsr_doc_id)
-    if status == "failed":
+    if report_error is not None:
+        # 0257 NR0003 §2: terminal, so it must NOT enter the 0157 recovery loop below — every
+        # case passed, so there is no INFRA fault to repair and re-firing green tests cannot
+        # produce the missing report. Surface it once and stop.
+        _maybe_notify_chain_failure(doc, finished_run)
+    elif status == "failed":
         # flowgate.default.0157: route the failure through the auto-recovery loop first. An INFRA
         # failure (env/tooling) is re-fired or escalated and owns its own signal; a real RED (CODE)
         # returns "code" and falls through to the chain-failed alarm + existing rework chain.
@@ -1123,6 +1136,22 @@ def _safe_decode(data) -> str:
 
 
 def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
+    """Assemble this run's TSR into the TS's single active report slot (0257 NR0003 §1).
+
+    Two distinct re-entry paths land here, and they need different answers:
+
+    * the *same* run re-finishing (worker retry) — return the report it already produced,
+      keyed on run_id. Narrow by construction: finish_run records tsr_doc_id only after
+      this returns, so this guard is False on a first assembly and True only afterwards.
+    * a *new* run for the same TS (the B0001 rerun) — revise the report already holding
+      the workflow slot instead of reserving a second number. Reserving one per attempt is
+      what produced two TSR documents, the second of which the slot never adopted.
+
+    Per-attempt history stays in test_runs/test_run_cases; the workflow keeps one document.
+    """
+    if run.get("tsr_doc_id"):
+        return str(run["tsr_doc_id"])
+
     group_id = doc.get("group_id")
     project_id = doc.get("project_id")
     module = doc.get("module") or "none"
@@ -1130,11 +1159,16 @@ def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
     if not group_id or not project_id:
         raise RuntimeError("TS document has no group/project")
 
+    title = f"테스트 레포트 — {doc.get('title') or doc['doc_id']}"
+    content = _tsr_content(doc, run, cases, title)
+
+    active = _active_tsr_for_ts(doc)
+    if active is not None:
+        return _revise_active_tsr(doc, active, content, title)
+
     doc_code = numbering_service.reserve_document(group_id, "TSR", module=module)
     tsr_doc_id = f"{group_id}.{doc_code}"
     _type, seq = id_formatter.parse_doc_code(doc_code)
-    title = f"테스트 레포트 — {doc.get('title') or doc['doc_id']}"
-    content = _tsr_content(doc, run, cases, title)
     path = storage_paths.document_path(
         project_id=project_id,
         group_code=group_id,
@@ -1161,6 +1195,60 @@ def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
             "target_id": doc["doc_id"],
             "triggered_by": doc["doc_id"],
         }
+    )
+    _register_tsr_workflow_result(doc, tsr_doc_id, path)
+    return tsr_doc_id
+
+
+def _active_tsr_for_ts(doc: dict) -> Optional[dict]:
+    """The TSR document already holding this TS's report slot, if any (0257 NR0003 §1).
+
+    A TSR is assembled for exactly one TS and records it as target_id, so the TS doc_id is
+    the slot key. Superseded reports are ignored. When a group already carries the B0001
+    duplicate, the slot-bound report wins over the orphan so a rerun converges back onto
+    the document the workflow actually tracks (cleaning up the existing orphan is NR0003 §4
+    admin work, deliberately not automated here).
+    """
+    existing = [
+        candidate
+        for candidate in db_docs.get_documents_by_target_id(doc["doc_id"], types=("TSR",))
+        if not candidate.get("superseded_by")
+    ]
+    if not existing:
+        return None
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    for candidate in existing:
+        if db_wfseq.get_item_by_result_doc_id(candidate["doc_id"]) is not None:
+            return candidate
+    return existing[-1]
+
+
+def _revise_active_tsr(doc: dict, active: dict, content: str, title: str) -> str:
+    """Rewrite the active TSR in place for a fresh run, keeping its doc_id and slot."""
+    tsr_doc_id = str(active["doc_id"])
+    project_id = doc["project_id"]
+    group_id = doc["group_id"]
+    # Recompute rather than trust the stored file_path: it is the same deterministic path the
+    # create branch below writes, and rebuilding it repairs a row whose path went stale or
+    # empty — the "연결된 MD 파일이 없습니다" preview of B0001.
+    path = storage_paths.document_path(
+        project_id=project_id,
+        group_code=group_id,
+        doc_code=tsr_doc_id[len(group_id) + 1:],
+        filename="document.md",
+        module=doc.get("module") or "none",
+        branch=doc.get("branch") or "main",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    db_docs.update(
+        tsr_doc_id,
+        {
+            "title": title,
+            "file_path": storage_paths.to_storage_relative(path, project_id),
+            "revision_no": (active.get("revision_no") or 0) + 1,
+        },
     )
     _register_tsr_workflow_result(doc, tsr_doc_id, path)
     return tsr_doc_id
@@ -1255,25 +1343,58 @@ def _register_tsr_workflow_result(doc: dict, tsr_doc_id: str, path: Path) -> Non
             register_workflow_result,
             transition_document_review,
         )
+        from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
 
-        head = db_wfseq.get_pending_head_by_group(doc.get("group_id"), doc.get("project_id"))
-        if head is not None and (head.get("type") or "").upper() == "TSR":
+        item = _tsr_slot_item(doc, db_wfseq)
+        if item is not None and item.get("result_doc_id") != tsr_doc_id:
             register_workflow_result(
-                item_id=head["id"],
+                item_id=item["id"],
                 registered_path=storage_paths.to_storage_relative(path, doc.get("project_id")),
                 registered_doc_id=tsr_doc_id,
                 registered_at=now_iso(),
                 actor_user_id=doc.get("owner_id") or "system",
             )
-        transition_document_review(
-            doc_id=tsr_doc_id,
-            action="submit",
-            actor_user_id=doc.get("owner_id") or "system",
-            user_permissions={"document.update"},
-        )
+        # Submit only from a state the review matrix accepts. A report reused while still
+        # awaiting review is already in the right state; re-submitting it raised an invalid
+        # transition that the except below swallowed, hiding real failures behind a warning.
+        review_status = (db_docs.get_by_id(tsr_doc_id) or {}).get("doc_review_status") or ""
+        if get_doc_review_rule(review_status, "submit") is not None:
+            transition_document_review(
+                doc_id=tsr_doc_id,
+                action="submit",
+                actor_user_id=doc.get("owner_id") or "system",
+                user_permissions={"document.update"},
+            )
     except Exception:
         logger.warning("TSR workflow registration failed for %s", tsr_doc_id, exc_info=True)
     _maybe_chain_auto_approve_tsr(doc, tsr_doc_id)
+
+
+def _tsr_slot_item(doc: dict, db_wfseq) -> Optional[dict]:
+    """The sequence slot that holds this TS's report (0257 NR0003 §3).
+
+    Resolved from the TS's own sequence, not the pending head: the head only names a TSR
+    while the first report is outstanding, so a rerun's report used to find no slot and was
+    left unbound — the orphan document of B0001. The workflow builder attaches TSR directly
+    after its TS (AUTO_REPORT_MAP), so the slot is the first TSR item past the TS's own.
+    Falls back to the pending head when the TS is not a registered slot result.
+    """
+    seq = db_wfseq.get_sequence_for_member_doc(doc["doc_id"])
+    if seq is not None:
+        items = sorted(
+            db_wfseq.get_sequence_items(seq["id"]), key=lambda it: it.get("sort_order") or 0
+        )
+        ts_at = next(
+            (i for i, it in enumerate(items) if it.get("result_doc_id") == doc["doc_id"]), None
+        )
+        if ts_at is not None:
+            for item in items[ts_at + 1:]:
+                if (item.get("type") or "").upper() == "TSR":
+                    return item
+    head = db_wfseq.get_pending_head_by_group(doc.get("group_id"), doc.get("project_id"))
+    if head is not None and (head.get("type") or "").upper() == "TSR":
+        return head
+    return None
 
 
 def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
