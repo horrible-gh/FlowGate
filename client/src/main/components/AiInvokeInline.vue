@@ -78,7 +78,7 @@
         <p v-if="endReasonText" class="aiv-inline__notice">{{ endReasonText }}</p>
 
         <div v-if="missingDocReasons.length > 0" class="aiv-inline__section aiv-inline__diagnostics">
-          <strong>{{ t('main.ai_invoke_dialog.failure_details') }}</strong>
+          <strong>{{ t(scoped ? 'main.ai_invoke_dialog.failure_details_scoped' : 'main.ai_invoke_dialog.failure_details') }}</strong>
           <ul class="aiv-inline__history">
             <li v-for="(reason, index) in missingDocReasons" :key="`${index}-${reason}`">
               {{ reason }}
@@ -146,6 +146,11 @@ const cancelling = ref(false)
 const groupId = computed(() => props.groupId)
 const run = computed(() => store.runsByGroup[groupId.value] ?? null)
 
+// docsTarget 0 = the server judged this run by its scope (an edit's revision, a review's
+// row), not by documents — it never had a document to register, so the document-flavoured
+// failure wording would be a lie. 0259 B0001.
+const scoped = computed(() => run.value?.docsTarget === 0)
+
 const titleText = computed(() => {
   if (!run.value) return ''
   if (run.value.phase === 'running') {
@@ -156,7 +161,7 @@ const titleText = computed(() => {
   if (run.value.phase === 'lost') return t('main.ai_invoke_dialog.error_run_lost')
   if (run.value.outcome === 'complete') return t('main.ai_invoke_dialog.outcome_complete')
   if (run.value.outcome === 'partial') return t('main.ai_invoke_dialog.outcome_partial')
-  return t('main.ai_invoke_dialog.outcome_none')
+  return t(scoped.value ? 'main.ai_invoke_dialog.outcome_none_scoped' : 'main.ai_invoke_dialog.outcome_none')
 })
 
 const elapsedText = computed(() => {
@@ -175,7 +180,11 @@ const missingDocReasons = computed(() => {
     reasons.push(t('main.ai_invoke_dialog.tool_not_called', { count: current.toolCallMisses }))
   }
   if (current.turnLimitExhausted) reasons.push(t('main.ai_invoke_dialog.turn_limit_exhausted'))
-  if (current.oracleMismatch) reasons.push(t('main.ai_invoke_dialog.oracle_no_documents'))
+  if (current.oracleMismatch) {
+    reasons.push(t(scoped.value
+      ? 'main.ai_invoke_dialog.oracle_no_result'
+      : 'main.ai_invoke_dialog.oracle_no_documents'))
+  }
   return reasons
 })
 

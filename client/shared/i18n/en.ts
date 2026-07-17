@@ -1023,15 +1023,21 @@ export default {
       outcome_complete: 'Completed',
       outcome_partial: 'Partial (stopped midway)',
       outcome_none: 'Failed (no document registered)',
+      // For runs that produce no document (review / edit / rework / VR correction / chat).
+      // Those runs cannot register a document at all, so "no document registered" can never
+      // be their failure reason — 0259 B0001.
+      outcome_none_scoped: 'Failed (no work applied)',
       reached_docs: 'Registered documents',
       last_message: 'AI last message',
       last_message_none: 'Not received (the process ended without a final message).',
       fallback_history: 'Fallback history: {count}',
       failure_details: 'Why no document was registered',
+      failure_details_scoped: 'Why no work was applied',
       register_error: 'Registration failed (HTTP {status}): {reason}',
       tool_not_called: 'The AI did not call the actual registration tool ({count} times).',
       turn_limit_exhausted: 'The maximum conversation turns were exhausted before the registration target was reached.',
       oracle_no_documents: 'The AI run ended, but no document actually reached the group. This is judged from group documents, not the AI message.',
+      oracle_no_result: 'The AI run ended, but no work was applied to the target document. This is judged from the actual document state, not the AI message.',
       reason_spawn_failed: 'startup failed',
       reason_fast_fail: 'exited immediately',
       reason_api_error: 'API error',
