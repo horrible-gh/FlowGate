@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -156,5 +158,25 @@ describe('AiInvokeMiniplayer', () => {
       expect.stringContaining('flowgate.default.3007.0006-Q'),
     )
     wrapper.unmount()
+  })
+
+  // jsdom does not apply SFC <style> blocks, so the stacking order cannot be observed
+  // through mount(); pin the layering contract at the source level instead. The document
+  // full view dims the whole screen via the shared .modal-bg layer, and the miniplayer
+  // must stay visible above it while a document is being read (0269 D0002).
+  it('stacks above the shared modal layer so cards stay visible in document full view', () => {
+    const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+    const sfc = read('../../src/main/components/AiInvokeMiniplayer.vue')
+    const appCss = read('../../shared/app.css')
+
+    const mini = Number(/\.aiv-mini\s*\{[^}]*z-index:\s*(\d+)/s.exec(sfc)?.[1])
+    const modalBg = Number(/\.modal-bg\s*\{[^}]*z-index:\s*(\d+)/s.exec(appCss)?.[1])
+    const modalOverlay = Number(/\.modal-overlay\s*\{[^}]*z-index:\s*(\d+)/s.exec(appCss)?.[1])
+
+    expect(Number.isFinite(mini)).toBe(true)
+    expect(Number.isFinite(modalBg)).toBe(true)
+    expect(Number.isFinite(modalOverlay)).toBe(true)
+    expect(mini).toBeGreaterThan(modalBg)
+    expect(mini).toBeGreaterThan(modalOverlay)
   })
 })

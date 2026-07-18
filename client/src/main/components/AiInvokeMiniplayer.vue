@@ -327,7 +327,11 @@ watch(entries, list => {
   position: fixed;
   right: 18px;
   bottom: 18px;
-  z-index: 220;
+  /* Must sit above the shared .modal-bg/.modal-overlay layer (z 1000) — the document
+     full view uses it, and the cards must stay visible while a document is being read
+     there (0269 D0002 "화면 어디에서든 항상"). Kept below alert-grade dialogs
+     (ReviewReject/TimeMachine 1200, GitConflictResolver 1400) and toasts (2000). */
+  z-index: 1100;
 }
 
 .aiv-mini__fab {
