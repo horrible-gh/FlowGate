@@ -69,7 +69,21 @@ _TOKEN_SCOPE = {
     "next_step_message": "new",
     "design_handoff": "new",
 }
-_ALLOWED_SCOPES = (*_TOKEN_SCOPE.keys(), "review", "resolve_conflict")
+# review/resolve_conflict/workflow_sequence_edit/test_run keep their OWN token scope (the
+# identity fallthrough of `_TOKEN_SCOPE.get`), because each is minted by a dedicated service
+# that also builds its mention — see the issue_builder branches in `start_ai_invoke`.
+#
+# 0268 B0001: workflow_sequence_edit and test_run were the last two token scopes with a
+# [멘트복사] entrance but no in-app AI 호출 — their surfaces (WorkflowDecisionModal,
+# TestRunStrip) sit outside MainPanel's invoke wiring, so the parallel-invoke pass
+# (group 0223) never reached them and this allowlist kept the gap structural.
+_ALLOWED_SCOPES = (
+    *_TOKEN_SCOPE.keys(),
+    "review",
+    "resolve_conflict",
+    "workflow_sequence_edit",
+    "test_run",
+)
 
 
 def _err(exc: HTTPException) -> JSONResponse:
@@ -305,6 +319,44 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "mention": issued.get("mention") or "",
             }
         issue_builder = _issue_review
+    if body.action_scope == "workflow_sequence_edit":
+        # 0268 B0001 (NR0003 결함 1): the invoke twin of WorkflowDecisionModal's [멘트 복사].
+        # Same issuer as POST /workflow/sequence-edit-request, so the worker reads the exact
+        # prompt the clipboard path produced — only the delivery differs.
+        def _issue_sequence_edit():
+            issued = workflow_decision_service.request_sequence_edit(
+                doc_id=body.doc_ref or "",
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                locale=locale,
+            )
+            return {
+                "raw_token": issued["raw_token"],
+                "token_id": issued["token_id"],
+                "scratch_dir": issued["scratch_dir"],
+                "mention": issued.get("mention") or "",
+            }
+        issue_builder = _issue_sequence_edit
+    if body.action_scope == "test_run":
+        # 0268 B0001 (NR0003 결함 2): the invoke twin of TestRunStrip's delegation copy.
+        # issue_test_run_request returns the raw token under "token" (not "raw_token"),
+        # so it is remapped here to the issue_builder contract start_run expects.
+        def _issue_test_run():
+            from modules.flow_gate.services import test_run_service
+
+            issued = test_run_service.issue_test_run_request(
+                doc_id=body.doc_ref or "",
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                locale=locale,
+            )
+            return {
+                "raw_token": issued["token"],
+                "token_id": issued["token_id"],
+                "scratch_dir": issued["scratch_dir"],
+                "mention": issued.get("mention") or "",
+            }
+        issue_builder = _issue_test_run
     if body.action_scope == "workflow_decide":
         def _issue_workflow_decision():
             return workflow_decision_service.request_workflow_decision(

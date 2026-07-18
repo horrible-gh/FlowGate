@@ -16,6 +16,9 @@
     <span class="run-strip-label">{{ label }}</span>
     <span v-if="subText" class="run-strip-sub">{{ subText }}</span>
     <span v-if="!isRunning" class="run-strip-actions">
+      <!-- 0268 B0001: this button was labelled "AI에게 위임" with a robot icon while only
+           writing the clipboard — the label itself is what hid the missing in-app call.
+           It now says what it does, and the real AI 호출 sits next to it (병행, not 택일). -->
       <button
         type="button"
         class="run-strip-btn"
@@ -24,11 +27,25 @@
         @click="onDelegate"
       >
         <AppIcon
-          :name="delegating ? 'spinner' : 'robot'"
+          :name="delegating ? 'spinner' : 'copy'"
           :spin="delegating"
           aria-hidden="true"
         />
         {{ t('main.test_run_strip.delegate') }}
+      </button>
+      <button
+        type="button"
+        class="run-strip-btn run-strip-btn--invoke"
+        :disabled="busy"
+        :title="t('main.test_run_strip.invoke_ai_hint')"
+        @click="onInvokeAi"
+      >
+        <AppIcon
+          :name="invoking ? 'spinner' : 'robot'"
+          :spin="invoking"
+          aria-hidden="true"
+        />
+        {{ t('main.test_run_strip.invoke_ai') }}
       </button>
       <button
         type="button"
@@ -54,6 +71,7 @@ import { postRequest } from '@shared/api'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
 import { useToast } from './common/useToast'
+import { useAiProviderStore } from '../stores/aiProvider'
 import AppIcon from '@shared/AppIcon.vue'
 import type { TestRun } from '../types/testRun'
 
@@ -75,7 +93,9 @@ const { showToast } = useToast()
 
 const launching = ref(false)
 const delegating = ref(false)
-const busy = computed(() => launching.value || delegating.value)
+// 0268 B0001: the in-app half of the delegation above.
+const invoking = ref(false)
+const busy = computed(() => launching.value || delegating.value || invoking.value)
 
 const isRunning = computed(() => props.testRun?.status === 'running')
 const hasRunHistory = computed(() => props.testRun != null)
@@ -175,6 +195,41 @@ async function onDelegate() {
     }
   } finally {
     delegating.value = false
+  }
+}
+
+// 0268 B0001 (NR0003 결함 2): the same delegation, run in-app. /ai-invoke/start mints the
+// test_run token through issue_test_run_request — the same issuer /documents/test-run-request
+// uses — so the worker reads the identical execution mention; only the delivery differs.
+// The raw token never reaches the browser on this path.
+async function onInvokeAi() {
+  if (busy.value || !props.docId) return
+  const parts = props.docId.split('.')
+  if (parts.length < 4) {
+    showToast(t('main.test_run_strip.invoke_ai_failed'), 'error')
+    return
+  }
+  invoking.value = true
+  try {
+    // Resolved on click, not at setup: this strip is mounted Pinia-free in its component
+    // tests (same reason AiProviderSelect stays presentational), and only the invoke path
+    // actually needs the provider selection.
+    const providerStore = useAiProviderStore()
+    await providerStore.ensureLoaded(parts[0])
+    await postRequest('/api/v1/ai-invoke/start', {
+      project: parts[0],
+      module: parts[1],
+      group: parts[2],
+      doc_ref: props.docId,
+      action_scope: 'test_run',
+      mode: 'single',
+      provider_id: providerStore.selectedProviderId || undefined,
+    })
+    showToast(t('main.test_run_strip.invoke_ai_started'), 'info')
+  } catch (e: unknown) {
+    showToast(runErrorMessage(e), 'error')
+  } finally {
+    invoking.value = false
   }
 }
 </script>

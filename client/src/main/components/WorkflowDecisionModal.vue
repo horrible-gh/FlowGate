@@ -276,6 +276,18 @@
 
         <!-- ── Footer ── -->
         <div class="modal-ft">
+          <!-- 0268 TR0005 rev1: the provider picker sits at the far left of the footer, ahead of
+               the note and every button, so the run target is read before any action is chosen. -->
+          <AiProviderSelect
+            v-if="mode === 'edit' && !loading && !loadError"
+            class="wdm-provider"
+            :providers="providerStore.providers"
+            :model-value="providerStore.selectedProviderId"
+            :loading="providerStore.loading"
+            :errored="!!providerStore.error"
+            hide-label
+            @update:model-value="(v: string) => providerStore.selectProvider(v)"
+          />
           <span class="wdm-footer-note">
             <AppIcon name="info" />
             {{ mode === 'edit' ? t('main.workflow_edit_modal.footer_note') : t('main.workflow_decision_modal.footer_note') }}
@@ -291,15 +303,29 @@
             <AppIcon name="check" />
             {{ t('main.workflow_decision_modal.confirm') }}
           </button>
+          <!-- 0268 B0001: 멘트복사와 AI 호출은 택일이 아니라 병행입니다. This button used to be
+               labelled "AI에게 수정 요청" with a robot icon while only writing the clipboard,
+               which is exactly what hid the missing invoke path — it is now named for what it
+               does, and the real in-app call sits beside it. -->
           <button
             v-if="mode === 'edit' && !loading && !loadError"
             type="button"
             class="btn btn-secondary"
-            :disabled="requestingAiEdit || issuing"
+            :disabled="requestingAiEdit || invokingAi || issuing"
             @click="requestAiSequenceEdit"
           >
-            <AppIcon name="robot" />
-            {{ t('main.workflow_edit_modal.ai_edit') }}
+            <AppIcon name="copy" />
+            {{ t('main.workflow_edit_modal.mention_copy') }}
+          </button>
+          <button
+            v-if="mode === 'edit' && !loading && !loadError"
+            type="button"
+            class="btn btn-secondary"
+            :disabled="requestingAiEdit || invokingAi || issuing"
+            @click="invokeAiSequenceEdit"
+          >
+            <AppIcon :name="invokingAi ? 'spinner' : 'robot'" :spin="invokingAi" />
+            {{ t('main.workflow_edit_modal.invoke_ai') }}
           </button>
           <button
             v-if="mode === 'edit' && !loading && !loadError"
@@ -321,11 +347,13 @@
 
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, patchRequest } from '@shared/api'
+import { getRequest, patchRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { useAiProviderStore } from '../stores/aiProvider'
 import { useFlowGateToken, type IssuedToken } from '../composables/useFlowGateToken'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
 
@@ -365,6 +393,11 @@ const docTypeStore = useDocTypeStore()
 // R0001 group 0208: delegate the pending-sequence edit to an AI worker.
 const { requestSequenceEdit, composeMention, issuing } = useFlowGateToken()
 const requestingAiEdit = ref(false)
+
+// 0268 B0001: the in-app half of the same delegation. Both entrances issue the identical
+// workflow_sequence_edit token and mention server-side — only the delivery differs.
+const providerStore = useAiProviderStore()
+const invokingAi = ref(false)
 
 // ── Static config ──────────────────────────────────────────────────────────────
 
@@ -786,6 +819,39 @@ async function requestAiSequenceEdit() {
     else if (token) showToast(t('main.workflow_edit_modal.error_ai_mention_copy'), 'warning')
   } finally {
     requestingAiEdit.value = false
+  }
+}
+
+// 0268 B0001 (NR0003 결함 1): run the very same delegation in-app instead of by clipboard.
+// POSTs action_scope 'workflow_sequence_edit' to /ai-invoke/start, where the server mints the
+// token through request_sequence_edit — the same issuer the copy path calls — so the worker
+// reads a byte-identical prompt. The raw token never reaches the browser on this path.
+async function invokeAiSequenceEdit() {
+  if (!props.docId || invokingAi.value) return
+  const parts = props.docId.split('.')
+  if (parts.length < 4) {
+    showToast(t('main.workflow_edit_modal.error_ai_invoke'), 'error')
+    return
+  }
+  invokingAi.value = true
+  try {
+    await providerStore.ensureLoaded(parts[0])
+    await postRequest('/api/v1/ai-invoke/start', {
+      project: parts[0],
+      module: parts[1],
+      group: parts[2],
+      doc_ref: props.docId,
+      action_scope: 'workflow_sequence_edit',
+      mode: 'single',
+      provider_id: providerStore.selectedProviderId || undefined,
+    })
+    showToast(t('main.workflow_edit_modal.toast_ai_invoke_started'), 'success')
+    close()
+  } catch (e: any) {
+    const data = e?.response?.data
+    showToast(data?.message || data?.error?.message || t('main.workflow_edit_modal.error_ai_invoke'), 'error')
+  } finally {
+    invokingAi.value = false
   }
 }
 
@@ -1215,6 +1281,12 @@ watch(
   border: 2px dashed var(--primary);
   background: var(--primary-l);
   border-radius: var(--r);
+}
+
+/* ── Footer: provider picker pinned to the far left, note takes the slack ── */
+.wdm-provider {
+  flex-shrink: 0;
+  margin-right: 10px;
 }
 
 /* ── Footer note ── */
