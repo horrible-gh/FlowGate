@@ -201,4 +201,22 @@ describe('AiInvokeMiniplayer', () => {
     expect(mini).toBeGreaterThan(modalBg)
     expect(mini).toBeGreaterThan(modalOverlay)
   })
+
+  // Same jsdom limitation as above — assert the offset contract at the source level.
+  // The sticky action bar is fixed at bottom:0, so a plain `bottom: 18px` put the
+  // miniplayer straight on top of its buttons (TR0007 rev3 rejection). Every `bottom`
+  // declaration on .aiv-mini (base + the <=680px override) must include the bar height.
+  it('offsets its bottom by the action-bar height so it never covers the action bar', () => {
+    const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+    const sfc = read('../../src/main/components/AiInvokeMiniplayer.vue')
+    const blocks = [...sfc.matchAll(/\.aiv-mini\s*\{([^}]*)\}/gs)].map(m => m[1])
+    const bottoms = blocks
+      .map(b => /bottom:\s*([^;]+);/.exec(b)?.[1]?.trim())
+      .filter((v): v is string => Boolean(v))
+
+    expect(bottoms.length).toBeGreaterThanOrEqual(2)
+    for (const bottom of bottoms) {
+      expect(bottom).toContain('var(--fg-actionbar-h, 0px)')
+    }
+  })
 })
