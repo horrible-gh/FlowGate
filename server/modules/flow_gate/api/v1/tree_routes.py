@@ -11,6 +11,7 @@ New endpoints:
 """
 from __future__ import annotations
 
+import shutil
 import tempfile
 import zipfile
 from urllib.parse import quote
@@ -29,6 +30,14 @@ router = APIRouter(prefix="/api/v1", tags=["Tree"])
 
 class SrcContentUpdate(BaseModel):
     content: str
+
+
+class SrcDeleteRequest(BaseModel):
+    path: str
+    type: str
+    # NR0003 권장 5: the client sends its current group-branch context here so the
+    # server can refuse a group-scoped delete outright. Absent (base-checkout edit) → None.
+    group_id: str | None = None
 
 
 @router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
@@ -57,6 +66,33 @@ def _resolve_src_path(project_id: str, path: str):
     except (ValueError, OSError):
         raise HTTPException(status_code=403, detail="Forbidden")
     return full_path
+
+
+def _resolve_delete_path(project_id: str, path: str):
+    """Resolve without following symlinks and reject any symlink component."""
+    from modules.flow_gate.storage.paths import src_root
+    from modules.flow_gate.db import projects as _proj
+    row = _proj.get_by_id(project_id)
+    project_name = (row.get("project_name") or "").strip() if row else ""
+    settings = _proj.get_settings(project_id)
+    branch = (settings.get("branch") or "main").strip() if settings else "main"
+    if not project_name:
+        raise HTTPException(status_code=404, detail="Not found")
+    root = src_root(project_name, branch).resolve()
+    # NR0003 finding: normalize a SINGLE backslash to '/', matching _validate_path_param.
+    # Replacing only a double backslash left 'foo\bar' as one literal component, so its
+    # per-component symlink check was bypassed and resolution disagreed with validation.
+    candidate = root.joinpath(*path.replace("\\", "/").split("/"))
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    current = root
+    for part in candidate.relative_to(root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise HTTPException(status_code=400, detail="Symbolic links are not allowed")
+    return candidate
 
 
 @router.api_route("/projects/{project_id}/files/src-content", methods=["GET", "HEAD"], response_class=PlainTextResponse)
@@ -98,6 +134,44 @@ async def update_src_file_content(
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
     return {"path": path, "content_length": len(body.content), "base_git": base_git}
+
+
+
+@router.delete("/projects/{project_id}/files", response_class=JSONResponse)
+async def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
+    """Delete one file or directory from the editable base checkout."""
+    auth = _check_project_auth(request, project_id)
+    if isinstance(auth, JSONResponse): return auth
+    # NR0003 권장 4: deletion requires a WRITE permission (perm_document_delete), not read.
+    # Enforce it for EVERY caller — user JWTs and worker/outbound tokens alike. verify_bearer
+    # only guarantees perm_document_read, so gating this check on _is_user_jwt let any worker
+    # token hard-delete base-checkout files with mere read access. Checking the token's
+    # issued_to against the request project can only restrict access, never widen it.
+    if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
+        return _err(403, "FORBIDDEN", "insufficient permission for this operation")
+    # NR0003 권장 5: this endpoint manages ONLY the editable base checkout. A group-branch
+    # (read-only) context must never delete through here — the client hides the menu, but the
+    # server refuses group-scoped deletes outright rather than trusting the UI guard.
+    if (body.group_id or "").strip():
+        return _err(403, "FORBIDDEN", "deletion is not allowed on a group branch")
+    try: _validate_path_param(body.path)
+    except HTTPException: return _err(400, "INVALID_PATH", "path is invalid")
+    if body.path.replace("\\", "/").strip("/") in ("", "."): return _err(400, "INVALID_PATH", "project root cannot be deleted")
+    if body.type not in ("file", "folder"): return _err(400, "TYPE_MISMATCH", "type must be file or folder")
+    try: full_path = _resolve_delete_path(project_id, body.path)
+    except HTTPException: return _err(400, "INVALID_PATH", "symbolic links are not allowed")
+    if not full_path.exists(): return _err(404, "NOT_FOUND", "path does not exist")
+    actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
+    if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
+    try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
+    except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
+    # NR0003 권장 8: like the src-content PATCH, this delete lands in the base checkout and
+    # leaves it dirty (blocking merge finalize for every group of this project). Return the
+    # base git status so the explorer can refresh its base-dirty markers and Git finalize
+    # warning immediately, instead of the contamination staying invisible until a later finalize.
+    from modules.flow_gate.services import git_service
+    base_git = git_service.base_checkout_dirty_status(project_id)
+    return {"deleted": body.path, "type": actual_type, "base_git": base_git}
 
 
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)

@@ -76,7 +76,19 @@
       <ContextMenuItem v-if="!readonly" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
+      <ContextMenuItem v-if="!readonly" icon="trash" :danger="true" @click="deleteNode">
+        {{ t('common.delete') }}
+      </ContextMenuItem>
     </ContextMenu>
+
+    <ConfirmModal
+      v-model:visible="showDeleteConfirm"
+      :title="deleteConfirmTitle"
+      :message="deleteConfirmMessage"
+      :confirm-label="t('common.delete')"
+      :danger="true"
+      @confirm="confirmDelete"
+    />
 
     <CreateFileFolderModal
       v-model:visible="showModal"
@@ -96,11 +108,13 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useExplorerStore, type FileNode } from '../stores/explorer'
+import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
+import ConfirmModal from './ConfirmModal.vue'
 import { useFileUpload } from '../composables/useFileUpload'
 import { copyToClipboard } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
-import { downloadBlobRequest } from '@shared/api'
+import api, { downloadBlobRequest } from '@shared/api'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
@@ -123,6 +137,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
+const tabsStore = useTabsStore()
 const { showToast } = useToast()
 const { collectDropFiles, uploadFiles } = useFileUpload()
 // 0245 R0001 / NR0003 §1 — expansion is owned by the store so that a folder opened
@@ -138,6 +153,8 @@ const ctxY = ref(0)
 const showModal = ref(false)
 const modalType = ref<'folder' | 'file'>('folder')
 const downloading = ref(false)
+const deleting = ref(false)
+const showDeleteConfirm = ref(false)
 const nodeDragOver = ref(false)
 const nodeFileInputRef = ref<HTMLInputElement | null>(null)
 const nodeFolderInputRef = ref<HTMLInputElement | null>(null)
@@ -272,6 +289,93 @@ async function downloadNode() {
     else showToast(t('main.file_tree_node.download_failed'), 'danger')
   } finally {
     downloading.value = false
+  }
+}
+
+const deleteConfirmTitle = computed(() => t('main.file_tree_node.delete_confirm_title'))
+// NR0003 권장 6: the confirm text names the target and, for a folder, spells out that the
+// deletion is recursive and irreversible. The danger styling comes from ConfirmModal.
+const deleteConfirmMessage = computed(() =>
+  props.node.type === 'folder'
+    ? t('main.file_tree_node.delete_confirm_folder', { path: props.node.path })
+    : t('main.file_tree_node.delete_confirm_file', { path: props.node.path }),
+)
+
+// NR0003 권장 6·9: replace the native window.confirm with the shared danger-styled
+// ConfirmModal. deleteNode only opens the modal; the request runs from confirmDelete.
+function deleteNode() {
+  if (!props.projectId || deleting.value) return
+  showCtx.value = false
+  showDeleteConfirm.value = true
+}
+
+// NR0003 권장 9: map the server's distinct error codes to translated, user-facing toasts.
+function deleteErrorMessage(e: any): string {
+  const code = e?.response?.data?.error?.code
+  const status = e?.response?.status
+  switch (code) {
+    case 'INVALID_PATH': return t('main.file_tree_node.delete_invalid_path')
+    case 'NOT_FOUND': return t('main.file_tree_node.delete_not_found')
+    case 'TYPE_MISMATCH': return t('main.file_tree_node.delete_type_mismatch')
+    case 'FORBIDDEN': return t('main.file_tree_node.delete_forbidden')
+    case 'DELETE_FAILED': return t('main.file_tree_node.delete_failed')
+  }
+  if (status === 403) return t('main.file_tree_node.delete_forbidden')
+  if (status === 404) return t('main.file_tree_node.delete_not_found')
+  return t('main.file_tree_node.delete_failed')
+}
+
+// NR0003 권장 7: after a successful delete, close open editor tabs and clear selection for
+// the deleted node AND — when a folder is deleted — for everything under it, so a deleted
+// file's tab, the selected node, and the pending-select path can never point at a gone path.
+function cleanupDeletedRefs() {
+  const deletedPath = props.node.path.replace(/\\/g, '/')
+  const prefix = deletedPath + '/'
+  const isUnder = (p: string | null | undefined) => {
+    const np = (p ?? '').replace(/\\/g, '/')
+    if (!np) return false
+    return np === deletedPath || (props.node.type === 'folder' && np.startsWith(prefix))
+  }
+  // Snapshot ids first — closeTab() splices the array as we iterate.
+  const staleTabIds = tabsStore.tabs
+    .filter((tab) => tab.projectId === props.projectId && isUnder(tab.path))
+    .map((tab) => tab.id)
+  staleTabIds.forEach((id) => tabsStore.closeTab(id))
+
+  const selId = explorerStore.selectedFileNodeId
+  if (selId === props.node.id) {
+    explorerStore.selectedFileNodeId = null
+  } else if (props.node.type === 'folder' && selId) {
+    const selNode = props.allNodes.find((n) => n.id === selId)
+    if (selNode && isUnder(selNode.path)) explorerStore.selectedFileNodeId = null
+  }
+  if (isUnder(explorerStore.pendingSelectFilePath)) explorerStore.pendingSelectFilePath = null
+}
+
+async function confirmDelete() {
+  if (!props.projectId || deleting.value) return
+  deleting.value = true
+  try {
+    const res = await api.delete(
+      `/api/v1/projects/${encodeURIComponent(props.projectId)}/files`,
+      // group_id lets the server refuse a group-branch delete (NR0003 권장 5); it is
+      // omitted in the editable base-checkout view where groupId is null.
+      { data: { path: props.node.path, type: props.node.type, group_id: props.groupId ?? undefined } },
+    )
+    cleanupDeletedRefs()
+    // NR0003 권장 8: the delete dirtied the base checkout — refresh the base-dirty markers and
+    // the Git finalize warning from the returned status, mirroring the src-content save flow.
+    const baseGit = res?.data?.base_git
+    if (baseGit) {
+      explorerStore.setBaseDirtyFiles(props.projectId, Array.isArray(baseGit.files) ? baseGit.files : [])
+    }
+    explorerStore.invalidateProject(props.projectId)
+    emit('tree-changed')
+  } catch (e: any) {
+    // NR0003 필수 테스트: on failure keep the tree intact (no invalidate/emit) and toast.
+    showToast(deleteErrorMessage(e), 'danger')
+  } finally {
+    deleting.value = false
   }
 }
 
