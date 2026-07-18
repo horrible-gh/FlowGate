@@ -37,6 +37,7 @@ from fastapi import HTTPException
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
@@ -309,6 +310,40 @@ def _probe_doc_reviews(doc_id: str) -> int:
     return len(db_reviews.list_by_doc(doc_id) or [])
 
 
+def _probe_test_runs(doc_id: str) -> int:
+    """Test-run rows on the bound document (0268 B0001).
+
+    A `test_run` token may only POST /documents/test-run, which INSERTs one run row for the
+    TS it is bound to — it can never register a document, so the document oracle would make
+    success unreachable here exactly as 0259 B0001 described for edit/review.
+    """
+    return len(db_test_runs.list_by_doc(doc_id) or [])
+
+
+def _probe_sequence_max_item(doc_id: str) -> int:
+    """Highest item_seq in the bound document's workflow sequence (0268 B0001).
+
+    A `workflow_sequence_edit` worker calls PATCH /workflow/sequence, which registers no
+    document — so, like edit/review, the document oracle could never credit it. The probe
+    is the sequence's max item_seq because `edit_workflow_pending` deletes the pending tail
+    and re-inserts at `max_item_seq + 1`: a plain count could FALL across a valid shrink,
+    but the max is strictly monotonic across any edit that inserts.
+
+    Known limitation, deliberate: shrinking a sequence to locked-steps-only inserts nothing,
+    so that one edit settles 'none'. A false negative on a rare edit is the safer error here
+    than the false POSITIVE the alternative gives — with no probe at all, docs_target 0 makes
+    `docs_reached >= docs_target` trivially true and a worker that did NOTHING reports
+    'complete', which is the "verdict renamed instead of judged" failure 0259 B0001 fixed.
+    """
+    try:
+        seq = db_wfseq.get_sequence_by_doc_id(doc_id)
+    except Exception:  # noqa: BLE001
+        return 0
+    if seq is None:
+        return 0
+    return int(db_wfseq.get_max_item_seq(seq["id"]) or 0)
+
+
 # Keyed by TOKEN scope — the value `start_run` actually receives. The route maps
 # chat/rework/vr_correction onto `edit` before calling, and all three land as an in-place
 # revision of the bound document (chat included: the conversation worker submits the whole
@@ -317,6 +352,8 @@ def _probe_doc_reviews(doc_id: str) -> int:
 _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
     "edit": _probe_doc_revision,
     "review": _probe_doc_reviews,
+    "test_run": _probe_test_runs,
+    "workflow_sequence_edit": _probe_sequence_max_item,
 }
 
 

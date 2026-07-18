@@ -4,11 +4,16 @@
 // admission gate), the run launch, the error mapping, and the AI delegation copy.
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 
 const postRequest = vi.fn()
 vi.mock('@shared/api', () => ({
   postRequest: (...args: unknown[]) => postRequest(...args),
+  // The provider store (0268 B0001 invoke path) loads its list through getRequest; it
+  // swallows failures into an empty list, so the invoke assertions below stay about the
+  // POST body rather than about provider availability.
+  getRequest: async () => ({ data: { providers: [] } }),
 }))
 
 const showToast = vi.fn()
@@ -193,5 +198,55 @@ describe('TestRunStrip', () => {
       i18n.global.t('main.test_run_strip.delegate_copy_failed'),
       'error',
     )
+  })
+
+  // 0268 B0001: this strip used to offer the clipboard copy ALONE while labelling it
+  // "AI에게 위임" with a robot icon, so it read as though the in-app call already existed.
+  // Both entrances must now be present and independently reachable.
+  describe('in-app AI invoke (0268 B0001)', () => {
+    it('offers the copy and the AI-invoke entrances side by side', () => {
+      const wrapper = mountStrip()
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.delegate'))
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.invoke_ai'))
+      expect(wrapper.find('.run-strip-btn--invoke').exists()).toBe(true)
+    })
+
+    it('invoke click starts a test_run-scoped run and never touches the clipboard', async () => {
+      setActivePinia(createPinia())
+      postRequest.mockResolvedValue({ data: { ok: true, run_id: 'air_1' } })
+      const wrapper = mountStrip()
+      await wrapper.find('.run-strip-btn--invoke').trigger('click')
+      await flushPromises()
+      expect(postRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/start', {
+        project: 'proj',
+        module: 'mod',
+        group: '0001',
+        doc_ref: 'proj.mod.0001.0005-TS',
+        action_scope: 'test_run',
+        mode: 'single',
+        provider_id: undefined,
+      })
+      // The whole point of the parallel entrance: the mention goes to the worker
+      // server-side, so the raw token never reaches the browser or the clipboard.
+      expect(copiedTexts).toEqual([])
+      expect(showToast).toHaveBeenCalledWith(
+        i18n.global.t('main.test_run_strip.invoke_ai_started'),
+        'info',
+      )
+    })
+
+    it('invoke failure surfaces the mapped error and leaves the copy path usable', async () => {
+      setActivePinia(createPinia())
+      postRequest.mockRejectedValue({ response: { data: { error: 'permission_denied' } } })
+      const wrapper = mountStrip()
+      await wrapper.find('.run-strip-btn--invoke').trigger('click')
+      await flushPromises()
+      expect(showToast).toHaveBeenCalledWith(
+        i18n.global.t('main.test_run_strip.err_denied'),
+        'error',
+      )
+      // busy must release, or a failed invoke would strand the copy button too.
+      expect(wrapper.find('.run-strip-btn--invoke').attributes('disabled')).toBeUndefined()
+    })
   })
 })
