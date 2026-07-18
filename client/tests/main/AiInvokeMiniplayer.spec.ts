@@ -36,10 +36,32 @@ describe('AiInvokeMiniplayer', () => {
     document.body.innerHTML = ''
   })
 
-  it('renders nothing while there is no run to monitor', async () => {
+  // 0269 재점검: with no run the monitor used to disappear entirely, so on the dashboard
+  // there was nothing to see at all. It now stays mounted as a muted idle pill.
+  it('stays visible as an idle pill while there is no run to monitor', async () => {
     const wrapper = mountPlayer()
     await flushPromises()
-    expect(wrapper.find('.aiv-mini').exists()).toBe(false)
+    const root = wrapper.find('.aiv-mini')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('aiv-mini--idle')
+    expect(wrapper.text()).toContain(t('main.ai_miniplayer.idle_summary'))
+    // Idle shows the empty line instead of run cards.
+    expect(wrapper.find('.aiv-mini__empty').text()).toBe(t('main.ai_miniplayer.empty'))
+    expect(wrapper.find('.aiv-mini__card').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('drops the idle state as soon as a run arrives', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-idle', group_id: 'flowgate.default.3000',
+      doc_ref: 'flowgate.default.3000.0001-R', mode: 'single',
+    })
+    await flushPromises()
+    expect(wrapper.find('.aiv-mini').classes()).not.toContain('aiv-mini--idle')
+    expect(wrapper.find('.aiv-mini__empty').exists()).toBe(false)
+    expect(wrapper.find('.aiv-mini__card').exists()).toBe(true)
     wrapper.unmount()
   })
 

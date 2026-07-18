@@ -529,8 +529,11 @@
             </div>
           </div>
 
-          <!-- Right column: Workflow + Type Distribution -->
+          <!-- Right column: AI runs + Workflow + Type Distribution -->
           <div class="right-col">
+            <!-- AI run monitor (0269): always on the dashboard, running or not. -->
+            <AiRunMonitorCard />
+
             <!-- Workflow Status -->
             <div class="card">
               <div class="card-hd">
@@ -1101,6 +1104,7 @@ import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type Sequenc
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
+import AiRunMonitorCard from './AiRunMonitorCard.vue'
 import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'

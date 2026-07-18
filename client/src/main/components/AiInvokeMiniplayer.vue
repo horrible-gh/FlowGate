@@ -1,7 +1,13 @@
 <template>
   <!-- 실행 미니플레이어 (group 0252 D0007): bottom-right floating monitor for every run
-       the user owns. Hidden entirely while there is nothing to monitor. -->
-  <div v-if="entries.length > 0" class="aiv-mini" :class="{ 'aiv-mini--collapsed': collapsed }">
+       the user owns. Always mounted — with no run to monitor it stays as a muted idle
+       pill so the monitor is visibly present on the dashboard and on document screens
+       instead of vanishing (0269 재점검). -->
+  <div
+    class="aiv-mini"
+    :class="{ 'aiv-mini--collapsed': collapsed, 'aiv-mini--idle': idle }"
+    data-test="ai-miniplayer"
+  >
     <button
       v-if="collapsed"
       type="button"
@@ -31,7 +37,9 @@
         </button>
       </header>
 
-      <TransitionGroup name="aiv-mini-card" tag="ul" class="aiv-mini__list">
+      <p v-if="idle" class="aiv-mini__empty">{{ t('main.ai_miniplayer.empty') }}</p>
+
+      <TransitionGroup v-else name="aiv-mini-card" tag="ul" class="aiv-mini__list">
         <li
           v-for="entry in entries"
           :key="entry.groupId"
@@ -174,11 +182,15 @@ const entries = computed<AiInvokeRunEntry[]>(() =>
   Object.values(store.runsByGroup).sort((a, b) => a.groupId.localeCompare(b.groupId)),
 )
 
+const idle = computed(() => entries.value.length === 0)
+
 const fabText = computed(() =>
-  t('main.ai_miniplayer.fab_summary', {
-    running: store.activeCount,
-    waiting: store.awaitingQCount + store.pausedCount,
-  }),
+  idle.value
+    ? t('main.ai_miniplayer.idle_summary')
+    : t('main.ai_miniplayer.fab_summary', {
+        running: store.activeCount,
+        waiting: store.awaitingQCount + store.pausedCount,
+      }),
 )
 
 function readCollapsed(): boolean {
@@ -347,6 +359,31 @@ watch(entries, list => {
   font-size: .78rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Idle presence: visible but quiet — no primary tint, no shadow pull. */
+.aiv-mini--idle .aiv-mini__fab,
+.aiv-mini--idle .aiv-mini__panel {
+  border-color: var(--border);
+  opacity: .72;
+}
+
+.aiv-mini--idle .aiv-mini__fab {
+  color: var(--text-m);
+  font-weight: 500;
+}
+
+.aiv-mini--idle:hover .aiv-mini__fab,
+.aiv-mini--idle:hover .aiv-mini__panel {
+  opacity: 1;
+}
+
+.aiv-mini__empty {
+  margin: 0;
+  padding: 14px 14px 16px;
+  color: var(--text-m);
+  font-size: .74rem;
+  text-align: center;
 }
 
 .aiv-mini__fab--awaiting {
