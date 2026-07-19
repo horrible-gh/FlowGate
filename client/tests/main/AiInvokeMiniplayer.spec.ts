@@ -266,4 +266,21 @@ describe('AiInvokeMiniplayer', () => {
     expect(sfc).not.toContain('var(--fg-actionbar-h')
     expect(actionBar).not.toContain("setProperty('--fg-actionbar-h")
   })
+
+  // rev1 반려: the chip sits directly against the provider select, so it must not draw a
+  // box of its own, and there must be no divider line between the two.
+  it('draws no outline around the chip and no divider against the provider selector', () => {
+    const sfc = read('../../src/main/components/AiInvokeMiniplayer.vue')
+
+    const rootBlock = /\.aiv-mini\s*\{([^}]*)\}/s.exec(sfc)?.[1] ?? ''
+    expect(rootBlock).not.toMatch(/border(-right)?:\s*(?!none)/)
+
+    const chipBlock = /\.aiv-mini__chip\s*\{([^}]*)\}/s.exec(sfc)?.[1] ?? ''
+    expect(chipBlock).toContain('border: none')
+    expect(chipBlock).toContain('background: transparent')
+
+    // No state may re-introduce an outline (hover/open/awaiting).
+    const chipStates = sfc.slice(sfc.indexOf('.aiv-mini__chip {'), sfc.indexOf('.aiv-mini__empty'))
+    expect(chipStates).not.toContain('border-color')
+  })
 })

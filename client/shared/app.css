@@ -64,8 +64,11 @@ ul, ol { list-style: none; }
 .brand-ver  { font-size: .6rem; color: rgba(255,255,255,.3); font-weight: 400; align-self: flex-end; padding-bottom: 2px; }
 .header-spacer { flex: 1; }
 .header-nav { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+/* No icon inside: the run monitor chip immediately to its left is the group's single
+   robot glyph (0269 TR0013 rev1). Left padding is 0 so the chip and the select read as
+   one control group with no divider between them. */
 .ai-provider-selector {
-  display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 10px;
+  display: flex; align-items: center; height: 100%; padding: 0 10px 0 0;
   border-right: 1px solid rgba(255,255,255,.06); color: rgba(255,255,255,.72);
 }
 .ai-provider-selector select {

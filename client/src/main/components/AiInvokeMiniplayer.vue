@@ -364,17 +364,19 @@ watch(entries, list => {
 /* Header-anchored: an inline element of the header bar, not a floating overlay. Nothing
    here measures or dodges anything — the chip cannot overlap a screen's bottom-fixed UI
    because it is not over the screen at all (0269 NR0011 §2). */
+/* Header-anchored, and it sits directly left of the provider select as one control
+   group with it — so no divider on this side (0269 TR0013 rev1 반려). */
 .aiv-mini {
   position: relative;
   display: inline-flex;
   align-items: center;
   height: 100%;
-  padding: 0 10px;
-  border-right: 1px solid rgba(255, 255, 255, .06);
+  padding: 0 8px 0 10px;
 }
 
-/* Chip: icon + count only. It sits on the dark header, so it follows the header's
-   white-on-navy control styling rather than the light --surface tokens. */
+/* Chip: bare icon + count, no box. A bordered pill immediately beside the bordered
+   select box read as two competing boxes, so the chip carries no outline of its own —
+   only a hover/open wash, like the sidebar toggle. */
 .aiv-mini__chip {
   position: relative;
   display: inline-flex;
@@ -382,9 +384,9 @@ watch(entries, list => {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border: 1px solid rgba(255, 255, 255, .14);
+  border: none;
   border-radius: var(--r);
-  background: rgba(255, 255, 255, .05);
+  background: transparent;
   color: rgba(255, 255, 255, .82);
   cursor: pointer;
   transition: all var(--tr);
@@ -393,7 +395,6 @@ watch(entries, list => {
 .aiv-mini__chip:hover,
 .aiv-mini__chip.active {
   background: rgba(255, 255, 255, .1);
-  border-color: rgba(255, 255, 255, .25);
   color: white;
 }
 
@@ -425,8 +426,10 @@ watch(entries, list => {
   text-align: center;
 }
 
-.aiv-mini__chip--awaiting {
-  border-color: color-mix(in srgb, var(--warning) 70%, transparent);
+/* Borderless, so the awaiting signal rides on the glyph colour and the badge alone. */
+.aiv-mini__chip--awaiting,
+.aiv-mini__chip--awaiting:hover,
+.aiv-mini__chip--awaiting.active {
   color: var(--warning);
 }
 
@@ -641,7 +644,7 @@ watch(entries, list => {
 
 @media (max-width: 680px) {
   .aiv-mini {
-    padding: 0 6px;
+    padding: 0 6px 0 8px;
   }
 
   /* Anchor to the right edge of the viewport-ish instead of overflowing off-screen:

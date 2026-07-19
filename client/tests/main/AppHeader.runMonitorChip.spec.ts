@@ -39,23 +39,40 @@ beforeEach(() => {
 // bottom edge (the chat composer, the sticky action bar). It now rides in the header
 // beside the provider selector, where overlap is structurally impossible.
 describe('AppHeader run monitor chip (0269 NR0011)', () => {
-  it('renders the run monitor inside the header, right after the provider selector', () => {
+  it('renders the run monitor inside the header, immediately before the provider selector', () => {
     const wrapper = mountHeader()
 
     const monitor = wrapper.find('[data-test="ai-miniplayer"]')
     expect(monitor.exists()).toBe(true)
     expect(wrapper.find('[data-test="ai-miniplayer-chip"]').exists()).toBe(true)
 
-    // Order inside the header: provider selector → run monitor → spacer.
+    // Order inside the header: run monitor → provider selector → spacer.
     const header = wrapper.get('.app-header').element
     const children = Array.from(header.children)
     const providerIdx = children.findIndex(el => el.classList.contains('ai-provider-selector'))
     const monitorIdx = children.indexOf(monitor.element)
     const spacerIdx = children.findIndex(el => el.classList.contains('header-spacer'))
 
-    expect(providerIdx).toBeGreaterThanOrEqual(0)
-    expect(monitorIdx).toBe(providerIdx + 1)
-    expect(spacerIdx).toBe(monitorIdx + 1)
+    expect(monitorIdx).toBeGreaterThanOrEqual(0)
+    expect(providerIdx).toBe(monitorIdx + 1)
+    expect(spacerIdx).toBe(providerIdx + 1)
+
+    wrapper.unmount()
+  })
+
+  // rev1 반려: the selector carried its own robot icon, so an identical glyph sat on
+  // each side of the select box. Exactly one robot may flank the selector, and it is
+  // the chip.
+  it('leaves the provider selector without an icon of its own', () => {
+    const wrapper = mountHeader()
+
+    const selector = wrapper.get('.ai-provider-selector')
+    expect(selector.findAll('.app-icon')).toHaveLength(0)
+    expect(selector.findAll('svg, img, i')).toHaveLength(0)
+
+    // The chip is the one and only icon rendered beside the select box.
+    const chip = wrapper.get('[data-test="ai-miniplayer-chip"]')
+    expect(chip.findAll('.app-icon')).toHaveLength(1)
 
     wrapper.unmount()
   })
