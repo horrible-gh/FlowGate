@@ -64,8 +64,11 @@ ul, ol { list-style: none; }
 .brand-ver  { font-size: .6rem; color: rgba(255,255,255,.3); font-weight: 400; align-self: flex-end; padding-bottom: 2px; }
 .header-spacer { flex: 1; }
 .header-nav { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+/* No icon inside: the run monitor chip immediately to its left is the group's single
+   robot glyph (0269 TR0013 rev1). Left padding is 0 so the chip and the select read as
+   one control group with no divider between them. */
 .ai-provider-selector {
-  display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 10px;
+  display: flex; align-items: center; height: 100%; padding: 0 10px 0 0;
   border-right: 1px solid rgba(255,255,255,.06); color: rgba(255,255,255,.72);
 }
 .ai-provider-selector select {
@@ -468,6 +471,10 @@ button.doc-id-badge:hover .doc-id-copy-icon { opacity: 1; }
 /* ─── Modal ─── */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.52); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(2px); }
 .modal-bg.hidden { display: none; }
+/* Reading-surface variant (document full view, 0269 NR0011 §3): starts below the app
+   header so the header's controls — the AI run monitor chip above all — stay visible and
+   clickable while a document is being read. Alert-grade modals keep the full-screen dim. */
+.modal-bg--below-header { top: var(--hdr-h); }
 .modal-box { background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--sh-lg); width: 520px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: mIn .15s ease; }
 .modal-lg { width: 720px; }
 @keyframes mIn { from { opacity: 0; transform: translateY(-8px) scale(.97); } to { opacity: 1; transform: none; } }

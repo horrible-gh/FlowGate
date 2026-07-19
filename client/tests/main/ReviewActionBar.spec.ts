@@ -729,4 +729,23 @@ describe('ReviewActionBar', () => {
       wrapper.unmount()
     }
   })
+
+  // The bar used to publish its measured height so the floating run miniplayer could park
+  // above it (TR0007 rev3). The miniplayer moved into the app header (0269 NR0011), so
+  // nothing floats over this bar any more and the bar must not leave a stray custom
+  // property behind on the document element.
+  it('no longer publishes a bottom-offset custom property', () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: { ...defaultProps, mode: 'review' },
+      global: { plugins: [i18n] },
+    })
+
+    try {
+      expect(
+        document.documentElement.style.getPropertyValue('--fg-actionbar-h'),
+      ).toBe('')
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

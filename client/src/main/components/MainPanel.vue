@@ -529,8 +529,11 @@
             </div>
           </div>
 
-          <!-- Right column: Workflow + Type Distribution -->
+          <!-- Right column: AI runs + Workflow + Type Distribution -->
           <div class="right-col">
+            <!-- AI run monitor (0269): always on the dashboard, running or not. -->
+            <AiRunMonitorCard />
+
             <!-- Workflow Status -->
             <div class="card">
               <div class="card-hd">
@@ -781,7 +784,15 @@
 
     <!-- Document Full View Modal -->
     <teleport to="body">
-      <div v-if="fullViewVisible && fullViewTab" class="modal-bg" @keydown.escape="closeFullView">
+      <!-- `modal-bg--below-header`: the full view is a reading surface, not an alert, and
+           the run monitor now lives in the header. Starting the dim below the header keeps
+           the monitor reachable while a document is being read (0269 D0002 "화면 어디에서든
+           항상"), which the full-screen dim would otherwise cover. -->
+      <div
+        v-if="fullViewVisible && fullViewTab"
+        class="modal-bg modal-bg--below-header"
+        @keydown.escape="closeFullView"
+      >
         <div class="modal-box document-modal">
           <div class="modal-hd">
             <span class="modal-title">
@@ -1101,6 +1112,7 @@ import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type Sequenc
 import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
+import AiRunMonitorCard from './AiRunMonitorCard.vue'
 import TextViewer from './TextViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'

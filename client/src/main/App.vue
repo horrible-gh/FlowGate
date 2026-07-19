@@ -4,24 +4,29 @@
   <!-- Manual-copy fallback for failed clipboard writes (B0001 / group 0221): mounted once at
        the app root because copy failures surface from many components. -->
   <ClipboardFallbackModal />
-  <!-- 실행 미니플레이어 (group 0252 D0007): mounted once at the app root so the
-       running/paused/awaiting-Q cards stay visible on every screen. -->
-  <AiInvokeMiniplayer />
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ToastContainer } from './components/common'
 import ClipboardFallbackModal from './components/ClipboardFallbackModal.vue'
-import AiInvokeMiniplayer from './components/AiInvokeMiniplayer.vue'
 import { useDocTypeStore } from './stores/docTypeStore'
 import { useProjectStore } from './stores/project'
+import { useAiInvokeRunsStore } from './stores/aiInvokeRuns'
 
 const { locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const projectStore = useProjectStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+
+// P0008 S1: one bootstrap per app mount restores running + paused + awaiting cards.
+// It lives here rather than in the miniplayer because that component now renders inside
+// AppHeader, which remounts on every route change (0269 NR0011 §4).
+onMounted(() => {
+  void aiInvokeRunsStore.bootstrap()
+})
 
 // Reload labels when locale changes
 watch(locale, (newLocale) => {

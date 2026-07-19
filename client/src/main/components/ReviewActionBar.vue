@@ -860,6 +860,9 @@ function onOutsideClick() {
   if (dropdownOpen.value) dropdownOpen.value = false
 }
 
+// The bar used to publish its measured height as --fg-actionbar-h so the floating run
+// miniplayer could park above it. The miniplayer now lives in the app header (0269
+// NR0011), so nothing floats over this bar and the measuring is gone.
 onMounted(() => {
   window.addEventListener('click', onOutsideClick)
 })
