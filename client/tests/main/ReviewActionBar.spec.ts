@@ -730,15 +730,11 @@ describe('ReviewActionBar', () => {
     }
   })
 
-  // TR0007 rev3: the run miniplayer floats in the same bottom-right corner as this bar and
-  // was covering its buttons. The bar publishes its own measured height so the miniplayer
-  // can offset itself; the value must disappear again when the bar leaves the screen,
-  // otherwise the dashboard miniplayer would float with a phantom gap.
-  it('publishes its height as --fg-actionbar-h while mounted and clears it on unmount', () => {
-    const rectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockReturnValue({ height: 61 } as DOMRect)
-
+  // The bar used to publish its measured height so the floating run miniplayer could park
+  // above it (TR0007 rev3). The miniplayer moved into the app header (0269 NR0011), so
+  // nothing floats over this bar any more and the bar must not leave a stray custom
+  // property behind on the document element.
+  it('no longer publishes a bottom-offset custom property', () => {
     const wrapper = mount(ReviewActionBar, {
       props: { ...defaultProps, mode: 'review' },
       global: { plugins: [i18n] },
@@ -747,12 +743,9 @@ describe('ReviewActionBar', () => {
     try {
       expect(
         document.documentElement.style.getPropertyValue('--fg-actionbar-h'),
-      ).toBe('61px')
+      ).toBe('')
     } finally {
       wrapper.unmount()
-      rectSpy.mockRestore()
     }
-
-    expect(document.documentElement.style.getPropertyValue('--fg-actionbar-h')).toBe('')
   })
 })

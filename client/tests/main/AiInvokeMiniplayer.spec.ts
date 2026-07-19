@@ -12,8 +12,17 @@ vi.mock('@shared/api', () => ({ getRequest, postRequest }))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 
+const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+
 function mountPlayer() {
   return mount(AiInvokeMiniplayer, { global: { plugins: [i18n] } })
+}
+
+// The monitor is a header chip whose cards live in a popover, so every card-level
+// assertion has to open it first (0269 NR0011).
+async function openPopover(wrapper: ReturnType<typeof mountPlayer>) {
+  await wrapper.find('.aiv-mini__chip').trigger('click')
+  await flushPromises()
 }
 
 describe('AiInvokeMiniplayer', () => {
@@ -21,7 +30,6 @@ describe('AiInvokeMiniplayer', () => {
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
-    localStorage.removeItem('flowgate.aiMiniplayer.collapsed')
     // bootstrap (active-all) + title/detail lookups
     getRequest.mockImplementation(async (url: string) => {
       if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
@@ -37,17 +45,79 @@ describe('AiInvokeMiniplayer', () => {
   })
 
   // 0269 재점검: with no run the monitor used to disappear entirely, so on the dashboard
-  // there was nothing to see at all. It now stays mounted as a muted idle pill.
-  it('stays visible as an idle pill while there is no run to monitor', async () => {
+  // there was nothing to see at all. It now stays as a muted chip in the header.
+  it('stays visible as a muted chip while there is no run to monitor', async () => {
     const wrapper = mountPlayer()
     await flushPromises()
     const root = wrapper.find('.aiv-mini')
     expect(root.exists()).toBe(true)
     expect(root.classes()).toContain('aiv-mini--idle')
-    expect(wrapper.text()).toContain(t('main.ai_miniplayer.idle_summary'))
-    // Idle shows the empty line instead of run cards.
+
+    const chip = wrapper.find('[data-test="ai-miniplayer-chip"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.attributes('title')).toBe(t('main.ai_miniplayer.idle_summary'))
+    // Nothing to count while idle -> no badge.
+    expect(wrapper.find('[data-test="ai-miniplayer-chip-badge"]').exists()).toBe(false)
+
+    await openPopover(wrapper)
     expect(wrapper.find('.aiv-mini__empty').text()).toBe(t('main.ai_miniplayer.empty'))
     expect(wrapper.find('.aiv-mini__card').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // CH0009 사용자 지시: "글자는 안넣어도 되니까" — the chip carries an icon and a count
+  // only. Guard against a label creeping back in and widening the header.
+  it('keeps the chip text-free and puts the summary in the tooltip', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-chip', group_id: 'flowgate.default.3010',
+      doc_ref: 'flowgate.default.3010.0001-R', mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: 'run-chip2', group_id: 'flowgate.default.3011', end_reason: 'user_paused',
+    })
+    await flushPromises()
+
+    const chip = wrapper.find('[data-test="ai-miniplayer-chip"]')
+    const summary = t('main.ai_miniplayer.fab_summary', { running: 1, waiting: 1 })
+    expect(chip.attributes('title')).toBe(summary)
+    expect(chip.attributes('aria-label')).toContain(summary)
+    // The only text inside the chip is the numeric badge — no label.
+    expect(chip.text().trim()).toBe('2')
+    wrapper.unmount()
+  })
+
+  it('toggles the popover from the chip and closes on Escape', async () => {
+    const wrapper = mountPlayer()
+    await flushPromises()
+    expect(wrapper.find('.aiv-mini__panel').exists()).toBe(false)
+
+    await openPopover(wrapper)
+    expect(wrapper.find('.aiv-mini__panel').exists()).toBe(true)
+    expect(wrapper.find('.aiv-mini__chip').attributes('aria-expanded')).toBe('true')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('.aiv-mini__panel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  // The popover hides everything while closed, so an unanswered 질의 has to be visible
+  // on the chip itself (NR0011 §5.2).
+  it('badges the chip with the awaiting-answer count', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-qb', group_id: 'flowgate.default.3012',
+      doc_ref: 'flowgate.default.3012.0001-R', mode: 'continuous',
+    })
+    store.trackQuestionRegistered('flowgate.default.3012.0005-Q')
+    await flushPromises()
+
+    const chip = wrapper.find('[data-test="ai-miniplayer-chip"]')
+    expect(chip.classes()).toContain('aiv-mini__chip--awaiting')
+    expect(wrapper.find('[data-test="ai-miniplayer-chip-badge"]').text()).toBe('1')
     wrapper.unmount()
   })
 
@@ -59,6 +129,7 @@ describe('AiInvokeMiniplayer', () => {
       doc_ref: 'flowgate.default.3000.0001-R', mode: 'single',
     })
     await flushPromises()
+    await openPopover(wrapper)
     expect(wrapper.find('.aiv-mini').classes()).not.toContain('aiv-mini--idle')
     expect(wrapper.find('.aiv-mini__empty').exists()).toBe(false)
     expect(wrapper.find('.aiv-mini__card').exists()).toBe(true)
@@ -73,6 +144,7 @@ describe('AiInvokeMiniplayer', () => {
       doc_ref: 'flowgate.default.3001.0001-R', mode: 'continuous', docs_target: 6,
     })
     await flushPromises()
+    await openPopover(wrapper)
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.btn_pause'))
 
     // Control: a single-mode card must NOT offer pause (D0007 정지 흐름).
@@ -99,6 +171,7 @@ describe('AiInvokeMiniplayer', () => {
       end_reason: 'user_paused', docs_reached: 3, docs_target: 6,
     })
     await flushPromises()
+    await openPopover(wrapper)
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.btn_resume'))
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.state_paused'))
     expect(wrapper.text()).not.toContain(t('common.close'))
@@ -114,6 +187,7 @@ describe('AiInvokeMiniplayer', () => {
     })
     store.trackQuestionRegistered('flowgate.default.3004.0005-Q')
     await flushPromises()
+    await openPopover(wrapper)
     expect(wrapper.find('.aiv-mini__card--awaiting').exists()).toBe(true)
     expect(wrapper.text()).toContain(
       t('main.ai_miniplayer.awaiting_q_badge', { count: 1 }),
@@ -122,31 +196,7 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
-  it('collapses to a FAB with the running/waiting summary', async () => {
-    const wrapper = mountPlayer()
-    const store = useAiInvokeRunsStore()
-    store.trackStarted({
-      run_id: 'run-1', group_id: 'flowgate.default.3005',
-      doc_ref: 'flowgate.default.3005.0001-R', mode: 'continuous',
-    })
-    store.trackFinished({
-      run_id: 'run-x', group_id: 'flowgate.default.3006', end_reason: 'user_paused',
-    })
-    await flushPromises()
-
-    await wrapper.find('.aiv-mini__iconbtn').trigger('click')
-    const fab = wrapper.find('.aiv-mini__fab')
-    expect(fab.exists()).toBe(true)
-    expect(fab.text()).toContain(
-      t('main.ai_miniplayer.fab_summary', { running: 1, waiting: 1 }),
-    )
-
-    await fab.trigger('click')
-    expect(wrapper.find('.aiv-mini__panel').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('opens the first pending Q from an awaiting card', async () => {
+  it('opens the first pending Q from an awaiting card and closes the popover', async () => {
     getRequest.mockImplementation(async (url: string) => {
       if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
       if (url.includes('/documents/detail')) {
@@ -168,6 +218,7 @@ describe('AiInvokeMiniplayer', () => {
     })
     store.trackQuestionRegistered('flowgate.default.3007.0006-Q')
     await flushPromises()
+    await openPopover(wrapper)
 
     const openBtn = wrapper.findAll('button').find(
       b => b.text().includes(t('main.ai_miniplayer.btn_open_doc')),
@@ -179,44 +230,40 @@ describe('AiInvokeMiniplayer', () => {
     expect(getRequest).toHaveBeenCalledWith(
       expect.stringContaining('flowgate.default.3007.0006-Q'),
     )
+    // Navigating away from the popover closes it — it must not linger over the document.
+    expect(wrapper.find('.aiv-mini__panel').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  // jsdom does not apply SFC <style> blocks, so the stacking order cannot be observed
-  // through mount(); pin the layering contract at the source level instead. The document
-  // full view dims the whole screen via the shared .modal-bg layer, and the miniplayer
-  // must stay visible above it while a document is being read (0269 D0002).
-  it('stacks above the shared modal layer so cards stay visible in document full view', () => {
-    const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
-    const sfc = read('../../src/main/components/AiInvokeMiniplayer.vue')
+  // jsdom does not apply SFC <style> blocks nor render AppHeader's layout here, so these
+  // two contracts are pinned at the source level instead.
+
+  // The document full view dims the screen with the shared .modal-bg layer. The monitor
+  // now lives in the header, so that dim has to start below the header or the chip is
+  // unreachable while a document is being read (0269 D0002 / NR0011 §3).
+  it('keeps the header reachable under the document full view overlay', () => {
+    const mainPanel = read('../../src/main/components/MainPanel.vue')
     const appCss = read('../../shared/app.css')
 
-    const mini = Number(/\.aiv-mini\s*\{[^}]*z-index:\s*(\d+)/s.exec(sfc)?.[1])
-    const modalBg = Number(/\.modal-bg\s*\{[^}]*z-index:\s*(\d+)/s.exec(appCss)?.[1])
-    const modalOverlay = Number(/\.modal-overlay\s*\{[^}]*z-index:\s*(\d+)/s.exec(appCss)?.[1])
-
-    expect(Number.isFinite(mini)).toBe(true)
-    expect(Number.isFinite(modalBg)).toBe(true)
-    expect(Number.isFinite(modalOverlay)).toBe(true)
-    expect(mini).toBeGreaterThan(modalBg)
-    expect(mini).toBeGreaterThan(modalOverlay)
+    // The full view uses the below-header variant, not the bare full-screen dim.
+    expect(mainPanel).toMatch(/class="modal-bg modal-bg--below-header"/)
+    // ...and that variant actually starts at the header height.
+    const variant = /\.modal-bg--below-header\s*\{([^}]*)\}/s.exec(appCss)?.[1] ?? ''
+    expect(variant).toContain('top: var(--hdr-h)')
   })
 
-  // Same jsdom limitation as above — assert the offset contract at the source level.
-  // The sticky action bar is fixed at bottom:0, so a plain `bottom: 18px` put the
-  // miniplayer straight on top of its buttons (TR0007 rev3 rejection). Every `bottom`
-  // declaration on .aiv-mini (base + the <=680px override) must include the bar height.
-  it('offsets its bottom by the action-bar height so it never covers the action bar', () => {
-    const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf-8')
+  // The whole point of moving into the header: overlap is impossible by structure, so no
+  // component measures another one's height any more (NR0011 §6).
+  it('positions itself in the header instead of measuring bottom-fixed UI', () => {
     const sfc = read('../../src/main/components/AiInvokeMiniplayer.vue')
-    const blocks = [...sfc.matchAll(/\.aiv-mini\s*\{([^}]*)\}/gs)].map(m => m[1])
-    const bottoms = blocks
-      .map(b => /bottom:\s*([^;]+);/.exec(b)?.[1]?.trim())
-      .filter((v): v is string => Boolean(v))
+    const actionBar = read('../../src/main/components/ReviewActionBar.vue')
 
-    expect(bottoms.length).toBeGreaterThanOrEqual(2)
-    for (const bottom of bottoms) {
-      expect(bottom).toContain('var(--fg-actionbar-h, 0px)')
-    }
+    const rootBlock = /\.aiv-mini\s*\{([^}]*)\}/s.exec(sfc)?.[1] ?? ''
+    expect(rootBlock).toContain('position: relative')
+    expect(rootBlock).not.toContain('position: fixed')
+    // The action-bar height channel is gone on both ends: nobody reads the custom
+    // property and nobody publishes it (the only remaining mention is a comment).
+    expect(sfc).not.toContain('var(--fg-actionbar-h')
+    expect(actionBar).not.toContain("setProperty('--fg-actionbar-h")
   })
 })

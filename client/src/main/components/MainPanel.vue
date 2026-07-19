@@ -784,7 +784,15 @@
 
     <!-- Document Full View Modal -->
     <teleport to="body">
-      <div v-if="fullViewVisible && fullViewTab" class="modal-bg" @keydown.escape="closeFullView">
+      <!-- `modal-bg--below-header`: the full view is a reading surface, not an alert, and
+           the run monitor now lives in the header. Starting the dim below the header keeps
+           the monitor reachable while a document is being read (0269 D0002 "화면 어디에서든
+           항상"), which the full-screen dim would otherwise cover. -->
+      <div
+        v-if="fullViewVisible && fullViewTab"
+        class="modal-bg modal-bg--below-header"
+        @keydown.escape="closeFullView"
+      >
         <div class="modal-box document-modal">
           <div class="modal-hd">
             <span class="modal-title">

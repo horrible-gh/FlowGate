@@ -1053,6 +1053,7 @@ export default {
     ai_miniplayer: {
       title: 'AI 실행',
       collapse: '접기',
+      chip_label: 'AI 실행 모니터 — {summary}',
       fab_summary: '{running} 실행 · {waiting} 대기',
       idle_summary: 'AI 실행 없음',
       empty: '진행 중인 AI 위임이 없습니다.',

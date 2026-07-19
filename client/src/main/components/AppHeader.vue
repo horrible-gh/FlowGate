@@ -38,6 +38,12 @@
       </select>
     </label>
 
+    <!-- 실행 미니플레이어 (0269 NR0011): the run monitor lives here, right beside the
+         provider selector — "어느 프로바이더로 돌릴까" next to "지금 뭐가 돌고 있나".
+         In the header it can never overlap a screen's bottom-fixed UI (chat composer,
+         sticky action bar), which the floating version kept doing. -->
+    <AiInvokeMiniplayer />
+
     <!-- Spacer -->
     <div class="header-spacer"></div>
 
@@ -95,6 +101,7 @@ import { RouterLink } from 'vue-router'
 import ProjectSelector from './ProjectSelector.vue'
 import NotificationCenter from './NotificationCenter.vue'
 import GitActionMenu from './GitActionMenu.vue'
+import AiInvokeMiniplayer from './AiInvokeMiniplayer.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'

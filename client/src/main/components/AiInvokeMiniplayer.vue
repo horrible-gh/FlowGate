@@ -1,26 +1,37 @@
 <template>
-  <!-- 실행 미니플레이어 (group 0252 D0007): bottom-right floating monitor for every run
-       the user owns. Always mounted — with no run to monitor it stays as a muted idle
-       pill so the monitor is visibly present on the dashboard and on document screens
-       instead of vanishing (0269 재점검). -->
+  <!-- 실행 미니플레이어 (group 0252 D0007 / 0269 NR0011): a header chip next to the
+       provider selector, with the run cards in a popover underneath. It lives inside the
+       header instead of floating over the screen, so overlapping a screen's bottom-fixed
+       elements (the chat composer, the sticky action bar) is structurally impossible —
+       no offset measuring anywhere. Always present: with no run to monitor the chip just
+       goes muted so the monitor never vanishes (0269 재점검). -->
   <div
+    ref="rootEl"
     class="aiv-mini"
-    :class="{ 'aiv-mini--collapsed': collapsed, 'aiv-mini--idle': idle }"
+    :class="{ 'aiv-mini--idle': idle }"
     data-test="ai-miniplayer"
   >
+    <!-- No label text on the chip (CH0009 사용자 지시) — the summary rides in the
+         tooltip/aria-label, and the count badge carries the at-a-glance signal. -->
     <button
-      v-if="collapsed"
       type="button"
-      class="aiv-mini__fab"
-      :class="{ 'aiv-mini__fab--awaiting': store.awaitingQCount > 0 }"
+      class="aiv-mini__chip"
+      :class="{ 'aiv-mini__chip--awaiting': store.awaitingQCount > 0, active: open }"
       :title="fabText"
-      @click="setCollapsed(false)"
+      :aria-label="t('main.ai_miniplayer.chip_label', { summary: fabText })"
+      :aria-expanded="open"
+      data-test="ai-miniplayer-chip"
+      @click="toggle"
     >
       <AppIcon name="robot" />
-      <span class="aiv-mini__fab-text">{{ fabText }}</span>
+      <span
+        v-if="badgeCount > 0"
+        class="aiv-mini__chip-badge"
+        data-test="ai-miniplayer-chip-badge"
+      >{{ badgeCount > 99 ? '99+' : badgeCount }}</span>
     </button>
 
-    <section v-else class="aiv-mini__panel" :aria-label="t('main.ai_miniplayer.title')">
+    <section v-if="open" class="aiv-mini__panel" :aria-label="t('main.ai_miniplayer.title')">
       <header class="aiv-mini__head">
         <span class="aiv-mini__head-title">
           <AppIcon name="robot" />
@@ -31,9 +42,9 @@
           type="button"
           class="aiv-mini__iconbtn"
           :title="t('main.ai_miniplayer.collapse')"
-          @click="setCollapsed(true)"
+          @click="open = false"
         >
-          <AppIcon name="caret-down" />
+          <AppIcon name="caret-up" />
         </button>
       </header>
 
@@ -155,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest } from '@shared/api'
@@ -167,14 +178,16 @@ import {
   type AiInvokeRunEntry,
 } from '../stores/aiInvokeRuns'
 
-const COLLAPSE_LS_KEY = 'flowgate.aiMiniplayer.collapsed'
-
 const { t } = useI18n()
 const { showToast } = useToast()
 const store = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
 
-const collapsed = ref(readCollapsed())
+// Popover state only — deliberately NOT persisted. A header popover is a transient
+// surface (like the notification bell): it opens on demand and closes on outside
+// click/Escape/navigation, so a remembered "open" would just be in the way on reload.
+const open = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
 const busy = reactive(new Set<string>())
 const titles = reactive<Record<string, string>>({})
 
@@ -193,19 +206,23 @@ const fabText = computed(() =>
       }),
 )
 
-function readCollapsed(): boolean {
-  try {
-    return localStorage.getItem(COLLAPSE_LS_KEY) === '1'
-  } catch {
-    return false
-  }
+// The closed popover hides everything, so the chip has to carry the signal on its own:
+// answers-waiting first (that's the state the user must not miss), else the live run count.
+const badgeCount = computed(() =>
+  store.awaitingQCount > 0 ? store.awaitingQCount : store.activeCount + store.pausedCount,
+)
+
+function toggle(): void {
+  open.value = !open.value
 }
 
-function setCollapsed(value: boolean): void {
-  collapsed.value = value
-  try {
-    localStorage.setItem(COLLAPSE_LS_KEY, value ? '1' : '0')
-  } catch { /* ignore quota errors */ }
+function onClickOutside(e: MouseEvent): void {
+  if (!open.value) return
+  if (rootEl.value && !rootEl.value.contains(e.target as Node)) open.value = false
+}
+
+function onKeyDown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && open.value) open.value = false
 }
 
 function cardIcon(entry: AiInvokeRunEntry): string {
@@ -309,6 +326,7 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
     const res = await getRequest<any>(`/api/v1/documents/detail?doc_id=${encodeURIComponent(docId)}`)
     const d = (res.data as any)?.data ?? res.data
     if (!d?.doc_id) return
+    open.value = false
     tabsStore.openTab({
       id: d.doc_id,
       title: d.title ?? d.doc_id,
@@ -322,9 +340,17 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
   }
 }
 
+// P0008 S1's one-shot bootstrap stays in App.vue: this component now lives in AppHeader,
+// which remounts on every route change, so bootstrapping from here would refire
+// /ai-invoke/active-all on each navigation.
 onMounted(() => {
-  // P0008 S1: one bootstrap per app mount restores running + paused + awaiting cards.
-  void store.bootstrap()
+  window.addEventListener('click', onClickOutside, true)
+  window.addEventListener('keydown', onKeyDown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('click', onClickOutside, true)
+  window.removeEventListener('keydown', onKeyDown)
 })
 
 watch(entries, list => {
@@ -335,51 +361,77 @@ watch(entries, list => {
 </script>
 
 <style scoped>
+/* Header-anchored: an inline element of the header bar, not a floating overlay. Nothing
+   here measures or dodges anything — the chip cannot overlap a screen's bottom-fixed UI
+   because it is not over the screen at all (0269 NR0011 §2). */
 .aiv-mini {
-  position: fixed;
-  right: 18px;
-  /* Park above the sticky action bar instead of covering its buttons (TR0007 rev3).
-     ReviewActionBar publishes its measured height as --fg-actionbar-h while it is
-     mounted and clears it on unmount, so screens without the bar (dashboard) keep the
-     plain 18px margin. */
-  bottom: calc(var(--fg-actionbar-h, 0px) + 18px);
-  /* Must sit above the shared .modal-bg/.modal-overlay layer (z 1000) — the document
-     full view uses it, and the cards must stay visible while a document is being read
-     there (0269 D0002 "화면 어디에서든 항상"). Kept below alert-grade dialogs
-     (ReviewReject/TimeMachine 1200, GitConflictResolver 1400) and toasts (2000). */
-  z-index: 1100;
-}
-
-.aiv-mini__fab {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border));
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: var(--sh-md, 0 8px 24px rgba(15, 23, 42, .18));
-  color: var(--text);
-  font-size: .78rem;
-  font-weight: 600;
+  height: 100%;
+  padding: 0 10px;
+  border-right: 1px solid rgba(255, 255, 255, .06);
+}
+
+/* Chip: icon + count only. It sits on the dark header, so it follows the header's
+   white-on-navy control styling rather than the light --surface tokens. */
+.aiv-mini__chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: var(--r);
+  background: rgba(255, 255, 255, .05);
+  color: rgba(255, 255, 255, .82);
   cursor: pointer;
+  transition: all var(--tr);
 }
 
-/* Idle presence: visible but quiet — no primary tint, no shadow pull. */
-.aiv-mini--idle .aiv-mini__fab,
-.aiv-mini--idle .aiv-mini__panel {
-  border-color: var(--border);
-  opacity: .72;
+.aiv-mini__chip:hover,
+.aiv-mini__chip.active {
+  background: rgba(255, 255, 255, .1);
+  border-color: rgba(255, 255, 255, .25);
+  color: white;
 }
 
-.aiv-mini--idle .aiv-mini__fab {
-  color: var(--text-m);
-  font-weight: 500;
+/* Idle presence: still there, just quiet (0269 재점검) — no badge, dimmed glyph. */
+.aiv-mini--idle .aiv-mini__chip {
+  color: rgba(255, 255, 255, .48);
 }
 
-.aiv-mini--idle:hover .aiv-mini__fab,
-.aiv-mini--idle:hover .aiv-mini__panel {
-  opacity: 1;
+.aiv-mini--idle .aiv-mini__chip:hover,
+.aiv-mini--idle .aiv-mini__chip.active {
+  color: rgba(255, 255, 255, .82);
+}
+
+/* The popover is a closing surface, so an unanswered 질의 must be visible on the chip
+   itself or it gets missed (NR0011 §5.2). */
+.aiv-mini__chip-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: white;
+  font-size: .62rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.aiv-mini__chip--awaiting {
+  border-color: color-mix(in srgb, var(--warning) 70%, transparent);
+  color: var(--warning);
+}
+
+.aiv-mini__chip--awaiting .aiv-mini__chip-badge {
+  background: var(--warning);
 }
 
 .aiv-mini__empty {
@@ -390,12 +442,13 @@ watch(entries, list => {
   text-align: center;
 }
 
-.aiv-mini__fab--awaiting {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
+/* Dropped from the chip like the notification panel; z-index only has to beat the app
+   body, never the modal layer, because the header is a peer of the screen and not
+   something that floats over it. */
 .aiv-mini__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 10px;
   display: flex;
   flex-direction: column;
   width: min(360px, calc(100vw - 36px));
@@ -403,8 +456,9 @@ watch(entries, list => {
   border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: var(--sh-md, 0 10px 30px rgba(15, 23, 42, .2));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .32);
   overflow: hidden;
+  z-index: 500;
 }
 
 .aiv-mini__head {
@@ -587,8 +641,15 @@ watch(entries, list => {
 
 @media (max-width: 680px) {
   .aiv-mini {
-    right: 10px;
-    bottom: calc(var(--fg-actionbar-h, 0px) + 10px);
+    padding: 0 6px;
+  }
+
+  /* Anchor to the right edge of the viewport-ish instead of overflowing off-screen:
+     the chip sits near the left on narrow headers, so a left-aligned 360px panel would
+     still fit, but clamp the offset so it never pokes past the window. */
+  .aiv-mini__panel {
+    left: 0;
+    max-width: calc(100vw - 12px);
   }
 }
 </style>

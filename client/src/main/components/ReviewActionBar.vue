@@ -1,5 +1,5 @@
 <template>
-  <div ref="barEl" class="sticky-footer-bar">
+  <div class="sticky-footer-bar">
     <div class="sfb-inner">
       <!-- Labels section (1 row normally; 2 rows when viewing a past doc) -->
       <div class="sfb-labels">
@@ -860,38 +860,15 @@ function onOutsideClick() {
   if (dropdownOpen.value) dropdownOpen.value = false
 }
 
-// TR0007 rev3: the action bar is fixed at bottom:0 and the run miniplayer floats in the
-// same corner, so the miniplayer used to sit right on top of the buttons. Publish this
-// bar's live height as --fg-actionbar-h so the miniplayer can park above it. Measured
-// rather than hard-coded because the bar reflows to a taller stacked layout under 760px.
-const barEl = ref<HTMLElement | null>(null)
-let barResizeObs: ResizeObserver | null = null
-
-function publishBarHeight(px: number) {
-  document.documentElement.style.setProperty('--fg-actionbar-h', `${Math.round(px)}px`)
-}
-
+// The bar used to publish its measured height as --fg-actionbar-h so the floating run
+// miniplayer could park above it. The miniplayer now lives in the app header (0269
+// NR0011), so nothing floats over this bar and the measuring is gone.
 onMounted(() => {
   window.addEventListener('click', onOutsideClick)
-  if (barEl.value) {
-    publishBarHeight(barEl.value.getBoundingClientRect().height)
-    if (typeof ResizeObserver !== 'undefined') {
-      barResizeObs = new ResizeObserver(() => {
-        // Border box, not contentRect — the bar carries a 1px top border.
-        if (barEl.value) publishBarHeight(barEl.value.getBoundingClientRect().height)
-      })
-      barResizeObs.observe(barEl.value)
-    }
-  }
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', onOutsideClick)
-  barResizeObs?.disconnect()
-  barResizeObs = null
-  // No bar on screen (dashboard, or a screen without the footer) -> miniplayer drops back
-  // to the plain bottom margin.
-  document.documentElement.style.removeProperty('--fg-actionbar-h')
 })
 </script>
 

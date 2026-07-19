@@ -1053,6 +1053,7 @@ export default {
     ai_miniplayer: {
       title: 'AI実行',
       collapse: '折りたたむ',
+      chip_label: 'AI実行モニター — {summary}',
       fab_summary: '{running} 実行 · {waiting} 待機',
       idle_summary: 'AI実行なし',
       empty: '進行中のAI委任はありません。',
