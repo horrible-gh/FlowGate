@@ -374,9 +374,13 @@ watch(entries, list => {
   padding: 0 8px 0 10px;
 }
 
-/* Chip: bare icon + count, no box. A bordered pill immediately beside the bordered
-   select box read as two competing boxes, so the chip carries no outline of its own —
-   only a hover/open wash, like the sidebar toggle. */
+/* Chip: icon + count in a quiet outline. The badge only appears once something is
+   running, so before the first click there is otherwise no signal that this is
+   clickable at all, and a bare glyph alone in the header reads as a status label
+   (0269 CH0016 → T0017). The outline is deliberately fainter than the provider
+   select beside it (.10 vs .14) and carries no fill, so it states "button" without
+   turning into a second box competing with the select. Hover/open adds a wash only —
+   emphasis stays with the run state. */
 .aiv-mini__chip {
   position: relative;
   display: inline-flex;
@@ -384,7 +388,7 @@ watch(entries, list => {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, .1);
   border-radius: var(--r);
   background: transparent;
   color: rgba(255, 255, 255, .82);
@@ -426,7 +430,9 @@ watch(entries, list => {
   text-align: center;
 }
 
-/* Borderless, so the awaiting signal rides on the glyph colour and the badge alone. */
+/* The outline stays neutral in every state — splitting static/running by border would
+   double up on a signal the badge already carries, so awaiting rides on the glyph
+   colour and the badge alone (CH0016). */
 .aiv-mini__chip--awaiting,
 .aiv-mini__chip--awaiting:hover,
 .aiv-mini__chip--awaiting.active {
