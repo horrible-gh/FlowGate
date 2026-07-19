@@ -29,6 +29,8 @@
     .\setup.ps1 -DbType mysql -DbHost db.local -DbUser flowgate -DbDatabase flowgate
     MySQL/MariaDB setup (prompts for the password if -DbPassword is omitted).
 #>
+# Windows PowerShell 5.1 (the Windows default shell) and PowerShell 7.x both work.
+#Requires -Version 5.1
 [CmdletBinding()]
 param(
     [ValidateSet('sqlite3', 'sqlite', 'local', 'mysql', 'postgres')]
@@ -202,12 +204,16 @@ if ($DbType -in 'sqlite3', 'sqlite', 'local') {
     # The DB file is created when the server first boots and runs migrations.
     # Boot it briefly in the background so the admin can be seeded right away.
     $dbFile = Join-Path $StorageDir 'flowgate.db'
+    # Storage dir goes in this scope rather than a Start-Process parameter: the
+    # -Environment parameter is PowerShell 7.4+ only and hard-fails on Windows
+    # PowerShell 5.1. Child processes inherit it, and create_dev_user.py below
+    # needs it too, whether or not we boot the server here.
+    $env:FLOWGATE_STORAGE_DIR = $StorageDir
     if (-not (Test-Path $dbFile)) {
         Write-Host '    Booting the server once to initialize the DB...'
         $proc = Start-Process -FilePath $VenvPython `
             -ArgumentList @('-m', 'uvicorn', 'routers.main:app', '--host', '127.0.0.1', '--port', "$Port") `
             -WorkingDirectory (Join-Path $Root 'server') `
-            -Environment @{ FLOWGATE_STORAGE_DIR = $StorageDir } `
             -PassThru -WindowStyle Hidden
         for ($i = 0; $i -lt 30; $i++) {
             if (Test-Path $dbFile) { break }
@@ -224,7 +230,6 @@ if ($DbType -in 'sqlite3', 'sqlite', 'local') {
             $adminPw = [System.Net.NetworkCredential]::new('', $sec).Password
         }
         # Skips automatically if the account already exists (re-run safe).
-        $env:FLOWGATE_STORAGE_DIR = $StorageDir
         & $VenvPython (Join-Path $Root 'server\create_dev_user.py') `
             --username $adminUser `
             --email "$adminUser@flowgate.local" `
