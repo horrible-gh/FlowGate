@@ -119,6 +119,31 @@ def user_exists_by_username(conn: sqlite3.Connection, username: str) -> bool:
     return conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone() is not None
 
 
+def missing_rbac_seed(conn: sqlite3.Connection) -> list[str]:
+    """Names of RBAC rows user_project_roles' foreign keys need but that are absent.
+
+    004_rbac.sql seeds them, so an empty result here means the DB was opened
+    before the migrations finished. Reporting that beats letting the INSERT
+    below fail with a bare `FOREIGN KEY constraint failed`, which names neither
+    the missing row nor the reason it is missing.
+    """
+    missing = []
+    try:
+        if conn.execute(
+            "SELECT 1 FROM projects WHERE project_id = ?", (SYSTEM_PROJECT,)
+        ).fetchone() is None:
+            missing.append(f"projects.{SYSTEM_PROJECT}")
+        for role_id in ("role_admin", "role_worker"):
+            if conn.execute(
+                "SELECT 1 FROM roles WHERE role_id = ?", (role_id,)
+            ).fetchone() is None:
+                missing.append(f"roles.{role_id}")
+    except sqlite3.OperationalError as exc:
+        # Table itself absent — migrations are even further behind.
+        missing.append(f"({exc})")
+    return missing
+
+
 def create_user(
     conn: sqlite3.Connection,
     username: str,
@@ -275,6 +300,15 @@ def main() -> None:
         candidates = [(username, email)]
     else:
         candidates = [(f"dev{i}", f"dev{i}@flowgate.local") for i in range(1, args.count + 1)]
+
+    missing = missing_rbac_seed(conn)
+    if missing:
+        print(f"\n[!] DB is not fully migrated — missing: {', '.join(missing)}")
+        print("    These rows are seeded by sql/migrations/sqlite/004_rbac.sql, which the")
+        print("    server applies on boot. Start the server, wait for migrations to finish")
+        print("    (python server/check_db_ready.py --wait 300), then re-run this command.")
+        conn.close()
+        sys.exit(1)
 
     print(f"\n🚀 Creating FlowGate test accounts (DB: {DB_PATH})")
     created, skipped = [], []

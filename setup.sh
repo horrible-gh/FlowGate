@@ -123,13 +123,12 @@ echo "==> Admin account"
 # the schema on first boot; seed the admin with your own tooling against that DB.
 case "$DB_TYPE" in
     sqlite|sqlite3|local)
-        # The DB file appears once the server boots and runs migrations. Wait for it.
+        # Wait for the migrations to finish, not merely for the file to appear:
+        # SQLite creates flowgate.db as soon as sqloader connects, well before
+        # 004_rbac.sql seeds the __SYSTEM__ project and role rows that
+        # create_dev_user.py needs (missing them => FOREIGN KEY constraint failed).
         DB_FILE="$STORAGE_DIR/flowgate.db"
-        for _ in $(seq 1 30); do
-            [[ -f "$DB_FILE" ]] && break
-            sleep 1
-        done
-        if [[ -f "$DB_FILE" ]]; then
+        if "$ROOT/.venv/bin/python" "$ROOT/server/check_db_ready.py" --db "$DB_FILE" --wait 300; then
             read -rp "Admin username [admin]: " ADMIN_USER
             ADMIN_USER="${ADMIN_USER:-admin}"
             ADMIN_PW=""
@@ -143,7 +142,7 @@ case "$DB_TYPE" in
                 --password "$ADMIN_PW" \
                 --admin || true
         else
-            echo "[!] DB not ready after 30s — create the admin account manually later:"
+            echo "[!] DB migrations did not finish — create the admin account manually later:"
             echo "    $ROOT/.venv/bin/python server/create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
         fi
         ;;

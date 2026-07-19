@@ -201,27 +201,39 @@ Write-Host '==> Admin account'
 # create_dev_user.py talks to SQLite directly. For mysql/postgres the server
 # still creates the schema on first boot; seed the admin against that DB yourself.
 if ($DbType -in 'sqlite3', 'sqlite', 'local') {
-    # The DB file is created when the server first boots and runs migrations.
-    # Boot it briefly in the background so the admin can be seeded right away.
+    # The schema is created by the server booting and running its migrations, so
+    # boot it briefly in the background to seed the admin right away.
     $dbFile = Join-Path $StorageDir 'flowgate.db'
     # Storage dir goes in this scope rather than a Start-Process parameter: the
     # -Environment parameter is PowerShell 7.4+ only and hard-fails on Windows
     # PowerShell 5.1. Child processes inherit it, and create_dev_user.py below
     # needs it too, whether or not we boot the server here.
     $env:FLOWGATE_STORAGE_DIR = $StorageDir
-    if (-not (Test-Path $dbFile)) {
-        Write-Host '    Booting the server once to initialize the DB...'
+    $readyCheck = Join-Path $Root 'server\check_db_ready.py'
+    # Readiness is "every migration committed", NOT "flowgate.db exists": SQLite
+    # creates the file the instant sqloader connects, so the old Test-Path probe
+    # returned true before 004_rbac.sql had seeded the __SYSTEM__ project and the
+    # role rows, and create_dev_user.py then died on a FOREIGN KEY violation.
+    & $VenvPython $readyCheck --db $dbFile --quiet
+    $dbReady = ($LASTEXITCODE -eq 0)
+    if (-not $dbReady) {
+        # Covers a first install (no file) and a re-run after this step failed
+        # partway, which leaves a file that exists but is only half migrated.
+        Write-Host '    Booting the server once to apply DB migrations...'
         $proc = Start-Process -FilePath $VenvPython `
             -ArgumentList @('-m', 'uvicorn', 'routers.main:app', '--host', '127.0.0.1', '--port', "$Port") `
             -WorkingDirectory (Join-Path $Root 'server') `
             -PassThru -WindowStyle Hidden
-        for ($i = 0; $i -lt 30; $i++) {
-            if (Test-Path $dbFile) { break }
-            Start-Sleep -Seconds 1
-        }
+        # Applying the full migration set takes appreciably longer than the 30s
+        # the file-existence probe needed; poll until it actually finishes.
+        & $VenvPython $readyCheck --db $dbFile --wait 300
+        $dbReady = ($LASTEXITCODE -eq 0)
+        # Windows has no clean SIGTERM for a hidden console process, but by here
+        # the migrations have either committed or timed out, so nothing that the
+        # admin bootstrap depends on is lost by force-stopping.
         if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     }
-    if (Test-Path $dbFile) {
+    if ($dbReady) {
         $adminUser = Read-Host 'Admin username (default admin)'
         if (-not $adminUser) { $adminUser = 'admin' }
         $adminPw = ''
@@ -236,7 +248,8 @@ if ($DbType -in 'sqlite3', 'sqlite', 'local') {
             --password $adminPw `
             --admin
     } else {
-        Write-Host '[!] DB not ready — create the admin account manually later:'
+        Write-Host '[!] DB migrations did not finish — create the admin account manually later'
+        Write-Host '    (start the server, let it finish migrating, then run):'
         Write-Host "    `"$VenvPython`" server\create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
     }
 } else {
