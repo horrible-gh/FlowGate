@@ -83,12 +83,27 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
             logger.warning("process kill failed for %s", proc.pid, exc_info=True)
 
 
+def _decode_candidates() -> tuple[str, ...]:
+    """Encodings to try, in order, for child-process output on this host.
+
+    On Windows the console codepage comes FIRST (0277 B0001 -> NR0003 §5 S1). cmd.exe and
+    most native tools emit the ANSI/OEM codepage (cp949, cp932, cp1252 ...), and a short
+    run of those bytes is often accidentally valid UTF-8 — trying UTF-8 first therefore
+    succeeds with mojibake rather than failing over. os.device_encoding(1) returns None
+    when stdout is redirected (which it is, whenever the server runs as a service), so
+    'mbcs' — the process ANSI codepage — is the reliable fallback.
+    """
+    if os.name == "nt":
+        return (os.device_encoding(1) or "mbcs", "utf-8")
+    return ("utf-8", os.device_encoding(1) or "mbcs")
+
+
 def safe_decode(data) -> str:
     if data is None:
         return ""
     if isinstance(data, str):
         return data
-    for enc in ("utf-8", os.device_encoding(1) or "mbcs"):
+    for enc in _decode_candidates():
         try:
             return data.decode(enc)
         except Exception:

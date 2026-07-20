@@ -26,6 +26,7 @@ from modules.flow_gate.services import (
     token_service,
     test_command_service,
     engine_recipe_service,
+    process_runner,
 )
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -1038,9 +1039,18 @@ def _scratch_dir(doc: dict, run_id: str) -> Path:
 
 
 def _execution_env(port: int, scratch: Path) -> dict[str, str]:
+    """Env every setup/case/teardown command sees.
+
+    FLOWGATE_TEST_OS / FLOWGATE_TEST_SHELL (0277 B0001 -> NR0003 §4 F3) let a TS branch at
+    run time instead of guessing the host: the same cmd string is handed to cmd.exe on
+    Windows and /bin/sh on POSIX, and until these existed a TS had no way to tell which.
+    Additive — existing TS documents are unaffected.
+    """
     return {
         "FLOWGATE_TEST_PORT": str(port),
         "FLOWGATE_TEST_SCRATCH": str(scratch),
+        "FLOWGATE_TEST_OS": test_command_service.current_os(),
+        "FLOWGATE_TEST_SHELL": test_command_service.current_shell(),
     }
 
 
@@ -1123,16 +1133,7 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
 
 
 def _safe_decode(data) -> str:
-    if data is None:
-        return ""
-    if isinstance(data, str):
-        return data
-    for enc in ("utf-8", os.device_encoding(1) or "mbcs"):
-        try:
-            return data.decode(enc)
-        except Exception:
-            continue
-    return data.decode("utf-8", errors="replace")
+    return process_runner.safe_decode(data)
 
 
 def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
