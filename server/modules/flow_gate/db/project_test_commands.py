@@ -50,14 +50,19 @@ def insert(
     origin: str,
     last_success_at: Optional[str],
     status: str = "active",
+    verified_os: Optional[str] = None,
 ) -> dict:
-    """Insert a new row and return it (INSERT + last_insert_rowid() share one connection)."""
+    """Insert a new row and return it (INSERT + last_insert_rowid() share one connection).
+
+    `verified_os` is the os.name of the host where a remote test run last passed this
+    command ('nt' | 'posix'); None means no OS evidence (manual entries, legacy rows).
+    """
     store = get_store()
     now = now_iso()
     with store.transaction() as s:
         s._execute(
             store._sql("test_commands.insert"),
-            [project, command, description, origin, status, last_success_at, now, now],
+            [project, command, description, origin, status, last_success_at, verified_os, now, now],
         )
         row = s._fetch_one("SELECT last_insert_rowid() AS rid")
         new_id = row["rid"] if row else None
@@ -68,7 +73,8 @@ def update_row(project: str, command_id: int, updates: dict) -> Optional[dict]:
     """Read-modify-write the mutable column set; return the updated row, or None if absent.
 
     `updates` may carry any subset of
-    {command, description, origin, status, last_success_at}; unspecified fields keep their value.
+    {command, description, origin, status, last_success_at, verified_os}; unspecified fields
+    keep their value.
     """
     store = get_store()
     current = get_by_id(project, command_id)
@@ -79,8 +85,10 @@ def update_row(project: str, command_id: int, updates: dict) -> Optional[dict]:
     origin = updates.get("origin", current["origin"])
     status = updates.get("status", current["status"])
     last_success_at = updates.get("last_success_at", current["last_success_at"])
+    verified_os = updates.get("verified_os", current.get("verified_os"))
     store._execute(
         store._sql("test_commands.update_row"),
-        [command, description, origin, status, last_success_at, now_iso(), project, command_id],
+        [command, description, origin, status, last_success_at, verified_os,
+         now_iso(), project, command_id],
     )
     return get_by_id(project, command_id)

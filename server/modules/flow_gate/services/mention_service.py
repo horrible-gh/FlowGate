@@ -519,6 +519,7 @@ _TS_AUTHORING_TYPES = {"TS"}
 
 
 def _ts_authoring_section() -> str:
+    host_os = test_command_service.current_os()
     body = (
         "Write this TS as an executable spec. FlowGate runs it remotely from the project\n"
         "source root — do NOT assume any locally-running service. Use three H2 sections in\n"
@@ -539,7 +540,8 @@ def _ts_authoring_section() -> str:
         "Limits: at most 50 cases, 20 setup/teardown steps, 5 services. Verdict is exit-0 only.\n\n"
         "Framework-agnostic: the ONLY verdict is the process exit code (0 = pass). Any\n"
         "runner works — pytest, `npm test`, `npx vitest run`, `go test`, `cargo test`, a bare\n"
-        "shell script. This is NOT Python-only; pick whatever matches the code under test.\n\n"
+        "script. This is NOT Python-only; pick whatever matches the code under test.\n\n"
+        + _ts_host_shell_guidance(host_os) +
         "Because cmd runs at the SOURCE ROOT, cd into the subproject first. Example — the\n"
         "frontend Vitest suite (lives in client/, config at client/vitest.config.ts):\n\n"
         "## 테스트 준비\n"
@@ -548,10 +550,47 @@ def _ts_authoring_section() -> str:
         "### TC-1: frontend unit suite is green\n"
         "- cmd: cd client && npm test             # == `vitest run`; PASS iff exit 0\n"
         "- 기대: all Vitest specs pass (exit 0)\n\n"
+        "(`cd X && <runner>` is the one chaining form that works on both cmd.exe and /bin/sh,\n"
+        "which is why the example uses it.)\n\n"
         "Node/npm must be on the FlowGate host PATH for JS runners; a fresh source tree has\n"
         "no node_modules, so the install setup step above is required."
     )
     return _section("Test scenario authoring (TS)", body)
+
+
+# Host-shell guidance (flowgate.default.0277 B0001 -> NR0003 §4 F1).
+# Every cmd is spawned with shell=True, so it is interpreted by %COMSPEC% (cmd.exe) on
+# Windows and /bin/sh on POSIX. The guide never said which, so workers defaulted to POSIX
+# and their commands failed outright once FlowGate moved to a Windows host. State the
+# actual host shell and name the idioms that do not survive it.
+_TS_WINDOWS_SHELL_GUIDANCE = (
+    "HOST SHELL — this FlowGate host is WINDOWS (os.name=nt). Every cmd is interpreted by\n"
+    "cmd.exe, NOT /bin/sh. POSIX-only syntax fails here. Do NOT use: rm -rf (use `rmdir /s /q`\n"
+    "or `del /q`), ls, cat, grep, touch, which, `export VAR=x` (use `set VAR=x`), `$VAR`\n"
+    "(use `%VAR%`), `$(cmd)` substitution, single-quoted 'strings' (cmd.exe does not strip\n"
+    "them — use double quotes), `2>/dev/null` (use `2>nul`), `&&`-chained `source`/`.`, and\n"
+    "`/`-rooted absolute paths. Portable alternatives are preferred where they exist: `&&`\n"
+    "chaining, `cd`, and any language-level runner (python -m pytest, npm test, go test)\n"
+    "behave the same on both platforms — reach for those before writing shell-specific code.\n"
+    "If a step genuinely needs POSIX semantics, write it as a script in the repo and invoke\n"
+    "it through an interpreter that is on PATH (e.g. `python tools/check.py`) rather than\n"
+    "inlining shell builtins.\n\n"
+)
+
+_TS_POSIX_SHELL_GUIDANCE = (
+    "HOST SHELL — this FlowGate host is POSIX (os.name=posix). Every cmd is interpreted by\n"
+    "/bin/sh (NOT bash): avoid bashisms such as [[ ]], arrays, and `source` (use `.`).\n"
+    "Windows-only syntax (%VAR%, `set VAR=x`, backslash paths, `2>nul`) will not work.\n"
+    "Prefer language-level runners (python -m pytest, npm test, go test) over shell builtins —\n"
+    "they keep the TS portable if this project is ever moved to a Windows host.\n\n"
+)
+
+
+def _ts_host_shell_guidance(host_os: str) -> str:
+    """The shell-specific do/don't block, chosen from the host FlowGate actually runs on."""
+    if host_os == test_command_service.OS_WINDOWS:
+        return _TS_WINDOWS_SHELL_GUIDANCE
+    return _TS_POSIX_SHELL_GUIDANCE
 
 
 # ── N/T instruction authoring (group 0230 R0001 / T0005 WI-7) ────────────────────
