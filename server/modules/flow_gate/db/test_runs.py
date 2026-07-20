@@ -144,6 +144,19 @@ def set_run_port(run_id: str, port: int) -> None:
     )
 
 
+def set_run_source_root(run_id: str, source_root: str, source_root_kind: str) -> None:
+    """Record the tree this run actually executed in (0280 NR0003 §6-2).
+
+    *source_root* is storage-root-relative; *source_root_kind* is 'worktree' or the
+    reason the run fell back to the base project-branch tree. Written once, right
+    after resolution, so the evidence exists even if the run later dies mid-way.
+    """
+    get_store()._execute(
+        "UPDATE test_runs SET source_root = ?, source_root_kind = ? WHERE run_id = ?",
+        [source_root, source_root_kind, run_id],
+    )
+
+
 def finish_run(
     *,
     run_id: str,

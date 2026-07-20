@@ -144,7 +144,16 @@ def resolve_project_src_root(
             if wt is not None:
                 return wt
         except Exception:
-            pass  # worktree resolution must never break the fallback path
+            # 0280 NR0003 §4-B: worktree resolution must never break the fallback
+            # path — but swallowing it silently made a git-integrated group run in
+            # base(main) with no trace anywhere. Fall back loudly.
+            _log.warning(
+                "worktree resolution failed for group %s (project %s) — falling back "
+                "to the base project-branch tree",
+                group_id,
+                project_id,
+                exc_info=True,
+            )
     try:
         from modules.flow_gate.db import projects as _proj  # lazy — import cycle
     except Exception:
@@ -166,6 +175,39 @@ def resolve_project_src_root(
         if configured:
             branch = configured
     return src_root(project_name, branch).resolve()
+
+
+def classify_src_root(
+    project_id: Optional[str],
+    group_id: Optional[str],
+    root: Optional[Path],
+) -> str:
+    """Classify an *already resolved* src root into a ``SRC_ROOT_*`` kind.
+
+    0280 NR0003 §6-2: callers persist and display the root they actually used, so
+    a "the tests ran in main" report becomes checkable instead of arguable. Kind is
+    ``git_service.SRC_ROOT_WORKTREE`` when *root* is the group's worktree, else the
+    ``SRC_ROOT_*`` reason the worktree was skipped.
+
+    Deliberately classifies the root it is *given* rather than re-deriving it: when
+    the two disagree (a test double, a caller that resolved elsewhere) the answer is
+    ``"unknown"``, never a confident lie. Never raises — bookkeeping must not be able
+    to fail a run.
+    """
+    if root is None:
+        return "unknown"
+    try:
+        from modules.flow_gate.services import git_service  # lazy — import cycle
+
+        wt, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if wt is not None and Path(root).resolve(strict=False) != wt:
+            return "unknown"
+        return reason
+    except Exception:
+        _log.warning(
+            "src_root classification failed for group %s", group_id, exc_info=True
+        )
+        return "unknown"
 
 
 def project_root(
