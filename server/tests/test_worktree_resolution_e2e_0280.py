@@ -378,14 +378,20 @@ class TestWorktreeResolution:
 
 @needs_git
 class TestReleasedWorktree:
-    def test_released_worktree_falls_back_to_base_with_a_named_reason(self, worktree):
-        """Merging releases the worktree; a re-run then silently moves to base.
+    def test_released_worktree_still_resolves_while_its_dir_survives(self, worktree):
+        """0284 T0005: clearing the ledger flag must NOT silently move a re-run to base.
 
-        The fallback itself is intended (the tree may be gone). What T0005 changed is
-        that it is now named, so the next report can be settled instead of argued.
+        Merge/push cleanup resets worktree_registered=0 (unregister_worktree). Before
+        0284 that alone dropped the re-run to the base(main) tree even though the group's
+        branch worktree was still on disk — the "re-run hazard" that made every
+        post-merge fix-verification run against a tree lacking the fix (B0001 / NR0003
+        §4). resolve_project_src_root now recovers the on-disk worktree; only a genuinely
+        pruned directory falls back. The low-level ledger fact stays truthful for
+        observability — effective_src_root_ex still reports worktree_unregistered.
         """
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage import paths as storage_paths
         from modules.flow_gate.storage.paths import resolve_project_src_root
 
         before = resolve_project_src_root(PROJECT_ID, "main", group_id=GROUP)
@@ -396,10 +402,13 @@ class TestReleasedWorktree:
             after = resolve_project_src_root(PROJECT_ID, "main", group_id=GROUP)
             path, reason = svc.effective_src_root_ex(PROJECT_ID, GROUP)
 
-            # The directory still exists, so this is NOT a vanished-tree fallback —
-            # the ledger flag alone moved the run to base. That is the re-run hazard.
+            # The directory still exists → recover it instead of dropping to base.
             assert worktree["worktree"].is_dir()
-            assert after == worktree["base"].resolve()
+            assert after == worktree["worktree"]
+            assert after != worktree["base"].resolve()
+            # A run recovered this way is classified by the tree it used, not the flag.
+            assert storage_paths.classify_src_root(PROJECT_ID, GROUP, after) == "worktree"
+            # effective_src_root_ex still reports the raw ledger truth for observability.
             assert path is None
             assert reason == "worktree_unregistered"
         finally:
