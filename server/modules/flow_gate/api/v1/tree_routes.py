@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 from urllib.parse import quote
 
+import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
@@ -40,8 +41,13 @@ class SrcDeleteRequest(BaseModel):
     group_id: str | None = None
 
 
+# 0275 T0005 (NR0003 원인 2): these handlers do sync DB/filesystem work, so they
+# must be plain `def` — FastAPI then runs them in the threadpool instead of on
+# the event loop, where a slow tree load froze every in-flight request (SSE
+# heartbeats included). Only group_dispose stays async (it awaits the SSE
+# broadcast) and pushes its sync work through anyio.to_thread.
 @router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
-async def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
     """Return the file tree for the project."""
     tree = process_service.get_file_tree(project_id)
     return {"data": tree}
@@ -96,7 +102,7 @@ def _resolve_delete_path(project_id: str, path: str):
 
 
 @router.api_route("/projects/{project_id}/files/src-content", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-async def get_src_file_content(request: Request, project_id: str, path: str = Query(..., description="relative path from docs_root")):
+def get_src_file_content(request: Request, project_id: str, path: str = Query(..., description="relative path from docs_root")):
     """Return the content of a src-tree file as UTF-8 text.
     For HEAD requests, return only the Content-Length header (for file size checks).
     """
@@ -113,7 +119,7 @@ async def get_src_file_content(request: Request, project_id: str, path: str = Qu
 
 
 @router.patch("/projects/{project_id}/files/src-content", response_class=JSONResponse)
-async def update_src_file_content(
+def update_src_file_content(
     project_id: str,
     body: SrcContentUpdate,
     path: str = Query(..., description="relative path from docs_root"),
@@ -138,7 +144,7 @@ async def update_src_file_content(
 
 
 @router.delete("/projects/{project_id}/files", response_class=JSONResponse)
-async def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
+def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     """Delete one file or directory from the editable base checkout."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
@@ -175,7 +181,7 @@ async def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequ
 
 
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
-async def get_groups_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+def get_groups_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
     """Return the group tree for the project."""
     tree = process_service.get_group_tree(project_id)
     return {"data": tree}
@@ -190,10 +196,12 @@ async def group_dispose(request: Request, group_id: str):
         body = {}
     reason_option = str(body.get("reason_option", "")).strip()
     reason_detail = str(body.get("reason_detail", "")).strip()
-    result = process_service.dispose_group(
-        group_id,
-        reason_option=reason_option,
-        reason_detail=reason_detail,
+    result = await anyio.to_thread.run_sync(
+        lambda: process_service.dispose_group(
+            group_id,
+            reason_option=reason_option,
+            reason_detail=reason_detail,
+        )
     )
     # TR0079.0003 (rework): a group disposal must propagate over SSE so already-open
     # clients react immediately — without it the only refresh was the disposing user's
@@ -213,7 +221,9 @@ async def group_dispose(request: Request, group_id: str):
         # by contract: disposal has already succeeded and a git failure must not undo it.
         try:
             from modules.flow_gate.services import git_service
-            git_service.cleanup_disposed_group(result.get("project") or "", group_id)
+            await anyio.to_thread.run_sync(
+                lambda: git_service.cleanup_disposed_group(result.get("project") or "", group_id)
+            )
         except Exception:
             pass
         try:
@@ -290,7 +300,7 @@ def _check_project_auth(request: Request, project_id: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/projects/{project_id}/files/download")
-async def download_file(
+def download_file(
     request: Request,
     project_id: str,
     path: str = Query(..., description="relative path from project root (POSIX '/' separator)"),
@@ -333,7 +343,7 @@ async def download_file(
 # ---------------------------------------------------------------------------
 
 @router.get("/projects/{project_id}/files/download-zip")
-async def download_zip(
+def download_zip(
     request: Request,
     project_id: str,
     path: str = Query(..., description="relative path from project root to the directory to compress"),

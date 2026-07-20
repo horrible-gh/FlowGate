@@ -29,14 +29,39 @@ def _listen_port() -> int:
         return 8089
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[stg] ignoring invalid {name}={raw!r}; using {default}", file=sys.stderr)
+        return default
+
+
 if __name__ == "__main__":
     import uvicorn
-    # reload=True per staging request; import-string form required for reload.
+    # 0275 T0007 (NR0003 원인 5): reload=True ran the dev file-watcher in
+    # production — deploy/flowgate.service runs this file. Reload is now opt-in
+    # (FLOWGATE_RELOAD=true for dev; import-string form kept so it still works)
+    # and the worker count is configurable via FLOWGATE_WORKERS. Keep workers=1
+    # while SSE matters: the publisher is in-process, so events from one worker
+    # never reach subscribers on another. uvicorn ignores workers under reload.
     # timeout_graceful_shutdown: backstop so any stuck in-flight request (e.g. a
     # long-lived SSE stream) cannot block shutdown indefinitely (group 0102 R0001).
     uvicorn.run(
         "routers.main:app",
         host=(os.environ.get("FLOWGATE_BIND_HOST") or "0.0.0.0").strip(),
         port=_listen_port(),
-        reload=True, timeout_graceful_shutdown=3,
+        reload=_env_flag("FLOWGATE_RELOAD", False),
+        workers=_env_int("FLOWGATE_WORKERS", 1),
+        timeout_graceful_shutdown=3,
     )

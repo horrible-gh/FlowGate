@@ -733,6 +733,33 @@ def get_docs_for_tree_by_group(group_id: str) -> list[dict]:
     )
 
 
+def get_docs_for_tree_by_groups(group_ids: list) -> dict[str, list[dict]]:
+    """Return tree documents for many groups at once, keyed by group_id.
+
+    Batch counterpart of get_docs_for_tree_by_group() (0275 NR0003 원인 3: the
+    group tree issued one query per group). Preserves the per-group
+    ORDER BY doc_id DESC ordering. Chunked to stay under SQLite's historical
+    999 bind-variable limit.
+    """
+    result: dict[str, list[dict]] = {gid: [] for gid in group_ids}
+    if not group_ids:
+        return result
+    store = get_store()
+    gids = list(group_ids)
+    chunk_size = 900
+    for i in range(0, len(gids), chunk_size):
+        chunk = gids[i:i + chunk_size]
+        placeholders = ",".join(["?"] * len(chunk))
+        rows = store._fetch_all(
+            f"SELECT * FROM documents WHERE group_id IN ({placeholders})"
+            f" ORDER BY group_id, doc_id DESC",
+            chunk,
+        )
+        for row in rows:
+            result.setdefault(row["group_id"], []).append(row)
+    return result
+
+
 def get_orphan_docs_for_tree(project_id: str, known_group_ids: list) -> list[dict]:
     store = get_store()
     if known_group_ids:

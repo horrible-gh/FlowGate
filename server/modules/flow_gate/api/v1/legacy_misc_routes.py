@@ -36,23 +36,26 @@ from modules.flow_gate import service, process_service
 router = APIRouter(prefix="/api/v1", tags=["LegacyMisc"])
 
 
+# 0275 T0005 (NR0003 원인 2): handlers doing sync DB work are plain `def` so
+# FastAPI runs them in the threadpool instead of blocking the event loop. The
+# ones that `await request.json()` stay async.
 @router.get("/brief", response_class=JSONResponse)
-async def api_brief():
+def api_brief():
     return service.envelope("brief", service.get_brief())
 
 
 @router.get("/queue", response_class=JSONResponse)
-async def api_queue():
+def api_queue():
     return service.envelope("queue", service.build_action_queue())
 
 
 @router.get("/draft", response_class=JSONResponse)
-async def api_draft_rpc(doc_id: str = Query(...)):
-    return await api_draft(doc_id)
+def api_draft_rpc(doc_id: str = Query(...)):
+    return api_draft(doc_id)
 
 
 @router.get("/draft/{doc_id:path}", response_class=JSONResponse)
-async def api_draft(doc_id: str):
+def api_draft(doc_id: str):
     draft = service.build_worker_draft(doc_id)
     if draft is None:
         return JSONResponse(
@@ -63,12 +66,12 @@ async def api_draft(doc_id: str):
 
 
 @router.get("/detail", response_class=JSONResponse)
-async def api_detail_rpc(doc_id: str = Query(...)):
-    return await api_detail(doc_id)
+def api_detail_rpc(doc_id: str = Query(...)):
+    return api_detail(doc_id)
 
 
 @router.get("/detail/{doc_id:path}", response_class=JSONResponse)
-async def api_detail(doc_id: str):
+def api_detail(doc_id: str):
     detail = service.get_document_detail(doc_id)
     if detail is None:
         return JSONResponse(
@@ -79,14 +82,14 @@ async def api_detail(doc_id: str):
 
 
 @router.get("/projects", response_class=JSONResponse)
-async def api_projects():
+def api_projects():
     """Return projects and modules as JSON."""
     projects = process_service.get_projects_with_modules()
     return {"projects": projects}
 
 
 @router.get("/groups/{group_id}", response_class=JSONResponse)
-async def api_get_group(group_id: str):
+def api_get_group(group_id: str):
     """Retrieve single group (JSON)."""
     group = _db.get_group(group_id)
     if group is None:
@@ -140,7 +143,7 @@ async def api_clipboard(request: Request):
 # ── T394: Transfer remaining /flow_gate/ items ──────────────────────────────────────────────
 
 @router.post("/outbox/create", response_class=JSONResponse)
-async def api_outbox_create(
+def api_outbox_create(
     request: Request,
     project: str = Form(...),
     module: str = Form(""),

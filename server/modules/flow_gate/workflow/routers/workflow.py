@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+import anyio.to_thread
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -362,8 +364,12 @@ async def document_review_transition_rpc(
                 }},
             )
         try:
-            group_id = git_service.precheck_approve_git_action(
-                db_docs.get_by_id(body.doc_id), git_action
+            # 0275 T0007 (NR0003 원인 2): the git precheck/finalize run sync
+            # subprocess + DB work — keep them off the event loop.
+            group_id = await anyio.to_thread.run_sync(
+                lambda: git_service.precheck_approve_git_action(
+                    db_docs.get_by_id(body.doc_id), git_action
+                )
             )
         except GitServiceError as exc:
             return JSONResponse(
@@ -379,12 +385,16 @@ async def document_review_transition_rpc(
     )
 
     if git_action is not None and group_id:
-        response["git"] = git_service.run_approve_git_action(group_id, git_action)
+        response["git"] = await anyio.to_thread.run_sync(
+            lambda: git_service.run_approve_git_action(group_id, git_action)
+        )
     return response
 
 
+# 0275 T0007 (NR0003 원인 2): sync DB/git work only — plain `def` runs in the
+# threadpool instead of blocking the event loop.
 @router.post("/documents/workflow/finalize")
-async def finalize_workflow_endpoint(
+def finalize_workflow_endpoint(
     body: DocumentBodyRequest,
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -525,52 +535,61 @@ async def document_review_transition_endpoint(
     Permission: approve → document.approve, reject → document.reject, mark_revised → document.update
     M026 §8-1.
     """
-    user_permissions = _get_user_permissions(current_user)
+    # 0275 T0007 (NR0003 원인 2): the transition + AC cascade are sync DB/git
+    # work — run them in the threadpool so a slow transition cannot stall the
+    # event loop. Only the SSE broadcast below needs the loop; HTTPExceptions
+    # raised inside the closure propagate unchanged through run_sync.
+    def _transition_sync():
+        user_permissions = _get_user_permissions(current_user)
 
-    # Capture the pre-transition state for SSE emission
-    prev_doc = db_docs.get_by_id(doc_id)
-    prev_review_status = prev_doc.get("doc_review_status") if prev_doc else None
+        # Capture the pre-transition state for SSE emission
+        prev_doc = db_docs.get_by_id(doc_id)
+        prev_review_status = prev_doc.get("doc_review_status") if prev_doc else None
 
-    _guard_group_not_disposed(prev_doc, doc_id)
+        _guard_group_not_disposed(prev_doc, doc_id)
 
-    try:
-        result = transition_document_review(
-            doc_id=doc_id,
-            action=action,
-            actor_user_id=current_user["user_id"],
-            user_permissions=user_permissions,
-            comment=body.comment,
-        )
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = 404 if "not found" in detail else 400
-        raise HTTPException(status_code=status_code, detail=detail)
-    except WFPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    except TransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # AC (final approval) approval finalizes the group's R/B workflow (wf_done).
-    if action == "approve" and (result or {}).get("type_code") == "AC":
         try:
-            project_id = result.get("project_id")
-            group_id = result.get("group_id")
-            if project_id and group_id:
-                group_docs = db_docs.list_documents(
-                    project_id=project_id, group_id=group_id, limit=200
-                )
-                roots = [item for item in group_docs if item.get("type_code") in {"R", "B"}]
-                roots.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
-                if roots:
-                    db_docs.update(roots[0]["doc_id"], {"doc_review_status": "wf_done"})
-                    # 0177 NR0016 §3: realize the git none→awaiting_choice transition
-                    # NOW so the header badge SSE (git_pending_changed) fires at
-                    # approval time instead of on the next status query. Never raises.
-                    git_service.realize_wf_done_transition(group_id)
-        except Exception:
-            pass
+            result = transition_document_review(
+                doc_id=doc_id,
+                action=action,
+                actor_user_id=current_user["user_id"],
+                user_permissions=user_permissions,
+                comment=body.comment,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if "not found" in detail else 400
+            raise HTTPException(status_code=status_code, detail=detail)
+        except WFPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except TransitionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        # AC (final approval) approval finalizes the group's R/B workflow (wf_done).
+        if action == "approve" and (result or {}).get("type_code") == "AC":
+            try:
+                project_id = result.get("project_id")
+                group_id = result.get("group_id")
+                if project_id and group_id:
+                    group_docs = db_docs.list_documents(
+                        project_id=project_id, group_id=group_id, limit=200
+                    )
+                    roots = [item for item in group_docs if item.get("type_code") in {"R", "B"}]
+                    roots.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
+                    if roots:
+                        db_docs.update(roots[0]["doc_id"], {"doc_review_status": "wf_done"})
+                        # 0177 NR0016 §3: realize the git none→awaiting_choice transition
+                        # NOW so the header badge SSE (git_pending_changed) fires at
+                        # approval time instead of on the next status query. Never raises.
+                        git_service.realize_wf_done_transition(group_id)
+            except Exception:
+                pass
+
+        return prev_review_status, result
+
+    prev_review_status, result = await anyio.to_thread.run_sync(_transition_sync)
 
     # SSE broadcast (M026 §8-1 Phase 5-C)
     try:
@@ -658,56 +677,65 @@ async def register_document_result_endpoint(
     from modules.flow_gate.db.connection import now_iso as _now_iso
     from modules.flow_gate.db import workflow_sequences as _db_wseq
 
-    user_permissions = _get_user_permissions(current_user)
-    if "document.update" not in user_permissions and "own.draft" not in user_permissions:
-        raise HTTPException(status_code=403, detail="document.update or own.draft permission required.")
+    # 0275 T0007 (NR0003 원인 2): permission check, result registration and the
+    # auto submit transition are sync DB work — run them in the threadpool so
+    # they cannot stall the event loop. Only the SSE broadcast below needs the
+    # loop; HTTPExceptions raised inside the closure propagate through run_sync.
+    def _register_sync():
+        user_permissions = _get_user_permissions(current_user)
+        if "document.update" not in user_permissions and "own.draft" not in user_permissions:
+            raise HTTPException(status_code=403, detail="document.update or own.draft permission required.")
 
-    doc = db_docs.get_by_id(doc_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+        doc = db_docs.get_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
-    # TR0079.0003 rework (6th pass): register_result mutates the document
-    # (register_workflow_result + rejected->revised transition). A disposed (DC)
-    # group must not accept result re-registration that flips review_status. This
-    # endpoint lives in workflow.py, so documents.py's _reject_if_group_disposed
-    # never covered it — the exact gap the review flagged. Fails open for live groups.
-    _guard_group_not_disposed(doc, doc_id)
+        # TR0079.0003 rework (6th pass): register_result mutates the document
+        # (register_workflow_result + rejected->revised transition). A disposed (DC)
+        # group must not accept result re-registration that flips review_status. This
+        # endpoint lives in workflow.py, so documents.py's _reject_if_group_disposed
+        # never covered it — the exact gap the review flagged. Fails open for live groups.
+        _guard_group_not_disposed(doc, doc_id)
 
-    # Look up the workflow sequence and head item (item_id required)
-    seq = _db_wseq.get_sequence_by_doc_id(doc_id)
-    if not seq:
-        raise HTTPException(status_code=404, detail="Workflow sequence not found.")
-    head_item = _db_wseq.get_effective_head(seq["id"])
-    if not head_item:
-        raise HTTPException(status_code=404, detail="Workflow head item not found.")
+        # Look up the workflow sequence and head item (item_id required)
+        seq = _db_wseq.get_sequence_by_doc_id(doc_id)
+        if not seq:
+            raise HTTPException(status_code=404, detail="Workflow sequence not found.")
+        head_item = _db_wseq.get_effective_head(seq["id"])
+        if not head_item:
+            raise HTTPException(status_code=404, detail="Workflow head item not found.")
 
-    prev_review_status = doc.get("doc_review_status")
-    result = register_workflow_result(
-        item_id=head_item["id"],
-        registered_path=doc.get("file_path") or "",
-        registered_doc_id=doc_id,
-        registered_at=_now_iso(),
-        actor_user_id=current_user["user_id"],
-    )
-
-    # DB004 §6.1: route doc_review_status transitions through
-    # transition_document_review() (single writer)
-    next_review_status = prev_review_status
-    try:
-        _updated = transition_document_review(
-            doc_id=doc_id,
-            action="submit",
+        prev_review_status = doc.get("doc_review_status")
+        result = register_workflow_result(
+            item_id=head_item["id"],
+            registered_path=doc.get("file_path") or "",
+            registered_doc_id=doc_id,
+            registered_at=_now_iso(),
             actor_user_id=current_user["user_id"],
-            user_permissions=user_permissions,
         )
-        if _updated:
-            next_review_status = _updated.get("doc_review_status", prev_review_status)
-    except TransitionError:
-        # submit transition not needed in the current state
-        # (pending_review/revised, etc.) — normal path
-        pass
-    except Exception:
-        pass
+
+        # DB004 §6.1: route doc_review_status transitions through
+        # transition_document_review() (single writer)
+        next_review_status = prev_review_status
+        try:
+            _updated = transition_document_review(
+                doc_id=doc_id,
+                action="submit",
+                actor_user_id=current_user["user_id"],
+                user_permissions=user_permissions,
+            )
+            if _updated:
+                next_review_status = _updated.get("doc_review_status", prev_review_status)
+        except TransitionError:
+            # submit transition not needed in the current state
+            # (pending_review/revised, etc.) — normal path
+            pass
+        except Exception:
+            pass
+
+        return doc, prev_review_status, next_review_status, result
+
+    doc, prev_review_status, next_review_status, result = await anyio.to_thread.run_sync(_register_sync)
 
     # Broadcast SSE when an automatic transition occurs
     if next_review_status != prev_review_status:

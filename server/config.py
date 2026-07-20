@@ -81,6 +81,19 @@ class Settings(BaseSettings):
     FLOWGATE_PORT: int = 8089
     FLOWGATE_BIND_HOST: str = "0.0.0.0"
 
+    # 0275 T0007 (NR0003 원인 5): stg.py launch knobs. Reload is dev-only (the
+    # file-watcher used to run unconditionally in production); keep workers at 1
+    # while SSE matters — the publisher is in-process and does not span workers.
+    # Declared for the same extra_forbidden reason as FLOWGATE_PORT above;
+    # stg.py reads them from the environment after load_dotenv().
+    FLOWGATE_RELOAD: bool = False
+    FLOWGATE_WORKERS: int = 1
+
+    # 0275 T0007 (NR0003 원인 5): run schema migrations + backfill scan at every
+    # boot. Set false on remote-DB deployments where boot latency matters and
+    # migrations are applied at deploy time instead.
+    AUTO_MIGRATION: bool = True
+
     # Group 0235 D0005 §3-4 / L0008 §2-5: submission base for the EXTERNAL AGENT
     # (CLI provider) inbox POST. Origin only (scheme://host[:port]); the server
     # appends CONTEXT + /api/v1. When unset, the agent api base is derived by
@@ -166,7 +179,7 @@ class DatabaseSetting:
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
-                    "auto_migration": True,
+                    "auto_migration": settings.AUTO_MIGRATION,
                     "migration_path": MIGRATION_PATHS + "/mysql"
                 },
             }
@@ -189,7 +202,7 @@ class DatabaseSetting:
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
-                    "auto_migration": True,
+                    "auto_migration": settings.AUTO_MIGRATION,
                     "migration_path": MIGRATION_PATHS + "/sqlite"
                 },
             }
@@ -215,7 +228,7 @@ class DatabaseSetting:
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
-                    "auto_migration": True,
+                    "auto_migration": settings.AUTO_MIGRATION,
                     "migration_path": MIGRATION_PATHS + "/postgres"
                 },
             }
