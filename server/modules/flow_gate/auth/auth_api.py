@@ -13,6 +13,9 @@ from .token_store import blacklist_token,get_refresh_token,revoke_refresh_token,
 from .session_store import create_request_session,create_session,get_session,list_active_sessions,revoke_all_sessions,revoke_other_sessions,revoke_session,touch_session
 from .totp_service import TOTP_LOCK_MAX_ATTEMPTS,TOTP_LOCK_MINUTES,encrypt_totp_secret,generate_totp_secret,get_totp_provisioning_uri,verify_totp_code
 router=APIRouter()
+# 0275 T0005 (NR0003 원인 2): every handler here does sync DB work (and login/
+# password_change run bcrypt, ~100ms+ of CPU), so they are plain `def` — FastAPI
+# runs them in the threadpool instead of blocking the event loop.
 def _now_utc():return datetime.now(timezone.utc)
 def _roles(uid):
     try:
@@ -43,7 +46,7 @@ class RefreshRequest(BaseModel):refresh_token:str
 class LogoutRequest(BaseModel):refresh_token:Optional[str]=None
 class PasswordChangeRequest(BaseModel):current_password:Optional[str]=None; new_password:str
 @router.post("/login")
-async def login(request:Request,body:LoginRequest):
+def login(request:Request,body:LoginRequest):
     user=db_users.get_by_username(body.username) or (db_users.get_by_email(body.username) if "@" in body.username else None)
     if not user:raise HTTPException(400,"invalid_credentials")
     _lock(user,"login")
@@ -62,21 +65,21 @@ def _temp_user(token):
     if not user:raise HTTPException(401,"token_expired")
     return user
 @router.post("/totp/verify")
-async def totp_verify(request:Request,body:TotpVerifyRequest):
+def totp_verify(request:Request,body:TotpVerifyRequest):
     user=_temp_user(body.temp_token); _lock(user,"totp")
     if not verify_totp_code(user.get("totp_secret"),body.code):_failed(user,"totp"); raise HTTPException(401,"invalid_code")
     _reset(user["user_id"],"totp"); return _tokens(user,request)
 @router.post("/totp/backup")
-async def totp_backup(request:Request,body:TotpBackupRequest):
+def totp_backup(request:Request,body:TotpBackupRequest):
     user=_temp_user(body.temp_token); _lock(user,"totp")
     if not verify_backup_code(user["user_id"],body.backup_code):_failed(user,"totp"); raise HTTPException(401,"invalid_backup_code")
     _reset(user["user_id"],"totp"); return _tokens(user,request)
 @router.post("/totp/setup")
-async def totp_setup(request:Request,current_user:dict=Depends(get_current_user)):
+def totp_setup(request:Request,current_user:dict=Depends(get_current_user)):
     secret=generate_totp_secret(); db_users.update(current_user["user_id"],{"totp_secret":encrypt_totp_secret(secret)}); codes=generate_codes(); store_codes(current_user["user_id"],codes)
     return {"qr_uri":get_totp_provisioning_uri(secret,current_user.get("username",current_user["user_id"])),"backup_codes":codes,"secret_masked":secret[:4]+"****"}
 @router.post("/refresh")
-async def refresh(request:Request,body:RefreshRequest):
+def refresh(request:Request,body:RefreshRequest):
     try:payload=decode_token(body.refresh_token)
     except jwt.ExpiredSignatureError:raise HTTPException(401,"Token has expired")
     except jwt.InvalidTokenError:raise HTTPException(401,"Invalid authentication credentials")
@@ -101,7 +104,7 @@ async def refresh(request:Request,body:RefreshRequest):
     refresh_token,new_jti,_=create_refresh_token(uid,expires,sid); rotate_refresh_token(jti,new_jti,uid,expires,sid); touch_session(sid)
     return {"access_token":access,"refresh_token":refresh_token,"token_type":"bearer"}
 @router.post("/logout")
-async def logout(request:Request,body:LogoutRequest,payload:dict=Depends(verify_token)):
+def logout(request:Request,body:LogoutRequest,payload:dict=Depends(verify_token)):
     uid=payload.get("sub"); sid=payload.get("sid")
     if payload.get("jti") and uid:blacklist_token(payload["jti"],uid,payload.get("exp",0))
     if body.refresh_token:
@@ -112,7 +115,7 @@ async def logout(request:Request,body:LogoutRequest,payload:dict=Depends(verify_
     if sid and uid:revoke_session(sid,uid,"logout")
     return {"message":"Logged out successfully"}
 @router.post("/password/change")
-async def password_change(request:Request,body:PasswordChangeRequest,current_user:dict=Depends(get_current_user),payload:dict=Depends(verify_token)):
+def password_change(request:Request,body:PasswordChangeRequest,current_user:dict=Depends(get_current_user),payload:dict=Depends(verify_token)):
     uid=current_user["user_id"]
     if not current_user.get("first_login_required"):
         if not body.current_password:raise HTTPException(400,"current_password_required")
@@ -125,21 +128,21 @@ async def password_change(request:Request,body:PasswordChangeRequest,current_use
     else:revoke_all_sessions(uid,"password_change")
     return {"message":"Password changed successfully","first_login_required":False}
 @router.get("/sessions")
-async def sessions(payload:dict=Depends(verify_token)):
+def sessions(payload:dict=Depends(verify_token)):
     sid=payload.get("sid"); rows=list_active_sessions(payload["sub"])
     return {"sessions":[{**row,"is_current":bool(sid and row["session_id"]==sid)} for row in rows]}
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id:str,payload:dict=Depends(verify_token)):
+def delete_session(session_id:str,payload:dict=Depends(verify_token)):
     if session_id==payload.get("sid"):raise HTTPException(409,"current_session_use_logout")
     if not revoke_session(session_id,payload["sub"],"remote"):raise HTTPException(404,"session_not_found")
     return {"message":"Session revoked","session_id":session_id}
 @router.post("/sessions/revoke-others")
-async def revoke_others(payload:dict=Depends(verify_token)):
+def revoke_others(payload:dict=Depends(verify_token)):
     if not payload.get("sid"):raise HTTPException(409,"current_session_unknown")
     count=revoke_other_sessions(payload["sub"],payload["sid"],"revoke_others")
     return {"message":"Other sessions revoked","revoked_count":count}
 @router.get("/me")
-async def me(current_user:dict=Depends(get_current_user)):
+def me(current_user:dict=Depends(get_current_user)):
     return {"user_id":current_user["user_id"],"username":current_user.get("username"),"email":current_user.get("email"),"is_admin":bool(current_user.get("is_admin")),"first_login_required":bool(current_user.get("first_login_required")),"roles":_roles(current_user["user_id"])}
 
 # Backward-compatible helper names used by the established authentication tests.

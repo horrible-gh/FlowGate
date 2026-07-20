@@ -5286,6 +5286,23 @@ def get_group_tree(project_id: str) -> dict:
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
 
+    # 0275 NR0003 원인 3: this tree used to issue one documents query per group
+    # plus one 'created'-event memo_file query per document (≈ 2 + G + D queries
+    # per load — thousands on a real project, ruinous against a remote DB).
+    # Batch all three lookups upfront so a tree load stays at a handful of
+    # queries regardless of tree size.
+    group_ids = [dict(g)["group_id"] for g in groups]
+    docs_by_group = db.get_docs_for_tree_by_groups(group_ids)
+    orphan_docs = db.get_orphan_docs_for_tree(project_id, group_ids)
+    _all_tree_docs = [d for _docs in docs_by_group.values() for d in _docs]
+    _all_tree_docs.extend(orphan_docs)
+    try:
+        memo_files = db.get_created_memo_files_map(
+            [dict(d)["doc_id"] for d in _all_tree_docs]
+        )
+    except Exception:
+        memo_files = {}
+
     # Fixed column names from the main DB schema
     doc_type_col = "type_code"
     doc_file_col = "file_path"
@@ -5337,7 +5354,6 @@ def get_group_tree(project_id: str) -> dict:
     nodes: list[dict] = []
     project_node_id = f"project:{project_id}"
     module_nodes: dict[str, dict[str, Any]] = {}
-    known_group_ids: set[str] = set()
 
     _dir_map = {
         "outbox": db.OUTBOX_DIR,
@@ -5386,11 +5402,7 @@ def get_group_tree(project_id: str) -> dict:
         doc_type = doc.get(doc_type_col, "")
         title = doc.get("title", "")
         doc_type_label = get_type_name(doc_type)
-        try:
-            memo_file = db.get_created_memo_file(doc_id)
-        except Exception:
-            memo_file = None
-        memo_file = memo_file or doc.get(doc_file_col)
+        memo_file = memo_files.get(doc_id) or doc.get(doc_file_col)
         direction = doc.get("direction", "")
         _base_dir = _dir_map.get(direction) if direction else None
         _md_path = os.path.join(_base_dir, memo_file) if (_base_dir and memo_file) else memo_file
@@ -5446,11 +5458,10 @@ def get_group_tree(project_id: str) -> dict:
             "is_discarded": False,
             "children": []
         }
-        known_group_ids.add(group_id)
         module_node["children"].append(group_node)
         nodes.append(group_node)
 
-        docs = db.get_docs_for_tree_by_group(group_id)
+        docs = docs_by_group.get(group_id, [])
 
         # A group is final-approved when the R/B document that owns its workflow has
         # reached wf_done. This reuses the docs already fetched above so no extra
@@ -5473,9 +5484,8 @@ def get_group_tree(project_id: str) -> dict:
             nodes.append(doc_node)
 
     # Handle orphan documents: include documents whose group_id is missing from
-    # the groups table under the uncategorized node
-    orphan_docs = db.get_orphan_docs_for_tree(project_id, list(known_group_ids))
-
+    # the groups table under the uncategorized node (fetched upfront above,
+    # together with the memo_file batch)
     orphan_nodes: dict[str, dict[str, Any]] = {}
     for doc_row in orphan_docs:
         doc = dict(doc_row)

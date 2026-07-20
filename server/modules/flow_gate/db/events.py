@@ -42,6 +42,41 @@ def get_created_memo_file(doc_id: str) -> Optional[str]:
     return row["memo_file"] if row else None
 
 
+def get_created_memo_files_map(doc_ids: list[str]) -> dict[str, str]:
+    """Return a doc_id -> memo_file map from the creation events.
+
+    Batch counterpart of get_created_memo_file() (0275 NR0003 원인 3: the group
+    tree issued this lookup once per document). Same row selection: the latest
+    'created' event per document that carries a non-empty memo_file.
+    Chunked to stay under SQLite's historical 999 bind-variable limit.
+    """
+    result: dict[str, str] = {}
+    if not doc_ids:
+        return result
+    store = get_store()
+    ids = list(doc_ids)
+    chunk_size = 900
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        placeholders = ",".join(["?"] * len(chunk))
+        rows = store._fetch_all(
+            f"SELECT e.doc_id, e.memo_file"
+            f" FROM events e"
+            f" INNER JOIN ("
+            f"     SELECT doc_id, MAX(event_id) AS max_event_id"
+            f"     FROM events"
+            f"     WHERE event_type = 'created'"
+            f"       AND memo_file IS NOT NULL AND memo_file != ''"
+            f"       AND doc_id IN ({placeholders})"
+            f"     GROUP BY doc_id"
+            f" ) latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
+            chunk,
+        )
+        for r in rows:
+            result[r["doc_id"]] = r["memo_file"]
+    return result
+
+
 def is_file_processed(memo_file: str) -> bool:
     """Return whether the file has been processed."""
     row = get_store()._fetch_one(
