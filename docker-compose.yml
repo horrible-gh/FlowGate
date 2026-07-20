@@ -41,10 +41,17 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-flowgate}
       DB_DATABASE: ${DB_DATABASE:-flowgate}
       DB_SCHEMA: ${DB_SCHEMA:-}
-      # Optional one-shot admin bootstrap (SQLite only; safe to leave unset).
+      # Optional one-shot admin bootstrap. Works on every engine as of 0273
+      # (it was SQLite-only before); safe to leave unset.
       FLOWGATE_ADMIN_USERNAME: ${FLOWGATE_ADMIN_USERNAME:-}
       FLOWGATE_ADMIN_PASSWORD: ${FLOWGATE_ADMIN_PASSWORD:-}
       FLOWGATE_ADMIN_EMAIL: ${FLOWGATE_ADMIN_EMAIL:-}
+      # Encryption keys. Leave unset and the entrypoint generates them once and
+      # persists them to the data volume; supply your own to control rotation.
+      # Changing either makes the data it protects unreadable (stored git
+      # credentials / enrolled 2FA secrets respectively).
+      FLOWGATE_GIT_ENCRYPT_KEY: ${FLOWGATE_GIT_ENCRYPT_KEY:-}
+      FLOWGATE_TOTP_ENCRYPT_KEY: ${FLOWGATE_TOTP_ENCRYPT_KEY:-}
     volumes:
       - flowgate-data:/data
 

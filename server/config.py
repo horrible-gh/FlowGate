@@ -64,6 +64,23 @@ class Settings(BaseSettings):
     FLOWGATE_GIT_ENCRYPT_KEY: str | None = None
     FLOWGATE_GIT_ENCRYPT_KEY_PREV: str | None = None
 
+    # TOTP secret encryption (0273 NR0003 P1-3) — base64-encoded 32-byte AES key
+    # read by modules/flow_gate/auth/totp_service.py. Declared here so the setup
+    # scripts can persist it in .env: pydantic forbids extra keys, so an
+    # undeclared FLOWGATE_TOTP_ENCRYPT_KEY line would fail the boot outright.
+    # Unset does NOT break startup — it breaks the first 2FA enrolment, which is
+    # why this went unnoticed. _PREV enables rotation-time decryption.
+    FLOWGATE_TOTP_ENCRYPT_KEY: str | None = None
+    FLOWGATE_TOTP_ENCRYPT_KEY_PREV: str | None = None
+
+    # Listen address (0273 NR0003 P1-2). stg.py — the entry point the systemd
+    # unit runs — had port 8089 hardcoded, so a Linux install could not move off
+    # a busy port without editing the source. Declared here for the same
+    # extra_forbidden reason as the TOTP keys above; stg.py reads them from the
+    # environment after load_dotenv().
+    FLOWGATE_PORT: int = 8089
+    FLOWGATE_BIND_HOST: str = "0.0.0.0"
+
     # Group 0235 D0005 §3-4 / L0008 §2-5: submission base for the EXTERNAL AGENT
     # (CLI provider) inbox POST. Origin only (scheme://host[:port]); the server
     # appends CONTEXT + /api/v1. When unset, the agent api base is derived by
@@ -87,6 +104,24 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+
+# 🔹 Mirror the credential keys from .env into os.environ (0273 NR0003 P1-3).
+# totp_service.py and git_service.py read os.environ directly, but pydantic
+# parses .env into `settings` WITHOUT populating os.environ. That only worked
+# because stg.py calls load_dotenv() first — the systemd path. Launchers that
+# import the app directly (run.bat / setup.ps1 -Start / `uvicorn routers.main:app`)
+# skip stg.py entirely, so a key that is present in .env stayed invisible to both
+# services. Fill in only what the real environment has not already set, so an
+# explicit OS env var (docker-entrypoint, systemd Environment=) still wins.
+for _env_key in (
+    "FLOWGATE_TOTP_ENCRYPT_KEY",
+    "FLOWGATE_TOTP_ENCRYPT_KEY_PREV",
+    "FLOWGATE_GIT_ENCRYPT_KEY",
+    "FLOWGATE_GIT_ENCRYPT_KEY_PREV",
+):
+    _env_val = getattr(settings, _env_key, None)
+    if _env_val and not os.environ.get(_env_key):
+        os.environ[_env_key] = _env_val
 
 
 # 🔹 DB settings class (singleton pattern)
@@ -142,7 +177,12 @@ class DatabaseSetting:
                 # parity with the MySQL/PostgreSQL branches. See note above.
                 "placeholder": "?",
                 f"{settings.DB_TYPE.value}": {
-                    "db_name": settings.DB_PATH
+                    "db_name": settings.DB_PATH,
+                    # 0273 NR0003 §5-2: this was hardcoded True, so DB_LOG had no
+                    # effect on the DEFAULT engine — full SQL logging could not be
+                    # turned off without editing the source. The mysql/postgres
+                    # branches already honour settings.DB_LOG; match them.
+                    "log": settings.DB_LOG,
                 },
                 "service": {
                     "log": True,
@@ -153,7 +193,7 @@ class DatabaseSetting:
                     "migration_path": MIGRATION_PATHS + "/sqlite"
                 },
             }
-        elif settings.DB_TYPE.value in (DBType.POSTGRES):
+        elif settings.DB_TYPE.value in (DBType.POSTGRES,):
             if settings.DB_PORT == 0:
                 settings.DB_PORT = None
             self.config = {
@@ -179,6 +219,17 @@ class DatabaseSetting:
                     "migration_path": MIGRATION_PATHS + "/postgres"
                 },
             }
+        else:
+            # 0273 NR0003 §5-5: falling through left self.config == {} and handed
+            # database_init({}) an empty dict, whose failure names neither the
+            # setting nor the value that caused it. The DBType enum already
+            # rejects unknown values at Settings() time, so this fires only when
+            # a member is added to the enum without a branch here — say so.
+            raise ValueError(
+                f"DB_TYPE='{settings.DB_TYPE.value}' has no configuration branch "
+                f"in DatabaseSetting._init_db (supported: "
+                f"{', '.join(t.value for t in DBType)})."
+            )
 
         self.instance_init()
 

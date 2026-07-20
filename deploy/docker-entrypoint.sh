@@ -69,6 +69,18 @@ if [ -z "${FLOWGATE_GIT_ENCRYPT_KEY:-}" ]; then
     persist FLOWGATE_GIT_ENCRYPT_KEY "$FLOWGATE_GIT_ENCRYPT_KEY"
     echo "[entrypoint] generated a new git credential key (persisted to the data volume)"
 fi
+
+# TOTP secret encryption key (0273 NR0003 P1-3) — base64 32-byte AES key read by
+# modules/flow_gate/auth/totp_service.py. It was missing from every install path,
+# including this one. The server boots fine without it; the failure appears later
+# as a RuntimeError the first time a user enrols in 2FA. Persist it once —
+# changing it makes already-enrolled secrets unreadable.
+if [ -z "${FLOWGATE_TOTP_ENCRYPT_KEY:-}" ]; then
+    FLOWGATE_TOTP_ENCRYPT_KEY="$(python -c 'import os,base64; print(base64.b64encode(os.urandom(32)).decode())')"
+    export FLOWGATE_TOTP_ENCRYPT_KEY
+    persist FLOWGATE_TOTP_ENCRYPT_KEY "$FLOWGATE_TOTP_ENCRYPT_KEY"
+    echo "[entrypoint] generated a new TOTP encryption key (persisted to the data volume)"
+fi
 [ -f "$SECRETS_FILE" ] && chmod 600 "$SECRETS_FILE" 2>/dev/null || true
 
 # ── DB selection ─────────────────────────────────────────────────────────────
@@ -104,27 +116,22 @@ case "$DB_TYPE" in
         ;;
 esac
 
-# ── Optional admin bootstrap (idempotent; SQLite only) ───────────────────────
-# create_dev_user.py talks to SQLite directly. Set FLOWGATE_ADMIN_USERNAME +
-# FLOWGATE_ADMIN_PASSWORD to auto-seed the first account; re-runs skip if it
-# already exists. For mysql/postgres, seed the admin against the DB yourself.
+# ── Optional admin bootstrap (idempotent; every engine) ──────────────────────
+# 0273 NR0003 P1-1: this was SQLite-only because create_dev_user.py opened the DB
+# with `import sqlite3`, so a mysql/postgres container came up with no account
+# that could log in. The script is engine-neutral now (server/db_bootstrap.py).
+# Set FLOWGATE_ADMIN_USERNAME + FLOWGATE_ADMIN_PASSWORD to auto-seed the first
+# account; re-runs skip if it already exists.
 if [ -n "${FLOWGATE_ADMIN_USERNAME:-}" ] && [ -n "${FLOWGATE_ADMIN_PASSWORD:-}" ]; then
-    case "$DB_TYPE" in
-        sqlite|sqlite3|local)
-            echo "[entrypoint] ensuring admin account '$FLOWGATE_ADMIN_USERNAME' ..."
-            # Importing config runs auto-migration → creates the schema before seeding.
-            ( cd /app/server && python -c "import config" ) \
-                || echo "[entrypoint] schema init warning (continuing)"
-            ( cd /app/server && python create_dev_user.py \
-                --username "$FLOWGATE_ADMIN_USERNAME" \
-                --email "${FLOWGATE_ADMIN_EMAIL:-${FLOWGATE_ADMIN_USERNAME}@flowgate.local}" \
-                --password "$FLOWGATE_ADMIN_PASSWORD" --admin ) \
-                || echo "[entrypoint] admin seed skipped/failed (continuing)"
-            ;;
-        *)
-            echo "[entrypoint] admin auto-seed is SQLite-only; seed the $DB_TYPE admin manually."
-            ;;
-    esac
+    echo "[entrypoint] ensuring admin account '$FLOWGATE_ADMIN_USERNAME' ..."
+    # Importing config runs auto-migration → creates the schema before seeding.
+    ( cd /app/server && python -c "import config" ) \
+        || echo "[entrypoint] schema init warning (continuing)"
+    ( cd /app/server && python create_dev_user.py \
+        --username "$FLOWGATE_ADMIN_USERNAME" \
+        --email "${FLOWGATE_ADMIN_EMAIL:-${FLOWGATE_ADMIN_USERNAME}@flowgate.local}" \
+        --password "$FLOWGATE_ADMIN_PASSWORD" --admin ) \
+        || echo "[entrypoint] admin seed skipped/failed (continuing)"
 fi
 
 echo "[entrypoint] starting: $*"

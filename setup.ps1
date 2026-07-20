@@ -5,21 +5,30 @@
 .DESCRIPTION
     End to end, mirroring the Linux flow (minus systemd, which Windows lacks):
       - server: python venv (.venv) + dependencies
-      - server\.env: working defaults (CONTEXT, DB, SECRET_KEY, token pepper)
+      - server\.env: working defaults (CONTEXT, DB, listen address, CORS origin,
+        SECRET_KEY, token pepper, TOTP + git encryption keys)
       - client: build -> client\dist (same-origin API base)
       - run.bat: a generated launcher (sets FLOWGATE_STORAGE_DIR, starts uvicorn)
-      - admin: prompt for username/password and create the first account (sqlite)
+      - admin: create the first account, on any supported engine
 
     The server supports sqlite3 / mysql / postgres (see server\config.py). The
-    default is sqlite3, which needs no external server. Target a networked DB by
-    passing -DbType plus the connection parameters:
+    engine is asked for when -DbType is omitted; the default is sqlite3, which
+    needs no external server. Target a networked DB by passing -DbType plus the
+    connection parameters:
 
       .\setup.ps1 -DbType postgres -DbHost 127.0.0.1 -DbPort 5432 `
                   -DbUser flowgate -DbPassword secret -DbDatabase flowgate
 
     Migrations auto-apply on first boot from sql\migrations\<db>\, so there is no
-    manual schema step. Re-runs are safe: SECRET_KEY / token pepper are only
-    generated when empty, and the admin account is skipped if it already exists.
+    manual schema step. Re-runs are safe: SECRET_KEY / token pepper / encryption
+    keys are only generated when empty, and the admin account is skipped if it
+    already exists.
+
+    An unattended run supplies the answers up front, and never prompts:
+
+      .\setup.ps1 -DbType postgres -DbHost db -DbUser flowgate -DbPassword secret `
+                  -DbDatabase flowgate -AllowedOrigin https://flowgate.example.com `
+                  -AdminUsername admin -AdminPassword secret
 
 .EXAMPLE
     .\setup.ps1
@@ -42,10 +51,49 @@ param(
     [string]$DbDatabase,
     [string]$DbSchema,
     [int]$Port = 8089,
+    [string]$BindHost = '0.0.0.0',
+    # CORS origin. Left empty the installer asks, and falls back to '*' with a
+    # warning (0273 NR0003 P2-1).
+    [string]$AllowedOrigin,
+    # First admin. Supplying both makes the bootstrap unattended; mirrors the
+    # FLOWGATE_ADMIN_* variables docker-compose.yml already uses.
+    [string]$AdminUsername,
+    [string]$AdminPassword,
+    [string]$AdminEmail,
     [switch]$Start  # start the server in this window after setup
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Whether we may block on Read-Host. An unattended run (CI, scheduled task) must
+# fall back to parameters/environment rather than hang forever on a prompt.
+$Interactive = [Environment]::UserInteractive
+
+# Parameters fall back to the environment so an unattended run can supply
+# everything the same way setup.sh does.
+if (-not $AdminUsername) { $AdminUsername = $env:FLOWGATE_ADMIN_USERNAME }
+if (-not $AdminPassword) { $AdminPassword = $env:FLOWGATE_ADMIN_PASSWORD }
+if (-not $AdminEmail)    { $AdminEmail    = $env:FLOWGATE_ADMIN_EMAIL }
+if (-not $AllowedOrigin) { $AllowedOrigin = $env:ALLOWED_ORIGIN }
+
+# 0273 NR0003 §5-1: -DbType has a default, so "not supplied" is only detectable
+# via PSBoundParameters. Without this the engine was chosen silently and the
+# operator was never offered the DB selection R0001 asked for.
+if (-not $PSBoundParameters.ContainsKey('DbType')) {
+    if ($env:DB_TYPE) {
+        $DbType = $env:DB_TYPE
+    } elseif ($Interactive) {
+        Write-Host 'Which database should FlowGate use?'
+        Write-Host '  sqlite3   file-backed, no external server (default)'
+        Write-Host '  mysql     MySQL / MariaDB'
+        Write-Host '  postgres  PostgreSQL'
+        $answer = Read-Host 'DB type (default sqlite3)'
+        if ($answer) { $DbType = $answer }
+    }
+    if ($DbType -notin @('sqlite3', 'sqlite', 'local', 'mysql', 'postgres')) {
+        throw "Unsupported DB_TYPE='$DbType' (use sqlite3, mysql, or postgres)."
+    }
+}
 
 $Root        = Split-Path -Parent $MyInvocation.MyCommand.Path
 $StorageDir  = Join-Path $Root 'storage'
@@ -99,6 +147,9 @@ function Test-EnvSet([string]$Key) {
 
 # Generate a hex secret using the venv python (always present by this point).
 function New-Secret { & $VenvPython -c 'import secrets; print(secrets.token_hex(32))' }
+
+# base64-encoded 32-byte key — the form the AES-GCM helpers (TOTP, git creds) expect.
+function New-B64Key { & $VenvPython -c 'import os,base64; print(base64.b64encode(os.urandom(32)).decode())' }
 
 # ── server: venv + dependencies ──────────────────────────────────────────────
 Write-Host '==> Server: venv + dependencies'
@@ -154,6 +205,38 @@ if (-not (Test-EnvSet 'FLOWGATE_TOKEN_PEPPER_v1')) {
     Set-EnvVar 'FLOWGATE_TOKEN_PEPPER_v1' (New-Secret)
     Set-EnvVar 'FLOWGATE_TOKEN_PEPPER_ACTIVE_ID' 'v1'
 }
+# TOTP secret encryption key (0273 NR0003 P1-3) — absent from every install path
+# until now. The server boots without it; the failure surfaces later as a
+# RuntimeError on the first 2FA enrolment. Rotating orphans stored secrets, so
+# generate once, exactly like the pepper above.
+if (-not (Test-EnvSet 'FLOWGATE_TOTP_ENCRYPT_KEY')) {
+    Set-EnvVar 'FLOWGATE_TOTP_ENCRYPT_KEY' (New-B64Key)
+}
+# Git credential encryption key (P2-2) — the container entrypoint generates this,
+# host installs left it blank and fell back to a plaintext key file.
+if (-not (Test-EnvSet 'FLOWGATE_GIT_ENCRYPT_KEY')) {
+    Set-EnvVar 'FLOWGATE_GIT_ENCRYPT_KEY' (New-B64Key)
+}
+
+# Listen address — recorded in .env so server\stg.py and run.bat agree (P1-2).
+Set-EnvVar 'FLOWGATE_PORT' "$Port"
+Set-EnvVar 'FLOWGATE_BIND_HOST' $BindHost
+
+# CORS (P2-1). The sample ships ALLOWED_ORIGIN=* and neither installer used to
+# overwrite it, so every install finished permanently allowing every origin.
+if (-not $AllowedOrigin -and $Interactive) {
+    Write-Host ''
+    Write-Host 'Service URL browsers will load FlowGate from (used as the CORS origin).'
+    Write-Host 'Example: https://flowgate.example.com   - leave blank to allow any origin.'
+    $AllowedOrigin = Read-Host 'Service URL'
+}
+if ($AllowedOrigin) {
+    Set-EnvVar 'ALLOWED_ORIGIN' $AllowedOrigin
+} else {
+    Set-EnvVar 'ALLOWED_ORIGIN' '*'
+    Write-Host '[!] ALLOWED_ORIGIN=* - every origin may call this API.'
+    Write-Host "    Set ALLOWED_ORIGIN in $EnvFile to your service URL before exposing it."
+}
 
 # ── client: build -> dist ────────────────────────────────────────────────────
 Write-Host '==> Client: build -> dist'
@@ -188,7 +271,7 @@ cd /d "%~dp0client"
 call npm run build || (echo Client build failed & exit /b 1)
 
 cd /d "%~dp0server"
-"$VenvPython" -m uvicorn routers.main:app --host 0.0.0.0 --port $Port
+"$VenvPython" -m uvicorn routers.main:app --host $BindHost --port $Port
 "@
 # .bat files MUST use CRLF: cmd.exe seeks by byte offset assuming 2-byte line
 # endings, so LF-only files drift and execute mid-line fragments (e.g. a stray
@@ -196,65 +279,75 @@ cd /d "%~dp0server"
 $runBat = $runBat -replace "`r?`n", "`r`n"
 [System.IO.File]::WriteAllText((Join-Path $Root 'run.bat'), $runBat, (New-Object System.Text.UTF8Encoding($false)))
 
-# ── admin account (sqlite only) ──────────────────────────────────────────────
+# ── admin account (every engine) ─────────────────────────────────────────────
 Write-Host '==> Admin account'
-# create_dev_user.py talks to SQLite directly. For mysql/postgres the server
-# still creates the schema on first boot; seed the admin against that DB yourself.
-if ($DbType -in 'sqlite3', 'sqlite', 'local') {
-    # The schema is created by the server booting and running its migrations, so
-    # boot it briefly in the background to seed the admin right away.
-    $dbFile = Join-Path $StorageDir 'flowgate.db'
-    # Storage dir goes in this scope rather than a Start-Process parameter: the
-    # -Environment parameter is PowerShell 7.4+ only and hard-fails on Windows
-    # PowerShell 5.1. Child processes inherit it, and create_dev_user.py below
-    # needs it too, whether or not we boot the server here.
-    $env:FLOWGATE_STORAGE_DIR = $StorageDir
-    $readyCheck = Join-Path $Root 'server\check_db_ready.py'
-    # Readiness is "every migration committed", NOT "flowgate.db exists": SQLite
-    # creates the file the instant sqloader connects, so the old Test-Path probe
-    # returned true before 004_rbac.sql had seeded the __SYSTEM__ project and the
-    # role rows, and create_dev_user.py then died on a FOREIGN KEY violation.
-    & $VenvPython $readyCheck --db $dbFile --quiet
+# 0273 NR0003 P1-1: this used to run for sqlite only, because create_dev_user.py
+# opened the DB with `import sqlite3`. A completed -DbType postgres install
+# therefore had no account that could log in. Both that script and
+# check_db_ready.py are engine-neutral now (server\db_bootstrap.py).
+$isSqlite = $DbType -in 'sqlite3', 'sqlite', 'local'
+# Storage dir goes in this scope rather than a Start-Process parameter: the
+# -Environment parameter is PowerShell 7.4+ only and hard-fails on Windows
+# PowerShell 5.1. Child processes inherit it, and create_dev_user.py below
+# needs it too, whether or not we boot the server here.
+$env:FLOWGATE_STORAGE_DIR = $StorageDir
+$readyCheck = Join-Path $Root 'server\check_db_ready.py'
+# Readiness is "every migration committed", NOT "the DB answers": SQLite creates
+# flowgate.db the instant sqloader connects, and a networked engine accepts
+# connections long before 004_rbac.sql has seeded the __SYSTEM__ project and the
+# role rows — create_dev_user.py then died on a FOREIGN KEY violation.
+# --db is SQLite-only; the networked engines are located via the DB_* keys the
+# script reads from server\.env.
+$readyArgs = @()
+if ($isSqlite) { $readyArgs += @('--db', (Join-Path $StorageDir 'flowgate.db')) }
+
+& $VenvPython $readyCheck @readyArgs --quiet
+$dbReady = ($LASTEXITCODE -eq 0)
+if (-not $dbReady) {
+    # Covers a first install and a re-run after this step failed partway, which
+    # leaves a DB that exists but is only half migrated.
+    Write-Host '    Booting the server once to apply DB migrations...'
+    $proc = Start-Process -FilePath $VenvPython `
+        -ArgumentList @('-m', 'uvicorn', 'routers.main:app', '--host', '127.0.0.1', '--port', "$Port") `
+        -WorkingDirectory (Join-Path $Root 'server') `
+        -PassThru -WindowStyle Hidden
+    # Applying the full migration set takes appreciably longer than the 30s the
+    # old file-existence probe needed; poll until it actually finishes.
+    & $VenvPython $readyCheck @readyArgs --wait 300
     $dbReady = ($LASTEXITCODE -eq 0)
-    if (-not $dbReady) {
-        # Covers a first install (no file) and a re-run after this step failed
-        # partway, which leaves a file that exists but is only half migrated.
-        Write-Host '    Booting the server once to apply DB migrations...'
-        $proc = Start-Process -FilePath $VenvPython `
-            -ArgumentList @('-m', 'uvicorn', 'routers.main:app', '--host', '127.0.0.1', '--port', "$Port") `
-            -WorkingDirectory (Join-Path $Root 'server') `
-            -PassThru -WindowStyle Hidden
-        # Applying the full migration set takes appreciably longer than the 30s
-        # the file-existence probe needed; poll until it actually finishes.
-        & $VenvPython $readyCheck --db $dbFile --wait 300
-        $dbReady = ($LASTEXITCODE -eq 0)
-        # Windows has no clean SIGTERM for a hidden console process, but by here
-        # the migrations have either committed or timed out, so nothing that the
-        # admin bootstrap depends on is lost by force-stopping.
-        if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-    }
-    if ($dbReady) {
-        $adminUser = Read-Host 'Admin username (default admin)'
-        if (-not $adminUser) { $adminUser = 'admin' }
-        $adminPw = ''
+    # Windows has no clean SIGTERM for a hidden console process, but by here the
+    # migrations have either committed or timed out, so nothing that the admin
+    # bootstrap depends on is lost by force-stopping.
+    if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+}
+if ($dbReady) {
+    $adminUser = $AdminUsername
+    $adminPw   = $AdminPassword
+    if (-not $adminUser -and $Interactive) { $adminUser = Read-Host 'Admin username (default admin)' }
+    if (-not $adminUser) { $adminUser = 'admin' }
+    if (-not $adminPw -and $Interactive) {
         while (-not $adminPw) {
             $sec = Read-Host 'Admin password' -AsSecureString
             $adminPw = [System.Net.NetworkCredential]::new('', $sec).Password
         }
+    }
+    # The email was hardcoded to <username>@flowgate.local; make it overridable.
+    $adminMail = if ($AdminEmail) { $AdminEmail } else { "$adminUser@flowgate.local" }
+    if (-not $adminPw) {
+        Write-Host '[!] No admin password given (use -AdminPassword / $env:FLOWGATE_ADMIN_PASSWORD for unattended installs).'
+        Write-Host "    `"$VenvPython`" server\create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
+    } else {
         # Skips automatically if the account already exists (re-run safe).
         & $VenvPython (Join-Path $Root 'server\create_dev_user.py') `
             --username $adminUser `
-            --email "$adminUser@flowgate.local" `
+            --email $adminMail `
             --password $adminPw `
             --admin
-    } else {
-        Write-Host '[!] DB migrations did not finish — create the admin account manually later'
-        Write-Host '    (start the server, let it finish migrating, then run):'
-        Write-Host "    `"$VenvPython`" server\create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
     }
 } else {
-    Write-Host "[i] DB_TYPE=${DbType}: skipping the SQLite admin bootstrap."
-    Write-Host "    create_dev_user.py is SQLite-only; seed the first admin directly against your $DbType database."
+    Write-Host '[!] DB migrations did not finish — create the admin account manually later'
+    Write-Host '    (start the server, let it finish migrating, then run):'
+    Write-Host "    `"$VenvPython`" server\create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
 }
 
 # ── done ─────────────────────────────────────────────────────────────────────
@@ -267,7 +360,9 @@ Done. Start FlowGate with:
   run.bat                 (or: .\.venv\Scripts\python -m uvicorn routers.main:app --host 0.0.0.0 --port $Port  from server\)
 
   Open:     http://localhost:$Port
+  Listen:   ${BindHost}:$Port
   DB:       $DbType (schema auto-migrates on first boot from sql\migrations\)
+  CORS:     $(if ($AllowedOrigin) { $AllowedOrigin } else { '* (any origin)' })
   Storage:  $StorageDir
 
 Notes:
@@ -285,7 +380,7 @@ if ($Start) {
     $env:FLOWGATE_STORAGE_DIR = $StorageDir
     Push-Location (Join-Path $Root 'server')
     try {
-        & $VenvPython -m uvicorn routers.main:app --host 0.0.0.0 --port $Port
+        & $VenvPython -m uvicorn routers.main:app --host $BindHost --port $Port
     } finally {
         Pop-Location
     }
