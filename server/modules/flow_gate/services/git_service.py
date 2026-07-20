@@ -1472,35 +1472,106 @@ def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
 
 # ── Effective source-root resolution (L0006 §2.2·§4.1) ───────────────────────
 
+# 0280 NR0003 §4-B: every reason the worktree is NOT used. The fallback itself is
+# intended design; what was missing is any record of WHICH condition fired, so a
+# "tests ran in main" report could never be confirmed or refuted after the fact.
+# These constants are persisted (test_runs.source_root_kind) and rendered in TSR.
+SRC_ROOT_WORKTREE = "worktree"
+SRC_ROOT_NO_GROUP = "no_group_context"
+SRC_ROOT_INTEGRATION_OFF = "git_integration_off"
+SRC_ROOT_NO_STATE = "no_group_git_state"
+SRC_ROOT_UNREGISTERED = "worktree_unregistered"
+SRC_ROOT_NO_BRANCH = "state_branch_empty"
+SRC_ROOT_NO_PROJECT_NAME = "project_name_missing"
+SRC_ROOT_DIR_MISSING = "worktree_dir_missing"
+SRC_ROOT_ERROR = "resolution_error"
+
+
+def effective_src_root_ex(
+    project_id: Optional[str], group_id: Optional[str]
+) -> tuple[Optional[Path], str]:
+    """``effective_src_root`` plus the reason, and a log line on every fallback.
+
+    Returns ``(worktree_path, "worktree")`` or ``(None, <SRC_ROOT_* reason>)``.
+    0280 NR0003 §6-3: each fallback below used to be a bare ``return None`` with
+    no log, no DB column and no UI trace, so a group that silently dropped to the
+    base tree left zero evidence. Two of them are routine (integration off / no
+    group context) and log at debug; the rest mean a worktree was *expected* and
+    is not there — notably ``worktree_unregistered``, which is what a post-merge
+    re-run hits (CLEANUP_STATUSES clears the flag) — so they log at warning.
+    Never raises.
+    """
+    if not project_id or not group_id:
+        return None, SRC_ROOT_NO_GROUP
+    try:
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            _log.debug(
+                "effective_src_root: base tree for %s (%s)",
+                group_id,
+                SRC_ROOT_INTEGRATION_OFF,
+            )
+            return None, SRC_ROOT_INTEGRATION_OFF
+        state = db_git.get_state(group_id)
+        if state is None:
+            _log.warning(
+                "effective_src_root: base tree for %s (%s) — git integration is on "
+                "but the group has no git state row",
+                group_id,
+                SRC_ROOT_NO_STATE,
+            )
+            return None, SRC_ROOT_NO_STATE
+        if not state.get("worktree_registered"):
+            _log.warning(
+                "effective_src_root: base tree for %s (%s, status=%s) — the worktree "
+                "was never registered or was released (merged/pushed cleanup)",
+                group_id,
+                SRC_ROOT_UNREGISTERED,
+                state.get("status"),
+            )
+            return None, SRC_ROOT_UNREGISTERED
+        branch = (state.get("branch") or "").strip()
+        if not branch:
+            _log.warning(
+                "effective_src_root: base tree for %s (%s)", group_id, SRC_ROOT_NO_BRANCH
+            )
+            return None, SRC_ROOT_NO_BRANCH
+        project_name = _project_name(project_id)
+        if not project_name:
+            _log.warning(
+                "effective_src_root: base tree for %s (%s, project_id=%s)",
+                group_id,
+                SRC_ROOT_NO_PROJECT_NAME,
+                project_id,
+            )
+            return None, SRC_ROOT_NO_PROJECT_NAME
+        wt_path = src_root(project_name, branch)
+        if not wt_path.is_dir():
+            # E7/E13: ledger without directory → fallback
+            _log.warning(
+                "effective_src_root: base tree for %s (%s, expected=%s branch=%s)",
+                group_id,
+                SRC_ROOT_DIR_MISSING,
+                wt_path,
+                branch,
+            )
+            return None, SRC_ROOT_DIR_MISSING
+        return wt_path.resolve(), SRC_ROOT_WORKTREE
+    except Exception:
+        _log.warning("effective_src_root failed for %s", group_id, exc_info=True)
+        return None, SRC_ROOT_ERROR
+
+
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
     """Group worktree path when it must be used, else None (= caller falls back).
 
     Fallback-first (L0006 §2.2): missing config, disabled integration, missing
     ledger entry, or a vanished directory all yield None so the caller resolves
-    the ordinary project-branch folder. Never raises.
+    the ordinary project-branch folder. Never raises. Thin wrapper over
+    ``effective_src_root_ex`` — callers that need to record WHY the worktree was
+    skipped use that one directly (0280 T0005).
     """
-    if not project_id or not group_id:
-        return None
-    try:
-        cfg = db_git.get_config(project_id)
-        if cfg is None or not cfg.get("enabled"):
-            return None
-        state = db_git.get_state(group_id)
-        if state is None or not state.get("worktree_registered"):
-            return None
-        branch = (state.get("branch") or "").strip()
-        if not branch:
-            return None
-        project_name = _project_name(project_id)
-        if not project_name:
-            return None
-        wt_path = src_root(project_name, branch)
-        if not wt_path.is_dir():
-            return None  # E7/E13: ledger without directory → fallback
-        return wt_path.resolve()
-    except Exception:
-        _log.warning("effective_src_root failed for %s", group_id, exc_info=True)
-        return None
+    return effective_src_root_ex(project_id, group_id)[0]
 
 
 # ── Finalize state (P0005 §5-1 / L0006 §3) ───────────────────────────────────
@@ -3639,4 +3710,3 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
         ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
-

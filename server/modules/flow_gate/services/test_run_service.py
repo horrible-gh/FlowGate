@@ -499,6 +499,10 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "case_failed": run.get("case_failed"),
         "error": run.get("error"),
         "tsr_doc_id": run.get("tsr_doc_id"),
+        # 0280 T0005: expose the recorded execution root so a "ran in main" report
+        # can be checked against the run itself, not just the assembled TSR.
+        "source_root": run.get("source_root"),
+        "source_root_kind": run.get("source_root_kind"),
         "port": run.get("port"),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
@@ -600,6 +604,8 @@ def _execute_run_inner(run: dict) -> None:
         )
         _emit_finished(doc, db_test_runs.get_run(run["run_id"]) or run, None)
         return
+
+    _record_source_root(doc, run, root)
 
     port = _allocate_port()
     scratch = _scratch_dir(doc, run["run_id"])
@@ -733,6 +739,31 @@ def _execute_run_inner(run: dict) -> None:
             # hand on — surface it once so the unmanned chain no longer goes silent (was: only an
             # ephemeral SSE broadcast). Best-effort; never affects the verdict.
             _maybe_notify_chain_failure(doc, finished_run)
+
+
+def _record_source_root(doc: dict, run: dict, root: Path) -> None:
+    """Persist the tree this run executes in, before a single command runs.
+
+    0280 NR0003 §6-2: the runner resolved a root and then forgot it, so "the tests
+    ran in main" could never be confirmed or refuted — a correct worktree run and a
+    silent fallback to base were indistinguishable after the fact. Written early so
+    a run that dies mid-way still carries its location. Best-effort in both
+    directions: bookkeeping must never fail a run, and a failure to record must not
+    masquerade as a recorded base run (the column stays NULL → "기록 없음").
+    """
+    try:
+        kind = storage_paths.classify_src_root(
+            doc.get("project_id"), doc.get("group_id"), root
+        )
+        stored = storage_paths.to_storage_relative(root, doc.get("project_id"))
+        db_test_runs.set_run_source_root(run["run_id"], stored, kind)
+        logger.info(
+            "test-run %s: executing in %s (%s)", run["run_id"], stored, kind
+        )
+    except Exception:
+        logger.warning(
+            "test-run %s: failed to record source root", run["run_id"], exc_info=True
+        )
 
 
 def _execute_setup(
@@ -1302,8 +1333,8 @@ def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str) -> str:
             "",
             "## 실행 환경",
             "",
-            f"- 프로젝트: {doc.get('project_id')} / 브랜치: {doc.get('branch') or 'main'}",
-            "- 작업 위치: 프로젝트 소스 루트 (src_root)",
+            f"- 프로젝트: {doc.get('project_id')} / 문서 브랜치: {doc.get('branch') or 'main'}",
+            f"- 실행 위치: {_src_root_label(run)}",
             f"- 할당 포트: {run.get('port')} / 스크래치: 회차 전용 (종료 시 삭제됨)",
             "- 실행 주체: FlowGate 서버 (워커 로컬 환경 불개입)",
             "",
@@ -1326,6 +1357,39 @@ def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str) -> str:
             "",
         ]
     )
+
+
+# 0280 NR0003 §4-A: the 실행 환경 block used to print doc['branch'] (always "main",
+# it is the *document's* branch, not the worktree's) next to the hardcoded string
+# "프로젝트 소스 루트 (src_root)". A run that executed correctly in the group worktree
+# was therefore reported as having run in main — the direct source of the repeated
+# "tests run in main" reports. These labels render what the run actually recorded.
+_SRC_ROOT_REASON_LABELS = {
+    "git_integration_off": "이 프로젝트는 git 통합이 꺼져 있다",
+    "no_group_git_state": "git 통합은 켜져 있으나 그룹의 git 상태 기록이 없다",
+    "worktree_unregistered": "그룹 워크트리가 등록돼 있지 않다 (머지/푸시 후 해제된 경우 포함)",
+    "state_branch_empty": "그룹 git 상태에 브랜치 값이 없다",
+    "project_name_missing": "프로젝트명을 확인할 수 없다",
+    "worktree_dir_missing": "등록된 워크트리 디렉터리가 실제로 존재하지 않는다",
+    "no_group_context": "그룹 정보 없이 실행됐다",
+    "resolution_error": "워크트리 해석 중 오류가 발생했다",
+}
+
+
+def _src_root_label(run: dict) -> str:
+    """Render the run's recorded execution root for the TSR 실행 환경 block."""
+    stored = run.get("source_root")
+    kind = run.get("source_root_kind")
+    if not stored:
+        # Runs predating 0280 T0005, and runs whose bookkeeping failed. Say so
+        # rather than repeating the old guess.
+        return "기록 없음 (이 회차는 실행 루트를 기록하지 않았다)"
+    if kind == "worktree":
+        return f"그룹 워크트리 `{stored}` — 작업 브랜치에서 실행됨"
+    if kind == "unknown":
+        return f"`{stored}` (워크트리 여부 미상)"
+    reason = _SRC_ROOT_REASON_LABELS.get(kind, kind)
+    return f"프로젝트 base 트리 `{stored}` — 워크트리 미사용: {reason}"
 
 
 def _kind_label(kind: Optional[str]) -> str:
