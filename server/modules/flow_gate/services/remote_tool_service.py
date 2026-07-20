@@ -50,6 +50,13 @@ OPS = ("read", "write", "grep", "glob", "remove")
 _WORKER_GRANT_PREFIX = "worker_"
 _MUTATING_WORK_TYPES = {"T", "TR"}
 
+# 0279 T0005 (NR0003 원인 2): directory names never worth walking for a source
+# scan. `server/.venv` alone dominated the measured 40s grep — it is dependency
+# code, not project source, and every byte of it was being read and regex-matched.
+# Skipped for grep and glob only; read/write/remove address files directly and are
+# unaffected, so an explicit path into one of these directories still works.
+_SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pycache__"})
+
 # operation → required scope (P0005 §3.2 / L0006 §3.2 / DB0007 §5). glob shares the grep scope.
 OP_SCOPE = {
     "read": "read",
@@ -607,14 +614,31 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     return ({"path": body["path"], "removed": True}, None)
 
 
+def _is_excluded(real: str, base_real: str) -> bool:
+    """True when `real` sits inside an excluded directory *below* `base_real`.
+
+    0279 T0005: the check is relative to the requested base, not to the source
+    root, so pointing a scan AT `.venv` (path=".venv") still scans it — only
+    incidental descent into one of these directories is skipped.
+    """
+    rel = os.path.relpath(real, base_real)
+    if rel.startswith(".."):
+        return False
+    segments = rel.replace("\\", "/").split("/")[:-1]  # directory segments only
+    return any(seg in _SCAN_EXCLUDE_DIRS for seg in segments)
+
+
 def _iter_files(root: Path, base: Path, glob_filter: Optional[str]):
     """Yield (posix_relpath_from_root, abspath) for files under base, jailed to root."""
     root_real = os.path.realpath(str(root))
+    base_real = os.path.realpath(str(base))
     candidates = base.glob(glob_filter) if glob_filter else base.rglob("*")
     for cand in candidates:
         real = os.path.realpath(str(cand))
         if not _under_root(real, root_real):
             continue  # symlink escape — skip
+        if _is_excluded(real, base_real):
+            continue  # dependency/VCS directory — not project source (0279 T0005)
         if not os.path.isfile(real):
             continue
         rel = os.path.relpath(real, root_real).replace("\\", "/")
@@ -633,10 +657,16 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     matches: list[dict] = []
     total = 0
     truncated = False
-    # Note: iteration does not stop after max_results is reached. This is intentional
-    # so that `total` reflects the exact full match count; even when only one result is
-    # requested, the entire source root is scanned (after skipping large/binary files) —
-    # which costs accordingly on large roots.
+    # 0279 T0005 (NR0003 원인 2): scanning used to continue after max_results was
+    # reached so that `total` was an exact full count. That made a max_results=1
+    # call walk the entire source root — the measured 40s freeze was exactly such
+    # a call, and the cost grew linearly as the repo grew. Stop at the first file
+    # that fills the quota instead.
+    #
+    # `total` therefore changes meaning: it is exact when truncated is False, and a
+    # LOWER BOUND (matches counted before the scan stopped) when truncated is True.
+    # A truncated response already told the caller the result set was incomplete, so
+    # no caller could have been relying on an exact count in that branch.
     for rel, real in _iter_files(root, base, glob_filter):
         try:
             if os.path.getsize(real) > _GREP_FILE_SKIP_BYTES:
@@ -655,6 +685,10 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
                     truncated = True
                 else:
                     matches.append({"file": rel, "line": lineno, "text": line})
+        if truncated:
+            # Finish the current file (its matches are already counted), then stop
+            # walking the tree — the quota is full and every further file is pure cost.
+            break
     return ({"matches": matches, "total": total, "truncated": truncated}, None)
 
 
@@ -663,11 +697,14 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if base is None:
         raise _OpError(422)
     root_real = os.path.realpath(str(root))
+    base_real = os.path.realpath(str(base))
     paths: list[str] = []
     for cand in sorted(base.glob(body["pattern"])):
         real = os.path.realpath(str(cand))
         if not _under_root(real, root_real):
             continue
+        if _is_excluded(real, base_real):
+            continue  # dependency/VCS directory — not project source (0279 T0005)
         rel = os.path.relpath(real, root_real).replace("\\", "/")
         paths.append(rel)
     return ({"paths": paths, "total": len(paths)}, None)

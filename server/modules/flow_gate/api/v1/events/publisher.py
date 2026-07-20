@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 import asyncio
+import logging
+
+_log = logging.getLogger(__name__)
 
 @dataclass
 class FlowEvent:
@@ -27,6 +30,48 @@ _lock = asyncio.Lock()
 # without access to the loop that owns the subscriber queues.
 _main_loop: Optional["asyncio.AbstractEventLoop"] = None
 
+
+def _offer(q: asyncio.Queue, event: FlowEvent) -> bool:
+    """Enqueue *event* without ever blocking. True when it was queued.
+
+    This is the whole of the 0279 P3-9 fix. Both publish paths iterate the
+    subscriber queues **while holding ``_lock``**, and the queues are bounded
+    (``maxsize=100``). The previous ``await q.put(event)`` therefore parked on the
+    first full queue *with the lock still held*, which froze every other publish,
+    every ``subscribe`` and every ``unsubscribe`` process-wide — permanently, since
+    the only thing that could drain that queue was an SSE client that had already
+    stopped reading. One abandoned browser tab could wedge event delivery for
+    everyone, and because ``_lock`` also guards subscribe/unsubscribe, new tabs hung
+    on connect instead of recovering. That is the "로딩중에서 멈춘다" shape R0001 asked
+    about, arriving from the event path rather than from the DB or the filesystem.
+
+    A queue that is full means the subscriber is not draining, so something must be
+    dropped. We drop the **oldest** event to make room for the newest: these events
+    are refresh signals, a client this far behind is going to re-sync on its next
+    full fetch anyway, and the newest signal is the one that reflects current state.
+    Dropping the newest instead would leave the client pinned to stale data.
+    """
+    try:
+        q.put_nowait(event)
+        return True
+    except asyncio.QueueFull:
+        pass
+    try:
+        q.get_nowait()
+    except asyncio.QueueEmpty:  # pragma: no cover - drained between the two calls
+        pass
+    try:
+        q.put_nowait(event)
+        _log.warning(
+            "SSE subscriber queue full; dropped oldest event to admit %s",
+            event.event_type,
+        )
+        return True
+    except asyncio.QueueFull:  # pragma: no cover - refilled between the two calls
+        _log.warning("SSE subscriber queue full; dropped event %s", event.event_type)
+        return False
+
+
 async def publish_event(event: FlowEvent) -> int:
     """Transport-agnostic publish — push to all subscriber queues for the given user_id.
 
@@ -37,8 +82,8 @@ async def publish_event(event: FlowEvent) -> int:
     async with _lock:
         queues = _subscribers.get(event.audience, [])
         for q in queues:
-            await q.put(event)
-            delivered += 1
+            if _offer(q, event):
+                delivered += 1
     return delivered
 
 async def subscribe(user_id: str) -> asyncio.Queue:
@@ -69,8 +114,8 @@ async def broadcast_event(event: FlowEvent) -> int:
     async with _lock:
         for queues in list(_subscribers.values()):
             for q in queues:
-                await q.put(event)
-                delivered += 1
+                if _offer(q, event):
+                    delivered += 1
     return delivered
 
 

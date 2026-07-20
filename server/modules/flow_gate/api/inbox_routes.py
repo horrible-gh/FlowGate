@@ -14,6 +14,7 @@ import re
 import shutil
 from typing import Optional
 
+import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, model_validator
@@ -633,16 +634,16 @@ async def inbox(request: Request):
         return _fail(400, "action must be new, edit, review, or test_run")
 
     if action == "new":
-        return await _handle_new(request, raw, body)
+        return await anyio.to_thread.run_sync(_handle_new, request, raw, body)
     elif action == "review":
-        return await _handle_review(request, raw, body)
+        return await anyio.to_thread.run_sync(_handle_review, request, raw, body)
     elif action == "test_run":
-        return await _handle_test_run(request, raw, body)
+        return await anyio.to_thread.run_sync(_handle_test_run, request, raw, body)
     else:
-        return await _handle_edit(request, raw, body)
+        return await anyio.to_thread.run_sync(_handle_edit, request, raw, body)
 
 
-async def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONResponse:
+def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Start a TS test run through a test_run-scoped worker token."""
     from modules.flow_gate.services import test_run_service
 
@@ -722,7 +723,7 @@ async def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSON
     return JSONResponse(status_code=202, content=result)
 
 
-async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse:
+def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Store an AI review result for action: review (document_reviews child record).
 
     A review belongs to its target document rather than being a document itself.
@@ -824,13 +825,12 @@ async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONRe
     # pill and no refresh (review submission is not a doc_review_status change, so it was
     # emitting nothing). Broadcast (audience="*") since the reviewer may be a different user.
     try:
-        import asyncio
-        from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
+        from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe, FlowEvent
         from modules.flow_gate.api.v1.events.event_types import EventType
         group_id_val = doc.get("group_id")
 
-        async def _push():
-            await broadcast_event(FlowEvent(
+        def _push():
+            broadcast_event_threadsafe(FlowEvent(
                 event_type=EventType.AI_REVIEW_ARRIVED,
                 payload={
                     "doc_id": doc_id,
@@ -845,7 +845,7 @@ async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONRe
             ))
             # Refresh open document tabs / group view so the pill surfaces without a
             # manual reload (rides the fg:open_docs_refresh path on the client).
-            await broadcast_event(FlowEvent(
+            broadcast_event_threadsafe(FlowEvent(
                 event_type=EventType.GROUP_VIEW_REFRESH,
                 payload={"group_id": group_id_val, "reason": "review_added"},
                 audience="*",
@@ -854,14 +854,13 @@ async def _handle_review(request: Request, raw_token: str, body: dict) -> JSONRe
                 group_id=group_id_val,
             ))
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(_push())
-            else:
-                loop.run_until_complete(_push())
-        except RuntimeError:
-            asyncio.run(_push())
+        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
+        # schedule onto the captured main loop themselves, so the old
+        # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
+        # also unsound from a worker thread: it would have built a NEW loop and
+        # published into queues owned by the main loop, delivering nothing —
+        # exactly the failure publish_event_threadsafe was written to fix.
+        _push()
     except Exception as _push_exc:
         import LogAssist.log as logger
         logger.warning(f"[inbox review] Step 9 SSE publish failed (ignored): {_push_exc}")
@@ -1107,7 +1106,7 @@ def _continuation_self_chain(
     return envelope
 
 
-async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
+def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: new (D020 §3-3-2)."""
 
     # ── Step 1: Field validation ────────────────────────────────────────────────────
@@ -1450,28 +1449,27 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
 
     # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
     try:
-        import asyncio
-        from modules.flow_gate.api.v1.events.publisher import publish_event, FlowEvent
+        from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
         from modules.flow_gate.api.v1.events.event_types import EventType
         from modules.flow_gate.api.v1.group_routes import get_next_action_candidates
 
-        async def _push():
+        def _push():
             base = dict(project=project, group_id=group["group_id"],
                         doc_id=canonical_doc_id, audience=actor_user_id)
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.FILE_EXPLORER_REFRESH,
                 payload={"operation": "created", "stored_path": str(stored_path)},
                 **base,
             ))
             doc_rec = db_docs.get_by_id(canonical_doc_id)
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
                 payload={"operation": "created", "doc_id": canonical_doc_id,
                          "type": doc_type, "title": extracted_title,
                          "status": "open", "revision_no": 0},
                 **base,
             ))
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.GROUP_VIEW_REFRESH,
                 payload={"group_id": group["group_id"], "reason": "document_added"},
                 **base,
@@ -1485,8 +1483,8 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
                 and doc_rec
                 and doc_rec.get("doc_review_status") == "pending_review"
             ):
-                from modules.flow_gate.api.v1.events.publisher import broadcast_event
-                await broadcast_event(FlowEvent(
+                from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
+                broadcast_event_threadsafe(FlowEvent(
                     event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
                     payload={
                         "doc_id": canonical_doc_id,
@@ -1501,7 +1499,7 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
                 ))
             candidates = get_next_action_candidates(group["group_id"])
             if candidates:
-                await publish_event(FlowEvent(
+                publish_event_threadsafe(FlowEvent(
                     event_type=EventType.NOTIFICATION_NEW_ACTION_CANDIDATE,
                     payload={"doc_id": canonical_doc_id, "type": doc_type,
                              "title": extracted_title, "candidates": candidates},
@@ -1509,21 +1507,20 @@ async def _handle_new(request: Request, raw_token: str, body: dict) -> JSONRespo
                 ))
             # D022 §3-3: Q-registration-only event (when doc_type='Q')
             if doc_type.upper() == "Q":
-                await publish_event(FlowEvent(
+                publish_event_threadsafe(FlowEvent(
                     event_type=EventType.QNA_Q_REGISTERED,
                     payload={"q_doc_id": canonical_doc_id, "prev_doc_id": prev_doc_id,
                              "title": extracted_title, "status": "open"},
                     **base,
                 ))
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(_push())
-            else:
-                loop.run_until_complete(_push())
-        except RuntimeError:
-            asyncio.run(_push())
+        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
+        # schedule onto the captured main loop themselves, so the old
+        # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
+        # also unsound from a worker thread: it would have built a NEW loop and
+        # published into queues owned by the main loop, delivering nothing —
+        # exactly the failure publish_event_threadsafe was written to fix.
+        _push()
     except Exception as _push_exc:
         import LogAssist.log as logger
         logger.warning(f"[inbox new] Step 9 SSE publish failed (ignored): {_push_exc}")
@@ -1615,7 +1612,7 @@ def _carry_over_conversation(
     return new_doc_id
 
 
-async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
+def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: edit (D020 §3-4-2)."""
 
     # ── Step 1: Field validation ────────────────────────────────────────────────────
@@ -2013,20 +2010,19 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
 
     # ── Step 9: Screen push (Phase 2) ──────────────────────────────────────────
     try:
-        import asyncio
-        from modules.flow_gate.api.v1.events.publisher import publish_event, FlowEvent
+        from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
         from modules.flow_gate.api.v1.events.event_types import EventType
 
-        async def _push():
+        def _push():
             base = dict(project=project, group_id=group["group_id"],
                         doc_id=doc_id, audience=actor_user_id)
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.FILE_EXPLORER_REFRESH,
                 payload={"operation": "updated", "stored_path": str(stored_path)},
                 **base,
             ))
             refreshed_doc = db_docs.get_by_id(doc_id)
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
                 payload={"operation": "updated", "doc_id": doc_id,
                          "type": refreshed_doc.get("type_code") if refreshed_doc else None,
@@ -2046,7 +2042,7 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
             if refreshed_doc and (refreshed_doc.get("type_code") or "").upper() in CONVERSATION_TYPE_CODES:
                 _owner_id = refreshed_doc.get("owner_id")
                 if _owner_id and _owner_id != actor_user_id:
-                    await publish_event(FlowEvent(
+                    publish_event_threadsafe(FlowEvent(
                         event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
                         payload={"operation": "updated", "doc_id": doc_id,
                                  "type": refreshed_doc.get("type_code"),
@@ -2056,12 +2052,12 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
                         project=project, group_id=group["group_id"],
                         doc_id=doc_id, audience=_owner_id,
                     ))
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.GROUP_VIEW_REFRESH,
                 payload={"group_id": group["group_id"], "reason": "document_updated"},
                 **base,
             ))
-            await publish_event(FlowEvent(
+            publish_event_threadsafe(FlowEvent(
                 event_type=EventType.EDIT_MARKER_ADDED,
                 payload={"doc_id": doc_id, "revision_no": new_revision_no,
                          "edit_reason": edit_reason, "linked_doc_id": linked_doc_id},
@@ -2071,8 +2067,8 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
             if edit_reason == "rejected":
                 edited_doc = db_docs.get_by_id(doc_id)
                 if edited_doc and edited_doc.get("doc_review_status") == "revised":
-                    from modules.flow_gate.api.v1.events.publisher import broadcast_event
-                    await broadcast_event(FlowEvent(
+                    from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
+                    broadcast_event_threadsafe(FlowEvent(
                         event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
                         payload={
                             "doc_id": doc_id,
@@ -2086,14 +2082,13 @@ async def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResp
                         group_id=group["group_id"],
                     ))
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(_push())
-            else:
-                loop.run_until_complete(_push())
-        except RuntimeError:
-            asyncio.run(_push())
+        # 0279 T0007: _push is now synchronous and the *_threadsafe publishers
+        # schedule onto the captured main loop themselves, so the old
+        # get_event_loop/ensure_future/asyncio.run dance is gone. That dance was
+        # also unsound from a worker thread: it would have built a NEW loop and
+        # published into queues owned by the main loop, delivering nothing —
+        # exactly the failure publish_event_threadsafe was written to fix.
+        _push()
     except Exception as _push_exc:
         import LogAssist.log as logger
         logger.warning(f"[inbox edit] Step 9 SSE publish failed (ignored): {_push_exc}")

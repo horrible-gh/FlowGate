@@ -39,7 +39,29 @@ def get_type_names_map(locale: str = "en") -> dict[str, str]:
     if key not in _cache:
         with _lock:
             if key not in _cache:
-                _cache[key] = _load_type_names_map(locale)
+                # 0279 P3-12: an empty result is deliberately NOT cached.
+                # ``_load_type_names_map`` returns {} both for "no rows" and for "the
+                # query raised", and this line previously stored that {} under the key
+                # unconditionally — after which ``key not in _cache`` was false forever,
+                # so a single transient DB error pinned every document type to its bare
+                # type_code ("R" instead of "Request") for the entire life of the
+                # process, with no recovery short of a write path happening to call
+                # invalidate_type_label_cache(). Skipping the cache write costs one
+                # retry per lookup while the table is genuinely empty (a fresh install
+                # before seeding) and self-heals the moment rows appear.
+                #
+                # The double-checked lock around the load is intentional and stays: it
+                # is what keeps a cold cache from stampeding the DB with one identical
+                # query per concurrent request. Measured on the 0279 fix bench, 8
+                # concurrent cold lookups against a 0.3s query complete in 0.30s total
+                # under this pattern — the waiters block on the lock, then find the
+                # cache warm and never query at all. Moving the load outside the lock
+                # to "avoid the convoy" was tried and rejected: it produced 8 duplicate
+                # queries for exactly the same 0.30s wall time.
+                loaded = _load_type_names_map(locale)
+                if not loaded:
+                    return loaded
+                _cache[key] = loaded
     return _cache[key]
 
 

@@ -17,6 +17,12 @@ from . import dialect as _dialect
 
 _JST = timezone(timedelta(hours=9))
 
+# 0279 T0005: how long a SQLite connection waits for a competing writer's lock
+# before raising "database is locked". Python's default is 5s; 15s absorbs the
+# document-write bursts an unmanned worker chain produces without masking a
+# genuine deadlock (there is none — every writer is a bounded transaction).
+_SQLITE_BUSY_TIMEOUT_MS = 15_000
+
 
 def now_iso() -> str:
     """Return the current time as a JST ISO 8601 string."""
@@ -94,6 +100,22 @@ class FlowGateStore:
             if self.dialect == _dialect.SQLITE:
                 try:
                     txn.execute("PRAGMA foreign_keys = ON")
+                except Exception:
+                    pass
+                # 0279 T0005 (NR0003 §4 'SQLite 락 경합'): busy_timeout is a
+                # per-connection setting and the sqlite backend opens a fresh
+                # connection per call, so it reverted to Python's 5s default on
+                # every transaction, with no retry anywhere in the codebase. A
+                # writer holding the EXCLUSIVE lock past 5s therefore surfaced as
+                # a hard "database is locked" error rather than a wait. This is
+                # the write locus, so raise the ceiling here.
+                #
+                # NOTE this is a partial fix. The production connection factory
+                # lives in the third-party sqloader package (config.get_db_instance),
+                # not in this tree, so read-only connections opened outside a
+                # transaction still get the 5s default. See the T0005 report.
+                try:
+                    txn.execute(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}")
                 except Exception:
                     pass
             _tx_local.txn = txn
