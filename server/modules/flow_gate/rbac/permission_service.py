@@ -79,6 +79,18 @@ def invalidate_cache(user_id: str, project_id: Optional[str] = None) -> None:
                 del _cache[k]
 
 
+def invalidate_all() -> None:
+    """Drop every cached entry.
+
+    Needed when a change affects users that cannot be enumerated cheaply —
+    editing a *role's* permissions re-grants or revokes it for everyone holding
+    that role (0276 T0009). With a 30-minute TTL and no such hook, those edits
+    previously took up to half an hour to take effect.
+    """
+    with _cache_lock:
+        _cache.clear()
+
+
 def clear_all_cache() -> None:
     """Clear the entire cache (used for testing or system restart)."""
     with _cache_lock:

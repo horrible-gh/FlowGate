@@ -1222,15 +1222,101 @@ def update_metadata(doc_id: str, owner: str | None, priority: str | None, due_da
 
 # ── Briefing ─────────────────────────────────────────────────────────
 
-def get_brief() -> dict:
-    open_docs = db.get_open_documents()
+class BriefContext:
+    """Per-request prefetch shared by the brief / gaps / queue / handover path.
+
+    0276 NR0003 발견 3: these four entry points each re-queried the same data.
+    A single /brief request ran get_open_documents() up to four times, executed
+    detect_workflow_gaps() twice in full, and issued five separate N+1 cascades
+    (one query per open document, per queue item, per conflict event) — 100+
+    queries for 30 open documents, growing linearly with the document count.
+
+    Design decision (CH0004): the shared state is an *explicit object* threaded
+    as an optional argument, not a module-level request-scoped cache. The server
+    has no request-scope plumbing to hang a cache on, and a module-level one
+    would leak a stale snapshot across requests and threads. Passing it also
+    keeps the data flow visible at each call site.
+
+    Every lookup is lazy and memoised, so each underlying query runs at most once
+    per context and only if something actually asks for it — a standalone
+    detect_workflow_gaps() does not pay for the linked-document scan it never
+    reads, while a /brief request shares all of them.
+
+    Callers that pass no context keep the previous behaviour: each public
+    function builds a private one, so signatures stay backward compatible.
+    """
+
+    def __init__(self):
+        self._open_docs: list[dict] | None = None
+        self._linked_by_target: dict[str, list[dict]] | None = None
+        self._followups_by_target: dict[str, set] | None = None
+        self._latest_events: dict[str, dict | None] = {}
+        self._workflow_gaps: dict | None = None
+
+    @property
+    def open_docs(self) -> list[dict]:
+        """The open-document snapshot every consumer shares.
+
+        Sharing it also makes one response internally consistent; the four
+        separate queries could each observe a different commit.
+        """
+        if self._open_docs is None:
+            self._open_docs = db.get_open_documents()
+        return self._open_docs
+
+    @property
+    def linked_by_target(self) -> dict[str, list[dict]]:
+        """target_id -> NR/TR documents. One scan instead of N+1 ①②③."""
+        if self._linked_by_target is None:
+            self._linked_by_target = db.get_linked_result_documents_map()
+        return self._linked_by_target
+
+    @property
+    def followups_by_target(self) -> dict[str, set]:
+        """target_id -> follow-up type codes. One query instead of N+1 ④.
+
+        NR is included so get_handover()'s pending list resolves from it too.
+        """
+        if self._followups_by_target is None:
+            self._followups_by_target = db.get_followup_type_map(("T", "TR", "NR"))
+        return self._followups_by_target
+
+    def linked(self, doc_id: str) -> list[dict]:
+        """NR/TR documents referencing doc_id (same shape as db.get_linked_result_documents)."""
+        return self.linked_by_target.get(doc_id, [])
+
+    def has_followup(self, doc_id: str, types: tuple[str, ...]) -> bool:
+        """Whether a follow-up document of any of `types` targets doc_id."""
+        existing = self.followups_by_target.get(doc_id)
+        return bool(existing and existing.intersection(types))
+
+    def latest_events(self, doc_ids: list[str]) -> dict[str, dict | None]:
+        """Memoised latest-event map; queries only ids not seen yet."""
+        missing = [d for d in doc_ids if d and d not in self._latest_events]
+        if missing:
+            # Record every requested id first so documents without any event are
+            # remembered as "looked up, none found" and never re-queried.
+            for doc_id in missing:
+                self._latest_events[doc_id] = None
+            self._latest_events.update(db.get_latest_events_map(missing))
+        return self._latest_events
+
+    def workflow_gaps(self) -> dict:
+        """detect_workflow_gaps() computed at most once per request."""
+        if self._workflow_gaps is None:
+            self._workflow_gaps = detect_workflow_gaps(ctx=self)
+        return self._workflow_gaps
+
+
+def get_brief(ctx: BriefContext | None = None) -> dict:
+    ctx = ctx or BriefContext()
+    open_docs = ctx.open_docs
     missing_nr_tr: list[dict] = []
 
     for doc in open_docs:
         if doc.get("type") not in ("N", "T"):
             continue
-        linked = db.get_linked_result_documents(doc["doc_id"])
-        if not linked:
+        if not ctx.linked(doc["doc_id"]):
             missing_nr_tr.append({
                 "doc_id": doc["doc_id"],
                 "type": doc["type"],
@@ -1240,13 +1326,16 @@ def get_brief() -> dict:
                 "status": doc["status"],
             })
 
-    workflow_gaps = detect_workflow_gaps()
+    # Both of these used to recompute the gaps independently (the queue summary
+    # via build_action_queue); the context computes them once.
+    workflow_gaps = ctx.workflow_gaps()
+    queue_summary = get_action_queue_summary(ctx=ctx)
 
     return {
         "open_documents": open_docs,
         "recent_events": db.get_recent_events(5),
         "missing_nr_tr_documents": missing_nr_tr,
-        "queue_summary": get_action_queue_summary(),
+        "queue_summary": queue_summary,
         "workflow_gaps": workflow_gaps,
     }
 
@@ -1312,15 +1401,22 @@ def get_tv_dashboard_summary() -> dict:
 
 # ── Handover ─────────────────────────────────────────────────────────
 
-def get_handover() -> dict:
+def get_handover(ctx: BriefContext | None = None) -> dict:
     """Return the handover draft structure for the next session."""
-    workflow_gaps = detect_workflow_gaps()
+    ctx = ctx or BriefContext()
+    # Same rule as db.get_pending_nr_tr_documents(): open N/T documents with no
+    # NR/TR follow-up. Resolved from the prefetched map instead of one query per
+    # open document (0276 NR0003 발견 3).
+    pending = [
+        doc for doc in ctx.open_docs
+        if doc.get("type") in ("N", "T") and not ctx.has_followup(doc["doc_id"], ("NR", "TR"))
+    ]
     return {
-        "pending": db.get_pending_nr_tr_documents(),
-        "open": db.get_open_documents(),
+        "pending": pending,
+        "open": ctx.open_docs,
         "recently_closed": db.get_recently_closed_or_rejected_documents(10),
-        "queue_summary": get_action_queue_summary(),
-        "workflow_gaps": workflow_gaps,
+        "queue_summary": get_action_queue_summary(ctx=ctx),
+        "workflow_gaps": ctx.workflow_gaps(),
     }
 
 
@@ -1353,10 +1449,13 @@ def get_conflict_history() -> dict:
     }
 
 
-def _with_latest_event(docs: list[dict]) -> list[dict]:
+def _with_latest_event(docs: list[dict], ctx: "BriefContext | None" = None) -> list[dict]:
     """Inject the latest event summary into the document list."""
     doc_ids = [d["doc_id"] for d in docs]
-    latest_map = db.get_latest_events_map(doc_ids)
+    # This runs once per gap category and once per queue category (12 times per
+    # /brief), over heavily overlapping document sets. The context memoises the
+    # union so the repeats cost nothing (0276 NR0003 발견 3).
+    latest_map = ctx.latest_events(doc_ids) if ctx else db.get_latest_events_map(doc_ids)
 
     enriched: list[dict] = []
     for doc in docs:
@@ -1371,11 +1470,15 @@ def _with_latest_event(docs: list[dict]) -> list[dict]:
     return enriched
 
 
-def _find_target_docs_with_no_followup(open_docs: list[dict], followup_types: tuple[str, ...]) -> list[dict]:
+def _find_target_docs_with_no_followup(
+    open_docs: list[dict],
+    followup_types: tuple[str, ...],
+    ctx: "BriefContext | None" = None,
+) -> list[dict]:
     """Find open documents that have no follow-up document with the given target_id."""
     result: list[dict] = []
     for doc in open_docs:
-        followers = db.get_linked_result_documents(doc["doc_id"])
+        followers = ctx.linked(doc["doc_id"]) if ctx else db.get_linked_result_documents(doc["doc_id"])
         if not any(f.get("type") in followup_types for f in followers):
             result.append(doc)
     return result
@@ -1430,8 +1533,8 @@ def _append_gap_item(result: list[dict], doc: dict, reason: str):
     result.append(item)
 
 
-def _build_gap_category(docs: list[dict]) -> dict:
-    enriched = _with_latest_event(docs)
+def _build_gap_category(docs: list[dict], ctx: "BriefContext | None" = None) -> dict:
+    enriched = _with_latest_event(docs, ctx)
     sorted_items = _sort_queue_items(enriched)
     return {
         "count": len(sorted_items),
@@ -1440,11 +1543,12 @@ def _build_gap_category(docs: list[dict]) -> dict:
     }
 
 
-def detect_workflow_gaps(now: datetime | None = None) -> dict:
+def detect_workflow_gaps(now: datetime | None = None, ctx: "BriefContext | None" = None) -> dict:
     """Detect operational gaps (stale/overdue/follow-up/review bottlenecks)."""
     now_dt = now or datetime.now()
     today = now_dt.date()
-    open_docs = db.get_open_documents()
+    ctx = ctx or BriefContext()
+    open_docs = ctx.open_docs
 
     stale_open: list[dict] = []
     overdue: list[dict] = []
@@ -1483,8 +1587,7 @@ def detect_workflow_gaps(now: datetime | None = None) -> dict:
             _append_gap_item(unassigned_important, doc, f"{priority} priority document has no owner")
 
         if doc_type == "N" and created_days is not None and created_days >= WORKFLOW_GAP_RULES["followup_grace_days_from_n"]:
-            followers_t = db.get_documents_by_target_id(doc_id, types=("T",))
-            if not followers_t:
+            if not ctx.has_followup(doc_id, ("T",)):
                 _append_gap_item(
                     missing_followup_from_n,
                     doc,
@@ -1492,8 +1595,7 @@ def detect_workflow_gaps(now: datetime | None = None) -> dict:
                 )
 
         if doc_type == "T" and created_days is not None and created_days >= WORKFLOW_GAP_RULES["followup_grace_days_from_t"]:
-            followers_tr = db.get_documents_by_target_id(doc_id, types=("TR",))
-            if not followers_tr:
+            if not ctx.has_followup(doc_id, ("TR",)):
                 _append_gap_item(
                     missing_followup_from_t,
                     doc,
@@ -1508,12 +1610,12 @@ def detect_workflow_gaps(now: datetime | None = None) -> dict:
             )
 
     categories = {
-        "stale_open": _build_gap_category(stale_open),
-        "overdue": _build_gap_category(overdue),
-        "unassigned_important": _build_gap_category(unassigned_important),
-        "missing_followup_from_n": _build_gap_category(missing_followup_from_n),
-        "missing_followup_from_t": _build_gap_category(missing_followup_from_t),
-        "review_stuck": _build_gap_category(review_stuck),
+        "stale_open": _build_gap_category(stale_open, ctx),
+        "overdue": _build_gap_category(overdue, ctx),
+        "unassigned_important": _build_gap_category(unassigned_important, ctx),
+        "missing_followup_from_n": _build_gap_category(missing_followup_from_n, ctx),
+        "missing_followup_from_t": _build_gap_category(missing_followup_from_t, ctx),
+        "review_stuck": _build_gap_category(review_stuck, ctx),
     }
 
     counts = {name: cat["count"] for name, cat in categories.items()}
@@ -1543,25 +1645,32 @@ def _sort_queue_items(docs: list[dict]) -> list[dict]:
     return sorted(docs, key=_queue_sort_key)
 
 
-def build_action_queue() -> dict:
+def build_action_queue(ctx: BriefContext | None = None) -> dict:
     """Build the operational priority queue by category."""
-    open_docs = db.get_open_documents()
-    workflow_gaps = detect_workflow_gaps()
+    ctx = ctx or BriefContext()
+    open_docs = ctx.open_docs
+    workflow_gaps = ctx.workflow_gaps()
     open_n = [d for d in open_docs if d.get("type") == "N"]
     open_t = [d for d in open_docs if d.get("type") == "T"]
     open_review = db.get_documents_by_status_and_types("open", ("NR", "TR"))
     rejected = db.get_documents_by_status("rejected")
     stale_open = workflow_gaps["categories"]["stale_open"]["items"]
 
-    needs_dispatch = _find_target_docs_with_no_followup(open_n, ("T",))
-    needs_result = _find_target_docs_with_no_followup(open_t, ("NR", "TR"))
+    needs_dispatch = _find_target_docs_with_no_followup(open_n, ("T",), ctx)
+    needs_result = _find_target_docs_with_no_followup(open_t, ("NR", "TR"), ctx)
 
+    # One query for every conflict event's document instead of one per event
+    # (0276 NR0003 발견 3, N+1 ⑤). Insertion order still follows the event order.
     conflict_docs_map: dict[str, dict] = {}
-    for e in db.get_conflict_events(50):
+    conflict_events = db.get_conflict_events(50)
+    conflict_doc_map = db.get_documents_by_ids(
+        [e.get("doc_id") for e in conflict_events if e.get("doc_id")]
+    )
+    for e in conflict_events:
         doc_id = e.get("doc_id")
         if not doc_id or doc_id in conflict_docs_map:
             continue
-        doc = db.get_document_by_id(doc_id)
+        doc = conflict_doc_map.get(doc_id)
         if doc:
             conflict_docs_map[doc_id] = doc
 
@@ -1590,16 +1699,22 @@ def build_action_queue() -> dict:
         "stale_open": stale_open,
     }
 
+    # Prime the latest-event cache for every category in one query, so the
+    # per-category _with_latest_event() calls below are all cache hits.
+    ctx.latest_events([
+        d.get("doc_id") for docs in categories_raw.values() for d in docs if d.get("doc_id")
+    ])
+
     categories: dict[str, dict] = {}
     for name, docs in categories_raw.items():
-        enriched = _with_latest_event(docs)
+        enriched = _with_latest_event(docs, ctx)
         with_actions: list[dict] = []
         for item in enriched:
             doc_id = item.get("doc_id") or ""
             if doc_id.startswith("conflict-file:"):
                 item["next_action"] = "Check conflict reason, then decide to reprocess or discard"
             else:
-                linked_docs = db.get_linked_result_documents(doc_id) if doc_id else []
+                linked_docs = ctx.linked(doc_id) if doc_id else []
                 _, desc = _suggest_next_action(item, linked_docs)
                 item["next_action"] = desc
             with_actions.append(item)
@@ -1617,8 +1732,8 @@ def build_action_queue() -> dict:
     }
 
 
-def get_action_queue_summary() -> dict:
-    queue = build_action_queue()
+def get_action_queue_summary(ctx: BriefContext | None = None) -> dict:
+    queue = build_action_queue(ctx=ctx or BriefContext())
     categories = queue["categories"]
     return {
         "stale_open_hours": queue["stale_open_hours"],

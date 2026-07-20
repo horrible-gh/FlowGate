@@ -733,51 +733,45 @@ def get_docs_for_tree_by_group(group_id: str) -> list[dict]:
     )
 
 
-def get_docs_for_tree_by_groups(group_ids: list) -> dict[str, list[dict]]:
-    """Return tree documents for many groups at once, keyed by group_id.
+# Columns the document tree actually renders (see process_service.get_group_tree:
+# _build_doc_node and the group final-approved/discarded derivation). documents
+# has ~30 columns including the meta JSON blob and commit_message; SELECT * pulled
+# all of them for every document in the project on each tree load.
+TREE_DOC_COLUMNS = (
+    "doc_id, project_id, group_id, module, type_code, title,"
+    " file_path, direction, doc_review_status"
+)
 
-    Batch counterpart of get_docs_for_tree_by_group() (0275 NR0003 원인 3: the
-    group tree issued one query per group). Preserves the per-group
-    ORDER BY doc_id DESC ordering. Chunked to stay under SQLite's historical
-    999 bind-variable limit.
+
+def get_docs_for_tree_by_project(project_id: str) -> list[dict]:
+    """Return every tree document of a project in a single unordered query.
+
+    Replaces the get_docs_for_tree_by_groups() / get_orphan_docs_for_tree() pair
+    (0276 NR0003 발견 1). Both callers always passed the project's *entire* group
+    list, so `group_id IN (?×G)` and `group_id NOT IN (?×G)` between them spent
+    thousands of bind parameters encoding what `project_id = ?` says with one.
+    documents.project_id is NOT NULL, so one predicate covers grouped and orphan
+    documents alike; get_group_tree() splits them by group membership and applies
+    the ordering the two SQL statements used to apply.
     """
-    result: dict[str, list[dict]] = {gid: [] for gid in group_ids}
-    if not group_ids:
-        return result
-    store = get_store()
-    gids = list(group_ids)
-    chunk_size = 900
-    for i in range(0, len(gids), chunk_size):
-        chunk = gids[i:i + chunk_size]
-        placeholders = ",".join(["?"] * len(chunk))
-        rows = store._fetch_all(
-            f"SELECT * FROM documents WHERE group_id IN ({placeholders})"
-            f" ORDER BY group_id, doc_id DESC",
-            chunk,
-        )
-        for row in rows:
-            result.setdefault(row["group_id"], []).append(row)
-    return result
-
-
-def get_orphan_docs_for_tree(project_id: str, known_group_ids: list) -> list[dict]:
-    store = get_store()
-    if known_group_ids:
-        placeholders = ",".join(["?"] * len(known_group_ids))
-        return store._fetch_all(
-            f"SELECT * FROM documents WHERE project_id = ?"
-            f" AND (group_id IS NULL OR group_id NOT IN ({placeholders}))"
-            f" ORDER BY module, doc_id DESC",
-            [project_id, *known_group_ids],
-        )
-    return store._fetch_all(
-        "SELECT * FROM documents WHERE project_id = ? ORDER BY module, doc_id DESC",
+    return get_store()._fetch_all(
+        f"SELECT {TREE_DOC_COLUMNS} FROM documents WHERE project_id = ?",
         [project_id],
     )
 
 
-def get_linked_result_documents(target_id: str) -> list[dict]:
-    """List NR/TR documents referencing target_id, preferring the DB value and falling back to file parsing."""
+def get_linked_result_documents_map() -> dict[str, list[dict]]:
+    """Group every NR/TR document by the target_id it references.
+
+    Batch counterpart of get_linked_result_documents() (0276 NR0003 발견 3: the
+    brief/queue path called the single-target version once per open document —
+    N+1 ①②③ — and *each* call already scanned all NR/TR rows and re-read the
+    memo file of every row with an empty target_id). Building the whole map costs
+    exactly one such scan, so one request goes from N scans to one.
+
+    Row selection, ordering (d.id DESC within each bucket) and the memo-file
+    fallback are unchanged; only the grouping is new.
+    """
     rows = get_store()._fetch_all(
         "SELECT d.doc_id, d.type, d.status, d.title, d.created_at, d.target_id, e.memo_file"
         " FROM documents d"
@@ -785,25 +779,78 @@ def get_linked_result_documents(target_id: str) -> list[dict]:
         " WHERE d.type IN ('NR', 'TR')"
         " ORDER BY d.id DESC"
     )
-    linked: list[dict] = []
+    linked_map: dict[str, list[dict]] = {}
     for row_dict in rows:
         stored_target_id = (row_dict.get("target_id") or "").strip()
-        if stored_target_id:
-            if stored_target_id != target_id:
-                continue
-        else:
-            memo_target_id = _read_target_id_from_memo_file(row_dict.get("memo_file") or "")
-            if memo_target_id != target_id:
-                continue
-        linked.append({
+        resolved_target_id = stored_target_id or _read_target_id_from_memo_file(
+            row_dict.get("memo_file") or ""
+        )
+        if not resolved_target_id:
+            continue
+        linked_map.setdefault(resolved_target_id, []).append({
             "doc_id": row_dict["doc_id"],
             "type": row_dict["type"],
             "status": row_dict["status"],
             "title": row_dict["title"],
             "created_at": row_dict["created_at"],
-            "target_id": stored_target_id or target_id,
+            "target_id": resolved_target_id,
         })
-    return linked
+    return linked_map
+
+
+def get_linked_result_documents(target_id: str) -> list[dict]:
+    """List NR/TR documents referencing target_id, preferring the DB value and falling back to file parsing."""
+    return get_linked_result_documents_map().get(target_id, [])
+
+
+def get_followup_type_map(types: tuple) -> dict[str, set]:
+    """Return target_id -> set of follow-up type_codes, for the given types.
+
+    Batch counterpart of get_documents_by_target_id() for the existence checks in
+    detect_workflow_gaps()/get_pending_nr_tr_documents() (0276 NR0003 발견 3,
+    N+1 ④): those callers only ask "does a follow-up of type X exist for this
+    target?", which one DISTINCT query answers for every target at once.
+    """
+    result: dict[str, set] = {}
+    if not types:
+        return result
+    placeholders = ",".join(["?"] * len(types))
+    rows = get_store()._fetch_all(
+        f"SELECT DISTINCT target_id, type_code FROM documents"
+        f" WHERE type_code IN ({placeholders})"
+        f"   AND target_id IS NOT NULL AND target_id != ''",
+        list(types),
+    )
+    for row in rows:
+        result.setdefault(row["target_id"], set()).add(row["type_code"])
+    return result
+
+
+def get_documents_by_ids(doc_ids: list) -> dict[str, dict]:
+    """Return a doc_id -> document map for the given ids.
+
+    Batch counterpart of get_document_by_id() (0276 NR0003 발견 3, N+1 ⑤: the
+    action queue resolved one document per conflict event). Chunked to stay under
+    SQLite's historical 999 bind-variable limit.
+    """
+    result: dict[str, dict] = {}
+    if not doc_ids:
+        return result
+    store = get_store()
+    ids = list(dict.fromkeys(doc_ids))
+    chunk_size = 900
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        placeholders = ",".join(["?"] * len(chunk))
+        rows = store._fetch_all(
+            f"SELECT * FROM documents WHERE doc_id IN ({placeholders})",
+            chunk,
+        )
+        for row in rows:
+            doc = _normalize_document_row(row)
+            if doc:
+                result[doc["doc_id"]] = doc
+    return result
 
 
 def has_open_result_for_target(target_id: str) -> tuple:
