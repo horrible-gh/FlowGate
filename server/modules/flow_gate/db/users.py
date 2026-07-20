@@ -4,6 +4,21 @@ from typing import Optional, Any
 from .connection import get_store, now_iso
 
 
+def _invalidate_auth_cache(user_id: str) -> None:
+    """Drop the auth middleware's cached copy of this user row (0276 T0009).
+
+    is_active / is_admin gate access, so a change must apply immediately rather
+    than at TTL expiry. Imported lazily: `modules.flow_gate.auth.__init__` pulls
+    in middleware and auth_api, which import this module back.
+    """
+    try:
+        from modules.flow_gate.auth import auth_cache
+    except Exception:
+        return
+    auth_cache.invalidate_user(user_id)
+
+
+
 def get_by_id(user_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM users WHERE user_id = ?", [user_id]
@@ -59,6 +74,7 @@ def create(data: dict[str, Any]) -> dict:
             row["first_login_required"], row["created_at"], row["updated_at"],
         ],
     )
+    _invalidate_auth_cache(row["user_id"])
     return get_by_id(row["user_id"])  # type: ignore[return-value]
 
 
@@ -71,8 +87,12 @@ def update(user_id: str, updates: dict[str, Any]) -> Optional[dict]:
         f"UPDATE users SET {set_clause} WHERE user_id = ?",
         [*updates.values(), user_id],
     )
+    # 0276: the auth path caches this row for a few seconds; a change to
+    # is_active / is_admin must not wait for the TTL.
+    _invalidate_auth_cache(user_id)
     return get_by_id(user_id)
 
 
 def delete(user_id: str) -> None:
     get_store()._execute("DELETE FROM users WHERE user_id = ?", [user_id])
+    _invalidate_auth_cache(user_id)

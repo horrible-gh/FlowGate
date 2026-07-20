@@ -2,6 +2,7 @@
 from __future__ import annotations
 import uuid
 from modules.flow_gate.db.connection import get_store, now_iso
+from . import auth_cache as _auth_cache
 
 REVOKE_REASONS = {"logout", "remote", "revoke_others", "password_change", "reuse_detected", "admin"}
 
@@ -44,8 +45,14 @@ def get_session(session_id: str) -> dict | None:
     return get_store()._fetch_one("SELECT * FROM auth_sessions WHERE session_id = ?", [session_id])
 
 def is_session_active(session_id: str) -> bool:
-    row = get_session(session_id)
-    return bool(row and row.get("revoked_at") is None)
+    # 0276 NR0003 발견 2: one of the five fixed per-request auth queries. Every
+    # revoke path below invalidates this entry, so a revocation is visible
+    # immediately in-process rather than after the TTL.
+    def _load() -> bool:
+        row = get_session(session_id)
+        return bool(row and row.get("revoked_at") is None)
+
+    return _auth_cache.session_cache().get_or_load(session_id, _load)
 
 def list_active_sessions(user_id: str) -> list[dict]:
     return get_store()._fetch_all(
@@ -66,6 +73,7 @@ def revoke_session(session_id: str, user_id: str, reason: str) -> bool:
             return False
         store._execute("UPDATE auth_sessions SET revoked_at=?,revoke_reason=? WHERE session_id=? AND user_id=? AND revoked_at IS NULL", [now, reason, session_id, user_id])
         store._execute("UPDATE refresh_tokens SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL", [now, session_id])
+    _auth_cache.invalidate_session(session_id)
     return True
 
 def revoke_other_sessions(user_id: str, current_sid: str, reason: str) -> int:
@@ -76,6 +84,7 @@ def revoke_other_sessions(user_id: str, current_sid: str, reason: str) -> int:
         rows = store._fetch_all("SELECT session_id FROM auth_sessions WHERE user_id=? AND session_id<>? AND revoked_at IS NULL", [user_id, current_sid])
         store._execute("UPDATE refresh_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND (session_id IS NULL OR session_id<>?)", [now, user_id, current_sid])
         store._execute("UPDATE auth_sessions SET revoked_at=?,revoke_reason=? WHERE user_id=? AND session_id<>? AND revoked_at IS NULL", [now, reason, user_id, current_sid])
+    _auth_cache.invalidate_all_sessions()
     return len(rows)
 
 def revoke_all_sessions(user_id: str, reason: str) -> None:
@@ -85,3 +94,4 @@ def revoke_all_sessions(user_id: str, reason: str) -> None:
     with store.transaction():
         store._execute("UPDATE refresh_tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", [now, user_id])
         store._execute("UPDATE auth_sessions SET revoked_at=?,revoke_reason=? WHERE user_id=? AND revoked_at IS NULL", [now, reason, user_id])
+    _auth_cache.invalidate_all_sessions()

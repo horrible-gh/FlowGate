@@ -42,38 +42,36 @@ def get_created_memo_file(doc_id: str) -> Optional[str]:
     return row["memo_file"] if row else None
 
 
-def get_created_memo_files_map(doc_ids: list[str]) -> dict[str, str]:
-    """Return a doc_id -> memo_file map from the creation events.
+def get_created_memo_files_map_by_project(project_id: str) -> dict[str, str]:
+    """Return a doc_id -> memo_file map from the creation events of one project.
 
     Batch counterpart of get_created_memo_file() (0275 NR0003 원인 3: the group
-    tree issued this lookup once per document). Same row selection: the latest
-    'created' event per document that carries a non-empty memo_file.
-    Chunked to stay under SQLite's historical 999 bind-variable limit.
+    tree issued this lookup once per document). 0276 NR0003 발견 1: the caller
+    passed the project's entire doc_id list, so the chunked
+    `doc_id IN (?×900)` loop spent thousands of bind parameters restating what
+    `d.project_id = ?` says with one. Narrowing through documents keeps the row
+    selection identical — the latest 'created' event per document that carries a
+    non-empty memo_file — while the query count drops to exactly one.
     """
     result: dict[str, str] = {}
-    if not doc_ids:
+    if not project_id:
         return result
-    store = get_store()
-    ids = list(doc_ids)
-    chunk_size = 900
-    for i in range(0, len(ids), chunk_size):
-        chunk = ids[i:i + chunk_size]
-        placeholders = ",".join(["?"] * len(chunk))
-        rows = store._fetch_all(
-            f"SELECT e.doc_id, e.memo_file"
-            f" FROM events e"
-            f" INNER JOIN ("
-            f"     SELECT doc_id, MAX(event_id) AS max_event_id"
-            f"     FROM events"
-            f"     WHERE event_type = 'created'"
-            f"       AND memo_file IS NOT NULL AND memo_file != ''"
-            f"       AND doc_id IN ({placeholders})"
-            f"     GROUP BY doc_id"
-            f" ) latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
-            chunk,
-        )
-        for r in rows:
-            result[r["doc_id"]] = r["memo_file"]
+    rows = get_store()._fetch_all(
+        "SELECT e.doc_id, e.memo_file"
+        " FROM events e"
+        " INNER JOIN ("
+        "     SELECT e2.doc_id, MAX(e2.event_id) AS max_event_id"
+        "     FROM events e2"
+        "     INNER JOIN documents d ON d.doc_id = e2.doc_id"
+        "     WHERE e2.event_type = 'created'"
+        "       AND e2.memo_file IS NOT NULL AND e2.memo_file != ''"
+        "       AND d.project_id = ?"
+        "     GROUP BY e2.doc_id"
+        " ) latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
+        [project_id],
+    )
+    for r in rows:
+        result[r["doc_id"]] = r["memo_file"]
     return result
 
 
@@ -118,21 +116,35 @@ def get_recent_events(limit: int = 5) -> list[dict]:
 
 
 def get_latest_events_map(doc_ids: list[str]) -> dict[str, dict]:
-    """Return a map of the latest event for each document."""
+    """Return a map of the latest event for each document.
+
+    Chunked to stay under SQLite's historical 999 bind-variable limit
+    (0276 NR0003 발견 1: this was the one IN(...) batch left unchunked, so a
+    caller with 1000+ open documents raised "too many SQL variables" instead of
+    returning rows).
+    """
+    result: dict[str, dict] = {}
     if not doc_ids:
-        return {}
-    placeholders = ",".join(["?"] * len(doc_ids))
-    rows = get_store()._fetch_all(
-        f"SELECT e.doc_id, e.event_type, e.note, e.memo_file, e.created_at"
-        f" FROM events e"
-        f" INNER JOIN ("
-        f"     SELECT doc_id, MAX(event_id) AS max_event_id"
-        f"     FROM events WHERE doc_id IN ({placeholders})"
-        f"     GROUP BY doc_id"
-        f" ) latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
-        list(doc_ids),
-    )
-    return {r["doc_id"]: dict(r) for r in rows}
+        return result
+    store = get_store()
+    ids = list(doc_ids)
+    chunk_size = 900
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        placeholders = ",".join(["?"] * len(chunk))
+        rows = store._fetch_all(
+            f"SELECT e.doc_id, e.event_type, e.note, e.memo_file, e.created_at"
+            f" FROM events e"
+            f" INNER JOIN ("
+            f"     SELECT doc_id, MAX(event_id) AS max_event_id"
+            f"     FROM events WHERE doc_id IN ({placeholders})"
+            f"     GROUP BY doc_id"
+            f" ) latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
+            chunk,
+        )
+        for r in rows:
+            result[r["doc_id"]] = dict(r)
+    return result
 
 
 def get_conflict_events(limit: int = 50) -> list[dict]:

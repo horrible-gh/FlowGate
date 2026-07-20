@@ -142,6 +142,9 @@ def mock_db(test_db_path):
             "modules.flow_gate.db.numbering_jobs",
             "modules.flow_gate.db.totp_backup_codes",
             "modules.flow_gate.rbac.decorators",
+            # rbac.decorators._has_permission delegates to permission_service
+            # (0276 T0009), so its bound get_store needs the same treatment.
+            "modules.flow_gate.rbac.permission_service",
             # Settings services do `from ..db.connection import get_store` at import
             # time, so their bound `get_store` is whatever the name pointed at when the
             # module was first imported. In a full-suite run these modules are imported
@@ -154,9 +157,15 @@ def mock_db(test_db_path):
     ]
     for _m in _modules:
         _m.get_store = lambda store=store: store
+    # permission_service memoises resolved permission sets in a module-level dict.
+    # Clear it around each test so entries resolved against a previous test's
+    # store cannot leak into this one (0276 T0009).
+    from modules.flow_gate.rbac import permission_service as _perm_svc
+    _perm_svc.invalidate_all()
     try:
         yield store
     finally:
+        _perm_svc.invalidate_all()
         for _m in _modules:
             _m.get_store = _real_get_store
 

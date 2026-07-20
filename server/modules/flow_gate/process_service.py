@@ -5291,17 +5291,41 @@ def get_group_tree(project_id: str) -> dict:
     # per load — thousands on a real project, ruinous against a remote DB).
     # Batch all three lookups upfront so a tree load stays at a handful of
     # queries regardless of tree size.
+    #
+    # 0276 NR0003 발견 1: batching alone traded query count for bind-parameter
+    # count — the three batched lookups passed the project's whole group list and
+    # whole doc_id list as IN(...) parameters (thousands of %s per tree load, and
+    # still growing linearly with the project). Every one of those lists WAS the
+    # project, so `project_id = ?` expresses the same filter with one parameter,
+    # and the grouped/orphan split moves to Python below.
     group_ids = [dict(g)["group_id"] for g in groups]
-    docs_by_group = db.get_docs_for_tree_by_groups(group_ids)
-    orphan_docs = db.get_orphan_docs_for_tree(project_id, group_ids)
-    _all_tree_docs = [d for _docs in docs_by_group.values() for d in _docs]
-    _all_tree_docs.extend(orphan_docs)
+    known_group_ids = set(group_ids)
+    all_tree_docs = [dict(d) for d in db.get_docs_for_tree_by_project(project_id)]
     try:
-        memo_files = db.get_created_memo_files_map(
-            [dict(d)["doc_id"] for d in _all_tree_docs]
-        )
+        memo_files = db.get_created_memo_files_map_by_project(project_id)
     except Exception:
         memo_files = {}
+
+    def _by_doc_id_desc(rows: list[dict]) -> list[dict]:
+        return sorted(rows, key=lambda d: d.get("doc_id") or "", reverse=True)
+
+    # Reproduces the ordering the replaced queries applied:
+    #   grouped -> ORDER BY group_id, doc_id DESC (per-group list: doc_id DESC)
+    #   orphans -> ORDER BY module, doc_id DESC   (NULL module first, as in SQL)
+    docs_by_group: dict[str, list[dict]] = {gid: [] for gid in group_ids}
+    orphan_docs: list[dict] = []
+    for doc in all_tree_docs:
+        doc_group_id = doc.get("group_id")
+        if doc_group_id in known_group_ids:
+            docs_by_group[doc_group_id].append(doc)
+        else:
+            orphan_docs.append(doc)
+    for _gid, _docs in docs_by_group.items():
+        docs_by_group[_gid] = _by_doc_id_desc(_docs)
+    orphan_docs = sorted(
+        _by_doc_id_desc(orphan_docs),
+        key=lambda d: (d.get("module") is not None, d.get("module") or ""),
+    )
 
     # Fixed column names from the main DB schema
     doc_type_col = "type_code"

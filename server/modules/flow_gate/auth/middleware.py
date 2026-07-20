@@ -25,7 +25,11 @@ def get_current_user(payload:dict=Depends(verify_token)):
     user_id=payload.get("sub")
     if not user_id:raise HTTPException(401,"Invalid token subject")
     from modules.flow_gate.db import users as db_users
-    user=db_users.get_by_id(user_id)
+    from . import auth_cache as _auth_cache
+    # 0276 NR0003 발견 2: one of the five fixed per-request auth queries.
+    # db.users.create/update/delete invalidate this entry, so is_active/is_admin
+    # changes take effect immediately in-process.
+    user=_auth_cache.user_cache().get_or_load(user_id,lambda:db_users.get_by_id(user_id))
     if not user:raise HTTPException(401,"User not found")
     if not user.get("is_active"):raise HTTPException(403,"User account is inactive")
     return user

@@ -294,8 +294,8 @@ def get_created_memo_file(doc_id):
     return _db_events.get_created_memo_file(doc_id)
 
 
-def get_created_memo_files_map(doc_ids):
-    return _db_events.get_created_memo_files_map(doc_ids)
+def get_created_memo_files_map_by_project(project_id):
+    return _db_events.get_created_memo_files_map_by_project(project_id)
 
 
 def get_recent_events_by_doc_id(doc_id, limit: int = 5):
@@ -340,6 +340,11 @@ def get_document_by_id(doc_id):
 
 def get_documents_by_target_id(target_id, types=None, statuses=None):
     return _db_documents.get_documents_by_target_id(target_id, types, statuses)
+
+
+def get_documents_by_ids(doc_ids):
+    """Return a doc_id -> document map for the given ids (batched)."""
+    return _db_documents.get_documents_by_ids(doc_ids)
 
 
 def get_all_documents():
@@ -415,6 +420,16 @@ def get_latest_d_in_group(group_id):
 
 def get_linked_result_documents(target_id):
     return _db_documents.get_linked_result_documents(target_id)
+
+
+def get_linked_result_documents_map():
+    """Group all NR/TR documents by referenced target_id in one scan."""
+    return _db_documents.get_linked_result_documents_map()
+
+
+def get_followup_type_map(types):
+    """Map target_id -> set of follow-up type_codes, for the given types."""
+    return _db_documents.get_followup_type_map(types)
 
 
 def has_open_result_for_target(target_id):
@@ -612,14 +627,9 @@ def get_docs_for_tree_by_group(group_id: str) -> list:
     return _db_documents.get_docs_for_tree_by_group(group_id)
 
 
-def get_docs_for_tree_by_groups(group_ids: list) -> dict:
-    """List documents for many groups in one query (for get_group_tree only)."""
-    return _db_documents.get_docs_for_tree_by_groups(group_ids)
-
-
-def get_orphan_docs_for_tree(project_id: str, known_group_ids: list) -> list:
-    """List orphan documents in the project (for get_group_tree only)."""
-    return _db_documents.get_orphan_docs_for_tree(project_id, known_group_ids)
+def get_docs_for_tree_by_project(project_id: str) -> list:
+    """List every document of a project in one query (for get_group_tree only)."""
+    return _db_documents.get_docs_for_tree_by_project(project_id)
 
 
 # ── TV doc_id helpers (pure logic) ────────────────────────────────────────────
@@ -686,16 +696,18 @@ __all__ = [
     "get_document_by_pk", "update_document_status_by_pk",
     "get_documents_by_group_id", "get_next_number", "get_next_doc_id",
     "issue_group_id", "get_project_settings", "upsert_project_settings",
-    "remove_project_settings", "get_created_memo_file", "get_created_memo_files_map",
+    "remove_project_settings", "get_created_memo_file",
+    "get_created_memo_files_map_by_project",
     "get_allowed_projects", "get_allowed_project_names",
     "update_group_updated_at", "get_document_by_id",
-    "get_documents_by_target_id", "get_events_by_doc_id",
+    "get_documents_by_target_id", "get_documents_by_ids",
+    "get_linked_result_documents_map", "get_followup_type_map",
+    "get_events_by_doc_id",
     "update_document_status", "update_document_metadata",
     "get_all_documents", "get_documents_filtered",
     "get_documents_by_status", "get_all_groups", "get_group",
     "update_group_status", "close_group",
     "get_outbox_documents", "get_inbox_process_documents",
-    "get_docs_for_tree_by_group", "get_docs_for_tree_by_groups",
-    "get_orphan_docs_for_tree",
+    "get_docs_for_tree_by_group", "get_docs_for_tree_by_project",
     "derive_tv_doc_id", "derive_tvr_doc_id", "get_doc_seq_num",
 ]

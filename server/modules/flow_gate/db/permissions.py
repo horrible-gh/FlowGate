@@ -4,6 +4,21 @@ from typing import Optional, Any
 from .connection import get_store, now_iso
 
 
+def _invalidate_permission_cache() -> None:
+    """Drop rbac.permission_service's cache after a role_permissions change.
+
+    0276 T0009: that cache holds resolved permission sets for 30 minutes and was
+    only invalidated on role *assignment*. Editing a role's permissions changes
+    what every holder of that role may do, so it has to clear too. Imported
+    lazily — the db package must not import rbac at module load time.
+    """
+    try:
+        from modules.flow_gate.rbac import permission_service
+    except Exception:
+        return
+    permission_service.invalidate_all()
+
+
 def get_by_id(permission_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM permissions WHERE permission_id = ?", [permission_id]
@@ -41,6 +56,7 @@ def delete(permission_id: str) -> None:
     get_store()._execute(
         "DELETE FROM permissions WHERE permission_id = ?", [permission_id]
     )
+    _invalidate_permission_cache()
 
 
 def assign_to_role(role_id: str, permission_id: str) -> None:
@@ -49,6 +65,7 @@ def assign_to_role(role_id: str, permission_id: str) -> None:
         " ON CONFLICT DO NOTHING",
         [role_id, permission_id],
     )
+    _invalidate_permission_cache()
 
 
 def revoke_from_role(role_id: str, permission_id: str) -> None:
@@ -56,3 +73,4 @@ def revoke_from_role(role_id: str, permission_id: str) -> None:
         "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
         [role_id, permission_id],
     )
+    _invalidate_permission_cache()
