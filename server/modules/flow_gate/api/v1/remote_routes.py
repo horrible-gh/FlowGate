@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import anyio.to_thread
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
@@ -37,5 +38,16 @@ async def remote_tool(request: Request, operation: str):
         # request is authenticated, the missing fields surface as 422 (④).
         body = None
 
-    status, payload = remote_tool_service.handle(operation, raw_token, body)
+    # 0279 T0005 (NR0003 원인 1): remote_tool_service.handle() is a plain `def`
+    # that walks the entire source tree (grep/glob) and does blocking file I/O.
+    # Calling it directly from this `async def` ran it ON the event loop, so one
+    # remote/grep froze every other in-flight request — measured at 40s, during
+    # which an unrelated 0.15s DB read took 40.2s and returned only once the grep
+    # finished. This handler must stay `async def` because it awaits
+    # request.json(), so push the sync pipeline through the threadpool instead.
+    # (Same bug class as 0275 T0005, whose fix covered tree/list/document/git
+    # routes but missed this router.)
+    status, payload = await anyio.to_thread.run_sync(
+        remote_tool_service.handle, operation, raw_token, body
+    )
     return JSONResponse(status_code=status, content=payload)

@@ -155,14 +155,43 @@ tokenChannel?.addEventListener('message', (event: MessageEvent) => {
   }
 })
 
+// 0279 T0005 (NR0003 원인 3): this instance had no `timeout`, so axios defaulted to
+// `timeout: 0` — wait forever. When a request stalled, its promise never settled, the
+// `finally { loading.value = false }` never ran, and no rejection reached the existing
+// error+retry UI. The screen therefore froze on "loading" rather than showing an error,
+// with no self-recovery path short of a page reload. A finite default converts that
+// permanent freeze into an ordinary, retryable ECONNABORTED.
+const DEFAULT_TIMEOUT_MS = 30_000
+
+// Endpoints that are legitimately slow, so the 30s default would abort healthy work.
+// Matched on the request path, which keeps the policy in one place — a per-call
+// override would have to be repeated at every call site and silently forgotten at new
+// ones. Ceiling is 130s: just above the server's GIT_NET_TIMEOUT_SEC = 120 (git_service),
+// so the server's own timeout is what surfaces, not ours.
+const LONG_TIMEOUT_MS = 130_000
+const LONG_RUNNING_PATHS = [
+  /\/git\//,
+  /\/files\/upload/,
+  /\/files\/download/,
+  /\/search\//,
+]
+
 const api: AxiosInstance = axios.create({
   baseURL: getBaseUrl(),
   headers: { 'Content-Type': 'application/json' },
+  timeout: DEFAULT_TIMEOUT_MS,
 })
 
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (window.__accessToken__) {
     config.headers.Authorization = `Bearer ${window.__accessToken__}`
+  }
+  // Raise the ceiling for known-slow endpoints unless the caller set its own timeout.
+  if (config.timeout === DEFAULT_TIMEOUT_MS) {
+    const path = config.url || ''
+    if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
+      config.timeout = LONG_TIMEOUT_MS
+    }
   }
   // Forward the UI locale so server-built artifacts (e.g. worker mentions) can
   // emit localized doc-type names. Same source the i18n bootstrap reads.
@@ -199,9 +228,12 @@ const runRefresh = async (): Promise<string> => {
       return shared!.access
     }
 
+    // Bare `axios`, not `api` — deliberately, to skip the auth interceptor. That also
+    // skips the instance default, so set the timeout explicitly: a rotation that hangs
+    // forever holds the cross-tab refresh lock and blocks every queued caller (0279 T0005).
     const { data } = await axios.post<RefreshResponse>(`${getBaseUrl()}/auth/refresh`, {
       refresh_token: currentRefreshToken ?? intendedRefreshToken,
-    })
+    }, { timeout: DEFAULT_TIMEOUT_MS })
     window.__accessToken__ = data.access_token
     sessionStorage.setItem('fg_access_token', data.access_token)
     storeRefreshToken(data.refresh_token)
@@ -411,7 +443,7 @@ export const serverLogout = async (): Promise<void> => {
     await axios.post(
       `${getBaseUrl()}/auth/logout`,
       { refresh_token: refreshToken },
-      { headers },
+      { headers, timeout: DEFAULT_TIMEOUT_MS },
     )
   } catch (e) {
     console.warn('[serverLogout] Server logout call failed:', e)

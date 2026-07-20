@@ -64,6 +64,29 @@ _NOTIFICATION_EVENT_TYPES = (
 _GROUP_DISCARD_TYPE = "DC"
 _WORKFLOW_ROOT_TYPES = ("R", "B")
 
+# Newest-events window scanned by _event_rows (0279 P3-10).
+#
+# The query below had NO LIMIT: it returned every matching workflow_event for the
+# project, twice LEFT JOINed against documents and users, and _normalized_activities
+# then ran _metadata() JSON parsing plus _normalize_activity() over all of them and
+# sorted the result in Python — only for _page() to slice off the first ~10 rows.
+# Cost grew linearly and without bound as the event log accumulated, on a query that
+# runs on every dashboard load and every 🔔 poll. This is the DB-side answer to
+# R0001 ("DB 때문인지 파일 때문인지"): nothing here is slow at 500 events and all of it
+# is slow at 500,000, which is why the stall appeared gradually rather than at once.
+#
+# The ORDER BY is already newest-first and both callers render newest-first from the
+# head of the list, so taking the newest N is the window they actually consume. N is
+# set far above any page size (callers pass limits in the tens) to leave room for the
+# post-fetch filtering in _normalize_activity and _without_terminal_group_items.
+#
+# Accepted tradeoff, stated plainly: `total`, `has_more` and `unread_count` are now
+# computed over this window, so they saturate here instead of counting the whole
+# history — a bell badge that would have read 5,000 reads 2,000. The displayed items
+# are unchanged. Making those counts exact without the full scan needs a COUNT(*)
+# aggregate per surface, which is a separate change.
+_EVENT_SCAN_LIMIT = 2000
+
 
 class DashboardDataError(RuntimeError):
     """Dashboard source data is internally inconsistent."""
@@ -139,7 +162,12 @@ def _fetch_terminal_group_ids(project_id: str) -> set[str]:
 def _event_rows(
     project_id: str,
     event_types: tuple[str, ...] = _ACTIVITY_EVENT_TYPES,
+    scan_limit: int = _EVENT_SCAN_LIMIT,
 ) -> list[dict]:
+    """Newest ``scan_limit`` matching workflow events for a project, newest first.
+
+    See ``_EVENT_SCAN_LIMIT`` for why the window exists and what it costs.
+    """
     placeholders = ",".join("?" for _ in event_types)
     return get_store()._fetch_all(
         f"""
@@ -157,8 +185,9 @@ def _event_rows(
         WHERE we.project_id = ?
           AND we.event_type IN ({placeholders})
         ORDER BY we.created_at DESC, we.id DESC
+        LIMIT ?
         """,
-        [project_id, *event_types],
+        [project_id, *event_types, scan_limit],
     )
 
 

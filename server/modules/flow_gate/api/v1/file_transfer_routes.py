@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 
+import anyio.to_thread
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
@@ -80,6 +81,19 @@ def _under_root(full_path: str, root: str) -> bool:
     """Returns True if full_path is under root (prefix check including os.sep)."""
     root_prefix = root if root.endswith(os.sep) else root + os.sep
     return full_path.startswith(root_prefix) or full_path == root
+
+
+def _save_file(full_path_str: str, data: bytes) -> None:
+    """Create intermediate directories and write one uploaded file (overwrite).
+
+    0279 T0005 (NR0003 원인 1): split out of upload_files so the blocking mkdir +
+    write can be pushed through anyio.to_thread. Run on the event loop it froze
+    every other request for the duration of the write — up to 100 MB per file and
+    500 MB per request.
+    """
+    os.makedirs(os.path.dirname(full_path_str), exist_ok=True)
+    with open(full_path_str, "wb") as fh:
+        fh.write(data)
 
 
 def _err(status: int, code: str, message: str) -> JSONResponse:
@@ -217,12 +231,9 @@ async def upload_files(request: Request, project_id: str):
                 content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Total request size exceeds 500 MB"}},
             )
 
-        # Create intermediate directories (if needed)
-        os.makedirs(os.path.dirname(full_path_str), exist_ok=True)
-
-        # Save file (overwrite)
-        with open(full_path_str, "wb") as fh:
-            fh.write(data)
+        # Create intermediate directories (if needed) and save the file
+        # (overwrite) — off the event loop, see _save_file.
+        await anyio.to_thread.run_sync(_save_file, full_path_str, data)
 
         # Return POSIX relative path from project root in the response
         saved_rel = os.path.relpath(full_path_str, root_str).replace("\\", "/")

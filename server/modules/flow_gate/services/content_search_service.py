@@ -23,14 +23,29 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.storage.paths import resolve_storage_path
 
-# doc_id -> (mtime, original_text, lowered_text)
-_CACHE: dict[str, tuple[float, str, str]] = {}
+# doc_id -> (mtime, original_text, lowered_text), least-recently-used first.
+#
+# 0279 P3-11: this cache was an unbounded plain dict. A facet-less body search walks
+# every candidate document (see the "Limitation (honest)" note above), so one such
+# search admitted the *entire corpus* — and each entry holds the body twice, the
+# original text plus its lowercased copy, so the resident cost is roughly 2× the
+# total size of all document bodies and it never came back down. Nothing evicted:
+# `reset_cache()` is only called by tests. On a long-lived server with a growing
+# corpus that is a monotonic climb into memory pressure, which is exactly the kind
+# of slow-onset "가끔 멈춘다" R0001 is chasing.
+#
+# An LRU cap makes the footprint predictable. The cache is a pure optimisation
+# keyed on mtime — a miss re-reads the file and is correct, just slower — so
+# eviction can never produce a wrong result, only a re-read.
+_CACHE_MAX_ENTRIES = 512
+_CACHE: "OrderedDict[str, tuple[float, str, str]]" = OrderedDict()
 _LOCK = threading.Lock()
 
 _SNIPPET_BEFORE = 40
@@ -131,6 +146,7 @@ def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
     with _LOCK:
         cached = _CACHE.get(doc_id)
         if cached is not None and cached[0] == mtime:
+            _CACHE.move_to_end(doc_id)  # mark as recently used
             return cached[1], cached[2]
 
     try:
@@ -145,6 +161,9 @@ def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
     lowered = text.lower()
     with _LOCK:
         _CACHE[doc_id] = (mtime, text, lowered)
+        _CACHE.move_to_end(doc_id)
+        while len(_CACHE) > _CACHE_MAX_ENTRIES:
+            _CACHE.popitem(last=False)  # evict least recently used
     return text, lowered
 
 

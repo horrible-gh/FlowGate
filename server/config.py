@@ -295,6 +295,42 @@ class DatabaseSetting:
 # 🔹 Create singleton instance
 import os
 
+
+def _enable_sqlite_wal() -> None:
+    """Put the runtime SQLite DB into WAL journal mode, once, at boot.
+
+    0279 T0005 (NR0003 §4): `PRAGMA journal_mode = WAL` existed only in
+    db/migrations/migrate.py — a standalone legacy script that builds
+    flow_gate_new.db and is not on the boot path. The runtime DB was therefore
+    still in rollback-journal mode, where a write transaction takes an EXCLUSIVE
+    lock that blocks every concurrent READ. Under WAL, readers and a writer
+    proceed together, which removes that amplifier.
+
+    journal_mode is persisted in the database file itself, so applying it once
+    per boot is sufficient and idempotent — unlike busy_timeout, which is
+    per-connection (handled in db/connection.py).
+
+    Best-effort by design: a failure here must never stop the server booting,
+    since the previous journal mode remains perfectly functional.
+    """
+    if settings.DB_TYPE.value not in (DBType.SQLITE, DBType.SQLITE3, DBType.LOCAL):
+        return
+    path = (settings.DB_PATH or "").strip()
+    if not path or not os.path.exists(path):
+        return
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(path, timeout=15)
+        try:
+            mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+            logger.debug(f"✅ SQLite journal_mode={mode[0] if mode else '?'} ({path})")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"⚠️ Could not enable SQLite WAL mode ({path}): {e}")
+
+
 # During test runs, avoid initializing the full DB/migrator which may require
 # resources not present in the test environment. Set environment variable
 # `TESTING=1` to skip DB initialization.
@@ -302,6 +338,8 @@ if os.getenv("TESTING", "0") != "1":
     db = DatabaseSetting()
     # Maintain backward import compatibility
     tfa = db.tfa
+    # After the migrator has created/updated the DB file (0279 T0005).
+    _enable_sqlite_wal()
 else:
     class _DummyDB:
         def __init__(self):

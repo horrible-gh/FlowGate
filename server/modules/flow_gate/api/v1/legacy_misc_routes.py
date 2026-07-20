@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+import anyio.to_thread
 from fastapi import APIRouter, Form, Query
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
@@ -39,6 +40,11 @@ router = APIRouter(prefix="/api/v1", tags=["LegacyMisc"])
 # 0275 T0005 (NR0003 원인 2): handlers doing sync DB work are plain `def` so
 # FastAPI runs them in the threadpool instead of blocking the event loop. The
 # ones that `await request.json()` stay async.
+#
+# 0279 T0005 (NR0003 원인 1): staying `async def` was not enough — those handlers
+# still ran their sync mkdir/file-create/clipboard work ON the event loop after
+# the await. They now hand that work to anyio.to_thread.run_sync, so only the
+# body parse happens on the loop.
 @router.get("/brief", response_class=JSONResponse)
 def api_brief():
     return service.envelope("brief", service.get_brief())
@@ -104,10 +110,12 @@ def api_get_group(group_id: str):
 async def api_create_folder(request: Request):
     """Create folder. Body: {project_id, parent_path, name}"""
     body = await request.json()
-    result = process_service.create_storage_folder(
-        project_id=body.get("project_id", ""),
-        parent_path=body.get("parent_path", ""),
-        name=body.get("name", ""),
+    result = await anyio.to_thread.run_sync(
+        lambda: process_service.create_storage_folder(
+            project_id=body.get("project_id", ""),
+            parent_path=body.get("parent_path", ""),
+            name=body.get("name", ""),
+        )
     )
     if result.get("status") == "error":
         return JSONResponse(status_code=400, content=result)
@@ -118,10 +126,12 @@ async def api_create_folder(request: Request):
 async def api_create_file(request: Request):
     """Create file. Body: {project_id, parent_path, name}"""
     body = await request.json()
-    result = process_service.create_storage_file(
-        project_id=body.get("project_id", ""),
-        parent_path=body.get("parent_path", ""),
-        name=body.get("name", ""),
+    result = await anyio.to_thread.run_sync(
+        lambda: process_service.create_storage_file(
+            project_id=body.get("project_id", ""),
+            parent_path=body.get("parent_path", ""),
+            name=body.get("name", ""),
+        )
     )
     if result.get("status") == "error":
         return JSONResponse(status_code=400, content=result)
@@ -137,7 +147,7 @@ async def api_clipboard(request: Request):
             status_code=400,
             content={"status": "error", "message": "file_path is required"},
         )
-    return process_service.build_clipboard_text(file_path)
+    return await anyio.to_thread.run_sync(process_service.build_clipboard_text, file_path)
 
 
 # ── T394: Transfer remaining /flow_gate/ items ──────────────────────────────────────────────
