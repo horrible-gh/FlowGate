@@ -115,6 +115,50 @@ def src_root(project_name: str, branch: str = 'main') -> Path:
     return get_storage_root() / 'src' / project_name / branch
 
 
+def _group_worktree_on_disk(
+    project_id: Optional[str], group_id: Optional[str]
+) -> Optional[Path]:
+    """The group's branch worktree path when it physically exists, else None.
+
+    0284 T0005 (structural fix for B0001): recovery used by
+    resolve_project_src_root / classify_src_root when the git ledger's
+    worktree_registered flag has been cleared — merge/push cleanup resets it to
+    0 (git_integration.unregister_worktree), which is what silently dropped every
+    post-merge / in-flight re-run to the base(main) tree (NR0003 §4). The flag gates
+    slot *accounting*, not which tree the runner must read: while the group's branch
+    worktree is still on disk it stays authoritative, so a fix-verification suite is
+    checked against the tree that actually holds the fix. Mirrors the gates of
+    git_service.effective_src_root_ex (integration on, state, branch, project
+    name, directory present) EXCEPT the registration flag. Pure lookup — never
+    raises; a genuinely pruned directory returns None so the caller still falls back.
+    """
+    if not project_id or not group_id:
+        return None
+    try:
+        from modules.flow_gate.services import git_service  # lazy — import cycle
+
+        cfg = git_service.db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return None
+        state = git_service.db_git.get_state(group_id)
+        if not state:
+            return None
+        branch = (state.get("branch") or "").strip()
+        if not branch:
+            return None
+        project_name = git_service._project_name(project_id)
+        if not project_name:
+            return None
+        wt = src_root(project_name, branch)
+        if wt.is_dir():
+            return wt.resolve()
+    except Exception:
+        _log.warning(
+            "on-disk worktree recovery failed for group %s", group_id, exc_info=True
+        )
+    return None
+
+
 def resolve_project_src_root(
     project_id: Optional[str],
     fallback_branch: str = "main",
@@ -154,6 +198,21 @@ def resolve_project_src_root(
                 project_id,
                 exc_info=True,
             )
+        # 0284 T0005 (structural fix for B0001 / NR0003 §6-1): effective_src_root()
+        # returns None once the ledger's worktree_registered flag is cleared (merge/
+        # push cleanup), which used to drop the run to the base(main) tree even while
+        # the group's branch worktree was still on disk — so a fix-verification suite
+        # ran against a tree lacking the very fix it verifies. Recover the on-disk
+        # branch worktree before falling back; only a pruned directory falls through.
+        recovered = _group_worktree_on_disk(project_id, group_id)
+        if recovered is not None:
+            _log.info(
+                "resolve_project_src_root: group %s using on-disk worktree %s despite "
+                "cleared registration ledger (post-merge recovery)",
+                group_id,
+                recovered,
+            )
+            return recovered
     try:
         from modules.flow_gate.db import projects as _proj  # lazy — import cycle
     except Exception:
@@ -200,8 +259,16 @@ def classify_src_root(
         from modules.flow_gate.services import git_service  # lazy — import cycle
 
         wt, reason = git_service.effective_src_root_ex(project_id, group_id)
-        if wt is not None and Path(root).resolve(strict=False) != wt:
-            return "unknown"
+        if wt is not None:
+            return reason if Path(root).resolve(strict=False) == wt else "unknown"
+        # 0284 T0005: effective_src_root_ex still reports the ledger fallback reason
+        # (e.g. worktree_unregistered after merge/cleanup) even though the run may have
+        # executed in the group's on-disk branch worktree via the recovery above.
+        # Classify by the root ACTUALLY used so the TSR reads "worktree", not the
+        # stale ledger reason.
+        recovered = _group_worktree_on_disk(project_id, group_id)
+        if recovered is not None and Path(root).resolve(strict=False) == recovered:
+            return git_service.SRC_ROOT_WORKTREE
         return reason
     except Exception:
         _log.warning(
