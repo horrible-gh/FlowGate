@@ -37,6 +37,7 @@ from modules.flow_gate.api.v1.test_run_routes import router as _test_run_router
 from modules.flow_gate.api.v1.ai_invoke_routes import router as _ai_invoke_router
 from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_recipe_router
 from modules.flow_gate.api.v1.git_routes import router as _git_router
+from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from config import settings
 from startup import run_all as _bootstrap
@@ -108,6 +109,11 @@ async def git_service_exception_handler(request: Request, exc: GitServiceError):
     )
 
 app.add_middleware(SlowAPIMiddleware)
+# 0291 P3-1 / 4-8: 요청 하나 = DB 읽기 캐시 하나 + 쿼리 계측 하나.
+# add_middleware 는 스택을 바깥쪽으로 쌓으므로 **나중에 추가된 것이 먼저 실행된다.**
+# 이 줄이 SlowAPIMiddleware 뒤에 오는 덕에 스코프가 바깥에 서고, 레이트리밋에 걸려
+# 거절되는 요청까지 계측에 잡힌다. 스코프가 안쪽에 있으면 그 요청은 통계에서 사라진다.
+app.add_middleware(RequestScopeMiddleware)
 
 # Legacy login/register endpoints removed — replaced by /flowgate/auth/login (B001 fix)
 # app.include_router(login.router, prefix=f"{CONTEXT}/login", tags=["Login"])

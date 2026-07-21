@@ -101,6 +101,11 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 # Document types subject to parent transition on child creation (T528)
 _PARENT_CLOSE_TYPE_CODES = {"R", "B", "M"}
 
+# 한 그룹의 문서를 한 번에 몇 건까지 읽어 head/루트 판정에 쓰는지 (0291 T3).
+# 원래 _parse_doc_workflow 안에 있던 리터럴 100 이다. 이제 "잘렸는가" 판정에도
+# 쓰이므로 — 잘렸으면 루트를 좁은 쿼리로 다시 확인한다 — 이름을 붙여 한 곳에 둔다.
+_GROUP_DOC_SCAN_LIMIT = 100
+
 
 def _try_close_parent_on_child_created(
     parent_doc_id: str,
@@ -475,17 +480,43 @@ def _parse_doc_workflow(doc: dict) -> dict:
         parsed_history = []
     out["rejection_history"] = parsed_history
 
+    # 0291 T3: 그룹 문서 목록을 **먼저** 한 번 읽고, 그 아래의 R/B 루트 조회와 head
+    # 판정이 같은 결과를 나눠 쓴다. 예전에는 루트를 좁은 쿼리로 따로 두 번(R, 없으면 B)
+    # 읽은 뒤 곧바로 같은 그룹의 문서 목록을 통째로 다시 읽었다 — 뒤엣것이 앞엣것을
+    # 완전히 포함하는데도. 문서 응답당 최대 3 → 1.
+    #
+    # ``list_documents`` 의 정렬은 두 호출이 같다(``ORDER BY updated_at DESC``). 그래서
+    # 목록에서 첫 R(없으면 첫 B)을 고르는 것은 ``type_code=R, limit=1`` 과 같은 행이다 —
+    # **목록이 잘리지 않았을 때만.** 그룹 문서가 100건을 넘으면 루트가 그 100건 밖에
+    # 있을 수 있으므로 그때는 예전의 좁은 쿼리로 떨어진다.
+    group_head = None
+    candidates: list = []  # all group docs; also used for 'pending' derivation below
+    if doc.get("project_id") and doc.get("group_id"):
+        from modules.flow_gate.db import documents as _db_docs_chain
+        try:
+            candidates = _db_docs_chain.list_documents(
+                project_id=doc["project_id"],
+                group_id=doc["group_id"],
+                limit=_GROUP_DOC_SCAN_LIMIT,   # group sizes are tiny; we filter in Python below
+            )
+        except Exception:
+            candidates = []
+    _candidates_truncated = len(candidates) >= _GROUP_DOC_SCAN_LIMIT
+
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES and doc.get("group_id") and doc.get("project_id"):
         from modules.flow_gate.db import documents as _db_docs
         try:
-            roots = _db_docs.list_documents(
-                project_id=doc["project_id"],
-                group_id=doc["group_id"],
-                type_code="R",
-                limit=1,
-            )
+            roots = [c for c in candidates if c.get("type_code") == "R"][:1]
             if not roots:
+                roots = [c for c in candidates if c.get("type_code") == "B"][:1]
+            if not roots and (_candidates_truncated or not candidates):
+                # 목록이 잘렸거나 아예 못 읽었다 — 없다고 단정할 수 없으므로 확인한다.
                 roots = _db_docs.list_documents(
+                    project_id=doc["project_id"],
+                    group_id=doc["group_id"],
+                    type_code="R",
+                    limit=1,
+                ) or _db_docs.list_documents(
                     project_id=doc["project_id"],
                     group_id=doc["group_id"],
                     type_code="B",
@@ -512,33 +543,26 @@ def _parse_doc_workflow(doc: dict) -> dict:
 
     # Resolve group head by direct documents-table lookup (PM 4-step spec, T818).
     # NOT using workflow_sequence_items.result_doc_id (rejected by PM thrice).
-    group_head = None
-    candidates: list = []  # all group docs; also used for 'pending' derivation below
-    if doc.get("project_id") and doc.get("group_id"):
-        from modules.flow_gate.db import documents as _db_docs_chain
-        try:
-            candidates = _db_docs_chain.list_documents(
-                project_id=doc["project_id"],
-                group_id=doc["group_id"],
-                limit=100,   # group sizes are tiny; we filter in Python below
-            )
-            # Filter: workflow-step docs only, not yet approved.
-            # Auto-complete types (memos) are never an actionable head — invariant
-            # guard so an existing memo can never surface as the head regardless of
-            # its stored status (B / defence-in-depth alongside the reopen guard).
-            NON_HEAD_TYPES = WORKFLOW_ROOT_TYPES | {"Q"} | AUTO_COMPLETE_TYPES
-            APPROVED_STATUSES = {"approved", "wf_done"}
-            in_progress = [
-                c for c in candidates
-                if c.get("type_code") not in NON_HEAD_TYPES
-                and (c.get("doc_review_status") is None
-                     or c.get("doc_review_status") not in APPROVED_STATUSES)
-            ]
-            # Pick the earliest-seq in-progress doc (the next step in workflow order).
-            in_progress.sort(key=lambda c: (c.get("seq") or 0))
-            group_head = in_progress[0] if in_progress else None
-        except Exception:
-            pass
+    # 0291 T3: 문서 목록은 위에서 이미 한 번 읽었다 (``candidates``). 여기서는 거르기만 한다.
+    #
+    # 두 상수는 try 안이 아니라 여기서 정의한다. 예전에는 조회 블록 안에 있어서, 조회가
+    # 예외로 끝나면 아래 head 판정이 NameError 로 터졌다 — 목록을 못 읽은 것보다 나쁜
+    # 실패다. 목록과 무관한 값이므로 무조건 있어야 한다.
+    NON_HEAD_TYPES = WORKFLOW_ROOT_TYPES | {"Q"} | AUTO_COMPLETE_TYPES
+    APPROVED_STATUSES = {"approved", "wf_done"}
+    # Filter: workflow-step docs only, not yet approved.
+    # Auto-complete types (memos) are never an actionable head — invariant
+    # guard so an existing memo can never surface as the head regardless of
+    # its stored status (B / defence-in-depth alongside the reopen guard).
+    in_progress = [
+        c for c in candidates
+        if c.get("type_code") not in NON_HEAD_TYPES
+        and (c.get("doc_review_status") is None
+             or c.get("doc_review_status") not in APPROVED_STATUSES)
+    ]
+    # Pick the earliest-seq in-progress doc (the next step in workflow order).
+    in_progress.sort(key=lambda c: (c.get("seq") or 0))
+    group_head = in_progress[0] if in_progress else None
 
     final_approved = (
         doc.get("doc_review_status") == "wf_done"
@@ -1665,7 +1689,10 @@ def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
 def _return_point_payload(group_id: str) -> dict:
     from modules.flow_gate.db import workflow_return_points as _db_rp
 
-    rp = _db_rp.get_by_group(group_id)
+    # 0291 T2: 예전에는 여기서 네 번 조회했다(반환점 → front 문서 → pending 최소 seq →
+    # 스냅샷 개수). 뒤의 셋은 첫 조회의 id/front_seq 에서 파생될 뿐이라 한 문장으로
+    # 접었다 — 문서 응답당 4 → 1. 세부는 db/workflow_return_points.summary().
+    rp = _db_rp.summary(group_id)
     if rp is None:
         return {
             "exists": False,
@@ -1677,13 +1704,12 @@ def _return_point_payload(group_id: str) -> dict:
             "destination_min": None,
         }
 
-    front_doc = _db_rp.get_front_doc(group_id, int(rp["front_seq"]))
-    current_min = _db_rp.current_pending_min_seq(rp["id"])
+    current_min = rp["current_min_seq"]
     return {
         "exists": True,
         "front_seq": rp["front_seq"],
-        "front_label": (front_doc or {}).get("title") or (front_doc or {}).get("type_code"),
-        "restorable_count": _db_rp.count_docs(rp["id"]),
+        "front_label": rp["front_title"] or rp["front_type_code"],
+        "restorable_count": rp["restorable_count"],
         "current_min_seq": current_min,
         "destination_default": rp["front_seq"],
         "destination_min": current_min,

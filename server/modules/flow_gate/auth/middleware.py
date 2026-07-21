@@ -13,6 +13,12 @@ def verify_token(token:str=Depends(oauth2_scheme)):
     except jwt.InvalidTokenError:raise credentials
     if payload.get("type")!="access":raise credentials
     if payload.get("totp_pending"):raise HTTPException(401,"2FA verification required")
+    # 0291 T1: 아래 두 판정과 get_current_user 의 사용자 조회는 서로 독립인 단일 행
+    # 조회 세 개다. 캐시가 비어 있으면 세 번 따로 가므로, 먼저 한 번에 읽어 세 캐시를
+    # 채운다. 판정 자체는 아래 그대로 — 무효화 경로가 바뀌지 않는다.
+    # 실패해도 조용히 넘어가고 종전 경로가 그대로 돈다 (auth_preamble 독스트링).
+    from . import auth_preamble as _preamble
+    _preamble.prefetch(payload.get("jti"),payload.get("sid"),payload.get("sub"))
     try:
         if payload.get("jti") and is_blacklisted(payload["jti"]):raise HTTPException(401,"Token has been revoked")
         if payload.get("sid") and not is_session_active(payload["sid"]):raise HTTPException(401,"session_revoked")

@@ -1,11 +1,11 @@
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useDashboardStore } from '../stores/dashboard'
 import { useToast } from '../components/common/useToast'
 
-function getSseUrl(): string {
+function getSseUrl(project?: string | null): string {
   const base =
     (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
     'http://127.0.0.1:8088/flowgate'
@@ -14,9 +14,16 @@ function getSseUrl(): string {
     (window as any).__accessToken__ ||
     sessionStorage.getItem('fg_access_token') ||
     ''
-  const tokenParam = token ? `?token=${encodeURIComponent(token)}` : ''
 
-  return `${base}/api/v1/events/stream${tokenParam}`
+  // Declare the project this screen is showing so the server only pushes broadcasts
+  // belonging to it (0291 D0005 §3-2). Omitted while no project is selected yet —
+  // the server then falls back to delivering everything, so nothing is lost.
+  const params = new URLSearchParams()
+  if (token) params.set('token', token)
+  if (project) params.set('project', project)
+  const query = params.toString()
+
+  return `${base}/api/v1/events/stream${query ? `?${query}` : ''}`
 }
 
 // Decode the current access token to obtain this client's own user id, matching
@@ -48,6 +55,17 @@ export function useFlowGateSse(refreshAll: () => void) {
 
   let es: EventSource | null = null
   let hadPreviousConnection = false
+
+  // Project the currently-open stream declared to the server (0291 D0005 §3-2).
+  // Tracked separately from projectStore.currentProjectId so the watcher below can
+  // tell "the user switched project" from "the store settled on the same value".
+  let connectedProject: string | null = null
+  // Set when a reconnect is triggered by a project switch, so the `open` handler
+  // re-reads the screen even on the (theoretical) first-ever connection. §3-3 hangs
+  // entirely on this resync: events for the new project that arrive between the old
+  // subscription ending and the new one being registered are simply not delivered,
+  // and the full re-read is what makes that gap harmless instead of a missed update.
+  let forceResyncOnOpen = false
 
   // Manual reconnection state. The native EventSource auto-reconnect reuses the
   // ORIGINAL url — i.e. the access token captured at first connect — and treats a
@@ -186,12 +204,7 @@ export function useFlowGateSse(refreshAll: () => void) {
     }
   }
 
-  function invalidateAndRefresh(project?: string | null, dashboardImmediate = false) {
-    const pid = project ?? projectStore.currentProjectId
-    if (pid) explorerStore.invalidateProject(pid)
-    if (pid && pid === projectStore.currentProjectId) {
-      dashboardStore.invalidate(pid, dashboardImmediate)
-    }
+  function emitScreenRefresh(pid: string | null) {
     refreshAll()
     // refreshAll() only invalidates the explorer tree. Open document tabs derive
     // their action-bar / workflow-head state from a one-shot fetch on mount, so a
@@ -200,23 +213,107 @@ export function useFlowGateSse(refreshAll: () => void) {
     // action bar stays live (navigate-to-existing instead of stale "proceed/create").
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
-        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid ?? null } }),
+        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid } }),
       )
       // Signal the 🔔 notification center to refetch its persistent inflow feed + unread badge,
       // so document inflow is visible without entering the dashboard (R0001 group 0045 / NR0003
       // option A + option D). The server stays the single source of truth — the center refetches rather than
       // incrementing locally — so live and persisted counts cannot drift.
       window.dispatchEvent(
-        new CustomEvent('fg:notification', { detail: { project: pid ?? null } }),
+        new CustomEvent('fg:notification', { detail: { project: pid } }),
       )
     }
+  }
+
+  // Refresh coalescing (P1-3 / NR0003 §4 P1). One logical change frequently emits
+  // several events (an unattended worker handling a single document publishes a
+  // document_explorer_refresh, a doc_review_status_changed and a group_view_refresh
+  // in quick succession), and each one used to drive its own full screen re-read:
+  // explorer tree + one workflow-head fetch per open tab. Collapsing a burst into a
+  // single re-read cuts that multiplier without changing what the screen ends up
+  // showing, because every refresh in a burst reads the same post-burst server state.
+  //
+  // Fixed window, not a sliding debounce: the first event sets the deadline and later
+  // events join it rather than pushing it back. A sliding window would let a steady
+  // event stream postpone the refresh indefinitely — the screen would go stale exactly
+  // when the most is happening. This way the delay is bounded by COALESCE_MS.
+  //
+  // Coalescing lives on the client, not in the publisher: dropping events server-side
+  // would also drop the toasts and the per-document reloads that ride on the same
+  // events. Only the screen re-read is merged here; every event is still handled.
+  const REFRESH_COALESCE_MS = 250
+  let coalesceTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingRefreshProject: string | null = null
+
+  function flushScreenRefresh() {
+    const pid = pendingRefreshProject
+    pendingRefreshProject = null
+    emitScreenRefresh(pid)
+  }
+
+  function cancelCoalescedRefresh() {
+    if (coalesceTimer !== null) {
+      clearTimeout(coalesceTimer)
+      coalesceTimer = null
+    }
+    pendingRefreshProject = null
+  }
+
+  function scheduleScreenRefresh(pid: string | null, immediate: boolean) {
+    pendingRefreshProject = pid
+    if (immediate) {
+      // Reconnect resync (§3-3) and manual-equivalent paths must not be deferred:
+      // this re-read is the safety net for events missed while disconnected.
+      if (coalesceTimer !== null) {
+        clearTimeout(coalesceTimer)
+        coalesceTimer = null
+      }
+      flushScreenRefresh()
+      return
+    }
+    if (coalesceTimer !== null) return
+    coalesceTimer = setTimeout(() => {
+      coalesceTimer = null
+      flushScreenRefresh()
+    }, REFRESH_COALESCE_MS)
+  }
+
+  function invalidateAndRefresh(project?: string | null, immediate = false) {
+    const pid = project ?? projectStore.currentProjectId
+    if (pid) explorerStore.invalidateProject(pid)
+    if (pid && pid !== projectStore.currentProjectId) {
+      // Client-side project guard (P1-2 / NR0003 §4 P1-2). The server now routes
+      // broadcasts by project (D0005 §3-1), but its rules 3 and 4 are deliberate
+      // fallbacks — an event whose project is unknown, or a subscription that never
+      // declared one, still reaches every screen. Without this guard those fallback
+      // deliveries reinstate the very fan-out P1-1 removed. The cache invalidation
+      // above still runs, so switching to that project later re-reads it rather than
+      // showing a stale tree.
+      return
+    }
+    if (pid) dashboardStore.invalidate(pid, immediate)
+    scheduleScreenRefresh(pid ?? null, immediate)
+  }
+
+  function onProjectChanged(next: string | null) {
+    // The interest project is bound at connect time server-side, so a switch means
+    // rebuilding the stream. Project switching is a human action, so the reconnect
+    // cost is paid at human frequency — the reason D0005 §3-2 chose this over an
+    // extra "update my interest" endpoint.
+    if (closedByUs) return
+    const normalized = next ?? null
+    if (normalized === connectedProject && es !== null) return
+    forceResyncOnOpen = true
+    reconnectNow('project_changed')
   }
 
   function connect() {
     clearReconnectTimer()
     closedByUs = false
-    log('connecting')
-    const source = new EventSource(getSseUrl(), { withCredentials: true })
+    const project = projectStore.currentProjectId ?? null
+    connectedProject = project
+    log('connecting', { project })
+    const source = new EventSource(getSseUrl(project), { withCredentials: true })
     es = source
     // Treat a fresh attempt as "just seen" so the liveness watchdog gives it a full
     // window to open before judging it stale.
@@ -226,12 +323,14 @@ export function useFlowGateSse(refreshAll: () => void) {
       log('connection open')
       reconnectAttempts = 0
       markAlive()
-      if (hadPreviousConnection) {
-        // Recovered from a drop. The server does not replay events emitted while we
-        // were disconnected, so force a full resync of the explorer + open documents
-        // on every (re)open. (NR0003 item 2)
+      if (hadPreviousConnection || forceResyncOnOpen) {
+        // Recovered from a drop, or re-subscribed under a new project. The server does
+        // not replay events emitted while we were disconnected, so force a full resync
+        // of the explorer + open documents on every (re)open. (NR0003 item 2 /
+        // 0291 D0005 §3-3)
         invalidateAndRefresh(undefined, true)
       }
+      forceResyncOnOpen = false
       hadPreviousConnection = true
     })
 
@@ -491,12 +590,17 @@ export function useFlowGateSse(refreshAll: () => void) {
   function disconnect() {
     closedByUs = true
     clearReconnectTimer()
+    // Drop any refresh still inside its coalescing window — firing it after unmount
+    // would call refreshAll() on a torn-down view.
+    cancelCoalescedRefresh()
     reconnectAttempts = 0
     if (es) {
       es.close()
       es = null
     }
   }
+
+  let stopProjectWatch: (() => void) | null = null
 
   onMounted(() => {
     window.addEventListener('fg:document_content_refresh_completed', onDocumentContentRefreshCompleted)
@@ -507,8 +611,16 @@ export function useFlowGateSse(refreshAll: () => void) {
     window.addEventListener('online', onOnline)
     connect()
     startLivenessWatch()
+    stopProjectWatch = watch(
+      () => projectStore.currentProjectId,
+      (next) => onProjectChanged(next ?? null),
+    )
   })
   onBeforeUnmount(() => {
+    if (stopProjectWatch) {
+      stopProjectWatch()
+      stopProjectWatch = null
+    }
     window.removeEventListener('fg:document_content_refresh_completed', onDocumentContentRefreshCompleted)
     window.removeEventListener('fg:access_token_refreshed', onAccessTokenRefreshed)
     if (typeof document !== 'undefined') {

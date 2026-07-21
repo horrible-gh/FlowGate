@@ -94,8 +94,20 @@ def _authenticate(jwt_token: str) -> Optional[str]:
 
 
 @router.get("/events/stream")
-async def sse_stream(request: Request, token: Optional[str] = None):
-    """SSE UI push stream."""
+async def sse_stream(
+    request: Request,
+    token: Optional[str] = None,
+    project: Optional[str] = None,
+):
+    """SSE UI push stream.
+
+    ``project`` is the project this screen is currently showing (0291 D0005 §3-2).
+    Broadcast events carrying a different project are not delivered to this stream.
+    It is optional: a client that omits it receives every broadcast, as before.
+    Because the interest is bound at connect time, the client reconnects when the
+    user switches project — and its existing reconnect handler re-reads the screen,
+    which covers the events missed during the switch (§3-3).
+    """
     jwt_token = _extract_jwt(request, token)
     if jwt_token is None:
         return JSONResponse(
@@ -114,7 +126,9 @@ async def sse_stream(request: Request, token: Optional[str] = None):
                      "help_url": help_url()}
         )
 
-    q = await subscribe(user_id)
+    interest_project = project or None
+    q = await subscribe(user_id, interest_project)
+    logger.debug(f"[SSE] subscribed user={user_id} project={interest_project}")
 
     # Set in routers.main.lifespan; absent in lightweight test apps (then None,
     # which simply disables the shutdown race and keeps the heartbeat behaviour).
