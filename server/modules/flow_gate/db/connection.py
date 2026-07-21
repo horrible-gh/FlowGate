@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from . import dialect as _dialect
+from . import request_cache as _request_cache
 
 _JST = timezone(timedelta(hours=9))
 
@@ -130,6 +131,12 @@ class FlowGateStore:
 
     def _execute(self, sql: str, params=None) -> None:
         sql = self._tr(sql)
+        # 0291 P3-1: 이 요청 안에서 무언가 바뀌었다 — 요청 스코프 캐시를 통째로 버린다.
+        # 어떤 SELECT 가 이 문장의 영향을 받는지는 SQL 문자열만 보고 알 수 없으므로
+        # 테이블별 추적을 하지 않는다 (request_cache 규칙 2). 무효화를 실행 **전에**
+        # 두는 이유: 여기서 예외가 나도 캐시는 이미 비어 있어야 한다. 부분 적용된
+        # 문장의 효과를 낡은 캐시가 가리는 것이 최악이다.
+        _request_cache.invalidate()
         txn = getattr(_tx_local, "txn", None)
         if txn:
             txn.execute(sql, params or [])
@@ -141,6 +148,9 @@ class FlowGateStore:
     def _fetch_one(self, sql: str, params=None) -> Optional[dict]:
         sql = self._tr(sql)
         txn = getattr(_tx_local, "txn", None)
+        cached = _request_cache.lookup(sql, params, txn is not None)
+        if not _request_cache.is_miss(cached):
+            return cached
         if txn:
             txn.execute(sql, params or [])
             if hasattr(txn, "fetchone"):
@@ -152,13 +162,16 @@ class FlowGateStore:
         else:
             cur = self._db.execute(sql, params or [])
             row = cur.fetchone()
-        if row is None:
-            return None
-        return dict(row) if not isinstance(row, dict) else row
+        result = None if row is None else (dict(row) if not isinstance(row, dict) else row)
+        _request_cache.store(sql, params, result, txn is not None)
+        return result
 
     def _fetch_all(self, sql: str, params=None) -> list[dict]:
         sql = self._tr(sql)
         txn = getattr(_tx_local, "txn", None)
+        cached = _request_cache.lookup(sql, params, txn is not None)
+        if not _request_cache.is_miss(cached):
+            return cached
         if txn:
             txn.execute(sql, params or [])
             if hasattr(txn, "fetchall"):
@@ -170,9 +183,9 @@ class FlowGateStore:
         else:
             cur = self._db.execute(sql, params or [])
             rows = cur.fetchall()
-        if not rows:
-            return rows
-        return [dict(r) if not isinstance(r, dict) else r for r in rows]
+        result = rows if not rows else [dict(r) if not isinstance(r, dict) else r for r in rows]
+        _request_cache.store(sql, params, result, txn is not None)
+        return result
 
     def table_exists(self, name: str) -> bool:
         """Dialect-portable check for whether a table exists.
@@ -218,6 +231,7 @@ class FlowGateStore:
         """
         if not updates:
             return False
+        _request_cache.invalidate()  # 0291 P3-1: 쓰기다 — _execute 와 같은 규칙.
         set_parts = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [expected_val, row_id]
         sql = self._tr(
