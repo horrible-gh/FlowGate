@@ -27,6 +27,7 @@ async function openPopover(wrapper: ReturnType<typeof mountPlayer>) {
 
 describe('AiInvokeMiniplayer', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -232,6 +233,103 @@ describe('AiInvokeMiniplayer', () => {
     )
     // Navigating away from the popover closes it — it must not linger over the document.
     expect(wrapper.find('.aiv-mini__panel').exists()).toBe(false)
+    // ...and the run is still live, so opening its Q must NOT take the card away (0290).
+    expect(store.runsByGroup['flowgate.default.3007']).toBeDefined()
+    wrapper.unmount()
+  })
+
+  // 0290 R0001 §1: the card is the completion notice, so reading it (문서 열기) is what
+  // retires it — not a stopwatch the user never sees.
+  it('retires a finished card once its document has been opened', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-d', group_id: 'flowgate.default.3010',
+      doc_ref: 'flowgate.default.3010.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-d', group_id: 'flowgate.default.3010',
+      doc_ref: 'flowgate.default.3010.0001-R', outcome: 'complete',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const openBtn = wrapper.findAll('button').find(
+      b => b.text().includes(t('main.ai_miniplayer.btn_open_doc')),
+    )
+    await openBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.runsByGroup['flowgate.default.3010']).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('offers a per-card remove and a bulk clear for finished cards only', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    for (const n of ['3011', '3012']) {
+      store.trackStarted({
+        run_id: `run-${n}`, group_id: `flowgate.default.${n}`,
+        doc_ref: `flowgate.default.${n}.0001-R`, mode: 'single',
+      })
+      store.trackFinished({
+        run_id: `run-${n}`, group_id: `flowgate.default.${n}`,
+        doc_ref: `flowgate.default.${n}.0001-R`, outcome: 'complete',
+      })
+    }
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.3013',
+      doc_ref: 'flowgate.default.3013.0001-R', mode: 'single',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    // "닫기" was ambiguous next to the popover's own collapse control (0290 NR0003 §5.2).
+    expect(wrapper.text()).toContain(t('main.ai_miniplayer.btn_remove'))
+    const removes = wrapper.findAll('[data-test="ai-miniplayer-remove"]')
+    expect(removes).toHaveLength(2)
+    await removes[0].trigger('click')
+    expect(store.finishedCount).toBe(1)
+
+    await wrapper.find('[data-test="ai-miniplayer-clear-finished"]').trigger('click')
+    await flushPromises()
+    expect(store.finishedCount).toBe(0)
+    // The live run is untouched, and with nothing finished left the bulk action goes away.
+    expect(store.runsByGroup['flowgate.default.3013']?.phase).toBe('running')
+    expect(wrapper.find('[data-test="ai-miniplayer-clear-finished"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('orders awaiting and running cards above finished ones', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    // Ascending group id alone would invert this order.
+    store.trackStarted({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020',
+      doc_ref: 'flowgate.default.3020.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020',
+      doc_ref: 'flowgate.default.3020.0001-R', outcome: 'complete',
+    })
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.3021',
+      doc_ref: 'flowgate.default.3021.0001-R', mode: 'single',
+    })
+    store.trackStarted({
+      run_id: 'run-q', group_id: 'flowgate.default.3022',
+      doc_ref: 'flowgate.default.3022.0001-R', mode: 'continuous',
+    })
+    store.trackQuestionRegistered('flowgate.default.3022.0002-Q')
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const docs = wrapper.findAll('.aiv-mini__doc').map(el => el.text())
+    expect(docs).toEqual([
+      'flowgate.default.3022.0001-R',
+      'flowgate.default.3021.0001-R',
+      'flowgate.default.3020.0001-R',
+    ])
     wrapper.unmount()
   })
 

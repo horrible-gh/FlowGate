@@ -39,6 +39,15 @@
         </span>
         <span class="aiv-mini__head-summary">{{ fabText }}</span>
         <button
+          v-if="store.finishedCount > 0"
+          type="button"
+          class="aiv-mini__clearbtn"
+          data-test="ai-miniplayer-clear-finished"
+          @click="store.dismissAllFinished()"
+        >
+          {{ t('main.ai_miniplayer.btn_clear_finished') }}
+        </button>
+        <button
           type="button"
           class="aiv-mini__iconbtn"
           :title="t('main.ai_miniplayer.collapse')"
@@ -149,10 +158,11 @@
               v-if="entry.phase === 'finished' || entry.phase === 'lost'"
               type="button"
               class="btn btn-ghost btn-sm"
+              data-test="ai-miniplayer-remove"
               @click="store.dismiss(entry.groupId)"
             >
               <AppIcon name="x" />
-              {{ t('common.close') }}
+              {{ t('main.ai_miniplayer.btn_remove') }}
             </button>
             <button type="button" class="btn btn-ghost btn-sm" @click="openDoc(entry)">
               <AppIcon name="arrow-square-out" />
@@ -173,6 +183,7 @@ import { getRequest } from '@shared/api'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
 import {
+  compareRunEntries,
   isAwaitingQ,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
@@ -192,7 +203,7 @@ const busy = reactive(new Set<string>())
 const titles = reactive<Record<string, string>>({})
 
 const entries = computed<AiInvokeRunEntry[]>(() =>
-  Object.values(store.runsByGroup).sort((a, b) => a.groupId.localeCompare(b.groupId)),
+  Object.values(store.runsByGroup).slice().sort(compareRunEntries),
 )
 
 const idle = computed(() => entries.value.length === 0)
@@ -335,6 +346,10 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       mdPath: d.file_path ?? null,
       typeCode: d.type_code ?? null,
     })
+    // Opening the document IS the acknowledgement (0290 R0001 §1): the result has been
+    // read, so the card goes now instead of waiting out the TTL. dismiss() ignores
+    // running/awaiting/paused cards, so a live run is never dropped by this.
+    store.dismiss(entry.groupId)
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }
@@ -493,6 +508,24 @@ watch(entries, list => {
   color: var(--text-m);
   font-size: .72rem;
   text-align: right;
+}
+
+/* Quiet text button: a bulk action next to the title must not read louder than the
+   per-card actions it replaces. */
+.aiv-mini__clearbtn {
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-m);
+  font-size: .7rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.aiv-mini__clearbtn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
 }
 
 .aiv-mini__iconbtn {

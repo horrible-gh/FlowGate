@@ -4,13 +4,14 @@ import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiInvokeInline from '@main/components/AiInvokeInline.vue'
-import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { INLINE_RESULT_WINDOW_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest }))
 
 describe('AiInvokeInline', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -83,5 +84,36 @@ describe('AiInvokeInline', () => {
     expect(text).toContain('context_binding')
     expect(text).toContain(i18n.global.t('main.ai_invoke_dialog.turn_limit_exhausted'))
     wrapper.unmount()
+  })
+
+  // 0290 NR0003 §5.3: the header monitor keeps a finished card for 30 minutes, but this
+  // banner sits on the document — it gets its own, much shorter, view of the same entry.
+  // The registry keeps the card either way; only this surface stops showing it.
+  it('stops showing a finished run after its own short window, without dismissing it', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mount(AiInvokeInline, {
+        props: { groupId: 'flowgate.default.0290' },
+        global: { plugins: [i18n] },
+      })
+      const store = useAiInvokeRunsStore()
+      store.trackStarted({
+        run_id: 'run-w', group_id: 'flowgate.default.0290',
+        doc_ref: 'flowgate.default.0290.0001-R', status: 'running',
+      })
+      store.trackFinished({
+        run_id: 'run-w', group_id: 'flowgate.default.0290', outcome: 'complete', docs_reached: 1,
+      })
+      await nextTick()
+      expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+
+      vi.advanceTimersByTime(INLINE_RESULT_WINDOW_MS + 1_000)
+      await nextTick()
+      expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+      expect(store.runsByGroup['flowgate.default.0290']?.phase).toBe('finished')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

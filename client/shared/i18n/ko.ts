@@ -1075,6 +1075,8 @@ export default {
       btn_pause: '일시정지',
       btn_resume: '재개',
       btn_open_doc: '문서 열기',
+      btn_remove: '목록에서 제거',
+      btn_clear_finished: '완료 항목 모두 지우기',
       error_pause_failed: '일시정지 요청에 실패했습니다.',
       error_resume_failed: '재개에 실패했습니다.',
       error_open_failed: '문서를 열지 못했습니다.',
