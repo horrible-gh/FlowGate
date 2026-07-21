@@ -857,12 +857,14 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "FLOWGATE_SCRATCH": run["scratch_dir"],
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
+    eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, source_root)
     kwargs = process_runner.popen_kwargs(source_root, env)
+    kwargs["cwd"] = eff_cwd
     kwargs["stdin"] = subprocess.PIPE
 
     launched = time.monotonic()
     try:
-        proc = subprocess.Popen(cmd, **kwargs)
+        proc = subprocess.Popen(eff_cmd, **kwargs)
     except Exception as exc:
         return "spawn_failed", str(exc)[:500]
 

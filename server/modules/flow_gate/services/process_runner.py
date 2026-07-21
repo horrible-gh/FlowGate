@@ -119,6 +119,29 @@ def read_tail(path: Path, chars: int) -> str:
     return text[-chars:]
 
 
+def unc_safe_shell(cmd: str, root: Path) -> tuple[str, Optional[str]]:
+    r"""Make (cmd, cwd) safe to hand to a ``shell=True`` child on Windows.
+
+    cmd.exe refuses a UNC path (``\\host\share\...``) as its current directory:
+    it prints "UNC 경로는 지원되지 않습니다 / UNC パスはサポートされません。" and
+    silently resets CWD to ``C:\Windows``, breaking every relative path the
+    command relies on (0285 B0001 -> NR0004). When *root* is a UNC path we
+    therefore do NOT pass it to cmd.exe as ``cwd``; instead we prefix ``pushd``,
+    which maps the share to a temporary drive letter and cd's into it. The temp
+    mapping is released automatically when the ``cmd /c`` session exits, so no
+    trailing ``popd`` is needed — and because ``&&`` leaves the command last on
+    the line its exit code is preserved. Returns ``(effective_cmd, effective_cwd)``;
+    ``effective_cwd`` is None on the UNC path so Popen inherits the server's own
+    (local) working directory before pushd relocates.
+
+    POSIX shells and local / mapped-drive roots are returned unchanged.
+    """
+    root_str = str(root)
+    if os.name == "nt" and root_str.startswith("\\\\"):
+        return f'pushd "{root_str}" && {cmd}', None
+    return cmd, root_str
+
+
 def run_command(
     cmd: str,
     root: Path,
@@ -131,15 +154,16 @@ def run_command(
     process tree is killed and any partial output is recovered — the exact
     mechanics test_run_service._run_shell_command has always used.
     """
+    eff_cmd, eff_cwd = unc_safe_shell(cmd, root)
     kwargs = {
-        "cwd": str(root),
         "shell": True,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
     }
     kwargs.update(popen_kwargs(root, env, include_stdio=False))
+    kwargs["cwd"] = eff_cwd
 
-    proc = subprocess.Popen(cmd, **kwargs)
+    proc = subprocess.Popen(eff_cmd, **kwargs)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
