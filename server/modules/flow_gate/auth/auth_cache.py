@@ -77,6 +77,16 @@ _users = _TTLCache(_configured_ttl)       # user_id    -> user row | None
 _tokens = _TTLCache(_token_ttl)           # token hash -> tokens row | None
 
 
+def caching_enabled() -> bool:
+    """False when FLOWGATE_AUTH_CACHE_TTL=0 disables the three per-request caches.
+
+    auth_preamble.prefetch() consults this: with caching off there is nowhere to
+    put a prefetched row, so merging the lookups would add a round trip instead
+    of removing two.
+    """
+    return _configured_ttl() > 0
+
+
 def blacklist_cache() -> _TTLCache:
     return _blacklist
 
