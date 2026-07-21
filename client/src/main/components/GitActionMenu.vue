@@ -93,7 +93,8 @@
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { postRequest } from '@shared/api'
+import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
@@ -102,6 +103,7 @@ import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 
 const { t } = useI18n()
 const { showToast } = useToast()
+const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
 
@@ -149,10 +151,11 @@ async function fetchStatus() {
     return
   }
   try {
-    const { data } = await getRequest<{ ok: boolean; status: GitStatus }>(
-      `/api/v1/projects/${projectId.value}/git/status`,
-    )
-    status.value = data.status
+    // 0282 NR0003 발견 3: shared store fetch — concurrent callers (explorer,
+    // status panel, SSE listeners) coalesce onto one git/status request.
+    status.value = (await explorerStore.fetchGitStatus(
+      projectId.value,
+    )) as unknown as GitStatus | null
   } catch {
     status.value = null // 403/404 — button stays hidden for non-git projects
   }

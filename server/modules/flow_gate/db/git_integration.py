@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from . import meta_cache
 from .connection import get_store, now_iso
 
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
@@ -23,10 +24,21 @@ STATE_VALUES = (
 
 # ── project_git_config ────────────────────────────────────────────────────────
 
-def get_config(project_id: str) -> Optional[dict]:
+def _get_config_db(project_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM project_git_config WHERE project_id = ?", [project_id]
     )
+
+
+def get_config(project_id: str) -> Optional[dict]:
+    """TTL-cached read (0282 NR0003 발견 2) — several layers each re-fetch the
+    config on one screen load. Returns a copy so a caller mutating its row
+    cannot poison the cache; upsert/delete below invalidate explicitly (they
+    also read via _get_config_db so their existence checks are never stale)."""
+    row = meta_cache.git_config_cache().get_or_load(
+        project_id, lambda: _get_config_db(project_id)
+    )
+    return dict(row) if isinstance(row, dict) else row
 
 
 def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
@@ -37,7 +49,7 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
     value=replace protocol before reaching storage).
     """
     now = now_iso()
-    existing = get_config(project_id)
+    existing = _get_config_db(project_id)
     store = get_store()
     if existing is None:
         store._execute(
@@ -70,15 +82,17 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
                 data.get("author_name"), data.get("author_email"), now, project_id,
             ],
         )
+    meta_cache.invalidate_git_config(project_id)
     return get_config(project_id)  # type: ignore[return-value]
 
 
 def delete_config(project_id: str) -> bool:
-    if get_config(project_id) is None:
+    if _get_config_db(project_id) is None:
         return False
     get_store()._execute(
         "DELETE FROM project_git_config WHERE project_id = ?", [project_id]
     )
+    meta_cache.invalidate_git_config(project_id)
     return True
 
 

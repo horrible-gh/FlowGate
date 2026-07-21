@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from typing import Optional, Any
+from . import meta_cache
 from .connection import get_store, now_iso
 
 
@@ -12,10 +13,20 @@ def get_by_name(project_name: str) -> Optional[dict]:
     )
 
 
-def get_by_id(project_id: str) -> Optional[dict]:
+def _get_by_id_db(project_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM projects WHERE project_id = ?", [project_id]
     )
+
+
+def get_by_id(project_id: str) -> Optional[dict]:
+    """TTL-cached read (0282 NR0003 발견 2) — one screen load called this 11
+    times from independent entry points. Returns a copy so a caller mutating
+    its row cannot poison the cache; every writer below invalidates."""
+    row = meta_cache.project_cache().get_or_load(
+        project_id, lambda: _get_by_id_db(project_id)
+    )
+    return dict(row) if isinstance(row, dict) else row
 
 
 def list_projects(is_active: int | None = None) -> list[dict]:
@@ -27,6 +38,20 @@ def list_projects(is_active: int | None = None) -> list[dict]:
     return store._fetch_all("SELECT * FROM projects ORDER BY project_id")
 
 
+# 0282 NR0003 발견 2 (꼬리 항목): the information_schema/table_exists probe for
+# project_modules ran once per list_modules call. Migrations only ever CREATE
+# this table, so remember the positive answer for the process lifetime; a False
+# keeps re-probing, which stays correct while migrations are still landing.
+_PM_TABLE_SEEN = False
+
+
+def _project_modules_table_exists(store) -> bool:
+    global _PM_TABLE_SEEN
+    if not _PM_TABLE_SEEN and store.table_exists("project_modules"):
+        _PM_TABLE_SEEN = True
+    return _PM_TABLE_SEEN
+
+
 def list_modules(project_id: str) -> list[dict]:
     """Modules for a project = union of groups.module and project_modules,
     mirroring get_group_tree (process_service). The 'none' bucket is titled
@@ -35,7 +60,7 @@ def list_modules(project_id: str) -> list[dict]:
     store = get_store()
     # project_modules titles (first-class; authoritative title when present)
     pm_titles: dict[str, str] = {}
-    has_pm = store.table_exists("project_modules")
+    has_pm = _project_modules_table_exists(store)
     if has_pm:
         for r in store._fetch_all(
             "SELECT name, title FROM project_modules WHERE project_id = ?", [project_id]
@@ -79,6 +104,7 @@ def create(data: dict[str, Any]) -> dict:
             data.get("created_at", now), data.get("updated_at", now),
         ],
     )
+    meta_cache.invalidate_project(data["project_id"])
     return get_by_id(data["project_id"])  # type: ignore[return-value]
 
 
@@ -91,11 +117,13 @@ def update(project_id: str, updates: dict[str, Any]) -> Optional[dict]:
         f"UPDATE projects SET {set_clause} WHERE project_id = ?",
         [*updates.values(), project_id],
     )
+    meta_cache.invalidate_project(project_id)
     return get_by_id(project_id)
 
 
 def delete(project_id: str) -> None:
     get_store()._execute("DELETE FROM projects WHERE project_id = ?", [project_id])
+    meta_cache.invalidate_project(project_id)
 
 
 def get_settings(project_id: str) -> Optional[dict]:
@@ -140,7 +168,7 @@ _LEGACY_PROJECT_ROOTS: dict[str, str] = {}
 def get_project_modules(project_id: str) -> list[dict]:
     """Return project_modules entries for get_group_tree, or [] if the table does not exist."""
     store = get_store()
-    if not store.table_exists("project_modules"):
+    if not _project_modules_table_exists(store):
         return []
     return store._fetch_all(
         "SELECT * FROM project_modules WHERE project_id = ? ORDER BY name", [project_id]
@@ -241,6 +269,7 @@ def add_allowed_project(project: str, module: str = "") -> None:
         " WHERE projects.is_active = 0",
         [project, project, now, now],
     )
+    meta_cache.invalidate_project(project)
 
 
 def remove_allowed_project(project: str, module: str = "") -> None:
@@ -250,3 +279,4 @@ def remove_allowed_project(project: str, module: str = "") -> None:
         " WHERE project_id = ?",
         [now_iso(), project],
     )
+    meta_cache.invalidate_project(project)

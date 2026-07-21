@@ -420,10 +420,35 @@ api.interceptors.response.use(
 export const postRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
   api.post<T>(path, data)
 
+// 0282 NR0003 발견 3: the screen-load SQL log showed the client running the
+// same GET series twice (racing mounts / duplicated event listeners), roughly
+// doubling the server's per-load query work. Coalesce identical in-flight GETs
+// onto one network call: a caller issuing a GET whose (path, params) twin is
+// still pending gets that pending promise. The entry is dropped as soon as the
+// request settles, so sequential refetches (e.g. re-reading status right after
+// a finalize POST) always hit the server.
+const inflightGets = new Map<string, Promise<AxiosResponse<unknown>>>()
+
+const getRequestKey = (path: string, params: Record<string, unknown>): string => {
+  const keys = Object.keys(params).sort()
+  // Query params are flat key/value pairs; a sorted-key stringify makes the
+  // dedupe key insensitive to caller-side property order.
+  return keys.length ? `${path}?${JSON.stringify(params, keys)}` : path
+}
+
 export const getRequest = async <T>(
   path: string,
   params: Record<string, unknown> = {},
-): Promise<AxiosResponse<T>> => api.get<T>(path, { params })
+): Promise<AxiosResponse<T>> => {
+  const key = getRequestKey(path, params)
+  const inflight = inflightGets.get(key)
+  if (inflight) return inflight as Promise<AxiosResponse<T>>
+  const request = api.get<T>(path, { params }).finally(() => {
+    inflightGets.delete(key)
+  })
+  inflightGets.set(key, request as Promise<AxiosResponse<unknown>>)
+  return request
+}
 
 /**
  * T376: Server logout API call.

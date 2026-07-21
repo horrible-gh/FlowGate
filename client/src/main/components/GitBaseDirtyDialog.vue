@@ -68,7 +68,7 @@
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { postRequest } from '@shared/api'
 import { useExplorerStore } from '../stores/explorer'
 
 const { t } = useI18n()
@@ -125,11 +125,9 @@ async function resolve(pid: string, dirtyFiles: string[]): Promise<'proceed' | '
 
 async function fetchDirty(pid: string): Promise<string[]> {
   try {
-    const { data } = await getRequest<{
-      ok: boolean
-      status: { base_dirty?: { files: string[] } }
-    }>(`/api/v1/projects/${pid}/git/status`)
-    const f = data.status?.base_dirty?.files
+    // 0282 NR0003 발견 3: shared store fetch instead of a private git/status GET.
+    const status = await explorerStore.fetchGitStatus(pid)
+    const f = status?.base_dirty?.files
     return Array.isArray(f) ? f : []
   } catch {
     return []

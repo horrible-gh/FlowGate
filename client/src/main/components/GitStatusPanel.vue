@@ -496,16 +496,16 @@ async function fetchStatus() {
     return
   }
   try {
-    const { data } = await getRequest<{ ok: boolean; status: GitStatus }>(
-      `/api/v1/projects/${props.projectId}/git/status`,
-    )
-    status.value = data.status
-    // 0177 §2.6-a badge trigger 1/4: every status fetch refreshes the file-tree
-    // "modified" badges from the aggregated dirty set.
-    explorerStore.setBaseDirtyFiles(props.projectId, data.status.base_dirty?.files ?? [])
+    // 0282 NR0003 발견 3: shared store fetch — concurrent callers coalesce onto
+    // one git/status request. The §2.6-a badge sync (trigger 1/4) moved into the
+    // store fetch itself.
+    const next = (await explorerStore.fetchGitStatus(
+      props.projectId,
+    )) as unknown as GitStatus | null
+    status.value = next
     // Drop an expanded conflict editor whose row no longer reports a conflict.
-    if (expanded.value) {
-      const still = data.status.pending.find(
+    if (next && expanded.value) {
+      const still = next.pending.find(
         (p) => p.group_id === expanded.value && p.status === 'conflict',
       )
       if (!still) collapseResolve()
@@ -1218,4 +1218,3 @@ defineExpose({ fetchStatus })
   color: var(--text);
 }
 </style>
-
