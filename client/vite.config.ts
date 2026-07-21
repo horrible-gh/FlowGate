@@ -33,6 +33,12 @@ const multiPageHistoryFallback = () => ({
 export default defineConfig({
   plugins: [vue(), multiPageHistoryFallback()],
   resolve: {
+    // Windows: the source tree can live on a drive letter mapped to a UNC share.
+    // Vite's realpath pass rewrites resolved ids onto whichever drive letter
+    // `net use` lists last; the html entries then no longer sit under the root
+    // and rollup rejects the emitted absolute fileName. Keep ids on the root's
+    // own drive. No effect on a plain (non-symlinked) node_modules install.
+    preserveSymlinks: true,
     alias: {
       '@shared': resolve(__dirname, 'shared'),
       '@login': resolve(__dirname, 'src/login'),

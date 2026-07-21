@@ -4231,12 +4231,17 @@ watch(textWrapEnabled, (enabled) => {
   min-height: 0;
 }
 
+/* Narrow windows give the chat the whole overlay instead of the centred 1180px box. The
+   height is taken from the overlay (`%`), never from the viewport: `100dvh - 16px` is
+   taller than the below-header container at *every* window height, so it clipped the
+   composer by a constant 18px on every screen under 820px wide. The container cap from
+   `.modal-bg--below-header > .modal-box` is left in place — `max-height: none` here is
+   what let the box outgrow its track in the first place. */
 @media (max-width: 820px) {
   .document-modal:has(.document-modal__body--conversation) {
     width: calc(100vw - 16px);
-    height: calc(100dvh - 16px);
+    height: calc(100% - 16px);
     max-width: none;
-    max-height: none;
   }
 }
 
@@ -4269,7 +4274,10 @@ watch(textWrapEnabled, (enabled) => {
 
 .document-modal {
   width: min(1180px, 94vw);
-  height: min(860px, 90vh);
+  /* `%`, not vh: the full view is centred inside `.modal-bg--below-header`, whose height is
+     already the viewport minus the header. A vh height overflows that shorter container and
+     the excess is split evenly above and below, dropping the box's bottom edge off-screen. */
+  height: min(860px, 100%);
 }
 
 .document-modal__body {

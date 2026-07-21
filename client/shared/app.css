@@ -476,6 +476,13 @@ button.doc-id-badge:hover .doc-id-copy-icon { opacity: 1; }
    clickable while a document is being read. Alert-grade modals keep the full-screen dim. */
 .modal-bg--below-header { top: var(--hdr-h); }
 .modal-box { background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--sh-lg); width: 520px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; animation: mIn .15s ease; }
+/* Inside the below-header overlay the available height is `100vh - var(--hdr-h)`, not the
+   whole viewport, so a vh cap on the box is measured against the wrong track: the centred
+   box overflows by (H - C)/2 at the bottom, past a fixed layer nothing can scroll, and the
+   controls sitting at the box's bottom edge (CH composer: send/stop) become unreachable.
+   Cap against the container instead — `%` follows --hdr-h automatically. Any height limit
+   under this overlay must stay container-relative; raw vh/dvh reintroduces the same bug. */
+.modal-bg--below-header > .modal-box { max-height: calc(100% - 16px); }
 .modal-lg { width: 720px; }
 @keyframes mIn { from { opacity: 0; transform: translateY(-8px) scale(.97); } to { opacity: 1; transform: none; } }
 .modal-hd { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }

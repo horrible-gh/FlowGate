@@ -9,6 +9,11 @@ export default defineConfig({
     globals: true,
   },
   resolve: {
+    // Windows: the source tree can live on a drive letter mapped to a UNC share.
+    // Vite's realpath pass rewrites resolved ids onto whichever drive letter
+    // `net use` lists last, which no longer matches the project root and makes
+    // every import fail to load. Keep resolved ids on the root's own drive.
+    preserveSymlinks: true,
     alias: {
       '@shared': resolve(__dirname, 'shared'),
       '@login': resolve(__dirname, 'src/login'),
