@@ -1,4 +1,4 @@
-"""Preflight guard for the 0291 request-scope-cache test scenario (TS0014).
+"""Preflight guard for the flowgate.default.0291 test scenarios.
 
 Run from ``server/`` as ``python tools/check_0291_env.py``.
 
@@ -24,15 +24,28 @@ import sys
 # Files this scenario exercises. Their absence means the runner is not sitting in
 # the 0291 source root (or the implementation was never committed).
 REQUIRED_FILES = (
+    # P3-1 (TS0014)
     "modules/flow_gate/db/request_cache.py",
     "modules/flow_gate/api/request_scope_middleware.py",
     "modules/flow_gate/db/connection.py",
     "tests/test_request_scope_cache_0291.py",
+    # T1 — auth preamble collapsed into one query
+    "modules/flow_gate/auth/auth_preamble.py",
+    "modules/flow_gate/utils/ttl_cache.py",
+    "tests/test_auth_preamble_0291.py",
+    # T2 — return-point quartet folded into one query
+    "modules/flow_gate/db/workflow_return_points.py",
+    "tests/test_return_point_summary_0291.py",
+    # T3 — a group's documents read once per document response
+    "modules/flow_gate/documents/routers/documents.py",
+    "tests/test_document_read_query_budget_0291.py",
+    # T3 builds its fixture DB straight from the committed sqlite migrations
+    "sql/migrations/sqlite",
 )
 
 # Imported by the test module itself; a missing one surfaces here as a plain
 # sentence rather than as a pytest collection traceback.
-REQUIRED_MODULES = ("pytest", "fastapi", "starlette")
+REQUIRED_MODULES = ("pytest", "fastapi", "starlette", "httpx")
 
 
 def main() -> int:
