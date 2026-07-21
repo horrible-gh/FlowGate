@@ -1665,7 +1665,10 @@ def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
 def _return_point_payload(group_id: str) -> dict:
     from modules.flow_gate.db import workflow_return_points as _db_rp
 
-    rp = _db_rp.get_by_group(group_id)
+    # 0291 T2: 예전에는 여기서 네 번 조회했다(반환점 → front 문서 → pending 최소 seq →
+    # 스냅샷 개수). 뒤의 셋은 첫 조회의 id/front_seq 에서 파생될 뿐이라 한 문장으로
+    # 접었다 — 문서 응답당 4 → 1. 세부는 db/workflow_return_points.summary().
+    rp = _db_rp.summary(group_id)
     if rp is None:
         return {
             "exists": False,
@@ -1677,13 +1680,12 @@ def _return_point_payload(group_id: str) -> dict:
             "destination_min": None,
         }
 
-    front_doc = _db_rp.get_front_doc(group_id, int(rp["front_seq"]))
-    current_min = _db_rp.current_pending_min_seq(rp["id"])
+    current_min = rp["current_min_seq"]
     return {
         "exists": True,
         "front_seq": rp["front_seq"],
-        "front_label": (front_doc or {}).get("title") or (front_doc or {}).get("type_code"),
-        "restorable_count": _db_rp.count_docs(rp["id"]),
+        "front_label": rp["front_title"] or rp["front_type_code"],
+        "restorable_count": rp["restorable_count"],
         "current_min_seq": current_min,
         "destination_default": rp["front_seq"],
         "destination_min": current_min,
