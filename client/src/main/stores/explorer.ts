@@ -3,6 +3,21 @@ import { computed, ref } from 'vue'
 import { getRequest } from '@shared/api'
 import { useProjectStore } from './project'
 
+// 0283 T0004 (NR0003 권고 C): a single transient tree-fetch failure — a client timeout on
+// a slow remote-storage directory walk, or a momentary 5xx — used to surface
+// "트리를 불러오지 못했습니다." immediately and force a manual page reload. Retry once after a
+// short backoff before giving up, so a one-off blip self-heals; a second failure still
+// propagates to the existing catch/error UI unchanged.
+const TREE_RETRY_DELAY_MS = 800
+const getTreeWithRetry = async <T>(url: string) => {
+  try {
+    return await getRequest<T>(url)
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, TREE_RETRY_DELAY_MS))
+    return await getRequest<T>(url)
+  }
+}
+
 export interface WorkflowNodeState {
   nodeStatus: 'ns-pending' | 'ns-approved' | 'ns-advanced' | 'ns-next-act' | 'ns-done'
   docClass: 'R' | 'Q' | 'B' | null
@@ -145,7 +160,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     loadingFile.value = true
     fileError.value = null
     try {
-      const res = await getRequest<{ nodes: FileNode[] }>(`/api/v1/projects/${pid}/files/tree?branch=${encodeURIComponent(currentBranch.value)}`)
+      const res = await getTreeWithRetry<{ nodes: FileNode[] }>(`/api/v1/projects/${pid}/files/tree?branch=${encodeURIComponent(currentBranch.value)}`)
       const nodes = (res.data as any).data.nodes as FileNode[]
       fileTreeCache.value[key] = nodes.filter((n) => n.permissions.includes('read'))
       return fileTreeCache.value[key]
@@ -168,7 +183,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     loadingGroup.value = true
     groupError.value = null
     try {
-      const res = await getRequest<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}`)
+      const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}`)
       const nodes = (res.data as any).data.nodes as GroupNode[]
       groupTreeCache.value[key] = nodes
       return groupTreeCache.value[key]
@@ -260,7 +275,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     loadingFile.value = true
     fileError.value = null
     try {
-      const res = await getRequest<{ data: { branch: string; commit: string; nodes: FileNode[] } }>(
+      const res = await getTreeWithRetry<{ data: { branch: string; commit: string; nodes: FileNode[] } }>(
         `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/tree`,
       )
       const data = (res.data as any).data as { branch: string; commit: string; nodes: FileNode[] }

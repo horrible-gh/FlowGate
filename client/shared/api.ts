@@ -174,6 +174,14 @@ const LONG_RUNNING_PATHS = [
   /\/files\/upload/,
   /\/files\/download/,
   /\/search\//,
+  // 0283 T0004 (NR0003 근본원인): the base file-tree and group-tree GETs do a
+  // synchronous recursive directory walk of the storage root. On remote/UNC storage
+  // that walk intermittently exceeds the 30s default and axios aborts it, surfacing
+  // "트리를 불러오지 못했습니다." Give these reads the same 130s ceiling the other
+  // legitimately-slow endpoints get. (git group-branch tree /git/.../tree already
+  // matches /\/git\// above.)
+  /\/files\/tree/,
+  /\/groups\/tree/,
 ]
 
 const api: AxiosInstance = axios.create({

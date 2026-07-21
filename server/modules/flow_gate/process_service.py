@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
 import sqlite3
+import time
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +20,7 @@ from .numbering import numbering_service
 from .storage import paths as storage_paths
 from .db.document_type_labels import get_type_name, get_type_names_map
 
+logger = logging.getLogger(__name__)
 
 # ── Type → display-name mapping (locale-aware, DB-backed) ────────────────────
 # Remove hardcoding: query the document_type_names table (T471)
@@ -5154,20 +5157,47 @@ def get_file_tree(project_id: str) -> dict:
     nodes: list[dict] = []
     node_id = 0
 
+    def _list_dir_with_retry(path: str, retries: int = 3, delay: float = 0.3) -> list:
+        # 0283 T0004 (NR0003 원인 2·3): remote/UNC storage can raise a transient
+        # OSError/PermissionError mid-walk — a network hiccup, or a worker writing the
+        # same directory (Windows sharing violation). The write path already defends
+        # against this (storage.filesystem.safe_rename retries on PermissionError); the
+        # read/tree path had no such guard and silently swallowed the error, collapsing
+        # the tree into an empty/partial result with no diagnostic. Mirror safe_rename's
+        # bounded retry+backoff, and only after it is exhausted log a warning and return
+        # an empty listing (degrading this subtree, never the whole request).
+        last_exc: Exception | None = None
+        for attempt in range(retries):
+            try:
+                with os.scandir(path) as it:
+                    return list(it)
+            except (OSError, PermissionError) as exc:
+                last_exc = exc
+                time.sleep(delay * (attempt + 1))
+        logger.warning(
+            "get_file_tree: could not list %s after %d attempts: %s",
+            path, retries, last_exc,
+        )
+        return []
+
     def walk_directory(path: str, parent_id: str | None = None) -> None:
         nonlocal node_id
-        try:
-            raw_entries = os.listdir(path)
-        except (OSError, PermissionError):
-            return
 
         visible: list[tuple[str, str, bool]] = []
-        for entry in raw_entries:
+        for entry in _list_dir_with_retry(path):
+            name = entry.name
             # Do not expose DB files or hidden items in the tree
-            if entry.startswith(".") or entry.lower().endswith(".db"):
+            if name.startswith(".") or name.lower().endswith(".db"):
                 continue
-            full_path = os.path.join(path, entry)
-            visible.append((entry, full_path, os.path.isdir(full_path)))
+            try:
+                # os.scandir caches the dirent type, so is_dir() usually needs no extra
+                # network round-trip (unlike os.path.isdir, which always stat()s).
+                is_dir = entry.is_dir()
+            except OSError:
+                # Transient stat failure on one entry: keep it visible as a file rather
+                # than dropping it or aborting the whole walk.
+                is_dir = False
+            visible.append((name, entry.path, is_dir))
 
         # Folders-first + natural, case-insensitive ordering (R0003).
         visible.sort(key=lambda item: _file_tree_sort_key(item[0], item[2]))
@@ -5176,6 +5206,13 @@ def get_file_tree(project_id: str) -> dict:
             node_id += 1
             current_id = str(node_id)
 
+            try:
+                rel_path = os.path.relpath(full_path, docs_root)
+            except ValueError:
+                # Windows: relpath across different drives raises ValueError. Fall back
+                # to the absolute path rather than 500-ing the entire tree request.
+                rel_path = full_path
+
             if is_dir:
                 node: dict[str, Any] = {
                     "id": current_id,
@@ -5183,7 +5220,7 @@ def get_file_tree(project_id: str) -> dict:
                     "type": "folder",
                     "name": entry,
                     "label": entry,
-                    "path": os.path.relpath(full_path, docs_root),
+                    "path": rel_path,
                     "permissions": ["read"],
                     "children": [],
                 }
@@ -5196,7 +5233,7 @@ def get_file_tree(project_id: str) -> dict:
                     "type": "file",
                     "name": entry,
                     "label": entry,
-                    "path": os.path.relpath(full_path, docs_root),
+                    "path": rel_path,
                     "permissions": ["read", "download"],
                 })
 
