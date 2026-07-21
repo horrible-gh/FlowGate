@@ -123,6 +123,9 @@ def test_effective_src_root_ex_returns_the_worktree_when_it_exists(monkeypatch, 
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     worktree = tmp_path / "src" / "FlowGate Live" / "fg-0280"
     worktree.mkdir(parents=True)
+    # 0287 NR0004: a worktree is a directory WITH its `.git` link; a bare directory
+    # is the corpse an interrupted teardown leaves, and no resolver accepts it now.
+    (worktree / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
     git_service = _install_git(
         monkeypatch,
         cfg={"enabled": 1},
@@ -158,6 +161,9 @@ def test_classify_src_root_reports_worktree_and_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(tmp_path))
     worktree = tmp_path / "src" / "FlowGate Live" / "fg-0280"
     worktree.mkdir(parents=True)
+    # 0287 NR0004: a worktree is a directory WITH its `.git` link; a bare directory
+    # is the corpse an interrupted teardown leaves, and no resolver accepts it now.
+    (worktree / ".git").write_text("gitdir: ../main/.git/worktrees/x", encoding="utf-8")
     _install_git(
         monkeypatch,
         cfg={"enabled": 1},

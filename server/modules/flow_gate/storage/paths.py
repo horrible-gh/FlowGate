@@ -131,6 +131,10 @@ def _group_worktree_on_disk(
     git_service.effective_src_root_ex (integration on, state, branch, project
     name, directory present) EXCEPT the registration flag. Pure lookup — never
     raises; a genuinely pruned directory returns None so the caller still falls back.
+
+    0287 NR0004 §5: "present" additionally requires the worktree's `.git` link. A
+    teardown interrupted mid-delete leaves the directory standing with its link and
+    most of its files gone, and that corpse must not be recovered as authoritative.
     """
     if not project_id or not group_id:
         return None
@@ -150,7 +154,12 @@ def _group_worktree_on_disk(
         if not project_name:
             return None
         wt = src_root(project_name, branch)
-        if wt.is_dir():
+        # 0287 NR0004 §5: "still on disk" has to mean a real tree, not a directory
+        # that happens to exist. An interrupted `worktree remove` leaves the path
+        # in place minus its `.git` link and most of its content, and recovering
+        # ONTO that corpse is worse than the fallback this guard was written to
+        # avoid — the suite runs against a tree missing the modules under test.
+        if wt.is_dir() and git_service._worktree_link_ok(wt):
             return wt.resolve()
     except Exception:
         _log.warning(
@@ -203,7 +212,8 @@ def resolve_project_src_root(
         # push cleanup), which used to drop the run to the base(main) tree even while
         # the group's branch worktree was still on disk — so a fix-verification suite
         # ran against a tree lacking the very fix it verifies. Recover the on-disk
-        # branch worktree before falling back; only a pruned directory falls through.
+        # branch worktree before falling back; a pruned directory — or one left
+        # broken by an interrupted teardown (0287 NR0004) — falls through.
         recovered = _group_worktree_on_disk(project_id, group_id)
         if recovered is not None:
             _log.info(

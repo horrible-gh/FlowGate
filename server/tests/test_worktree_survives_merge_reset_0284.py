@@ -38,6 +38,9 @@ def _install(monkeypatch, *, cfg, state, project_name=NAME):
 def _make_worktree(tmp_path):
     wt = tmp_path / "src" / NAME / BRANCH
     wt.mkdir(parents=True)
+    # 0287 NR0004: a real worktree carries its `.git` link, and every resolver now
+    # requires it — a bare directory is the corpse an interrupted teardown leaves.
+    (wt / ".git").write_text("gitdir: ../main/.git/worktrees/x\n", encoding="utf-8")
     return wt
 
 
