@@ -52,6 +52,13 @@ _log = logging.getLogger(__name__)
 GIT_TEST_TIMEOUT_SEC = 15
 GIT_NET_TIMEOUT_SEC = 120
 GIT_LOCAL_TIMEOUT_SEC = 30
+# 0287 NR0004 §3: `worktree remove` recursively deletes a FULL source checkout
+# (measured: 864 files / 112 MB) and the storage root is routinely an SMB share,
+# where every unlink is a round trip. Under the 30 s local budget the subprocess
+# was killed MID-DELETE, leaving a half-erased tree whose `.git` file was already
+# gone — the state that then failed every retry forever. Deletion gets its own,
+# far larger budget; it is a local filesystem walk, not a network call.
+GIT_WORKTREE_RM_TIMEOUT_SEC = 300
 # Group branch file explorer — checkout-free ref/tree/blob reads (0186 L0006 §1).
 GIT_READ_TIMEOUT_SEC = 15          # local ls-tree / cat-file timeout (no network)
 BLOB_MAX_RETURN_BYTES = 1048576    # 1 MiB blob content cap; over → truncated=true
@@ -969,6 +976,121 @@ def _ref_exists(repo: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
+# ── Worktree liveness: is that directory a REAL worktree? (0287 NR0004) ──────
+# Every gate in this module used to equate "the directory exists" with "a healthy
+# registered worktree exists". A `worktree remove` interrupted mid-delete breaks
+# that equivalence: the directory survives while its `.git` link and most of its
+# content are already gone. Two corpse shapes were observed in the field —
+#   B) admin dir still in .git/worktrees, worktree `.git` file gone → `prunable`
+#   C) admin dir pruned away too → git no longer knows the path at all
+# — and BOTH pass `is_dir()`. These helpers tell the three states apart.
+
+
+def _worktree_link_ok(wt_path: Path) -> bool:
+    """Whether *wt_path* still carries its worktree `.git` link.
+
+    Cheap local check (one stat) and the discriminator that matters to readers:
+    without this link the directory is a half-deleted corpse, not a source tree.
+    A normal worktree has `.git` as a FILE ('gitdir: …'); the base checkout has it
+    as a directory. Both count as linked — callers may hand either one in."""
+    try:
+        return (wt_path / ".git").exists()
+    except OSError:
+        return False
+
+
+def _registered_worktrees(base_root: Path) -> Optional[set[Path]]:
+    """Resolved paths git currently accepts as live worktrees, or None if unknown.
+
+    Parses `git worktree list --porcelain`. An entry flagged `prunable` is git's
+    own statement that the registration is stale, so it is EXCLUDED — for cleanup
+    purposes a prunable entry is an orphan, not a worktree.
+
+    Paths are compared resolved, never as strings: `git worktree list` reports the
+    real path (e.g. a UNC share `//host/share/…`) while `src_root()` builds the
+    junction/mapped form (`C:\\…\\storage\\…`), so the two spellings of one
+    directory never match textually (0287 NR0004 §7-1).
+
+    Returns None — meaning "cannot tell" — when git fails or times out, so callers
+    can stay conservative instead of mistaking silence for "not registered"."""
+    proc = _run_git(["worktree", "list", "--porcelain"], cwd=base_root)
+    if proc.returncode != 0:
+        _log.warning(
+            "worktree list failed in %s: %s", base_root, _last_line(proc.stderr)
+        )
+        return None
+    live: set[Path] = set()
+    current: Optional[Path] = None
+    prunable = False
+
+    def _flush() -> None:
+        if current is not None and not prunable:
+            live.add(current)
+
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("worktree "):
+            _flush()
+            prunable = False
+            raw = line[len("worktree "):].strip()
+            try:
+                current = Path(raw).resolve()
+            except OSError:
+                current = None
+        elif line.startswith("prunable"):
+            prunable = True
+    _flush()
+    return live
+
+
+def _classify_worktree_dir(base_root: Path, wt_path: Path) -> str:
+    """'live' | 'orphan' | 'unknown' for an EXISTING directory (0287 NR0004 §7-1).
+
+    'live'    — git lists it as a non-prunable worktree AND its `.git` link is intact
+    'orphan'  — the directory is there but git does not (or no longer can) own it:
+                unregistered, prunable, or link destroyed by an interrupted delete
+    'unknown' — git could not answer; the caller must not assume either way
+    """
+    if not _worktree_link_ok(wt_path):
+        # Decisive on its own: `worktree remove` refuses such a path outright
+        # ("validation failed, cannot remove working tree: '…/.git' does not exist").
+        return "orphan"
+    live = _registered_worktrees(base_root)
+    if live is None:
+        return "unknown"
+    try:
+        resolved = wt_path.resolve()
+    except OSError:
+        return "orphan"
+    return "live" if resolved in live else "orphan"
+
+
+def _force_rmtree(path: Path) -> bool:
+    """Delete a directory tree that git could not, best-effort. True when gone.
+
+    Used for orphan slots only (a path git refuses to own). Read-only files are a
+    normal Windows leftover — clear the attribute and retry rather than aborting
+    the whole sweep on one file, which is exactly how the corpse trees were born."""
+
+    def _retry(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except Exception:
+            _log.debug("rmtree could not remove %s", target, exc_info=True)
+
+    try:
+        # `onerror` is deprecated since 3.12 in favour of `onexc`; the runtime is
+        # already on 3.14, so prefer the supported hook and keep the old one as a
+        # fallback rather than letting a removed kwarg fail the whole teardown.
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_retry)
+        else:
+            shutil.rmtree(path, onerror=_retry)
+    except Exception:
+        _log.warning("rmtree failed for %s", path, exc_info=True)
+    return not path.exists()
+
+
 # ── Base-slot provisioning: lossless adopt + attempt ledger (0161 L0005) ─────
 
 def _judge_base_slot(base_root: Path, base_branch: str) -> str:
@@ -1366,6 +1488,10 @@ def _ensure_worktree_locked(
         and state.get("worktree_registered")
         and state.get("branch") == branch
         and wt_path.is_dir()
+        # 0287 NR0004 §5.1: `is_dir()` alone declared a half-deleted corpse "ready"
+        # and returned ok — no re-provisioning, and a git_worktree_ready event for
+        # a tree that no longer holds the source.
+        and _worktree_link_ok(wt_path)
     ):
         db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _emit_worktree_ready(project_id, group_id, branch, base_branch, wt_path, created=False)
@@ -1484,6 +1610,12 @@ SRC_ROOT_UNREGISTERED = "worktree_unregistered"
 SRC_ROOT_NO_BRANCH = "state_branch_empty"
 SRC_ROOT_NO_PROJECT_NAME = "project_name_missing"
 SRC_ROOT_DIR_MISSING = "worktree_dir_missing"
+# 0287 NR0004 §5: the directory is there but it is a corpse — an interrupted
+# `worktree remove` took its `.git` link and most of its content with it. Distinct
+# from *_dir_missing because the failure looks nothing alike in a TSR: the suite
+# runs, finds a tree with its test files but not its modules, and reports import
+# errors that read like product bugs.
+SRC_ROOT_DIR_BROKEN = "worktree_dir_broken"
 SRC_ROOT_ERROR = "resolution_error"
 
 
@@ -1556,6 +1688,21 @@ def effective_src_root_ex(
                 branch,
             )
             return None, SRC_ROOT_DIR_MISSING
+        if not _worktree_link_ok(wt_path):
+            # 0287 NR0004 §5: a directory is not a source tree. Without its `.git`
+            # link the path is what an interrupted teardown left behind, and
+            # returning it here is what silently pointed a suite at a half-erased
+            # checkout while the TSR still labelled the root "worktree".
+            _log.warning(
+                "effective_src_root: base tree for %s (%s, path=%s branch=%s) — the "
+                "directory has no .git link (leftover of an interrupted worktree "
+                "teardown); it is NOT a usable source tree",
+                group_id,
+                SRC_ROOT_DIR_BROKEN,
+                wt_path,
+                branch,
+            )
+            return None, SRC_ROOT_DIR_BROKEN
         return wt_path.resolve(), SRC_ROOT_WORKTREE
     except Exception:
         _log.warning("effective_src_root failed for %s", group_id, exc_info=True)
@@ -2739,6 +2886,15 @@ def _cleanup_group_slot(
     intentionally thrown away, and for a no-work group the branch holds no unique
     commit so nothing is lost, and origin was never pushed. The caller must hold
     the project git lock. Returns True when the slot ended up unregistered.
+
+    0287 NR0004: the worktree step is three-way, not two-way. A slot whose
+    directory git no longer owns (registration pruned, or the `.git` link
+    destroyed by a delete that was interrupted mid-run) is an ORPHAN: `worktree
+    remove` rejects it on every attempt, so it is pruned + deleted directly and
+    the teardown continues to the branch and the ledger. That does not widen the
+    E7 scope — we are past the gates above, so the ledger itself says this path is
+    THIS group's slot and the group is terminal/disposed/no-work. An undeterminable
+    registration (git unavailable/timed out) still defers rather than deleting.
     """
     try:
         cfg = db_git.get_config(project_id)
@@ -2779,12 +2935,59 @@ def _cleanup_group_slot(
         wt_path = src_root(project_name, branch)
 
         if wt_path.is_dir():
-            proc = _run_git(["worktree", "remove", "--force", str(wt_path)], cwd=base_root)
-            if proc.returncode != 0 or wt_path.exists():
+            # 0287 NR0004 §4: this used to be a two-state branch — directory present
+            # meant "healthy worktree, call remove". The third state (directory
+            # present, git registration missing or destroyed) fell into the remove
+            # path, where git rejects it every single time ("is not a working tree"
+            # / "validation failed … '.git' does not exist"), and the bare
+            # `return False` below then skipped the branch delete AND the ledger
+            # unregister — so the slot could never leave this state. Classify first.
+            kind = _classify_worktree_dir(base_root, wt_path)
+            if kind == "live":
+                proc = _run_git(
+                    ["worktree", "remove", "--force", str(wt_path)],
+                    cwd=base_root, timeout=GIT_WORKTREE_RM_TIMEOUT_SEC,
+                )
+                if proc.returncode != 0 or wt_path.exists():
+                    # A remove that fails HALFWAY leaves an orphan behind (that is
+                    # how B/C above are created), so re-classify instead of giving
+                    # up: if git no longer owns the path, finish the job ourselves.
+                    kind = _classify_worktree_dir(base_root, wt_path)
+                    if kind == "live":
+                        # Still a genuine registered worktree — something outside
+                        # our control blocked it (file lock, permissions). Preserve
+                        # the ledger row so a later sweep retries, as before.
+                        _log.warning(
+                            "worktree remove failed for %s (rc=%s, still registered): %s",
+                            group_id, proc.returncode, _last_line(proc.stderr),
+                        )
+                        return False
+                    _log.warning(
+                        "worktree remove for %s left an orphan directory (rc=%s: %s) — "
+                        "reclaiming it directly",
+                        group_id, proc.returncode, _last_line(proc.stderr),
+                    )
+            if kind == "unknown":
+                # git could not tell us whether the path is registered. Deleting a
+                # possibly-live worktree is the one irreversible mistake here, so
+                # stay conservative and let the next sweep retry.
                 _log.warning(
-                    "worktree remove failed for %s: %s", group_id, _last_line(proc.stderr)
+                    "worktree registration for %s is undeterminable — cleanup deferred",
+                    group_id,
                 )
                 return False
+            if kind == "orphan" and wt_path.exists():
+                # Orphan: git refuses to own this path, so `worktree remove` can
+                # never clear it. Drop the stale bookkeeping, then delete the
+                # directory ourselves and CONTINUE to the branch/ledger teardown.
+                _run_git(["worktree", "prune"], cwd=base_root)
+                if not _force_rmtree(wt_path):
+                    _log.warning(
+                        "orphan worktree directory for %s could not be removed: %s",
+                        group_id, wt_path,
+                    )
+                    return False
+                _log.info("orphan worktree directory reclaimed for %s: %s", group_id, wt_path)
         else:
             # Directory already gone (manual removal) — just drop the stale
             # worktree bookkeeping so the branch delete below can proceed.
