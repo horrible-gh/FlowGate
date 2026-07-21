@@ -43,12 +43,38 @@ def _configured_ttl() -> float:
         return 5.0
 
 
+def _token_ttl() -> float:
+    """TTL for the worker-token lookup (0288 NR0003 권고 3).
+
+    Separate from _configured_ttl for two reasons:
+
+      * It is OFF under TESTING unless FLOWGATE_TOKEN_CACHE_TTL says otherwise.
+        Worker tokens are single-use, and much of the suite issues a token,
+        mutates the row (consume / revoke / expire — sometimes with raw SQL that
+        cannot invalidate anything) and immediately asserts the 401. A stale
+        window there would make those tests order-dependent. Same reasoning as
+        db/meta_cache.py.
+      * It is separately tunable in operation: this entry gates authentication
+        for every worker call, so an operator may want it shorter than the rest.
+
+    FLOWGATE_TOKEN_CACHE_TTL=0 disables it (every verify hits the DB).
+    """
+    raw = os.environ.get("FLOWGATE_TOKEN_CACHE_TTL")
+    if raw is None or raw.strip() == "":
+        return 0.0 if os.environ.get("TESTING") else _configured_ttl()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _configured_ttl()
+
+
 # The two RBAC queries are NOT cached here: rbac/permission_service.py already
 # caches the resolved permission set with its own TTL and invalidation, and
 # rbac/decorators.py now delegates to it (0276 T0009).
 _blacklist = _TTLCache(_configured_ttl)   # jti        -> bool (is the access token revoked?)
 _sessions = _TTLCache(_configured_ttl)    # session_id -> bool (is the session still active?)
 _users = _TTLCache(_configured_ttl)       # user_id    -> user row | None
+_tokens = _TTLCache(_token_ttl)           # token hash -> tokens row | None
 
 
 def blacklist_cache() -> _TTLCache:
@@ -61,6 +87,10 @@ def session_cache() -> _TTLCache:
 
 def user_cache() -> _TTLCache:
     return _users
+
+
+def token_cache() -> _TTLCache:
+    return _tokens
 
 
 # ── Invalidation hooks (called from the write paths) ─────────────────────────
@@ -98,8 +128,23 @@ def invalidate_user(user_id: str | None = None) -> None:
     _users.invalidate(user_id)
 
 
+def invalidate_tokens() -> None:
+    """Any write to the tokens table happened (issue / consume / revoke / …).
+
+    Clears the whole map rather than one key: the cache is keyed by token hash
+    (that is what the lookup has) while every write path addresses the row by
+    token_id, and mapping id -> hash would cost the very query being saved.
+    Clearing is cheap and unconditionally correct — token writes are a handful
+    per workflow step, while the reads happen on every authenticated call — and
+    it keeps single-use semantics exact: a consumed token 401s on the very next
+    request, not TTL seconds later.
+    """
+    _tokens.clear()
+
+
 def invalidate_everything() -> None:
     """Full reset. Used by tests and by anything that rewrites auth state wholesale."""
     _blacklist.clear()
     _sessions.clear()
     _users.clear()
+    _tokens.clear()

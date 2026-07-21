@@ -425,16 +425,21 @@ def get_answers_for_document(doc_id: str) -> list[dict]:
 
     Returns [{"Q": item_body, "A": latest_answer_body_or_null}, ...] / [] if none.
     """
-    container = db_questions.get_container_by_doc(doc_id)
-    if container is None:
-        return []
-    items = db_question_items.list_by_question(container["id"])
-    result = []
-    for item in items:
-        answers = db_answers.list_by_question_item(item["id"])
-        latest_a = answers[-1]["body"] if answers else None
-        result.append({"Q": item["body"], "A": latest_a})
-    return result
+    # 0288 NR0003 발견 5 / 권고 3: this was 2 + N queries (container, items, then
+    # one answers SELECT per item) on the GET /document path, which every worker
+    # hits. question_items.qa_bundle_by_doc is the same data as one LEFT JOIN
+    # already ordered by (seq, answer created_at), so the whole thing is one
+    # query regardless of item count. Rows for an unanswered item carry
+    # answer_body = NULL, which is exactly the "A": None this returned before.
+    result: list[dict] = []
+    for row in db_question_items.qa_bundle_by_doc(doc_id):
+        seq = row.get("seq")
+        if result and result[-1]["_seq"] == seq:
+            # Later row for the same item = later answer (ORDER BY a.created_at).
+            result[-1]["A"] = row.get("answer_body")
+        else:
+            result.append({"_seq": seq, "Q": row.get("body"), "A": row.get("answer_body")})
+    return [{"Q": r["Q"], "A": r["A"]} for r in result]
 
 
 def list_open_items(project_id: Optional[str] = None) -> list[dict]:

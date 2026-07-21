@@ -9,7 +9,7 @@ LogAssist==1.1.4
 redis==5.2.1
 PyMySQL==1.1.1
 pycryptodome==3.23.0
-sqloader==0.2.16
+sqloader==0.2.17
 slowapi==0.1.9
 email-validator==2.3.0
 psycopg2-binary==2.9.12

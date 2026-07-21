@@ -6,6 +6,34 @@ from typing import Any, Optional
 from .connection import get_store, now_iso, iso_days_ago
 
 
+def _token_cache():
+    """The short-lived hash -> row cache, or None when it is unavailable.
+
+    Imported lazily for the same reason as db/users.py: `flow_gate.auth.__init__`
+    pulls in middleware and auth_api, which import db modules back, so a
+    module-level import here would be a cycle at package-init time.
+    """
+    try:
+        from modules.flow_gate.auth import auth_cache
+    except Exception:
+        return None
+    return auth_cache.token_cache()
+
+
+def _invalidate_token_cache() -> None:
+    """A tokens row changed; drop the cached lookups (0288 NR0003 권고 3).
+
+    Called from every write path in this module so the cache can never keep a
+    consumed or revoked token alive: single-use enforcement stays exact and the
+    TTL is only a backstop for writers outside this process.
+    """
+    try:
+        from modules.flow_gate.auth import auth_cache
+    except Exception:
+        return
+    auth_cache.invalidate_tokens()
+
+
 def get_by_id(token_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM tokens WHERE token_id = ?", [token_id]
@@ -13,9 +41,30 @@ def get_by_id(token_id: str) -> Optional[dict]:
 
 
 def get_by_hash(token_hash: str) -> Optional[dict]:
-    return get_store()._fetch_one(
-        "SELECT * FROM tokens WHERE hash = ?", [token_hash]
+    """Look up a token by its peppered hash — the per-request auth query.
+
+    0288 NR0003 발견 5: this ran once for every authenticated call (the log shows
+    the same hash re-read 10+ times while the explorer loads), each one taking a
+    connection out of the pool the same request then needs for its real work.
+    Cached like the other auth lookups (auth/auth_cache.py); every writer in this
+    module invalidates, so a consumed/revoked token is never served from here.
+    """
+    cache = _token_cache()
+    if cache is None:
+        return get_store()._fetch_one(
+            "SELECT * FROM tokens WHERE hash = ?", [token_hash]
+        )
+    row = cache.get_or_load(
+        token_hash,
+        lambda: get_store()._fetch_one(
+            "SELECT * FROM tokens WHERE hash = ?", [token_hash]
+        ),
     )
+    # Hand out a copy: token_service.verify() rewrites scratch_dir on the record
+    # it returns, and callers add their own keys. Without this the cached dict
+    # would accumulate every caller's mutations and serve them to the next
+    # request.
+    return dict(row) if row is not None else None
 
 
 def create(data: dict[str, Any]) -> dict:
@@ -44,6 +93,7 @@ def create(data: dict[str, Any]) -> dict:
             data.get("continuation_instruction_mode"),
         ],
     )
+    _invalidate_token_cache()
     return get_by_id(data["token_id"])  # type: ignore[return-value]
 
 
@@ -54,6 +104,7 @@ def consume(token_id: str) -> Optional[dict]:
         "UPDATE tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL",
         [now_iso(), token_id],
     )
+    _invalidate_token_cache()
     return get_by_id(token_id)
 
 
@@ -68,6 +119,7 @@ def increment_dry_run(token_id: str) -> None:
         "UPDATE tokens SET dry_run_count = dry_run_count + 1 WHERE token_id = ?",
         [token_id],
     )
+    _invalidate_token_cache()
 
 
 def revoke(token_id: str) -> Optional[dict]:
@@ -77,6 +129,7 @@ def revoke(token_id: str) -> Optional[dict]:
         "UPDATE tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL",
         [now_iso(), token_id],
     )
+    _invalidate_token_cache()
     return get_by_id(token_id)
 
 
@@ -89,6 +142,7 @@ def delete_expired(days_grace: int = 30) -> int:
         "DELETE FROM tokens WHERE expires_at < ?",
         [iso_days_ago(days_grace)],
     )
+    _invalidate_token_cache()
     return 0  # rowcount is not exposed; for logging
 
 

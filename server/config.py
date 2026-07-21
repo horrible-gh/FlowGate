@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from typing import Optional
 from enum import Enum
 from sqloader.init import database_init
@@ -40,6 +40,38 @@ class Settings(BaseSettings):
     DB_SCHEMA: str = ""
     DB_LOG: bool = True
     DB_PATH: str = ""
+
+    # 0288 NR0003 발견 4 / 권고 2 — connection-pool sizing for the MySQL and
+    # PostgreSQL backends. Endpoints are declared with sync `def`, so FastAPI
+    # runs them on the AnyIO thread pool (40 threads by default) while sqloader
+    # defaulted to max_parallel_queries=5 / pool_min=1 / pool_max=5. Nothing was
+    # forwarded from here, so those defaults could not be tuned at all in
+    # operation: 40 workers queued behind 5 slots, and pool_min=1 made psycopg2
+    # close every returned connection above the first — a TCP reconnect per
+    # query under load (psycopg2/pool.py:105-122).
+    #
+    # sqloader semantics (sqloader/postgresql.py __init__):
+    #   * max_parallel_queries — the semaphore permit count; callers past it WAIT.
+    #     This, not the pool, is what applies backpressure.
+    #   * pool_max must be >= max_parallel_queries (sqloader raises otherwise);
+    #     the surplus is reserve so the pool never raises "exhausted" while the
+    #     semaphore still has permits. None ⇒ equal to max_parallel_queries.
+    #   * pool_min connections are opened eagerly and kept, killing the churn.
+    #   * acquire_timeout bounds the wait for a permit. Left unset it waits
+    #     forever, so a single leaked slot would hang requests indefinitely
+    #     instead of failing them; 30s fails loudly.
+    #   * max_lifetime / max_idle recycle connections at checkout. Unset by
+    #     default (= sqloader default, no recycling); set them when a proxy or
+    #     the server drops idle connections underneath the pool.
+    #
+    # Keep DB_POOL_MAX >= DB_MAX_PARALLEL_QUERIES when overriding either.
+    # Ignored by the SQLite backend (no pool).
+    DB_MAX_PARALLEL_QUERIES: int = 20
+    DB_POOL_MIN: int = 5
+    DB_POOL_MAX: int = 24
+    DB_ACQUIRE_TIMEOUT: float = 30.0
+    DB_POOL_MAX_LIFETIME: Optional[float] = None
+    DB_POOL_MAX_IDLE: Optional[float] = None
 
     # NOTE: preset activation is now managed by server/res/preset_hands.json
     # and not by environment settings. PRESET_HANDS removed per T072.
@@ -113,6 +145,46 @@ class Settings(BaseSettings):
             return 10485760
         return v
 
+    @field_validator(
+        "DB_MAX_PARALLEL_QUERIES",
+        "DB_POOL_MIN",
+        "DB_POOL_MAX",
+        "DB_ACQUIRE_TIMEOUT",
+        "DB_POOL_MAX_LIFETIME",
+        "DB_POOL_MAX_IDLE",
+        mode="before",
+    )
+    @classmethod
+    def _blank_pool_value_uses_default(cls, v, info):
+        # Same blank-value hazard as FLOWGATE_INBOX_CONTENT_MAX above: a key that
+        # is PRESENT but empty (`DB_POOL_MAX=` in a copied .env) never falls back
+        # to the declared default and would crash the boot on "" -> int/float.
+        # Resolve the field's own default instead of hardcoding one per field.
+        if isinstance(v, str) and v.strip() == "":
+            field = cls.model_fields[info.field_name]
+            return field.default
+        return v
+
+    @model_validator(mode="after")
+    def _check_pool_sizing(self):
+        # sqloader raises ValueError for pool_max < max_parallel_queries, but only
+        # at DatabaseSetting._init_db() time and only for postgres. Reject it here
+        # instead: the message names the two .env keys the operator actually set,
+        # and the check applies whatever the backend is.
+        if self.DB_POOL_MAX < self.DB_MAX_PARALLEL_QUERIES:
+            raise ValueError(
+                f"DB_POOL_MAX ({self.DB_POOL_MAX}) must be >= "
+                f"DB_MAX_PARALLEL_QUERIES ({self.DB_MAX_PARALLEL_QUERIES}): a "
+                "pool smaller than the concurrency limit is exhausted before "
+                "that limit is reached."
+            )
+        if self.DB_POOL_MIN > self.DB_POOL_MAX:
+            raise ValueError(
+                f"DB_POOL_MIN ({self.DB_POOL_MIN}) must be <= DB_POOL_MAX "
+                f"({self.DB_POOL_MAX})."
+            )
+        return self
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()
@@ -135,6 +207,32 @@ for _env_key in (
     _env_val = getattr(settings, _env_key, None)
     if _env_val and not os.environ.get(_env_key):
         os.environ[_env_key] = _env_val
+
+
+def _pool_settings(pooled: bool) -> dict:
+    """Connection-pool keys handed to sqloader's database_init (0288 권고 2).
+
+    ``pooled=False`` (MySQL) emits only the two keys sqloader reads for that
+    backend; sending the postgres-only keys there would be dead config.
+
+    Keys unknown to an older installed sqloader are simply ignored by
+    database_init (it reads the dict with .get), so this stays safe to run
+    against a version predating the configurable pool — it just has no effect
+    until sqloader>=0.2.16 is installed.
+    """
+    common = {
+        "max_parallel_queries": settings.DB_MAX_PARALLEL_QUERIES,
+        "acquire_timeout": settings.DB_ACQUIRE_TIMEOUT,
+    }
+    if not pooled:
+        return common
+    return {
+        **common,
+        "pool_min": settings.DB_POOL_MIN,
+        "pool_max": settings.DB_POOL_MAX,
+        "max_lifetime": settings.DB_POOL_MAX_LIFETIME,
+        "max_idle": settings.DB_POOL_MAX_IDLE,
+    }
 
 
 # 🔹 DB settings class (singleton pattern)
@@ -173,6 +271,10 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
+                    # 0288 NR0003 권고 2. MySqlWrapper opens a connection per
+                    # transaction rather than pooling, so only the two
+                    # concurrency knobs sqloader accepts here apply.
+                    **_pool_settings(pooled=False),
                 },
                 "service": {
                     "log": True,
@@ -222,6 +324,10 @@ class DatabaseSetting:
                     "database": settings.DB_DATABASE,
                     "schema": settings.DB_SCHEMA,
                     "log": settings.DB_LOG,
+                    # 0288 NR0003 발견 4 / 권고 2: without these the pool stayed
+                    # at sqloader's 5/1/5 defaults regardless of .env — the
+                    # 40-thread-vs-5-slot mismatch behind B0001's exhaustion.
+                    **_pool_settings(pooled=True),
                 },
                 "service": {
                     "log": True,
