@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import threading
@@ -931,11 +930,13 @@ def _start_service_step(
     cmd = _replace_placeholders(step["cmd"], port, scratch)
     log_path = scratch / f"{step['case_no'].lower()}-service.log"
     log_handle = log_path.open("ab")
+    eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = _popen_kwargs(root, env)
+    kwargs["cwd"] = eff_cwd
     kwargs["stdout"] = log_handle
     kwargs["stderr"] = subprocess.STDOUT
     try:
-        proc = subprocess.Popen(cmd, **kwargs)
+        proc = subprocess.Popen(eff_cmd, **kwargs)
     except Exception as exc:
         log_handle.close()
         db_test_runs.mark_case_finished(
@@ -1005,15 +1006,16 @@ def _run_shell_command(
     timeout: int,
     env: Optional[dict[str, str]],
 ) -> tuple[str, Optional[int], str]:
+    eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = {
-        "cwd": str(root),
         "shell": True,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
     }
     kwargs.update(_popen_kwargs(root, env, include_stdio=False))
+    kwargs["cwd"] = eff_cwd
 
-    proc = subprocess.Popen(cmd, **kwargs)
+    proc = subprocess.Popen(eff_cmd, **kwargs)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -1037,22 +1039,7 @@ def _popen_kwargs(
     *,
     include_stdio: bool = True,
 ) -> dict:
-    kwargs = {
-        "cwd": str(root),
-        "shell": True,
-    }
-    if include_stdio:
-        kwargs["stdout"] = subprocess.PIPE
-        kwargs["stderr"] = subprocess.PIPE
-    if env is not None:
-        merged_env = os.environ.copy()
-        merged_env.update(env)
-        kwargs["env"] = merged_env
-    if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
-    return kwargs
+    return process_runner.popen_kwargs(root, env, include_stdio=include_stdio)
 
 
 def _allocate_port() -> int:
@@ -1131,36 +1118,7 @@ def _remove_scratch(path: Path) -> None:
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
-    if proc.poll() is not None:
-        return
-    if os.name == "nt":
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=10,
-            )
-        except Exception:
-            logger.warning("taskkill failed for process %s", proc.pid, exc_info=True)
-        if proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                logger.warning("process kill failed for %s", proc.pid, exc_info=True)
-        return
-
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
-    except Exception:
-        logger.warning("process group kill failed for %s", proc.pid, exc_info=True)
-        try:
-            proc.kill()
-        except Exception:
-            logger.warning("process kill failed for %s", proc.pid, exc_info=True)
+    process_runner.kill_process_tree(proc)
 
 
 def _safe_decode(data) -> str:
