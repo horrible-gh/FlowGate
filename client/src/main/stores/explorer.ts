@@ -36,6 +36,32 @@ export interface GroupBlobData {
   content: string | null
 }
 
+// 0282 NR0003 발견 3 — response shape of GET /projects/{id}/git/status
+// (git_service.project_git_status). Typed to what the four consumers read;
+// the payload may carry more fields.
+export interface GitProjectStatus {
+  enabled: boolean
+  base_branch: string | null
+  base_path_state?: string
+  ahead_count: number | null
+  behind_count: number | null
+  base_dirty?: { dirty: boolean; files: string[] }
+  slots: Array<{ group_id: string; branch: string | null; status: string; merge_id: number | null }>
+  pending: Array<{
+    group_id: string
+    branch: string | null
+    status: string
+    default_action: string
+    merge_id: number | null
+    ac_doc_id?: string | null
+    conflict_since?: string | null
+  }>
+  pending_count: number
+  cleanable_count?: number
+  provision_failures?: Array<{ group_id: string; error: string; failed_at: string | null }>
+  unpushed?: { count: number; commit_count: number; merges: unknown[] }
+}
+
 export interface GroupNode {
   id: string
   parent_id: string | null
@@ -78,6 +104,14 @@ export const useExplorerStore = defineStore('explorer', () => {
   // tree. Refreshed by its four triggers: git/status fetch, src-content save
   // response, base-commit/base-revert response, finalize base_dirty 409.
   const baseDirtyFiles = ref<Record<string, string[]>>({})
+  // 0282 NR0003 발견 3: project git/status was fetched independently by four
+  // components (FileExplorer, GitActionMenu, GitStatusPanel, GitBaseDirtyDialog)
+  // — every mount race or SSE trigger multiplied the server's aggregation work.
+  // The store now owns the fetch: concurrent callers coalesce onto one request,
+  // the latest payload stays readable per project, and the §2.6-a base-dirty
+  // badge sync happens here once instead of in each component.
+  const gitStatus = ref<Record<string, GitProjectStatus | null>>({})
+  const gitStatusInflight = new Map<string, Promise<GitProjectStatus | null>>()
   // 0186 L0006 §2.4 — checkout-free group-branch explorer caches, keyed by the
   // branch HEAD commit so a branch advance auto-invalidates the stale snapshot.
   // activeGroupBranch: currently viewed group_id in the file explorer (null = base).
@@ -144,6 +178,32 @@ export const useExplorerStore = defineStore('explorer', () => {
     } finally {
       loadingGroup.value = false
     }
+  }
+
+  /** Fetch (and share) a project's git/status. Always hits the server — the
+   *  status changes under finalize/SSE flows, so freshness wins — but every
+   *  caller arriving while a fetch is in flight joins that fetch instead of
+   *  issuing another one. Errors propagate to each joined caller. */
+  async function fetchGitStatus(pid: string): Promise<GitProjectStatus | null> {
+    const inflight = gitStatusInflight.get(pid)
+    if (inflight) return inflight
+    const request = (async () => {
+      try {
+        const res = await getRequest<{ ok: boolean; status: GitProjectStatus }>(
+          `/api/v1/projects/${encodeURIComponent(pid)}/git/status`,
+        )
+        const status = ((res.data as any)?.status ?? null) as GitProjectStatus | null
+        gitStatus.value = { ...gitStatus.value, [pid]: status }
+        // 0177 §2.6-a badge trigger 1/4 (moved here from GitStatusPanel): every
+        // status fetch refreshes the file-tree "modified" badges.
+        if (status) setBaseDirtyFiles(pid, status.base_dirty?.files ?? [])
+        return status
+      } finally {
+        gitStatusInflight.delete(pid)
+      }
+    })()
+    gitStatusInflight.set(pid, request)
+    return request
   }
 
   function invalidateProject(pid: string) {
@@ -384,6 +444,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     selectedFileNodeId, selectedGroupNodeId, pendingSelectFilePath,
     loadingFile, loadingGroup, fileError, groupError,
     baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath, isBaseDirtyDir,
+    gitStatus, fetchGitStatus,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,

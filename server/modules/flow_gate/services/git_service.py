@@ -1592,6 +1592,23 @@ def _group_root_wf_done(group_id: str) -> bool:
     return row is not None
 
 
+def _groups_root_wf_done(group_ids: list[str]) -> set[str]:
+    """Batch form of _group_root_wf_done (0282 NR0003 발견 1): one IN query
+    instead of one probe per group. project_git_status ran the per-group probe
+    inside its slot loop — 8 groups × 2 client calls = 12 of the 68 queries in
+    the R0001 screen-load log, growing linearly with group count."""
+    if not group_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in group_ids)
+    rows = get_store()._fetch_all(
+        "SELECT DISTINCT group_id FROM documents "
+        f"WHERE group_id IN ({placeholders}) "
+        "AND type_code IN ('R','B') AND doc_review_status = 'wf_done'",
+        list(group_ids),
+    )
+    return {r["group_id"] for r in rows}
+
+
 def _group_ac_doc_id(group_id: str) -> Optional[str]:
     """Newest AC (final-approval) doc id of the group, or None. Never raises —
     the field is advisory navigation state for the header [open] button
@@ -1606,6 +1623,27 @@ def _group_ac_doc_id(group_id: str) -> Optional[str]:
     except Exception:
         _log.warning("ac_doc_id lookup failed for %s", group_id, exc_info=True)
         return None
+
+
+def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
+    """Batch form of _group_ac_doc_id (0282 NR0003 발견 1). MAX(doc_id) per
+    group ≡ the single version's ORDER BY doc_id DESC first row. Same advisory
+    never-raise contract: on failure every pending row simply carries no
+    ac_doc_id and the [open] button falls back to the R root."""
+    if not group_ids:
+        return {}
+    try:
+        placeholders = ", ".join("?" for _ in group_ids)
+        rows = get_store()._fetch_all(
+            "SELECT group_id, MAX(doc_id) AS doc_id FROM documents "
+            f"WHERE group_id IN ({placeholders}) AND type_code = 'AC' "
+            "GROUP BY group_id",
+            list(group_ids),
+        )
+        return {r["group_id"]: r["doc_id"] for r in rows if r.get("doc_id")}
+    except Exception:
+        _log.warning("ac_doc_id batch lookup failed", exc_info=True)
+        return {}
 
 
 # ── No-work divergence gating (flowgate.default.0199 B0001) ──────────────────
@@ -3147,9 +3185,17 @@ def project_git_status(project_id: str) -> dict:
     project_name = _project_name(project_id)
     base_root = src_root(project_name, base_branch) if project_name else None
 
-    rows = db_git.list_states_of_project(project_id)
+    # 0282 NR0003 발견 1: one ledger scan serves both the registered-slot
+    # aggregation and the provision-failure surface below (previously two
+    # near-identical project scans), and the per-slot wf_done probe is batched
+    # into a single IN query so the loop only does set membership.
+    all_rows = db_git.list_states_of_project_any(project_id)
+    rows = [r for r in all_rows if r.get("worktree_registered")]
+    wf_done_groups = _groups_root_wf_done(
+        [r["group_id"] for r in rows if (r.get("status") or "none") == "none"]
+    )
     for row in rows:
-        if (row.get("status") or "none") == "none" and _group_root_wf_done(row["group_id"]):
+        if (row.get("status") or "none") == "none" and row["group_id"] in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
                 # merge/push) here; real groups still transition to awaiting_choice.
@@ -3170,6 +3216,10 @@ def project_git_status(project_id: str) -> dict:
          "status": r.get("status"), "merge_id": r.get("merge_id")}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
+    pending_rows = [r for r in rows if r.get("status") in PENDING_STATUSES]
+    # 0282 NR0003 발견 1: the AC lookup was the next N+1 in line — batched
+    # before pending grows with adoption.
+    ac_doc_ids = _group_ac_doc_ids([r["group_id"] for r in pending_rows])
     pending = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
          "status": r.get("status"), "default_action": default_action,
@@ -3179,8 +3229,8 @@ def project_git_status(project_id: str) -> dict:
          # 0182 NR0003 §4: pending implies the workflow root is wf_done, so the
          # header [open] button targets the AC document (which hosts the git
          # finalize UI since §3) instead of detouring through the R root.
-         "ac_doc_id": _group_ac_doc_id(r["group_id"])}
-        for r in rows if r.get("status") in PENDING_STATUSES
+         "ac_doc_id": ac_doc_ids.get(r["group_id"])}
+        for r in pending_rows
     ]
     # 0205 P scenario 8: annotate conflict pending rows with how long they have
     # been unresolved (elapsed = now − conflict_since), so the panel can surface
@@ -3197,7 +3247,7 @@ def project_git_status(project_id: str) -> dict:
     # survives the one-shot SSE. Disposed groups are excluded. Newest first.
     provision_failures: list[dict] = []
     try:
-        for r in db_git.list_states_of_project_any(project_id):
+        for r in all_rows:
             if (
                 r.get("provision_error")
                 and not r.get("worktree_registered")

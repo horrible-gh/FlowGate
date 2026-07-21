@@ -187,9 +187,12 @@ function groupLabel(s: { group_id: string; status: string }): string {
 
 async function loadGroupSlots(pid: string) {
   try {
-    const res = await api.get(`/api/v1/projects/${encodeURIComponent(pid)}/git/status`)
-    const status = (res.data as any)?.status
-    groupSlots.value = Array.isArray(status?.slots) ? status.slots : []
+    // 0282 NR0003 발견 3: fetched via the explorer store so concurrent callers
+    // (header menu, status panel, SSE triggers) share one git/status request.
+    const status = await explorerStore.fetchGitStatus(pid)
+    groupSlots.value = Array.isArray(status?.slots)
+      ? (status!.slots as Array<{ group_id: string; branch: string; status: string }>)
+      : []
   } catch {
     groupSlots.value = []
   }
