@@ -654,6 +654,19 @@ async function adoptActiveRun(): Promise<void> {
   }
 }
 
+// 0278 NR0003: the concrete per-provider cause (spawn_failed plus the OS error text)
+// already rides in the finished payload as fallback_history, but nothing on the chat
+// surface ever showed it -- which is what made 0278 R0001 undiagnosable from a user
+// report alone.
+function firstFallbackDetail(data: Record<string, any>): string {
+  const history = Array.isArray(data.fallback_history) ? data.fallback_history : []
+  for (const item of history) {
+    const detail = typeof item?.detail === 'string' ? item.detail.trim() : ''
+    if (detail) return detail.length > 200 ? `${detail.slice(0, 200)}...` : detail
+  }
+  return ''
+}
+
 function chatRunFailureDetail(data: Record<string, any>): string {
   const registerErrors = Array.isArray(data.register_errors) ? data.register_errors : []
   if (registerErrors.length > 0) {
@@ -667,7 +680,16 @@ function chatRunFailureDetail(data: Record<string, any>): string {
   }
   if (data.end_reason === 'cancelled') return t('main.ai_invoke_dialog.end_cancelled')
   if (data.end_reason === 'timeout') return t('main.ai_invoke_dialog.end_timeout')
-  if (data.end_reason === 'all_failed') return t('main.ai_invoke_dialog.end_all_failed')
+  // 0278 NR0003: the server stamps end_reason='all_providers_failed' (ai_invoke_service
+  // _worker). Comparing only against the legacy 'all_failed' never matched, so a provider
+  // chain that never started fell through to the last_message_none branch below and
+  // reported "no message received" for what is actually a startup failure. AiInvokeInline
+  // already accepts both spellings -- keep the two surfaces in agreement.
+  if (data.end_reason === 'all_providers_failed' || data.end_reason === 'all_failed') {
+    const label = t('main.ai_invoke_dialog.end_all_failed')
+    const cause = firstFallbackDetail(data)
+    return cause ? `${label} (${cause})` : label
+  }
   if (data.exit_code != null && Number(data.exit_code) !== 0) return `exit code ${data.exit_code}`
   if (!data.last_message_received) return t('main.ai_invoke_dialog.last_message_none')
   // A chat run never registers a document, so the document-flavoured wording never applied

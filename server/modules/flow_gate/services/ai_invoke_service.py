@@ -841,7 +841,24 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if kind == "codex":
         cmd = f'{cmd} --output-last-message "{last_message_file}"'
 
-    source_root = Path(run["source_root"]) if run.get("source_root") else scratch
+    # 0278 NR0003: resolve_project_src_root() returns the project's source-mirror path
+    # WITHOUT checking that it exists, and only git provisioning ever creates that
+    # directory. A non-git project therefore yields a real-looking path to a folder
+    # that is not there, and Popen(cwd=...) raises for every provider in the chain --
+    # the run dies as all_providers_failed with no last message. The mirror is not
+    # required for a CLI worker (it registers through the inbox API, not the tree),
+    # so fall back to the run scratch dir. The bare `else scratch` never covered this
+    # case because the resolver hands back a path, not None.
+    resolved_root = Path(run["source_root"]) if run.get("source_root") else None
+    if resolved_root is not None and resolved_root.is_dir():
+        source_root = resolved_root
+    else:
+        if resolved_root is not None:
+            logger.warning(
+                "ai-invoke %s: source mirror missing at %s - running in scratch %s",
+                run["run_id"], resolved_root, scratch,
+            )
+        source_root = scratch
     # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
     # must post results to an address it can actually reach. The mention was built
     # with the operator-facing base; rewrite it (and export it) to an agent-reachable
