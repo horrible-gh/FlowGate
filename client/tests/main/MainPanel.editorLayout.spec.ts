@@ -44,6 +44,8 @@ describe('document edit modal layout', () => {
   })
 
   it('bounds the modal height so the box itself defines the track', () => {
-    expect(cssRule('.document-modal')).toMatch(/height:\s*min\(860px,\s*90vh\)/)
+    // `100%`, not a vh cap: the same rule serves the full view, which is centred inside
+    // `.modal-bg--below-header` (a container already shorter than the viewport).
+    expect(cssRule('.document-modal')).toMatch(/height:\s*min\(860px,\s*100%\)/)
   })
 })
