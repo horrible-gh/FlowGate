@@ -18,6 +18,7 @@ from typing import Optional
 
 from modules.flow_gate.db import ai_providers as _ai_db
 from modules.flow_gate.db import projects as _projects_db
+from modules.flow_gate.services import test_command_service as _tcs
 
 # ── Parameters (L0004 §1) ────────────────────────────────────────────────────
 NAME_MAX = 100
@@ -46,6 +47,42 @@ _DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com",
 }
 
+# Per-kind × host-OS example CLI commands (flowgate.default.0281 T0005, NR0003 §4 F2 / R2).
+# Before this, the only guidance the product offered was the static claude-shaped
+# placeholder `claude -p` (client i18n `placeholder_cli_command`), which stayed put even
+# after picking Codex/Copilot — so operators pasted the CLIs' Linux-written docs verbatim
+# and they broke under cmd.exe. The catalog now carries a starting point per kind, keyed by
+# host OS ("nt"/"posix"), so the UI can surface the example that matches THIS host.
+#
+# These are seeds, not verified truth: the codex/copilot strings are the POSIX-documented
+# forms from R0001, reused for "nt" until an operator confirms a Windows form via the
+# provider connection test (test-provider endpoint). "custom" gets no example by design —
+# it is the escape hatch for arbitrary commands.
+_CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
+    "claude": {
+        "posix": "claude -p",
+        "nt": "claude -p",
+    },
+    "codex": {
+        "posix": (
+            "codex --ask-for-approval never --sandbox workspace-write exec "
+            "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
+        ),
+        "nt": (
+            "codex --ask-for-approval never --sandbox workspace-write exec "
+            "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
+        ),
+    },
+    "copilot": {
+        "posix": "copilot --model claude-sonnet-5 --output-format=json",
+        "nt": "copilot --model claude-sonnet-5 --output-format=json",
+    },
+    "custom": {
+        "posix": "",
+        "nt": "",
+    },
+}
+
 
 class AiSettingsValidationError(Exception):
     """Carries the P0003 422 error array (code: validation_failed)."""
@@ -56,9 +93,18 @@ class AiSettingsValidationError(Exception):
 
 
 def get_catalog() -> dict:
+    """Enum lists the editor renders from, plus (0281 T0005) host-OS context and per-kind
+    example CLI commands so the UI can offer an OS-appropriate starting point instead of the
+    static `claude -p` placeholder. `host_os`/`host_shell` describe the machine that will
+    actually run cli_command via shell=True — the same values the connection test injects as
+    FLOWGATE_OS / FLOWGATE_SHELL.
+    """
     return {
         "exec_types": list(EXEC_TYPES),
         "kinds": {"cli": list(KINDS_CLI), "api": list(KINDS_API)},
+        "host_os": _tcs.current_os(),
+        "host_shell": _tcs.current_shell(),
+        "cli_examples": {k: dict(v) for k, v in _CLI_COMMAND_EXAMPLES.items()},
     }
 
 

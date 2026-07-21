@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from modules.flow_gate.rbac.decorators import require_permission
+from modules.flow_gate.services import ai_provider_probe_service as _probe
 from modules.flow_gate.settings import ai_settings_service as _svc
 
 router = APIRouter(tags=["AiSettings"])
@@ -37,6 +38,20 @@ class SystemAiSettingsPut(BaseModel):
     providers: list[ProviderIn] | None = None
     default_provider_id: str | None = None
     default_provider_index: int | None = None
+
+
+class ProviderProbeIn(BaseModel):
+    """Current editor form values for a connection test (0281 T0005 / NR0003 R1).
+
+    Carries the live form — not a saved provider id — so the operator can test BEFORE
+    saving, exactly as the Git settings test-connection does (GitSettingsView P0005 §3-2).
+    """
+
+    exec_type: str = "cli"
+    kind: str = ""
+    cli_command: str | None = None
+    api_base_url: str | None = None
+    prompt: str | None = None
 
 
 class ProjectAiSettingsPut(SystemAiSettingsPut):
@@ -109,6 +124,25 @@ def put_project_ai_settings(
         raise HTTPException(status_code=404, detail=str(exc))
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
+
+
+@router.post("/system/ai-settings/test-provider")
+def test_system_ai_provider(
+    body: ProviderProbeIn,
+    user=Depends(require_permission("system.settings.manage")),
+):
+    """Launch the form's cli_command on this host with a short timeout and report exit
+    code + stderr tail (0281 T0005 R1). Diagnostic only — never persists anything."""
+    return _probe.probe_provider(body.model_dump())
+
+
+@router.post("/projects/{project_id}/ai-settings/test-provider")
+def test_project_ai_provider(
+    project_id: str,
+    body: ProviderProbeIn,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    return _probe.probe_provider(body.model_dump())
 
 
 @router.get("/projects/{project_id}/ai-settings/effective")
