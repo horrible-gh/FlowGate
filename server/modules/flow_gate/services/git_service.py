@@ -3319,6 +3319,31 @@ def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[l
     return commits
 
 
+def _remote_base_missing(base_root: Optional[Path], base_branch: str) -> bool:
+    """True only when the base checkout is healthy and refs/remotes/origin/{base}
+    is absent — the remote has no base branch yet (0297 B0001 bootstrap).
+
+    Deliberately narrower than "unmeasured": git being unavailable or the checkout
+    missing reads False, so a consumer can never mistake those for "the remote is
+    empty, offer the first push"."""
+    if base_root is None or not git_available() or not (base_root / ".git").exists():
+        return False
+    return not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
+
+
+def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
+    """Commits reachable from the base checkout's HEAD, or None when it cannot be
+    counted (git off, no checkout, unborn HEAD). Lets the client tell "nothing to
+    push yet" apart from "one snapshot commit waiting for its first push"."""
+    if base_root is None or not git_available() or not (base_root / ".git").exists():
+        return None
+    proc = _run_git(["rev-list", "--count", "HEAD"], cwd=base_root)
+    if proc.returncode != 0:
+        return None
+    txt = (proc.stdout or "").strip()
+    return int(txt) if txt.isdigit() else None
+
+
 def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
     matches: list[str] = []
     for row in db_git.list_states_of_project_any(project_id):
@@ -3337,7 +3362,15 @@ def _build_unpushed(
 ) -> dict:
     commits = _unpushed_commits(base_root, base_branch)
     if commits is None:
-        return {"count": 0, "commit_count": 0, "merges": [], "measured": False}
+        # 0297 B0001: an unmeasured result used to be indistinguishable from "in
+        # sync" downstream (commit_count 0), which hid the ONLY push entry point
+        # while the remote was still empty. These two fields carry the bootstrap
+        # case explicitly so the client decides instead of guessing.
+        return {
+            "count": 0, "commit_count": 0, "merges": [], "measured": False,
+            "remote_branch_missing": _remote_base_missing(base_root, base_branch),
+            "local_commit_count": _local_commit_count(base_root),
+        }
     merge_commits = [c for c in commits if len(c["parents"]) >= 2]
     merges: list[dict] = []
     top_sha = commits[0]["full_sha"] if commits else None
@@ -3364,6 +3397,10 @@ def _build_unpushed(
         "commit_count": commit_count if commit_count is not None else len(commits),
         "merges": merges,
         "measured": True,
+        # Measured implies origin/{base} exists; keep the shape stable so the
+        # client can read both fields unconditionally.
+        "remote_branch_missing": False,
+        "local_commit_count": None,
     }
 
 
@@ -3963,3 +4000,4 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
         ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
+

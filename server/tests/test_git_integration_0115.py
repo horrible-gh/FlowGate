@@ -1701,3 +1701,73 @@ class TestNoWorkAutoDiscard0199:
         assert "gitnoop_default_0214" not in self._origin_heads(noop_origin)
         assert db_git.get_state(group)["worktree_registered"] == 0
 
+
+@pytest.mark.skipif(not _GIT, reason="git binary unavailable")
+class TestFirstPushBootstrap0297:
+    """0297 B0001 / NR0003 — a freshly created (empty) remote has no
+    refs/remotes/origin/{base}, so ahead/behind and the unpushed walk are
+    unmeasurable. The payload used to flatten that to commit_count 0, which the
+    client could not tell apart from "in sync" — and the only push button in the
+    app is gated on that number, so the FIRST push had no entry point at all.
+
+    These tests pin the two facts the client now gates on, and prove the push it
+    was blocked from issuing works."""
+
+    def _bootstrap(self, tmp_path):
+        """Empty bare origin + a base checkout holding one local snapshot commit
+        — exactly the state `_adopt()` leaves behind after provisioning against a
+        brand-new repository."""
+        bare = tmp_path / "origin.git"
+        base = tmp_path / "base"
+        _git(["init", "--bare", "-b", "main", str(bare)])
+        _git(["init", "-b", "main", str(base)])
+        _git(["remote", "add", "origin", str(bare)], cwd=base)
+        _git(["fetch", "origin"], cwd=base)
+        (base / "README.md").write_text("hello\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=base)
+        _git(["commit", "-m", "snapshot"], cwd=base)
+        return bare, base
+
+    def test_empty_remote_reports_bootstrap_fields(self, tmp_path):
+        from modules.flow_gate.services import git_service as svc
+
+        bare, base = self._bootstrap(tmp_path)
+        assert not svc._ref_exists(base, "refs/remotes/origin/main")
+
+        unpushed = svc._build_unpushed("gitprj", base, "main", None)
+        assert unpushed["measured"] is False
+        assert unpushed["commit_count"] == 0          # legacy field, unchanged
+        assert unpushed["remote_branch_missing"] is True
+        assert unpushed["local_commit_count"] == 1    # …but there IS work to push
+
+        # The push the client used to hide is a plain success.
+        _git(["push", "origin", "main"], cwd=base)
+        assert "refs/heads/main" in _git(["ls-remote", "--heads", str(bare)])
+
+    def test_measured_payload_keeps_shape(self, tmp_path):
+        from modules.flow_gate.services import git_service as svc
+
+        _bare, base = self._bootstrap(tmp_path)
+        _git(["push", "origin", "main"], cwd=base)
+        (base / "next.txt").write_text("more\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=base)
+        _git(["commit", "-m", "second"], cwd=base)
+
+        unpushed = svc._build_unpushed("gitprj", base, "main", None)
+        assert unpushed["measured"] is True
+        assert unpushed["commit_count"] == 1
+        # Both bootstrap fields are always present so the client reads them
+        # unconditionally; measured means the remote branch exists.
+        assert unpushed["remote_branch_missing"] is False
+        assert unpushed["local_commit_count"] is None
+
+    def test_missing_checkout_is_not_reported_as_empty_remote(self, tmp_path):
+        """Unmeasured has other causes (no checkout, git off). Those must NOT
+        read as "empty remote", or the client would offer a first push with
+        nothing to push."""
+        from modules.flow_gate.services import git_service as svc
+
+        unpushed = svc._build_unpushed("gitprj", tmp_path / "missing", "main", None)
+        assert unpushed["measured"] is False
+        assert unpushed["remote_branch_missing"] is False
+        assert unpushed["local_commit_count"] is None
