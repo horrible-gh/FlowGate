@@ -239,7 +239,7 @@
             </template>
           </div>
 
-          <div v-for="key in ['reported', 'detected']" :key="key">
+          <div v-for="key in trScopeMainKeys" :key="key">
             <p class="dip-trs-list-label">
               {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScope[key]?.count ?? 0 }})
             </p>
@@ -410,6 +410,8 @@ const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
 
 // 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
 const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
+// 템플릿 인라인 배열은 string[]로 넓혀져 TrScopeVerdict 인덱싱이 막히므로 여기서 고정한다.
+const trScopeMainKeys = ['reported', 'detected'] as const
 
 watch(
   () => props.trScope,
