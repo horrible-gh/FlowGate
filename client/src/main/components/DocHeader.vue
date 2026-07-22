@@ -229,6 +229,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
+import type { TrScopeVerdict } from '../types/trScope'
 
 const props = defineProps<{ tab: Tab }>()
 
@@ -288,6 +289,9 @@ interface DocDetail {
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
   next_step_exists?: boolean
+  // TR 작업범위 검증 결과 (0299 D0004 §6). 서버가 meta 에서 펼쳐 준다. 대상이
+  // 아니거나 검증 도입 이전 문서면 키 자체가 오지 않는다.
+  tr_scope?: TrScopeVerdict | null
 }
 
 const doc = ref<DocDetail | null>(null)

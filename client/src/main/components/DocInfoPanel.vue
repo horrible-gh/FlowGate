@@ -239,17 +239,20 @@
             </template>
           </div>
 
-          <div v-for="key in ['reported', 'detected']" :key="key">
+          <div v-for="key in trScopeAllKeys" :key="key">
             <p class="dip-trs-list-label">
-              {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScope[key]?.count ?? 0 }})
+              {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScopeSlice(key).count }})
             </p>
             <ul class="dip-trs-list">
-              <li v-for="p in trScope[key]?.items ?? []" :key="p"><code>{{ p }}</code></li>
-              <li v-if="!trScope[key]?.count" class="dip-trs-more">
+              <li v-for="p in trScopeSlice(key).items" :key="p"><code>{{ p }}</code></li>
+              <li v-if="!trScopeSlice(key).count" class="dip-trs-more">
                 {{ t('main.doc_info_panel.tr_scope_empty') }}
               </li>
-              <li v-else-if="trScope[key].count > trScope[key].items.length" class="dip-trs-more">
-                {{ t('main.doc_info_panel.tr_scope_more', { n: trScope[key].count - trScope[key].items.length }) }}
+              <li
+                v-else-if="trScopeSlice(key).count > trScopeSlice(key).items.length"
+                class="dip-trs-more"
+              >
+                {{ t('main.doc_info_panel.tr_scope_more', { n: trScopeSlice(key).count - trScopeSlice(key).items.length }) }}
               </li>
             </ul>
           </div>
@@ -364,7 +367,7 @@ import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiReviewFinding } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
-import type { TrScopeVerdict } from '../types/trScope'
+import type { TrScopePathSlice, TrScopeVerdict } from '../types/trScope'
 
 const { t } = useI18n()
 const aiProviderStore = useAiProviderStore()
@@ -410,6 +413,18 @@ const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
 
 // 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
 const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
+
+// 신고/감지 전체 목록 — 어긋남 목록 다음에 같은 모양으로 나란히 둔다 (D0004 §6).
+// 인라인 배열 리터럴로 두면 키가 string 으로 추론돼 인덱싱이 막히므로, 위 어긋남
+// 목록과 똑같이 as const 로 리터럴 유니온을 유지한다.
+const trScopeAllKeys = ['reported', 'detected'] as const
+
+// 없는 슬라이스는 빈 것으로 채워 돌려준다. 템플릿이 옵셔널 체이닝과 v-if/v-else-if
+// 좁히기에 기대지 않아도 되고, "0건" 표시도 그대로 성립한다.
+const emptyTrScopeSlice: TrScopePathSlice = { count: 0, items: [] }
+function trScopeSlice(key: (typeof trScopeAllKeys)[number]): TrScopePathSlice {
+  return props.trScope?.[key] ?? emptyTrScopeSlice
+}
 
 watch(
   () => props.trScope,
