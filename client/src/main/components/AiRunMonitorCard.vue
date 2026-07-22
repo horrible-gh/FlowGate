@@ -21,36 +21,53 @@
         <p>{{ t('main.ai_miniplayer.dash_empty') }}</p>
       </div>
       <div v-else class="airm-list">
-        <button
+        <!-- A row is a container, not a button: the remove action is a button of its own
+             and nesting one inside another is invalid markup (0290 NR0003 §5.2). -->
+        <div
           v-for="entry in entries"
           :key="entry.groupId"
-          type="button"
-          class="airm-row dashboard-row"
-          @click="openDoc(entry)"
+          class="airm-row"
         >
-          <AppIcon
-            :name="cardIcon(entry)"
-            :spin="entry.phase === 'running' && !entry.cancelling"
-            class="airm-row-icon"
-            :class="{ 'airm-row-icon--awaiting': isAwaitingQ(entry) }"
-          />
-          <span class="airm-row-body">
-            <span class="airm-row-doc">{{ entry.docRef || entry.groupId }}</span>
-            <span class="airm-row-meta">
-              {{ stateLabel(entry) }}
-              <template v-if="entry.provider?.name"> · {{ entry.provider.name }}</template>
-              <template v-if="entry.docsTarget > 1">
-                · {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: entry.docsTarget }) }}
-              </template>
-            </span>
-          </span>
-          <span
-            class="airm-badge"
-            :class="{ 'airm-badge--awaiting': isAwaitingQ(entry) }"
+          <button
+            type="button"
+            class="airm-row-main"
+            @click="openDoc(entry)"
           >
-            {{ isAwaitingQ(entry) ? t('main.ai_miniplayer.dash_state_awaiting') : modeLabel(entry) }}
-          </span>
-        </button>
+            <AppIcon
+              :name="cardIcon(entry)"
+              :spin="entry.phase === 'running' && !entry.cancelling"
+              class="airm-row-icon"
+              :class="{ 'airm-row-icon--awaiting': isAwaitingQ(entry) }"
+            />
+            <span class="airm-row-body">
+              <span class="airm-row-doc">{{ entry.docRef || entry.groupId }}</span>
+              <span class="airm-row-meta">
+                {{ stateLabel(entry) }}
+                <template v-if="entry.provider?.name"> · {{ entry.provider.name }}</template>
+                <template v-if="entry.docsTarget > 1">
+                  · {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: entry.docsTarget }) }}
+                </template>
+              </span>
+            </span>
+            <span
+              class="airm-badge"
+              :class="{ 'airm-badge--awaiting': isAwaitingQ(entry) }"
+            >
+              {{ isAwaitingQ(entry) ? t('main.ai_miniplayer.dash_state_awaiting') : modeLabel(entry) }}
+            </span>
+          </button>
+          <button
+            v-if="isFinishedCard(entry)"
+            type="button"
+            class="airm-row-remove"
+            :title="t('main.ai_miniplayer.btn_remove')"
+            :aria-label="t('main.ai_miniplayer.btn_remove')"
+            data-test="ai-run-monitor-remove"
+            @click="store.dismiss(entry.groupId)"
+          >
+            <AppIcon name="x" />
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -63,7 +80,13 @@ import AppIcon from '@shared/AppIcon.vue'
 import { getRequest } from '@shared/api'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
-import { isAwaitingQ, useAiInvokeRunsStore, type AiInvokeRunEntry } from '../stores/aiInvokeRuns'
+import {
+  compareRunEntries,
+  isAwaitingQ,
+  isFinishedCard,
+  useAiInvokeRunsStore,
+  type AiInvokeRunEntry,
+} from '../stores/aiInvokeRuns'
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -71,7 +94,7 @@ const store = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
 
 const entries = computed<AiInvokeRunEntry[]>(() =>
-  Object.values(store.runsByGroup).sort((a, b) => a.groupId.localeCompare(b.groupId)),
+  Object.values(store.runsByGroup).slice().sort(compareRunEntries),
 )
 
 function cardIcon(entry: AiInvokeRunEntry): string {
@@ -119,6 +142,8 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       mdPath: d.file_path ?? null,
       typeCode: d.type_code ?? null,
     })
+    // Same acknowledgement rule as the header monitor (0290 R0001 §1).
+    store.dismiss(entry.groupId)
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }
@@ -145,18 +170,48 @@ onMounted(() => {
 .airm-row {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: 100%;
-  padding: 10px 16px;
-  border: none;
   border-bottom: 1px solid var(--border);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
 }
 
 .airm-row:last-child {
   border-bottom: none;
+}
+
+.airm-row-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 4px 10px 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.airm-row-main:hover {
+  background: var(--surface-hover, rgba(148, 163, 184, .08));
+}
+
+.airm-row-remove {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 10px;
+  padding: 4px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-m);
+  cursor: pointer;
+}
+
+.airm-row-remove:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
 }
 
 .airm-row-icon {

@@ -1078,6 +1078,8 @@ export default {
       btn_pause: 'Pause',
       btn_resume: 'Resume',
       btn_open_doc: 'Open document',
+      btn_remove: 'Remove from list',
+      btn_clear_finished: 'Clear finished',
       error_pause_failed: 'Pause request failed.',
       error_resume_failed: 'Resume failed.',
       error_open_failed: 'Could not open the document.',

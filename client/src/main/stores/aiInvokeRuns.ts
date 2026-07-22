@@ -69,7 +69,16 @@ type InvokeSseDetail = {
 const POLL_INTERVAL_MS = 5_000
 const CLOCK_INTERVAL_MS = 1_000
 // L0009 §1: finished/cancelled/lost cards leave the list on their own; paused cards never do.
-export const FINISHED_CARD_TTL_MS = 10_000
+// 0290 NR0003 §5.1: 10s was effectively "gone before it was read" — the header monitor is
+// the channel this user actually watches for completions, so a finished card now survives
+// long enough to walk away from. Reading the card (문서 열기) or removing it stays instant.
+export const FINISHED_CARD_TTL_MS = 30 * 60_000
+// The document screen's inline banner shares this registry but not its lifetime: a result
+// panel pinned over the document for 30 minutes is nobody's idea of helpful (NR0003 §5.3).
+export const INLINE_RESULT_WINDOW_MS = 60_000
+// A 30-minute TTL turns the list into a log unless it is capped (NR0003 §5.5).
+export const MAX_FINISHED_CARDS = 20
+const FINISHED_STORAGE_KEY = 'fg.ai_invoke.finished_cards'
 
 function nullableString(value: unknown): string | null {
   return value == null || value === '' ? null : String(value)
@@ -215,14 +224,14 @@ export function isAwaitingQ(entry: AiInvokeRunEntry): boolean {
 }
 
 const ACTIVE_PHASES: AiInvokePhase[] = ['running', 'pause_requested']
-const FINISHED_PHASES: AiInvokePhase[] = ['finished', 'lost']
 
-// 0294 B0001: a finished/lost card lives on for FINISHED_CARD_TTL_MS, so every surface
-// that summarizes the registry has to count it for exactly that long. Otherwise the
-// closed header chip goes blank the instant a run ends and the completion — the one
-// thing the user was waiting for — is the only state that is never shown.
-export function isFinishedWithinTtl(entry: AiInvokeRunEntry): boolean {
-  return FINISHED_PHASES.includes(entry.phase)
+// The one predicate for "a result the user has not dealt with yet". 0294 B0001: every
+// surface that summarizes the registry — including the CLOSED header chip — has to count
+// these for exactly as long as the card lives, or the completion is the single state that
+// is never shown.
+export function isFinishedCard(entry: AiInvokeRunEntry): boolean {
+  // A user_paused finish is a PAUSED card (P0008 S4) — never a decay/persist candidate.
+  return (entry.phase === 'finished' || entry.phase === 'lost')
     && entry.endReason !== 'user_paused'
     && entry.finishedAtMs != null
 }
@@ -230,21 +239,94 @@ export function isFinishedWithinTtl(entry: AiInvokeRunEntry): boolean {
 // 'complete' is the only clean landing; partial/none/lost must not borrow the success
 // tone, or a failed chain reads as a job well done on the chip alone.
 export function isFinishedAlert(entry: AiInvokeRunEntry): boolean {
-  return isFinishedWithinTtl(entry) && (entry.phase === 'lost' || entry.outcome !== 'complete')
+  return isFinishedCard(entry) && (entry.phase === 'lost' || entry.outcome !== 'complete')
+}
+
+function sortRank(entry: AiInvokeRunEntry): number {
+  if (isAwaitingQ(entry)) return 0
+  if (ACTIVE_PHASES.includes(entry.phase)) return 1
+  if (entry.phase === 'paused') return 2
+  return 3
+}
+
+// With a 30-minute TTL a plain group-id sort would let stale finished cards sit above a
+// live run (NR0003 §5.5). State first — what needs the user comes first — then newest
+// result first inside the finished band, group id elsewhere so the order stays stable.
+export function compareRunEntries(a: AiInvokeRunEntry, b: AiInvokeRunEntry): number {
+  const rank = sortRank(a) - sortRank(b)
+  if (rank !== 0) return rank
+  // Two runs can finish inside the same millisecond, so the group id still has to break
+  // the tie — otherwise the order of two finished cards is whatever the object yields.
+  if (sortRank(a) === 3 && a.finishedAtMs !== b.finishedAtMs) {
+    return (b.finishedAtMs ?? 0) - (a.finishedAtMs ?? 0)
+  }
+  return a.groupId.localeCompare(b.groupId)
+}
+
+// Finished cards live only in this store, and /ai-invoke/active-all deliberately omits
+// finished runs — so without this a reload wiped the very cards the TTL is meant to keep
+// (NR0003 §3.5). sessionStorage, not local: per-tab is the right scope for a popover.
+function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
+  if (typeof sessionStorage === 'undefined') return {}
+  try {
+    const raw = sessionStorage.getItem(FINISHED_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return {}
+    const cutoff = Date.now() - FINISHED_CARD_TTL_MS
+    const restored: Record<string, AiInvokeRunEntry> = {}
+    for (const [groupId, entry] of Object.entries(parsed as Record<string, AiInvokeRunEntry>)) {
+      if (entry && isFinishedCard(entry) && (entry.finishedAtMs as number) > cutoff) {
+        restored[groupId] = entry
+      }
+    }
+    return restored
+  } catch {
+    return {}
+  }
+}
+
+function persistFinished(runsByGroup: Record<string, AiInvokeRunEntry>): void {
+  if (typeof sessionStorage === 'undefined') return
+  try {
+    const snapshot: Record<string, AiInvokeRunEntry> = {}
+    for (const [groupId, entry] of Object.entries(runsByGroup)) {
+      if (isFinishedCard(entry)) snapshot[groupId] = entry
+    }
+    if (Object.keys(snapshot).length === 0) sessionStorage.removeItem(FINISHED_STORAGE_KEY)
+    else sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(snapshot))
+  } catch {
+    // Quota/private-mode failures are not worth breaking the monitor over.
+  }
 }
 
 export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
-  const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>({})
+  const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>(loadPersistedFinished())
   const now = ref(Date.now())
   const discoveryInFlight = new Set<string>()
   const refreshingRunIds = new Set<string>()
   let lastPollAt = 0
   let bootstrapInFlight = false
+  let persistDirty = false
+
+  // Batched through the 1s clock: the finished set changes in bursts (a sweep can drop
+  // several cards at once) and sessionStorage writes are synchronous.
+  function schedulePersist(): void {
+    persistDirty = true
+  }
+
+  function flushPersist(): void {
+    if (!persistDirty) return
+    persistDirty = false
+    persistFinished(runsByGroup)
+  }
 
   function trackStarted(payload: Record<string, any>): void {
     if (!payload?.run_id || !payload?.group_id) return
     const groupId = String(payload.group_id)
+    const replacedFinished = runsByGroup[groupId] != null && isFinishedCard(runsByGroup[groupId])
     runsByGroup[groupId] = startedEntry(payload, runsByGroup[groupId])
+    if (replacedFinished) schedulePersist()
   }
 
   function trackProviderSwitched(payload: Record<string, any>): void {
@@ -312,6 +394,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       pausedAt: userPaused ? new Date().toISOString() : base.pausedAt,
       finishedAtMs: userPaused ? null : Date.now(),
     }
+    schedulePersist()
   }
 
   function markLost(groupId: string, runId?: string): void {
@@ -320,6 +403,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     run.phase = 'lost'
     run.cancelling = false
     run.finishedAtMs = Date.now()
+    schedulePersist()
   }
 
   function applySse(detail: InvokeSseDetail | undefined): void {
@@ -501,7 +585,23 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   function dismiss(groupId: string): void {
     const run = runsByGroup[groupId]
-    if (run && !ACTIVE_PHASES.includes(run.phase) && run.phase !== 'paused') delete runsByGroup[groupId]
+    if (run && !ACTIVE_PHASES.includes(run.phase) && run.phase !== 'paused') {
+      delete runsByGroup[groupId]
+      schedulePersist()
+    }
+  }
+
+  function dismissAllFinished(): void {
+    // Bulk counterpart to dismiss(), for when a 30-minute TTL has stacked up results.
+    // Same guard: only finished/lost cards go, running and paused ones stay put.
+    let removed = false
+    for (const [groupId, run] of Object.entries(runsByGroup)) {
+      if (isFinishedCard(run)) {
+        delete runsByGroup[groupId]
+        removed = true
+      }
+    }
+    if (removed) schedulePersist()
   }
 
   function isGroupRunning(groupId: string | null | undefined): boolean {
@@ -539,18 +639,29 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function sweepFinishedCards(): void {
-    // L0009 §2.6: finished/lost cards decay after FINISHED_CARD_TTL_MS; a manual
-    // dismiss stays immediate and paused cards never decay.
+    // L0009 §2.6 / 0290 NR0003 §5.5: finished+lost cards decay after FINISHED_CARD_TTL_MS
+    // and, beyond MAX_FINISHED_CARDS, the oldest ones go early so a long TTL cannot turn
+    // the popover into an unbounded run log. Manual dismiss stays immediate; paused cards
+    // never decay by either rule.
+    let removed = false
+    const survivors: Array<[string, AiInvokeRunEntry]> = []
     for (const [groupId, run] of Object.entries(runsByGroup)) {
-      if (
-        (run.phase === 'finished' || run.phase === 'lost')
-        && run.endReason !== 'user_paused'
-        && run.finishedAtMs != null
-        && now.value - run.finishedAtMs >= FINISHED_CARD_TTL_MS
-      ) {
+      if (!isFinishedCard(run)) continue
+      if (now.value - (run.finishedAtMs as number) >= FINISHED_CARD_TTL_MS) {
         delete runsByGroup[groupId]
+        removed = true
+      } else {
+        survivors.push([groupId, run])
       }
     }
+    if (survivors.length > MAX_FINISHED_CARDS) {
+      survivors.sort((a, b) => (a[1].finishedAtMs as number) - (b[1].finishedAtMs as number))
+      for (const [groupId] of survivors.slice(0, survivors.length - MAX_FINISHED_CARDS)) {
+        delete runsByGroup[groupId]
+        removed = true
+      }
+    }
+    if (removed) schedulePersist()
   }
 
   function onInvokeEvent(event: Event): void {
@@ -578,6 +689,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   function clockTick(): void {
     now.value = Date.now()
     sweepFinishedCards()
+    flushPersist()
     if (now.value - lastPollAt >= POLL_INTERVAL_MS) {
       lastPollAt = now.value
       void refreshAllRunning()
@@ -605,16 +717,21 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
     if (clockTimer) clearInterval(clockTimer)
+    flushPersist()
   })
 
   return {
     runsByGroup,
+    // 1s clock, exposed so a surface can age its own view of an entry (the inline banner
+    // uses it for INLINE_RESULT_WINDOW_MS) without running a second timer.
+    now,
     activeCount: computed(() => Object.values(runsByGroup).filter(run => ACTIVE_PHASES.includes(run.phase)).length),
     awaitingQCount: computed(() => Object.values(runsByGroup).filter(isAwaitingQ).length),
     pausedCount: computed(() => Object.values(runsByGroup).filter(run => run.phase === 'paused').length),
-    // Alive only for the card TTL (0294 B0001) — the sweep drops the entry and these
-    // fall back to 0 on their own, so no separate expiry timer for the chip.
-    finishedCount: computed(() => Object.values(runsByGroup).filter(isFinishedWithinTtl).length),
+    // Alive exactly as long as the card is (0294 B0001) — the sweep, a dismiss or an
+    // acknowledged read drops the entry and these fall back on their own, so the chip
+    // needs no expiry timer of its own.
+    finishedCount: computed(() => Object.values(runsByGroup).filter(isFinishedCard).length),
     finishedAlertCount: computed(() => Object.values(runsByGroup).filter(isFinishedAlert).length),
     trackStarted,
     trackProviderSwitched,
@@ -631,6 +748,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     pause,
     resume,
     dismiss,
+    dismissAllFinished,
     sweepFinishedCards,
     isGroupRunning,
     elapsedMsFor,
