@@ -58,18 +58,27 @@ _DEFAULT_BASE_URLS = {
 # forms from R0001, reused for "nt" until an operator confirms a Windows form via the
 # provider connection test (test-provider endpoint). "custom" gets no example by design —
 # it is the escape hatch for arbitrary commands.
+#
+# 0295 NR0003 §5-1: the claude row was the old i18n placeholder promoted verbatim, so it
+# carried neither a model nor `--dangerously-skip-permissions` — without the latter the CLI
+# stops on a permission prompt nobody can answer (the invoke contract forbids args and only
+# feeds stdin), which reads as "the AI is slow" until the run times out. The codex row was
+# missing `--skip-git-repo-check`, which `codex exec` requires whenever cwd is not a git
+# repo; see CODEX_SKIP_GIT_FLAG below.
 _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
     "claude": {
-        "posix": "claude -p",
-        "nt": "claude -p",
+        "posix": "claude --model claude-opus-4-8 --dangerously-skip-permissions -p -",
+        "nt": "claude --model claude-opus-4-8 --dangerously-skip-permissions -p -",
     },
     "codex": {
         "posix": (
             "codex --ask-for-approval never --sandbox workspace-write exec "
+            "--skip-git-repo-check "
             "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
         ),
         "nt": (
             "codex --ask-for-approval never --sandbox workspace-write exec "
+            "--skip-git-repo-check "
             "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
         ),
     },
@@ -82,6 +91,41 @@ _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
         "nt": "",
     },
 }
+
+
+# Fixing the example above only helps providers registered AFTER the fix — rows already in
+# `ai_providers.cli_command` keep the broken string, which is exactly the provider that
+# produced 0295 B0001. So the flag is also injected at spawn time, by both the invoke path
+# and the connection probe, through normalize_cli_command() (0295 NR0003 §5-2 / §5-3).
+CODEX_SKIP_GIT_FLAG = "--skip-git-repo-check"
+
+
+def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
+    """Return *cli_command* with the per-kind flags a run cannot work without.
+
+    Today that is codex only. `codex exec` refuses to start unless cwd is inside a git
+    repository, and reports it as::
+
+        Not inside a trusted directory and --skip-git-repo-check was not specified.
+
+    on stderr with exit 1, in well under a second — which the invoke path then classifies as
+    `fast_fail` ("즉시 종료") and burns as a provider failure (0295 NR0003 §2). FlowGate has
+    three ways to end up outside a repo: the scratch-dir fallback when the source mirror is
+    missing (ai_invoke_service._cli_execute), a project whose mirror exists but is not a git
+    checkout, and the probe's tempfile.mkdtemp() cwd — the last of which made the 0281
+    connection test report `command_failed` for every codex provider, however correct.
+
+    The flag only suppresses a precondition check, so appending it is harmless when cwd IS a
+    repo. It is appended at the end rather than spliced after `exec`: verified equivalent on
+    codex (0295 NR0003 §4-4), and appending needs no parsing of an operator-authored string.
+    Callers that already carry the flag are left untouched.
+    """
+    cmd = (cli_command or "").strip()
+    if not cmd or (kind or "") != "codex":
+        return cmd
+    if CODEX_SKIP_GIT_FLAG in cmd:
+        return cmd
+    return f"{cmd} {CODEX_SKIP_GIT_FLAG}"
 
 
 class AiSettingsValidationError(Exception):

@@ -836,6 +836,11 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if not cmd:
         return "spawn_failed", "cli_command not set"
     kind = provider.get("kind") or ""
+    # 0295 NR0003 §5-2: injects codex's --skip-git-repo-check when the stored command lacks
+    # it. The cwd resolved below is NOT guaranteed to be a git repo (scratch fallback, or a
+    # project mirror that is not a checkout), and codex exec exits 1 immediately when it is
+    # not — burning the provider as a fast_fail before it ever reads the prompt.
+    cmd = ai_settings_service.normalize_cli_command(kind, cmd)
     scratch = Path(run["scratch_dir"])
     last_message_file = scratch / "last_message.txt"
     if kind == "codex":
@@ -942,10 +947,44 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     return "started_ok", None
 
 
+def _copilot_last_message(stdout_text: str) -> Optional[str]:
+    """Last assistant text from copilot's `--output-format=json` event stream.
+
+    The stream is NDJSON — one event object per line, no blank lines anywhere — so the
+    blank-line block splitter below returns the WHOLE dump as a single "message" and the
+    operator sees MCP server status logs where the answer should be (0292 CH0002, 0295
+    NR0003 §6). The answer lives in the last `assistant.message` event's `data.content`;
+    `assistant.message_delta` carries the same text in fragments and `result` carries no
+    text at all, so neither is a usable substitute.
+
+    Returns None when nothing parses, leaving the caller on its block-splitting fallback —
+    a copilot run that failed before emitting any event still has stderr/plain output worth
+    showing.
+    """
+    message: Optional[str] = None
+    for line in stdout_text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "assistant.message":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        content = data.get("content")
+        if isinstance(content, str) and content.strip():
+            message = content.strip()
+    return message
+
+
 def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_message_file: Path) -> None:
     """Per-kind last-message recovery (hive providers.py rule table, rules only):
     claude = full stdout trimmed / codex = --output-last-message file /
-    copilot & custom = last non-blank block of the stdout tail."""
+    copilot = last `assistant.message` event / custom = last non-blank block of the tail."""
     message: Optional[str] = None
     if kind == "claude":
         message = stdout_text.strip() or None
@@ -955,7 +994,9 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
                 message = last_message_file.read_text(encoding="utf-8", errors="replace").strip() or None
         except Exception:
             message = None
-    else:
+    elif kind == "copilot":
+        message = _copilot_last_message(stdout_text)
+    if message is None and kind not in ("claude", "codex"):
         tail = stdout_text[-OUTPUT_TAIL_BYTES:]
         blocks = [b.strip() for b in re.split(r"\n\s*\n", tail) if b.strip()]
         message = blocks[-1] if blocks else None
