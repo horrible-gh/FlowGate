@@ -2376,6 +2376,17 @@ def get_document(
     # AI review results (document_reviews child records), variant C: latest review plus full history.
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
     out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
+    # TR 작업범위 검증 결과 (0299 D0004 §6). meta 안에 있지만 화면이 meta 문자열을
+    # 직접 파싱하지 않도록 여기서 펼친다. 없으면 키 자체를 두지 않는다 — 검증 도입
+    # 이전 TR 과 비대상 문서에서 화면이 빈 카드를 그리지 않게 하기 위한 것이다.
+    try:
+        from modules.flow_gate.services import tr_scope_service as _tr_scope
+
+        verdict = _tr_scope.verdict_from_meta(doc.get("meta"))
+        if verdict is not None:
+            out["tr_scope"] = verdict
+    except Exception:  # noqa: BLE001 — 표시용 부가 정보가 문서 조회를 깨선 안 된다
+        pass
     return out
 
 

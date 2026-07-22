@@ -194,6 +194,68 @@
         </div>
       </div>
 
+      <!-- Section 2.5: TR 작업범위 검증 (0299 D0004 §6).
+           결과가 통과이고 사유가 없으면 접어 둔다 — 정상 제출에서 이 카드가 펼쳐져
+           있으면 매 문서마다 읽을 것 없는 목록이 자리를 차지한다. 경고·거부일 때만
+           펼쳐서 보여준다. -->
+      <div v-if="trScope" class="dip-section" :class="{ collapsed: sectionCollapsed.tr_scope }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.tr_scope" @click="toggleSection('tr_scope')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="git-branch" />
+          {{ t('main.doc_info_panel.section_tr_scope') }}
+        </button>
+        <div class="dip-sec-body">
+          <div class="dip-trs-head">
+            <span class="dip-trs-verdict" :class="`dip-trs-${trScope.verdict}`">
+              {{ t(`main.doc_info_panel.tr_scope_verdict_${trScope.verdict}`) }}
+            </span>
+            <span v-if="trScope.stage" class="dip-trs-stage">
+              {{ t(`main.doc_info_panel.tr_scope_stage_${trScope.stage}`) }}
+            </span>
+          </div>
+          <p v-if="trScope.branch" class="dip-trs-assign">
+            {{ t('main.doc_info_panel.tr_scope_branch') }}: <code>{{ trScope.branch }}</code>
+          </p>
+
+          <ul v-if="trScope.codes?.length" class="dip-trs-codes">
+            <li v-for="code in trScope.codes" :key="code">
+              <strong>{{ code }}</strong> — {{ t(`main.doc_info_panel.tr_scope_code_${code.replace('-', '_').toLowerCase()}`) }}
+            </li>
+          </ul>
+
+          <!-- 어긋난 항목이 먼저다. 신고/감지 전체 목록은 그다음이고, 눈으로 대조할
+               수 있게 같은 모양으로 나란히 둔다. -->
+          <div v-for="key in trScopeDiffKeys" :key="key">
+            <template v-if="trScope[key]?.count">
+              <p class="dip-trs-list-label dip-trs-mismatch">
+                {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScope[key].count }})
+              </p>
+              <ul class="dip-trs-list dip-trs-mismatch">
+                <li v-for="p in trScope[key].items" :key="p"><code>{{ p }}</code></li>
+                <li v-if="trScope[key].count > trScope[key].items.length" class="dip-trs-more">
+                  {{ t('main.doc_info_panel.tr_scope_more', { n: trScope[key].count - trScope[key].items.length }) }}
+                </li>
+              </ul>
+            </template>
+          </div>
+
+          <div v-for="key in ['reported', 'detected']" :key="key">
+            <p class="dip-trs-list-label">
+              {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScope[key]?.count ?? 0 }})
+            </p>
+            <ul class="dip-trs-list">
+              <li v-for="p in trScope[key]?.items ?? []" :key="p"><code>{{ p }}</code></li>
+              <li v-if="!trScope[key]?.count" class="dip-trs-more">
+                {{ t('main.doc_info_panel.tr_scope_empty') }}
+              </li>
+              <li v-else-if="trScope[key].count > trScope[key].items.length" class="dip-trs-more">
+                {{ t('main.doc_info_panel.tr_scope_more', { n: trScope[key].count - trScope[key].items.length }) }}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <!-- Section 3: rejection reason -->
       <div v-if="canShowRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.reject }">
         <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.reject" @click="toggleSection('reject')">
@@ -302,6 +364,7 @@ import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiReviewFinding } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
+import type { TrScopeVerdict } from '../types/trScope'
 
 const { t } = useI18n()
 const aiProviderStore = useAiProviderStore()
@@ -314,6 +377,8 @@ const props = defineProps<{
   rejectionHistory?: RejectionHistoryItem[]
   aiReview?: AiReview | null
   aiReviewHistory?: AiReview[]
+  // TR 작업범위 검증 결과 (0299 D0004 §6). 서버가 documents.meta 에서 펼쳐 준다.
+  trScope?: TrScopeVerdict | null
   qStatus?: string | null
   workflowSteps?: string[] | null
   selfIndex?: number | null
@@ -333,13 +398,29 @@ const emit = defineEmits<{
 // under its own title caret — the same caret idiom as the left file-tree. This is
 // separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
 // emit) so the two controls don't fight. Sections start expanded.
-type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject'
+type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject' | 'tr_scope'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   qa: false,
   ai_review: false,
   reject: false,
+  // 통과이고 사유가 없으면 접어 둔다 (D0004 §6). 아래 watch 가 판정을 보고 연다.
+  tr_scope: true,
 })
+
+// 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
+const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
+
+watch(
+  () => props.trScope,
+  (v) => {
+    // 경고·거부이거나 사유 코드가 하나라도 있으면 펼친다. 관측 단계에서는 통과로
+    // 기록되지만 사유는 남으므로, 그때도 펼쳐서 운영자가 단계를 올리기 전에 무엇이
+    // 걸릴지 미리 볼 수 있게 한다.
+    sectionCollapsed.tr_scope = !(v && (v.verdict !== 'pass' || (v.codes?.length ?? 0) > 0))
+  },
+  { immediate: true },
+)
 function toggleSection(key: SectionKey) {
   sectionCollapsed[key] = !sectionCollapsed[key]
 }
@@ -1027,6 +1108,37 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
   padding: 0;
 }
 .dip-ai-history-link:hover { text-decoration: underline; }
+
+/* TR 작업범위 검증 카드 (0299 D0004 §6). 신고/감지 두 목록을 같은 모양으로 두어
+   눈으로 대조할 수 있게 하고, 어긋난 항목만 색으로 구분한다. */
+.dip-trs-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dip-trs-verdict {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 700;
+}
+.dip-trs-pass { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
+.dip-trs-warn { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }
+.dip-trs-reject { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
+.dip-trs-skipped { background: var(--muted-bg, #f1f5f9); color: var(--muted, #64748b); }
+.dip-trs-stage { font-size: .7rem; color: var(--muted, #64748b); }
+.dip-trs-assign { margin: 6px 0 0; font-size: .72rem; color: var(--muted, #64748b); }
+.dip-trs-codes { margin: 6px 0 0; padding-left: 16px; font-size: .72rem; line-height: 1.5; }
+.dip-trs-list-label { margin: 8px 0 2px; font-size: .72rem; font-weight: 600; }
+.dip-trs-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: .7rem;
+  line-height: 1.5;
+  max-height: 180px;   /* 긴 목록이 패널 전체를 늘리지 않게 자체 스크롤 */
+  overflow-y: auto;
+  word-break: break-all;
+}
+.dip-trs-mismatch { color: var(--danger, #b91c1c); }
+.dip-trs-more { color: var(--muted, #64748b); list-style: none; margin-left: -16px; }
 
 /* P0005/T0006: the AI's response to a rejection — threaded as a reply directly
    under the rejection quote (a sibling, not nested inside the quote box).

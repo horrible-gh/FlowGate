@@ -36,6 +36,7 @@ from fastapi import HTTPException
 
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
@@ -152,6 +153,92 @@ def _group_resume_lock(group_id: str) -> threading.Lock:
 
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
+
+
+def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> bool:
+    """Is *root* the group's OWN worktree, as opposed to the base project tree?
+
+    ``resolve_project_src_root`` is fallback-first by design: when the worktree is
+    missing it silently hands back the ordinary project-branch folder (main). The
+    return value alone therefore cannot answer "did we get the worktree?", so this
+    compares it against the path the group's ledger branch would occupy.
+    """
+    if root is None:
+        return False
+    try:
+        state = db_git.get_state(group_id) or {}
+        branch = (state.get("branch") or "").strip()
+        project_name = git_service._project_name(project_id)
+        if not branch or not project_name:
+            return False
+        expected = git_service.src_root(project_name, branch)
+        return root.resolve() == expected.resolve()
+    except Exception:  # noqa: BLE001 — an unanswerable comparison is a "no"
+        return False
+
+
+def _require_group_worktree(project_id: str, module: str, group_id: str, branch: str) -> None:
+    """Refuse to launch a run that would execute in the base tree (0299 R0001).
+
+    This is the root cause R0001 describes: "간혹 AI들이 부여받은 브랜치에 안하고
+    main브랜치에 작업할 때가 있다". The remote CRUD endpoints have been gated since
+    0205 (remote_tool_service._resolve_root_for_mutation), but the invoked worker's
+    *cwd* was not — it came from the fallback-first resolver, so a group whose
+    worktree was missing got a CLI agent pointed straight at the base checkout, free
+    to edit files there with its own tools. TR 작업범위 검증 (0299 D0004) catches that
+    afterwards, at report time; this closes it at the front, before any work happens.
+
+    Same shape as the remote-write gate on purpose: one synchronous ensure_worktree
+    self-heal, then a 409 carrying the blocking cause. Non-integrated projects and
+    group-less runs are untouched — they have no worktree to demand.
+    """
+    if not group_id or not project_id:
+        return
+    try:
+        cfg = db_git.get_config(project_id)
+    except Exception:  # noqa: BLE001 — a config lookup failure must not block a run
+        return
+    if cfg is None or not cfg.get("enabled"):
+        return  # non-integrated project: the base tree IS the source of truth
+
+    root = storage_paths.resolve_project_src_root(project_id, branch, group_id=group_id)
+    if _is_group_worktree(project_id, group_id, root):
+        return
+    try:
+        if git_service.ensure_worktree(
+            project_id, module or "default", group_id, trigger="ai_invoke_retry"
+        ) == "ok":
+            root = storage_paths.resolve_project_src_root(project_id, branch, group_id=group_id)
+            if _is_group_worktree(project_id, group_id, root):
+                return
+    except Exception:  # noqa: BLE001 — ensure_worktree never raises, but be certain
+        logger.warning("ensure_worktree retry failed for group %s", group_id, exc_info=True)
+
+    # Still not there. Report WHY — "worktree unavailable" with no cause is what makes
+    # this class of incident unfixable after the fact (0280 NR0003 §4-B).
+    try:
+        state = db_git.get_state(group_id) or {}
+        provision_error = state.get("provision_error")
+        session = git_service.open_merge_session_of_project(project_id)
+    except Exception:  # noqa: BLE001
+        provision_error, session = None, None
+    if session is not None:
+        cause = "merge_conflict_open"
+    elif provision_error:
+        cause = "provision_failed"
+    else:
+        cause = "worktree_missing"
+    logger.warning(
+        "ai_invoke blocked for group %s — no group worktree (cause=%s, resolved=%s)",
+        group_id, cause, root,
+    )
+    raise _http_error(
+        409, "worktree_unavailable",
+        f"이 그룹의 작업 폴더(워크트리)를 확인할 수 없어 AI 실행을 시작하지 않습니다 "
+        f"(원인: {cause}). 워크트리 없이 실행하면 작업이 원본 체크아웃(main)에 "
+        f"남습니다. 그룹 Git 상태를 복구한 뒤 다시 실행하십시오.",
+        group_id=group_id, cause=cause, provision_error=provision_error,
+    )
 
 
 def _next_run_id() -> str:
@@ -527,6 +614,15 @@ def start_run(
     if active is not None:
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active["run_id"])
+
+    # 0299 R0001: refuse before minting a token / creating scratch — a run that would
+    # execute in the base tree must not start at all, and failing here keeps the
+    # rollback trivial (nothing has been created yet). The doc's branch is only the
+    # fallback-branch hint; the guard itself is about the group worktree.
+    _require_group_worktree(
+        project_id, module, group_id,
+        (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
+    )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
     target_to_end = mode == "continuous" and continuation_target_seq == -1

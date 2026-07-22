@@ -109,6 +109,20 @@
             <p class="form-hint">{{ $t('settings.project.git.author_hint') }}</p>
           </div>
 
+          <!-- TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 단계별 설명 한 줄을
+               함께 보여준다 — 운영자가 "강제로 올리면 무슨 일이 생기는지" 모른 채
+               올리면 돌고 있는 작업이 한꺼번에 반려된다. -->
+          <div class="form-group">
+            <label class="form-label">{{ $t('settings.project.git.tr_scope_stage') }}</label>
+            <select class="form-ctrl" v-model="form.tr_scope_stage" style="max-width:320px;">
+              <option value="observe">{{ $t('settings.project.git.tr_scope_observe') }}</option>
+              <option value="warn">{{ $t('settings.project.git.tr_scope_warn') }}</option>
+              <option value="enforce">{{ $t('settings.project.git.tr_scope_enforce') }}</option>
+            </select>
+            <p class="form-hint">{{ $t(`settings.project.git.tr_scope_hint_${form.tr_scope_stage || 'observe'}`) }}</p>
+            <p class="form-hint">{{ $t('settings.project.git.tr_scope_hint') }}</p>
+          </div>
+
           <div class="form-group">
             <label class="form-label" style="display:flex; align-items:center; gap:8px;">
               <input type="checkbox" v-model="form.enabled" />
@@ -224,6 +238,9 @@ const form = ref({
   translate_url: '',
   author_name: '',
   author_email: '',
+  // TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 기본은 관측 — 이미 돌고 있는
+  // 작업들에는 `## 변경 파일` 섹션이 없으므로 곧바로 강제로 켜면 전부 걸린다.
+  tr_scope_stage: 'observe',
 });
 
 const secretPlaceholder = computed(() =>
@@ -281,6 +298,7 @@ function applyConfig(cfg) {
     // Empty = not overridden; the placeholder shows the FlowGate default (0237).
     author_name: cfg.author_name || '',
     author_email: cfg.author_email || '',
+    tr_scope_stage: cfg.tr_scope_stage || 'observe',
   };
   secretInput.value = '';
   clearSecret.value = false;
@@ -302,6 +320,7 @@ function resetForm() {
     translate_url: '',
     author_name: '',
     author_email: '',
+    tr_scope_stage: 'observe',
   };
 }
 

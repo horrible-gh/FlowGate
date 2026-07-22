@@ -36,6 +36,7 @@ from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import engine_recipe_service
+from modules.flow_gate.services import tr_scope_service
 
 logger = logging.getLogger(__name__)
 
@@ -920,7 +921,16 @@ def build_mention(
         if prev_doc_id_value:
             post_body["prev_doc_id"] = prev_doc_id_value
         post_body["title"] = "<Fill this in>"
-        post_body["content"] = "<Fill this in>"
+        # TR 작업범위 검증 (0299 D0004 §3.9): TR 은 content 자리에 빈 `## 변경 파일`
+        # 섹션을 미리 넣어 둔다. 칸이 있으면 채우고, 없으면 안내를 읽어도 빠뜨린다 —
+        # 이 placeholder 가 T1 의 "TR 서식에 빈 섹션 추가"에 해당한다.
+        if str(doc_type_value).upper() == "TR":
+            post_body["content"] = (
+                "<Fill this in>\n\n"
+                + tr_scope_service.TR_SECTION_PLACEHOLDER
+            )
+        else:
+            post_body["content"] = "<Fill this in>"
         # TR commit-message draft (flowgate.default.0173 D0002 §2 / P0003 §1): the TR
         # worker understands the work in English, so it supplies the commit subject at
         # report time. Optional and TR-only; the server ignores it for other types.
@@ -932,11 +942,18 @@ def build_mention(
 
     post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
     commit_hint = ""
+    # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
+    # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
+    if is_edit and str(parent_type or "").upper() == "TR":
+        commit_hint = f"\n{tr_scope_service.TR_SECTION_GUIDE}"
     if not is_edit and str(head_type or "").upper() == "TR":
         commit_hint = (
             "\nThe optional `commit_message` is an English one-line commit subject "
             "(<=200 chars) that becomes the finalize commit for this group. Write it "
             "in the Conventional Commits form and in English; omit it if unsure.\n"
+            # 0299 D0004 §3.9: 작업 지시가 검증의 전제다. 형식 안내가 먼저 나가야
+            # 대조할 대상이 생기고, 반려당한 뒤에 처음 형식을 배우는 일이 없다.
+            f"\n{tr_scope_service.TR_SECTION_GUIDE}"
         )
     s5_body = (
         f"Artifact registration: POST {base}/inbox\n"

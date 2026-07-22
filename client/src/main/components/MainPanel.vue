@@ -328,6 +328,7 @@
             :rejection-history="exposedValue(docHeaderRefs[tab.id]?.rejectionHistory) ?? []"
             :ai-review="exposedValue(docHeaderRefs[tab.id]?.aiReview) ?? null"
             :ai-review-history="exposedValue(docHeaderRefs[tab.id]?.aiReviewHistory) ?? []"
+            :tr-scope="exposedValue(docHeaderRefs[tab.id]?.trScope) ?? null"
             :q-status="qStatuses[tab.id] ?? null"
             :workflow-steps="exposedValue(docHeaderRefs[tab.id]?.workflowSteps) ?? null"
             :self-index="exposedValue(docHeaderRefs[tab.id]?.workflowSelfIndex) ?? null"
