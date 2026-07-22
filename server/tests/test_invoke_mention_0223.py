@@ -61,6 +61,47 @@ class TestConversationMention:
         body = json.loads(text[text.index("{"):])
         assert "module" not in body
 
+    def test_absolute_host_survives_into_the_mention(self):
+        # Guard inherited from client/tests/main/buildConversationMention.host.spec.ts,
+        # deleted with the TS builder in 0293. Group 0103 B0001 was "the chat copy mention
+        # shows no host anywhere" — a host-less URL is unusable to a worker on another
+        # machine, and this is now the only place that property is pinned.
+        text = ims.build_conversation_mention(
+            doc_id="d", project="p", module=None, group_name="g",
+            raw_token="RAW", api_base_url="http://192.168.0.9:8088/flowgate/api/v1",
+        )
+        assert "GET http://192.168.0.9:8088/flowgate/api/v1/document?doc_id=d" in text
+        assert "POST http://192.168.0.9:8088/flowgate/api/v1/inbox" in text
+
+    def test_no_provider_asks_the_worker_to_fill_the_slot(self):
+        # Copy path: the server cannot know who the user will paste this to.
+        text = ims.build_conversation_mention(
+            doc_id="d", project="p", module=None, group_name="g",
+            raw_token="RAW", api_base_url="http://h:1/api/v1",
+        )
+        assert "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>" in text
+        # "I don't know" must be an accepted answer, not a forced guess.
+        assert "drop the parentheses entirely" in text
+
+    def test_known_provider_is_baked_in_verbatim(self):
+        # Invoke path with a pinned provider: nothing for the worker to decide.
+        text = ims.build_conversation_mention(
+            doc_id="d", project="p", module=None, group_name="g",
+            raw_token="RAW", api_base_url="http://h:1/api/v1",
+            provider="Claude Opus",
+        )
+        assert "## 🤖 AI(Claude Opus) · <ISO-8601 timestamp>" in text
+        assert "<your model name>" not in text
+
+    def test_provider_containing_a_paren_falls_back_to_self_report(self):
+        # ")" would break HEADER_RE, so such a name is never baked in.
+        text = ims.build_conversation_mention(
+            doc_id="d", project="p", module=None, group_name="g",
+            raw_token="RAW", api_base_url="http://h:1/api/v1",
+            provider="we(ird)name",
+        )
+        assert "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>" in text
+
 
 class TestRejectionSection:
     def test_empty_when_no_context(self):

@@ -5,8 +5,8 @@ import { useToast } from '../components/common/useToast'
 import { prependMessagesSection } from '../utils/mentionMessages'
 import { copyToClipboard } from '../utils/clipboard'
 
-// Base URL used ONLY to build copy-paste mention text (buildConversationMention /
-// buildMentText). Mentions are consumed by an AI worker on another machine, so the URL
+// Base URL used ONLY to build copy-paste mention text (buildMentText — the fallback for
+// when the server returns no mention). Mentions are consumed by an AI worker on another machine, so the URL
 // MUST be absolute (scheme+host) — a relative value has no host to resolve against.
 // In production setup.ps1 writes VITE_API_BASE_URL=/flowgate (relative, correct for the
 // SPA's same-origin axios calls) which left mentions host-less (group 0103 B0001: "the
@@ -27,7 +27,9 @@ export interface TokenIssueParams {
   project: string
   module?: string
   group: string
-  action_scope?: 'new' | 'edit'
+  // 'chat' is a mention selector, not a grant: the server mints an edit token and returns
+  // the compact CH mention (0293). The resolved action_scope on the response is 'edit'.
+  action_scope?: 'new' | 'edit' | 'chat'
   doc_ref?: string | null
   selected_docs?: string[]
   // Continuous work (group 0086 R0001 / NR0003 B안): when continuationTargetSeq is set the
@@ -54,57 +56,17 @@ export function splitGroupId(canonical: string | null | undefined): { module?: s
   return { groupCode: canonical }
 }
 
-// TR0044.0010 rev4: a CHAT-ONLY, compact mention for conversation (CH) documents.
-// The reviewer asked that the conversation mention-copy produce a mention stripped of Q /
-// clarification / reference / doc_type clutter — "strip out Q info and other useless info,
-// keep it compact". The standard edit mention (mention_service.build_mention) carries all of
-// that, so for CH we build our own minimal one: read the conversation, append one AI
-// turn (§6 format), submit the full body via inbox edit. No Q-registration guide, no
-// no-choices guard, no recent-docs/template/doc_type sections — just chat.
-export interface ConversationMentionParams {
-  rawToken: string
-  docId: string
-  project: string
-  module?: string | null
-  groupName: string
-}
-
-export function buildConversationMention(p: ConversationMentionParams): string {
-  const apiBase = `${getFlowGateBaseUrl()}/api/v1`
-  const body: Record<string, unknown> = {
-    action: 'edit',
-    project: p.project,
-    ...(p.module ? { module: p.module } : {}),
-    group_name: p.groupName,
-    doc_id: p.docId,
-    // inbox validates edit_reason against {rejected, qna_followup, user_comment,
-    // worker_self}; an AI appending its own conversation turn is a self-initiated edit.
-    edit_reason: 'worker_self',
-    content: '<the full conversation body, with your new turn appended at the end>',
-  }
-  return [
-    '## Conversation (대화)',
-    '---',
-    'You are a participant in an ongoing conversation. Read the latest messages and',
-    'reply naturally and concisely. This is a chat — no document headers, no Q /',
-    'clarification registration, no review. Just talk.',
-    '',
-    `Conversation document: ${p.docId}`,
-    `Read the full conversation: GET ${apiBase}/document?doc_id=${encodeURIComponent(p.docId)}`,
-    `Authorization: Bearer ${p.rawToken}`,
-    '',
-    'To reply, append ONE new turn to the END of the existing body in this exact',
-    'format, then submit the COMPLETE body (every existing turn + your new one):',
-    '',
-    '## 🤖 AI · <ISO-8601 timestamp>',
-    '<your reply>',
-    '',
-    `Submit: POST ${apiBase}/inbox`,
-    `Authorization: Bearer ${p.rawToken}`,
-    '',
-    JSON.stringify(body, null, 2),
-  ].join('\n')
-}
+// The CHAT-ONLY compact mention for conversation (CH) documents used to be built HERE
+// (buildConversationMention), because TR0044.0010 rev4 rejected the standard edit mention
+// for chat — "strip out Q info and other useless info, keep it compact" — and the server
+// had nothing else to offer. When the in-app AI 호출 path arrived it had to port the
+// builder to Python, leaving one format in two languages held together by comments.
+//
+// 0293 T0005 deleted this copy. POST /token/issue accepts action_scope:'chat' and returns
+// the compact mention as `token.mention` (server: invoke_mention_service
+// .build_conversation_mention), which is the SAME function the invoke path calls — the
+// byte-identical rule is now structural. Callers use token.mention; there is no client
+// fallback, because a chat mention without its token is useless anyway.
 
 export interface IssuedToken {
   raw_token: string

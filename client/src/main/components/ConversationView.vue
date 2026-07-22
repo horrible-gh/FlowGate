@@ -19,6 +19,9 @@
                 <AppIcon :name="turn.speaker === 'user' ? 'user' : 'robot'" />
                 {{ turn.speaker === 'user' ? t('main.conversation_view.speaker_user') : t('main.conversation_view.speaker_ai') }}
               </span>
+              <!-- 0293 R0001: which AI answered. Drawn only when the turn header recorded
+                   it — a missing provider is absent information, not a warning state. -->
+              <span v-if="turn.provider" class="conv-provider" :title="turn.provider">{{ turn.provider }}</span>
               <span v-if="turn.ts" class="conv-ts">{{ formatTs(turn.ts) }}</span>
             </div>
             <div class="conv-body">{{ turn.body }}</div>
@@ -184,6 +187,7 @@ interface ConvTurn {
   speaker: string // 'user' | 'ai' | raw label
   ts: string
   body: string
+  provider?: string // 0293: header's parenthesized provider; absent = not recorded
 }
 
 const props = defineProps<{
@@ -393,18 +397,40 @@ async function onManualCopyAgain() {
 // R0127.0001: the leading emoji is OPTIONAL on parse, so a hand-typed header
 // ("## AI · …", "## 사용자 · …", or "##  AI · …" with extra spaces) is still read as
 // a turn. Kept in lockstep with the server (conversation.py is the source of truth).
-const SPEAKER_ALT = '(?:🧑 )?사용자|(?:🤖 )?AI'
+// 0293 R0001: the AI label may carry the provider in parentheses —
+// "## 🤖 AI(claude-opus-4-8) · …". Optional, so every pre-0293 turn parses unchanged.
+const SPEAKER_ALT = '(?:🧑 )?사용자|(?:🤖 )?AI(?:\\([^)]*\\))?'
 const HEADER_RE = new RegExp(`^##\\s+(${SPEAKER_ALT}) · (\\S+)\\s*$`)
 const HEADERLIKE_RE = new RegExp(`^\\\\*##\\s+(?:${SPEAKER_ALT}) · \\S+\\s*$`)
+const PROVIDER_RE = /^(.*?)\(([^)]*)\)$/
 
-function speakerKey(label: string): string {
+function stripSpeakerDecorations(label: string): { bare: string; provider?: string } {
   let s = label
   for (const prefix of ['🧑 ', '🤖 ']) {
     if (s.startsWith(prefix)) { s = s.slice(prefix.length); break }
   }
-  if (s === '사용자') return 'user'
-  if (s === 'AI') return 'ai'
+  const m = PROVIDER_RE.exec(s)
+  if (!m) return { bare: s }
+  const provider = m[2].trim()
+  return { bare: m[1], ...(provider ? { provider } : {}) }
+}
+
+// The provider suffix MUST be stripped here, not just ignored by the renderer. The chat
+// AI-call success test counts turns with speaker === 'ai' before and after the run
+// (pollRun); a label that kept its parentheses would still render as an AI bubble but
+// never be counted, so every successful reply would be reported as "no reply".
+function speakerKey(label: string): string {
+  const { bare } = stripSpeakerDecorations(label)
+  if (bare === '사용자') return 'user'
+  if (bare === 'AI') return 'ai'
   return label
+}
+
+// undefined = not recorded (pre-0293 turn, or a model that does not know its own name).
+// The badge is simply omitted — absence of information, not a warning.
+function speakerProvider(label: string): string | undefined {
+  const { bare, provider } = stripSpeakerDecorations(label)
+  return bare === 'AI' || bare === '사용자' ? provider : undefined
 }
 
 function unescapeLine(line: string): string {
@@ -417,6 +443,7 @@ function parseConversation(content: string): { intro: string; turns: ConvTurn[] 
   const parsed: ConvTurn[] = []
   let curSpeaker: string | null = null
   let curTs = ''
+  let curProvider: string | undefined
   let curBody: string[] = []
   let started = false
 
@@ -424,7 +451,12 @@ function parseConversation(content: string): { intro: string; turns: ConvTurn[] 
     if (curSpeaker === null) return
     const body = [...curBody]
     if (body.length && body[body.length - 1] === '') body.pop()
-    parsed.push({ speaker: curSpeaker, ts: curTs, body: body.join('\n') })
+    parsed.push({
+      speaker: curSpeaker,
+      ts: curTs,
+      body: body.join('\n'),
+      ...(curProvider ? { provider: curProvider } : {}),
+    })
   }
 
   for (const line of content.split('\n')) {
@@ -432,6 +464,7 @@ function parseConversation(content: string): { intro: string; turns: ConvTurn[] 
     if (m) {
       flush()
       curSpeaker = speakerKey(m[1])
+      curProvider = speakerProvider(m[1])
       curTs = m[2]
       curBody = []
       started = true
@@ -915,6 +948,23 @@ defineExpose({ load, scrollToBottom })
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Provider badge (0293). Deliberately quieter than the speaker label: it answers
+   "which AI", it is not the thing you read first. Truncates rather than wrapping so a
+   long model id cannot push the timestamp out of the meta row. */
+.conv-provider {
+  font-size: .64rem;
+  font-weight: 600;
+  color: var(--text-m);
+  background: var(--bg-subtle, #f1f5f9);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 999px;
+  padding: 0 6px;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conv-ts {

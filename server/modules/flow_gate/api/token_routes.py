@@ -18,6 +18,7 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
@@ -31,12 +32,23 @@ from config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["TokenIssue"])
 
+# Wire scopes accepted on the request, and the TOKEN scope each one is minted under.
+# Only "chat" differs from its own name: it is a mention selector layered on an edit
+# grant (0293). Kept in the same shape as ai_invoke_routes._TOKEN_SCOPE on purpose —
+# the two chat paths must agree on both the grant and the mention.
+_WIRE_SCOPES = ("new", "edit", "chat", "resolve_conflict")
+_WIRE_TOKEN_SCOPE = {"chat": "edit"}
+
 
 class TokenIssueRequest(BaseModel):
     project: str
     module: Optional[str] = None
     group: str
-    action_scope: Optional[str] = None   # "new" | "edit" | null → auto-determined by backend (T244 §1-2)
+    # "new" | "edit" | "chat" | "resolve_conflict" | null → auto-determined (T244 §1-2).
+    # "chat" is a MENTION scope, not a grant: it mints an ordinary edit token and only
+    # swaps the mention for the compact CH one (0293 — same rule as
+    # ai_invoke_routes._TOKEN_SCOPE, which has mapped "chat"→"edit" since group 0223).
+    action_scope: Optional[str] = None
     doc_ref: Optional[str] = None
     selected_docs: Optional[list] = None  # T384: selected document list (for mention reference doc inclusion)
     # Continuous work (group 0086 R0001 / NR0003 B안): when continuation_target_seq is set,
@@ -78,11 +90,13 @@ def issue_token(
     7. token_service.issue() call
     """
     # Step 1: action_scope handling (validate if explicit, defer auto-determination if null)
-    if body.action_scope is not None and body.action_scope not in ("new", "edit", "resolve_conflict"):
+    if body.action_scope is not None and body.action_scope not in _WIRE_SCOPES:
         raise HTTPException(
             status_code=400,
-            detail="action_scope must be new, edit, or resolve_conflict",
+            detail=f"action_scope must be one of {', '.join(_WIRE_SCOPES)}",
         )
+    if body.action_scope == "chat" and not body.doc_ref:
+        raise HTTPException(status_code=422, detail="doc_ref is required for chat")
 
     # Step 1-b: project_id / group / doc_ref canonical form validation (T261)
     try:
@@ -125,9 +139,11 @@ def issue_token(
 
     # Step 6: auto-determine action_scope (T244 §1-2)
     if body.action_scope is not None:
-        resolved_action_scope = body.action_scope
+        wire_scope = body.action_scope
     else:
-        resolved_action_scope = _determine_action_scope(body.doc_ref)
+        wire_scope = _determine_action_scope(body.doc_ref)
+    # The mention is chosen by the WIRE scope, the token by the mapped one.
+    resolved_action_scope = _WIRE_TOKEN_SCOPE.get(wire_scope, wire_scope)
     if resolved_action_scope == "resolve_conflict" and group_id is None:
         raise HTTPException(status_code=404, detail=f"Group not found: {canonical_group_id}")
 
@@ -156,20 +172,35 @@ def issue_token(
     # Step 8: build M020 mention (when doc_ref + sequence head exist)
     # Continuous work (group 0086): a continuation token swaps the mention's Q-guard for the
     # delegation/unmanned/no-stop/autonomous block (mention_service continuous branch).
-    mention = _build_mention_for_token(
-        doc_ref=body.doc_ref,
-        group_id=group_id,
-        project_id=body.project,
-        scratch_dir=result["scratch_dir"],
-        raw_token=result["raw_token"],
-        request=request,
-        ref_doc_ids=body.selected_docs,
-        action_scope=resolved_action_scope,
-        locale=req_locale,
-        continuous=is_continuous,
-        merge_id=body.merge_id,
-        continuous_review_mode=bool(is_continuous and body.continuation_review_mode),
-    )
+    if wire_scope == "chat":
+        # 0293 NR0004 발견 3: the browser used to assemble this text itself and throw the
+        # server's mention away. It is served from here now, so the [멘트복사] path and the
+        # in-app AI 호출 path cannot drift. No provider is passed: this mention goes to
+        # whoever the user pastes it to, which the server cannot know — the worker fills
+        # the slot in, or leaves it out.
+        mention = invoke_mention_service.build_conversation_mention(
+            doc_id=body.doc_ref,
+            project=body.project,
+            module=body.module,
+            group_name=canonical_group_id,
+            raw_token=result["raw_token"],
+            api_base_url=_build_api_base(request),
+        )
+    else:
+        mention = _build_mention_for_token(
+            doc_ref=body.doc_ref,
+            group_id=group_id,
+            project_id=body.project,
+            scratch_dir=result["scratch_dir"],
+            raw_token=result["raw_token"],
+            request=request,
+            ref_doc_ids=body.selected_docs,
+            action_scope=resolved_action_scope,
+            locale=req_locale,
+            continuous=is_continuous,
+            merge_id=body.merge_id,
+            continuous_review_mode=bool(is_continuous and body.continuation_review_mode),
+        )
 
     return TokenIssueResponse(
         ok=True,

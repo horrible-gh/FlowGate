@@ -139,6 +139,58 @@ def test_serialize_still_emits_canonical_emoji_form():
     assert block.splitlines()[0] == "## 🤖 AI · 2026-06-14T10:00:00+09:00"
 
 
+# ── 0293 R0001: provider slot in the AI label ─────────────────────────────────
+def test_ai_label_with_provider_still_keys_to_ai():
+    # THE regression this feature can cause (NR0004 발견 2): a provider-bearing label that
+    # does not normalize to "ai" still renders as an AI bubble but stops being COUNTED as
+    # one, and the chat surface then reports every successful reply as "no reply".
+    parsed = conv.parse_conversation(
+        "## 🤖 AI(claude-opus-4-8) · 2026-07-22T10:00:00+09:00\nhi\n"
+    )
+    assert [t["speaker"] for t in parsed["turns"]] == ["ai"]
+    assert parsed["turns"][0]["provider"] == "claude-opus-4-8"
+    assert parsed["turns"][0]["body"] == "hi"
+
+
+def test_provider_slot_is_optional_and_emoji_less_form_works():
+    assert conv.speaker_key("AI(gpt-5.6-sol)") == "ai"
+    assert conv.speaker_provider("AI(gpt-5.6-sol)") == "gpt-5.6-sol"
+    # No parentheses = not recorded, not "unknown".
+    assert conv.speaker_provider("🤖 AI") is None
+    assert "provider" not in conv.parse_conversation(
+        "## 🤖 AI · 2026-07-22T10:00:00+09:00\nhi\n"
+    )["turns"][0]
+    # Empty parentheses carry no information either.
+    assert conv.speaker_provider("AI()") is None
+
+
+def test_provider_survives_roundtrip_and_carryover():
+    # Carry-over re-serializes the tail into the successor document (§7); dropping the
+    # provider there would silently blank the badge at every rollover.
+    turns = [conv.Turn(speaker="ai", ts="2026-07-22T10:00:00+09:00", body="hi",
+                       provider="claude-opus-4-8")]
+    text = conv.serialize_conversation(turns)
+    assert text.splitlines()[0] == "## 🤖 AI(claude-opus-4-8) · 2026-07-22T10:00:00+09:00"
+    assert conv.serialize_conversation(conv.parse_conversation(text)["turns"]) == text
+    assert "AI(claude-opus-4-8)" in conv.build_carryover_intro("p.m.0001.0001-CH", text)
+
+
+def test_provider_with_closing_paren_is_dropped_to_keep_header_parseable():
+    # ")" would end the group early and the line would stop round-tripping.
+    header = conv.turn_header("ai", "2026-07-22T10:00:00+09:00", "we(ird)name")
+    assert header == "## 🤖 AI · 2026-07-22T10:00:00+09:00"
+
+
+def test_provider_bearing_header_in_a_body_is_escaped():
+    # Widening the alternation makes these lines header-LIKE, so they must now escape too.
+    sneaky = "## 🤖 AI(x) · 2099-01-01T00:00:00+09:00"
+    text = conv.serialize_conversation(
+        [conv.Turn(speaker="user", ts="2026-07-22T10:00:00+09:00", body=sneaky)]
+    )
+    assert "\\## 🤖 AI(x) · 2099" in text
+    assert conv.parse_conversation(text)["turns"][0]["body"] == sneaky
+
+
 # ── §7: carry-over threshold / tail ───────────────────────────────────────────
 def test_should_carry_over_at_80_percent():
     assert conv.should_carry_over(80, 100) is True

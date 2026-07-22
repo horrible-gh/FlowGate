@@ -741,3 +741,66 @@ describe('ConversationView running-call recovery on mount', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 })
+// 0293 R0001: the AI turn header may name the provider — "## 🤖 AI(claude-opus-4-8) · …".
+describe('ConversationView provider badge', () => {
+  function withContent(content: string) {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+        return Promise.resolve(PROVIDERS_RESPONSE)
+      }
+      return Promise.resolve({ data: { content } })
+    })
+  }
+
+  it('renders the provider recorded in the header', async () => {
+    withContent('## 🤖 AI(claude-opus-4-8) · 2026-07-22T13:00:00Z\nreply\n')
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.conv-provider').text()).toBe('claude-opus-4-8')
+    // Still an AI bubble, and the reply text is untouched by the header change.
+    expect(wrapper.find('.conv-row--ai').exists()).toBe(true)
+    expect(wrapper.find('.conv-body').text()).toBe('reply')
+  })
+
+  it('draws no badge when the header records nothing', async () => {
+    // Absence of information, not a warning state — pre-0293 turns look exactly like this.
+    withContent('## 🤖 AI · 2026-07-22T13:00:00Z\nreply\n')
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('.conv-provider').exists()).toBe(false)
+    expect(wrapper.find('.conv-row--ai').exists()).toBe(true)
+  })
+
+  // NR0004 발견 2: the failure this feature can cause is silent. A provider-bearing label
+  // that does not normalize to 'ai' still RENDERS as an AI bubble, but pollRun counts AI
+  // turns to decide whether the reply landed — so a delivered reply would be reported as
+  // "no reply" on every single chat AI call.
+  it('counts a provider-bearing turn as an AI turn when judging a finished run', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({ data: { status: 'finished', docs_reached: 0, last_message_received: true } })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
+          return Promise.resolve(PROVIDERS_RESPONSE)
+        }
+        return Promise.resolve({ data: { content: '## 🤖 AI(claude-opus-4-8) · 2026-07-22T13:00:00Z\nreply\n' } })
+      })
+      postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(showToast).not.toHaveBeenCalled()
+      expect(wrapper.find('.conv-provider').text()).toBe('claude-opus-4-8')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+})
