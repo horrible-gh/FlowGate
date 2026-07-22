@@ -86,6 +86,56 @@
         <AppIcon name="x" />
       </button>
     </div>
+    <!-- flowgate.default.0296 T0004 (NR0003 R1) — base-checkout files that were
+         never committed. Unlike the block above these are NOT a merge blocker
+         (the E3 guard is tracked-only, by design): they are simply absent from
+         every group worktree, because `worktree add` checks out a commit. That
+         is why an agent reports a file as missing while the file explorer plainly
+         shows it. Committing here is the only in-app way to hand one to a worker,
+         hence the explicit per-file pick — never a blanket `add -A`. -->
+    <div v-if="baseUntrackedFiles.length" class="git-base-untracked" role="note">
+      <AppIcon name="file-plus" />
+      <div class="git-base-untracked__body">
+        <div class="git-base-untracked__msg">
+          {{ t('main.git_status.base_untracked_alert', { n: baseUntrackedCount }) }}
+        </div>
+        <label v-for="f in baseUntrackedFiles" :key="f" class="git-base-untracked-row">
+          <input
+            type="checkbox"
+            :checked="untrackedPicked.includes(f)"
+            :disabled="busy"
+            @change="toggleUntracked(f)"
+          />
+          <span class="git-base-untracked-row__path">{{ f }}</span>
+        </label>
+        <div v-if="baseUntrackedTruncated" class="git-base-untracked__more">
+          {{ t('main.git_status.base_untracked_truncated', { n: baseUntrackedFiles.length }) }}
+        </div>
+        <div class="git-base-commit-row">
+          <input
+            class="form-ctrl git-commit-msg-input"
+            type="text"
+            maxlength="200"
+            :value="untrackedCommitMsg"
+            :placeholder="untrackedCommitSuggested"
+            @input="untrackedCommitMsg = ($event.target as HTMLInputElement).value"
+          />
+          <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" @click="toggleAllUntracked">
+            {{ allUntrackedPicked ? t('main.git_status.base_untracked_pick_none')
+                                  : t('main.git_status.base_untracked_pick_all') }}
+          </button>
+          <button
+            class="btn btn-sm btn-primary"
+            type="button"
+            :disabled="busy || !untrackedPicked.length"
+            @click="doCommitUntracked"
+          >
+            <AppIcon name="check" />
+            {{ t('main.git_status.base_untracked_commit_btn', { n: untrackedPicked.length }) }}
+          </button>
+        </div>
+      </div>
+    </div>
       <div class="card-bd pad">
       <!-- Unpushed base-merge list (0202 P0006 scenarios 5-8). -->
       <div v-if="showUnpushedSection" class="git-status-sect git-unpushed-sect">
@@ -306,6 +356,9 @@ interface GitStatus {
   behind_count: number | null
   // 0177 L0002 §2.1: base-checkout dirty set (tracked files only)
   base_dirty?: { dirty: boolean; files: string[] }
+  // 0296 T0004: never-committed files. A SEPARATE field on purpose — folding it
+  // into base_dirty would widen the E3 guard to build artifacts (0165.0009).
+  base_untracked?: { count: number; files: string[]; truncated?: boolean }
   slots: Slot[]
   pending: Pending[]
   pending_count: number
@@ -362,6 +415,34 @@ function defaultBaseCommitMessage(files: string[]): string {
 }
 
 const baseCommitSuggested = computed(() => defaultBaseCommitMessage(baseDirtyFiles.value))
+
+// ── Never-committed base files (0296 T0004 / NR0003 R1) ──────────────────────
+
+const baseUntrackedFiles = computed(() => status.value?.base_untracked?.files ?? [])
+// The server caps the listed paths; `count` is what it actually listed, so the
+// header stays honest about a checkout holding more than one screenful.
+const baseUntrackedCount = computed(
+  () => status.value?.base_untracked?.count ?? baseUntrackedFiles.value.length,
+)
+const baseUntrackedTruncated = computed(() => !!status.value?.base_untracked?.truncated)
+
+const untrackedPicked = ref<string[]>([])
+const untrackedCommitMsg = ref('')
+const untrackedCommitSuggested = computed(() => defaultBaseCommitMessage(untrackedPicked.value))
+const allUntrackedPicked = computed(
+  () =>
+    baseUntrackedFiles.value.length > 0 &&
+    untrackedPicked.value.length === baseUntrackedFiles.value.length,
+)
+
+function toggleUntracked(file: string) {
+  const i = untrackedPicked.value.indexOf(file)
+  if (i >= 0) untrackedPicked.value.splice(i, 1)
+  else untrackedPicked.value.push(file)
+}
+function toggleAllUntracked() {
+  untrackedPicked.value = allUntrackedPicked.value ? [] : [...baseUntrackedFiles.value]
+}
 const baseCommitMsg = ref('')
 const baseCommitEdited = ref(false)
 function onBaseCommitInput(value: string) {
@@ -610,6 +691,19 @@ function handleBaseDirty(
   payload: { action: string; commit_message?: string },
   err: any,
 ): boolean {
+  // 0296 T0004 (NR0003 R5): the sibling failure — an untracked base file sits on
+  // a path the merge wants to create. git refuses, the tracked-only E3 guard
+  // never saw it, and this used to arrive as a bare 500. Point at the same
+  // section: committing those files is exactly the fix.
+  if (err?.code === 'base_untracked_conflict') {
+    const blocked: string[] = Array.isArray(err.details?.files) ? err.details.files : []
+    untrackedPicked.value = blocked
+    showToast(
+      t('main.git_status.base_untracked_conflict_toast', { files: blocked.join(', ') }),
+      'danger',
+    )
+    return true
+  }
   if (err?.code !== 'base_dirty') return false
   pendingFinalize.value = { groupId, payload }
   const files = Array.isArray(err.details?.files) ? err.details.files : []
@@ -651,6 +745,61 @@ async function doBaseCommit() {
     }
   } catch (e: any) {
     showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+// 0296 T0004: commit exactly the picked new files. `paths` is what makes the
+// server stage untracked entries at all — without it base-commit runs `add -u`
+// and silently ignores them, which is how B0001's "why?????" happened.
+async function doCommitUntracked() {
+  if (busy.value || !props.projectId || !untrackedPicked.value.length) return
+  busy.value = true
+  try {
+    const msg = untrackedCommitMsg.value.trim()
+    const body: { paths: string[]; message?: string } = { paths: [...untrackedPicked.value] }
+    if (msg) body.message = msg
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${props.projectId}/git/base-commit`,
+      body,
+    )
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      return
+    }
+    const r = data.result
+    // Tracked leftovers still drive the E3 badges; the untracked list is its own
+    // field and must not be mistaken for them.
+    const remaining: string[] = Array.isArray(r?.remaining) ? r.remaining : []
+    if (status.value) status.value.base_dirty = { dirty: remaining.length > 0, files: remaining }
+    explorerStore.setBaseDirtyFiles(props.projectId, remaining)
+    if (r?.committed) {
+      showToast(
+        t('main.git_status.base_untracked_commit_done', {
+          n: (r.files || []).length,
+          commit: r.commit || '',
+        }),
+        'success',
+      )
+    }
+    untrackedPicked.value = []
+    untrackedCommitMsg.value = ''
+  } catch (e: any) {
+    const err = e?.response?.data?.error
+    // A .gitignore'd path can never be committed (NR0003 §C4) — the server says
+    // which ones, so the operator stops retrying a commit that cannot work.
+    if (err?.code === 'path_ignored') {
+      showToast(
+        t('main.git_status.base_untracked_ignored', {
+          files: (err.details?.files || []).join(', '),
+        }),
+        'danger',
+      )
+    } else {
+      showToast(err?.message || t('main.git_status.failed'), 'danger')
+    }
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1243,5 +1392,51 @@ defineExpose({ fetchStatus })
 }
 .git-base-dirty-alert__close:hover {
   color: var(--text);
+}
+/* 0296 T0004 — informational, not a blocker: an accent/neutral treatment so it
+   never reads as the danger-coloured base_dirty alert directly above it. */
+.git-base-untracked {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 16px 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--bg-subtle, #f8fafc);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.git-base-untracked > i {
+  color: var(--accent, #2563eb);
+  margin-top: 2px;
+  flex: none;
+}
+.git-base-untracked__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.git-base-untracked__msg {
+  color: var(--text, inherit);
+}
+.git-base-untracked-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  cursor: pointer;
+}
+.git-base-untracked-row__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.74rem;
+  color: var(--text-m);
+  word-break: break-all;
+}
+.git-base-untracked__more {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--text-m);
 }
 </style>

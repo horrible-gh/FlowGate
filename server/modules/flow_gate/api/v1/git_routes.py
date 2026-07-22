@@ -223,6 +223,11 @@ class BaseCommitBody(BaseModel):
     # Commit subject; blank/omitted → the server derives "fix: <files>" itself
     # (0177 L0002 §2.2 — the same rule the FE uses to seed its input).
     message: str | None = None
+    # 0296 T0004 (NR0003 R1): explicit base-checkout-relative paths to stage.
+    # Omitted → the legacy all-dirty-tracked commit. Given → exactly these paths,
+    # which MAY be untracked new files; that is the only way to get a new file
+    # into the commit the group worktrees are cut from.
+    paths: list[str] | None = None
 
 
 @router.post("/projects/{project_id}/git/base-commit")
@@ -231,9 +236,13 @@ def post_git_base_commit(
     body: BaseCommitBody | None = None,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    """Explicit commit of the base checkout's dirty tracked files (0177 L0002 §2.3)."""
+    """Explicit commit of the base checkout (0177 L0002 §2.3, 0296 T0004)."""
     try:
-        return git_service.base_commit(project_id, body.message if body else None)
+        return git_service.base_commit(
+            project_id,
+            body.message if body else None,
+            body.paths if body else None,
+        )
     except GitServiceError as exc:
         return _guard(exc)
 

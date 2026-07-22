@@ -1494,7 +1494,10 @@ def _ensure_worktree_locked(
         and _worktree_link_ok(wt_path)
     ):
         db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
-        _emit_worktree_ready(project_id, group_id, branch, base_branch, wt_path, created=False)
+        _emit_worktree_ready(
+            project_id, group_id, branch, base_branch, wt_path,
+            created=False, base_root=base_root,
+        )
         return "ok"
 
     if wt_path.exists():
@@ -1519,13 +1522,10 @@ def _ensure_worktree_locked(
             cwd=base_root,
         )
     else:
-        start_point = (
-            f"origin/{base_branch}"
-            if _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
-            else base_branch
-        )
         proc = _run_git(
-            ["worktree", "add", "-b", branch, str(wt_path), start_point], cwd=base_root
+            ["worktree", "add", "-b", branch, str(wt_path),
+             _worktree_start_point(base_root, base_branch)],
+            cwd=base_root,
         )
     if proc.returncode != 0:
         _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
@@ -1533,25 +1533,71 @@ def _ensure_worktree_locked(
 
     db_git.register_worktree(group_id, project_id, branch)
     db_git.clear_provision_failure(group_id)   # success clears the failure marker (L §2.4)
-    _emit_worktree_ready(project_id, group_id, branch, base_branch, wt_path, created=True)
+    _emit_worktree_ready(
+        project_id, group_id, branch, base_branch, wt_path,
+        created=True, base_root=base_root,
+    )
     return "ok"
 
 
+def _worktree_start_point(base_root: Path, base_branch: str) -> str:
+    """Where a brand-new group branch forks from.
+
+    Historically always `origin/<base>` when that ref existed, so a group always
+    started from the newest published state. But `base_commit` deliberately does
+    NOT push (its commit rides along on the next finalize's base push), so a
+    locally committed file stayed absent from every worktree created afterwards —
+    i.e. "commit it and the agent can see it" was still false even *after* 0296
+    T0004 gave the operator a way to commit untracked files. The whole fix would
+    have stopped one step short.
+
+    So: prefer the LOCAL base branch whenever it already contains everything
+    origin has (fast-forward-ahead or equal) — it is then strictly the newer of
+    the two and loses nothing. Only when origin is ahead or the two have
+    diverged does `origin/<base>` win, preserving the original intent; a genuine
+    divergence is the E4 `base_diverged` condition and stays finalize's problem,
+    not this function's.
+    """
+    remote = f"origin/{base_branch}"
+    if not _ref_exists(base_root, f"refs/remotes/{remote}"):
+        return base_branch
+    if not _ref_exists(base_root, f"refs/heads/{base_branch}"):
+        return remote
+    contains = _run_git(["merge-base", "--is-ancestor", remote, base_branch], cwd=base_root)
+    return base_branch if contains.returncode == 0 else remote
+
+
 def _emit_worktree_ready(
-    project_id: str, group_id: str, branch: str, base_branch: str, wt_path: Path, *, created: bool
+    project_id: str, group_id: str, branch: str, base_branch: str, wt_path: Path, *,
+    created: bool, base_root: Optional[Path] = None,
 ) -> None:
     try:
         rel = wt_path.relative_to(get_storage_root()).as_posix()
     except Exception:
         rel = str(wt_path)
-    _emit("git_worktree_ready", project_id, group_id, {
+    payload = {
         "project": project_id,
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
         "worktree_path": rel,
         "created": created,
-    })
+    }
+    # 0296 T0004 (NR0003 R3): `worktree add` checks out a COMMIT, so whatever is
+    # sitting uncommitted in the base checkout does not exist in the tree the
+    # workers read (NR §C1). That isolation is correct and stays — but the
+    # operator learns about it, today, only by watching an agent claim a file is
+    # missing. Ship the count at the moment the worktree appears so the UI can
+    # warn up front. Advisory only: never let it fail the provisioning.
+    try:
+        if base_root is not None:
+            untracked = _untracked_files(base_root)
+            if untracked:
+                payload["base_untracked_count"] = len(untracked)
+                payload["base_untracked"] = untracked[:20]
+    except Exception:
+        _log.warning("worktree-ready untracked probe failed for %s", group_id, exc_info=True)
+    _emit("git_worktree_ready", project_id, group_id, payload)
 
 
 def _emit_worktree_failed(
@@ -2335,6 +2381,63 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
     return files
 
 
+# Cap on the untracked list carried in advisory payloads (status / worktree-ready
+# event). A base checkout that accumulated a build tree can hold thousands of
+# untracked paths; the operator only needs to see that they exist and act on the
+# first screenful, and an unbounded list would bloat every status poll.
+UNTRACKED_LIST_MAX = 200
+
+
+def _untracked_files(repo: Path, limit: int = UNTRACKED_LIST_MAX) -> list[str]:
+    """The base checkout's untracked — i.e. never-committed — files.
+
+    Deliberately the COMPLEMENT of `_dirty_files(include_untracked=False)`, and
+    deliberately carried in a SEPARATE field everywhere it surfaces. NR
+    flowgate.default.0296.0003 §C3: `include_untracked=False` was one flag doing
+    two jobs — bounding the E3 guard (correct, NR flowgate.default.0165.0009) and
+    bounding what the operator is *able* to commit (wrong: it left untracked files
+    with no in-app commit path, so they never reached a group worktree). Splitting
+    the list splits the concerns; the guard scope below is untouched.
+
+    `--untracked-files=all` expands directories into individual paths — a bare
+    `?? newdir/` entry is not something the operator can reason about or hand to
+    `git add` file-by-file. `.gitignore` is honoured by git itself, so ignored
+    files (NR §C4) never appear here: they cannot be committed, hence cannot be
+    offered. `limit` (0 = unbounded) caps the scan for display payloads.
+    """
+    proc = _run_git(["status", "--porcelain", "--untracked-files=all"], cwd=repo)
+    if proc.returncode != 0:
+        return []
+    files: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        if not line.startswith("??"):
+            continue
+        entry = line[3:].strip()
+        # porcelain may quote paths with unusual chars; strip surrounding quotes.
+        if len(entry) >= 2 and entry[0] == '"' and entry[-1] == '"':
+            entry = entry[1:-1]
+        if not entry:
+            continue
+        files.append(entry)
+        if limit and len(files) >= limit:
+            break
+    return files
+
+
+def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
+    """Which of `paths` `.gitignore` excludes — used to turn an impossible commit
+    into an explanation instead of a bare git failure (NR §C4). `git add -- <p>`
+    on an ignored path fails with "use -f if you really want to add them"; forcing
+    is NOT the answer (an ignored file is ignored on purpose), so the caller
+    rejects with a code the FE can phrase as "this file is git-ignored — a worker
+    can never see it"."""
+    if not paths:
+        return []
+    proc = _run_git(["check-ignore", "--", *paths], cwd=repo)
+    # exit 1 = nothing ignored (empty stdout); 128 = failure → treat as none.
+    return [l.strip() for l in (proc.stdout or "").splitlines() if l.strip()]
+
+
 def base_checkout_dirty_status(project_id: str) -> dict:
     """Lightweight base-checkout dirty status for the file-editor save response
     (flowgate.default.0176 T0010 §a).
@@ -2343,28 +2446,37 @@ def base_checkout_dirty_status(project_id: str) -> dict:
     edit), which leaves the base dirty and — via the E3 guard — blocks merge
     finalize for EVERY group of the project. The editor calls this right after a
     save so the contamination is visible immediately instead of surfacing later as
-    a bare finalize 500. Scope matches the guard exactly: tracked-file changes only
-    (`include_untracked=False`).
+    a bare finalize 500. `dirty`/`files` scope matches the guard exactly:
+    tracked-file changes only (`include_untracked=False`).
+
+    `untracked` is a SEPARATE field (0296 T0004 / NR0003 R1) and is NOT reflected
+    in `dirty`: a brand-new file blocks nothing, but it is invisible to every
+    worker until committed (the group worktree is built from a commit — NR §C1),
+    so the editor needs to name it without the guard treating it as contamination.
 
     Never raises: the file write already succeeded, so a git-disabled project, a
     missing base checkout, or any git failure all yield a benign
-    {"enabled": ..., "dirty": False, "files": []} — status is advisory and must not
-    turn a saved file into an error.
+    {"enabled": ..., "dirty": False, "files": [], "untracked": []} — status is
+    advisory and must not turn a saved file into an error.
     """
+    empty = {"enabled": False, "dirty": False, "files": [], "untracked": []}
     try:
         cfg = db_git.get_config(project_id)
         if cfg is None or not cfg.get("enabled"):
-            return {"enabled": False, "dirty": False, "files": []}
+            return dict(empty)
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         project_name = _project_name(project_id)
         base_root = src_root(project_name, base_branch) if project_name else None
         if base_root is None or not Path(base_root).is_dir():
-            return {"enabled": True, "dirty": False, "files": []}
+            return {**empty, "enabled": True}
         files = _dirty_files(base_root, include_untracked=False)
-        return {"enabled": True, "dirty": bool(files), "files": files}
+        return {
+            "enabled": True, "dirty": bool(files), "files": files,
+            "untracked": _untracked_files(base_root),
+        }
     except Exception:
         _log.warning("base_checkout_dirty_status failed for %s", project_id, exc_info=True)
-        return {"enabled": False, "dirty": False, "files": []}
+        return dict(empty)
 
 
 def _merge_commit_subject(branch: str, base_branch: str) -> str:
@@ -2583,8 +2695,22 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         files_proc = _run_git(["diff", "--name-only", "--diff-filter=U"], cwd=base_root)
         files = [l.strip() for l in (files_proc.stdout or "").splitlines() if l.strip()]
         if not files:
+            # 0296 T0004 (NR0003 §5 / R5): one non-conflict failure has a specific,
+            # user-fixable cause and used to arrive as a bare 500 — an untracked
+            # file sitting in the base checkout on a path the merge wants to
+            # create. The E3 guard cannot catch it (that guard is tracked-only, by
+            # design), so this is where it must be named. git refuses BEFORE
+            # starting the merge here, so `merge --abort` below is a harmless no-op.
+            blockers = _untracked_merge_blockers(proc.stderr)
             _run_git(["merge", "--abort"], cwd=base_root)
             _set_status(group_id, "waiting")
+            if blockers is not None:
+                raise GitServiceError(
+                    409, "base_untracked_conflict",
+                    "the merge is blocked by uncommitted new files in the base "
+                    "checkout; commit or remove them, then retry",
+                    details={"files": blockers},
+                )
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
         merge_id = db_git.create_session(group_id, files, finalize_action=action)
         _set_status(group_id, "conflict", merge_id=merge_id)
@@ -2630,6 +2756,43 @@ def _finalize_result(
 def _last_line(text: Optional[str]) -> str:
     lines = [l for l in (text or "").strip().splitlines() if l.strip()]
     return lines[-1] if lines else "git command failed"
+
+
+# git aborts a merge that would clobber an untracked file with:
+#   error: The following untracked working tree files would be overwritten by merge:
+#           path/one.txt
+#           path/two.txt
+#   Please move or remove them before you merge.
+# ("removed by merge" is the delete-side wording of the same refusal.)
+_UNTRACKED_MERGE_RE = re.compile(
+    r"untracked working tree files? would be (?:overwritten|removed) by", re.I
+)
+
+
+def _untracked_merge_blockers(stderr: Optional[str]) -> Optional[list[str]]:
+    """The untracked paths that made git refuse a merge, or None if that is not
+    why it failed (0296 T0004 / NR0003 R5).
+
+    None vs [] is load-bearing: the caller only swaps in the dedicated error code
+    when this failure was actually identified, so an unrelated git error keeps its
+    honest 500 instead of being mislabelled. A recognized header with no parsable
+    file lines still returns [] — the diagnosis holds even if the list does not.
+    """
+    lines = (stderr or "").splitlines()
+    found = False
+    out: list[str] = []
+    for line in lines:
+        if not found:
+            if _UNTRACKED_MERGE_RE.search(line):
+                found = True
+            continue
+        # git indents the offending paths; the first unindented line ends the block.
+        if not line[:1].isspace():
+            break
+        path = line.strip()
+        if path:
+            out.append(path)
+    return out if found else None
 
 
 # ── Conflict session: list / resolve / abort (P0005 §6 / L0006 §2.7) ─────────
@@ -3511,21 +3674,34 @@ def project_git_status(project_id: str) -> dict:
     # panel can offer commit/revert BEFORE a merge bounces off the E3 guard.
     # Never-raise, matching base_checkout_dirty_status: a missing checkout or any
     # git failure reads as clean — the field is advisory display state.
+    # 0296 T0004 (NR0003 R1): the untracked set rides alongside in its OWN field.
+    # It must never fold into base_dirty — that would widen the E3 guard to build
+    # artifacts, the exact regression 0165.0009 fixed. It exists so the panel can
+    # say "N new files are not in any group worktree yet" and offer the commit.
+    base_readable = (
+        base_root is not None and (base_root / ".git").exists() and git_available()
+    )
     try:
-        base_dirty_files = (
-            _dirty_files(base_root, include_untracked=False)
-            if base_root is not None and (base_root / ".git").exists() and git_available()
-            else []
-        )
+        base_dirty_files = _dirty_files(base_root, include_untracked=False) if base_readable else []
     except Exception:
         _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
         base_dirty_files = []
+    try:
+        base_untracked_files = _untracked_files(base_root) if base_readable else []
+    except Exception:
+        _log.warning("base_untracked aggregation failed for %s", project_id, exc_info=True)
+        base_untracked_files = []
     unpushed = _build_unpushed(project_id, base_root, base_branch, ahead)
     return {"ok": True, "status": {
         "enabled": True, "base_branch": base_branch,
         "base_path_state": base_path_state,
         "ahead_count": ahead, "behind_count": behind,
         "base_dirty": {"dirty": bool(base_dirty_files), "files": base_dirty_files},
+        "base_untracked": {
+            "count": len(base_untracked_files),
+            "files": base_untracked_files,
+            "truncated": len(base_untracked_files) >= UNTRACKED_LIST_MAX,
+        },
         "slots": slots, "pending": pending, "pending_count": len(pending),
         "cleanable_count": cleanable_count,
         "provision_failures": provision_failures,
@@ -3796,13 +3972,31 @@ def _require_base_checkout(project_id: str) -> tuple[dict, Path]:
     return cfg, base_root
 
 
-def base_commit(project_id: str, message: Optional[str]) -> dict:
-    """POST …/projects/{id}/git/base-commit — commit ALL dirty tracked files of
-    the base checkout (L0002 §2.3). No partial commit; per-file granularity is
-    the revert operation. No push: the local commit rides on the next merge
-    finalize's base push (ff-only against origin stays a no-op while origin/base
-    remains an ancestor). An empty dirty set is an idempotent success so the
-    FE's commit-then-merge retry never turns a lost race into an error.
+def base_commit(
+    project_id: str, message: Optional[str], paths: Optional[list[str]] = None
+) -> dict:
+    """POST …/projects/{id}/git/base-commit — commit the base checkout (L0002 §2.3).
+
+    Two modes, and the distinction is the whole point of 0296 T0004:
+
+    * `paths` omitted — unchanged legacy behaviour: commit ALL dirty **tracked**
+      files via `add -u`. Untracked build artifacts are never swept in; this is
+      the E3/_dirty_files scope and 0165.0009 depends on it staying that way.
+    * `paths` given — commit exactly those paths via `add -- <paths>`, and they
+      MAY be untracked. This is the missing exit hatch from NR
+      flowgate.default.0296.0003 §C3: a group worktree is checked out from a
+      commit (§C1), so a file that was never committed is invisible to every
+      worker — yet the only in-app commit affordance refused to stage it, leaving
+      "commit it and it appears" true but impossible without a terminal.
+
+    `add -A` is deliberately NOT an option in either mode: it would drag
+    `__pycache__`/`.pytest_cache` into base history and undo the 0165.0009 scope
+    decision. Only paths the operator explicitly picked are staged.
+
+    No push: the local commit rides on the next merge finalize's base push
+    (ff-only against origin stays a no-op while origin/base remains an ancestor).
+    An empty dirty set is an idempotent success so the FE's commit-then-merge
+    retry never turns a lost race into an error.
     """
     _, base_root = _require_base_checkout(project_id)
     subject = normalize_subject(message)
@@ -3811,6 +4005,17 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
             422, "invalid_request",
             "message must be a single line of at most 200 characters.",
         )
+    # Normalize + validate BEFORE the lock (a 422 must have no side effects),
+    # mirroring base_revert: nothing may reach outside the base checkout.
+    selected: list[str] = []
+    for raw in (paths or []):
+        p = str(raw or "").strip().replace("\\", "/")
+        if not p:
+            continue
+        if p.startswith("/") or re.match(r"^[A-Za-z]:", p) or ".." in p.split("/"):
+            raise GitServiceError(422, "invalid_request", f"invalid path: {raw!r}")
+        if p not in selected:
+            selected.append(p)
     guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
     if not git_available():
         raise GitServiceError(
@@ -3829,17 +4034,52 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
             raise GitServiceError(
                 409, "invalid_state", "a merge is in progress; resolve or abort it first"
             )
-        files = _dirty_files(base_root, include_untracked=False)
+        tracked = _dirty_files(base_root, include_untracked=False)
+        if selected:
+            # Explicit selection: accept anything git currently reports as a
+            # pending change — tracked edits/deletions AND untracked new files.
+            # An unbounded scan here (limit=0) is right: this is a one-shot
+            # user-initiated commit, not a status poll, and silently refusing a
+            # file only because it fell past the display cap would be a bug.
+            untracked = set(_untracked_files(base_root, limit=0))
+            allowed = set(tracked) | untracked
+            unknown = [p for p in selected if p not in allowed]
+            if unknown:
+                # `.gitignore` first: "not a pending change" would be a lie for an
+                # ignored file that plainly exists on disk. It cannot be committed
+                # at all (NR §C4) — say so, and never force with `add -f`.
+                ignored = _ignored_paths(base_root, unknown)
+                if ignored:
+                    raise GitServiceError(
+                        422, "path_ignored",
+                        "these paths are excluded by .gitignore and cannot be committed",
+                        details={"files": ignored},
+                    )
+                raise GitServiceError(
+                    422, "invalid_request",
+                    "these paths have no pending change to commit",
+                    details={"files": unknown},
+                )
+            files = selected
+        else:
+            files = tracked
         if not files:
             return {"ok": True, "result": {
                 "committed": False, "commit": None, "subject": None,
                 "files": [], "remaining": [],
+                "remaining_untracked": _untracked_files(base_root),
             }}
         if not subject:
             subject = default_base_commit_message(files)
-        # `add -u` = stage tracked changes only (mod/delete), never untracked
-        # build artifacts — the exact E3/_dirty_files scope.
-        proc = _run_git(["add", "-u"], cwd=base_root)
+        if selected:
+            # Literal argv pathspecs (no shell, no globbing) matching the unquoted
+            # porcelain form the two listers produced — same contract as
+            # base_revert's `checkout HEAD -- <path>`.
+            proc = _run_git(["add", "--", *files], cwd=base_root)
+        else:
+            # `add -u` = stage tracked changes only (mod/delete), never untracked
+            # build artifacts — the exact E3/_dirty_files scope.
+            proc = _run_git(["add", "-u"], cwd=base_root)
         if proc.returncode == 0:
             proc = _run_git(
                 [*_GIT_IDENT, "commit", "-m", subject], cwd=base_root,
@@ -3856,6 +4096,10 @@ def base_commit(project_id: str, message: Optional[str]) -> dict:
             "subject": subject,
             "files": files,
             "remaining": _dirty_files(base_root, include_untracked=False),
+            # Kept separate from `remaining` so the FE's "base is clean → resume
+            # the parked merge" test stays the guard's test. Leftover untracked
+            # files never blocked the merge and must not block the resume.
+            "remaining_untracked": _untracked_files(base_root),
         }}
     finally:
         db_git.release_lock(project_id, holder)
