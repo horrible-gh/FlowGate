@@ -244,6 +244,10 @@ async function start() {
       })
       void aiInvokeStore.refresh(groupId)
       emit('update:visible', false)
+    } else if (status === 409 && data.code === 'no_provider_registered') {
+      // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
+      // to switch on, so point at the seed script instead of at a toggle.
+      startError.value = t('main.ai_invoke_dialog.error_no_provider_registered')
     } else if (status === 409 && data.code === 'no_enabled_provider') {
       startError.value = t('main.ai_invoke_dialog.error_no_provider')
     } else if (status === 422) {

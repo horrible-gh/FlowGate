@@ -1047,6 +1047,7 @@ export default {
       check_ai_settings: 'Check the provider configuration in AI settings.',
       source_dirty: 'The AI left {count} file(s) in the source tree — clean up before git work.',
       error_no_provider: 'No enabled AI provider for this project. Configure providers in AI settings.',
+      error_no_provider_registered: 'No AI provider is registered yet. Register one in AI settings, or run ./setup-ai.sh (Windows: .\\setup-ai.ps1) on the server.',
       error_start_failed: 'Failed to start the AI run.',
       error_run_lost: 'The run record was lost (server restarted). Check the group documents directly.',
       error_cancel_failed: 'Failed to cancel the run.',

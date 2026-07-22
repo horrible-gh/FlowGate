@@ -105,7 +105,9 @@ def fake_env(monkeypatch, tmp_path):
     """Patch every collaborator start_run touches; return the mutable doc store."""
     docs = FakeDocs()
     wfseq = FakeWfseq()
-    chain_holder = {"providers": [], "source": "system"}
+    # registered_count = rows before the enabled filter (0292 T0003): it is what lets
+    # admission tell "nothing registered" from "everything switched off".
+    chain_holder = {"providers": [], "source": "system", "registered_count": 0}
 
     monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
@@ -158,8 +160,14 @@ def fake_env(monkeypatch, tmp_path):
     return {"docs": docs, "wfseq": wfseq, "chain": chain_holder, "events": events, "tmp": tmp_path}
 
 
-def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n", provider_id=None):
+def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n", provider_id=None,
+           registered_count=None):
     fake_env["chain"]["providers"] = providers
+    # Default to "every registered provider is enabled" — the ordinary case. Tests that
+    # care about disabled rows pass registered_count explicitly.
+    fake_env["chain"]["registered_count"] = (
+        len(providers) if registered_count is None else registered_count
+    )
     return svc.start_run(
         project_id="flowgate",
         module="default",
@@ -560,10 +568,21 @@ class TestOracle:
 class TestAdmission:
     def test_no_enabled_provider(self, fake_env):
         from fastapi import HTTPException
+        # Providers exist, they are just all switched off.
         with pytest.raises(HTTPException) as exc:
-            _start(fake_env, [])
+            _start(fake_env, [], registered_count=2)
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "no_enabled_provider"
+
+    def test_no_provider_registered_is_its_own_code(self, fake_env):
+        """0292 T0003: an install that skipped the provider seed must not be told to go
+        toggle rows that do not exist — it is told what to run instead."""
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _start(fake_env, [], registered_count=0)
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "no_provider_registered"
+        assert "setup-ai" in exc.value.detail["message"]
 
     def test_run_in_progress(self, fake_env):
         from fastapi import HTTPException

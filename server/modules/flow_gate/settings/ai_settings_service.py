@@ -419,7 +419,8 @@ def _effective_view(project_id: str) -> dict:
     mode = _project_mode(state)
 
     if mode == "disabled":
-        return {"source": "disabled", "providers": [], "default_provider_id": None}
+        return {"source": "disabled", "providers": [], "default_provider_id": None,
+                "registered_count": 0}
 
     if mode == "custom":
         rows = _ai_db.list_scope(project_id)
@@ -435,6 +436,12 @@ def _effective_view(project_id: str) -> dict:
         "source": source,
         "providers": chain,
         "default_provider_id": _pick_default(default_id, chain),
+        # 0292 T0003: rows BEFORE the enabled filter. An empty chain has two very
+        # different causes — "nothing was ever registered" (a fresh install that
+        # skipped the provider seed) and "everything registered is switched off" —
+        # and the caller cannot tell them apart from `providers` alone. Callers that
+        # only need the chain can keep ignoring this key.
+        "registered_count": len(rows),
     }
 
 

@@ -6,6 +6,10 @@
 #   - client: build → client/dist (same-origin API base)
 #   - systemd: install, enable, and start the service
 #   - admin: prompt for username/password and create the first account
+#   - AI provider: offer to register the first one (server/seed_ai_provider.py)
+#
+# Declining that last step is fine — ./setup-ai.sh runs it on its own afterwards,
+# and is also how you add a second provider to the fallback chain later.
 #
 # Run once on the staging box as a normal user. sudo is used only for the
 # systemd steps and will prompt for a password:
@@ -25,6 +29,9 @@
 #   FLOWGATE_BIND_HOST     listen address       (default 0.0.0.0)
 #   ALLOWED_ORIGIN         CORS origin          (default '*', with a warning)
 #   FLOWGATE_ADMIN_EMAIL   first admin's email  (default <username>@flowgate.local)
+#   FLOWGATE_AI_KIND       first AI provider    (claude|copilot|codex — setting any
+#                          FLOWGATE_AI_* seeds it without the y/n prompt; the full
+#                          list is in ./setup-ai.sh --help)
 #
 # Migrations auto-apply on first boot from the matching sql/migrations/<db>/
 # set (sqlite | mysql | postgres), so no manual schema step is needed.
@@ -234,9 +241,41 @@ if "$ROOT/.venv/bin/python" "$ROOT/server/check_db_ready.py" "${READY_ARGS[@]}";
             --password "$ADMIN_PW" \
             --admin || true
     fi
+
+    echo "==> AI provider"
+    # ── AI provider (0292 T0003) ─────────────────────────────────────────────
+    # An install used to finish with an EMPTY ai_providers table, so nothing
+    # AI-driven worked until someone found the settings screen — and the omission
+    # only showed up later as a run dying with "all_providers_failed".
+    #
+    # Deliberately just y/n here. Which provider, which command and which key are
+    # all asked by seed_ai_provider.py, so the prompts exist once instead of once
+    # per shell, and adding a provider kind never touches this file (CH0002).
+    SEED_AI=0
+    if [[ -n "${FLOWGATE_AI_KIND:-}${FLOWGATE_AI_EXEC_TYPE:-}${FLOWGATE_AI_CLI_COMMAND:-}" ]]; then
+        # Preset for an unattended install — seed without asking, mirroring how
+        # FLOWGATE_ADMIN_* skips the admin prompts above.
+        SEED_AI=1
+    elif [[ $INTERACTIVE -eq 1 ]]; then
+        read -rp "Register an AI provider now? [y/N]: " ANSWER
+        # `if` rather than `[[ ]] && SEED_AI=1`: under `set -e` the short-circuit
+        # form exits the whole installer the moment the answer is not y.
+        if [[ "$ANSWER" =~ ^[Yy] ]]; then SEED_AI=1; fi
+    fi
+    if [[ $SEED_AI -eq 1 ]]; then
+        # Skips a provider that is already registered (re-run safe), and a failed
+        # probe must not fail the install — the provider is stored either way.
+        "$ROOT/.venv/bin/python" "$ROOT/server/seed_ai_provider.py" || true
+    else
+        echo "    Skipped. Register one whenever you like — this runs exactly the"
+        echo "    step that was just declined:"
+        echo "    $ROOT/setup-ai.sh"
+    fi
 else
     echo "[!] DB migrations did not finish — create the admin account manually later:"
     echo "    $ROOT/.venv/bin/python server/create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
+    echo "    ...and register an AI provider with:"
+    echo "    $ROOT/setup-ai.sh"
 fi
 
 echo

@@ -1046,6 +1046,7 @@ export default {
       check_ai_settings: 'AI 설정에서 프로바이더 구성을 확인하세요.',
       source_dirty: 'AI가 소스 트리에 파일 {count}건을 남겼습니다 — 깃 작업 전 정리가 필요합니다.',
       error_no_provider: '사용 가능한 AI 프로바이더가 없습니다. AI 설정에서 구성하세요.',
+      error_no_provider_registered: '등록된 AI 프로바이더가 없습니다. AI 설정에서 등록하거나 서버에서 ./setup-ai.sh (Windows: .\\setup-ai.ps1) 를 실행하세요.',
       error_start_failed: 'AI 실행 시작에 실패했습니다.',
       error_run_lost: '실행 기록이 소실되었습니다(서버 재기동). 그룹 문서를 직접 확인하세요.',
       error_cancel_failed: '실행 취소에 실패했습니다.',

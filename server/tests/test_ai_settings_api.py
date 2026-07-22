@@ -353,6 +353,9 @@ class TestProjectTriState:
         assert disabled["mode"] == "disabled"
         assert disabled["effective"] == {
             "source": "disabled", "providers": [], "default_provider_id": None,
+            # 0292 T0003: disabled reports 0 registered because nothing is in play —
+            # admission excludes this source from the "nothing registered" message.
+            "registered_count": 0,
         }
         # The preserved list is still exposed for a later custom return (L0004 §3).
         assert disabled["providers"] is not None
