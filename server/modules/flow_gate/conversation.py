@@ -40,7 +40,17 @@ _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 # "## 사용자 · …" — is still recognized as a chat turn. Serialization always emits
 # the canonical emoji form (USER_SPEAKER/AI_SPEAKER), so stored data stays uniform;
 # only recognition is relaxed (robustness principle: lenient in, strict out).
-_SPEAKER_ALT = r"(?:🧑 )?사용자|(?:🤖 )?AI"
+#
+# 0293 R0001 / NR0004 발견 1: the AI label may carry a provider in parentheses —
+# "## 🤖 AI(claude-opus-4-8) · …". The turn header is the only metadata slot the wire
+# format has, so the provider rides there. The suffix is OPTIONAL, so every turn
+# written before this change keeps parsing unchanged. speaker_key() strips it, which
+# is what keeps the parser/renderer/carry-over downstream of it untouched — see the
+# warning in that docstring.
+_SPEAKER_ALT = r"(?:🧑 )?사용자|(?:🤖 )?AI(?:\([^)]*\))?"
+
+# Provider suffix on an AI label, e.g. "AI(claude-opus-4-8)" → "claude-opus-4-8".
+_PROVIDER_RE = re.compile(r"^(?P<label>.*?)\((?P<provider>[^)]*)\)$")
 
 # Leading-emoji prefixes stripped when normalizing a parsed label to a logical key.
 _EMOJI_PREFIXES = ("🧑 ", "🤖 ")
@@ -56,22 +66,50 @@ HEADER_RE = re.compile(rf"^##\s+(?P<speaker>{_SPEAKER_ALT}) · (?P<ts>\S+)\s*$")
 _HEADERLIKE_RE = re.compile(rf"^\\*##\s+(?:{_SPEAKER_ALT}) · \S+\s*$")
 
 
-def speaker_key(label: str) -> str:
-    """Normalize a parsed speaker label to a logical key ("user"/"ai").
-
-    Accepts both the canonical emoji tokens ("🧑 사용자"/"🤖 AI") and their
-    emoji-less forms ("사용자"/"AI"). Unknown labels fall back to the raw label
-    (forward-compat with other speakers), matching the old _TOKEN_TO_KEY behaviour."""
+def _strip_speaker_decorations(label: str) -> tuple[str, Optional[str]]:
+    """Split a raw speaker label into its bare name and its provider suffix."""
     s = label
     for prefix in _EMOJI_PREFIXES:
         if s.startswith(prefix):
             s = s[len(prefix):]
             break
-    if s == "사용자":
+    m = _PROVIDER_RE.match(s)
+    if m is None:
+        return s, None
+    provider = m.group("provider").strip()
+    return m.group("label"), (provider or None)
+
+
+def speaker_key(label: str) -> str:
+    """Normalize a parsed speaker label to a logical key ("user"/"ai").
+
+    Accepts the canonical emoji tokens ("🧑 사용자"/"🤖 AI"), their emoji-less forms
+    ("사용자"/"AI"), and (0293) an AI label carrying a provider suffix
+    ("🤖 AI(claude-opus-4-8)"). Unknown labels fall back to the raw label
+    (forward-compat with other speakers), matching the old _TOKEN_TO_KEY behaviour.
+
+    The provider suffix MUST be stripped here. Everything downstream keys off the
+    logical "ai" string — including the chat surface's own success test, which counts
+    AI turns before and after a run (ConversationView.pollRun). A label that leaks the
+    parentheses through still RENDERS as an AI bubble (the renderer only tests for
+    "user"), so the failure is silent: every successful chat invoke would report
+    "no reply" (0293 NR0004 발견 2)."""
+    bare, _ = _strip_speaker_decorations(label)
+    if bare == "사용자":
         return "user"
-    if s == "AI":
+    if bare == "AI":
         return "ai"
     return label
+
+
+def speaker_provider(label: str) -> Optional[str]:
+    """The provider recorded in a speaker label's parentheses, or None.
+
+    None means "not recorded" — not "unknown provider". A turn written before 0293,
+    or by a model that does not know its own name, simply carries no suffix and the
+    renderer draws no badge."""
+    bare, provider = _strip_speaker_decorations(label)
+    return provider if bare in ("사용자", "AI") else None
 
 # ── Carry-over (§7) ────────────────────────────────────────────────────────────
 # Fraction of the inbox content cap at which a conversation rolls over to a
@@ -82,10 +120,17 @@ CARRYOVER_RATIO = 0.8
 CARRYOVER_KEEP_TURNS = 20
 
 
-class Turn(TypedDict):
+class _TurnBase(TypedDict):
     speaker: str  # "user" | "ai" (unknown tokens fall back to the raw label)
     ts: str
     body: str
+
+
+class Turn(_TurnBase, total=False):
+    # 0293: provider recorded in the header's parentheses; absent/None = not recorded.
+    # Optional so existing Turn(speaker=…, ts=…, body=…) construction stays valid, and
+    # so carry-over (§7) can re-serialize a turn without losing its provider.
+    provider: Optional[str]
 
 
 class ParsedConversation(TypedDict):
@@ -107,17 +152,23 @@ def _unescape_line(line: str) -> str:
     return line
 
 
-def turn_header(speaker: str, ts: str) -> str:
+def turn_header(speaker: str, ts: str, provider: Optional[str] = None) -> str:
     """Build the one-line header for a turn. *speaker* is a key ("user"/"ai") or a
-    raw display label (used verbatim for forward-compat with other speakers)."""
+    raw display label (used verbatim for forward-compat with other speakers).
+
+    *provider* (0293) appends the parenthesized provider slot. It is dropped when it
+    contains ")" — that character would end the group early and the line would no
+    longer round-trip through HEADER_RE."""
     label = _SPEAKER_TOKENS.get(speaker, speaker)
+    if provider and ")" not in provider:
+        label = f"{label}({provider})"
     return f"## {label} · {ts}"
 
 
-def serialize_turn(speaker: str, ts: str, body: str) -> str:
+def serialize_turn(speaker: str, ts: str, body: str, provider: Optional[str] = None) -> str:
     """Serialize a single turn to its `header + escaped body` block (no trailing
     separator)."""
-    lines = [turn_header(speaker, ts)]
+    lines = [turn_header(speaker, ts, provider)]
     for body_line in body.split("\n"):
         lines.append(_escape_line(body_line))
     return "\n".join(lines)
@@ -142,6 +193,7 @@ def parse_conversation(content: str) -> ParsedConversation:
     turns: list[Turn] = []
     cur_speaker: Optional[str] = None
     cur_ts: Optional[str] = None
+    cur_provider: Optional[str] = None
     cur_body: list[str] = []
     started = False
 
@@ -153,13 +205,17 @@ def parse_conversation(content: str) -> ParsedConversation:
         # (or the file's trailing newline for the last turn).
         if body_lines and body_lines[-1] == "":
             body_lines.pop()
-        turns.append(Turn(speaker=cur_speaker, ts=cur_ts or "", body="\n".join(body_lines)))
+        turn = Turn(speaker=cur_speaker, ts=cur_ts or "", body="\n".join(body_lines))
+        if cur_provider:
+            turn["provider"] = cur_provider
+        turns.append(turn)
 
     for line in content.split("\n"):
         m = HEADER_RE.match(line)
         if m:
             _flush()
             cur_speaker = speaker_key(m.group("speaker"))
+            cur_provider = speaker_provider(m.group("speaker"))
             cur_ts = m.group("ts")
             cur_body = []
             started = True
@@ -181,7 +237,7 @@ def serialize_conversation(turns: list[Turn], intro: str = "") -> str:
     if intro:
         parts.append(intro.rstrip("\n"))
     for t in turns:
-        parts.append(serialize_turn(t["speaker"], t["ts"], t["body"]))
+        parts.append(serialize_turn(t["speaker"], t["ts"], t["body"], t.get("provider")))
     return ("\n\n".join(parts) + "\n") if parts else ""
 
 

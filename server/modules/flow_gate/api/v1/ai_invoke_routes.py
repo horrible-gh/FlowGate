@@ -252,6 +252,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 group_name=group_id,
                 raw_token=raw_token,
                 api_base_url=_token_routes._build_api_base(request),
+                # 0293: the AI turn header carries the provider. Unlike the copy path,
+                # here the server knows who is being invoked — but only when the run
+                # cannot fall back to a different provider (see the helper's docstring).
+                provider=ai_invoke_service.resolve_pinned_provider_name(
+                    body.project, body.provider_id,
+                ),
             )
         if body.action_scope == "rework":
             doc = db_docs.get_by_id(body.doc_ref) or {}

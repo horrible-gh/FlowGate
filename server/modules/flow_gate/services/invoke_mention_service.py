@@ -8,6 +8,10 @@ through the generic token mention would diverge from the copy flow. Each
 function here mirrors its client counterpart exactly — if you change one
 side, change the other.
 
+0293 T0005: build_conversation_mention is no longer one of those mirrors. Its client
+twin was deleted and /token/issue serves this text to the copy path, so the chat
+mention now has exactly one implementation.
+
 Copy texts that carry no token (reject template, design handoff, VR prompt)
 cannot be byte-identical on their own: the invoked worker still needs
 credentials to act. For those, the invoke prompt is the copy text followed by
@@ -61,12 +65,36 @@ def build_conversation_mention(
     group_name: str,
     raw_token: str,
     api_base_url: str,
+    provider: Optional[str] = None,
 ) -> str:
-    """Port of buildConversationMention (useFlowGateToken.ts).
+    """The chat (CH) mention — the ONE builder for both chat paths (0293 T0005).
 
     Compact chat-only mention: read the CH conversation, append ONE AI turn,
     submit the full body via inbox action:edit (edit_reason=worker_self).
-    """
+
+    Until 0293 this was a port of the browser's buildConversationMention
+    (useFlowGateToken.ts), kept byte-identical by hand. The client builder is gone:
+    POST /token/issue now accepts action_scope='chat' and returns this text as its
+    `mention`, so the copy path and the invoke path read the same bytes by
+    construction rather than by discipline (NR0004 발견 3).
+
+    *provider* (NR0004 발견 4/5) is the value the SERVER knows for this run — the
+    enabled provider's display name — and is only passed when the run is pinned to a
+    single provider, because the mention is built before the fallback chain has
+    picked one. When it is None the worker is asked to fill the slot in itself, and
+    "I don't know" is an accepted answer: the parentheses are simply omitted and the
+    UI draws no badge (there is no forgery threat here — the user knows who they
+    pasted the mention to)."""
+    if provider and ")" not in provider:
+        # Server-known value: no instruction, the worker copies the header verbatim.
+        header_line = f"## 🤖 AI({provider}) · <ISO-8601 timestamp>"
+        provider_hint = None
+    else:
+        header_line = "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>"
+        provider_hint = (
+            "Replace <your model name> with your own model name. If you do not know it, "
+            "drop the parentheses entirely and write `## 🤖 AI` — that is a valid header."
+        )
     api_base = api_base_url.rstrip("/")
     body: dict = {"action": "edit", "project": project}
     if module:
@@ -82,7 +110,7 @@ def build_conversation_mention(
     from urllib.parse import quote
 
     doc_q = quote(doc_id, safe="")
-    return "\n".join([
+    lines = [
         "## Conversation (대화)",
         "---",
         "You are a participant in an ongoing conversation. Read the latest messages and",
@@ -96,14 +124,19 @@ def build_conversation_mention(
         "To reply, append ONE new turn to the END of the existing body in this exact",
         "format, then submit the COMPLETE body (every existing turn + your new one):",
         "",
-        "## 🤖 AI · <ISO-8601 timestamp>",
+        header_line,
         "<your reply>",
+    ]
+    if provider_hint:
+        lines += ["", provider_hint]
+    lines += [
         "",
         f"Submit: POST {api_base}/inbox",
         f"Authorization: Bearer {raw_token}",
         "",
         json.dumps(body, indent=2, ensure_ascii=False),
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def build_rejection_section(history: list[dict], last: Optional[str]) -> str:

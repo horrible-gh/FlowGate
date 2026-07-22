@@ -9,10 +9,12 @@ Fix (NR0004 §6, approved): POST /q/{doc_id}/questions rejects a CH target with 
 message tells the worker to ask in its reply turn instead.
 
 The gate is on the TARGET DOCUMENT rather than the credential because a "chat token" is not
-observable server-side: ai_invoke_routes._TOKEN_SCOPE maps "chat" onto the edit grant before
-issuing, and the manual [멘트복사] path asks /token/issue for action_scope='edit' outright.
-Both chat paths only ever share the CH document they are bound to — hence these tests issue an
-ordinary token (exactly what a chat worker holds) and assert on the document type.
+observable server-side: BOTH chat paths send the wire scope "chat" and both map it onto the
+edit grant before issuing (ai_invoke_routes._TOKEN_SCOPE, and since 0293
+token_routes._WIRE_TOKEN_SCOPE for the manual [멘트복사] path). "chat" selects a mention, never
+a grant, so the issued token is indistinguishable from any other edit token. What the two paths
+do share is the CH document they are bound to — hence these tests issue an ordinary token
+(exactly what a chat worker holds) and assert on the document type.
 
 Environment: TESTING=1 (temporary SQLite, no sqloader) — mirrors the test_q_anchor_0059.py harness.
 """

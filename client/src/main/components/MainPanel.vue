@@ -1109,7 +1109,7 @@ import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
 import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type SequenceSlot } from '../workflow/timeMachineSlot'
-import { useFlowGateToken, splitGroupId, buildConversationMention, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
+import { useFlowGateToken, splitGroupId, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
 import AiRunMonitorCard from './AiRunMonitorCard.vue'
@@ -3241,12 +3241,15 @@ async function onActionBarCreateConversation(tabId: string) {
 
 // TR0044.0010 rev3/rev4: conversation mention copy. Real-time chat isn't wired yet, so
 // a turn is delivered to the AI manually — the reviewer asked for a mention-copy button on the
-// chat. We issue an edit-scope token bound to the CH doc, but DO NOT copy the server's
-// standard edit mention (token.mention): rev4 reject — "the mention should be copied in a
-// chat-only form. Strip out Q info and other useless info and keep it compact". Instead we build a compact,
-// chat-only mention (buildConversationMention) with just: read the conversation, append
-// one AI turn (§6), submit via inbox edit. The AI reads the conversation and appends its
-// reply turn, the same inbox-edit path AI turns already use.
+// chat. We issue an edit-scope token bound to the CH doc, but NOT the server's STANDARD
+// edit mention: rev4 reject — "the mention should be copied in a chat-only form. Strip out
+// Q info and other useless info and keep it compact". What we copy is a compact chat-only
+// mention with just: read the conversation, append one AI turn (§6), submit via inbox
+// edit. The AI reads the conversation and appends its reply turn, the same inbox-edit path
+// AI turns already use.
+// 0293: that mention used to be assembled here in TS. It now comes back as token.mention
+// from /token/issue for action_scope:'chat', so the [멘트복사] text and the in-app AI 호출
+// prompt are produced by the same server function instead of two hand-synced copies.
 // Text of the last failed mention copy, per CH tab (B0001 / group 0240). Feeds
 // ConversationView's inline manual-copy panel — the CH-only replacement for the
 // full-screen ClipboardFallbackModal. Keyed by tab so two open chats can't cross-feed.
@@ -3277,16 +3280,14 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
       ...(gParts?.module != null ? { module: gParts.module } : {}),
       group: gParts?.groupCode ?? groupId,
       doc_ref: tabId,
-      action_scope: 'edit',
+      // 0293: 'chat' asks for the compact CH mention. The token itself is still an edit
+      // grant (the response's action_scope reads 'edit'), so nothing downstream changes.
+      action_scope: 'chat',
     })
-    if (!token) throw new ClipboardAbort()
-    return buildConversationMention({
-      rawToken: token.raw_token,
-      docId: tabId,
-      project,
-      module: gParts?.module ?? null,
-      groupName: groupId,
-    })
+    // No local fallback: the chat mention exists only server-side now, and a mention
+    // without its token would be useless to paste anyway.
+    if (!token?.mention) throw new ClipboardAbort()
+    return token.mention
   })
   if (token == null) return
   if (ok) {

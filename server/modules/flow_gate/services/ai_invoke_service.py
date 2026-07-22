@@ -426,6 +426,35 @@ def list_runtime_providers(project_id: str) -> dict:
     }
 
 
+def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) -> Optional[str]:
+    """The provider name a mention may claim, or None when it must not claim one.
+
+    0293 NR0004 발견 5: the worker mention is built BEFORE the run picks a provider, and
+    `_worker` may fall through the whole chain. Naming chain[0] in the mention would
+    therefore be a guess that reads like a server-confirmed fact. A name is only
+    returned when the effective chain collapses to exactly ONE provider — an explicit
+    UI pin (start_run's `chain = [selected]`), or a project with a single enabled
+    provider — because only then is fallback structurally impossible.
+
+    발견 4: the value is the provider's display NAME, not a model id. `api_model` exists
+    for exec_type='api' only; a CLI provider's model is buried in cli_command flags that
+    differ per kind, so there is no model string the server reliably knows. The name is
+    user-authored, unique per scope, and present for both exec types.
+
+    Never raises: an unusable answer here must not fail the run (start_run validates the
+    pin for real, and a missing name only costs a badge)."""
+    try:
+        chain = ai_settings_service.resolve_effective(project_id).get("providers") or []
+    except Exception:  # noqa: BLE001
+        return None
+    if provider_id:
+        selected = next((p for p in chain if p.get("id") == provider_id), None)
+        return (selected or {}).get("name") or None
+    if len(chain) == 1:
+        return chain[0].get("name") or None
+    return None
+
+
 def start_run(
     *,
     project_id: str,
