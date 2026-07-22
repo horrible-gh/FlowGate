@@ -16,7 +16,7 @@
     <button
       type="button"
       class="aiv-mini__chip"
-      :class="{ 'aiv-mini__chip--awaiting': store.awaitingQCount > 0, active: open }"
+      :class="[`aiv-mini__chip--${chipState}`, { active: open }]"
       :title="fabText"
       :aria-label="t('main.ai_miniplayer.chip_label', { summary: fabText })"
       :aria-expanded="open"
@@ -197,20 +197,41 @@ const entries = computed<AiInvokeRunEntry[]>(() =>
 
 const idle = computed(() => entries.value.length === 0)
 
-const fabText = computed(() =>
-  idle.value
-    ? t('main.ai_miniplayer.idle_summary')
-    : t('main.ai_miniplayer.fab_summary', {
-        running: store.activeCount,
-        waiting: store.awaitingQCount + store.pausedCount,
-      }),
-)
+const fabText = computed(() => {
+  if (idle.value) return t('main.ai_miniplayer.idle_summary')
+  const counts = {
+    running: store.activeCount,
+    waiting: store.awaitingQCount + store.pausedCount,
+    done: store.finishedCount,
+  }
+  // The finished clause only joins the summary while such a card exists, so the tooltip
+  // does not carry a permanent "0 완료" for the common running-only case.
+  return store.finishedCount > 0
+    ? t('main.ai_miniplayer.fab_summary_done', counts)
+    : t('main.ai_miniplayer.fab_summary', counts)
+})
 
 // The closed popover hides everything, so the chip has to carry the signal on its own:
-// answers-waiting first (that's the state the user must not miss), else the live run count.
+// answers-waiting first (that's the state the user must not miss), else every card the
+// registry still holds — running, paused, AND the finished/lost ones inside their TTL.
+// Leaving the finished ones out (0294 B0001) made the badge vanish at the exact moment
+// the run ended, so with the popover closed a completion was never visible at all.
 const badgeCount = computed(() =>
-  store.awaitingQCount > 0 ? store.awaitingQCount : store.activeCount + store.pausedCount,
+  store.awaitingQCount > 0
+    ? store.awaitingQCount
+    : store.activeCount + store.pausedCount + store.finishedCount,
 )
+
+// The count alone cannot say WHICH state it stands for, so the chip carries a colour with
+// it. Same priority as the badge: unanswered 질의 first, then live work, then the
+// transient end-of-run tone (danger for partial/none/lost, success for a clean finish).
+const chipState = computed(() => {
+  if (store.awaitingQCount > 0) return 'awaiting'
+  if (store.activeCount > 0 || store.pausedCount > 0) return 'live'
+  if (store.finishedAlertCount > 0) return 'alert'
+  if (store.finishedCount > 0) return 'done'
+  return 'live'
+})
 
 function toggle(): void {
   open.value = !open.value
@@ -441,6 +462,28 @@ watch(entries, list => {
 
 .aiv-mini__chip--awaiting .aiv-mini__chip-badge {
   background: var(--warning);
+}
+
+/* End-of-run tone (0294 B0001): the card survives its TTL, so the closed chip does too —
+   recoloured, because a completion left in the running tone reads as "still going". */
+.aiv-mini__chip--done,
+.aiv-mini__chip--done:hover,
+.aiv-mini__chip--done.active {
+  color: var(--success);
+}
+
+.aiv-mini__chip--done .aiv-mini__chip-badge {
+  background: var(--success);
+}
+
+.aiv-mini__chip--alert,
+.aiv-mini__chip--alert:hover,
+.aiv-mini__chip--alert.active {
+  color: var(--danger);
+}
+
+.aiv-mini__chip--alert .aiv-mini__chip-badge {
+  background: var(--danger);
 }
 
 .aiv-mini__empty {

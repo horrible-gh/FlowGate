@@ -3,9 +3,10 @@ import { fileURLToPath } from 'node:url'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import AiInvokeMiniplayer from '@main/components/AiInvokeMiniplayer.vue'
-import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest }))
@@ -288,5 +289,130 @@ describe('AiInvokeMiniplayer', () => {
     const chipStates = sfc.slice(afterChipBlock, sfc.indexOf('.aiv-mini__empty'))
     expect(chipStates).not.toContain('border-color')
     expect(chipStates).not.toMatch(/\bborder:/)
+  })
+})
+
+// 0294 B0001 회귀: the finished card lives for FINISHED_CARD_TTL_MS, but the closed chip
+// used to stop counting it the instant the run ended — and the popover is closed by
+// default, so "완료" was the one state the user could never see. The store-level TTL test
+// passed the whole time; only the chip's own signal was missing, so it is pinned here.
+describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    getRequest.mockReset()
+    postRequest.mockReset()
+    getRequest.mockResolvedValue({ data: {} } as any)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
+  const badge = (w: ReturnType<typeof mountPlayer>) =>
+    w.find('[data-test="ai-miniplayer-chip-badge"]')
+
+  it('holds the completion badge for the card TTL and drops it with the card', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020',
+      doc_ref: 'flowgate.default.3020.0001-R', mode: 'single',
+    })
+    await nextTick()
+    expect(badge(wrapper).text()).toBe('1')
+
+    store.trackFinished({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020', outcome: 'complete', docs_reached: 1,
+    })
+    await nextTick()
+    // The badge must NOT blink out with activeCount — this is the whole bug.
+    expect(badge(wrapper).text()).toBe('1')
+    // ...and it must not keep pretending the run is live either.
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--done')
+    expect(wrapper.find('.aiv-mini__chip').attributes('title')).toBe(
+      t('main.ai_miniplayer.fab_summary_done', { running: 0, waiting: 0, done: 1 }),
+    )
+
+    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    await nextTick()
+    expect(badge(wrapper).exists()).toBe(true)
+    expect(store.runsByGroup['flowgate.default.3020']).toBeDefined()
+
+    // TTL reached: signal and card go together, never one before the other.
+    vi.advanceTimersByTime(3_000)
+    await nextTick()
+    expect(badge(wrapper).exists()).toBe(false)
+    expect(store.runsByGroup['flowgate.default.3020']).toBeUndefined()
+    expect(wrapper.find('.aiv-mini').classes()).toContain('aiv-mini--idle')
+    wrapper.unmount()
+  })
+
+  it('separates a clean finish from a partial one and from a lost run', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-partial', group_id: 'flowgate.default.3021', doc_ref: 'r' })
+    store.trackFinished({
+      run_id: 'run-partial', group_id: 'flowgate.default.3021', outcome: 'partial', docs_reached: 2,
+    })
+    await nextTick()
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--alert')
+    expect(badge(wrapper).text()).toBe('1')
+
+    store.trackStarted({ run_id: 'run-lost', group_id: 'flowgate.default.3022', doc_ref: 'r' })
+    store.markLost('flowgate.default.3022', 'run-lost')
+    await nextTick()
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--alert')
+    expect(badge(wrapper).text()).toBe('2')
+    wrapper.unmount()
+  })
+
+  it('counts running, paused and finished together, with 질의 대기 still winning', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.3023', doc_ref: 'r', mode: 'continuous',
+    })
+    store.trackStarted({
+      run_id: 'run-pz', group_id: 'flowgate.default.3024', doc_ref: 'r', mode: 'continuous',
+    })
+    store.trackFinished({ run_id: 'run-pz', group_id: 'flowgate.default.3024', end_reason: 'user_paused' })
+    store.trackStarted({ run_id: 'run-done', group_id: 'flowgate.default.3025', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-done', group_id: 'flowgate.default.3025', outcome: 'complete' })
+    await nextTick()
+    // running + paused + finished-in-TTL — the finished one is no longer dropped.
+    expect(badge(wrapper).text()).toBe('3')
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--live')
+
+    // An unanswered 질의 still outranks everything: it is the only state needing the user.
+    store.trackQuestionRegistered('flowgate.default.3023.0005-Q')
+    await nextTick()
+    expect(badge(wrapper).text()).toBe('1')
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--awaiting')
+    wrapper.unmount()
+  })
+
+  // AppHeader remounts on every route change, so the popover state is gone — the finished
+  // signal has to be rebuilt from the store alone or navigating loses the completion.
+  it('rebuilds the finished signal after a remount', async () => {
+    const first = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-nav', group_id: 'flowgate.default.3026', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-nav', group_id: 'flowgate.default.3026', outcome: 'complete' })
+    await nextTick()
+    first.unmount()
+
+    const second = mountPlayer()
+    await nextTick()
+    expect(badge(second).text()).toBe('1')
+    expect(second.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--done')
+
+    // The popover still shows the finished card behind it (unchanged contract).
+    await second.find('.aiv-mini__chip').trigger('click')
+    await nextTick()
+    expect(second.find('.aiv-mini__card--finished').exists()).toBe(true)
+    expect(second.text()).toContain(t('main.ai_invoke_dialog.outcome_complete'))
+    second.unmount()
   })
 })

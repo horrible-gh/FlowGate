@@ -215,6 +215,23 @@ export function isAwaitingQ(entry: AiInvokeRunEntry): boolean {
 }
 
 const ACTIVE_PHASES: AiInvokePhase[] = ['running', 'pause_requested']
+const FINISHED_PHASES: AiInvokePhase[] = ['finished', 'lost']
+
+// 0294 B0001: a finished/lost card lives on for FINISHED_CARD_TTL_MS, so every surface
+// that summarizes the registry has to count it for exactly that long. Otherwise the
+// closed header chip goes blank the instant a run ends and the completion — the one
+// thing the user was waiting for — is the only state that is never shown.
+export function isFinishedWithinTtl(entry: AiInvokeRunEntry): boolean {
+  return FINISHED_PHASES.includes(entry.phase)
+    && entry.endReason !== 'user_paused'
+    && entry.finishedAtMs != null
+}
+
+// 'complete' is the only clean landing; partial/none/lost must not borrow the success
+// tone, or a failed chain reads as a job well done on the chip alone.
+export function isFinishedAlert(entry: AiInvokeRunEntry): boolean {
+  return isFinishedWithinTtl(entry) && (entry.phase === 'lost' || entry.outcome !== 'complete')
+}
 
 export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>({})
@@ -595,6 +612,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     activeCount: computed(() => Object.values(runsByGroup).filter(run => ACTIVE_PHASES.includes(run.phase)).length),
     awaitingQCount: computed(() => Object.values(runsByGroup).filter(isAwaitingQ).length),
     pausedCount: computed(() => Object.values(runsByGroup).filter(run => run.phase === 'paused').length),
+    // Alive only for the card TTL (0294 B0001) — the sweep drops the entry and these
+    // fall back to 0 on their own, so no separate expiry timer for the chip.
+    finishedCount: computed(() => Object.values(runsByGroup).filter(isFinishedWithinTtl).length),
+    finishedAlertCount: computed(() => Object.values(runsByGroup).filter(isFinishedAlert).length),
     trackStarted,
     trackProviderSwitched,
     trackFinished,

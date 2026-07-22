@@ -311,4 +311,34 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
 
     store.$dispose()
   })
+
+  // 0294 B0001: the header chip counts finished cards while they live, so the derived
+  // counts must track the TTL exactly — and must not fold a failure into the clean tone.
+  it('counts finished cards for their TTL and flags the non-clean ones', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-ok', group_id: 'g.count.ok', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-ok', group_id: 'g.count.ok', outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-bad', group_id: 'g.count.bad', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-bad', group_id: 'g.count.bad', outcome: 'partial' })
+    store.trackStarted({ run_id: 'run-lost', group_id: 'g.count.lost', doc_ref: 'r' })
+    store.markLost('g.count.lost', 'run-lost')
+    // A user-paused stop is not an end-of-run signal: it stays a paused card indefinitely.
+    store.trackStarted({ run_id: 'run-pz', group_id: 'g.count.pz', doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-pz', group_id: 'g.count.pz', end_reason: 'user_paused' })
+
+    expect(store.finishedCount).toBe(3)
+    expect(store.finishedAlertCount).toBe(2)
+    expect(store.pausedCount).toBe(1)
+    expect(store.activeCount).toBe(0)
+
+    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    expect(store.finishedCount).toBe(3)
+
+    vi.advanceTimersByTime(3_000)
+    expect(store.finishedCount).toBe(0)
+    expect(store.finishedAlertCount).toBe(0)
+    expect(store.pausedCount).toBe(1)
+
+    store.$dispose()
+  })
 })
