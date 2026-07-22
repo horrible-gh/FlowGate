@@ -28,6 +28,7 @@ async function openPopover(wrapper: ReturnType<typeof mountPlayer>) {
 
 describe('AiInvokeMiniplayer', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -233,6 +234,103 @@ describe('AiInvokeMiniplayer', () => {
     )
     // Navigating away from the popover closes it — it must not linger over the document.
     expect(wrapper.find('.aiv-mini__panel').exists()).toBe(false)
+    // ...and the run is still live, so opening its Q must NOT take the card away (0290).
+    expect(store.runsByGroup['flowgate.default.3007']).toBeDefined()
+    wrapper.unmount()
+  })
+
+  // 0290 R0001 §1: the card is the completion notice, so reading it (문서 열기) is what
+  // retires it — not a stopwatch the user never sees.
+  it('retires a finished card once its document has been opened', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-d', group_id: 'flowgate.default.3010',
+      doc_ref: 'flowgate.default.3010.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-d', group_id: 'flowgate.default.3010',
+      doc_ref: 'flowgate.default.3010.0001-R', outcome: 'complete',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const openBtn = wrapper.findAll('button').find(
+      b => b.text().includes(t('main.ai_miniplayer.btn_open_doc')),
+    )
+    await openBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.runsByGroup['flowgate.default.3010']).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('offers a per-card remove and a bulk clear for finished cards only', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    for (const n of ['3011', '3012']) {
+      store.trackStarted({
+        run_id: `run-${n}`, group_id: `flowgate.default.${n}`,
+        doc_ref: `flowgate.default.${n}.0001-R`, mode: 'single',
+      })
+      store.trackFinished({
+        run_id: `run-${n}`, group_id: `flowgate.default.${n}`,
+        doc_ref: `flowgate.default.${n}.0001-R`, outcome: 'complete',
+      })
+    }
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.3013',
+      doc_ref: 'flowgate.default.3013.0001-R', mode: 'single',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    // "닫기" was ambiguous next to the popover's own collapse control (0290 NR0003 §5.2).
+    expect(wrapper.text()).toContain(t('main.ai_miniplayer.btn_remove'))
+    const removes = wrapper.findAll('[data-test="ai-miniplayer-remove"]')
+    expect(removes).toHaveLength(2)
+    await removes[0].trigger('click')
+    expect(store.finishedCount).toBe(1)
+
+    await wrapper.find('[data-test="ai-miniplayer-clear-finished"]').trigger('click')
+    await flushPromises()
+    expect(store.finishedCount).toBe(0)
+    // The live run is untouched, and with nothing finished left the bulk action goes away.
+    expect(store.runsByGroup['flowgate.default.3013']?.phase).toBe('running')
+    expect(wrapper.find('[data-test="ai-miniplayer-clear-finished"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('orders awaiting and running cards above finished ones', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    // Ascending group id alone would invert this order.
+    store.trackStarted({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020',
+      doc_ref: 'flowgate.default.3020.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-fin', group_id: 'flowgate.default.3020',
+      doc_ref: 'flowgate.default.3020.0001-R', outcome: 'complete',
+    })
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.3021',
+      doc_ref: 'flowgate.default.3021.0001-R', mode: 'single',
+    })
+    store.trackStarted({
+      run_id: 'run-q', group_id: 'flowgate.default.3022',
+      doc_ref: 'flowgate.default.3022.0001-R', mode: 'continuous',
+    })
+    store.trackQuestionRegistered('flowgate.default.3022.0002-Q')
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const docs = wrapper.findAll('.aiv-mini__doc').map(el => el.text())
+    expect(docs).toEqual([
+      'flowgate.default.3022.0001-R',
+      'flowgate.default.3021.0001-R',
+      'flowgate.default.3020.0001-R',
+    ])
     wrapper.unmount()
   })
 
@@ -299,6 +397,9 @@ describe('AiInvokeMiniplayer', () => {
 describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    // Finished cards outlive the store now (per-tab persistence), so each case has to
+    // start from an empty cache or it inherits the previous one's results.
+    sessionStorage.clear()
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -414,5 +515,36 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
     expect(second.find('.aiv-mini__card--finished').exists()).toBe(true)
     expect(second.text()).toContain(t('main.ai_invoke_dialog.outcome_complete'))
     second.unmount()
+  })
+
+  // 0294 TR0005 rev1 반려: the retention contract the user is holding us to (0290) is a
+  // 30-minute, reload-surviving card — not a 10-second blink. That work existed on its own
+  // branch and never reached main, so the merged 0294 fix only mirrored the 10s window and
+  // the completion still vanished "immediately". Pinned end-to-end on the chip so the two
+  // halves can never drift apart again: minutes later, and after a page reload.
+  it('still shows the completion minutes later and after a reload', async () => {
+    const first = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-keep', group_id: 'flowgate.default.3027', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-keep', group_id: 'flowgate.default.3027', outcome: 'complete' })
+    await nextTick()
+
+    // Far past the old 10s window — the exact TTL is L0009/0290's call, but a user who
+    // walked away for a few minutes must still find the result waiting.
+    vi.advanceTimersByTime(5 * 60_000)
+    await nextTick()
+    expect(badge(first).text()).toBe('1')
+    expect(first.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--done')
+
+    // Reload: the registry is memory-only and /active-all never returns finished runs,
+    // so only the per-tab cache can carry the result across (0290 NR0003 §3.5).
+    first.unmount()
+    store.$dispose()
+    setActivePinia(createPinia())
+    const reloaded = mountPlayer()
+    await nextTick()
+    expect(badge(reloaded).text()).toBe('1')
+    expect(reloaded.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--done')
+    reloaded.unmount()
   })
 })

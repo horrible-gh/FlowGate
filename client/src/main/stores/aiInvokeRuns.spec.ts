@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { getRequest, postRequest } from '@shared/api'
-import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from './aiInvokeRuns'
+import { FINISHED_CARD_TTL_MS, MAX_FINISHED_CARDS, useAiInvokeRunsStore } from './aiInvokeRuns'
 
 vi.mock('@shared/api', () => ({
   getRequest: vi.fn(),
@@ -12,6 +12,7 @@ describe('aiInvokeRuns store', () => {
   let store: ReturnType<typeof useAiInvokeRunsStore>
 
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     store = useAiInvokeRunsStore()
     vi.clearAllMocks()
@@ -286,6 +287,7 @@ describe('aiInvokeRuns store', () => {
 describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    sessionStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
@@ -340,5 +342,88 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     expect(store.pausedCount).toBe(1)
 
     store.$dispose()
+  })
+  // 0290 R0001: the old 10s TTL meant a result was gone before it could be read. The
+  // exact value is a product decision, but "long enough to walk away from" is the point.
+  it('keeps a finished card well past the old 10s window', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-f', group_id: 'g.finished.2', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-f', group_id: 'g.finished.2', outcome: 'complete' })
+
+    vi.advanceTimersByTime(10 * 60_000)
+    expect(store.runsByGroup['g.finished.2']).toBeDefined()
+
+    store.$dispose()
+  })
+
+  it('caps the finished backlog by dropping the oldest cards first', () => {
+    const store = useAiInvokeRunsStore()
+    for (let i = 0; i < MAX_FINISHED_CARDS + 3; i += 1) {
+      const groupId = `g.cap.${String(i).padStart(2, '0')}`
+      store.trackStarted({ run_id: `run-${i}`, group_id: groupId, doc_ref: 'r' })
+      store.trackFinished({ run_id: `run-${i}`, group_id: groupId, outcome: 'complete' })
+      vi.advanceTimersByTime(1_000)  // distinct finishedAtMs so "oldest" is unambiguous
+    }
+
+    const remaining = Object.keys(store.runsByGroup).sort()
+    expect(remaining).toHaveLength(MAX_FINISHED_CARDS)
+    expect(remaining).not.toContain('g.cap.00')
+    expect(remaining).toContain(`g.cap.${String(MAX_FINISHED_CARDS + 2).padStart(2, '0')}`)
+
+    store.$dispose()
+  })
+
+  it('clears every finished card at once but leaves running and paused ones', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-f', group_id: 'g.bulk.fin', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-f', group_id: 'g.bulk.fin', outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-p', group_id: 'g.bulk.pau', doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-p', group_id: 'g.bulk.pau', end_reason: 'user_paused' })
+    store.trackStarted({ run_id: 'run-r', group_id: 'g.bulk.run', doc_ref: 'r' })
+    expect(store.finishedCount).toBe(1)
+
+    store.dismissAllFinished()
+
+    expect(store.runsByGroup['g.bulk.fin']).toBeUndefined()
+    expect(store.runsByGroup['g.bulk.pau']?.phase).toBe('paused')
+    expect(store.runsByGroup['g.bulk.run']?.phase).toBe('running')
+    expect(store.finishedCount).toBe(0)
+
+    store.$dispose()
+  })
+
+  // /ai-invoke/active-all never returns finished runs, so without this a reload wiped
+  // the cards the TTL exists to keep (0290 NR0003 §3.5).
+  it('restores finished cards across a reload and drops the expired ones', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-f', group_id: 'g.persist.1', doc_ref: 'r' })
+    store.trackFinished({ run_id: 'run-f', group_id: 'g.persist.1', outcome: 'complete' })
+    vi.advanceTimersByTime(2_000)  // let the 1s clock flush the write
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const reloaded = useAiInvokeRunsStore()
+    expect(reloaded.runsByGroup['g.persist.1']?.phase).toBe('finished')
+    reloaded.$dispose()
+
+    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS)
+    setActivePinia(createPinia())
+    const stale = useAiInvokeRunsStore()
+    expect(stale.runsByGroup['g.persist.1']).toBeUndefined()
+    stale.$dispose()
+  })
+
+  it('does not persist paused cards', () => {
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'run-p', group_id: 'g.persist.2', doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-p', group_id: 'g.persist.2', end_reason: 'user_paused' })
+    vi.advanceTimersByTime(2_000)
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const reloaded = useAiInvokeRunsStore()
+    // Paused chains come back from the server (active-all), not from this cache.
+    expect(reloaded.runsByGroup['g.persist.2']).toBeUndefined()
+    reloaded.$dispose()
   })
 })

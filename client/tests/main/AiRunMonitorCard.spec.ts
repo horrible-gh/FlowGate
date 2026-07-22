@@ -18,6 +18,7 @@ function mountCard() {
 
 describe('AiRunMonitorCard (dashboard)', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -77,11 +78,75 @@ describe('AiRunMonitorCard (dashboard)', () => {
     store.trackQuestionRegistered('flowgate.default.4004.0007-Q')
     await flushPromises()
 
-    await wrapper.find('.airm-row').trigger('click')
+    await wrapper.find('.airm-row-main').trigger('click')
     await flushPromises()
     expect(getRequest).toHaveBeenCalledWith(
       expect.stringContaining('flowgate.default.4004.0007-Q'),
     )
+    // 0290: opening acknowledges a FINISHED card only — a live run awaiting an answer
+    // must stay on the dashboard after its Q is opened.
+    expect(store.runsByGroup['flowgate.default.4004']).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('removes a finished row when it is opened, and offers an explicit remove button', async () => {
+    const wrapper = mountCard()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-f', group_id: 'flowgate.default.4005',
+      doc_ref: 'flowgate.default.4005.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-f', group_id: 'flowgate.default.4005',
+      doc_ref: 'flowgate.default.4005.0001-R', outcome: 'complete',
+    })
+    store.trackStarted({
+      run_id: 'run-g', group_id: 'flowgate.default.4006',
+      doc_ref: 'flowgate.default.4006.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-g', group_id: 'flowgate.default.4006',
+      doc_ref: 'flowgate.default.4006.0001-R', outcome: 'complete',
+    })
+    await flushPromises()
+
+    // The remove button only appears on finished rows, and it is a sibling of the row
+    // button — never nested inside it.
+    expect(wrapper.findAll('[data-test="ai-run-monitor-remove"]')).toHaveLength(2)
+    // Address the row by its document, not by list position — two runs can finish in the
+    // same millisecond, so the finished band's order is not something to assert here.
+    const rowFor = (docRef: string) => wrapper.findAll('.airm-row')
+      .find(row => row.text().includes(docRef))!
+    await rowFor('flowgate.default.4005.0001-R')
+      .find('[data-test="ai-run-monitor-remove"]').trigger('click')
+    expect(store.runsByGroup['flowgate.default.4005']).toBeUndefined()
+
+    await rowFor('flowgate.default.4006.0001-R').find('.airm-row-main').trigger('click')
+    await flushPromises()
+    expect(store.runsByGroup['flowgate.default.4006']).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps live runs above finished ones', async () => {
+    const wrapper = mountCard()
+    const store = useAiInvokeRunsStore()
+    // Group id order alone would put the finished run first — state has to win.
+    store.trackStarted({
+      run_id: 'run-old', group_id: 'flowgate.default.4001',
+      doc_ref: 'flowgate.default.4001.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-old', group_id: 'flowgate.default.4001',
+      doc_ref: 'flowgate.default.4001.0001-R', outcome: 'complete',
+    })
+    store.trackStarted({
+      run_id: 'run-live', group_id: 'flowgate.default.4009',
+      doc_ref: 'flowgate.default.4009.0001-R', mode: 'single',
+    })
+    await flushPromises()
+
+    const docs = wrapper.findAll('.airm-row-doc').map(el => el.text())
+    expect(docs[0]).toBe('flowgate.default.4009.0001-R')
     wrapper.unmount()
   })
 

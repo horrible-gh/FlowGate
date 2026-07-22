@@ -132,6 +132,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import {
+  INLINE_RESULT_WINDOW_MS,
+  isFinishedCard,
   useAiInvokeRunsStore,
   type AiInvokeProviderSwitch,
 } from '../stores/aiInvokeRuns'
@@ -144,7 +146,17 @@ const store = useAiInvokeRunsStore()
 const cancelling = ref(false)
 
 const groupId = computed(() => props.groupId)
-const run = computed(() => store.runsByGroup[groupId.value] ?? null)
+// The header monitor keeps finished cards for 30 minutes (0290 NR0003 §5.1), but this
+// banner sits on top of the document itself — a result panel parked there for half an
+// hour is in the way. The registry stays the single source of truth; only this surface's
+// view of a finished run expires early (NR0003 §5.3). Removing it here is not a dismiss:
+// the card is still in the header monitor until read or swept.
+const storeRun = computed(() => store.runsByGroup[groupId.value] ?? null)
+const run = computed(() => {
+  const entry = storeRun.value
+  if (!entry || !isFinishedCard(entry)) return entry
+  return store.now - (entry.finishedAtMs as number) < INLINE_RESULT_WINDOW_MS ? entry : null
+})
 
 // docsTarget 0 = the server judged this run by its scope (an edit's revision, a review's
 // row), not by documents — it never had a document to register, so the document-flavoured

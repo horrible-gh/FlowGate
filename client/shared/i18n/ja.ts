@@ -1077,6 +1077,8 @@ export default {
       btn_pause: '一時停止',
       btn_resume: '再開',
       btn_open_doc: 'ドキュメントを開く',
+      btn_remove: '一覧から削除',
+      btn_clear_finished: '完了項目をすべて消去',
       error_pause_failed: '一時停止の要求に失敗しました。',
       error_resume_failed: '再開に失敗しました。',
       error_open_failed: 'ドキュメントを開けませんでした。',
