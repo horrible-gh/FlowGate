@@ -1046,6 +1046,7 @@ export default {
       check_ai_settings: 'AI設定でプロバイダー構成を確認してください。',
       source_dirty: 'AIがソースツリーにファイル{count}件を残しました — git作業前に整理してください。',
       error_no_provider: 'このプロジェクトで有効なAIプロバイダーがありません。AI設定で構成してください。',
+      error_no_provider_registered: 'AIプロバイダーが未登録です。AI設定で登録するか、サーバーで ./setup-ai.sh (Windows: .\\setup-ai.ps1) を実行してください。',
       error_start_failed: 'AI実行の開始に失敗しました。',
       error_run_lost: '実行記録が失われました（サーバー再起動）。グループのドキュメントを直接確認してください。',
       error_cancel_failed: '実行の取消に失敗しました。',

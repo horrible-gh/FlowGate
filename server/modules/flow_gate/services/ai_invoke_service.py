@@ -474,6 +474,21 @@ def start_run(
         # An explicit UI selection pins the run. Fallback order only applies when no provider was specified.
         chain = [selected]
     if not chain:
+        # 0292 T0003: "no provider was ever registered" used to be indistinguishable
+        # from "the registered ones are all switched off" — both read as
+        # no_enabled_provider, and the operator of a fresh install was sent to a
+        # settings screen to toggle rows that do not exist. An install that skipped
+        # the provider seed is a normal path now, so it gets its own code and the
+        # command that fixes it.
+        # source == "disabled" is excluded: that project turned AI off on purpose, so
+        # "nothing is registered" would be a misleading thing to tell its operator.
+        if chain_source != "disabled" and not effective.get("registered_count"):
+            raise _http_error(
+                409, "no_provider_registered",
+                "No AI provider is registered. Register one in AI settings, "
+                "or run the installer's provider step: ./setup-ai.sh "
+                "(Windows: .\\setup-ai.ps1)",
+            )
         raise _http_error(
             409, "no_enabled_provider",
             "No enabled AI provider for this project. Configure providers in AI settings.",

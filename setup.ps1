@@ -10,6 +10,11 @@
       - client: build -> client\dist (same-origin API base)
       - run.bat: a generated launcher (sets FLOWGATE_STORAGE_DIR, starts uvicorn)
       - admin: create the first account, on any supported engine
+      - AI provider: offer to register the first one (server\seed_ai_provider.py);
+        setting any $env:FLOWGATE_AI_* seeds it without the prompt
+
+    Declining that last step is fine — .\setup-ai.ps1 runs it on its own afterwards,
+    and is also how you add a second provider to the fallback chain later.
 
     The server supports sqlite3 / mysql / postgres (see server\config.py). The
     engine is asked for when -DbType is omitted; the default is sqlite3, which
@@ -344,10 +349,42 @@ if ($dbReady) {
             --password $adminPw `
             --admin
     }
+
+    # ── AI provider (0292 T0003) ─────────────────────────────────────────────
+    # An install used to finish with an EMPTY ai_providers table, so nothing
+    # AI-driven worked until someone found the settings screen — and the omission
+    # only showed up later as a run dying with "all_providers_failed".
+    #
+    # Deliberately just y/n here. Which provider, which command and which key are
+    # all asked by seed_ai_provider.py, so the prompts exist once instead of once
+    # per shell, and adding a provider kind never touches this file (CH0002).
+    Write-Host '==> AI provider'
+    $seedAi = $false
+    if ($env:FLOWGATE_AI_KIND -or $env:FLOWGATE_AI_EXEC_TYPE -or $env:FLOWGATE_AI_CLI_COMMAND) {
+        # Preset for an unattended install — seed without asking, mirroring how
+        # $env:FLOWGATE_ADMIN_* skips the admin prompts above.
+        $seedAi = $true
+    } elseif ($Interactive) {
+        $seedAi = (Read-Host 'Register an AI provider now? (y/N)') -match '^[Yy]'
+    }
+    if ($seedAi) {
+        # Skips a provider that is already registered (re-run safe), and a failed
+        # probe must not fail the install — the provider is stored either way.
+        # try/catch is setup.sh's `|| true`: with $ErrorActionPreference = 'Stop',
+        # PowerShell 7.4+ turns a non-zero native exit into a terminating error.
+        try { & $VenvPython (Join-Path $Root 'server\seed_ai_provider.py') }
+        catch { Write-Host "[!] AI provider setup did not complete: $_" }
+    } else {
+        Write-Host '    Skipped. Register one whenever you like — this runs exactly the'
+        Write-Host '    step that was just declined:'
+        Write-Host "    $Root\setup-ai.ps1"
+    }
 } else {
     Write-Host '[!] DB migrations did not finish — create the admin account manually later'
     Write-Host '    (start the server, let it finish migrating, then run):'
     Write-Host "    `"$VenvPython`" server\create_dev_user.py --username admin --email admin@flowgate.local --password <pw> --admin"
+    Write-Host '    ...and register an AI provider with:'
+    Write-Host "    $Root\setup-ai.ps1"
 }
 
 # ── done ─────────────────────────────────────────────────────────────────────
