@@ -967,8 +967,15 @@ class TestProvision0161:
         group = "adoptprj.default.0001"
         assert svc.ensure_worktree("adoptprj", "default", group) == "ok"
         wt = src_root("AdoptProj", "adoptprj_default_0001")
-        # worktree branches still start from origin/main (0115 behavior, unchanged)
-        assert (wt / "shared.txt").read_text(encoding="utf-8") == "remote version\n"
+        # 0296 T0004: the worktree now forks from LOCAL main, which already
+        # contains origin/main plus the adopt snapshot. This assertion used to
+        # read "remote version" — the group saw stale remote content while the
+        # operator's base held the adopted local content, the same invisible-file
+        # class as B0001 (NR flowgate.default.0296.0003 §C1/§C2). It pinned the
+        # then-current behaviour, not an intent: the snapshot is expected to
+        # survive all the way to origin (asserted below), so a worktree that
+        # ignores it was only ever a way to lose work.
+        assert (wt / "shared.txt").read_text(encoding="utf-8") == "local version\n"
         (wt / "work.txt").write_text("group work\n", encoding="utf-8")
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
@@ -1700,4 +1707,185 @@ class TestNoWorkAutoDiscard0199:
         # push of a no-work group must NOT leak an empty branch to origin.
         assert "gitnoop_default_0214" not in self._origin_heads(noop_origin)
         assert db_git.get_state(group)["worktree_registered"] == 0
+
+
+# ── Untracked base files: listing, explicit commit, merge diagnostics ─────────
+# flowgate.default.0296 T0004, implementing NR0003 R1/R3/R5.
+#
+# The bug behind these tests (B0001): a file created through the FlowGate UI
+# lands in the BASE checkout, but every group worktree is `git worktree add`-ed
+# from a COMMIT — so the file exists in the tree the operator sees and in none of
+# the trees the AI workers read. "Commit it and it appears" was true, yet
+# base-commit ran `add -u` and refused to stage anything untracked, leaving no
+# way out from inside the product.
+
+def test_untracked_merge_blockers_parsing():
+    """R5's stderr parser — pure text, so it needs no git binary.
+
+    None (not []) when the failure was something else: the caller only swaps in
+    the dedicated 409 on a positive identification, so unrelated git errors keep
+    their honest 500 instead of being mislabelled as an untracked collision.
+    """
+    from modules.flow_gate.services import git_service as svc
+
+    stderr = (
+        "error: The following untracked working tree files would be "
+        "overwritten by merge:\n"
+        "\tdocs/new.md\n"
+        "\tsrc/added.py\n"
+        "Please move or remove them before you merge.\n"
+        "Aborting\n"
+    )
+    assert svc._untracked_merge_blockers(stderr) == ["docs/new.md", "src/added.py"]
+    # the delete-side wording of the same refusal
+    assert svc._untracked_merge_blockers(
+        "error: Untracked working tree file would be removed by merge:\n\tx.txt\n"
+    ) == ["x.txt"]
+    # unrelated failures / empty input → None, never a bogus empty diagnosis
+    assert svc._untracked_merge_blockers("fatal: refusing to merge unrelated histories") is None
+    assert svc._untracked_merge_blockers("") is None
+    assert svc._untracked_merge_blockers(None) is None
+    # header recognized but no parsable list → still a positive identification
+    assert svc._untracked_merge_blockers(
+        "error: The following untracked working tree files would be overwritten by merge:\n"
+    ) == []
+
+
+@pytest.fixture(scope="class")
+def untracked_origin(seed):
+    """A dedicated bare origin + enabled project, mirroring `base_origin`."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "untrkprj", "project_name": "UntrkProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0296-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    (seedwt / ".gitignore").write_text("*.secret\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("untrkprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("untrkprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "tmp": tmp, "base": src_root("UntrkProj", "main")}
+    svc.delete_config("untrkprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestBaseUntrackedCommit0296:
+    def test_untracked_is_listed_but_never_widens_the_guard(self, untracked_origin):
+        """R1's first half: the new file becomes *visible* without becoming
+        *dirty*. Folding it into base_dirty would make every `__pycache__` entry
+        block merge finalize for every group — the regression 0165.0009 fixed."""
+        from modules.flow_gate.services import git_service as svc
+
+        base = untracked_origin["base"]
+        (base / "brand_new.md").write_text("made in the UI\n", encoding="utf-8")
+        (base / "sub").mkdir()
+        (base / "sub" / "nested.txt").write_text("nested\n", encoding="utf-8")
+        (base / "keys.secret").write_text("shh\n", encoding="utf-8")   # .gitignore'd
+
+        st = svc.project_git_status("untrkprj")["status"]
+        # E3 scope untouched: an uncommitted NEW file blocks nothing.
+        assert st["base_dirty"] == {"dirty": False, "files": []}
+        # Directories are expanded to individual paths — a bare "sub/" entry is
+        # not a `git add` target the operator can reason about.
+        assert sorted(st["base_untracked"]["files"]) == ["brand_new.md", "sub/nested.txt"]
+        assert st["base_untracked"]["count"] == 2
+        # .gitignore'd paths are absent: they can never be committed, so offering
+        # them would promise a fix that does not exist (NR §C4).
+        assert "keys.secret" not in st["base_untracked"]["files"]
+
+        # the save-time editor probe carries the same split
+        probe = svc.base_checkout_dirty_status("untrkprj")
+        assert probe["dirty"] is False and probe["files"] == []
+        assert sorted(probe["untracked"]) == ["brand_new.md", "sub/nested.txt"]
+
+    def test_commit_by_path_puts_the_file_in_new_worktrees(self, untracked_origin):
+        """The whole point of B0001: commit → the AI worker can finally read it.
+
+        Asserted end-to-end against a real `git worktree add`, because the fix
+        only means anything if the file lands in the tree the worker resolves."""
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        out = svc.base_commit(
+            "untrkprj", "feat: add the file the agent could not see",
+            ["brand_new.md", "sub/nested.txt"],
+        )["result"]
+        assert out["committed"] is True
+        assert out["files"] == ["brand_new.md", "sub/nested.txt"]
+        assert out["subject"] == "feat: add the file the agent could not see"
+        assert out["remaining"] == []
+        # the ignored file is still on disk, and still not offered
+        assert out["remaining_untracked"] == []
+
+        group = "untrkprj.default.0296"
+        assert svc.ensure_worktree("untrkprj", "default", group) == "ok"
+        wt = src_root("UntrkProj", "untrkprj_default_0296")
+        assert (wt / "brand_new.md").read_text(encoding="utf-8") == "made in the UI\n"
+        assert (wt / "sub" / "nested.txt").is_file()
+
+    def test_omitting_paths_keeps_the_legacy_tracked_only_scope(self, untracked_origin):
+        """R1 must ADD an affordance, not widen the default one. A plain
+        base-commit still ignores untracked files — otherwise build artifacts
+        would ride into base history on every commit-then-merge click."""
+        from modules.flow_gate.services import git_service as svc
+
+        base = untracked_origin["base"]
+        (base / "README.md").write_text("edited\n", encoding="utf-8")          # tracked
+        (base / "artifact.tmp").write_text("build junk\n", encoding="utf-8")   # untracked
+
+        out = svc.base_commit("untrkprj", None)["result"]
+        assert out["committed"] is True
+        assert out["files"] == ["README.md"]
+        assert out["remaining"] == []
+        # untouched, exactly as before this change
+        assert out["remaining_untracked"] == ["artifact.tmp"]
+        assert (base / "artifact.tmp").is_file()
+
+    def test_gitignored_path_is_refused_with_its_own_code(self, untracked_origin):
+        """`git add -f` is NOT the answer — an ignored file is ignored on purpose.
+        Say so, and name the files, so the operator stops retrying a commit that
+        can never succeed (NR §C4)."""
+        from modules.flow_gate.services import git_service as svc
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_commit("untrkprj", None, ["keys.secret"])
+        assert exc.value.status == 422
+        assert exc.value.code == "path_ignored"
+        assert exc.value.details == {"files": ["keys.secret"]}
+
+    def test_path_validation_and_unknown_paths(self, untracked_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        # traversal/absolute paths are rejected BEFORE the lock (no side effects)
+        for bad in ["/etc/passwd", "../outside.txt", "a/../../b"]:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.base_commit("untrkprj", None, [bad])
+            assert exc.value.status == 422 and exc.value.code == "invalid_request"
+
+        # a clean path with nothing pending is a 422 naming it, not a silent no-op
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_commit("untrkprj", None, ["README.md"])
+        assert exc.value.status == 422
+        assert exc.value.code == "invalid_request"
+        assert exc.value.details == {"files": ["README.md"]}
+
+        # blank/duplicate entries collapse rather than reaching git
+        out = svc.base_commit("untrkprj", None, ["artifact.tmp", "artifact.tmp", "  "])["result"]
+        assert out["committed"] is True and out["files"] == ["artifact.tmp"]
 

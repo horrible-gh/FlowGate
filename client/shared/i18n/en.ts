@@ -2025,6 +2025,16 @@ export default {
       base_revert_btn: 'Revert',
       base_commit_done: 'Committed the base edits ({commit})',
       base_revert_done: 'Reverted {file}',
+      // 0296 T0004 — a file with no commit behind it does not exist in any group
+      // worktree, so an agent cannot read it no matter what the explorer shows.
+      base_untracked_alert: '{n} new file(s) have never been committed — they are not part of any group worktree, so AI workers cannot read them. Commit them to include them in worktrees created from now on.',
+      base_untracked_truncated: '(showing the first {n})',
+      base_untracked_pick_all: 'Select all',
+      base_untracked_pick_none: 'Clear selection',
+      base_untracked_commit_btn: 'Commit {n} selected',
+      base_untracked_commit_done: 'Committed {n} new file(s) ({commit})',
+      base_untracked_ignored: 'Files excluded by .gitignore cannot be committed: {files}',
+      base_untracked_conflict_toast: 'Uncommitted new files in the base checkout are blocking the merge: {files} — commit or remove them, then retry',
       cleanup_btn: 'Clean up finished branches ({n})',
       cleanup_done: 'Cleaned up {n} finished branch slot(s)',
       cleanup_partial: 'Cleaned up {n}; {failed} could not be cleaned (see server log)',
