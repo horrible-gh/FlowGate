@@ -808,6 +808,9 @@ def _config_view(row: dict) -> dict:
         # null = not overridden → server commits as the FlowGate default (0237).
         "author_name": row.get("author_name") or None,
         "author_email": row.get("author_email") or None,
+        # TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 컬럼이 NULL 인 기존 행은
+        # 마이그레이션 071 이전에 만들어진 행이므로 기본값 'observe' 로 읽는다.
+        "tr_scope_stage": row.get("tr_scope_stage") or "observe",
         "updated_at": row.get("updated_at"),
     }
 
@@ -851,6 +854,18 @@ def save_config(project_id: str, body: dict) -> dict:
 
     author_name, author_email = _resolve_author(body, existing)
 
+    # tr_scope_stage (0299 D0004 §3.6): omitted → keep stored (or 'observe' on a new
+    # row). Same exclude_unset "keep" protocol as translate_url/secret above, so an
+    # older client that does not know the field cannot silently reset the stage.
+    if "tr_scope_stage" in body:
+        tr_scope_stage = (body.get("tr_scope_stage") or "observe").strip() or "observe"
+        if tr_scope_stage not in db_git.TR_SCOPE_STAGE_VALUES:
+            raise GitServiceError(
+                422, "invalid_request", f"invalid tr_scope_stage: {tr_scope_stage!r}"
+            )
+    else:
+        tr_scope_stage = (existing.get("tr_scope_stage") if existing else None) or "observe"
+
     row = db_git.upsert_config(project_id, {
         "repo_url": (body.get("repo_url") or "").strip(),
         "provider": provider,
@@ -862,6 +877,7 @@ def save_config(project_id: str, body: dict) -> dict:
         "translate_url": translate_url,
         "author_name": author_name,
         "author_email": author_email,
+        "tr_scope_stage": tr_scope_stage,
     })
     return {"ok": True, "configured": True, "config": _config_view(row)}
 
@@ -2215,6 +2231,123 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "commit": commit, "changes": changes,
     }}
+
+
+def collect_scope_changes(project_id: str, group_id: str) -> dict:
+    """Every path this group actually changed, seen from its OWN worktree (0299 D0004 §3.3).
+
+    Deliberately NOT ``read_group_changes``. That one resolves the tree through
+    ``src_root(project_name, branch)`` and only checks that the directory exists,
+    and it looks at committed/tracked changes alone. For 작업범위 검증 both gaps are
+    fatal: a group whose worktree is missing must NOT silently be measured against
+    the base checkout (that is the very accident this feature exists to catch), and
+    a brand-new file that was never ``git add``-ed is the most ordinary shape of
+    real work there is — missing it would produce a bogus TRV-003 on an honest
+    report. So this resolves strictly via ``effective_src_root_ex`` (no main
+    fallback) and unions three sources:
+
+      * merge-base..worktree diff — committed + staged + unstaged tracked changes
+      * ``ls-files --others`` — untracked new files
+      * renames resolved to the NEW path only (D0004 §3.2: "이름을 바꾼 경우
+        바뀐 뒤의 경로만 적는다"), hence ``-M`` instead of ``--no-renames``
+
+    Returns ``{"available": bool, "reason": str, "worktree": str|None,
+    "branch": str|None, "paths": [str]}``. Never raises: an unavailable worktree or
+    a failing git call is a *result* (``available=False`` + reason), because the
+    caller must turn that into TRV-006 rather than a 500 on someone's TR.
+    Exclusion rules are NOT applied here — tr_scope_service owns them so the same
+    filter runs over the reported list too.
+    """
+    result: dict = {
+        "available": False, "reason": SRC_ROOT_ERROR,
+        "worktree": None, "branch": None, "paths": [],
+    }
+    wt_path, reason = effective_src_root_ex(project_id, group_id)
+    result["reason"] = reason
+    if wt_path is None:
+        return result
+    result["worktree"] = str(wt_path)
+    try:
+        state = db_git.get_state(group_id) or {}
+        result["branch"] = (state.get("branch") or "").strip() or None
+        cfg = db_git.get_config(project_id) or {}
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+
+        paths: set[str] = set()
+        merge_proc = _run_git(
+            ["merge-base", f"refs/heads/{base_branch}", "HEAD"],
+            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        merge_base = (merge_proc.stdout or "").strip()
+        if merge_proc.returncode == 0 and merge_base:
+            diff_proc = _run_git(
+                ["diff", "--name-status", "-M", "-z", merge_base, "--"],
+                cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+            )
+            if diff_proc.returncode != 0:
+                result["reason"] = SRC_ROOT_ERROR
+                return result
+            paths.update(_parse_name_status_z(diff_proc.stdout or ""))
+        else:
+            # No merge base (unrelated histories / missing base branch) — the
+            # committed half cannot be computed. Working-tree state alone would be
+            # a partial answer that reads as "you reported files you never changed",
+            # so refuse the whole measurement instead of half of it.
+            result["reason"] = SRC_ROOT_ERROR
+            return result
+
+        others = _run_git(
+            ["ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        if others.returncode != 0:
+            result["reason"] = SRC_ROOT_ERROR
+            return result
+        for path in (others.stdout or "").split("\0"):
+            if path:
+                paths.add(path)
+
+        result["available"] = True
+        result["reason"] = SRC_ROOT_WORKTREE
+        result["paths"] = sorted(paths)
+        return result
+    except Exception:  # noqa: BLE001 — a verification helper must never 500 a TR
+        _log.warning("collect_scope_changes failed for %s", group_id, exc_info=True)
+        result["available"] = False
+        result["reason"] = SRC_ROOT_ERROR
+        return result
+
+
+def _parse_name_status_z(stdout: str) -> list[str]:
+    """``git diff --name-status -M -z`` → changed paths (renames → new path only).
+
+    The -z record shape differs per status: ``M\\0path\\0`` but ``R100\\0old\\0new\\0``.
+    A fixed 2-field stride (what read_group_changes can afford with --no-renames)
+    desynchronizes the whole stream on the first rename, so this walks the fields.
+    """
+    fields = (stdout or "").split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        take_second = status[:1] in ("R", "C")
+        if index >= len(fields):
+            break
+        first = fields[index]
+        index += 1
+        if take_second:
+            if index >= len(fields):
+                break
+            second = fields[index]
+            index += 1
+            if second:
+                paths.append(second)
+        elif first:
+            paths.append(first)
+    return paths
 
 
 def _validate_blob_path(path: str) -> None:

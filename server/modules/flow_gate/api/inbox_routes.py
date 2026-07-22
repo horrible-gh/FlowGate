@@ -32,6 +32,7 @@ from modules.flow_gate.numbering.id_formatter import parse_doc_code
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.storage.paths import (
     get_storage_root,
     group_path,
@@ -478,6 +479,36 @@ def _fail(status: int, message: str, help_url: str | None = None) -> JSONRespons
             "help_url": help_url,
         },
     )
+
+
+_TR_SCOPE_META_MAX_PATHS = 50
+
+
+def _tr_scope_meta(result: dict) -> dict:
+    """Trim a tr_scope verdict down to what documents.meta should carry (0299 D0004 §6).
+
+    Keeps the verdict, stage, codes and assignment, plus a bounded slice of each path
+    list with its true count so the UI can render "n건" honestly while the stored blob
+    stays small. `notice` is never persisted — it only exists for a rejection, and a
+    rejection has no document to persist onto.
+    """
+    def _slice(key: str) -> dict:
+        values = list(result.get(key) or [])
+        return {"count": len(values), "items": values[:_TR_SCOPE_META_MAX_PATHS]}
+
+    return {
+        "verdict": result.get("verdict"),
+        "stage": result.get("stage"),
+        "codes": result.get("codes") or [],
+        "branch": result.get("branch"),
+        "scope_reason": result.get("scope_reason"),
+        "reported": _slice("reported"),
+        "detected": _slice("detected"),
+        "unconfirmed": _slice("unconfirmed"),
+        "unreported": _slice("unreported"),
+        "out_of_scope": _slice("out_of_scope"),
+        "format_errors": _slice("format_errors"),
+    }
 
 
 def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONResponse]:
@@ -1252,6 +1283,62 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if commit_message_draft is not None and len(commit_message_draft) > 200:
         return _fail(422, "commit_message must be a single line of at most 200 characters.")
 
+    # ── Step 5.7: TR 작업범위 검증 (0299 D0004) ────────────────────────────────
+    # TR 전용. 본문의 `## 변경 파일` 신고 목록을 이 그룹의 워크트리에서 서버가 실제로
+    # 관측한 변경과 대조해, 배정 범위 밖에서 이루어진 작업을 제출 시점에 잡는다.
+    #
+    # 자리 선정이 중요하다. 본문을 다 읽은 뒤(Step 5.5 의 guards 와 같은 재료),
+    # 그리고 dry-run 분기보다 *앞*이다. 앞이어야 dry-run 과 실등록이 같은 판정을
+    # 받고, 작업자가 본 제출 전에 dry_run 으로 미리 확인할 수 있다(D0004 §3.1).
+    # 거부는 numbering/storage/DB 이전이므로 문서 번호도 토큰도 소비되지 않는다.
+    #
+    # 검증 자체가 실패하면(예상 못 한 예외) 통과시킨다 — 위반 탐지 기능이 정상적인
+    # 제출을 500 으로 떨구는 것이 원래 사고보다 나쁘다.
+    tr_scope_result: Optional[dict] = None
+    if doc_type.upper() == "TR":
+        try:
+            scope_body = body_for_guards
+            if scope_body is None:
+                scope_body = _submission_text(doc_path, content)
+            tr_scope_result = tr_scope_service.evaluate(
+                project_id=project, group_id=group["group_id"], body=scope_body or ""
+            )
+        except Exception:  # noqa: BLE001 — 검증 실패가 TR 접수를 막아선 안 된다
+            tr_scope_result = None
+        # 검증 비대상(git 연동 꺼짐)은 판정이 아니라 부재다. 이걸 문서 meta 와
+        # dry-run 응답에까지 실으면 연동 없는 프로젝트의 모든 TR 에 "검증 안 함"
+        # 카드가 붙는다 — 아무도 고칠 수 없는 표시는 남기지 않는다.
+        if tr_scope_result and tr_scope_result.get("verdict") == tr_scope_service.VERDICT_SKIPPED:
+            tr_scope_result = None
+        if tr_scope_result and tr_scope_result.get("verdict") == tr_scope_service.VERDICT_REJECT:
+            # 거부된 제출에는 TR 문서 ID 가 없다(번호 예약 전). 사후 조회를 위해
+            # 그룹 타임라인에 이벤트로 남긴다 — tr_scope_service 모듈 docstring 참조.
+            try:
+                db_events.create({
+                    "event_type": "action_taken",
+                    "project_id": project,
+                    "group_id": group["group_id"],
+                    "document_id": None,
+                    "actor_user_id": actor_user_id,
+                    "from_state": None,
+                    "to_state": None,
+                    "metadata": json.dumps({
+                        "action_code": "tr_scope_rejected",
+                        "prev_doc_id": prev_doc_id,
+                        "token_id": token_rec.get("token_id"),
+                        "dry_run": bool(_truthy(body.get("dry_run"))),
+                        "stage": tr_scope_result.get("stage"),
+                        "codes": tr_scope_result.get("codes"),
+                        "branch": tr_scope_result.get("branch"),
+                        "out_of_scope": tr_scope_result.get("out_of_scope"),
+                        "unconfirmed": tr_scope_result.get("unconfirmed"),
+                        "unreported": tr_scope_result.get("unreported"),
+                    }, ensure_ascii=False),
+                })
+            except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
+                pass
+            return _fail(422, tr_scope_result.get("notice") or "TR 작업범위 검증 반려")
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
     # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
@@ -1265,13 +1352,20 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         new_checks.append("dup_body")
     if commit_message_draft is not None:
         new_checks.append("commit_message")
-    dry_resp = _maybe_dry_run(body, token_rec, {
+    would_register: dict = {
         "action": "new",
         "doc_id": None,
         "group_name": group["group_id"],
         "doc_type": doc_type,
         "checks_passed": new_checks,
-    })
+    }
+    # 0299 D0004 §3.1: dry-run 과 실등록은 같은 판정을 낸다. 거부는 위에서 이미
+    # 반환됐으므로 여기 실리는 것은 통과/경고/관측이며, 경고 사유가 있으면 작업자가
+    # 본 제출 전에 목록을 고칠 수 있게 판정 내용을 그대로 돌려준다.
+    if tr_scope_result is not None:
+        new_checks.append("tr_scope")
+        would_register["tr_scope"] = tr_scope_result
+    dry_resp = _maybe_dry_run(body, token_rec, would_register)
     if dry_resp is not None:
         return dry_resp
 
@@ -1324,6 +1418,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         meta_payload["related_doc_ids"] = related_doc_ids
     if fingerprints:
         meta_payload.update(fingerprints)
+    # 0299 D0004 §6: 통과/경고 판정은 생성된 TR 문서에 붙여 문서 상세에서 조회한다
+    # (거부는 문서가 존재하지 않으므로 events 로 간다 — Step 5.7 참조). 화면에 그대로
+    # 나열되는 값이라 목록 길이를 여기서 제한한다: 신고/감지 전체를 meta 에 넣으면
+    # 큰 그룹에서 meta 한 칸이 수십 KB가 되고, 화면은 어차피 접어서 보여준다.
+    if tr_scope_result is not None:
+        meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
     meta_value = json.dumps(meta_payload) if meta_payload else None
     try:
         db_docs.create({
@@ -1777,6 +1877,55 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real edit
         edit_fingerprints = {}  # unreadable doc_path / lookup error → skip; edit still proceeds
 
+    # ── Step 5.7: TR 작업범위 검증 (0299 R0001) ─────────────────────────────────
+    # _handle_new 에만 붙이면 edit 이 통째로 우회로가 된다. 사람 리뷰에서 반려된 TR 은
+    # edit 으로 재제출되는데, 그 경로에 검증이 없으면 `## 변경 파일` 목록을 사후에
+    # 아무렇게나 고쳐 넣어도 아무도 대조하지 않는다. new 의 가드를 edit 에 붙이지
+    # 않아 같은 오염이 재발한 전례(위 dup-body 가드 주석의 B0106)와 같은 구조다.
+    #
+    # 판정 시점이 다르므로 결과 기록도 다르다. edit 에는 이미 문서가 있으므로 통과·경고는
+    # Step 7.1 에서 그 문서의 meta 에 갱신하고, 거부는 문서를 바꾸지 않은 채 반환한다.
+    edit_tr_scope: Optional[dict] = None
+    if str(existing_doc.get("type_code") or "").upper() == "TR":
+        try:
+            scope_body = edit_body_for_guards
+            if scope_body is None:
+                scope_body = _submission_text(doc_path, content)
+            edit_tr_scope = tr_scope_service.evaluate(
+                project_id=project, group_id=group["group_id"], body=scope_body or ""
+            )
+        except Exception:  # noqa: BLE001 — 검증 실패가 재제출을 막아선 안 된다
+            edit_tr_scope = None
+        if edit_tr_scope and edit_tr_scope.get("verdict") == tr_scope_service.VERDICT_SKIPPED:
+            edit_tr_scope = None
+        if edit_tr_scope and edit_tr_scope.get("verdict") == tr_scope_service.VERDICT_REJECT:
+            try:
+                db_events.create({
+                    "event_type": "action_taken",
+                    "project_id": project,
+                    "group_id": group["group_id"],
+                    "document_id": None,
+                    "actor_user_id": actor_user_id,
+                    "from_state": None,
+                    "to_state": None,
+                    "metadata": json.dumps({
+                        "action_code": "tr_scope_rejected",
+                        "action": "edit",
+                        "doc_id": doc_id,
+                        "token_id": token_rec.get("token_id"),
+                        "dry_run": bool(_truthy(body.get("dry_run"))),
+                        "stage": edit_tr_scope.get("stage"),
+                        "codes": edit_tr_scope.get("codes"),
+                        "branch": edit_tr_scope.get("branch"),
+                        "out_of_scope": edit_tr_scope.get("out_of_scope"),
+                        "unconfirmed": edit_tr_scope.get("unconfirmed"),
+                        "unreported": edit_tr_scope.get("unreported"),
+                    }, ensure_ascii=False),
+                })
+            except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
+                pass
+            return _fail(422, edit_tr_scope.get("notice") or "TR 작업범위 검증 반려")
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
     # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
     # checks_passed reflects checks actually run on this path (L0007 §1.1/§4 principle):
@@ -1792,11 +1941,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_checks.append("frontmatter_identity")
     if edit_fingerprints:
         edit_checks.append("dup_body")
-    dry_resp = _maybe_dry_run(body, token_rec, {
+    edit_would_register: dict = {
         "action": "edit",
         "doc_id": doc_id,
         "checks_passed": edit_checks,
-    })
+    }
+    # new 와 같이, 거부는 위에서 이미 반환됐으므로 여기 실리는 것은 통과/경고다.
+    if edit_tr_scope is not None:
+        edit_checks.append("tr_scope")
+        edit_would_register["tr_scope"] = edit_tr_scope
+    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
     if dry_resp is not None:
         return dry_resp
 
@@ -1887,6 +2041,13 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         else:
             _meta_obj.pop("content_sha256", None)
             _meta_obj.pop("content_sha256_norm", None)
+        # 0299: 본문이 바뀌면 신고 목록도 바뀔 수 있으므로 판정을 새 것으로 덮는다.
+        # 검증 비대상으로 바뀐 경우(연동 해제 등)에는 옛 판정을 남겨 두지 않는다 —
+        # 화면에 지금 상태와 무관한 카드가 계속 떠 있는 것이 아무것도 없는 것보다 나쁘다.
+        if edit_tr_scope is not None:
+            _meta_obj["tr_scope"] = _tr_scope_meta(edit_tr_scope)
+        else:
+            _meta_obj.pop("tr_scope", None)
         db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
     except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
         import LogAssist.log as logger

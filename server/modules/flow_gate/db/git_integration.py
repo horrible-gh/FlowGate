@@ -20,6 +20,9 @@ ACTION_VALUES = ("merge", "merge_only", "push", "wait")
 STATE_VALUES = (
     "none", "awaiting_choice", "merging", "conflict", "merged", "pushed", "waiting",
 )
+# TR 작업범위 검증 적용 단계 (0299 D0004 §3.6, migration 071). 순서가 곧 강도이며,
+# tr_scope_service 가 "관측 < 경고 < 강제" 비교에 이 순서를 쓴다.
+TR_SCOPE_STAGE_VALUES = ("observe", "warn", "enforce")
 
 
 # ── project_git_config ────────────────────────────────────────────────────────
@@ -56,30 +59,32 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
             "INSERT INTO project_git_config "
             "(project_id, repo_url, provider, username, secret_enc, base_branch, "
             "default_finalize_action, enabled, translate_url, author_name, author_email, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "tr_scope_stage, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 project_id, data["repo_url"], data.get("provider") or "generic",
                 data.get("username"), data.get("secret_enc"),
                 data.get("base_branch") or "main",
                 data.get("default_finalize_action") or "wait",
                 1 if data.get("enabled") else 0, data.get("translate_url"),
-                data.get("author_name"), data.get("author_email"), now, now,
+                data.get("author_name"), data.get("author_email"),
+                data.get("tr_scope_stage") or "observe", now, now,
             ],
         )
     else:
         store._execute(
             "UPDATE project_git_config SET repo_url = ?, provider = ?, username = ?, "
             "secret_enc = ?, base_branch = ?, default_finalize_action = ?, enabled = ?, "
-            "translate_url = ?, author_name = ?, author_email = ?, updated_at = ? "
-            "WHERE project_id = ?",
+            "translate_url = ?, author_name = ?, author_email = ?, tr_scope_stage = ?, "
+            "updated_at = ? WHERE project_id = ?",
             [
                 data["repo_url"], data.get("provider") or "generic",
                 data.get("username"), data.get("secret_enc"),
                 data.get("base_branch") or "main",
                 data.get("default_finalize_action") or "wait",
                 1 if data.get("enabled") else 0, data.get("translate_url"),
-                data.get("author_name"), data.get("author_email"), now, project_id,
+                data.get("author_name"), data.get("author_email"),
+                data.get("tr_scope_stage") or "observe", now, project_id,
             ],
         )
     meta_cache.invalidate_git_config(project_id)

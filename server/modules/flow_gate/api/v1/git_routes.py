@@ -90,6 +90,9 @@ class GitConfigPut(BaseModel):
     # Validated as a pair by the service (both set, or both cleared).
     author_name: str | None = None
     author_email: str | None = None
+    # TR 작업범위 검증 적용 단계: observe | warn | enforce (0299 D0004 §3.6).
+    # Omitted = keep stored (exclude_unset), so an older client cannot reset it.
+    tr_scope_stage: str | None = None
 
 
 @router.put("/projects/{project_id}/git/config")
