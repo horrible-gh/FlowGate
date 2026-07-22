@@ -1055,6 +1055,7 @@ export default {
       collapse: '折りたたむ',
       chip_label: 'AI実行モニター — {summary}',
       fab_summary: '{running} 実行 · {waiting} 待機',
+      fab_summary_done: '{running} 実行 · {waiting} 待機 · {done} 完了',
       idle_summary: 'AI実行なし',
       empty: '進行中のAI委任はありません。',
       dash_title: 'AI実行モニター',

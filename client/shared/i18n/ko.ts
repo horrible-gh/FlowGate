@@ -1055,6 +1055,7 @@ export default {
       collapse: '접기',
       chip_label: 'AI 실행 모니터 — {summary}',
       fab_summary: '{running} 실행 · {waiting} 대기',
+      fab_summary_done: '{running} 실행 · {waiting} 대기 · {done} 완료',
       idle_summary: 'AI 실행 없음',
       empty: '진행 중인 AI 위임이 없습니다.',
       dash_title: 'AI 실행 모니터',

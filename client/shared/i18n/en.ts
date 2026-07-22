@@ -1056,6 +1056,7 @@ export default {
       collapse: 'Collapse',
       chip_label: 'AI run monitor — {summary}',
       fab_summary: '{running} running · {waiting} waiting',
+      fab_summary_done: '{running} running · {waiting} waiting · {done} finished',
       idle_summary: 'No AI runs',
       empty: 'No AI delegation is in progress.',
       dash_title: 'AI run monitor',
