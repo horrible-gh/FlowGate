@@ -228,7 +228,6 @@ import { useExplorerStore } from '../stores/explorer'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
-import type { TrScopeVerdict } from '../types/trScope'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 
 const props = defineProps<{ tab: Tab }>()
@@ -289,7 +288,6 @@ interface DocDetail {
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
   next_step_exists?: boolean
-  tr_scope?: TrScopeVerdict | null
 }
 
 const doc = ref<DocDetail | null>(null)
