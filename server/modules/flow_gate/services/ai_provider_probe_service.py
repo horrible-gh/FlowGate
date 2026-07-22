@@ -35,6 +35,7 @@ from pathlib import Path
 
 from modules.flow_gate.services import process_runner
 from modules.flow_gate.services import test_command_service as _tcs
+from modules.flow_gate.settings import ai_settings_service as _ai_settings
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,12 @@ def probe_provider(form: dict) -> dict:
     if cli_command == "":
         return {**base, "status": "skipped", "reason": "required_for_cli",
                 "message": "Enter a command before testing."}
+
+    # 0295 NR0003 §5-3: probe the command the invoke path would actually spawn, not the raw
+    # stored string. Without this the probe is not just inaccurate but inverted for codex —
+    # the mkdtemp() cwd below is never a git repo, so `codex exec` exits 1 before reading
+    # stdin and every codex provider, however correct, comes back `command_failed`.
+    cli_command = _ai_settings.normalize_cli_command(kind, cli_command)
 
     prompt = form.get("prompt") or ""
 
