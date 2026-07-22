@@ -2011,6 +2011,11 @@ export default {
       unpushed_badge: '未プッシュ {n}件',
       unpushed_commits: '未プッシュコミット {n}個',
       push_all: 'まとめてプッシュ',
+      // 0297 B0001: リモートに base ブランチがまだ無い場合の初回プッシュ文言。
+      remote_empty: 'リモートに base ブランチがまだありません（初回プッシュが必要）',
+      first_push: '初回プッシュ',
+      first_push_badge: 'ローカルコミット {n}個（未公開）',
+      first_push_hint: '空のリモートリポジトリに base ブランチを公開します。',
       unmerge_btn: 'アンマージ',
       unmerge_confirm: '{gid}のマージ（{commit}）をベースブランチから取り除き、グループをマージ待ちに戻します。続行しますか？',
       unmerged_toast: 'マージを取り消しました — グループはマージ待ちに戻りました',

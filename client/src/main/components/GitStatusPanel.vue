@@ -21,10 +21,11 @@
         class="btn btn-sm btn-primary"
         type="button"
         :disabled="busy"
+        :title="needsFirstPush ? t('main.git_status.first_push_hint') : undefined"
         @click="doPush(status.base_branch)"
       >
         <AppIcon name="cloud-arrow-up" />
-        {{ t('main.git_status.push_all') }}
+        {{ needsFirstPush ? t('main.git_status.first_push') : t('main.git_status.push_all') }}
       </button>
       <button
         class="git-refresh-btn"
@@ -314,6 +315,12 @@ interface GitStatus {
     count: number
     commit_count: number
     merges: UnpushedMerge[]
+    // 0297 B0001: `measured: false` means origin/{base} was absent, NOT "in sync".
+    // remote_branch_missing narrows that to the bootstrap case (empty remote) and
+    // local_commit_count says whether there is anything to publish.
+    measured?: boolean
+    remote_branch_missing?: boolean
+    local_commit_count?: number | null
   }
 }
 interface UnpushedMerge {
@@ -397,18 +404,38 @@ const inlineResolved = computed(
 const aheadBehindText = computed(() => {
   const s = status.value
   if (!s || s.ahead_count == null || s.behind_count == null) {
-    return t('main.git_status.unmeasured')
+    // 0297 B0001: an empty remote is not a stale fetch — telling the user to
+    // fetch there is a dead end, the actual next step is the first push.
+    return needsFirstPush.value
+      ? t('main.git_status.remote_empty')
+      : t('main.git_status.unmeasured')
   }
   return t('main.git_finalize.ahead_behind', { ahead: s.ahead_count, behind: s.behind_count })
 })
 const unpushedCount = computed(() => status.value?.unpushed?.count ?? 0)
 const unpushedCommitCount = computed(() => status.value?.unpushed?.commit_count ?? status.value?.ahead_count ?? 0)
-const canPushBase = computed(() => !!status.value?.base_branch && unpushedCommitCount.value > 0)
+// 0297 B0001: with an empty remote there is no origin/{base}, so ahead/behind and
+// the unpushed count come back unmeasured (0) — the push button used to vanish
+// exactly when the first push was needed. Treat "remote branch missing + local
+// commits exist" as pushable; the server's push endpoint already handles it.
+const needsFirstPush = computed(() => {
+  const u = status.value?.unpushed
+  if (!u || u.measured !== false || !u.remote_branch_missing) return false
+  return (u.local_commit_count ?? 0) > 0
+})
+const canPushBase = computed(
+  () => !!status.value?.base_branch && (unpushedCommitCount.value > 0 || needsFirstPush.value),
+)
 const showUnpushedSection = computed(
   () => unpushedCount.value > 0 || (unpushedCount.value === 0 && unpushedCommitCount.value > 0),
 )
 const unpushedBadgeText = computed(() => {
   if (!status.value) return ''
+  if (needsFirstPush.value) {
+    return t('main.git_status.first_push_badge', {
+      n: status.value.unpushed?.local_commit_count ?? 0,
+    })
+  }
   if (unpushedCount.value > 0) return t('main.git_status.unpushed_badge', { n: unpushedCount.value })
   if (unpushedCommitCount.value > 0) return t('main.git_status.unpushed_commits', { n: unpushedCommitCount.value })
   return ''

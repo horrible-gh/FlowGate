@@ -2011,6 +2011,11 @@ export default {
       unpushed_badge: '미푸시 {n}건',
       unpushed_commits: '미푸시 커밋 {n}개',
       push_all: '모아서 푸시',
+      // 0297 B0001: 원격에 base 브랜치가 아직 없을 때의 최초 푸시 문구.
+      remote_empty: '원격에 base 브랜치가 아직 없습니다 (최초 푸시 필요)',
+      first_push: '최초 푸시',
+      first_push_badge: '로컬 커밋 {n}개 (아직 미공개)',
+      first_push_hint: '비어 있는 원격 저장소에 base 브랜치를 공개합니다.',
       unmerge_btn: '언머지',
       unmerge_confirm: '{gid}의 머지({commit})를 본선에서 빼고, 그룹을 머지 대기로 되돌립니다. 계속할까요?',
       unmerged_toast: '머지를 되돌렸습니다 — 그룹이 머지 대기로 돌아왔습니다',

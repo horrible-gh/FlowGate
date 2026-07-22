@@ -2012,6 +2012,11 @@ export default {
       unpushed_badge: '{n} unpushed',
       unpushed_commits: '{n} unpushed commits',
       push_all: 'Push all',
+      // 0297 B0001: bootstrap wording for a remote that has no base branch yet.
+      remote_empty: 'Remote has no base branch yet (first push needed)',
+      first_push: 'First push',
+      first_push_badge: '{n} local commits (not published yet)',
+      first_push_hint: 'Publish the base branch to the empty remote repository.',
       unmerge_btn: 'Unmerge',
       unmerge_confirm: "Remove {gid}'s merge ({commit}) from the base branch and return the group to merge-pending. Continue?",
       unmerged_toast: 'Merge undone — the group is back to merge-pending',
