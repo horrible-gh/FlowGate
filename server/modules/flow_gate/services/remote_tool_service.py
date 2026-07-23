@@ -23,6 +23,7 @@ matching file_transfer_routes._get_src_root.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -43,6 +44,8 @@ from modules.flow_gate.storage.safe_path import (
     resolve_in_root,
     _under_root,
 )
+
+_logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -422,7 +425,27 @@ def _fallback_project_root(grant: dict) -> Optional[Path]:
     return src_root(project_name, branch).resolve()
 
 
-def _resolve_src_root(grant: dict) -> Optional[Path]:
+def _read_worktree_expected_reasons(git_service) -> frozenset:
+    """SRC_ROOT_* fallback reasons that mean an integrated group's worktree was
+    *expected* but could not be resolved (0301 T0004 / NR0003 §6-3).
+
+    The benign reasons are deliberately excluded: SRC_ROOT_NO_GROUP (legacy
+    grant with no group context) and SRC_ROOT_INTEGRATION_OFF (project is not
+    git-integrated) are ordinary fallback-first outcomes, so a read that lands on
+    the base tree for either of them stays silent and untouched.
+    """
+    return frozenset({
+        git_service.SRC_ROOT_NO_STATE,
+        git_service.SRC_ROOT_UNREGISTERED,
+        git_service.SRC_ROOT_NO_BRANCH,
+        git_service.SRC_ROOT_NO_PROJECT_NAME,
+        git_service.SRC_ROOT_DIR_MISSING,
+        git_service.SRC_ROOT_DIR_BROKEN,
+        git_service.SRC_ROOT_ERROR,
+    })
+
+
+def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
     0115: a grant that carries a group_id is routed to that group's git worktree
@@ -431,18 +454,51 @@ def _resolve_src_root(grant: dict) -> Optional[Path]:
     disabled integration, missing worktree — falls back to the ordinary
     project-branch folder exactly as before (fallback-first principle). Used by
     read/grep/glob; write/remove use _resolve_root_for_mutation (0205 L §2.3).
+
+    0301 T0004 (NR0003 §6-3): the read path used to return the base tree with no
+    self-heal and no trace, so a worker that read source in the window before its
+    group worktree was provisioned (the first-group timing gap, NR0003 §4.4)
+    silently read `main` and began editing on top of that state — the very
+    "자꾸 메인 브랜치에 작업" symptom of B0001. Reads must NEVER be blocked (that
+    would break legacy and non-integrated access), but when an integrated group
+    falls back for a reason that means the worktree was *expected*, we now mirror
+    the write gate: one synchronous ensure_worktree self-heal retry, and if it is
+    still unresolved a warning is logged so this is no longer the one traceless
+    fallback path. Benign fallbacks (legacy grant / integration off) stay silent.
     """
     project_id = grant.get("project")
     group_id = grant.get("group_id")
-    if group_id:
-        try:
-            from modules.flow_gate.services import git_service  # lazy — import cycle
+    if not group_id:
+        return _fallback_project_root(grant)   # legacy grant — silent fallback
+    try:
+        from modules.flow_gate.services import git_service  # lazy — import cycle
 
-            wt = git_service.effective_src_root(project_id, group_id)
-            if wt is not None:
-                return wt
-        except Exception:
-            pass  # resolution problems must never break the fallback path
+        wt, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if wt is not None:
+            return wt
+        if reason in _read_worktree_expected_reasons(git_service):
+            # Provisioning-timing window: one self-heal retry (symmetric with
+            # _resolve_root_for_mutation), then re-resolve. ensure_worktree is
+            # idempotent and never raises fatally; on failure we keep serving the
+            # base tree so the read still succeeds.
+            module = grant.get("module") or "default"
+            try:
+                if git_service.ensure_worktree(
+                    project_id, module, group_id, trigger="remote_read_retry"
+                ) == "ok":
+                    wt = git_service.effective_src_root(project_id, group_id)
+                    if wt is not None:
+                        return wt
+            except Exception:
+                pass
+            _logger.warning(
+                "remote read fell back to base tree for group %s (op=%s, "
+                "reason=%s) — worktree expected but unresolved after self-heal; "
+                "serving base checkout (read not blocked)",
+                group_id, op, reason,
+            )
+    except Exception:
+        pass  # resolution problems must never break the fallback path
     return _fallback_project_root(grant)
 
 
@@ -840,7 +896,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         if op in ("write", "remove"):
             root = _resolve_root_for_mutation(grant, op)
         else:
-            root = _resolve_src_root(grant)
+            root = _resolve_src_root(grant, op)
         if root is None:
             raise _OpError(503)
         # ⑤ Execute the operation
