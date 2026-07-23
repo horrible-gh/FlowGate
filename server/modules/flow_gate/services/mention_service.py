@@ -16,7 +16,7 @@ does not bury it:
   4. Reference documents      (one line each for head + selected: {slash-path}: GET {url})
   5. Recent documents in the group  (omit the section when there are 0)
   6. Artifact registration    (includes a complete POST example)
-  7. Scratch directory        (inactive)
+  7. Scratch directory        (token-owned path for doc_path files)
   8. doc_type guide           (GET /api/v1/help/doc_type)
   9. Reminder                 (the no-choices guard repeated for recency)
 
@@ -961,9 +961,18 @@ def build_mention(
             # 대조할 대상이 생기고, 반려당한 뒤에 처음 형식을 배우는 일이 없다.
             f"\n{tr_scope_service.TR_SECTION_GUIDE}"
         )
+    content_source_hint = (
+        "Choose exactly one document source (XOR):\n"
+        "- `content`: send the complete document inline, as shown in the POST example below.\n"
+        "- `doc_path`: replace `content` with the absolute path of a UTF-8 file located "
+        f"inside this token's scratch_dir: `{scratch_dir}`.\n"
+        "Do not send both `content` and `doc_path`."
+    )
     s5_body = (
         f"Artifact registration: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
+        f"\n"
+        f"{content_source_hint}\n"
         f"\n"
         f"{post_json}\n"
         f"{commit_hint}"
@@ -972,8 +981,13 @@ def build_mention(
     )
 
     # ── Section 6: scratch directory ──────────────────────────────────────────
-    # Disabled: remote HTTP consumers cannot access the server host's local paths. Restore when a command-invocation mode is introduced.
-    # s6_body = scratch_dir
+    # Workers and FlowGate run against the same group-worktree filesystem. Expose
+    # the token-owned directory so file submissions satisfy the server boundary.
+    s6_body = (
+        f"{scratch_dir}\n\n"
+        "For file-based inbox submissions, `{SCRATCH}` means the path above. "
+        "Create the file inside it and send that file's absolute path as `doc_path`."
+    )
 
     # ── Section 7: doc_type guide ────────────────────────────────────────────
     s7_body = f"GET {base}/help/doc_type"
@@ -1086,7 +1100,7 @@ def build_mention(
     # register Qs, not create the next document. The Q POST is embedded in s8_body instead.
     if not review_continuous:
         sections.append(_section("Artifact registration", s5_body))
-    # sections.append(_section("Scratch directory", s6_body))  # disabled (see §6 above)
+    sections.append(_section("Scratch directory", s6_body))
     sections.append(_section("doc_type guide", s7_body))
     # NR0003 recency: repeat the no-choices guard at the very bottom so a long
     # prompt does not bury it; recency weighting keeps it in the worker's view.
@@ -1592,8 +1606,13 @@ def build_review_mention(
     )
 
     # ── Section 6: scratch directory ─────────────────────────────────────────
-    # Disabled: remote HTTP consumers cannot access the server host's local paths. Restore when a command-invocation mode is introduced.
-    # s6_body = scratch_dir
+    # Review workers share the FlowGate group-worktree filesystem as well. Keep
+    # the same {SCRATCH} terminology used by task/test worker instructions.
+    s6_body = (
+        f"{scratch_dir}\n\n"
+        "`{SCRATCH}` means the token-owned path above. Keep temporary review "
+        "artifacts inside this directory."
+    )
 
     # ── Section 7: verdict guide (inline — no help endpoint for verdicts) ────
     s7_body = (
@@ -1621,7 +1640,7 @@ def build_review_mention(
     if s4_section:
         sections.append(s4_section)
     sections.append(_section("Review submission", s5_body))
-    # sections.append(_section("Scratch directory", s6_body))  # disabled (see §6 above)
+    sections.append(_section("Scratch directory", s6_body))
     sections.append(_section("Verdict guide", s7_body))
     # NR0003 recency: repeat the no-choices guard at the very bottom (see build_mention).
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
