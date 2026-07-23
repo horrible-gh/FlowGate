@@ -185,6 +185,7 @@ import { useToast } from './common/useToast'
 import {
   compareRunEntries,
   isAwaitingQ,
+  openTargetDocId,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
 } from '../stores/aiInvokeRuns'
@@ -352,7 +353,7 @@ async function doCancel(entry: AiInvokeRunEntry): Promise<void> {
 async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
   // 질의 대기 card jumps straight to the waiting Q; answers are registered in the
   // document's existing Q&A panel, never in the card itself (D0007 화면 구성).
-  const docId = entry.pendingQDocIds[0] ?? entry.docRef
+  const docId = openTargetDocId(entry)
   if (!docId) return
   try {
     const res = await getRequest<any>(`/api/v1/documents/detail?doc_id=${encodeURIComponent(docId)}`)

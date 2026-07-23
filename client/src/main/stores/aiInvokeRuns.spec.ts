@@ -1,12 +1,53 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { getRequest, postRequest } from '@shared/api'
-import { FINISHED_CARD_TTL_MS, MAX_FINISHED_CARDS, useAiInvokeRunsStore } from './aiInvokeRuns'
+import {
+  FINISHED_CARD_TTL_MS,
+  MAX_FINISHED_CARDS,
+  openTargetDocId,
+  type AiInvokeRunEntry,
+  useAiInvokeRunsStore,
+} from './aiInvokeRuns'
 
 vi.mock('@shared/api', () => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
 }))
+
+const openTargetEntry = (
+  overrides: Partial<Pick<AiInvokeRunEntry, 'pendingQDocIds' | 'reachedDocIds' | 'docRef'>> = {},
+): AiInvokeRunEntry => ({
+  pendingQDocIds: [],
+  reachedDocIds: [],
+  docRef: 'flowgate.default.0302.0001-R',
+  ...overrides,
+} as AiInvokeRunEntry)
+
+describe('openTargetDocId', () => {
+  it('prefers the first pending Q document', () => {
+    const entry = openTargetEntry({
+      pendingQDocIds: ['flowgate.default.0302.0005-Q'],
+      reachedDocIds: ['flowgate.default.0302.0004-TR'],
+    })
+
+    expect(openTargetDocId(entry)).toBe('flowgate.default.0302.0005-Q')
+  })
+
+  it('selects the last reached document when there is no pending Q', () => {
+    const entry = openTargetEntry({
+      reachedDocIds: [
+        'flowgate.default.0302.0004-TR',
+        'flowgate.default.0302.0006-TR',
+      ],
+    })
+
+    expect(openTargetDocId(entry)).toBe('flowgate.default.0302.0006-TR')
+  })
+
+  it('falls back to the source document when no reached document exists', () => {
+    expect(openTargetDocId(openTargetEntry())).toBe('flowgate.default.0302.0001-R')
+  })
+})
 
 describe('aiInvokeRuns store', () => {
   let store: ReturnType<typeof useAiInvokeRunsStore>
