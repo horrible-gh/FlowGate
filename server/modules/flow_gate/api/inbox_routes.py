@@ -2003,12 +2003,23 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             return _fail(500, f"Storage error: {exc}")
 
     # ── Step 7: DB update (CAS) ────────────────────────────────────────────────
+    # Re-point file_path at the location we just wrote (NR0003 §3-A / B0001, T0004).
+    # Step 6b writes the new body to `stored_path`, which may be a *recomputed*
+    # canonical path when the DB's file_path was stale/unresolvable (e.g. after a
+    # time-machine rollback, or a Windows absolute path that broke on host move).
+    # Historically this UPDATE only bumped revision_no/updated_at, so file_path kept
+    # pointing at the old, unresolvable value — the reader (_document_file_path) then
+    # 404'd ("MD 파일이 없다") even though the AI had just rewritten the body. Persist
+    # the actual write location, mirroring _handle_new which records file_path on
+    # creation. to_storage_relative is idempotent and never raises, so this is safe
+    # to fold into the CAS update (stays atomic with the revision bump).
+    new_file_path_rel = to_storage_relative(stored_path, project)
     store = get_store()
     now = now_iso()
     store._execute(
-        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? "
-        "WHERE doc_id = ? AND revision_no = ?",
-        [now, doc_id, current_revision_no],
+        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+        "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+        [now, new_file_path_rel, doc_id, current_revision_no],
     )
     refreshed = db_docs.get_by_id(doc_id)
     if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
