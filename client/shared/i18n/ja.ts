@@ -63,6 +63,7 @@ export default {
       title: 'FlowGate ログイン',
       subtitle: 'アカウント情報を入力してください',
       username: 'ユーザー名',
+      username_placeholder: 'admin / メール',
       password: 'パスワード',
       show_password: 'パスワードを表示',
       hide_password: 'パスワードを非表示',
@@ -140,9 +141,22 @@ export default {
   },
   settings: {
     nav: {
+      account: 'アカウント',
+      security: 'セキュリティとセッション',
       system: 'システム',
       users: 'プロジェクト管理',
       project: 'プロジェクト',
+    },
+    security_sessions: {
+      title: 'セキュリティとログインセッション',
+      description: 'ログイン中の端末を確認し、リモートでログアウトできます。',
+      revoke_others: '他のすべてのセッションをログアウト',
+      unknown_device: '不明なデバイス',
+      current: '現在のセッション',
+      sign_out: 'ログアウト',
+      loading: 'セッションを読み込み中…',
+      confirm: 'この端末以外のすべてのセッションをログアウトしますか？',
+      failed: 'セッション操作に失敗しました。',
     },
     system: {
       title: 'システム設定',

@@ -25,7 +25,7 @@
           class="form-ctrl"
           style="padding-left:34px;"
           autocomplete="username"
-          placeholder="admin / email"
+          :placeholder="t('auth.login.username_placeholder')"
           :disabled="loading"
           @keydown.enter="handleSubmit"
         />

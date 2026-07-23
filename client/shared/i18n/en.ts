@@ -63,6 +63,7 @@ export default {
       title: 'FlowGate Sign In',
       subtitle: 'Enter your account credentials',
       username: 'Username',
+      username_placeholder: 'admin / email',
       password: 'Password',
       show_password: 'Show password',
       hide_password: 'Hide password',
@@ -140,9 +141,22 @@ export default {
   },
   settings: {
     nav: {
+      account: 'Account',
+      security: 'Security & sessions',
       system: 'System',
       users: 'Project Management',
       project: 'Project',
+    },
+    security_sessions: {
+      title: 'Security and login sessions',
+      description: 'Review signed-in devices and sign them out remotely.',
+      revoke_others: 'Sign out all other sessions',
+      unknown_device: 'Unknown device',
+      current: 'Current session',
+      sign_out: 'Sign out',
+      loading: 'Loading sessions…',
+      confirm: 'Sign out all sessions except this device?',
+      failed: 'Session operation failed.',
     },
     system: {
       title: 'System Settings',

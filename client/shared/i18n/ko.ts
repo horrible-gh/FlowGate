@@ -63,6 +63,7 @@ export default {
       title: 'FlowGate 로그인',
       subtitle: '계정 정보를 입력해 주세요',
       username: '사용자명',
+      username_placeholder: 'admin / 이메일',
       password: '비밀번호',
       show_password: '비밀번호 표시',
       hide_password: '비밀번호 숨기기',
@@ -140,9 +141,22 @@ export default {
   },
   settings: {
     nav: {
+      account: '계정',
+      security: '보안 및 세션',
       system: '시스템',
       users: '프로젝트 관리',
       project: '프로젝트',
+    },
+    security_sessions: {
+      title: '보안 및 로그인 세션',
+      description: '현재 로그인된 기기를 확인하고 원격으로 로그아웃할 수 있습니다.',
+      revoke_others: '다른 모든 세션 로그아웃',
+      unknown_device: '알 수 없는 기기',
+      current: '현재 세션',
+      sign_out: '로그아웃',
+      loading: '세션을 불러오는 중…',
+      confirm: '현재 기기를 제외한 모든 세션에서 로그아웃할까요?',
+      failed: '세션 작업에 실패했습니다.',
     },
     system: {
       title: '시스템 설정',

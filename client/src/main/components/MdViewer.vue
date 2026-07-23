@@ -84,7 +84,7 @@ mdRenderer.use({
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
       const langClass = lang ? ` class="language-${lang}"` : ''
-      return `<div class="code-block-wrapper"><button class="code-copy-btn" type="button" aria-label="copy code"><svg class=\"code-copy-icon\" viewBox=\"0 0 256 256\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg></button><pre><code${langClass}>${escaped}</code></pre></div>`
+      return `<div class="code-block-wrapper"><button class="code-copy-btn" type="button" aria-label="${t('main.md_viewer.copy_code')}"><svg class=\"code-copy-icon\" viewBox=\"0 0 256 256\" width=\"1em\" height=\"1em\" fill=\"currentColor\" aria-hidden=\"true\"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg></button><pre><code${langClass}>${escaped}</code></pre></div>`
     },
   },
 })
