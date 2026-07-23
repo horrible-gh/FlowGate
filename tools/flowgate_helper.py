@@ -12,6 +12,7 @@ Usage example:
         base_url=os.environ["FLOWGATE_BASE_URL"],
         token=os.environ["FLOWGATE_TOKEN"],
         worker_model="claude-sonnet-4.6",
+        scratch_dir=os.environ["FLOWGATE_SCRATCH_DIR"],
     )
     try:
         result = helper.inbox_new(
@@ -19,7 +20,7 @@ Usage example:
             group_name="G001",
             prev_doc_id="R015",
             doc_type="D",
-            doc_path="/path/to/doc.md",
+            doc_path=os.path.join(os.environ["FLOWGATE_SCRATCH_DIR"], "doc.md"),
         )
     except FlowGateError as e:
         print(f"Error ({e.http_status}): {e.error_message}")
@@ -53,6 +54,8 @@ class FlowGateHelper:
         token: Issued raw_token (for Bearer authentication)
         worker_model: Worker model name (recorded when footer is attached)
         auto_footer: If True, footer is automatically attached on inbox_new/inbox_edit calls (§4-5-3)
+        scratch_dir: Token-owned scratch directory. When provided, inbox file paths
+            are required to resolve inside this directory.
     """
 
     def __init__(
@@ -61,11 +64,17 @@ class FlowGateHelper:
         token: str,
         worker_model: str = "unknown",
         auto_footer: bool = True,
+        scratch_dir: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.worker_model = worker_model
         self.auto_footer = auto_footer
+        self.scratch_dir = (
+            os.path.realpath(os.path.abspath(scratch_dir))
+            if scratch_dir is not None
+            else None
+        )
 
     # ── Inbound ──────────────────────────────────────────────────────────────────
 
@@ -86,7 +95,7 @@ class FlowGateHelper:
             group_name: Group identifier
             prev_doc_id: Parent document ID (e.g., "R015")
             doc_type: Document type to register (e.g., "NR", "Q", "D")
-            doc_path: Absolute path to the file created by the worker
+            doc_path: Path to the worker-created file inside the token scratch_dir
             related_doc_ids: List of related document IDs (optional, for Q registration)
             module: Module name (default: "__ALL__")
 
@@ -96,6 +105,7 @@ class FlowGateHelper:
         Raises:
             FlowGateError: On server error response
         """
+        doc_path = self._validate_doc_path(doc_path)
         if self.auto_footer:
             doc_path = self._attach_footer(doc_path)
 
@@ -129,7 +139,7 @@ class FlowGateHelper:
             group_name: Group identifier
             doc_id: ID of the document to edit
             edit_reason: Edit reason ("rejected" | "qna_followup" | "user_comment" | "worker_self")
-            doc_path: Absolute path to the file newly created by the worker
+            doc_path: Path to the newly created file inside the token scratch_dir
             linked_doc_id: Document ID that justifies the edit reason (optional — RJ document ID / Q ID, etc.)
             module: Module name (default: "__ALL__")
 
@@ -139,6 +149,7 @@ class FlowGateHelper:
         Raises:
             FlowGateError: On server error response
         """
+        doc_path = self._validate_doc_path(doc_path)
         if self.auto_footer:
             doc_path = self._attach_footer(doc_path)
 
@@ -184,6 +195,26 @@ class FlowGateHelper:
         return self._send(req)
 
     # ── Internal utilities ───────────────────────────────────────────────────────
+
+    def _validate_doc_path(self, doc_path: str) -> str:
+        """Resolve doc_path and, when configured, enforce the token scratch boundary."""
+        resolved_path = os.path.realpath(os.path.abspath(doc_path))
+        if self.scratch_dir is None:
+            return resolved_path
+
+        try:
+            inside_scratch = (
+                os.path.normcase(os.path.commonpath([self.scratch_dir, resolved_path]))
+                == os.path.normcase(self.scratch_dir)
+            )
+        except ValueError:
+            inside_scratch = False
+        if not inside_scratch:
+            raise ValueError(
+                "doc_path must resolve inside the token scratch_dir: "
+                f"{self.scratch_dir}"
+            )
+        return resolved_path
 
     def _post_inbox(self, body: dict) -> dict:
         url = f"{self.base_url}/api/v1/inbox"
