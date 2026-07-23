@@ -191,6 +191,73 @@ def test_provider_bearing_header_in_a_body_is_escaped():
     assert conv.parse_conversation(text)["turns"][0]["body"] == sneaky
 
 
+# ── 0306 NR0003 발견 1: localized user header (multi-read, locale write) ───────
+def test_localized_user_headers_all_key_to_user():
+    # Every ko/en/ja user label — emoji or emoji-less — normalizes to the logical role.
+    for label in ("🧑 사용자", "사용자", "🧑 User", "User", "🧑 ユーザー", "ユーザー"):
+        assert conv.speaker_key(label) == "user", label
+    # AI is unchanged; an unrelated label still falls through to itself.
+    assert conv.speaker_key("🤖 AI") == "ai"
+    assert conv.speaker_key("System") == "System"
+
+
+def test_turn_header_writes_locale_canonical_user_label():
+    ts = "2026-07-23T10:00:00+09:00"
+    assert conv.turn_header("user", ts, locale="ko") == f"## 🧑 사용자 · {ts}"
+    assert conv.turn_header("user", ts, locale="en") == f"## 🧑 User · {ts}"
+    assert conv.turn_header("user", ts, locale="ja") == f"## 🧑 ユーザー · {ts}"
+    # Unknown/missing locale falls back to ko; AI ignores locale entirely.
+    assert conv.turn_header("user", ts, locale="fr") == f"## 🧑 사용자 · {ts}"
+    assert conv.turn_header("user", ts) == f"## 🧑 사용자 · {ts}"
+    assert conv.turn_header("ai", ts, locale="en") == f"## 🤖 AI · {ts}"
+
+
+def test_append_turn_uses_caller_locale():
+    body = conv.append_turn("", "user", "2026-07-23T10:00:00+09:00", "hello", locale="en")
+    assert body.splitlines()[0] == "## 🧑 User · 2026-07-23T10:00:00+09:00"
+
+
+def test_mixed_locale_conversation_parses_every_turn_as_user():
+    text = (
+        "## 🧑 사용자 · 2026-07-23T10:00:00+09:00\n안녕\n\n"
+        "## 🧑 User · 2026-07-23T10:00:01+09:00\nhi\n\n"
+        "## ユーザー · 2026-07-23T10:00:02+09:00\nこんにちは\n"
+    )
+    parsed = conv.parse_conversation(text)
+    assert [t["speaker"] for t in parsed["turns"]] == ["user", "user", "user"]
+    assert [t["body"] for t in parsed["turns"]] == ["안녕", "hi", "こんにちは"]
+    assert [t["locale"] for t in parsed["turns"]] == ["ko", "en", "ja"]
+
+
+def test_localized_header_like_body_lines_are_escaped_in_any_language():
+    # An en/ja user header pasted into an AI body must not become a turn boundary.
+    for sneaky in (
+        "## 🧑 User · 2099-01-01T00:00:00+09:00",
+        "## ユーザー · 2099-01-01T00:00:00+09:00",
+    ):
+        text = conv.serialize_conversation(
+            [conv.Turn(speaker="ai", ts="2026-07-23T10:00:00+09:00", body=sneaky)]
+        )
+        assert "\\" + sneaky in text
+        parsed = conv.parse_conversation(text)
+        assert len(parsed["turns"]) == 1
+        assert parsed["turns"][0]["speaker"] == "ai"
+        assert parsed["turns"][0]["body"] == sneaky
+
+
+def test_carryover_preserves_user_locale_variant():
+    # Re-serializing the tail (§7) must keep an en/ja user turn in its language, not
+    # collapse it to Korean.
+    text = (
+        "## 🧑 User · 2026-07-23T10:00:00+09:00\nhi\n\n"
+        "## 🧑 ユーザー · 2026-07-23T10:00:01+09:00\nやあ\n"
+    )
+    again = conv.serialize_conversation(conv.parse_conversation(text)["turns"])
+    assert again == text
+    intro = conv.build_carryover_intro("flowgate.default.0306.0001-CH", text, keep_turns=2)
+    assert "## 🧑 User · " in intro and "## 🧑 ユーザー · " in intro
+
+
 # ── §7: carry-over threshold / tail ───────────────────────────────────────────
 def test_should_carry_over_at_80_percent():
     assert conv.should_carry_over(80, 100) is True

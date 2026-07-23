@@ -218,6 +218,51 @@ def test_second_turn_appends(seed_data, tmp_path):
     assert content.index("first") < content.index("second")
 
 
+def test_turn_written_in_caller_locale(seed_data, tmp_path):
+    # 0306 NR0003 발견 1: X-Locale selects the stored user header's language.
+    doc_id = "testprj-__ALL__-0044-CH0005"
+    target = _make_ch_doc(doc_id, tmp_path, content="", seq=5)
+    with _build_client(target) as client:
+        en = client.post(
+            f"/documents/{doc_id}/conversation/turn",
+            json={"body": "hello"}, headers={"X-Locale": "en"},
+        )
+        ja = client.post(
+            f"/documents/{doc_id}/conversation/turn",
+            json={"body": "やあ"}, headers={"X-Locale": "ja-JP"},
+        )
+    assert en.status_code == 201, en.text
+    content = ja.json()["content"]
+    assert "## 🧑 User · " in content       # en turn
+    assert "## 🧑 ユーザー · " in content    # ja-JP degraded to ja
+    assert "## 🧑 사용자" not in content     # no Korean fallback leaked in
+
+
+def test_missing_locale_falls_back_to_korean(seed_data, tmp_path):
+    doc_id = "testprj-__ALL__-0044-CH0006"
+    target = _make_ch_doc(doc_id, tmp_path, content="", seq=6)
+    with _build_client(target) as client:
+        resp = client.post(f"/documents/{doc_id}/conversation/turn", json={"body": "hi"})
+    assert resp.status_code == 201, resp.text
+    assert "## 🧑 사용자 · " in resp.json()["content"]
+
+
+def test_speaker_role_forced_to_user(seed_data, tmp_path):
+    # 0306 NR0003 발견 3: role is a trust-boundary decision. A request forging
+    # speaker="ai" on the human session path still records a user turn.
+    doc_id = "testprj-__ALL__-0044-CH0007"
+    target = _make_ch_doc(doc_id, tmp_path, content="", seq=7)
+    with _build_client(target) as client:
+        resp = client.post(
+            f"/documents/{doc_id}/conversation/turn",
+            json={"body": "sneaky", "speaker": "ai"},
+        )
+    assert resp.status_code == 201, resp.text
+    content = resp.json()["content"]
+    assert "## 🧑 사용자 · " in content
+    assert "## 🤖 AI" not in content
+
+
 def test_non_conversation_type_rejected(seed_data, tmp_path):
     # R root is not a conversation document → 400, no file write attempted.
     with _build_client(tmp_path / "unused.md") as client:

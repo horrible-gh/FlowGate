@@ -399,7 +399,12 @@ async function onManualCopyAgain() {
 // a turn. Kept in lockstep with the server (conversation.py is the source of truth).
 // 0293 R0001: the AI label may carry the provider in parentheses —
 // "## 🤖 AI(claude-opus-4-8) · …". Optional, so every pre-0293 turn parses unchanged.
-const SPEAKER_ALT = '(?:🧑 )?사용자|(?:🤖 )?AI(?:\\([^)]*\\))?'
+// 0306 NR0003 발견 1: the user label is localized — ko 사용자 / en User / ja ユーザー,
+// emoji still optional — and all normalize to 'user' (speakerKey). The server writes
+// each new user turn in its author's locale; this side only needs to READ every
+// locale's header so a mixed-language CH renders every turn with the right role.
+const USER_NAMES = ['사용자', 'User', 'ユーザー']
+const SPEAKER_ALT = '(?:🧑 )?(?:사용자|User|ユーザー)|(?:🤖 )?AI(?:\\([^)]*\\))?'
 const HEADER_RE = new RegExp(`^##\\s+(${SPEAKER_ALT}) · (\\S+)\\s*$`)
 const HEADERLIKE_RE = new RegExp(`^\\\\*##\\s+(?:${SPEAKER_ALT}) · \\S+\\s*$`)
 const PROVIDER_RE = /^(.*?)\(([^)]*)\)$/
@@ -421,7 +426,7 @@ function stripSpeakerDecorations(label: string): { bare: string; provider?: stri
 // never be counted, so every successful reply would be reported as "no reply".
 function speakerKey(label: string): string {
   const { bare } = stripSpeakerDecorations(label)
-  if (bare === '사용자') return 'user'
+  if (USER_NAMES.includes(bare)) return 'user'
   if (bare === 'AI') return 'ai'
   return label
 }
@@ -430,7 +435,7 @@ function speakerKey(label: string): string {
 // The badge is simply omitted — absence of information, not a warning.
 function speakerProvider(label: string): string | undefined {
   const { bare, provider } = stripSpeakerDecorations(label)
-  return bare === 'AI' || bare === '사용자' ? provider : undefined
+  return bare === 'AI' || USER_NAMES.includes(bare) ? provider : undefined
 }
 
 function unescapeLine(line: string): string {

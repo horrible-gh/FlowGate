@@ -330,9 +330,12 @@ class RootTypeConvert(BaseModel):
 class ConversationTurnAppend(BaseModel):
     """A single conversation (CH) turn submitted from the session UI (L0044.0008 §6).
 
-    The body is the human's message text; `speaker` defaults to "user" (the PM side).
-    The wire format is built server-side by the shared serializer, so the FE never
-    constructs turn headers / escaping itself.
+    The body is the human's message text. `speaker` is accepted for backward
+    compatibility but IGNORED by the route: this is the human session path, so the
+    server fixes the author role to "user" at the trust boundary (0306 NR0003 발견 3) —
+    only the AI worker's token-bound path records "ai" turns. The wire format
+    (headers / escaping / locale) is built server-side by the shared serializer, so the
+    FE never constructs it.
     """
     body: str = Field(..., min_length=1)
     speaker: Literal["user", "ai"] = "user"
@@ -2545,6 +2548,7 @@ def convert_root_type(
 def append_conversation_turn(
     doc_id: str,
     body: ConversationTurnAppend,
+    request: Request,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Append one turn to a conversation (CH) document from the session UI.
@@ -2584,7 +2588,13 @@ def append_conversation_turn(
 
     file_path = _document_file_path(doc)
     existing = file_path.read_text(encoding="utf-8") if file_path.is_file() else ""
-    new_content = _conv.append_turn(existing, body.speaker, now_iso(), text)
+    # 0306 NR0003 발견 1: record the new user turn in the caller's UI locale. The FE
+    # sends X-Locale on every request (client/shared/api.ts), so the session composer
+    # needs no new field; a region tag ("en-US") or unknown value degrades to ko in the
+    # serializer. 발견 3: role is a trust-boundary decision, not client data — this human
+    # session path always writes a "user" turn regardless of body.speaker.
+    locale = (request.headers.get("X-Locale") or "ko").strip().lower().split("-")[0]
+    new_content = _conv.append_turn(existing, "user", now_iso(), text, locale=locale)
 
     # Enforce the same content cap the inbox edit path uses, so a session turn cannot
     # push the body past the hard limit the carry-over threshold is sized against.

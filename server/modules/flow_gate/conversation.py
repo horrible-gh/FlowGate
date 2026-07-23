@@ -27,9 +27,26 @@ from __future__ import annotations
 import re
 from typing import Optional, TypedDict
 
-# ── Speaker tokens (fixed; shared by serializer and parser) ────────────────────
-USER_SPEAKER = "🧑 사용자"
+# ── Speaker tokens (shared by serializer and parser) ───────────────────────────
+# 0306 NR0003 발견 1: the user label is LOCALIZED. The stored turn header is the CH
+# document's own text — visible in the raw CH, on copy, and to external tooling — so a
+# ko/en/ja session records its user turn in that language instead of a hardcoded Korean
+# token. "lenient in, strict out" still holds: every locale variant PARSES back to the
+# logical "user" key, but a NEW turn is written in its author's locale (turn_header).
+USER_SPEAKER = "🧑 사용자"  # canonical ko form; also the fallback for unknown locales
 AI_SPEAKER = "🤖 AI"
+
+# Canonical (emoji-bearing) user label per UI locale. Unknown/missing locales fall back
+# to ko, matching the client's X-Locale default (client/shared/api.ts).
+_USER_SPEAKER_BY_LOCALE: dict[str, str] = {
+    "ko": "🧑 사용자",
+    "en": "🧑 User",
+    "ja": "🧑 ユーザー",
+}
+# Bare user names (emoji/provider already stripped) that normalize to the "user" key,
+# mapped to the locale they were written in so carry-over (§7) can preserve the variant.
+_USER_NAME_TO_LOCALE: dict[str, str] = {"사용자": "ko", "User": "en", "ユーザー": "ja"}
+_AI_NAMES = frozenset({"AI"})
 
 # Logical speaker key → display token.
 _SPEAKER_TOKENS: dict[str, str] = {"user": USER_SPEAKER, "ai": AI_SPEAKER}
@@ -47,7 +64,12 @@ _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 # written before this change keeps parsing unchanged. speaker_key() strips it, which
 # is what keeps the parser/renderer/carry-over downstream of it untouched — see the
 # warning in that docstring.
-_SPEAKER_ALT = r"(?:🧑 )?사용자|(?:🤖 )?AI(?:\([^)]*\))?"
+#
+# 0306 NR0003 발견 1: the user label may now be Korean, English, or Japanese (emoji
+# still optional). All three normalize to "user" (speaker_key). Because _HEADERLIKE_RE
+# and the FE parser reuse this same alternation, every locale's header — and every
+# header-LIKE body line in any locale — is recognized and escaped in lockstep.
+_SPEAKER_ALT = r"(?:🧑 )?(?:사용자|User|ユーザー)|(?:🤖 )?AI(?:\([^)]*\))?"
 
 # Provider suffix on an AI label, e.g. "AI(claude-opus-4-8)" → "claude-opus-4-8".
 _PROVIDER_RE = re.compile(r"^(?P<label>.*?)\((?P<provider>[^)]*)\)$")
@@ -84,9 +106,10 @@ def speaker_key(label: str) -> str:
     """Normalize a parsed speaker label to a logical key ("user"/"ai").
 
     Accepts the canonical emoji tokens ("🧑 사용자"/"🤖 AI"), their emoji-less forms
-    ("사용자"/"AI"), and (0293) an AI label carrying a provider suffix
-    ("🤖 AI(claude-opus-4-8)"). Unknown labels fall back to the raw label
-    (forward-compat with other speakers), matching the old _TOKEN_TO_KEY behaviour.
+    ("사용자"/"AI"), (0293) an AI label carrying a provider suffix
+    ("🤖 AI(claude-opus-4-8)"), and (0306) the English/Japanese user labels
+    ("User"/"ユーザー") in either emoji or emoji-less form. Unknown labels fall back to the
+    raw label (forward-compat with other speakers), matching old _TOKEN_TO_KEY behaviour.
 
     The provider suffix MUST be stripped here. Everything downstream keys off the
     logical "ai" string — including the chat surface's own success test, which counts
@@ -95,11 +118,19 @@ def speaker_key(label: str) -> str:
     "user"), so the failure is silent: every successful chat invoke would report
     "no reply" (0293 NR0004 발견 2)."""
     bare, _ = _strip_speaker_decorations(label)
-    if bare == "사용자":
+    if bare in _USER_NAME_TO_LOCALE:
         return "user"
-    if bare == "AI":
+    if bare in _AI_NAMES:
         return "ai"
     return label
+
+
+def user_locale_of(label: str) -> Optional[str]:
+    """The UI locale a user turn header was written in ("ko"/"en"/"ja"), or None when the
+    label is not a user turn (0306 NR0003 발견 1). Lets carry-over (§7) re-serialize a
+    turn in its original language instead of collapsing every user turn to Korean."""
+    bare, _ = _strip_speaker_decorations(label)
+    return _USER_NAME_TO_LOCALE.get(bare)
 
 
 def speaker_provider(label: str) -> Optional[str]:
@@ -109,7 +140,8 @@ def speaker_provider(label: str) -> Optional[str]:
     or by a model that does not know its own name, simply carries no suffix and the
     renderer draws no badge."""
     bare, provider = _strip_speaker_decorations(label)
-    return provider if bare in ("사용자", "AI") else None
+    known = bare in _USER_NAME_TO_LOCALE or bare in _AI_NAMES
+    return provider if known else None
 
 # ── Carry-over (§7) ────────────────────────────────────────────────────────────
 # Fraction of the inbox content cap at which a conversation rolls over to a
@@ -131,6 +163,10 @@ class Turn(_TurnBase, total=False):
     # Optional so existing Turn(speaker=…, ts=…, body=…) construction stays valid, and
     # so carry-over (§7) can re-serialize a turn without losing its provider.
     provider: Optional[str]
+    # 0306: the UI locale a user turn header was written in ("ko"/"en"/"ja"), so
+    # carry-over re-serializes it in the same language. Absent on AI turns and on turns
+    # constructed without one (which then serialize to the ko fallback).
+    locale: Optional[str]
 
 
 class ParsedConversation(TypedDict):
@@ -152,32 +188,59 @@ def _unescape_line(line: str) -> str:
     return line
 
 
-def turn_header(speaker: str, ts: str, provider: Optional[str] = None) -> str:
+def turn_header(
+    speaker: str,
+    ts: str,
+    provider: Optional[str] = None,
+    locale: Optional[str] = None,
+) -> str:
     """Build the one-line header for a turn. *speaker* is a key ("user"/"ai") or a
     raw display label (used verbatim for forward-compat with other speakers).
 
     *provider* (0293) appends the parenthesized provider slot. It is dropped when it
     contains ")" — that character would end the group early and the line would no
-    longer round-trip through HEADER_RE."""
-    label = _SPEAKER_TOKENS.get(speaker, speaker)
+    longer round-trip through HEADER_RE.
+
+    *locale* (0306) selects the localized user label ("🧑 사용자"/"🧑 User"/"🧑 ユーザー")
+    for a NEW user turn; it is ignored for other speakers and falls back to ko for a
+    missing/unknown locale."""
+    if speaker == "user":
+        label = _USER_SPEAKER_BY_LOCALE.get(locale or "", USER_SPEAKER)
+    else:
+        label = _SPEAKER_TOKENS.get(speaker, speaker)
     if provider and ")" not in provider:
         label = f"{label}({provider})"
     return f"## {label} · {ts}"
 
 
-def serialize_turn(speaker: str, ts: str, body: str, provider: Optional[str] = None) -> str:
+def serialize_turn(
+    speaker: str,
+    ts: str,
+    body: str,
+    provider: Optional[str] = None,
+    locale: Optional[str] = None,
+) -> str:
     """Serialize a single turn to its `header + escaped body` block (no trailing
     separator)."""
-    lines = [turn_header(speaker, ts, provider)]
+    lines = [turn_header(speaker, ts, provider, locale)]
     for body_line in body.split("\n"):
         lines.append(_escape_line(body_line))
     return "\n".join(lines)
 
 
-def append_turn(existing_content: str, speaker: str, ts: str, body: str) -> str:
+def append_turn(
+    existing_content: str,
+    speaker: str,
+    ts: str,
+    body: str,
+    locale: Optional[str] = None,
+) -> str:
     """Append one turn to the bottom of *existing_content*, separated by a single
-    blank line. Returns the full new body to submit via inbox edit (full replace)."""
-    block = serialize_turn(speaker, ts, body)
+    blank line. Returns the full new body to submit via inbox edit (full replace).
+
+    *locale* (0306) records a NEW user turn in the caller's UI language; it falls back
+    to ko for a missing/unknown locale and is ignored for non-user turns."""
+    block = serialize_turn(speaker, ts, body, locale=locale)
     if existing_content and existing_content.strip():
         return existing_content.rstrip("\n") + "\n\n" + block + "\n"
     return block + "\n"
@@ -194,6 +257,7 @@ def parse_conversation(content: str) -> ParsedConversation:
     cur_speaker: Optional[str] = None
     cur_ts: Optional[str] = None
     cur_provider: Optional[str] = None
+    cur_locale: Optional[str] = None
     cur_body: list[str] = []
     started = False
 
@@ -208,6 +272,8 @@ def parse_conversation(content: str) -> ParsedConversation:
         turn = Turn(speaker=cur_speaker, ts=cur_ts or "", body="\n".join(body_lines))
         if cur_provider:
             turn["provider"] = cur_provider
+        if cur_locale:
+            turn["locale"] = cur_locale
         turns.append(turn)
 
     for line in content.split("\n"):
@@ -216,6 +282,7 @@ def parse_conversation(content: str) -> ParsedConversation:
             _flush()
             cur_speaker = speaker_key(m.group("speaker"))
             cur_provider = speaker_provider(m.group("speaker"))
+            cur_locale = user_locale_of(m.group("speaker"))
             cur_ts = m.group("ts")
             cur_body = []
             started = True
@@ -237,7 +304,11 @@ def serialize_conversation(turns: list[Turn], intro: str = "") -> str:
     if intro:
         parts.append(intro.rstrip("\n"))
     for t in turns:
-        parts.append(serialize_turn(t["speaker"], t["ts"], t["body"], t.get("provider")))
+        parts.append(
+            serialize_turn(
+                t["speaker"], t["ts"], t["body"], t.get("provider"), t.get("locale")
+            )
+        )
     return ("\n\n".join(parts) + "\n") if parts else ""
 
 
