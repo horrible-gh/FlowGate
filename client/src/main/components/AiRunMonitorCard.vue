@@ -84,6 +84,7 @@ import {
   compareRunEntries,
   isAwaitingQ,
   isFinishedCard,
+  openTargetDocId,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
 } from '../stores/aiInvokeRuns'
@@ -127,8 +128,8 @@ function reachedFor(entry: AiInvokeRunEntry): number {
 }
 
 async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
-  // Same target as the miniplayer card: a waiting Q wins over the run's own document.
-  const docId = entry.pendingQDocIds[0] ?? entry.docRef
+  // A waiting Q wins, followed by the latest generated document and the source fallback.
+  const docId = openTargetDocId(entry)
   if (!docId) return
   try {
     const res = await getRequest<any>(`/api/v1/documents/detail?doc_id=${encodeURIComponent(docId)}`)

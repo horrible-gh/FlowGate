@@ -223,6 +223,12 @@ export function isAwaitingQ(entry: AiInvokeRunEntry): boolean {
   return entry.pendingQDocIds.length > 0
 }
 
+export function openTargetDocId(entry: AiInvokeRunEntry): string | undefined {
+  return entry.pendingQDocIds[0]
+    ?? entry.reachedDocIds[entry.reachedDocIds.length - 1]
+    ?? entry.docRef
+}
+
 const ACTIVE_PHASES: AiInvokePhase[] = ['running', 'pause_requested']
 
 // The one predicate for "a result the user has not dealt with yet". 0294 B0001: every
