@@ -1565,6 +1565,7 @@ export default {
       toast_upload_forbidden: 'Access denied.',
       toast_upload_failed: 'Upload failed',
       modified_badge: 'Modified',
+      new_badge: 'New',
       delete_confirm_title: 'Delete',
       delete_confirm_file: 'Delete the file "{path}"? This action cannot be undone.',
       delete_confirm_folder: 'Delete the folder "{path}" and all of its contents? This recursive deletion cannot be undone.',

@@ -21,12 +21,18 @@
       </span>
       <span class="tree-ico"><AppIcon :name="iconFA.name" :style="{ color: iconFA.color }" /></span>
       <span
-        v-if="isDirty"
+        v-if="isNew"
+        class="tree-new-marker"
+        :title="t('main.file_tree_node.new_badge')"
+        :aria-label="t('main.file_tree_node.new_badge')"
+      >U</span>
+      <span
+        v-else-if="isDirty"
         class="tree-dirty-marker"
         :title="t('main.file_tree_node.modified_badge')"
         :aria-label="t('main.file_tree_node.modified_badge')"
       >></span>
-      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isDirty }">{{ node.label }}</span>
+      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isDirty && !isNew, 'tree-lbl--new': isNew }">{{ node.label }}</span>
       <span v-if="downloading" class="tree-loading"><AppIcon name="spinner" spin /></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
@@ -184,6 +190,21 @@ const isDirty = computed(() => {
   return props.node.type === 'folder'
     ? explorerStore.isBaseDirtyDir(props.projectId, props.node.path)
     : explorerStore.isBaseDirtyPath(props.projectId, props.node.path)
+})
+
+// 0308 T0004 (NR0003 권고 2·3·5) — new (untracked) file marker, a channel parallel to
+// isDirty. base_dirty deliberately excludes untracked files (folding them in would widen
+// the E3 merge-finalize guard — git_service.py), so new files need their own store state.
+// Only the editable base checkout surfaces it: the read-only group-branch snapshot shows
+// committed files only, so uncommitted new files never appear there (NR0003 발견 4).
+// Priority (see template): a node reads as NEW before MODIFIED. For a file the two are
+// mutually exclusive (untracked vs tracked-modified); for a folder that holds both, the
+// new badge wins so the newly added file is never hidden — the whole point of B0001.
+const isNew = computed(() => {
+  if (props.readonly && props.groupId) return false
+  return props.node.type === 'folder'
+    ? explorerStore.isBaseUntrackedDir(props.projectId, props.node.path)
+    : explorerStore.isBaseUntrackedPath(props.projectId, props.node.path)
 })
 
 const iconFA = computed(() => {
@@ -467,5 +488,15 @@ async function onNodeFolderSelected(e: Event) {
   font-weight: 700;
   line-height: 1;
   color: var(--git-modified, #e2c08d);
+}
+.tree-lbl--new {
+  color: var(--git-added, #73c991);
+}
+.tree-new-marker {
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--git-added, #73c991);
 }
 </style>

@@ -61,6 +61,10 @@ export interface GitProjectStatus {
   ahead_count: number | null
   behind_count: number | null
   base_dirty?: { dirty: boolean; files: string[] }
+  // 0308 T0004 (NR0003 권고 1) — new (untracked) base-checkout files. Kept as a
+  // SEPARATE channel from base_dirty: folding untracked into base_dirty would widen
+  // the E3 merge-finalize guard (git_service.py). Drives the file-tree new-file badge.
+  base_untracked?: { count: number; files: string[]; truncated?: boolean }
   slots: Array<{ group_id: string; branch: string | null; status: string; merge_id: number | null }>
   pending: Array<{
     group_id: string
@@ -119,6 +123,12 @@ export const useExplorerStore = defineStore('explorer', () => {
   // tree. Refreshed by its four triggers: git/status fetch, src-content save
   // response, base-commit/base-revert response, finalize base_dirty 409.
   const baseDirtyFiles = ref<Record<string, string[]>>({})
+  // 0308 T0004 (NR0003 권고 1) — per-project set of new (untracked) base-checkout
+  // files, the exact complement of baseDirtyFiles. The server already emits it as
+  // base_untracked; it now drives a distinct file-tree new-file badge instead of being
+  // consumed only by GitStatusPanel. Refreshed alongside baseDirtyFiles on every
+  // git/status fetch. Never merged into baseDirtyFiles (E3 guard — git_service.py).
+  const baseUntrackedFiles = ref<Record<string, string[]>>({})
   // 0282 NR0003 발견 3: project git/status was fetched independently by four
   // components (FileExplorer, GitActionMenu, GitStatusPanel, GitBaseDirtyDialog)
   // — every mount race or SSE trigger multiplied the server's aggregation work.
@@ -212,6 +222,9 @@ export const useExplorerStore = defineStore('explorer', () => {
         // 0177 §2.6-a badge trigger 1/4 (moved here from GitStatusPanel): every
         // status fetch refreshes the file-tree "modified" badges.
         if (status) setBaseDirtyFiles(pid, status.base_dirty?.files ?? [])
+        // 0308 T0004 (NR0003 권고 1) badge trigger — refresh the file-tree new-file
+        // badges from the same status payload, on a channel separate from base-dirty.
+        if (status) setBaseUntrackedFiles(pid, status.base_untracked?.files ?? [])
         return status
       } finally {
         gitStatusInflight.delete(pid)
@@ -372,6 +385,26 @@ export const useExplorerStore = defineStore('explorer', () => {
     return _anyUnder(baseDirtyFiles.value[pid], folderPath)
   }
 
+  // 0308 T0004 (NR0003 권고 1·2·3) — new (untracked) base-checkout files, a channel
+  // parallel to the base-dirty one above. Same normalization and the same _anyUnder
+  // folder propagation, so a new file inside a collapsed folder still marks its ancestors.
+  function setBaseUntrackedFiles(pid: string, files: string[]) {
+    baseUntrackedFiles.value = {
+      ...baseUntrackedFiles.value,
+      [pid]: files.map((f) => f.replace(/\\/g, '/')),
+    }
+  }
+
+  function isBaseUntrackedPath(pid: string, path: string): boolean {
+    const files = baseUntrackedFiles.value[pid]
+    if (!files || !files.length) return false
+    return files.includes(path.replace(/\\/g, '/'))
+  }
+
+  function isBaseUntrackedDir(pid: string, folderPath: string): boolean {
+    return _anyUnder(baseUntrackedFiles.value[pid], folderPath)
+  }
+
   // ── Explorer tree expansion (0245 R0001 / NR0003 §1) ────────────────────────
 
   const expandKey = (pid: string, nodeId: string) => `${pid}:${nodeId}`
@@ -459,6 +492,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     selectedFileNodeId, selectedGroupNodeId, pendingSelectFilePath,
     loadingFile, loadingGroup, fileError, groupError,
     baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath, isBaseDirtyDir,
+    baseUntrackedFiles, setBaseUntrackedFiles, isBaseUntrackedPath, isBaseUntrackedDir,
     gitStatus, fetchGitStatus,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
