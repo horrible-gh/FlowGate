@@ -1564,6 +1564,7 @@ export default {
       toast_upload_forbidden: 'アクセスが拒否されました。',
       toast_upload_failed: 'アップロードに失敗しました',
       modified_badge: '変更あり',
+      new_badge: '新規',
       delete_confirm_title: '削除',
       delete_confirm_file: 'ファイル「{path}」を削除しますか？この操作は元に戻せません。',
       delete_confirm_folder: 'フォルダ「{path}」とその中身をすべて削除しますか？配下の項目も再帰的に削除され、元に戻せません。',

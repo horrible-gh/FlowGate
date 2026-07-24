@@ -1564,6 +1564,7 @@ export default {
       toast_upload_forbidden: '권한이 없습니다.',
       toast_upload_failed: '업로드 실패',
       modified_badge: '수정됨',
+      new_badge: '신규',
       delete_confirm_title: '삭제',
       delete_confirm_file: '"{path}" 파일을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
       delete_confirm_folder: '"{path}" 폴더와 그 안의 모든 내용을 삭제하시겠습니까? 하위 항목까지 재귀적으로 삭제되며 되돌릴 수 없습니다.',
