@@ -1466,6 +1466,18 @@ def create_next_approved_core(
                     "title": gen_title,
                     "status": doc.get("status"),
                     "revision_no": 0,
+                    # NR0005 §6-3 (T0006): this auto-generated "○○ 승인" head is the
+                    # auto-advance target document N0004 asked the explorer to pinpoint
+                    # AND select — not merely refresh. Carry an explicit select intent so
+                    # the FE can distinguish "select this" from a plain "refresh". The
+                    # exact doc_id is already present (§4-3), so no extra lookup is needed;
+                    # what was missing was the intent, which these two fields supply.
+                    # Additive / back-compatible: a client that ignores them behaves
+                    # exactly as before (a normal created refresh), and only the
+                    # auto-generated next-step head carries select=True, so ordinary
+                    # created/updated refreshes never make the selection "jump".
+                    "select": True,
+                    "focus_reason": "auto_advance",
                 },
                 audience="*",
                 project=project_id,
