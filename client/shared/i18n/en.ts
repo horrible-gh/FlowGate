@@ -2143,6 +2143,7 @@ export default {
     toast_archived: 'Project has been archived.',
     toast_restored: 'Project has been restored.',
     toast_error: 'An error occurred while creating the project.',
+    toast_state_error: 'Could not change the project status.',
     label_display_name: 'Display name',
     label_id: 'Project ID',
     button_suggest_id: 'Suggest ID',

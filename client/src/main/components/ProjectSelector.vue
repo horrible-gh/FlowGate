@@ -15,9 +15,9 @@
       <div v-if="projectStore.loading" class="proj-dd-item">
         {{ t('common.loading') }}
       </div>
-      <template v-else-if="projectStore.projects.length > 0">
+      <template v-else-if="projectStore.activeProjects.length > 0">
         <button
-          v-for="p in projectStore.projects"
+          v-for="p in projectStore.activeProjects"
           :key="p.project_id"
           type="button"
           class="proj-dd-item"
@@ -120,26 +120,15 @@ const currentProjectColor = computed(() => {
 const emit = defineEmits<{ projectChanged: [pid: string] }>()
 
 function projectColor(project: Project) {
-  const index = projectStore.projects.findIndex((p) => p.project_id === project.project_id)
+  const index = projectStore.activeProjects.findIndex((p) => p.project_id === project.project_id)
   return project.color || projectColors[Math.max(index, 0) % projectColors.length]
 }
 
 async function loadProjects() {
   try {
     await projectStore.fetchProjects()
-    
-    if (projectStore.currentProjectId) {
-      const projectExists = projectStore.projects.some(
-        (p) => p.project_id === projectStore.currentProjectId,
-      )
-      if (!projectExists) {
-        projectStore.currentProjectId = null
-        localStorage.removeItem('fg_current_project_id')
-      }
-    }
-    
-    if (projectStore.projects.length > 0 && !projectStore.currentProjectId) {
-      selectProject(projectStore.projects[0])
+    if (projectStore.activeProjects.length > 0 && !projectStore.currentProjectId) {
+      selectProject(projectStore.activeProjects[0])
     }
   } catch (e) {
     console.error('Failed to load projects:', e)

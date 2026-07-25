@@ -13,6 +13,7 @@ vi.mock('@shared/api', () => ({
 describe('settings store', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+    localStorage.clear();
     getRequest.mockReset();
   });
 
@@ -33,5 +34,46 @@ describe('settings store', () => {
 
     expect(store.systemSettings.storage_root).toBe('C:/workspace/projects/FlowGate/server/storage');
     expect(store.systemSettings.log_level).toBe('INFO');
+  });
+
+  it('loads all projects for management while activeProjects excludes archived entries', async () => {
+    getRequest.mockResolvedValueOnce({
+      data: {
+        projects: [
+          { project_id: 'active', project_name: 'Active', is_active: 1 },
+          { project_id: 'archived', project_name: 'Archived', is_active: 0 },
+        ],
+      },
+    });
+
+    const { useSettingsStore } = await import('../src/settings/stores/settings.js');
+    const store = useSettingsStore();
+
+    await store.fetchProjects();
+
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects', { status: 'all' });
+    expect(store.projects.map((p) => p.project_id)).toEqual(['active', 'archived']);
+    expect(store.activeProjects.map((p) => p.project_id)).toEqual(['active']);
+    expect(store.currentProjectId).toBe('active');
+  });
+  it('retains an archived current project while activeProjects stays selectable-only', async () => {
+    localStorage.setItem('fg_current_project_id', 'archived');
+    getRequest.mockResolvedValueOnce({
+      data: {
+        projects: [
+          { project_id: 'active', project_name: 'Active', is_active: 1 },
+          { project_id: 'archived', project_name: 'Archived', is_active: 0 },
+        ],
+      },
+    });
+
+    const { useSettingsStore } = await import('../src/settings/stores/settings.js');
+    const store = useSettingsStore();
+
+    await store.fetchProjects();
+
+    expect(store.currentProjectId).toBe('archived');
+    expect(localStorage.getItem('fg_current_project_id')).toBe('archived');
+    expect(store.activeProjects.map((p) => p.project_id)).toEqual(['active']);
   });
 });

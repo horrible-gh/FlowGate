@@ -53,16 +53,39 @@ from modules.flow_gate.services import test_command_service
 router = APIRouter(tags=["ProjectSettings"])
 
 
-@router.get("/projects")
-def list_projects_endpoint(user=Depends(get_current_user)):
-    """List all active projects, each with its modules (project_modules = SSOT, M036)."""
-    projects = projects_db.list_projects(is_active=1)
+def _status_to_is_active(status: str) -> int | None:
+    normalized = (status or "active").strip().lower()
+    if normalized == "all":
+        return None
+    if normalized == "active":
+        return 1
+    if normalized in {"inactive", "archive", "archived"}:
+        return 0
+    raise HTTPException(status_code=422, detail="status must be one of: all, active, inactive")
+
+
+def _attach_project_modules(projects: list[dict]) -> list[dict]:
     for p in projects:
         modules = projects_db.list_modules(p["project_id"])
         p["modules"] = [
             {"name": m["name"], "title": m.get("title") or m["name"]}
             for m in modules
         ]
+    return projects
+
+
+@router.get("/projects")
+def list_projects_endpoint(
+    status: str = Query("active"),
+    user=Depends(get_current_user),
+):
+    """Project list with an explicit management scope.
+
+    General consumers receive active projects by default. Archive/restore
+    management views pass status=all to render both states.
+    """
+    projects = projects_db.list_projects(is_active=_status_to_is_active(status))
+    _attach_project_modules(projects)
     return {"projects": projects}
 
 
@@ -71,6 +94,64 @@ class ProjectCreate(BaseModel):
     project_id: str | None = None
     description: str | None = None
     color: str | None = None
+
+
+class ProjectStatusPatch(BaseModel):
+    is_active: bool | None = None
+    status: str | None = None
+
+
+def _project_state_response(project_id: str) -> dict:
+    row = projects_db.get_by_id(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _attach_project_modules([row])[0]
+
+
+def _set_project_active(project_id: str, is_active: bool) -> dict:
+    current = projects_db.get_by_id(project_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target = 1 if is_active else 0
+    if int(current.get("is_active", 1)) != target:
+        if is_active:
+            projects_db.add_allowed_project(project_id)
+        else:
+            projects_db.remove_allowed_project(project_id)
+    return _project_state_response(project_id)
+
+
+@router.patch("/projects/{project_id}/status")
+def patch_project_status(
+    project_id: str,
+    body: ProjectStatusPatch,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    if body.is_active is not None:
+        return _set_project_active(project_id, bool(body.is_active))
+    if body.status is not None:
+        is_active = _status_to_is_active(body.status)
+        if is_active is None:
+            raise HTTPException(status_code=422, detail="status must be active or inactive")
+        return _set_project_active(project_id, is_active == 1)
+    raise HTTPException(status_code=422, detail="is_active or status is required")
+
+
+@router.post("/projects/{project_id}/archive")
+def archive_project(
+    project_id: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    return _set_project_active(project_id, False)
+
+
+@router.post("/projects/{project_id}/restore")
+def restore_project(
+    project_id: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    return _set_project_active(project_id, True)
 
 
 @router.post("/projects", status_code=201)

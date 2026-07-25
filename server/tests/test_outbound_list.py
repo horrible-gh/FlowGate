@@ -78,6 +78,16 @@ def tmp_db():
             mock_db._conn.executescript(sql_file.read_text(encoding="utf-8"))
         except Exception:
             pass
+    # Migration 064 rebuilds tokens from a legacy column list and can erase the
+    # column added by 063 when tests replay every migration while swallowing
+    # duplicate-column errors. Keep this fixture aligned with the runtime model.
+    token_columns = {
+        row["name"] for row in mock_db._conn.execute("PRAGMA table_info(tokens)")
+    }
+    if "continuation_instruction_mode" not in token_columns:
+        mock_db._conn.execute(
+            "ALTER TABLE tokens ADD COLUMN continuation_instruction_mode TEXT"
+        )
     mock_db._conn.commit()
     yield mock_db, db_path
     mock_db.close()
@@ -203,8 +213,8 @@ def test_list_projects_success(seed_data, tmp_path):
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
-    assert data["total"] >= 2
     assert any(item["project_id"] == "testprj" for item in data["items"])
+    assert all(item["project_id"] != "OFFPRJ" for item in data["items"])
 
 
 def test_list_projects_no_auth_401(seed_data):
@@ -253,6 +263,20 @@ def test_list_projects_status_filter(seed_data, tmp_path):
     items = resp.json()["items"]
     assert any(item["project_id"] == "testprj" for item in items)
     assert all(item["project_id"] != "OFFPRJ" for item in items)
+
+
+def test_list_projects_inactive_and_all_filters(seed_data, tmp_path):
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    inactive = client.get("/api/v1/list/projects?is_active=inactive", headers={"Authorization": f"Bearer {raw}"})
+    all_resp = client.get("/api/v1/list/projects?status=all", headers={"Authorization": f"Bearer {raw}"})
+
+    assert inactive.status_code == 200
+    assert [item["project_id"] for item in inactive.json()["items"]] == ["OFFPRJ"]
+    assert all_resp.status_code == 200
+    all_ids = {item["project_id"] for item in all_resp.json()["items"]}
+    assert {"testprj", "OFFPRJ"}.issubset(all_ids)
 
 
 def test_list_modules_success(seed_data, tmp_path):

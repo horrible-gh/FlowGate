@@ -2141,6 +2141,7 @@ export default {
     toast_archived: 'プロジェクトをアーカイブしました。',
     toast_restored: 'プロジェクトを復元しました。',
     toast_error: 'プロジェクトの作成中にエラーが発生しました。',
+    toast_state_error: 'プロジェクトの状態を変更できませんでした。',
     label_display_name: '表示名',
     label_id: 'プロジェクトID',
     button_suggest_id: 'IDを提案',

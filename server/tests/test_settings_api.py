@@ -120,6 +120,13 @@ def mock_db(test_db_path):
             cur = self._conn.execute(sql, params or [])
             return [dict(r) for r in cur.fetchall()]
 
+        def table_exists(self, table_name):
+            row = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                [table_name],
+            ).fetchone()
+            return row is not None
+
     store = TestStore(test_db_path)
     # Each db/rbac module does `from .connection import get_store`, so the name must be
     # overridden in every importing namespace. The previous nested `with patch(...)`
@@ -435,3 +442,73 @@ class TestRBACDecorators:
 
         user = {"user_id": "usr_manager", "is_admin": 0}
         assert _has_permission(user, "system.settings.manage", None) is False
+
+
+class TestProjectArchiveRestore:
+    def _make_client(self, user):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from modules.flow_gate.settings.routers.project_settings import router
+        from modules.flow_gate.auth.middleware import get_current_user
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app)
+
+    def test_project_list_defaults_to_active_and_management_can_request_all(self, mock_db):
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+        mock_db._execute(
+            "INSERT OR REPLACE INTO projects(project_id,project_name,is_active,created_at,updated_at) "
+            "VALUES('proj_archived','Archived',0,datetime('now'),datetime('now'))"
+        )
+        try:
+            active_resp = client.get("/api/v1/projects")
+            all_resp = client.get("/api/v1/projects?status=all")
+
+            assert all_resp.status_code == 200
+            assert active_resp.status_code == 200
+            all_ids = {p["project_id"] for p in all_resp.json()["projects"]}
+            active_ids = {p["project_id"] for p in active_resp.json()["projects"]}
+            assert "proj_archived" in all_ids
+            assert "proj_archived" not in active_ids
+        finally:
+            mock_db._execute("DELETE FROM projects WHERE project_id='proj_archived'")
+
+    def test_archive_restore_are_persistent_and_idempotent(self, mock_db):
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        archived = client.post("/api/v1/projects/proj_001/archive")
+        archived_again = client.post("/api/v1/projects/proj_001/archive")
+        row = mock_db._fetch_one("SELECT is_active FROM projects WHERE project_id='proj_001'")
+        restored = client.post("/api/v1/projects/proj_001/restore")
+        row_after_restore = mock_db._fetch_one("SELECT is_active FROM projects WHERE project_id='proj_001'")
+
+        assert archived.status_code == 200
+        assert archived.json()["is_active"] == 0
+        assert archived_again.status_code == 200
+        assert archived_again.json()["is_active"] == 0
+        assert row["is_active"] == 0
+        assert restored.status_code == 200
+        assert restored.json()["is_active"] == 1
+        assert row_after_restore["is_active"] == 1
+
+    def test_patch_status_rejects_missing_project(self):
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        resp = client.patch("/api/v1/projects/missing/status", json={"is_active": 0})
+
+        assert resp.status_code == 404
+    def test_patch_status_rejects_invalid_boolean(self):
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        resp = client.patch("/api/v1/projects/proj_001/status", json={"is_active": 2})
+
+        assert resp.status_code == 422
+
+    def test_project_status_requires_project_edit_permission(self):
+        client = self._make_client({"user_id": "usr_worker", "is_admin": 0})
+
+        resp = client.post("/api/v1/projects/proj_001/archive")
+
+        assert resp.status_code == 403

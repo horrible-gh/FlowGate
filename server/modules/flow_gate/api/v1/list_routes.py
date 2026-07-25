@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Query
 from fastapi.responses import JSONResponse
 
 from modules.flow_gate.db import documents as db_docs
@@ -45,6 +45,7 @@ def list_projects(
     limit: int = 50,
     offset: int = 0,
     status: Optional[str] = None,
+    is_active: Optional[str] = Query(None),
 ):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -53,11 +54,18 @@ def list_projects(
     if err:
         return err
 
-    is_active: Optional[int] = None
-    if status == "active":
-        is_active = 1
-    elif status == "inactive":
-        is_active = 0
+    status_filter = is_active if is_active is not None else status
+    active_filter: Optional[int] = 1
+    if status_filter is not None:
+        normalized = str(status_filter).strip().lower()
+        if normalized in {"all", "any", "*"}:
+            active_filter = None
+        elif normalized in {"active", "1", "true", "yes"}:
+            active_filter = 1
+        elif normalized in {"inactive", "archive", "archived", "0", "false", "no"}:
+            active_filter = 0
+        else:
+            return _fail(400, "status/is_active must be active, inactive, or all")
 
     store = get_store()
     count_sql = "SELECT COUNT(*) as cnt FROM projects"
@@ -65,11 +73,11 @@ def list_projects(
     data_sql = "SELECT * FROM projects"
     data_params: list = []
 
-    if is_active is not None:
+    if active_filter is not None:
         count_sql += " WHERE is_active = ?"
         data_sql += " WHERE is_active = ?"
-        count_params.append(is_active)
-        data_params.append(is_active)
+        count_params.append(active_filter)
+        data_params.append(active_filter)
 
     total_row = store._fetch_one(count_sql, count_params)
     total = total_row["cnt"] if total_row else 0

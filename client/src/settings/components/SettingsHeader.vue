@@ -15,7 +15,7 @@
       <div v-if="projectMenuOpen" class="proj-dd">
         <div class="proj-dd-hd">{{ t('main.nav.project_menu') }}</div>
         <button
-          v-for="project in settings.projects"
+          v-for="project in settings.activeProjects"
           :key="project.project_id"
           type="button"
           class="proj-dd-item"
