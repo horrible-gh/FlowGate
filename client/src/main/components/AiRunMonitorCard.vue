@@ -79,6 +79,8 @@ import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest } from '@shared/api'
 import { useTabsStore } from '../stores/tabs'
+import { useExplorerStore } from '../stores/explorer'
+import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import {
   compareRunEntries,
@@ -93,6 +95,8 @@ const { t } = useI18n()
 const { showToast } = useToast()
 const store = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
+const explorerStore = useExplorerStore()
+const projectStore = useProjectStore()
 
 const entries = computed<AiInvokeRunEntry[]>(() =>
   Object.values(store.runsByGroup).slice().sort(compareRunEntries),
@@ -143,6 +147,17 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       mdPath: d.file_path ?? null,
       typeCode: d.type_code ?? null,
     })
+    // Reveal + select the opened doc in the document explorer, same as the header
+    // miniplayer — the AI-run monitor card carried the identical open-without-reveal
+    // gap (0316 T0004 / NR0003 §3-2·권고 2), and the same rev1 반려: it passed the
+    // current project id, so opening a doc from another project never switched to it.
+    // Target the document's OWN project (d.project_id) with switchProject. Best-effort
+    // and detached from the open.
+    void explorerStore.revealDocInGroupTree(
+      d.project_id ?? projectStore.currentProjectId,
+      d.doc_id,
+      { switchProject: true },
+    )
     // Same acknowledgement rule as the header monitor (0290 R0001 §1).
     store.dismiss(entry.groupId)
   } catch {

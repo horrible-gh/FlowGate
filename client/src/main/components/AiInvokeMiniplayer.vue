@@ -181,6 +181,8 @@ import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest } from '@shared/api'
 import { useTabsStore } from '../stores/tabs'
+import { useExplorerStore } from '../stores/explorer'
+import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import {
   compareRunEntries,
@@ -194,6 +196,8 @@ const { t } = useI18n()
 const { showToast } = useToast()
 const store = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
+const explorerStore = useExplorerStore()
+const projectStore = useProjectStore()
 
 // Popover state only — deliberately NOT persisted. A header popover is a transient
 // surface (like the notification bell): it opens on demand and closes on outside
@@ -368,6 +372,19 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       mdPath: d.file_path ?? null,
       typeCode: d.type_code ?? null,
     })
+    // Mirror the tab open into the document explorer: switch to the document's OWN
+    // project (an AI run's target doc is often in another project than the one on
+    // screen), reveal the ancestor groups, and select the opened doc. Passing the
+    // current project id here was the rev1 반려 — "문서열기 해도 해당 프로젝트로 안가잖아":
+    // a cross-project open landed the reveal on the wrong tree and the explorer never
+    // moved. Use d.project_id (documents/detail is SELECT *) with switchProject; fall
+    // back to the current project when detail omits it. Best-effort and detached —
+    // the tab is already open, so a tree-load hiccup must not turn this into an error.
+    void explorerStore.revealDocInGroupTree(
+      d.project_id ?? projectStore.currentProjectId,
+      d.doc_id,
+      { switchProject: true },
+    )
     // Opening the document IS the acknowledgement (0290 R0001 §1): the result has been
     // read, so the card goes now instead of waiting out the TTL. dismiss() ignores
     // running/awaiting/paused cards, so a live run is never dropped by this.
