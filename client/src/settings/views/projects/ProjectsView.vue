@@ -108,7 +108,8 @@
                 v-if="p.is_active === 0"
                 class="btn btn-ghost btn-sm"
                 style="color:var(--primary);"
-                @click="showToast(t('projects.toast_restored'), 'success')"
+                @click="changeProjectArchiveState(p, false)"
+                :disabled="isProjectPending(p.project_id)"
               >
                 <AppIcon name="arrow-counter-clockwise" /> {{ t('projects.restore') }}
               </button>
@@ -117,7 +118,8 @@
                 class="btn btn-ghost btn-sm"
                 style="margin-left:auto; color:var(--text-m);"
                 :title="t('projects.archive')"
-                @click="showToast(t('projects.toast_archived'), 'info')"
+                @click="changeProjectArchiveState(p, true)"
+                :disabled="isProjectPending(p.project_id)"
               >
                 <AppIcon name="archive" />
               </button>
@@ -258,6 +260,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { postRequest } from '@shared/api';
+import { setProjectArchiveState } from '@shared/projects';
 import { useToast } from '../../../main/components/common/useToast';
 import { useSettingsStore } from '../../stores/settings.js';
 import AppIcon from '@shared/AppIcon.vue';
@@ -276,6 +279,7 @@ const newProjSlug = ref('');
 const newProjDesc = ref('');
 const selectedColor = ref('#2563eb');
 const storageType = ref('default');
+const pendingProjectIds = ref(new Set());
 
 const slugManuallyEdited = ref(false);
 let _slugDebounceTimer = null;
@@ -368,6 +372,26 @@ function formatUpdatedAt(updatedAt) {
 function openProject(project) {
   settings.setCurrentProject(project.project_id);
   window.location.href = '/main';
+}
+
+function isProjectPending(projectId) {
+  return pendingProjectIds.value.has(projectId);
+}
+
+async function changeProjectArchiveState(project, archived) {
+  if (isProjectPending(project.project_id)) return;
+  pendingProjectIds.value = new Set([...pendingProjectIds.value, project.project_id]);
+  try {
+    await setProjectArchiveState(project.project_id, archived);
+    await settings.fetchProjects();
+    showToast(t(archived ? 'projects.toast_archived' : 'projects.toast_restored'), archived ? 'info' : 'success');
+  } catch {
+    showToast(t('projects.toast_state_error'), 'danger');
+  } finally {
+    const next = new Set(pendingProjectIds.value);
+    next.delete(project.project_id);
+    pendingProjectIds.value = next;
+  }
 }
 
 async function suggestSlug() {

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { getRequest, patchRequest } from '@shared/api';
 
 function normalizeSettings(payload) {
@@ -20,6 +20,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const currentProjectId = ref(localStorage.getItem('fg_current_project_id') || null);
   const loading = ref(false);
   const error = ref(null);
+
+  const activeProjects = computed(() => projects.value.filter((p) => p.is_active === 1));
 
   async function fetchSystemSettings() {
     loading.value = true;
@@ -47,11 +49,11 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   async function fetchProjects() {
-    const { data } = await getRequest('/api/v1/projects');
+    const { data } = await getRequest('/api/v1/projects', { status: 'all' });
     const raw = Array.isArray(data) ? data : data.projects || [];
     projects.value = raw.filter((p) => p.project_id !== '__SYSTEM__');
-    if (projects.value.length && !currentProjectId.value) {
-      setCurrentProject(projects.value[0].project_id);
+    if (activeProjects.value.length && !currentProjectId.value) {
+      setCurrentProject(activeProjects.value[0].project_id);
     }
   }
 
@@ -68,6 +70,7 @@ export const useSettingsStore = defineStore('settings', () => {
     systemSettings,
     systemInfo,
     projects,
+    activeProjects,
     currentProjectId,
     loading,
     error,

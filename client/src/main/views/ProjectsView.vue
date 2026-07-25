@@ -147,7 +147,8 @@
                     v-if="p.is_active === 0"
                     class="btn btn-ghost btn-sm"
                     style="color:var(--primary);"
-                    @click="showToast(t('projects.toast_restored'), 'success')"
+                    @click="changeProjectArchiveState(p, false)"
+                    :disabled="isProjectPending(p.project_id)"
                   >
                     <AppIcon name="arrow-counter-clockwise" /> {{ t('projects.restore') }}
                   </button>
@@ -156,7 +157,8 @@
                     class="btn btn-ghost btn-sm"
                     style="margin-left:auto; color:var(--text-m);"
                     :title="t('projects.archive')"
-                    @click="showToast(t('projects.toast_archived'), 'info')"
+                    @click="changeProjectArchiveState(p, true)"
+                    :disabled="isProjectPending(p.project_id)"
                   >
                     <AppIcon name="archive" />
                   </button>
@@ -288,6 +290,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { useProjectStore, type Project } from '../stores/project'
 import { useToast } from '../components/common/useToast'
 import { postRequest } from '@shared/api'
+import { setProjectArchiveState } from '@shared/projects'
 
 interface AccessTokenPayload {
   username?: string
@@ -322,6 +325,7 @@ const newProjName = ref('')
 const newProjDesc = ref('')
 const selectedColor = ref('#2563eb')
 const storageType = ref<'default' | 'custom'>('default')
+const pendingProjectIds = ref<Set<string>>(new Set())
 
 const colorOptions = [
   '#2563eb', '#7c3aed', '#db2777', '#0891b2',
@@ -386,6 +390,26 @@ function openProject(p: Project) {
   router.push('/')
 }
 
+function isProjectPending(projectId: string): boolean {
+  return pendingProjectIds.value.has(projectId)
+}
+
+async function changeProjectArchiveState(project: Project, archived: boolean) {
+  if (isProjectPending(project.project_id)) return
+  pendingProjectIds.value = new Set([...pendingProjectIds.value, project.project_id])
+  try {
+    await setProjectArchiveState(project.project_id, archived)
+    await projectStore.fetchAllProjects(true)
+    showToast(t(archived ? 'projects.toast_archived' : 'projects.toast_restored'), archived ? 'info' : 'success')
+  } catch {
+    showToast(t('projects.toast_state_error'), 'danger')
+  } finally {
+    const next = new Set(pendingProjectIds.value)
+    next.delete(project.project_id)
+    pendingProjectIds.value = next
+  }
+}
+
 async function createProject() {
   const name = newProjName.value.trim()
   if (!name) {
@@ -400,7 +424,7 @@ async function createProject() {
     })
     showModal.value = false
     showToast(t('projects.toast_created', { name }), 'success')
-    await projectStore.fetchProjects(true)
+    await projectStore.fetchAllProjects(true)
     newProjName.value = ''
     newProjDesc.value = ''
   } catch {
@@ -410,7 +434,7 @@ async function createProject() {
 
 onMounted(async () => {
   try {
-    await projectStore.fetchProjects()
+    await projectStore.fetchAllProjects()
   } catch {
     // error already stored in projectStore.error
   }

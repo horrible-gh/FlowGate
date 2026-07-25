@@ -16,7 +16,7 @@
           :value="settings.currentProjectId"
           @change="settings.setCurrentProject($event.target.value)"
         >
-          <option v-for="p in settings.projects" :key="p.project_id" :value="p.project_id">{{ p.project_name }}</option>
+          <option v-for="p in settings.activeProjects" :key="p.project_id" :value="p.project_id">{{ p.project_name }}</option>
         </select>
         <button
           v-if="auth.can('project.group.manage')"

@@ -2141,6 +2141,7 @@ export default {
     toast_archived: '프로젝트가 아카이브되었습니다.',
     toast_restored: '프로젝트가 활성화되었습니다.',
     toast_error: '프로젝트 생성 중 오류가 발생했습니다.',
+    toast_state_error: '프로젝트 상태를 변경하지 못했습니다.',
     label_display_name: '표시명',
     label_id: '프로젝트 ID',
     button_suggest_id: 'ID 추천',
