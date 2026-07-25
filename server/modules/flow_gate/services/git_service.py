@@ -101,6 +101,10 @@ BOILERPLATE_BLACKLIST = frozenset({
 BASE_COMMIT_MSG_PREFIX = "fix: "
 BASE_COMMIT_MSG_JOINER = ", "
 ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
+# Subject for the seed commit that BORNs the base branch when a brand-new EMPTY
+# remote is connected (0313 B0001): `git clone --branch <base>` cannot create it,
+# so provisioning initializes the slot with this one README.md commit instead.
+BOOTSTRAP_SEED_MSG = "flowgate: initialize {base_branch} ({project_id})"
 # Present while an adopt is unfinished — the slot never reports "checkout"
 # until the marker is removed (L0005 §2.1·§2.3, 0161).
 ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
@@ -1299,6 +1303,86 @@ def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict
             "snapshot_commit": snapshot_commit, "snapshot_at": snapshot_at}
 
 
+def _remote_is_empty(repo_url: str, username: Optional[str], secret: str) -> bool:
+    """True only when the remote is reachable AND advertises no refs at all — a
+    brand-new, never-pushed repository (0313 B0001).
+
+    Deliberately narrow: any error, timeout, or non-empty ref advertisement reads
+    False, so a genuine fetch/auth failure still flows through the normal clone
+    path and surfaces its true reason instead of being masked as "empty".
+    """
+    proc = _run_git(
+        ["ls-remote", repo_url],
+        timeout=GIT_TEST_TIMEOUT_SEC,
+        username=username,
+        secret=secret if secret is not None else "",
+    )
+    return proc.returncode == 0 and not (proc.stdout or "").strip()
+
+
+def _bootstrap_empty_remote(
+    base_root: Path,
+    base_branch: str,
+    repo_url: str,
+    username: Optional[str],
+    secret: str,
+    project_id: str,
+) -> dict:
+    """Establish the base checkout for a brand-new EMPTY remote (0313 B0001).
+
+    `git clone --branch <base>` cannot succeed against a repository with no commits
+    and no <base> branch, so a freshly-connected empty remote used to fail
+    provisioning outright — no base checkout, hence no worktrees, no base-commit,
+    no first-push affordance (the whole "can't do anything" report). Here we init
+    the slot, wire origin, and seed a single README.md commit so the base branch is
+    BORN: worktrees get a commit to fork from and status gets a commit to offer as
+    the first push. Nothing is pushed — the seed rides the next finalize's base
+    push, exactly like adopt's snapshot. The `secret` is unused (every step is
+    local); it is accepted only to mirror the adopt/clone signatures.
+    """
+    try:
+        base_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"status": "failed", "reason": f"base dir uncreatable: {exc}",
+                "snapshot_commit": None, "snapshot_at": None}
+
+    proc = _run_git(["init", "-b", base_branch, str(base_root)])
+    if proc.returncode != 0:
+        # git < 2.28 has no `init -b`: init, then point the unborn HEAD at the base.
+        proc = _run_git(["init"], cwd=base_root)
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+        proc = _run_git(["symbolic-ref", "HEAD", f"refs/heads/{base_branch}"], cwd=base_root)
+        if proc.returncode != 0:
+            return _provision_failed(proc)
+
+    proc = _run_git(["remote", "add", "origin", repo_url], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+
+    readme = base_root / "README.md"
+    if not readme.exists():
+        try:
+            readme.write_text(f"# {project_id}\n", encoding="utf-8")
+        except OSError as exc:
+            return {"status": "failed", "reason": f"seed file unwritable: {exc}",
+                    "snapshot_commit": None, "snapshot_at": None}
+    proc = _run_git(["add", "--", "README.md"], cwd=base_root)
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+    msg = BOOTSTRAP_SEED_MSG.format(base_branch=base_branch, project_id=project_id)
+    proc = _run_git(
+        [*_GIT_IDENT, "commit", "-m", msg], cwd=base_root,
+        author_env=_author_env_for(project_id),
+    )
+    if proc.returncode != 0:
+        return _provision_failed(proc)
+    head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
+    return {"status": "ok", "reason": None,
+            "snapshot_commit": (head.stdout or "").strip() or None,
+            "snapshot_at": now_iso()}
+
+
 def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigger: str) -> dict:
     """Judge the base slot and establish it (none / clone / adopt) — L0005 §2.2.
 
@@ -1326,15 +1410,26 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
 
     if state == "empty":
         base_root.parent.mkdir(parents=True, exist_ok=True)
-        proc = _run_git(
-            ["clone", "--branch", base_branch, repo_url, str(base_root)],
-            timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-        )
-        if proc.returncode == 0:
-            result = {"status": "ok", "reason": None,
-                      "snapshot_commit": None, "snapshot_at": None}
+        if _remote_is_empty(repo_url, username, secret):
+            # 0313 B0001: a brand-new remote (no commits, no base branch) cannot be
+            # cloned with `--branch <base>` — the clone dies with "Remote branch
+            # <base> not found in upstream origin", leaving the base checkout
+            # uncreated and every downstream op (worktree/base-commit/first push)
+            # blocked. Initialize the slot with a seed commit so the base branch is
+            # born, instead of a clone that can never succeed.
+            result = _bootstrap_empty_remote(
+                base_root, base_branch, repo_url, username, secret, project_id
+            )
         else:
-            result = _provision_failed(proc)
+            proc = _run_git(
+                ["clone", "--branch", base_branch, repo_url, str(base_root)],
+                timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+            )
+            if proc.returncode == 0:
+                result = {"status": "ok", "reason": None,
+                          "snapshot_commit": None, "snapshot_at": None}
+            else:
+                result = _provision_failed(proc)
     else:  # occupied — pre-existing files or partial debris: lossless adopt
         result = _adopt(base_root, base_branch, repo_url, username, secret, project_id)
 
