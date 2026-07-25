@@ -195,13 +195,19 @@ const isDirty = computed(() => {
 // 0308 T0004 (NR0003 권고 2·3·5) — new (untracked) file marker, a channel parallel to
 // isDirty. base_dirty deliberately excludes untracked files (folding them in would widen
 // the E3 merge-finalize guard — git_service.py), so new files need their own store state.
-// Only the editable base checkout surfaces it: the read-only group-branch snapshot shows
-// committed files only, so uncommitted new files never appear there (NR0003 발견 4).
+// 0315 TR (NR0003 권고 4) — the read-only group-branch view now surfaces it too: the
+// checkout-free tree read used to show committed files only, so a worker's uncommitted
+// new files were invisible until finalize (B0001). The group tree read now returns a
+// worktree_untracked channel that drives this badge, mirroring the base-checkout one.
 // Priority (see template): a node reads as NEW before MODIFIED. For a file the two are
 // mutually exclusive (untracked vs tracked-modified); for a folder that holds both, the
 // new badge wins so the newly added file is never hidden — the whole point of B0001.
 const isNew = computed(() => {
-  if (props.readonly && props.groupId) return false
+  if (props.readonly && props.groupId) {
+    return props.node.type === 'folder'
+      ? explorerStore.isGroupUntrackedDir(props.projectId, props.groupId, props.node.path)
+      : explorerStore.isGroupUntrackedPath(props.projectId, props.groupId, props.node.path)
+  }
   return props.node.type === 'folder'
     ? explorerStore.isBaseUntrackedDir(props.projectId, props.node.path)
     : explorerStore.isBaseUntrackedPath(props.projectId, props.node.path)

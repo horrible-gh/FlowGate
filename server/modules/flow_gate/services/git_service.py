@@ -2251,6 +2251,68 @@ def _build_tree_nodes(files: list[str]) -> list[dict]:
     return nodes
 
 
+def _is_hidden_source_path(path: str) -> bool:
+    """Group-explorer exposure rule (shared by tree/changes/blob): hide dotfiles and
+    ``*.db``, matching the committed-tree filter so the untracked channel never
+    surfaces a path the committed view would have hidden."""
+    segments = path.split("/")
+    return (
+        any(seg.startswith(".") for seg in segments)
+        or segments[-1].lower().endswith(".db")
+    )
+
+
+def _group_worktree_path(project_id: str, group_id: str, branch: str) -> Optional[Path]:
+    """Absolute path of a group's live worktree, or None when it is unavailable.
+
+    NR0003: the checkout-free explorer reads committed git objects only, so a new
+    file the worker has not committed is invisible until finalize. The tree/changes/
+    blob readers use this worktree to surface those untracked files. A finalized or
+    not-yet-provisioned group has no worktree — a normal, non-fatal state (returns
+    None), so the committed view still renders on its own."""
+    state = db_git.get_state(group_id) or {}
+    project_name = _project_name(project_id)
+    if not project_name:
+        return None
+    wt_path = src_root(project_name, state.get("branch") or branch)
+    return wt_path if wt_path.exists() else None
+
+
+def _group_untracked_visible(wt_path: Path) -> list[str]:
+    """Exposed untracked (never-committed) paths in a group worktree, sorted.
+
+    ``git diff`` / ``ls-tree`` never report untracked files (NR0003 §3.1·§3.2), so
+    these are collected with ``ls-files --others --exclude-standard`` and filtered by
+    the same exposure rule as the committed tree. git emits '/'-separated paths."""
+    proc = _run_git(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(proc.stderr) or "ls-files failed"
+        )
+    out: list[str] = []
+    for path in (proc.stdout or "").split("\0"):
+        if path and not _is_hidden_source_path(path):
+            out.append(path)
+    return sorted(out)
+
+
+def _group_untracked_safe(project_id: str, group_id: str, branch: str) -> list[str]:
+    """``_group_untracked_visible`` for a resolved group, degrading to ``[]`` on any
+    failure. Untracked files SUPPLEMENT the committed view: a worktree hiccup must
+    never break the tree/changes read that worked before this channel existed."""
+    try:
+        wt_path = _group_worktree_path(project_id, group_id, branch)
+        if wt_path is None:
+            return []
+        return _group_untracked_visible(wt_path)
+    except Exception:  # noqa: BLE001 — supplemental channel, never fatal
+        _log.warning("group untracked scan failed for %s", group_id, exc_info=True)
+        return []
+
+
 def read_group_tree(project_id: str, group_id: str) -> dict:
     """checkout-free recursive tree of a group branch's HEAD commit (L0006 §2.2)."""
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
@@ -2275,9 +2337,15 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
         if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
             continue
         visible_files.append(path)
-    nodes = _build_tree_nodes(visible_files)
+    untracked = _group_untracked_safe(project_id, group_id, branch)
+    # _build_tree_nodes dedups by name per directory, so committed + untracked paths
+    # can be concatenated directly. worktree_untracked is ALSO returned as a separate
+    # channel (NR0003 권고 1): the client caches the tree by commit, but untracked
+    # files change without advancing the commit, so this list must not be cached there.
+    nodes = _build_tree_nodes(visible_files + untracked)
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "commit": commit, "nodes": nodes,
+        "worktree_untracked": untracked,
     }}
 
 
@@ -2323,6 +2391,13 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
             continue
         changes.append({"path": path, "status": status[:1]})
+    # NR0003 권고 2: git diff never lists untracked files, so a brand-new file would be
+    # absent from the changes list entirely — the exact "수정은 보이는데 신규만 안 보이는"
+    # asymmetry B0001 reports. Surface each with "?" (git porcelain's untracked marker).
+    existing = {change["path"] for change in changes}
+    for path in _group_untracked_safe(project_id, group_id, branch):
+        if path not in existing:
+            changes.append({"path": path, "status": "?"})
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "commit": commit, "changes": changes,
     }}
@@ -2512,6 +2587,59 @@ def _cat_file_blob_head(base_root: Path, sha: str, limit: int) -> bytes:
     return data
 
 
+def _read_group_untracked_blob(
+    project_id: str, group_id: str, branch: str, path: str
+) -> Optional[dict]:
+    """Read an untracked worktree file for the group explorer, or None when the path
+    is not an exposed untracked file (the caller then 404s as before).
+
+    NR0003 권고 3: git objects hold committed content only, so a not-yet-committed file
+    can be read solely off the worktree disk. The read is gated three ways — the
+    exposure filter, git's own untracked list, and a resolved-path containment check
+    against the worktree root — so it can never serve a tracked, hidden, or out-of-tree
+    file. Binary sniff / truncation mirror read_group_blob. The response carries
+    commit=None + untracked=True: it has no point-in-time, so it must not be pinned."""
+    wt_path = _group_worktree_path(project_id, group_id, branch)
+    if wt_path is None:
+        return None
+    normalized = path.replace("\\", "/")
+    if _is_hidden_source_path(normalized):
+        return None
+    try:
+        if normalized not in set(_group_untracked_visible(wt_path)):
+            return None
+    except GitServiceError:
+        return None
+    try:
+        wt_resolved = wt_path.resolve()
+        file_path = (wt_resolved / normalized).resolve()
+        file_path.relative_to(wt_resolved)
+    except (ValueError, OSError):
+        return None
+    if not file_path.is_file():
+        return None
+    try:
+        size = file_path.stat().st_size
+        with open(file_path, "rb") as handle:
+            head = handle.read(BLOB_MAX_RETURN_BYTES)
+    except OSError:
+        return None
+    if b"\x00" in head[:BLOB_BINARY_SNIFF_BYTES]:
+        return {"ok": True, "data": {
+            "group_id": group_id, "branch": branch, "commit": None, "path": path,
+            "size": size, "binary": True, "truncated": False,
+            "encoding": None, "content": None, "untracked": True,
+        }}
+    truncated = size > BLOB_MAX_RETURN_BYTES
+    body = head[:BLOB_MAX_RETURN_BYTES] if truncated else head[:size]
+    content = body.decode("utf-8", errors="replace")
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "commit": None, "path": path,
+        "size": size, "binary": False, "truncated": truncated,
+        "encoding": "utf-8", "content": content, "untracked": True,
+    }}
+
+
 def read_group_blob(
     project_id: str, group_id: str, path: str, ref: Optional[str] = None
 ) -> dict:
@@ -2528,6 +2656,12 @@ def read_group_blob(
         commit = ref
     entry = _ls_tree_entry(base_root, commit, path)
     if entry is None or entry[0] != "blob":
+        # NR0003 권고 3: the path may be a new file that lives only in the group
+        # worktree (no commit object yet). Fall back to reading it off disk before
+        # giving up — this is what makes a just-created file openable from the tree.
+        fallback = _read_group_untracked_blob(project_id, group_id, branch, path)
+        if fallback is not None:
+            return fallback
         raise GitServiceError(404, "not_found", f"path '{path}' not found in commit {commit}")
     sha = entry[1]
     size = _cat_file_size(base_root, sha)

@@ -42,13 +42,16 @@ export interface GroupChangeData {
 export interface GroupBlobData {
   group_id: string
   branch: string
-  commit: string
+  // 0315 TR (NR0003 권고 3) — null for an untracked worktree file: it has no commit
+  // object, so it is read straight off disk and carries no point-in-time to pin.
+  commit: string | null
   path: string
   size: number
   binary: boolean
   truncated: boolean
   encoding: string | null
   content: string | null
+  untracked?: boolean
 }
 
 // 0282 NR0003 발견 3 — response shape of GET /projects/{id}/git/status
@@ -144,7 +147,13 @@ export const useExplorerStore = defineStore('explorer', () => {
   const groupBranchCommit = ref<Record<string, string>>({})       // `${pid}:${gid}` -> commit
   const groupBranchTreeCache = ref<Record<string, FileNode[]>>({}) // `${pid}:${gid}:${commit}` -> nodes
   const groupBlobCache = ref<Record<string, GroupBlobData>>({})    // `${pid}:${gid}:${commit}:${path}` -> blob
-  const groupChangedFiles = ref<Record<string, string[]>>({})      // `${pid}:${gid}` -> normalized paths
+  const groupChangedFiles = ref<Record<string, string[]>>({})      // `${pid}:${gid}` -> normalized tracked-change paths
+  // 0315 TR (NR0003 권고 1·2·4) — new (untracked) files in a group worktree, the
+  // group-branch analogue of baseUntrackedFiles. The tree read returns them on a
+  // separate `worktree_untracked` channel because they change without advancing the
+  // branch commit (so they must NOT be cached under groupBranchTreeCache's commit key).
+  // Drives the new-file badge in the read-only group-branch explorer.
+  const groupUntrackedFiles = ref<Record<string, string[]>>({})    // `${pid}:${gid}` -> normalized paths
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
@@ -253,6 +262,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(groupChangedFiles.value)) {
       if (key.startsWith(`${pid}:`)) delete groupChangedFiles.value[key]
     }
+    for (const key of Object.keys(groupUntrackedFiles.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupUntrackedFiles.value[key]
+    }
   }
 
   // ── Group-branch (checkout-free) explorer (0186 P0005 §2·§3) ────────────────
@@ -288,16 +300,19 @@ export const useExplorerStore = defineStore('explorer', () => {
     loadingFile.value = true
     fileError.value = null
     try {
-      const res = await getTreeWithRetry<{ data: { branch: string; commit: string; nodes: FileNode[] } }>(
+      const res = await getTreeWithRetry<{ data: { branch: string; commit: string; nodes: FileNode[]; worktree_untracked?: string[] } }>(
         `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/tree`,
       )
-      const data = (res.data as any).data as { branch: string; commit: string; nodes: FileNode[] }
+      const data = (res.data as any).data as { branch: string; commit: string; nodes: FileNode[]; worktree_untracked?: string[] }
       const key = groupKey(pid, gid)
       const prev = groupBranchCommit.value[key]
       if (prev && prev !== data.commit) purgeGroupCommit(pid, gid, prev)
       groupBranchCommit.value = { ...groupBranchCommit.value, [key]: data.commit }
       const nodes = data.nodes.filter((n) => n.permissions.includes('read'))
       groupBranchTreeCache.value[`${key}:${data.commit}`] = nodes
+      // 0315 TR (NR0003 권고 1) — untracked files ride a channel separate from the
+      // commit-keyed tree cache, since they change without advancing the commit.
+      setGroupUntrackedFiles(pid, gid, data.worktree_untracked ?? [])
       return { branch: data.branch, commit: data.commit, nodes }
     } catch (e) {
       fileError.value = 'tree_load_failed'
@@ -312,9 +327,15 @@ export const useExplorerStore = defineStore('explorer', () => {
       `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/changes`,
     )
     const changes = (res.data as any).data.changes as GroupChangeData[]
+    // 0315 TR (NR0003 권고 2) — the server now also lists untracked files here with a
+    // '?' status. Those drive the NEW badge (via the tree's worktree_untracked channel),
+    // not the MODIFIED ('>') badge, so keep only tracked changes in groupChangedFiles;
+    // otherwise a brand-new file would light up as "modified" instead of "new".
     groupChangedFiles.value = {
       ...groupChangedFiles.value,
-      [groupKey(pid, gid)]: changes.map((change) => change.path.replace(/\\/g, '/')),
+      [groupKey(pid, gid)]: changes
+        .filter((change) => change.status !== '?')
+        .map((change) => change.path.replace(/\\/g, '/')),
     }
     return changes
   }
@@ -339,6 +360,27 @@ export const useExplorerStore = defineStore('explorer', () => {
     return _anyUnder(groupChangedFiles.value[groupKey(pid, gid)], folderPath)
   }
 
+  // 0315 TR (NR0003 권고 4) — new (untracked) files in a group worktree, the
+  // group-branch analogue of the isBaseUntracked* helpers. Same normalization and
+  // the same _anyUnder folder propagation, so a new file inside a collapsed folder
+  // still marks its ancestors in the read-only group-branch tree.
+  function setGroupUntrackedFiles(pid: string, gid: string, files: string[]) {
+    groupUntrackedFiles.value = {
+      ...groupUntrackedFiles.value,
+      [groupKey(pid, gid)]: files.map((f) => f.replace(/\\/g, '/')),
+    }
+  }
+
+  function isGroupUntrackedPath(pid: string, gid: string, path: string): boolean {
+    const files = groupUntrackedFiles.value[groupKey(pid, gid)]
+    if (!files || !files.length) return false
+    return files.includes(path.replace(/\\/g, '/'))
+  }
+
+  function isGroupUntrackedDir(pid: string, gid: string, folderPath: string): boolean {
+    return _anyUnder(groupUntrackedFiles.value[groupKey(pid, gid)], folderPath)
+  }
+
   /** Fetch a single file from a group branch, pinned to the tree's commit so tree
    *  and blob never disagree on point-in-time (L0006 §2.3·§2.4). Blob responses
    *  are cached by (pid, gid, commit, path). */
@@ -354,7 +396,12 @@ export const useExplorerStore = defineStore('explorer', () => {
         `?path=${encodeURIComponent(path)}${refQ}`,
     )
     const data = (res.data as any).data as GroupBlobData
-    groupBlobCache.value[`${groupKey(pid, gid)}:${data.commit}:${path}`] = data
+    // 0315 TR (NR0003 권고 3) — an untracked file is read off disk with commit=null and
+    // no point-in-time; caching it by commit would pin stale content across edits, so
+    // it is served fresh every time. Committed reads still cache by (pid, gid, commit, path).
+    if (!data.untracked && data.commit) {
+      groupBlobCache.value[`${groupKey(pid, gid)}:${data.commit}:${path}`] = data
+    }
     return data
   }
 
@@ -546,6 +593,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
     currentGroupCommit, groupChangedFiles, isGroupChangedPath, isGroupChangedDir,
+    groupUntrackedFiles, setGroupUntrackedFiles, isGroupUntrackedPath, isGroupUntrackedDir,
     expandedFileNodes, expandedGroupNodes,
     isFileNodeExpanded, setFileNodeExpanded, setFileNodesExpanded,
     isGroupNodeExpanded, setGroupNodeExpanded, setGroupNodesExpanded, expandGroupAncestors,
