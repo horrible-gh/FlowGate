@@ -4145,9 +4145,28 @@ def manual_fetch(project_id: str) -> dict:
         )
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
+        # *reported* behind_count — the local base branch never advanced, so the
+        # base checkout stayed behind upstream forever and the operator-facing
+        # "Fetch" action was a no-op recovery ("영원히 안가져올건가?"). Finalize was
+        # the ONLY path that ran `merge --ff-only origin/{base}` (see finalize). Do
+        # the same fast-forward here whenever it is safe: base is clean and can be
+        # fast-forwarded. A dirty base is left untouched (never force the server's
+        # own checkout), and a genuine divergence (local-only commits) simply fails
+        # the ff-only and is reported as behind/ahead — that stays the E4
+        # base_diverged condition finalize already owns, not this recovery's job.
+        advanced = False
+        if (
+            _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
+            and not _dirty(base_root, include_untracked=False)
+        ):
+            ff = _run_git(
+                ["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root
+            )
+            advanced = ff.returncode == 0
         ahead, behind = _base_ahead_behind(base_root, base_branch)
         return {"ok": True, "result": {
-            "fetched": True, "base_branch": base_branch,
+            "fetched": True, "advanced": advanced, "base_branch": base_branch,
             "ahead_count": ahead, "behind_count": behind,
         }}
     finally:
