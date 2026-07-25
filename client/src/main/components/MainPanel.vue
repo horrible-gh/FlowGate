@@ -269,10 +269,16 @@
               </div>
             </div>
             <div class="card-bd">
+              <!-- 0310 TR: load by doc-id whenever this is NOT a file tab, instead of keying on
+                   typeCode. A DB-document tab opened via any entry point that omitted typeCode
+                   (e.g. the head-move button pre-0310.0005-TR) still loaded null → "연결된 MD
+                   파일이 없습니다". isFileTab (projectId && no typeCode) is the single, entry-point-
+                   agnostic signal for path-backed tabs, so new navigation entries can never
+                   reintroduce the typeCode-loss regression. See flowgate.default.0310.0003-NR. -->
               <MdViewer
                 :ref="(el) => bindActiveRef(mdViewerRefs, tab.id, el)"
                 :path="tab.mdPath ?? tab.path"
-                :doc-id="tab.typeCode ? tab.id : null"
+                :doc-id="isFileTab(tab) ? null : tab.id"
                 :project-id="tab.projectId ?? null"
                 :git-group-id="tab.gitGroupId ?? null"
                 :git-commit="tab.gitCommit ?? null"
@@ -739,6 +745,14 @@
     </div>
 
 
+    <!-- B0001 (0310): the "head doc로 이동" button shows/opens by the RAW DocHeader headDocId
+         (the :head-doc-id binding below), so head-doc-label — which becomes the opened tab's
+         typeCode — must come from the SAME DocHeader source (workflowHeadType), not the computed
+         workflowViewState. In every noAction mode (review/info/…) the view state returns
+         headDocLabel=null while the raw headDocId is still set, so the old binding opened a
+         type:'md' tab with no typeCode → MdViewer :doc-id=null → "연결된 MD 파일이 없습니다".
+         Falls back to the view state value for the decision-override bridge.
+         See flowgate.default.0310.0003-NR. -->
     <ReviewActionBar
       v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
       :mode="getActionBarMode(activeTabId)!"
@@ -757,7 +771,7 @@
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
-      :head-doc-label="getWorkflowViewState(activeTabId).headDocLabel"
+      :head-doc-label="exposedValue(docHeaderRefs[activeTabId]?.workflowHeadType) ?? getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
       :viewed-doc-id="activeTabId"
       @approve="onReviewApproved(activeTabId, $event)"
@@ -832,10 +846,12 @@
                 :git-group-id="fullViewTab.gitGroupId ?? null"
                 :git-commit="fullViewTab.gitCommit ?? null"
               />
+              <!-- 0310 TR: not-a-file-tab → load by doc-id (mirrors the preview-card MdViewer);
+                   see the comment there and flowgate.default.0310.0003-NR. -->
               <MdViewer
                 v-else
                 :path="fullViewTab.mdPath ?? fullViewTab.path"
-                :doc-id="fullViewTab.typeCode ? fullViewTab.id : null"
+                :doc-id="isFileTab(fullViewTab) ? null : fullViewTab.id"
                 :project-id="fullViewTab.projectId ?? null"
                 :git-group-id="fullViewTab.gitGroupId ?? null"
                 :git-commit="fullViewTab.gitCommit ?? null"
