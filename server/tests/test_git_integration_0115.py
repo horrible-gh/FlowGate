@@ -1175,7 +1175,11 @@ class TestGitActions0162:
         # every pending item carries the project's default action
         assert all(p["default_action"] == "merge" for p in out["pending"])
 
-    def test_manual_fetch_reports_behind(self, act_origin):
+    def test_manual_fetch_fast_forwards_clean_base(self, act_origin):
+        # 0320 B0001/TR0005: manual_fetch used to only move the tracking ref and
+        # *report* behind — the clean base checkout never advanced ("영원히 안
+        # 가져올건가?"). It now fast-forwards a clean base to origin/{base}, so a
+        # single Fetch catches the base up (behind -> 0, advanced=True).
         from modules.flow_gate.services import git_service as svc
 
         # origin main advances via the seed worktree
@@ -1187,8 +1191,9 @@ class TestGitActions0162:
 
         out = svc.manual_fetch("gitactprj")["result"]
         assert out["fetched"] is True
+        assert out["advanced"] is True
         assert out["base_branch"] == "main"
-        assert out["behind_count"] >= 1
+        assert out["behind_count"] == 0
         assert out["ahead_count"] == 0
 
     def test_manual_push_allowed_and_rejected(self, act_origin):
