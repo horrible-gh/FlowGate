@@ -745,7 +745,7 @@ export default {
       search_no_results: '一致するドキュメントがありません。',
       group_select: 'ブランチ',
       base_branch: '基準ブランチ ({branch})',
-      readonly_badge: 'グループ {group} ブランチを閲覧中 · 読み取り専用',
+      readonly_badge: 'グループ {group} ブランチを閲覧中',
       binary_file: 'バイナリファイル — プレビューできません。',
       truncated_file: 'ファイルが大きいため、先頭のみ表示しています。',
       git_ahead: '基準ブランチより {n} コミット先行',

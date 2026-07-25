@@ -237,7 +237,7 @@
                 {{ t('main.document_preview.title') }}
               </span>
               <div class="card-actions">
-                <div v-if="canEditDoc(tab.id)" class="edit-dropdown-wrap">
+                <div v-if="canEditTab(tab)" class="edit-dropdown-wrap">
                   <button
                     class="btn btn-outline btn-sm"
                     type="button"
@@ -297,7 +297,12 @@
                   <input v-model="textWrapEnabled" type="checkbox" />
                   <span>{{ t('main.document_preview.wrap_lines') }}</span>
                 </label>
-                <button class="btn btn-outline btn-sm" type="button" @click="onEditDirect(tab)">
+                <button
+                  v-if="canEditTab(tab)"
+                  class="btn btn-outline btn-sm"
+                  type="button"
+                  @click="onEditDirect(tab)"
+                >
                   <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
                 </button>
                 <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
@@ -818,7 +823,7 @@
               <!-- CH has no [edit]: a chat is written through its composer, not by hand-editing
                    the transcript, and its card offers no [edit] either. -->
               <button
-                v-if="fullViewTab.typeCode !== 'CH'"
+                v-if="canEditTab(fullViewTab)"
                 class="btn btn-outline btn-sm"
                 type="button"
                 @click="editFromFullView(fullViewTab)"
@@ -1343,6 +1348,7 @@ const editBody = ref('')
 const editLoading = ref(false)
 const editSaving = ref(false)
 const editError = ref('')
+const editSourceEtag = ref('')
 const headerEditModeVisible = ref(false)
 const editFullContent = ref('')
 const nextActionModalVisible = ref(false)
@@ -1570,6 +1576,37 @@ function getTabSourcePath(tab: Tab): string {
 function isDocumentTab(tab: Tab): boolean {
   return !!tab.typeCode
 }
+
+function canDirectEditSource(tab: Tab): boolean {
+  return (
+    isFileTab(tab)
+    && !!tab.projectId
+    && !!getTabSourcePath(tab)
+    && (tab.type === 'md' || tab.type === 'text')
+  )
+}
+
+function sourceContentUrl(tab: Tab): string {
+  const base =
+    `/api/v1/projects/${encodeURIComponent(tab.projectId ?? '')}/files/src-content`
+    + `?path=${encodeURIComponent(getTabSourcePath(tab))}`
+  return tab.gitGroupId
+    ? `${base}&group_id=${encodeURIComponent(tab.gitGroupId)}`
+    : base
+}
+
+// A selected group remains structurally read-only in FileExplorer (create/delete/upload
+// stay blocked), but its existing text content is editable. Clear the legacy tab-level
+// read-only marker so StatusBar does not claim the whole file is read-only.
+watch(
+  () => tabs.value.map((tab) => `${tab.id}:${tab.gitGroupId ?? ''}:${tab.readonly ? '1' : '0'}`).join('|'),
+  () => {
+    for (const tab of tabs.value) {
+      if (isFileTab(tab) && tab.gitGroupId && tab.readonly) tab.readonly = false
+    }
+  },
+  { immediate: true },
+)
 
 if (typeof window !== 'undefined') {
   window.addEventListener('click', () => {
@@ -1870,6 +1907,10 @@ function isCompletedDoc(tabId: string): boolean {
 // The server resolves group-level final approval and terminal lifecycle states.
 function canEditDoc(tabId: string): boolean {
   return exposedValue<boolean>(docHeaderRefs[tabId]?.canEditDocument) === true
+}
+
+function canEditTab(tab: Tab): boolean {
+  return isFileTab(tab) ? canDirectEditSource(tab) : canEditDoc(tab.id)
 }
 
 function getNextStepCode(tabId: string): string {
@@ -3431,6 +3472,7 @@ async function openEditModal(tab: Tab) {
   editVisible.value = true
   editContent.value = ''
   editError.value = ''
+  editSourceEtag.value = ''
   editLoading.value = true
   headerEditModeVisible.value = false
   try {
@@ -3439,9 +3481,9 @@ async function openEditModal(tab: Tab) {
       const res = await getRequest<{ content: string }>(`/api/v1/documents/content?doc_id=${encodeURIComponent(tab.id)}`)
       raw = (res.data as any)?.content ?? ''
     } else if (tab.projectId && getTabSourcePath(tab)) {
-      const url = `/api/v1/projects/${encodeURIComponent(tab.projectId)}/files/src-content?path=${encodeURIComponent(getTabSourcePath(tab))}`
-      const res = await api.get<string>(url, { responseType: 'text' })
+      const res = await api.get<string>(sourceContentUrl(tab), { responseType: 'text' })
       raw = res.data ?? ''
+      editSourceEtag.value = String(res.headers?.etag ?? '')
     } else {
       throw new Error(t('main.main_panel.error_info_unavailable'))
     }
@@ -3462,6 +3504,7 @@ function closeEditModal() {
   editFrontmatter.value = ''
   editBody.value = ''
   editError.value = ''
+  editSourceEtag.value = ''
   headerEditModeVisible.value = false
 }
 async function saveEditContent() {
@@ -3481,8 +3524,13 @@ async function saveEditContent() {
         content,
       })
     } else if (editTab.value.projectId && getTabSourcePath(editTab.value)) {
-      const url = `/api/v1/projects/${encodeURIComponent(editTab.value.projectId)}/files/src-content?path=${encodeURIComponent(getTabSourcePath(editTab.value))}`
-      const resp = await api.patch(url, { content })
+      const resp = await api.patch(
+        sourceContentUrl(editTab.value),
+        { content },
+        editSourceEtag.value
+          ? { headers: { 'If-Match': editSourceEtag.value } }
+          : undefined,
+      )
       baseGit = resp?.data?.base_git ?? null
       // 0177 L0002 §2.6-a badge trigger 2/4: the save response carries the fresh
       // base-checkout dirty set — feed the file-tree "modified" badges directly.
@@ -3491,6 +3539,15 @@ async function saveEditContent() {
           editTab.value.projectId,
           Array.isArray(baseGit.files) ? baseGit.files : [],
         )
+      }
+      if (editTab.value.gitGroupId) {
+        const projectId = editTab.value.projectId
+        const groupId = editTab.value.gitGroupId
+        explorerStore.invalidateProject(projectId)
+        await Promise.allSettled([
+          explorerStore.fetchGroupBranchTree(projectId, groupId),
+          explorerStore.fetchGroupBranchChanges(projectId, groupId),
+        ])
       }
     } else {
       throw new Error(t('main.main_panel.error_info_unavailable'))
