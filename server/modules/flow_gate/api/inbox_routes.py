@@ -15,8 +15,8 @@ import shutil
 from typing import Optional
 
 import anyio.to_thread
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, model_validator
 
 from modules.flow_gate import linter as _linter
@@ -30,6 +30,7 @@ from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.numbering.id_formatter import parse_doc_code
 from modules.flow_gate.documents import document_service
+from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tr_scope_service
@@ -219,6 +220,227 @@ class InboxEditRequest(BaseModel):
             raise ValueError("edit_reason value is invalid")
         return self
 
+
+# ── Editable source content ─────────────────────────────────────────────────
+#
+# This router is registered before the legacy tree/git routers. Keeping the
+# compatibility URL here lets source-file editing gain a group-aware contract
+# without changing base-checkout callers: no group_id means the established base
+# checkout, while a supplied group_id is resolved strictly to that group's live
+# worktree and can never fall back to the base checkout.
+
+class EditableSourceUpdate(BaseModel):
+    content: str
+
+
+def _editable_source_root(project_id: str, group_id: Optional[str]) -> tuple[pathlib.Path, Optional[str]]:
+    from modules.flow_gate.services import git_service
+
+    if group_id:
+        group = db_groups.get_by_id(group_id)
+        if group is None or group.get("project_id") != project_id:
+            raise HTTPException(status_code=404, detail="Group not found in this project")
+        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if root is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Group worktree is unavailable ({reason}); base checkout was not used",
+            )
+        return root.resolve(), group_id
+
+    project = db_projects.get_by_id(project_id)
+    project_name = (project.get("project_name") or "").strip() if project else ""
+    settings = db_projects.get_settings(project_id)
+    branch = (settings.get("branch") or "main").strip() if settings else "main"
+    if not project_name:
+        raise HTTPException(status_code=404, detail="Not found")
+    # Resolve through the storage module at call time so deployments/tests that
+    # redirect the configured source root keep the same compatibility seam as
+    # the legacy src-content handler.
+    from modules.flow_gate.storage import paths as storage_paths
+    base_branch = git_service.base_branch_for(project_id) or branch
+    return storage_paths.src_root(project_name, base_branch).resolve(), None
+
+
+def _editable_source_path(
+    project_id: str, path: str, group_id: Optional[str]
+) -> tuple[pathlib.Path, pathlib.Path, Optional[str]]:
+    root, resolved_group_id = _editable_source_root(project_id, group_id)
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if (
+        not normalized
+        or normalized.startswith("/")
+        or (len(normalized) >= 2 and normalized[1] == ":")
+        or ".." in parts
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    candidate = root.joinpath(*parts)
+    current = root
+    try:
+        candidate.relative_to(root)
+        for part in candidate.relative_to(root).parts:
+            current = current / part
+            if current.is_symlink():
+                raise HTTPException(status_code=400, detail="Symbolic links are not allowed")
+        resolved = candidate.resolve()
+        resolved.relative_to(root)
+    except HTTPException:
+        raise
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return resolved, root, resolved_group_id
+
+
+def _source_etag(raw: bytes) -> str:
+    return f'"{hashlib.sha256(raw).hexdigest()}"'
+
+
+def _source_group_meta(project_id: str, group_id: str) -> dict:
+    from modules.flow_gate.services import git_service
+
+    try:
+        _base_root, branch, commit = git_service.resolve_group_ref(project_id, group_id)
+    except Exception:
+        branch, commit = None, None
+    return {"group_id": group_id, "branch": branch, "commit": commit}
+
+
+def _emit_source_edit_refresh(project_id: str, group_id: Optional[str], path: str) -> None:
+    """Best-effort refresh for other tabs/browsers after a direct source edit."""
+    try:
+        from modules.flow_gate.api.v1.events.publisher import (
+            FlowEvent,
+            broadcast_event_threadsafe,
+        )
+        from modules.flow_gate.api.v1.events.event_types import EventType
+
+        broadcast_event_threadsafe(FlowEvent(
+            event_type=EventType.FILE_EXPLORER_REFRESH,
+            payload={"operation": "updated", "source": "direct_edit", "path": path},
+            audience="*",
+            project=project_id,
+            group_id=group_id,
+            doc_id=None,
+        ))
+    except Exception:
+        pass
+
+
+@router.api_route(
+    "/projects/{project_id}/files/src-content",
+    methods=["GET", "HEAD"],
+    response_class=PlainTextResponse,
+)
+def get_editable_source_content(
+    request: Request,
+    project_id: str,
+    path: str = Query(..., description="relative path from source root"),
+    group_id: Optional[str] = Query(None, description="target group worktree"),
+):
+    """Read current source content from the base checkout or an exact group worktree."""
+    full_path, _root, resolved_group_id = _editable_source_path(project_id, path, group_id)
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    raw = full_path.read_bytes()
+    headers = {
+        "Content-Length": str(len(raw)),
+        "ETag": _source_etag(raw),
+    }
+    if resolved_group_id:
+        headers["X-FlowGate-Group-Id"] = resolved_group_id
+    if request.method == "HEAD":
+        return PlainTextResponse("", headers=headers)
+    return PlainTextResponse(raw.decode("utf-8", errors="replace"), headers=headers)
+
+
+@router.patch("/projects/{project_id}/files/src-content", response_class=JSONResponse)
+def update_editable_source_content(
+    request: Request,
+    project_id: str,
+    body: EditableSourceUpdate,
+    path: str = Query(..., description="relative path from source root"),
+    group_id: Optional[str] = Query(None, description="target group worktree"),
+):
+    """Update an existing source file, fail-closed when a group worktree is requested."""
+    full_path, _root, resolved_group_id = _editable_source_path(project_id, path, group_id)
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    before = full_path.read_bytes()
+    if_match = (request.headers.get("if-match") or "").strip()
+    if if_match and if_match != _source_etag(before):
+        raise HTTPException(
+            status_code=409,
+            detail="File changed since it was opened; reload before saving",
+        )
+
+    encoded = body.content.encode("utf-8")
+    full_path.write_bytes(encoded)
+    _emit_source_edit_refresh(project_id, resolved_group_id, path)
+
+    response: dict = {
+        "path": path,
+        "content_length": len(body.content),
+        "etag": _source_etag(encoded),
+    }
+    if resolved_group_id:
+        response["group_git"] = _source_group_meta(project_id, resolved_group_id)
+    else:
+        from modules.flow_gate.services import git_service
+        base_git = git_service.base_checkout_dirty_status(project_id)
+        # Preserve the established src-content response shape. Untracked files
+        # are refreshed through the project status endpoint, not this existing-file edit.
+        base_git.pop("untracked", None)
+        response["base_git"] = base_git
+    return response
+
+
+@router.get("/projects/{project_id}/git/groups/{group_id}/blob")
+def get_editable_group_blob(
+    project_id: str,
+    group_id: str,
+    path: str,
+    ref: Optional[str] = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Return the latest group-worktree bytes so unstaged tracked edits stay visible."""
+    if ref and not re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+        raise HTTPException(status_code=400, detail="ref must be a full 40-hex commit sha")
+    full_path, _root, _resolved_group_id = _editable_source_path(
+        project_id, path, group_id
+    )
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    from modules.flow_gate.services import git_service
+
+    size = full_path.stat().st_size
+    with full_path.open("rb") as handle:
+        head = handle.read(git_service.BLOB_MAX_RETURN_BYTES)
+    meta = _source_group_meta(project_id, group_id)
+    if b"\x00" in head[:git_service.BLOB_BINARY_SNIFF_BYTES]:
+        return {"ok": True, "data": {
+            **meta,
+            "path": path,
+            "size": size,
+            "binary": True,
+            "truncated": False,
+            "encoding": None,
+            "content": None,
+            "worktree": True,
+        }}
+    return {"ok": True, "data": {
+        **meta,
+        "path": path,
+        "size": size,
+        "binary": False,
+        "truncated": size > git_service.BLOB_MAX_RETURN_BYTES,
+        "encoding": "utf-8",
+        "content": head.decode("utf-8", errors="replace"),
+        "worktree": True,
+    }}
 
 # ── Failure response helper (D020 §3-5) ────────────────────────────────────────────────
 

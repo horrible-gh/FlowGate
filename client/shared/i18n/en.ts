@@ -745,7 +745,7 @@ export default {
       search_no_results: 'No matching documents.',
       group_select: 'Branch',
       base_branch: 'Base branch ({branch})',
-      readonly_badge: 'Viewing group {group} branch · read-only',
+      readonly_badge: 'Viewing group {group} branch',
       binary_file: 'Binary file — preview not available.',
       truncated_file: 'File is large; showing the beginning only.',
       git_ahead: 'Ahead of base by {n} commit(s)',
