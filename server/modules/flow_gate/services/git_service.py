@@ -1320,6 +1320,36 @@ def _remote_is_empty(repo_url: str, username: Optional[str], secret: str) -> boo
     return proc.returncode == 0 and not (proc.stdout or "").strip()
 
 
+def _remote_lacks_base_branch(
+    repo_url: str, username: Optional[str], secret: str, base_branch: str
+) -> bool:
+    """True when the remote is reachable AND advertises no ``refs/heads/<base>`` —
+    a superset of `_remote_is_empty` (0318 B0001).
+
+    A fully bare remote is only one way `git clone --branch <base>` can fatal with
+    "Remote branch <base> not found in upstream origin". The other — common — way is
+    a remote that DOES have refs but not the configured base branch: a default-branch
+    name mismatch (remote `master` vs base `main`, or the reverse), or a brand-new
+    repository initialized on some other branch. Both leave the base checkout
+    uncreated, so both must route to `_bootstrap_empty_remote` instead of a clone
+    that can never succeed.
+
+    Deliberately narrow like `_remote_is_empty`: any error or timeout reads False so
+    a genuine fetch/auth failure still flows through the normal clone path and
+    surfaces its true reason instead of being masked as "needs bootstrap". The
+    fully-qualified `refs/heads/<base>` pattern matches the base head exactly, so an
+    unrelated branch whose tail happens to be <base> (e.g. `dev/main`) is not a
+    false positive.
+    """
+    proc = _run_git(
+        ["ls-remote", repo_url, f"refs/heads/{base_branch}"],
+        timeout=GIT_TEST_TIMEOUT_SEC,
+        username=username,
+        secret=secret if secret is not None else "",
+    )
+    return proc.returncode == 0 and not (proc.stdout or "").strip()
+
+
 def _bootstrap_empty_remote(
     base_root: Path,
     base_branch: str,
@@ -1410,13 +1440,15 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
 
     if state == "empty":
         base_root.parent.mkdir(parents=True, exist_ok=True)
-        if _remote_is_empty(repo_url, username, secret):
-            # 0313 B0001: a brand-new remote (no commits, no base branch) cannot be
-            # cloned with `--branch <base>` — the clone dies with "Remote branch
-            # <base> not found in upstream origin", leaving the base checkout
-            # uncreated and every downstream op (worktree/base-commit/first push)
-            # blocked. Initialize the slot with a seed commit so the base branch is
-            # born, instead of a clone that can never succeed.
+        if _remote_lacks_base_branch(repo_url, username, secret, base_branch):
+            # 0313/0318 B0001: a remote WITHOUT the base branch cannot be cloned with
+            # `--branch <base>` — the clone dies with "Remote branch <base> not found
+            # in upstream origin", leaving the base checkout uncreated and every
+            # downstream op (worktree/base-commit/first push) blocked. This covers a
+            # fully bare remote (0313) AND one that advertises other refs but no
+            # <base> — e.g. a default-branch name mismatch or a repo initialized on
+            # another branch (0318). Initialize the slot with a seed commit so the
+            # base branch is born, instead of a clone that can never succeed.
             result = _bootstrap_empty_remote(
                 base_root, base_branch, repo_url, username, secret, project_id
             )
