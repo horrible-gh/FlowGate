@@ -4639,3 +4639,50 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
 
+
+# ── Base source-root resolution for the file explorer (0319 B0001) ────────────
+# The base file explorer and the editable base-checkout APIs resolved their source
+# directory from project_settings.branch (default "main"), while Git provisioning
+# clones/adopts the connected repo into src/{project}/{base_branch} (the git
+# integration config). When a connected repo's base branch is not "main" these two
+# paths diverge: provisioning lands the existing source under base_branch, but the
+# explorer walks an empty src/{project}/main and shows nothing — the B0001 report
+# ("the branch name is even the same, yet the file explorer is empty"). The source
+# is never actually "not fetched"; the read layer just looks at the wrong branch
+# folder. Resolve the base tree from the Git base_branch whenever integration is
+# ENABLED (mirroring the effective_src_root gate); a non-integrated or disabled
+# project keeps its project_settings.branch folder, so its behaviour never changes
+# (fallback-first, L0006 §2.2).
+def base_branch_for(project_id: Optional[str]) -> Optional[str]:
+    """Git base_branch when integration is enabled for the project, else None.
+
+    Never raises: any lookup failure reads as "not integrated", so the caller
+    falls back to the ordinary project-settings branch.
+    """
+    if not project_id:
+        return None
+    try:
+        cfg = db_git.get_config(project_id)
+    except Exception:
+        _log.warning("base_branch_for lookup failed for %s", project_id, exc_info=True)
+        return None
+    if cfg is None or not cfg.get("enabled"):
+        return None
+    return (cfg.get("base_branch") or "main").strip() or "main"
+
+
+def base_src_root(
+    project_id: Optional[str], project_name: str, fallback_branch: str = "main"
+) -> Path:
+    """Base source-checkout root for base file-explorer reads/edits (0319 B0001).
+
+    Git-integrated (enabled) → ``src_root(project_name, base_branch)``; otherwise
+    ``src_root(project_name, fallback_branch)``. ``fallback_branch`` is the value
+    the caller already derived from project_settings, so a non-integrated project
+    resolves byte-for-byte the same path as before. The returned Path is NOT
+    ``.resolve()``-d — callers that need a resolved path do so themselves, exactly
+    as they did with the raw ``src_root`` call this replaces.
+    """
+    branch = base_branch_for(project_id) or (fallback_branch or "main").strip() or "main"
+    return src_root(project_name, branch)
+

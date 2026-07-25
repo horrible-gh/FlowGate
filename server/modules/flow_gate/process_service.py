@@ -5139,8 +5139,8 @@ def get_file_tree(project_id: str) -> dict:
     Entries are ordered folders-first, then by natural case-insensitive name
     (see :func:`_file_tree_sort_key`).
     """
-    from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
+    from modules.flow_gate.services import git_service
 
     row = _proj.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
@@ -5150,7 +5150,11 @@ def get_file_tree(project_id: str) -> dict:
     if not project_name:
         return {"nodes": []}
 
-    docs_root = str(src_root(project_name, branch))
+    # 0319 B0001: a git-integrated project's base checkout lives under the git
+    # base_branch, not project_settings.branch (which stays "main"); resolve it so
+    # the base file explorer shows the connected repo's source. A non-integrated or
+    # disabled project keeps the settings-branch folder — behaviour unchanged.
+    docs_root = str(git_service.base_src_root(project_id, project_name, branch))
     if not os.path.isdir(docs_root):
         return {"nodes": []}
 
@@ -5244,8 +5248,8 @@ def get_file_tree(project_id: str) -> dict:
 def create_storage_folder(project_id: str, parent_path: str, name: str) -> dict:
     """Create an empty folder inside the src tree."""
     import re
-    from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
+    from modules.flow_gate.services import git_service
 
     name = name.strip()
     if not name:
@@ -5260,7 +5264,9 @@ def create_storage_folder(project_id: str, parent_path: str, name: str) -> dict:
     if not project_name:
         return {"status": "error", "message": "Project not found."}
 
-    docs_root = src_root(project_name, branch)
+    # 0319 B0001: create inside the git base_branch checkout when integrated, so a
+    # new folder lands in the same tree the base file explorer shows.
+    docs_root = git_service.base_src_root(project_id, project_name, branch)
     if parent_path:
         target = docs_root / parent_path / name
     else:
@@ -5280,8 +5286,8 @@ def create_storage_folder(project_id: str, parent_path: str, name: str) -> dict:
 def create_storage_file(project_id: str, parent_path: str, name: str) -> dict:
     """Create an empty file inside the src tree."""
     import re
-    from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
+    from modules.flow_gate.services import git_service
 
     name = name.strip()
     if not name:
@@ -5296,7 +5302,9 @@ def create_storage_file(project_id: str, parent_path: str, name: str) -> dict:
     if not project_name:
         return {"status": "error", "message": "Project not found."}
 
-    docs_root = src_root(project_name, branch)
+    # 0319 B0001: create inside the git base_branch checkout when integrated, so a
+    # new file lands in the same tree the base file explorer shows.
+    docs_root = git_service.base_src_root(project_id, project_name, branch)
     if parent_path:
         target = docs_root / parent_path / name
     else:

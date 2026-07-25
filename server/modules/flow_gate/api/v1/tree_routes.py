@@ -54,8 +54,8 @@ def get_files_tree(project_id: str, branch: str = Query("main", description="bra
 
 
 def _resolve_src_path(project_id: str, path: str):
-    from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
+    from modules.flow_gate.services import git_service
 
     row = _proj.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
@@ -65,7 +65,9 @@ def _resolve_src_path(project_id: str, path: str):
     if not project_name:
         raise HTTPException(status_code=404, detail="Not found")
 
-    docs_root = src_root(project_name, branch).resolve()
+    # 0319 B0001: a git-integrated project's base checkout lives under the git
+    # base_branch; resolve base file reads/edits there (non-integrated → unchanged).
+    docs_root = git_service.base_src_root(project_id, project_name, branch).resolve()
     try:
         full_path = (docs_root / path).resolve()
         full_path.relative_to(docs_root)  # prevent path traversal
@@ -76,15 +78,16 @@ def _resolve_src_path(project_id: str, path: str):
 
 def _resolve_delete_path(project_id: str, path: str):
     """Resolve without following symlinks and reject any symlink component."""
-    from modules.flow_gate.storage.paths import src_root
     from modules.flow_gate.db import projects as _proj
+    from modules.flow_gate.services import git_service
     row = _proj.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
     settings = _proj.get_settings(project_id)
     branch = (settings.get("branch") or "main").strip() if settings else "main"
     if not project_name:
         raise HTTPException(status_code=404, detail="Not found")
-    root = src_root(project_name, branch).resolve()
+    # 0319 B0001: delete targets the git base_branch checkout when integrated.
+    root = git_service.base_src_root(project_id, project_name, branch).resolve()
     # NR0003 finding: normalize a SINGLE backslash to '/', matching _validate_path_param.
     # Replacing only a double backslash left 'foo\bar' as one literal component, so its
     # per-component symlink check was bypassed and resolution disagreed with validation.

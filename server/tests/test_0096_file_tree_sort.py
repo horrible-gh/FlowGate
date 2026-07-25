@@ -32,11 +32,11 @@ def test_sort_key_natural_numeric():
 
 def _patch_tree(monkeypatch, root):
     from modules.flow_gate.db import projects as _proj
-    from modules.flow_gate.storage import paths as _paths
+    from modules.flow_gate.services import git_service
 
     monkeypatch.setattr(_proj, "get_by_id", lambda pid: {"project_name": "p"})
     monkeypatch.setattr(_proj, "get_settings", lambda pid: {"branch": "main"})
-    monkeypatch.setattr(_paths, "src_root", lambda name, branch: root)
+    monkeypatch.setattr(git_service, "base_src_root", lambda pid, name, branch: root)
 
 
 def test_get_file_tree_orders_folders_first_then_natural(tmp_path, monkeypatch):
