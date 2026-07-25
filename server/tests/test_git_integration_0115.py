@@ -1960,3 +1960,106 @@ class TestBaseUntrackedCommit0296:
         out = svc.base_commit("untrkprj", None, ["artifact.tmp", "artifact.tmp", "  "])["result"]
         assert out["committed"] is True and out["files"] == ["artifact.tmp"]
 
+
+@pytest.fixture(scope="class")
+def grpexp_origin(seed):
+    """A bare origin + enabled project dedicated to the group-explorer tests. Uses its
+    OWN project id so its on-disk base checkout never collides with another class's
+    (each project name maps to one persistent checkout dir across the file)."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "grpexpprj", "project_name": "GrpExpProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0315-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("grpexpprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "tmp": tmp}
+    svc.delete_config("grpexpprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestGroupExplorerUntracked:
+    """0315 TR (NR0003 권고 1·2·3): the checkout-free group-branch explorer surfaces
+    untracked (never-committed) worktree files. B0001's symptom was that a worker's new
+    file stayed invisible in tree / changes / blob reads until finalize, because all three
+    read committed git objects only. These pin the untracked channel end-to-end."""
+
+    GROUP = "grpexpprj.default.0150"
+
+    def _provision(self, svc):
+        from modules.flow_gate.storage.paths import src_root
+
+        assert svc.ensure_worktree("grpexpprj", "default", self.GROUP) == "ok"
+        return src_root("GrpExpProj", "grpexpprj_default_0150")
+
+    def test_tree_and_changes_surface_untracked(self, grpexp_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        wt = self._provision(svc)
+        # A brand-new file (never git add-ed) plus a tracked edit — the exact asymmetry
+        # B0001 reports ("수정은 보이는데 신규만 안 보인다").
+        (wt / "pkg").mkdir(exist_ok=True)
+        (wt / "pkg" / "new_module.py").write_text("print('new')\n", encoding="utf-8")
+        (wt / "README.md").write_text("hello\nchanged\n", encoding="utf-8")
+        # Exposure-filtered kinds must NOT leak in.
+        (wt / ".hidden_new").write_text("x\n", encoding="utf-8")
+        (wt / "cache.db").write_text("x\n", encoding="utf-8")
+
+        tree = svc.read_group_tree("grpexpprj", self.GROUP)["data"]
+        paths = {n["path"] for n in tree["nodes"] if n["type"] == "file"}
+        assert "pkg/new_module.py" in paths            # new file now appears in the tree
+        assert "README.md" in paths                    # committed file still there
+        assert tree["worktree_untracked"] == ["pkg/new_module.py"]  # separate channel, filtered
+        assert ".hidden_new" not in paths and "cache.db" not in paths
+
+        changes = svc.read_group_changes("grpexpprj", self.GROUP)["data"]["changes"]
+        by_path = {c["path"]: c["status"] for c in changes}
+        assert by_path.get("pkg/new_module.py") == "?"  # untracked marker
+        assert by_path.get("README.md") == "M"          # tracked edit unaffected
+        assert ".hidden_new" not in by_path and "cache.db" not in by_path
+
+    def test_blob_falls_back_to_worktree_for_untracked(self, grpexp_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        wt = self._provision(svc)
+        # write_bytes (not write_text) so the disk content is exactly what the blob
+        # reader returns — no platform \n → \r\n translation to confuse the assertion.
+        (wt / "fresh.txt").write_bytes(b"fresh content\n")
+
+        # Untracked file: no commit object, so it is read off disk with commit=None.
+        blob = svc.read_group_blob("grpexpprj", self.GROUP, "fresh.txt")["data"]
+        assert blob["content"] == "fresh content\n"
+        assert blob["commit"] is None and blob["untracked"] is True
+        assert blob["binary"] is False
+
+        # Passing the tree's own commit as ref must still resolve the untracked file
+        # (the client pins ref to the tree commit; untracked has no commit of its own).
+        _, _, head = svc.resolve_group_ref("grpexpprj", self.GROUP)
+        pinned = svc.read_group_blob("grpexpprj", self.GROUP, "fresh.txt", head)["data"]
+        assert pinned["content"] == "fresh content\n" and pinned["untracked"] is True
+
+        # A committed file still reads through the git-object path (commit set, no flag).
+        committed = svc.read_group_blob("grpexpprj", self.GROUP, "README.md")["data"]
+        assert committed["commit"] and not committed.get("untracked")
+
+        # A truly missing path is still a 404 (fallback never invents a file).
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.read_group_blob("grpexpprj", self.GROUP, "nope/missing.txt")
+        assert exc.value.status == 404
+

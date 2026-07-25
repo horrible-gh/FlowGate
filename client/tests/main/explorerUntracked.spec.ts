@@ -76,3 +76,78 @@ describe('explorer store — new (untracked) file markers', () => {
     expect(store.isBaseUntrackedPath('p1', 'dir/win.ts')).toBe(false)
   })
 })
+
+/**
+ * 0315 TR (NR0003 권고 1·2·3·4) — the READ-ONLY group-branch explorer now surfaces new
+ * (untracked) files too. B0001: a worker's just-created file was invisible in the group
+ * branch view until finalize, because the checkout-free tree/changes/blob reads see
+ * committed git objects only. The tree read now returns a worktree_untracked channel;
+ * the changes read lists new files with a '?' status; untracked blobs are read off disk
+ * (commit=null) and never cached by commit. These pin that store behaviour.
+ */
+describe('explorer store — group-branch new (untracked) file markers', () => {
+  const treeResp = (worktreeUntracked: string[], nodes: any[] = []) => ({
+    data: { data: { branch: 'g_default_0315', commit: 'abc123', nodes, worktree_untracked: worktreeUntracked } },
+  })
+
+  it('populates groupUntrackedFiles from the tree worktree_untracked channel, apart from changed', async () => {
+    getRequest.mockResolvedValueOnce(treeResp(['pkg\\new.py']))
+    const store = useExplorerStore()
+
+    await store.fetchGroupBranchTree('p1', 'g1')
+
+    // Backslashes normalized; the new file is on the untracked channel, not the changed one.
+    expect(store.isGroupUntrackedPath('p1', 'g1', 'pkg/new.py')).toBe(true)
+    expect(store.isGroupChangedPath('p1', 'g1', 'pkg/new.py')).toBe(false)
+  })
+
+  it('propagates the group new marker to ancestor folders (collapsed-folder reveal)', async () => {
+    getRequest.mockResolvedValueOnce(treeResp(['a/b/c/new.py']))
+    const store = useExplorerStore()
+
+    await store.fetchGroupBranchTree('p1', 'g1')
+
+    expect(store.isGroupUntrackedDir('p1', 'g1', 'a')).toBe(true)
+    expect(store.isGroupUntrackedDir('p1', 'g1', 'a/b')).toBe(true)
+    expect(store.isGroupUntrackedDir('p1', 'g1', 'a/b/c')).toBe(true)
+    expect(store.isGroupUntrackedDir('p1', 'g1', 'other')).toBe(false)
+  })
+
+  it("keeps the changes list full but routes '?' untracked out of the MODIFIED badge", async () => {
+    getRequest.mockResolvedValueOnce({
+      data: { data: { changes: [
+        { path: 'edited.py', status: 'M' },
+        { path: 'brand-new.py', status: '?' },
+      ] } },
+    })
+    const store = useExplorerStore()
+
+    const changes = await store.fetchGroupBranchChanges('p1', 'g1')
+
+    expect(changes.length).toBe(2) // the endpoint's full list is still returned to callers
+    expect(store.isGroupChangedPath('p1', 'g1', 'edited.py')).toBe(true)
+    // The untracked file must NOT read as modified — it belongs to the NEW badge instead.
+    expect(store.isGroupChangedPath('p1', 'g1', 'brand-new.py')).toBe(false)
+  })
+
+  it('serves an untracked blob fresh every time (commit=null → never cached)', async () => {
+    const blob = (content: string) => ({
+      data: { data: {
+        group_id: 'g1', branch: 'b', commit: null, path: 'new.py',
+        size: content.length, binary: false, truncated: false,
+        encoding: 'utf-8', content, untracked: true,
+      } },
+    })
+    getRequest.mockResolvedValueOnce(blob('v1')).mockResolvedValueOnce(blob('v2'))
+    const store = useExplorerStore()
+
+    const first = await store.fetchGroupBranchBlob('p1', 'g1', 'new.py')
+    const second = await store.fetchGroupBranchBlob('p1', 'g1', 'new.py')
+
+    expect(first.content).toBe('v1')
+    // A committed blob would have been cache-served; the untracked one is re-fetched so a
+    // later edit (same commit-less state) is never masked by a stale cache entry.
+    expect(second.content).toBe('v2')
+    expect(getRequest).toHaveBeenCalledTimes(2)
+  })
+})
