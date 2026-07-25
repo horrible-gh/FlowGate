@@ -478,6 +478,54 @@ export const useExplorerStore = defineStore('explorer', () => {
     if (ancestors.length) setGroupNodesExpanded(pid, ancestors, true)
   }
 
+  /** Reveal + select a document node in the group tree by doc id — the single
+   *  implementation shared by dashboard/notification navigation, the AI run
+   *  cards' "문서 열기", and the auto-advance SSE select intent (0316 T0004 /
+   *  NR0003 권고 1·2·3). Ensures the tree is loaded (force-refetching once when the
+   *  id is absent, e.g. a just-created auto-advance head that the cached tree has
+   *  not caught up to), expands the ancestor groups so the node is revealed, and
+   *  sets it as the selected node — the same reveal the dashboard cards already
+   *  perform, now reachable from the AI-work open paths that previously only opened
+   *  a tab. Best-effort: a tree-load failure resolves to null instead of throwing,
+   *  so a caller that also opens a tab still opens it. Returns the node when found.
+   *
+   *  `switchProject` (0316 TR0005 rev1 반려 — "문서열기 해도 해당 프로젝트로 안가잖아"):
+   *  when the target document lives in a project OTHER than the one on screen, the
+   *  reveal/select below would land on a group tree that isn't displayed and nothing
+   *  would move — the explorer stayed on the old project. The previous revision made
+   *  this worse by having every caller pass the *current* project id, so a cross-project
+   *  "문서 열기" silently no-op'd. With `switchProject`, the active project is switched to
+   *  `pid` first, so the explorer actually shows the document's project and the reveal
+   *  lands on the tree now on screen. Off by default: only the explicit user-driven open
+   *  paths opt in — a background SSE follow must never yank the user's view to another
+   *  project (that guard stays in useFlowGateSse). Selection/expansion are store (and
+   *  localStorage) state, so they survive the explorer remount the switch triggers. */
+  async function revealDocInGroupTree(
+    pid: string | null,
+    docId: string | null,
+    options: { switchProject?: boolean } = {},
+  ): Promise<GroupNode | null> {
+    if (!pid || !docId) return null
+    try {
+      if (options.switchProject && pid !== projectStore.currentProjectId) {
+        projectStore.setCurrentProject(pid)
+      }
+      let nodes = getCachedGroupTree(pid)
+      if (!nodes) nodes = await fetchGroupTree(pid, true)
+      let node = nodes.find((n) => n.id === docId)
+      if (!node) {
+        nodes = await fetchGroupTree(pid, true)
+        node = nodes.find((n) => n.id === docId)
+      }
+      if (!node || node.node_type !== 'document') return null
+      expandGroupAncestors(pid, nodes, node.id)
+      selectedGroupNodeId.value = node.id
+      return node
+    } catch {
+      return null
+    }
+  }
+
   function setWorkflowNodeState(docId: string, state: WorkflowNodeState) {
     workflowNodeStates.value[docId] = state
   }
@@ -501,6 +549,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     expandedFileNodes, expandedGroupNodes,
     isFileNodeExpanded, setFileNodeExpanded, setFileNodesExpanded,
     isGroupNodeExpanded, setGroupNodeExpanded, setGroupNodesExpanded, expandGroupAncestors,
+    revealDocInGroupTree,
     setWorkflowNodeState, clearWorkflowNodeState,
   }
 })

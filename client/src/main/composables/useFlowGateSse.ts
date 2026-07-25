@@ -390,6 +390,20 @@ export function useFlowGateSse(refreshAll: () => void) {
           }))
         }
         invalidateAndRefresh(data.project)
+        // Consume the auto-advance select intent (0316 T0004 / NR0003 §3-3·권고 3).
+        // The server tags ONLY auto-advance head documents with select:true, so ordinary
+        // created/updated refreshes never steal the tree selection — the recurring
+        // "AI가 다음 문서를 만들어도 탐색기가 따라가지 않는다" gap where the client ignored the field
+        // the server already emits (commit fa073d7). Reveal + select the new head so the
+        // explorer follows the AI's progress. Guarded to the current project: selecting a
+        // node in a project not on screen would be wrong (and its tree isn't loaded).
+        // Fired after invalidateAndRefresh — that cleared the cache, so the reveal's
+        // force-fetch reads the fresh tree containing the new head, and the selection it
+        // sets survives the coalesced remount (selection + expansion are store state).
+        const pid = data.project ?? projectStore.currentProjectId
+        if (payload.select === true && docId && pid === projectStore.currentProjectId) {
+          void explorerStore.revealDocInGroupTree(pid, docId)
+        }
       } catch { /* ignore parse errors */ }
     })
 

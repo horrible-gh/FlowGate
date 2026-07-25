@@ -7,6 +7,8 @@ import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import AiInvokeMiniplayer from '@main/components/AiInvokeMiniplayer.vue'
 import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { useProjectStore } from '@main/stores/project'
+import { useExplorerStore } from '@main/stores/explorer'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest }))
@@ -262,6 +264,76 @@ describe('AiInvokeMiniplayer', () => {
     await flushPromises()
 
     expect(store.runsByGroup['flowgate.default.3010']).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  // 0316 TR0005 rev1 반려 — "문서열기 해도 해당 프로젝트로 안가잖아": an AI run's document
+  // very often belongs to a DIFFERENT project than the one on screen. Opening it used to
+  // pass the *current* project id to the reveal, so the reveal landed on the wrong tree
+  // and the explorer never moved to the document's project. The open must now switch the
+  // active project to the doc's own project and select it there. Pinned end-to-end from
+  // the header "문서 열기" the user actually clicks.
+  it('switches to the document own project when opening a cross-project doc', async () => {
+    const projectStore = useProjectStore()
+    projectStore.setCurrentProject('proj-A')
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
+      if (url.includes('/documents/detail')) {
+        return {
+          data: {
+            doc_id: 'flowgate.default.9001.0001-R', title: '다른 프로젝트 문서',
+            type_code: 'R', file_path: 'a.md', project_id: 'proj-B',
+          },
+        }
+      }
+      if (url.includes('/groups/tree')) {
+        return {
+          data: {
+            data: {
+              nodes: [
+                {
+                  id: 'flowgate.default.9001.0001-R', parent_id: 'grp-9001',
+                  node_type: 'document', type_code: 'R', number: '0001', filename: null,
+                  label: 'R0001', has_md: true, md_path: 'a.md',
+                },
+                {
+                  id: 'grp-9001', parent_id: null, node_type: 'group', type_code: null,
+                  number: '9001', filename: null, label: '9001', has_md: false, md_path: null,
+                },
+              ],
+            },
+          },
+        }
+      }
+      return { data: {} }
+    })
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-xp', group_id: 'flowgate.default.9001',
+      doc_ref: 'flowgate.default.9001.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-xp', group_id: 'flowgate.default.9001',
+      doc_ref: 'flowgate.default.9001.0001-R', outcome: 'complete',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const openBtn = wrapper.findAll('button').find(
+      b => b.text().includes(t('main.ai_miniplayer.btn_open_doc')),
+    )
+    await openBtn!.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const explorerStore = useExplorerStore()
+    // The explorer is now on the document's project, not the one we started on...
+    expect(projectStore.currentProjectId).toBe('proj-B')
+    // ...and the opened doc is the selected node in that project's tree, with its
+    // ancestor group expanded so it is actually revealed.
+    expect(explorerStore.selectedGroupNodeId).toBe('flowgate.default.9001.0001-R')
+    expect(explorerStore.isGroupNodeExpanded('proj-B', 'grp-9001')).toBe(true)
     wrapper.unmount()
   })
 
