@@ -353,6 +353,7 @@
             v-if="canShowDocInfoPanel(tab.id)"
             :doc-id="tab.id"
             :type-code="getTabTypeCode(tab.id)"
+            :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? null"
             :review-status="exposedValue(docHeaderRefs[tab.id]?.docReviewStatus) ?? null"
             :reject-reason="exposedValue(docHeaderRefs[tab.id]?.rejectionReason) ?? null"
             :rejection-history="exposedValue(docHeaderRefs[tab.id]?.rejectionHistory) ?? []"

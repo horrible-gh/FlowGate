@@ -29,10 +29,65 @@
         </div>
       </div>
 
+      <!-- Section 1.5: source-change summary (0325 R0001 / N0004 §2·§3).
+           최종 승인(AC) 시점에만, 질의 응답·AI 검수 의견·반려 사유가 비운 자리에
+           들어간다. "머지할까 말까" 를 판단하는 그 화면에서 이번 그룹이 무엇을
+           얼마나 바꿨는지 볼 수 있는 유일한 자리다.
+           N0004 §2 에 따라 디렉터리별 파일 수 목록은 넣지 않는다 — 사이드바만
+           길어지고 판단에는 보태는 게 없다. -->
+      <div v-if="canShowChangesSection" class="dip-section" :class="{ collapsed: sectionCollapsed.changes }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.changes" @click="toggleSection('changes')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="git-diff" />
+          {{ t('main.doc_info_panel.section_changes') }}
+        </button>
+        <div class="dip-sec-body">
+          <div v-if="changesLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
+          <div v-else-if="changesError" class="dip-qa-error">{{ t('main.doc_info_panel.changes_failed') }}</div>
+          <div v-else-if="changeSummary.total === 0" class="dip-reject-empty">
+            <AppIcon name="check-circle" />
+            <span>{{ t('main.doc_info_panel.changes_empty') }}</span>
+          </div>
+          <template v-else>
+            <div class="dip-chg-headline">
+              <strong class="dip-chg-files">{{ t('main.doc_info_panel.changes_files', { n: changeSummary.total }) }}</strong>
+              <span v-if="changeSummary.lineStatsKnown" class="dip-chg-lines">
+                <span class="dip-chg-add">+{{ changeSummary.insertions.toLocaleString() }}</span>
+                <span class="dip-chg-del">−{{ changeSummary.deletions.toLocaleString() }}</span>
+              </span>
+            </div>
+            <ul class="dip-chg-kinds">
+              <li v-for="kind in changeKinds" :key="kind.key" class="dip-chg-kind">
+                <span class="dip-chg-badge" :class="`dip-chg-${kind.key}`">{{ kind.badge }}</span>
+                <span class="dip-chg-kind-label">{{ t(`main.doc_info_panel.changes_kind_${kind.key}`) }}</span>
+                <span class="dip-chg-kind-count">{{ kind.count }}</span>
+              </li>
+            </ul>
+            <p v-if="!changeSummary.lineStatsKnown" class="dip-chg-note">
+              {{ t('main.doc_info_panel.changes_lines_unknown') }}
+            </p>
+            <p v-if="aheadBehindText" class="dip-chg-branch">
+              <AppIcon name="git-branch" />
+              {{ aheadBehindText }}
+            </p>
+            <!-- 0325 TR0007 rev1 (반려 반영): 시안의 [변경사항 열기]. 요약은 "몇 파일 ·
+                 몇 줄"까지만 답하고, R0001 이 물은 "소스가 잘 됐는지" 는 실제 diff 를
+                 읽어야 답이 난다. 이 버튼이 그 진입점이고, 여는 화면은 승인 화면을
+                 대체하지 않는 오버레이라 닫으면 이 자리로 그대로 돌아온다. -->
+            <button type="button" class="dip-chg-open" @click="changesDialogOpen = true">
+              <AppIcon name="arrow-square-out" />
+              {{ t('main.doc_info_panel.changes_open') }}
+            </button>
+          </template>
+        </div>
+      </div>
+
       <!-- Section 2: Q&A (group 0126). The side panel keeps each query compact and only
            exposes the answer action per card; the full text/answer form opens in the
-           dialog so long queries never stretch the panel. -->
-      <div class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
+           dialog so long queries never stretch the panel.
+           0325 N0004 §3: hidden at the final-approval step — by then every query is
+           settled, and the space belongs to the source-change summary above. -->
+      <div v-if="canShowQaSection" class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
         <div class="dip-qa-headline">
           <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.qa" @click="toggleSection('qa')">
             <AppIcon name="caret-down" class="dip-acc-caret" />
@@ -350,6 +405,19 @@
       :copy-answer-mention="copyAnswerMention"
       :ai-run-item-id="aiRunItemId"
     />
+
+    <!-- 0325 TR0007 rev1 — what [변경사항 열기] opens: the file list + unified/split
+         diff of everything this group changed against its base. Mounted lazily so a
+         reviewer who never opens it pays for no diff request at all. -->
+    <GroupChangesDialog
+      v-if="changesDialogOpen && props.groupId"
+      :project-id="changesProjectId"
+      :group-id="props.groupId"
+      :branch="changesBranch"
+      :base-branch="changesBaseBranch"
+      :changes="changes"
+      @close="changesDialogOpen = false"
+    />
   </aside>
 </template>
 
@@ -359,8 +427,10 @@ import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
+import GroupChangesDialog from './GroupChangesDialog.vue'
 import { useQaAnswers } from '../composables/useQaAnswers'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { useExplorerStore, type GroupChangeData } from '../stores/explorer'
 import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
@@ -375,6 +445,10 @@ const aiProviderStore = useAiProviderStore()
 const props = defineProps<{
   docId: string
   typeCode: string | null
+  // 0325 T0006: the group this document belongs to, used ONLY by the AC
+  // source-change summary. Optional so every non-AC mount (and every existing
+  // test) keeps working without it.
+  groupId?: string | null
   reviewStatus: string | null
   rejectReason: string | null
   rejectionHistory?: RejectionHistoryItem[]
@@ -401,7 +475,7 @@ const emit = defineEmits<{
 // under its own title caret — the same caret idiom as the left file-tree. This is
 // separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
 // emit) so the two controls don't fight. Sections start expanded.
-type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject' | 'tr_scope'
+type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   qa: false,
@@ -409,6 +483,8 @@ const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   reject: false,
   // 통과이고 사유가 없으면 접어 둔다 (D0004 §6). 아래 watch 가 판정을 보고 연다.
   tr_scope: true,
+  // 0325 T0006: AC 에서만 뜨는 섹션이고, 뜨는 이유 자체가 "지금 보라"이므로 펼친 채 시작한다.
+  changes: false,
 })
 
 // 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
@@ -575,10 +651,15 @@ const statusDesc = computed(() => {
 const currentTypeCode = computed(() => props.typeCode || 'R')
 const isQDoc = computed(() => props.typeCode === 'Q')
 const isQDone = computed(() => props.qStatus === 'done')
-const canShowRejectSection = computed(() => !['R', 'B', 'Q', 'M'].includes(props.typeCode ?? ''))
+// 0325 N0004 §3: 최종 승인(AC) 화면에서는 질의 응답 · AI 검수 의견 · 반려 사유를
+// 감추고 그 자리에 소스 변경 요약을 띄운다. 세 섹션 모두 그 시점에는 이미 끝난
+// 얘기라 스크롤만 늘린다.
+const isAcDoc = computed(() => props.typeCode === 'AC')
+const canShowQaSection = computed(() => !isAcDoc.value)
+const canShowRejectSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
 
 // ── AI review feedback (variant C: latest item plus "view full history") ──
-const canShowReviewSection = computed(() => !['R', 'B', 'Q', 'M'].includes(props.typeCode ?? ''))
+const canShowReviewSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
 const priorReviewCount = computed(() => Math.max(0, (props.aiReviewHistory?.length ?? 0) - 1))
 
 // Accordion: collapse the findings list under the verdict badge so the side panel
@@ -626,6 +707,109 @@ const effectiveStatus = computed(() =>
 
 const nextStep = computed(() =>
   props.nextStepIndex != null ? (props.stepStates[props.nextStepIndex] ?? null) : null
+)
+
+// ── 0325 R0001 / N0004 §2: source-change summary (AC only) ────────────────────
+// R0001: "승인 후 머지 할까 말까 고민되는데 어떤 파일이 수정됐는지 볼 길이 없다."
+// The numbers come from two endpoints that already exist and are already called
+// elsewhere in the app — no new backend route:
+//   · /projects/{pid}/git/groups/{gid}/changes  → 변경 파일 목록 + 파일별 +/- 줄 수
+//   · /groups/{gid}/git/finalize                → base 대비 ahead/behind 커밋 수
+// N0004 §2 dropped the per-directory file counts, so this stays a few lines tall.
+const explorerStore = useExplorerStore()
+const changes = ref<GroupChangeData[]>([])
+const changesLoading = ref(false)
+const changesError = ref(false)
+const aheadCount = ref<number | null>(null)
+const behindCount = ref<number | null>(null)
+// 0325 TR0007 rev1 — branch names for the [변경사항 열기] viewer title, straight off
+// the same /changes response the summary already reads.
+const changesBranch = ref<string | null>(null)
+const changesBaseBranch = ref<string | null>(null)
+const changesDialogOpen = ref(false)
+
+const canShowChangesSection = computed(() => isAcDoc.value && !!props.groupId)
+// The group id's first segment is the project id — the same derivation
+// GitFinalizePanel uses for its own group-scoped calls.
+const changesProjectId = computed(() => (props.groupId ?? '').split('.')[0] || '')
+
+const CHANGE_KINDS = [
+  { key: 'added', badge: 'A', statuses: ['A', '?'] },
+  { key: 'modified', badge: 'M', statuses: ['M'] },
+  { key: 'deleted', badge: 'D', statuses: ['D'] },
+] as const
+
+const changeSummary = computed(() => {
+  let insertions = 0
+  let deletions = 0
+  // null (binary / unscannable) must not silently read as 0: if NOTHING reported a
+  // count, the +/- pair is a lie and the panel says so instead of showing "+0 −0".
+  let lineStatsKnown = false
+  for (const change of changes.value) {
+    if (typeof change.insertions === 'number') { insertions += change.insertions; lineStatsKnown = true }
+    if (typeof change.deletions === 'number') { deletions += change.deletions; lineStatsKnown = true }
+  }
+  return { total: changes.value.length, insertions, deletions, lineStatsKnown }
+})
+
+// Only the kinds actually present are listed — an empty "삭제 0" row is noise.
+const changeKinds = computed(() =>
+  CHANGE_KINDS
+    .map((kind) => ({
+      key: kind.key,
+      badge: kind.badge,
+      count: changes.value.filter((c) => (kind.statuses as readonly string[]).includes(c.status)).length,
+    }))
+    .filter((kind) => kind.count > 0),
+)
+
+const aheadBehindText = computed(() => {
+  if (aheadCount.value == null || behindCount.value == null) return ''
+  return t('main.git_finalize.ahead_behind', { ahead: aheadCount.value, behind: behindCount.value })
+})
+
+async function loadChangeSummary() {
+  const groupId = props.groupId ?? ''
+  const projectId = changesProjectId.value
+  if (!canShowChangesSection.value || !projectId) return
+  changesLoading.value = true
+  changesError.value = false
+  try {
+    const changeSet = await explorerStore.fetchGroupBranchChangeSet(projectId, groupId)
+    changes.value = changeSet.changes
+    changesBranch.value = changeSet.branch ?? null
+    changesBaseBranch.value = changeSet.base_branch ?? null
+  } catch {
+    changes.value = []
+    changesBranch.value = null
+    changesBaseBranch.value = null
+    changesError.value = true
+  } finally {
+    changesLoading.value = false
+  }
+  // ahead/behind is supplemental: the file counts are the point, so a failure here
+  // just drops the branch line rather than failing the whole section.
+  try {
+    const { data } = await getRequest<{ state: { ahead_count: number | null; behind_count: number | null } }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/git/finalize`,
+    )
+    aheadCount.value = data.state?.ahead_count ?? null
+    behindCount.value = data.state?.behind_count ?? null
+  } catch {
+    aheadCount.value = null
+    behindCount.value = null
+  }
+}
+
+watch(
+  () => [props.groupId, props.typeCode] as const,
+  () => {
+    // Switching documents must not leave the viewer open over a different group's
+    // approval screen.
+    changesDialogOpen.value = false
+    void loadChangeSummary()
+  },
+  { immediate: true },
 )
 
 // ── group 0022 §3.1/§3.2 · group 0093 R0001: document-bound query/answer panel ──────
@@ -1154,6 +1338,70 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
 }
 .dip-trs-mismatch { color: var(--danger, #b91c1c); }
 .dip-trs-more { color: var(--muted, #64748b); list-style: none; margin-left: -16px; }
+
+/* 소스 변경 요약 (0325 R0001 / N0004 §2). 최종 승인 화면에서만 뜨고, 그 화면의
+   판단("머지할까 말까")에 필요한 최소한만 — 파일 수 · 증감 줄 수 · 종류별 건수 ·
+   base 대비 앞섬/뒤처짐. 디렉터리별 분포는 N0004 §2 에 따라 넣지 않는다. */
+.dip-chg-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dip-chg-files { font-size: .82rem; }
+.dip-chg-lines { display: inline-flex; gap: 6px; font-size: .74rem; font-variant-numeric: tabular-nums; }
+.dip-chg-add { color: var(--success, #15803d); font-weight: 600; }
+.dip-chg-del { color: var(--danger, #b91c1c); font-weight: 600; }
+.dip-chg-kinds { margin: 7px 0 0; padding: 0; list-style: none; }
+.dip-chg-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .72rem;
+  line-height: 1.9;
+}
+.dip-chg-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: .62rem;
+  font-weight: 700;
+}
+.dip-chg-added { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
+.dip-chg-modified { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }
+.dip-chg-deleted { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
+.dip-chg-kind-label { flex: 1; color: var(--muted, #64748b); }
+.dip-chg-kind-count { font-variant-numeric: tabular-nums; font-weight: 600; }
+.dip-chg-note { margin: 6px 0 0; font-size: .68rem; color: var(--muted, #64748b); }
+.dip-chg-branch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 0 0;
+  font-size: .7rem;
+  color: var(--muted, #64748b);
+}
+/* [변경사항 열기] — 요약의 결론이 아니라 진입점이므로 섹션 맨 아래 전체 너비로 둔다. */
+.dip-chg-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 9px 0 0;
+  padding: 7px 9px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--primary, #1d4ed8);
+  background: var(--primary-bg, #eff6ff);
+  border: 1px solid var(--primary-border, #bfdbfe);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.dip-chg-open:hover { background: var(--primary-bg-hover, #dbeafe); }
 
 /* P0005/T0006: the AI's response to a rejection — threaded as a reply directly
    under the rejection quote (a sibling, not nested inside the quote box).

@@ -2427,6 +2427,60 @@ def _group_untracked_safe(project_id: str, group_id: str, branch: str) -> list[s
         return []
 
 
+# 0325 T0006: per-file +/- line counts for the changes list. `git diff --numstat`
+# already reports them for tracked paths; an untracked file has no diff entry at
+# all, so its "added" count is read off disk. Both channels degrade to None (=
+# "unknown", e.g. binary) rather than 0, so the client never shows a made-up 0.
+_UNTRACKED_STAT_MAX_BYTES = 1_000_000
+
+
+def _untracked_added_lines(wt_path: Path, rel_path: str) -> Optional[int]:
+    """Line count of an untracked file, or None when it is binary/oversized/unreadable."""
+    try:
+        target = wt_path / rel_path
+        if not target.is_file() or target.stat().st_size > _UNTRACKED_STAT_MAX_BYTES:
+            return None
+        data = target.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data:  # same binary heuristic git uses for --numstat's "-"
+        return None
+    if not data:
+        return 0
+    return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+
+
+def _diff_line_stats(wt_path: Path, merge_base: str) -> dict[str, tuple[Optional[int], Optional[int]]]:
+    """path -> (insertions, deletions) from ``git diff --numstat``.
+
+    Supplemental like the untracked channel: a failure here must not break the
+    changes list, so an unusable run yields an empty map and every file falls
+    back to None.
+    """
+    proc = _run_git(
+        ["diff", "--numstat", "--no-renames", "-z", merge_base, "--"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        _log.warning("numstat failed in %s: %s", wt_path, _one_line_subject(proc.stderr))
+        return {}
+    stats: dict[str, tuple[Optional[int], Optional[int]]] = {}
+    # -z record shape (renames excluded): "<added>\t<deleted>\t<path>\0".
+    # Binary files report "-" for both counts.
+    for record in (proc.stdout or "").split("\0"):
+        if not record:
+            continue
+        added, sep, rest = record.partition("\t")
+        deleted, sep2, path = rest.partition("\t")
+        if not sep or not sep2 or not path:
+            continue
+        stats[path] = (
+            int(added) if added.isdigit() else None,
+            int(deleted) if deleted.isdigit() else None,
+        )
+    return stats
+
+
 def read_group_tree(project_id: str, group_id: str) -> dict:
     """checkout-free recursive tree of a group branch's HEAD commit (L0006 §2.2)."""
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
@@ -2467,8 +2521,13 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
     }}
 
 
-def read_group_changes(project_id: str, group_id: str) -> dict:
-    """Tracked paths changed from the group's base commit through its worktree."""
+def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, Path, str]:
+    """(base_branch, branch, commit, worktree_path, merge_base) for group-vs-base diffs.
+
+    Shared by the changes list and the per-file diff reader (0325 TR0007 rev1) so both
+    compare against the SAME merge-base — otherwise the summary and the diff a reviewer
+    opens from it could disagree about what this group changed.
+    """
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     cfg = db_git.get_config(project_id) or {}
     state = db_git.get_state(group_id) or {}
@@ -2489,6 +2548,12 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         raise GitServiceError(
             500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
         )
+    return base_branch, branch, commit, wt_path, merge_base
+
+
+def read_group_changes(project_id: str, group_id: str) -> dict:
+    """Tracked paths changed from the group's base commit through its worktree."""
+    base_branch, branch, commit, wt_path, merge_base = _group_diff_context(project_id, group_id)
 
     diff_proc = _run_git(
         ["diff", "--name-status", "--no-renames", "-z", merge_base, "--"],
@@ -2499,6 +2564,11 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
             500, "git_error", _one_line_subject(diff_proc.stderr) or "git diff failed"
         )
 
+    # 0325 T0006: the final-approval sidebar summarizes "how big is this change",
+    # which --name-status cannot answer. A second read-only pass over the same
+    # merge-base supplies the per-file +/- counts.
+    line_stats = _diff_line_stats(wt_path, merge_base)
+
     fields = (diff_proc.stdout or "").split("\0")
     changes: list[dict] = []
     for index in range(0, len(fields) - 1, 2):
@@ -2508,16 +2578,205 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         segments = path.split("/")
         if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
             continue
-        changes.append({"path": path, "status": status[:1]})
+        insertions, deletions = line_stats.get(path, (None, None))
+        changes.append({
+            "path": path, "status": status[:1],
+            "insertions": insertions, "deletions": deletions,
+        })
     # NR0003 권고 2: git diff never lists untracked files, so a brand-new file would be
     # absent from the changes list entirely — the exact "수정은 보이는데 신규만 안 보이는"
     # asymmetry B0001 reports. Surface each with "?" (git porcelain's untracked marker).
     existing = {change["path"] for change in changes}
     for path in _group_untracked_safe(project_id, group_id, branch):
         if path not in existing:
-            changes.append({"path": path, "status": "?"})
+            # A never-added file deletes nothing, so 0 here is a fact, not a guess.
+            changes.append({
+                "path": path, "status": "?",
+                "insertions": _untracked_added_lines(wt_path, path), "deletions": 0,
+            })
     return {"ok": True, "data": {
-        "group_id": group_id, "branch": branch, "commit": commit, "changes": changes,
+        "group_id": group_id, "branch": branch, "commit": commit,
+        # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
+        # the base branch is a project setting the client had no other way to read.
+        "base_branch": base_branch, "changes": changes,
+    }}
+
+
+# ── Per-file diff of a group branch (0325 R0001 / TR0007 rev1) ───────────────
+# R0001 asks to actually READ the change before approving the merge, which the
+# changes list alone cannot answer — it only says which files and how many lines.
+# The diff is parsed here rather than shipped as raw text so the client renders
+# unified and split views from one structure and the parsing is unit-testable.
+DIFF_CONTEXT_LINES = 3
+DIFF_MAX_LINES = 4000            # per-file cap on returned diff lines → truncated=true
+DIFF_UNTRACKED_MAX_BYTES = 1_000_000
+
+
+class _DiffLineBudget:
+    """Line cap shared across a file's hunks; flips ``truncated`` once exhausted."""
+
+    def __init__(self, limit: int) -> None:
+        self.remaining = limit
+        self.truncated = False
+
+    def take(self) -> bool:
+        if self.remaining <= 0:
+            self.truncated = True
+            return False
+        self.remaining -= 1
+        return True
+
+
+_HUNK_HEAD_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def _parse_unified_diff(diff_text: str, budget: _DiffLineBudget) -> list[dict]:
+    """``git diff -U3`` output → hunks of typed lines with both line numbers.
+
+    Only the hunk bodies are kept; the ``diff --git`` / ``index`` / ``---`` / ``+++``
+    preamble carries nothing the viewer shows. ``\\ No newline at end of file`` is
+    dropped — it is a marker, not a line of the file.
+    """
+    hunks: list[dict] = []
+    current: Optional[dict] = None
+    old_no = new_no = 0
+    for raw in diff_text.split("\n"):
+        head = _HUNK_HEAD_RE.match(raw)
+        if head:
+            old_no, new_no = int(head.group(1)), int(head.group(3))
+            current = {
+                "old_start": old_no,
+                "old_lines": int(head.group(2) or 1),
+                "new_start": new_no,
+                "new_lines": int(head.group(4) or 1),
+                "section": (head.group(5) or "").strip(),
+                "lines": [],
+            }
+            hunks.append(current)
+            continue
+        if current is None or not raw:
+            continue
+        marker, text = raw[0], raw[1:]
+        if marker == "\\":
+            continue
+        if marker == " ":
+            kind, old_at, new_at = "context", old_no, new_no
+            old_no, new_no = old_no + 1, new_no + 1
+        elif marker == "-":
+            kind, old_at, new_at = "del", old_no, None
+            old_no += 1
+        elif marker == "+":
+            kind, old_at, new_at = "add", None, new_no
+            new_no += 1
+        else:
+            continue
+        if not budget.take():
+            break
+        current["lines"].append({
+            "kind": kind, "old_lineno": old_at, "new_lineno": new_at, "text": text,
+        })
+    return [hunk for hunk in hunks if hunk["lines"]]
+
+
+def _untracked_file_diff(wt_path: Path, path: str, budget: _DiffLineBudget) -> Optional[dict]:
+    """An untracked file as one all-added hunk, or None when it cannot be shown.
+
+    ``git diff`` never reports untracked files, so a brand-new file would open as an
+    empty diff — the same asymmetry NR0003 권고 2 fixed for the changes list. Binary
+    and oversized files return the binary/None shape instead of garbage text.
+
+    Gated on git's own untracked list: a TRACKED file with no changes also produces an
+    empty diff, and showing its whole content as "added" would be an outright lie about
+    what this group did.
+    """
+    try:
+        if path not in set(_group_untracked_visible(wt_path)):
+            return None
+    except GitServiceError:
+        return None
+    target = wt_path / path
+    try:
+        if not target.is_file():
+            return None
+        if target.stat().st_size > DIFF_UNTRACKED_MAX_BYTES:
+            return {"binary": False, "oversized": True, "hunks": []}
+        data = target.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data[:BLOB_BINARY_SNIFF_BYTES]:
+        return {"binary": True, "oversized": False, "hunks": []}
+    text = data.decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":       # trailing newline is not a final empty line
+        lines.pop()
+    body: list[dict] = []
+    for index, line in enumerate(lines, start=1):
+        if not budget.take():
+            break
+        body.append({"kind": "add", "old_lineno": None, "new_lineno": index, "text": line})
+    hunks = [{
+        "old_start": 0, "old_lines": 0, "new_start": 1 if body else 0,
+        "new_lines": len(body), "section": "", "lines": body,
+    }] if body else []
+    return {"binary": False, "oversized": False, "hunks": hunks}
+
+
+def read_group_file_diff(project_id: str, group_id: str, path: str) -> dict:
+    """Unified diff of ONE group-branch file against the group's merge-base.
+
+    Read-only and checkout-free like the rest of the group explorer: the diff runs in
+    the group's own worktree so uncommitted work is included, which is exactly the
+    state a reviewer is deciding to merge.
+    """
+    _validate_blob_path(path)
+    normalized = path.replace("\\", "/")
+    if _is_hidden_source_path(normalized):
+        raise GitServiceError(404, "not_found", f"path '{path}' is not available")
+
+    base_branch, branch, commit, wt_path, merge_base = _group_diff_context(project_id, group_id)
+    proc = _run_git(
+        [
+            "diff", "--no-color", "--no-renames", f"--unified={DIFF_CONTEXT_LINES}",
+            merge_base, "--", normalized,
+        ],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(proc.stderr) or "git diff failed"
+        )
+
+    budget = _DiffLineBudget(DIFF_MAX_LINES)
+    out = proc.stdout or ""
+    binary = False
+    oversized = False
+    untracked = False
+    hunks: list[dict] = []
+    if "@@" in out:
+        hunks = _parse_unified_diff(out, budget)
+    elif "Binary files" in out or "GIT binary patch" in out:
+        binary = True
+    else:
+        # No tracked diff: either an untracked file (invisible to git diff) or a path
+        # that simply did not change. Both are 404-free outcomes the viewer renders.
+        synthesized = _untracked_file_diff(wt_path, normalized, budget)
+        if synthesized is None:
+            raise GitServiceError(
+                404, "not_found", f"path '{path}' has no changes against the base branch"
+            )
+        untracked = True
+        binary = synthesized["binary"]
+        oversized = synthesized["oversized"]
+        hunks = synthesized["hunks"]
+
+    insertions = sum(1 for h in hunks for line in h["lines"] if line["kind"] == "add")
+    deletions = sum(1 for h in hunks for line in h["lines"] if line["kind"] == "del")
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "commit": commit,
+        "base_branch": base_branch, "path": normalized,
+        "binary": binary, "oversized": oversized, "untracked": untracked,
+        "truncated": budget.truncated, "insertions": insertions, "deletions": deletions,
+        "hunks": hunks,
     }}
 
 
