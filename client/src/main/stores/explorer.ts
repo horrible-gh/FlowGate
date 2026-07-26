@@ -37,6 +37,54 @@ export interface FileNode {
 export interface GroupChangeData {
   path: string
   status: string
+  // 0325 T0006 — per-file line counts from `git diff --numstat`. null means
+  // "unknown" (binary, or an untracked file too large to scan), which the
+  // summary must exclude from its totals instead of counting as 0.
+  insertions?: number | null
+  deletions?: number | null
+}
+
+// 0325 TR0007 rev1 — full /changes payload. The changed-file badges only ever needed
+// the paths, but the [변경사항 열기] viewer also titles itself "<branch> ↔ <base>".
+export interface GroupChangesData {
+  group_id: string
+  branch: string
+  commit: string | null
+  base_branch?: string | null
+  changes: GroupChangeData[]
+}
+
+// 0325 TR0007 rev1 — GET /projects/{pid}/git/groups/{gid}/diff (read_group_file_diff).
+// Hunks arrive pre-parsed so the viewer renders unified AND split from one structure.
+export interface GroupDiffLine {
+  kind: 'context' | 'add' | 'del'
+  old_lineno: number | null
+  new_lineno: number | null
+  text: string
+}
+
+export interface GroupDiffHunk {
+  old_start: number
+  old_lines: number
+  new_start: number
+  new_lines: number
+  section: string
+  lines: GroupDiffLine[]
+}
+
+export interface GroupFileDiffData {
+  group_id: string
+  branch: string
+  commit: string | null
+  base_branch?: string | null
+  path: string
+  binary: boolean
+  oversized: boolean
+  untracked: boolean
+  truncated: boolean
+  insertions: number
+  deletions: number
+  hunks: GroupDiffHunk[]
 }
 
 export interface GroupBlobData {
@@ -322,11 +370,14 @@ export const useExplorerStore = defineStore('explorer', () => {
     }
   }
 
-  async function fetchGroupBranchChanges(pid: string, gid: string): Promise<GroupChangeData[]> {
-    const res = await getRequest<{ data: { changes: GroupChangeData[] } }>(
+  /** Full /changes payload (branch names included). `fetchGroupBranchChanges` is the
+   *  paths-only view of this same call, kept as-is for the change-badge callers. */
+  async function fetchGroupBranchChangeSet(pid: string, gid: string): Promise<GroupChangesData> {
+    const res = await getRequest<{ data: GroupChangesData }>(
       `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/changes`,
     )
-    const changes = (res.data as any).data.changes as GroupChangeData[]
+    const data = (res.data as any).data as GroupChangesData
+    const changes = (data.changes ?? []) as GroupChangeData[]
     // 0315 TR (NR0003 권고 2) — the server now also lists untracked files here with a
     // '?' status. Those drive the NEW badge (via the tree's worktree_untracked channel),
     // not the MODIFIED ('>') badge, so keep only tracked changes in groupChangedFiles;
@@ -337,7 +388,21 @@ export const useExplorerStore = defineStore('explorer', () => {
         .filter((change) => change.status !== '?')
         .map((change) => change.path.replace(/\\/g, '/')),
     }
-    return changes
+    return { ...data, changes }
+  }
+
+  async function fetchGroupBranchChanges(pid: string, gid: string): Promise<GroupChangeData[]> {
+    return (await fetchGroupBranchChangeSet(pid, gid)).changes
+  }
+
+  /** Unified diff of ONE changed file in a group branch (0325 R0001). Not cached:
+   *  the group worktree is live, so a diff read after an edit must show the edit. */
+  async function fetchGroupBranchDiff(pid: string, gid: string, path: string): Promise<GroupFileDiffData> {
+    const res = await getRequest<{ data: GroupFileDiffData }>(
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/diff` +
+        `?path=${encodeURIComponent(path)}`,
+    )
+    return (res.data as any).data as GroupFileDiffData
   }
 
   function isGroupChangedPath(pid: string, gid: string, path: string): boolean {
@@ -592,6 +657,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
+    fetchGroupBranchChangeSet, fetchGroupBranchDiff,
     currentGroupCommit, groupChangedFiles, isGroupChangedPath, isGroupChangedDir,
     groupUntrackedFiles, setGroupUntrackedFiles, isGroupUntrackedPath, isGroupUntrackedDir,
     expandedFileNodes, expandedGroupNodes,

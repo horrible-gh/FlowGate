@@ -296,6 +296,24 @@ def get_group_branch_changes(
         return _guard(exc)
 
 
+@router.get("/projects/{project_id}/git/groups/{group_id}/diff")
+def get_group_branch_file_diff(
+    project_id: str,
+    group_id: str,
+    path: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Unified diff of one group-branch file against the group's base (0325 R0001).
+
+    Backs the [변경사항 열기] viewer opened from the final-approval sidebar: the
+    ``/changes`` list says WHICH files moved, this says WHAT moved in one of them.
+    """
+    try:
+        return git_service.read_group_file_diff(project_id, group_id, path)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
 @router.get("/projects/{project_id}/git/groups/{group_id}/blob")
 def get_group_branch_blob(
     project_id: str,
