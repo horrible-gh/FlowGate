@@ -142,6 +142,18 @@ _run_counter = 0
 _group_resume_locks: dict[str, threading.Lock] = {}
 _group_resume_locks_guard = threading.Lock()
 
+# 0317 TR0011 (Q153 opt-1): per-hop worker RE-SPAWN for unmanned continuous chains.
+# The reject cause was that an uninterrupted continuous chain spawns ONE worker (one
+# provider process) that self-continues through every hop via next_token, so every
+# document was written by hop-1's provider (all three "Anthropic Claude Sonnet 5"). The
+# fix automates the existing resume re-spawn: at each step boundary the inbox self-chain
+# withholds next_token and records the next hop here; when the finished hop's worker
+# settles, the engine re-enters start_run for the next hop, which re-resolves THAT hop's
+# provider (_resolve_continuation_hop_provider / the per-step override map). Session-
+# scoped, in-memory, keyed by group_id, cleared at chain end — never persisted (T0010 o1).
+_auto_resume: dict[str, dict] = {}
+_auto_resume_lock = threading.Lock()
+
 
 def _group_resume_lock(group_id: str) -> threading.Lock:
     with _group_resume_locks_guard:
@@ -561,6 +573,10 @@ def start_run(
     issue_builder: Optional[Callable[[], dict]] = None,
     merge_id: Optional[int] = None,
     completion_oracle: Optional[Callable[[], bool]] = None,
+    # 0317 T0010 rev4: item_seq (as str, JSON-body keys) -> provider_id, chosen in
+    # ContinuousWorkDialog's per-step override table. Session-scoped — this run's start
+    # request is the only place it lives; never persisted (T0010 Q&A: session-scoped o1).
+    continuation_provider_overrides: Optional[dict] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -580,7 +596,18 @@ def start_run(
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
-    if provider_id:
+    # 0317 T0010 rev4: a per-step override takes priority over everything else below —
+    # including an explicit UI pin — because it names this EXACT hop, not just "no explicit
+    # choice was made". Only re-orders the chain (like the doc-type resolver below), so a
+    # startup failure still degrades to the existing fallback tail.
+    step_override_provider = None
+    if mode == "continuous" and continuation_provider_overrides:
+        step_override_provider = _resolve_continuation_hop_override(
+            doc_ref, continuation_provider_overrides, chain,
+        )
+    if step_override_provider:
+        chain = _prioritize_chain(chain, step_override_provider)
+    elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
             raise _http_error(
@@ -589,6 +616,13 @@ def start_run(
             )
         # An explicit UI selection pins the run. Fallback order only applies when no provider was specified.
         chain = [selected]
+    elif mode == "continuous":
+        # 0317 D0004: no explicit pin on a continuous hop — consult the per-document-type
+        # 배정 규칙. The assigned provider (if any, and if enabled) leads the chain; the rest
+        # stay as the fallback tail so a startup failure still degrades gracefully (§3).
+        hop_provider = _resolve_continuation_hop_provider(project_id, doc_ref)
+        if hop_provider:
+            chain = _prioritize_chain(chain, hop_provider)
     if not chain:
         # 0292 T0003: "no provider was ever registered" used to be indistinguishable
         # from "the registered ones are all switched off" — both read as
@@ -747,6 +781,17 @@ def start_run(
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
         ),
+        # 0317 TR0011 (Q153 opt-1): the per-step override map rides on the run so each
+        # re-spawned hop can re-apply it (it never touches a token; it is session-scoped).
+        "continuation_provider_overrides": (
+            continuation_provider_overrides if mode == "continuous" else None
+        ),
+        # 0317 T0013 결함 ③: the header default provider pin rides the run too. Without it a
+        # re-spawned hop that has NO per-step override lost the user's chosen default and fell
+        # back to the doc-type assignment / project default chain — contradicting the
+        # "기본: <이름>" tag every ContinuousWorkDialog row promises. Session-scoped like the
+        # override map; never persisted on a token.
+        "continuation_base_provider_id": (provider_id if mode == "continuous" else None),
         # 0252 L0009 §2.8: keep the requester on the record so the global active list
         # (active_all) can filter runs per user, and §2.1: the continuation target for
         # the paused-row snapshot (None = to-end, resolved again at resume time).
@@ -797,6 +842,119 @@ def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
         "exec_type": provider.get("exec_type"),
         "kind": provider.get("kind"),
     }
+
+
+def _resolve_continuation_hop_provider(project_id: str, doc_ref: str) -> Optional[str]:
+    """The doc-type-assigned provider for the step this continuation session is about to run
+    (flowgate.default.0317 D0004 §2 홉 프로바이더 결정기), or None to use the default chain.
+
+    The next slot's *type* is the workflow effective head; instruction heads (N/T) auto-
+    complete server-side, so the type the WORKER actually produces is the paired report
+    (AUTO_REPORT_MAP: N->NR, T->TR, TS->TSR). We resolve the assignment for that worker
+    deliverable type. Never raises — any lookup gap degrades to the default chain (D0004 §3).
+    """
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        head = db_wfseq.get_effective_head(seq["id"])
+        if not head:
+            return None
+        head_type = (head.get("type") or "").upper()
+        from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+        worker_type = AUTO_REPORT_MAP.get(head_type, head_type)
+        # Prefer an assignment keyed by the worker deliverable type (TR/NR/TSR); fall back to
+        # one keyed by the raw sequence step type (T/N/TS) so a rule written against the visible
+        # step — the way the settings screen lists them (D0004 §6) — still takes effect.
+        assigned = ai_settings_service.resolve_doctype_provider(project_id, worker_type)
+        if assigned is None and worker_type != head_type:
+            assigned = ai_settings_service.resolve_doctype_provider(project_id, head_type)
+        return assigned
+    except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
+        logger.warning("continuation hop provider resolution failed for %s", doc_ref,
+                       exc_info=True)
+        return None
+
+
+def _hop_worker_item_seq(seq_id: int, head: dict) -> Optional[int]:
+    """The item_seq of the slot the worker will actually FILL this hop.
+
+    _expand_auto_reports places every report step (NR/TR/TSR) immediately after its
+    instruction step, and instruction heads (N/T/TS) auto-complete server-side during
+    advance — so when the effective head is an instruction step, the worker's real
+    deliverable is that following report slot, NOT the head slot. Fold to the report slot's
+    item_seq so a per-step override keyed to the visible report row (the way
+    ContinuousWorkDialog lists the runnable steps) is found — the item_seq-level twin of the
+    TYPE fold _resolve_continuation_hop_provider does through AUTO_REPORT_MAP. Without this
+    fold the override lookup uses the instruction slot's seq and misses every time, so a
+    report-row override never takes effect (0317 T0013 결함 ①: 단계 어긋남). A non-instruction
+    head fills its own slot, so its own item_seq is returned unchanged.
+    """
+    head_item_seq = head.get("item_seq")
+    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+    report_type = AUTO_REPORT_MAP.get((head.get("type") or "").upper())
+    if not report_type or head_item_seq is None:
+        return head_item_seq
+    # The report slot _expand_auto_reports attaches is the first slot of that type AFTER the
+    # instruction head; scan in item_seq order so the pairing stays unambiguous even when the
+    # same instruction type repeats later in the chain.
+    for item in sorted(
+        db_wfseq.get_sequence_items(seq_id) or [],
+        key=lambda i: i.get("item_seq") or 0,
+    ):
+        if (
+            (item.get("item_seq") or -1) > head_item_seq
+            and (item.get("type") or "").upper() == report_type
+        ):
+            return item.get("item_seq")
+    return head_item_seq
+
+
+def _resolve_continuation_hop_override(
+    doc_ref: str, overrides: dict, chain: list[dict],
+) -> Optional[str]:
+    """The provider explicitly overridden for THIS hop's item_seq (flowgate.default.0317
+    T0010 rev4 — CWD's per-step override table), or None to fall through to an explicit pin
+    / the doc-type resolver / the default chain.
+
+    ``overrides`` keys are item_seq, as strings (JSON object keys) or ints (already-decoded
+    dict from a same-process caller) — both are tried. The looked-up item_seq is the slot the
+    worker will actually fill (_hop_worker_item_seq), so an instruction head folds to its
+    paired report row before lookup. Never raises: a lookup gap or an override naming a
+    provider that is no longer enabled degrades to the next tier, exactly like
+    _resolve_continuation_hop_provider.
+    """
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        head = db_wfseq.get_effective_head(seq["id"])
+        if not head:
+            return None
+        item_seq = _hop_worker_item_seq(seq["id"], head)
+        if item_seq is None:
+            return None
+        provider_id = overrides.get(str(item_seq), overrides.get(item_seq))
+        if not provider_id:
+            return None
+        if not any(p.get("id") == provider_id for p in chain):
+            return None  # overridden provider is no longer enabled — degrade silently
+        return provider_id
+    except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
+        logger.warning("continuation hop override resolution failed for %s", doc_ref,
+                       exc_info=True)
+        return None
+
+
+def _prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
+    """Move the assigned provider to the front, keeping the rest as the fallback tail
+    (D0004 §3: 배정이 폴백보다 우선하되, 기동 실패 시 폴백 순서로 넘어간다). Unlike an explicit
+    UI pin — which collapses the chain to one provider and disables fallback — a doc-type
+    assignment only re-orders, so the existing _worker fallback loop still protects the run."""
+    head = [p for p in chain if p.get("id") == provider_id]
+    if not head:
+        return chain
+    return head + [p for p in chain if p.get("id") != provider_id]
 
 
 # ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
@@ -877,6 +1035,9 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             run["end_reason"] = "exited"
 
         _settle_and_judge(run)
+        # 0317 TR0011 (Q153 opt-1): the run is now finished, so start_run's active-run guard
+        # is clear — re-spawn the next hop's worker if the self-chain flagged a boundary.
+        _maybe_auto_resume_hop(run)
     except Exception:
         logger.exception("ai-invoke worker crashed for %s", run["run_id"])
         run["end_reason"] = run.get("end_reason") or "exited"
@@ -885,6 +1046,9 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         except Exception:
             logger.exception("ai-invoke settle failed for %s", run["run_id"])
             run["status"] = "finished"
+        # A crashed hop is a real stop, not a boundary: drop any pending re-spawn so the
+        # chain does not silently continue past a failure.
+        clear_auto_resume(run.get("group_id"))
 
 
 def _remaining_sec(run: dict) -> float:
@@ -1582,12 +1746,19 @@ def _settle_and_judge(run: dict) -> None:
     docs_reached = len(new_docs)
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
+    # 0317 TR0011 (Q153 opt-1): under per-hop re-spawn each continuous hop delivers ONE
+    # document and then hands the chain off (the self-chain withheld next_token and queued
+    # the next hop). Judge such a hop against 1, not the whole remaining chain target, so an
+    # intermediate hop settles "complete" (scratch cleaned) instead of a misleading "partial".
+    hop_target = run["docs_target"]
+    if run["mode"] == "continuous" and peek_auto_resume(run.get("group_id")) is not None:
+        hop_target = 1
     if run.get("action_scope") == "workflow_decide" and run["mode"] == "single":
         run["outcome"] = "complete" if workflow_decided else "none"
     elif run.get("action_scope") == "workflow_decide" and not workflow_decided:
         # Pre-decision continuous run that never decided: no resolved target to satisfy.
         run["outcome"] = "partial" if docs_reached >= 1 else "none"
-    elif docs_reached >= run["docs_target"]:
+    elif docs_reached >= hop_target:
         run["outcome"] = "complete"
     elif docs_reached >= 1:
         run["outcome"] = "partial"
@@ -1811,6 +1982,142 @@ def mark_user_paused(group_id: str) -> None:
     run = _active_run_for_group(group_id)
     if run is not None:
         run["user_paused"] = True
+
+
+# ── Per-hop re-spawn for unmanned continuous chains (0317 TR0011 / Q153 opt-1) ────────
+
+def has_active_run(group_id: Optional[str]) -> bool:
+    """True when an engine-driven run is live for this group. The inbox self-chain uses this
+    to separate an unmanned ENGINE chain (which re-spawns a worker — and re-resolves the
+    provider — per hop) from a copy-mention semi-manned chain (no engine worker to re-spawn,
+    so it must keep next_token self-continuation)."""
+    if not group_id:
+        return False
+    return _active_run_for_group(group_id) is not None
+
+
+def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
+    """Queue the next hop of an unmanned continuous chain for a fresh worker. Called by the
+    inbox self-chain at a step boundary INSTEAD of handing next_token to the still-running
+    worker; consumed by _maybe_auto_resume_hop when the current hop's worker settles."""
+    if not group_id:
+        return
+    with _auto_resume_lock:
+        _auto_resume[group_id] = dict(payload)
+
+
+def peek_auto_resume(group_id: Optional[str]) -> Optional[dict]:
+    """The queued next hop for this group, WITHOUT consuming it (used by the settle judge to
+    recognize a hop that handed the chain off)."""
+    if not group_id:
+        return None
+    with _auto_resume_lock:
+        return _auto_resume.get(group_id)
+
+
+def pop_auto_resume(group_id: Optional[str]) -> Optional[dict]:
+    if not group_id:
+        return None
+    with _auto_resume_lock:
+        return _auto_resume.pop(group_id, None)
+
+
+def clear_auto_resume(group_id: Optional[str]) -> None:
+    if not group_id:
+        return
+    with _auto_resume_lock:
+        _auto_resume.pop(group_id, None)
+
+
+def _maybe_auto_resume_hop(run: dict) -> None:
+    """After a hop's worker finalizes, re-spawn the next hop if the inbox self-chain queued
+    one (Q153 opt-1). Server-triggered automation of resume_chain: the next start_run
+    re-resolves the hop's provider, delivering true per-step providers on an unmanned chain.
+    Any real stop (cancel / timeout / provider exhaustion / crash) drops the queued hop rather
+    than continuing past it."""
+    group_id = run.get("group_id")
+    pending = pop_auto_resume(group_id)
+    if pending is None:
+        return
+    if run.get("end_reason") != "exited":
+        return
+    cancel_event = run.get("cancel_event")
+    if cancel_event is not None and cancel_event.is_set():
+        return
+    # Carry the session override map AND the header default pin forward so the re-spawned hop
+    # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
+    # base pin is what an override-less step resolves to (0317 T0013 결함 ③).
+    pending = {
+        **pending,
+        "provider_overrides": run.get("continuation_provider_overrides"),
+        "base_provider_id": run.get("continuation_base_provider_id"),
+    }
+    try:
+        _spawn_auto_resume(group_id, pending)
+    except HTTPException as exc:
+        logger.warning("ai-invoke auto-resume rejected for %s: %s",
+                       group_id, getattr(exc, "detail", exc))
+    except Exception:
+        logger.exception("ai-invoke auto-resume failed for %s", group_id)
+
+
+def _spawn_auto_resume(group_id: str, pending: dict) -> None:
+    """Advance the workflow one step and launch a fresh worker for it — the same
+    advance_workflow → start_run handoff resume_chain uses, minus the user-pause row. The
+    just-completed step was auto-approved by the self-chain, so advance_workflow resolves the
+    NEXT head here, and start_run re-resolves that head's provider."""
+    from modules.flow_gate.services import workflow_decision_service
+
+    doc_ref = pending["doc_ref"]
+    target_seq = pending["target_seq"]
+    review_mode = bool(pending.get("review_mode"))
+    instruction_mode = pending.get("instruction_mode")
+    locale = pending.get("locale") or "ko"
+    issued_to = pending["issued_to"]
+    api_base_url = pending["api_base_url"]
+    overrides = pending.get("provider_overrides")
+    base_provider_id = pending.get("base_provider_id")
+
+    parts = group_id.split(".")
+    project_id = parts[0]
+    module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
+
+    def _issue_next() -> dict:
+        adv = workflow_decision_service.advance_workflow(
+            doc_id=doc_ref,
+            issued_to=issued_to,
+            api_base_url=api_base_url,
+            locale=locale,
+            continuous=True,
+            continuation_target_seq=target_seq,
+            continuation_review_mode=review_mode,
+            continuation_instruction_mode=instruction_mode,
+        )
+        return {
+            "raw_token": adv["token"],
+            "token_id": adv["token_id"],
+            "scratch_dir": adv["scratch_dir"],
+            "mention": adv["mention"],
+        }
+
+    start_run(
+        project_id=project_id,
+        module=module,
+        group_id=group_id,
+        doc_ref=doc_ref,
+        action_scope="new",
+        mode="continuous",
+        continuation_target_seq=target_seq,
+        continuation_review_mode=review_mode,
+        continuation_instruction_mode=instruction_mode,
+        continuation_locale=locale,
+        issued_to=issued_to,
+        api_base_url=api_base_url,
+        mention_builder=lambda _raw, _scratch: None,
+        issue_builder=_issue_next,
+        provider_id=base_provider_id,
+        continuation_provider_overrides=overrides,
+    )
 
 
 def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:

@@ -1071,6 +1071,7 @@
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
       :continuation-instruction-mode="aiInvokeContinuationInstructionMode"
+      :provider-overrides="aiInvokeProviderOverrides"
       :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
@@ -1368,6 +1369,9 @@ const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
 const continuousInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
+// through the consent gate to the start request (session-scoped, never persisted).
+const continuousProviderOverrides = ref<Record<number, string>>({})
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1408,6 +1412,8 @@ const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
 const aiInvokeContinuationInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 0317 T0010 rev4: item_seq -> provider_id overrides forwarded onto the start request.
+const aiInvokeProviderOverrides = ref<Record<number, string>>({})
 const aiInvokeAutoStart = ref(false)
 const activeAiInvokeGroupId = computed(() => {
   if (!activeTabId.value) return ''
@@ -1651,6 +1657,8 @@ function openAiInvokeDialog(
     targetSeq?: number | null
     reviewMode?: boolean
     instructionMode?: 'auto_approved' | 'ai_direct'
+    // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog.
+    providerOverrides?: Record<number, string>
     autoStart?: boolean
     // 0242 NR0003 권고 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
@@ -1676,6 +1684,7 @@ function openAiInvokeDialog(
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
   aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? 'auto_approved'
+  aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
   aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
@@ -3019,12 +3028,14 @@ function onContinuousDialogConfirm(payload: {
   instructionMode: 'auto_approved' | 'ai_direct'
   stepCount: number
   fromDecision: boolean
+  providerOverrides: Record<number, string>
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
   continuousTargetLabel.value = payload.targetLabel
   continuousReviewMode.value = payload.reviewMode
   continuousInstructionMode.value = payload.instructionMode
+  continuousProviderOverrides.value = payload.providerOverrides
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -3054,6 +3065,7 @@ async function onContinuousWarnConfirm() {
       targetSeq,
       reviewMode: continuousReviewMode.value,
       instructionMode: continuousInstructionMode.value,
+      providerOverrides: continuousProviderOverrides.value,
       autoStart: true,
     },
   )

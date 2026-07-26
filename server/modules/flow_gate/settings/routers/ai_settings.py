@@ -58,6 +58,18 @@ class ProjectAiSettingsPut(SystemAiSettingsPut):
     mode: str
 
 
+class DoctypeAssignmentIn(BaseModel):
+    doc_type: str = ""
+    provider_id: str = ""
+
+
+class DoctypeProvidersPut(BaseModel):
+    """Full-replace the project's "문서 종류 -> 프로바이더" 배정 규칙 (0317 D0004 구현).
+    An empty list clears the map (back to the single default-provider behavior)."""
+
+    assignments: list[DoctypeAssignmentIn] | None = None
+
+
 def _providers_payload(body: SystemAiSettingsPut) -> list[dict] | None:
     if body.providers is None:
         return None
@@ -154,3 +166,33 @@ def get_project_ai_settings_effective(
         return _svc.resolve_effective(project_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/projects/{project_id}/ai-doctype-providers")
+def get_project_ai_doctype_providers(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """The continuous chain's per-document-type provider 배정 규칙 + the effective provider
+    options the UI renders (0317 D0004 §6)."""
+    try:
+        return _svc.get_doctype_providers(project_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.put("/projects/{project_id}/ai-doctype-providers")
+def put_project_ai_doctype_providers(
+    project_id: str,
+    body: DoctypeProvidersPut,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    assignments = None if body.assignments is None else [a.model_dump() for a in body.assignments]
+    try:
+        return _svc.save_doctype_providers(
+            project_id, assignments, updated_by=user.get("user_id"),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)

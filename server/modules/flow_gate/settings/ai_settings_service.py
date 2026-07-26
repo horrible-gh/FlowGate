@@ -16,6 +16,7 @@ from __future__ import annotations
 import secrets
 from typing import Optional
 
+from modules.flow_gate.db import ai_provider_doctype_map as _doctype_db
 from modules.flow_gate.db import ai_providers as _ai_db
 from modules.flow_gate.db import projects as _projects_db
 from modules.flow_gate.services import test_command_service as _tcs
@@ -30,6 +31,11 @@ API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000
 PROVIDERS_MAX = 20
+# Per-document-type provider assignment (flowgate.default.0317 D0004 구현). A project's
+# workflow has a handful of worker doc types (NR/TR/TSR/TS, ...); cap generously so the map
+# stays renderable without constraining any real sequence.
+DOCTYPE_ASSIGN_MAX = 50
+DOCTYPE_CODE_MAX = 40
 HINT_LEN = 4
 ID_PREFIX = "aip_"
 ID_SUFFIX_LEN = 6
@@ -500,3 +506,116 @@ def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional
     """Raw api_key for internal execution use. NEVER route this into an HTTP response,
     and never log the value (length-only logging allowed; L0004 §2.3)."""
     return _ai_db.get_secret(project_id, provider_id)
+
+
+# ── Per-document-type provider assignment (flowgate.default.0317 D0004 구현) ──────
+#
+# The continuous chain's "홉 프로바이더 결정기": a project-scoped "문서 종류 -> 프로바이더"
+# map the chain consults at each step boundary. An empty map reproduces today's
+# single-provider behavior (every doc type resolves to the effective default), so the
+# feature is additive and fully backward-compatible (D0004 §1 하위호환).
+
+def _norm_doctype(code: Optional[str]) -> str:
+    return (code or "").strip().upper()
+
+
+def validate_doctype_assignments(
+    project_id: str, assignments: Optional[list[dict]],
+) -> list[dict]:
+    """Collect ALL assignment errors (no early stop), mirroring validate_settings.
+
+    A valid assignment names a non-empty doc_type (unique in the payload) and a provider_id
+    that is in this project's EFFECTIVE enabled chain — the same set the run engine can
+    actually launch, so the UI cannot pin a provider a hop could never use.
+    """
+    errors: list[dict] = []
+    if not assignments:
+        return errors
+    if len(assignments) > DOCTYPE_ASSIGN_MAX:
+        errors.append({"field": "assignments", "reason": "too_many"})
+
+    enabled_ids = {p["id"] for p in (_effective_view(project_id).get("providers") or [])}
+    seen: set[str] = set()
+    for index, a in enumerate(assignments):
+        doc_type = _norm_doctype(a.get("doc_type"))
+        if doc_type == "":
+            errors.append({"index": index, "field": "doc_type", "reason": "required"})
+        elif len(doc_type) > DOCTYPE_CODE_MAX:
+            errors.append({"index": index, "field": "doc_type", "reason": "too_long"})
+        elif doc_type in seen:
+            errors.append({"index": index, "field": "doc_type", "reason": "duplicate_doc_type"})
+        else:
+            seen.add(doc_type)
+
+        provider_id = (a.get("provider_id") or "").strip()
+        if provider_id == "":
+            errors.append({"index": index, "field": "provider_id", "reason": "required"})
+        elif provider_id not in enabled_ids:
+            # Not in the effective enabled chain (disabled, deleted, or foreign scope).
+            errors.append({"index": index, "field": "provider_id", "reason": "unknown_provider"})
+    return errors
+
+
+def _doctype_view(project_id: str) -> dict:
+    """Serialized assignment map + the effective provider list the UI renders options from."""
+    effective = _effective_view(project_id)
+    return {
+        "ok": True,
+        "project": project_id,
+        "assignments": [
+            {"doc_type": r["doc_type"], "provider_id": r["provider_id"]}
+            for r in _doctype_db.list_for_project(project_id)
+        ],
+        "providers": [
+            {"id": p["id"], "name": p["name"], "exec_type": p["exec_type"], "kind": p["kind"]}
+            for p in (effective.get("providers") or [])
+        ],
+        "default_provider_id": effective.get("default_provider_id"),
+    }
+
+
+def get_doctype_providers(project_id: str) -> dict:
+    """Current assignment map for a project (404 via LookupError if the project is unknown)."""
+    _require_project(project_id)
+    return _doctype_view(project_id)
+
+
+def save_doctype_providers(
+    project_id: str,
+    assignments: Optional[list[dict]],
+    updated_by: Optional[str] = None,
+) -> dict:
+    """Full-replace the project's assignment map. Raises AiSettingsValidationError (422)
+    on any invalid row; an empty/None list clears the map."""
+    _require_project(project_id)
+    errors = validate_doctype_assignments(project_id, assignments)
+    if errors:
+        raise AiSettingsValidationError(errors)
+    rows = [
+        {"doc_type": _norm_doctype(a.get("doc_type")), "provider_id": (a.get("provider_id") or "").strip()}
+        for a in (assignments or [])
+    ]
+    _doctype_db.replace_for_project(project_id, rows)
+    return _doctype_view(project_id)
+
+
+def resolve_doctype_provider(project_id: str, doc_type: str) -> Optional[str]:
+    """The hop provider decider (D0004 §2): the provider_id assigned to *doc_type*, or None
+    when there is no rule OR the assigned provider is not in the effective enabled chain.
+
+    None means "use the default/fallback" — so an unmapped type, a disabled assignment, or
+    any lookup hiccup all degrade to today's behavior. Never raises: a resolution failure in
+    the continuous hot path must not stall an otherwise-healthy chain (D0004 §3 폴백)."""
+    normalized = _norm_doctype(doc_type)
+    if not normalized:
+        return None
+    try:
+        provider_id = _doctype_db.get_provider_for_type(project_id, normalized)
+        if not provider_id:
+            return None
+        chain = _effective_view(project_id).get("providers") or []
+        if any(p.get("id") == provider_id for p in chain):
+            return provider_id
+    except Exception:  # noqa: BLE001 — degrade to default, never break the hop
+        return None
+    return None

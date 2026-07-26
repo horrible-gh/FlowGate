@@ -1102,6 +1102,36 @@ def _continuation_self_chain(
         )
         return envelope
 
+    # 0317 TR0011 (Q153 opt-1): HOW the chain continues depends on who drives it.
+    #  • Engine-driven unmanned run (a live start_run worker exists for this group): do NOT
+    #    hand the next token to the running worker — that single provider process would write
+    #    every remaining hop, pinning the whole chain to hop-1's provider (the exact rejection:
+    #    3 documents, all "Anthropic Claude Sonnet 5"). Instead queue the next hop and withhold
+    #    next_token so this hop's worker stops; the engine re-spawns a fresh worker for the next
+    #    hop once this one settles, and that start_run re-resolves the hop's OWN provider.
+    #  • Copy-mention semi-manned run (no engine worker to re-spawn): keep minting next_token so
+    #    the human's external AI self-continues exactly as before.
+    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+    if _ai_invoke.has_active_run(token_rec.get("group_id")):
+        _ai_invoke.request_auto_resume(token_rec.get("group_id"), {
+            "doc_ref": spine_doc_ref,
+            "target_seq": target_seq,
+            "review_mode": review_mode,
+            "instruction_mode": instruction_mode,
+            "locale": (
+                token_rec.get("continuation_locale")
+                or request.headers.get("x-locale")
+                or "ko"
+            ),
+            "issued_to": actor_user_id,
+            "api_base_url": _inbox_api_base(request),
+        })
+        # No next_token: the worker stops after this hop; the engine re-spawns the next hop's
+        # worker (re-resolving its provider) once this one settles. The step just completed is
+        # already auto-approved above, so advance_workflow at re-spawn finds the next head.
+        envelope["continuation_respawn"] = True
+        return envelope
+
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
     # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).
     from modules.flow_gate.services import workflow_decision_service

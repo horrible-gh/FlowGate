@@ -67,6 +67,11 @@
             <span v-else-if="idx < headIdx" class="wsp-step-tag wsp-step-tag--done">
               {{ t('main.continuous_work.done_tag') }}
             </span>
+            <span
+              v-if="idx >= headIdx && stepTags[idx]"
+              class="wsp-prov-tag"
+              :class="{ 'wsp-prov-tag--override': stepTags[idx]!.override }"
+            >{{ stepTags[idx]!.text }}</span>
           </button>
         </div>
 
@@ -107,6 +112,12 @@ const props = defineProps<{
   docRef: string
   /** Load/refresh the sequence when this flips true (dialog opened, continuous mode picked). */
   active: boolean
+  /**
+   * 0317 T0010 rev4: per-step "which provider will actually run this" tag, shown next to
+   * runnable (not-yet-done) steps. Owned by the caller (ContinuousWorkDialog) so this shared
+   * picker stays provider-agnostic; callers that omit it (AiInvokeDialog) render no tag.
+   */
+  stepTag?: (item: WorkflowStepItem) => { text: string; override: boolean } | null
 }>()
 
 const emit = defineEmits<{
@@ -144,6 +155,9 @@ const headIdx = computed(() => {
 const headInProgress = computed(
   () => headIdx.value < items.value.length && items.value[headIdx.value].status === 'in_progress',
 )
+// Memoized per-step tags (0317 T0010 rev4): computed once per items/props.stepTag change
+// rather than re-invoked on every template re-render.
+const stepTags = computed(() => items.value.map(it => props.stepTag?.(it) ?? null))
 const stepCount = computed(() =>
   selectedIdx.value >= headIdx.value ? selectedIdx.value - headIdx.value + 1 : 0,
 )
@@ -179,6 +193,9 @@ const state = computed<WorkflowStepPickerState>(() => ({
   allDone: allDone.value,
   fromDecision: fromDecision.value,
   selection: selection.value,
+  // 0317 D0004: expose the loaded steps so the continuous dialog can list the distinct doc
+  // types for per-document-type provider assignment. Consumers that ignore it are unaffected.
+  steps: items.value,
 }))
 
 function selectTarget(idx: number) {
@@ -387,6 +404,22 @@ watch(
 }
 .wsp-step-tag--head { background: var(--primary-l); color: var(--primary); }
 .wsp-step-tag--done { background: var(--surface-h); color: var(--text-m); }
+.wsp-prov-tag {
+  font-size: .62rem;
+  font-weight: 700;
+  color: var(--text-m);
+  background: var(--surface-h);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.wsp-prov-tag--override {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-l);
+}
 .wsp-note {
   font-size: .78rem;
   line-height: 1.5;

@@ -44,6 +44,9 @@ class AiInvokeStartRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
+    # 0317 T0010 rev4: item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
+    # per-step override table. Session-scoped — consulted once, at start_run, never persisted.
+    continuation_provider_overrides: Optional[dict[str, str]] = None
     provider_id: Optional[str] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
@@ -392,6 +395,12 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 continuous=True,
                 continuation_target_seq=body.continuation_target_seq,
                 continuation_review_mode=body.continuation_review_mode,
+                # 0317 T0013 결함 ②: forward the instruction mode, exactly like
+                # _issue_workflow_decision above. Omitting it let it normalize to
+                # auto_approved, which then got baked into the token and propagated down the
+                # whole chain — so [지시서 작성 후 진행](ai_direct) died on every hop, not just
+                # the first, and N/T instruction steps were silently auto-approved away.
+                continuation_instruction_mode=body.continuation_instruction_mode,
             )
             return {
                 "raw_token": adv["token"],
@@ -419,6 +428,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             provider_id=body.provider_id,
             issue_builder=issue_builder,
             merge_id=body.merge_id,
+            continuation_provider_overrides=body.continuation_provider_overrides,
         )
     except HTTPException as exc:
         return _err(exc)
