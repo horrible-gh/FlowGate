@@ -33,7 +33,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from Crypto.Cipher import AES as _AES
 
@@ -1898,6 +1898,19 @@ def effective_src_root_ex(
         return None, SRC_ROOT_ERROR
 
 
+def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) -> bool:
+    """True when *group_id* has a live worktree that may be written to.
+
+    0327 T0004 (B0001 / NR0003 권고 1): the explorer used to treat "a group is
+    selected" as "read-only", so create/upload stayed blocked even for the group
+    the user is actively working in — while the server could already tell the two
+    apart. This is that answer, in the one shape the client needs, so the UI stops
+    guessing. Groups with no worktree (finalized, disposed, never provisioned)
+    remain fully read-only, exactly as before (권고 5).
+    """
+    return effective_src_root_ex(project_id, group_id)[0] is not None
+
+
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
     """Group worktree path when it must be used, else None (= caller falls back).
 
@@ -2239,20 +2252,33 @@ def _tree_sort_key(name: str, is_dir: bool) -> tuple:
     return _file_tree_sort_key(name, is_dir)
 
 
-def _build_tree_nodes(files: list[str]) -> list[dict]:
+def _build_tree_nodes(files: list[str], dirs: Sequence[str] = ()) -> list[dict]:
     """FileNode list (same contract as process_service.get_file_tree) from a flat
-    list of visible blob paths."""
+    list of visible blob paths.
+
+    0327 T0004 (B0001): *dirs* carries directory paths that hold no file at all.
+    Git has no way to express an empty directory, so a folder just created in a
+    group worktree is invisible to every file-based listing — the new folder the
+    user asked for would silently not appear. Those paths are registered with
+    every segment forced to folder so the tree shows them.
+    """
     children: dict[str, dict[str, bool]] = {"": {}}
-    for path in files:
-        segs = path.split("/")
+
+    def register(path: str, leaf_is_dir: bool) -> None:
+        segs = [seg for seg in path.split("/") if seg]
         for i, name in enumerate(segs):
             parent = "/".join(segs[:i])
-            is_dir = i < len(segs) - 1
+            is_dir = leaf_is_dir or i < len(segs) - 1
             children.setdefault(parent, {})
             prev = children[parent].get(name)
             children[parent][name] = bool(prev) or is_dir
             if is_dir:
                 children.setdefault("/".join(segs[: i + 1]), {})
+
+    for path in files:
+        register(path, False)
+    for path in dirs:
+        register(path, True)
     nodes: list[dict] = []
     counter = [0]
 
@@ -2331,6 +2357,62 @@ def _group_untracked_visible(wt_path: Path) -> list[str]:
     return sorted(out)
 
 
+def _group_empty_dirs_visible(wt_path: Path) -> list[str]:
+    """Exposed untracked directories that contain no file anywhere beneath them.
+
+    0327 T0004 (B0001): creating a folder in a group worktree used to leave no
+    trace in the explorer — git tracks files, so an empty directory is reported by
+    no file listing and the new folder simply never appeared. ``ls-files --others
+    --directory`` names the shallowest untracked directory; the ones that do hold
+    files are already covered by ``_group_untracked_visible`` (their file paths
+    imply the folders), so only the file-less ones are expanded here, together
+    with their equally empty subdirectories.
+    """
+    proc = _run_git(
+        ["ls-files", "--others", "--exclude-standard", "--directory", "-z"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(proc.stderr) or "ls-files failed"
+        )
+    out: list[str] = []
+    for entry in (proc.stdout or "").split("\0"):
+        rel = entry.rstrip("/")
+        # Only collapsed directory entries ('dir/') are of interest; plain files
+        # come from the untracked-file scan.
+        if not entry.endswith("/") or not rel or _is_hidden_source_path(rel):
+            continue
+        root = wt_path / rel
+        if not root.is_dir():
+            continue
+        if any(p.is_file() for p in root.rglob("*")):
+            continue  # holds files → its untracked file paths already imply it
+        out.append(rel)
+        for sub in root.rglob("*"):
+            if not sub.is_dir():
+                continue
+            sub_rel = sub.relative_to(wt_path).as_posix()
+            if not _is_hidden_source_path(sub_rel):
+                out.append(sub_rel)
+    return sorted(set(out))
+
+
+def _group_empty_dirs_safe(project_id: str, group_id: str, branch: str) -> list[str]:
+    """``_group_empty_dirs_visible`` for a resolved group, degrading to ``[]``.
+
+    Same contract as ``_group_untracked_safe``: a supplemental channel must never
+    break the committed tree read that worked before it existed."""
+    try:
+        wt_path = _group_worktree_path(project_id, group_id, branch)
+        if wt_path is None:
+            return []
+        return _group_empty_dirs_visible(wt_path)
+    except Exception:  # noqa: BLE001 — supplemental channel, never fatal
+        _log.warning("group empty-dir scan failed for %s", group_id, exc_info=True)
+        return []
+
+
 def _group_untracked_safe(project_id: str, group_id: str, branch: str) -> list[str]:
     """``_group_untracked_visible`` for a resolved group, degrading to ``[]`` on any
     failure. Untracked files SUPPLEMENT the committed view: a worktree hiccup must
@@ -2370,14 +2452,18 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
             continue
         visible_files.append(path)
     untracked = _group_untracked_safe(project_id, group_id, branch)
+    # 0327 T0004 (B0001): folders created in the group worktree that hold no file
+    # yet — they exist on disk but in no file listing, so they need their own channel.
+    empty_dirs = _group_empty_dirs_safe(project_id, group_id, branch)
     # _build_tree_nodes dedups by name per directory, so committed + untracked paths
     # can be concatenated directly. worktree_untracked is ALSO returned as a separate
     # channel (NR0003 권고 1): the client caches the tree by commit, but untracked
     # files change without advancing the commit, so this list must not be cached there.
-    nodes = _build_tree_nodes(visible_files + untracked)
+    nodes = _build_tree_nodes(visible_files + untracked, empty_dirs)
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "commit": commit, "nodes": nodes,
         "worktree_untracked": untracked,
+        "worktree_untracked_dirs": empty_dirs,
     }}
 
 
@@ -4008,9 +4094,15 @@ def project_git_status(project_id: str) -> dict:
                     "lazy git transition failed for %s", row.get("group_id"), exc_info=True
                 )
 
+    # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's
+    # worktree is really there, so a working group can offer create/upload instead
+    # of the blanket read-only it applied to every selected group. `rows` is already
+    # filtered to worktree_registered=1, so this only re-checks the on-disk side
+    # (directory present, .git link intact) — a handful of stats per status call.
     slots = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
-         "status": r.get("status"), "merge_id": r.get("merge_id")}
+         "status": r.get("status"), "merge_id": r.get("merge_id"),
+         "writable": group_worktree_writable(project_id, r["group_id"])}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
     pending_rows = [r for r in rows if r.get("status") in PENDING_STATUSES]

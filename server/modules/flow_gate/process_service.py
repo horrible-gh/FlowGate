@@ -5245,35 +5245,76 @@ def get_file_tree(project_id: str) -> dict:
     return {"nodes": nodes}
 
 
-def create_storage_folder(project_id: str, parent_path: str, name: str) -> dict:
-    """Create an empty folder inside the src tree."""
-    import re
+def _storage_create_target(
+    project_id: str, parent_path: str, name: str, group_id: str | None
+):
+    """Resolve where a new file/folder must be created, or return an error dict.
+
+    Returns ``(target_path, None)`` on success and ``(None, error_dict)`` otherwise.
+
+    0327 T0004 (B0001 / NR0003 권고 1): *group_id* routes the creation into that
+    group's live worktree instead of the base checkout, which is what makes "새
+    폴더 / 새 파일" work while a group branch is selected in the explorer. It is
+    fail-closed on purpose — a group whose worktree is gone gets an error rather
+    than a silent write into the base checkout, matching the src-content contract
+    (inbox_routes._editable_source_root). No group_id keeps the base behaviour.
+    """
+    import re as _re
     from modules.flow_gate.db import projects as _proj
     from modules.flow_gate.services import git_service
 
     name = name.strip()
     if not name:
-        return {"status": "error", "message": "Enter a name."}
-    if re.search(r'[/\\:*?"<>|]', name):
-        return {"status": "error", "message": "The name contains invalid characters."}
+        return None, {"status": "error", "message": "Enter a name."}
+    if _re.search(r'[/\\:*?"<>|]', name):
+        return None, {"status": "error", "message": "The name contains invalid characters."}
 
-    row = _proj.get_by_id(project_id)
-    project_name = (row.get("project_name") or "").strip() if row else ""
-    settings = _proj.get_settings(project_id)
-    branch = (settings.get("branch") or "main").strip() if settings else "main"
-    if not project_name:
-        return {"status": "error", "message": "Project not found."}
-
-    # 0319 B0001: create inside the git base_branch checkout when integrated, so a
-    # new folder lands in the same tree the base file explorer shows.
-    docs_root = git_service.base_src_root(project_id, project_name, branch)
-    if parent_path:
-        target = docs_root / parent_path / name
+    group_id = (group_id or "").strip() or None
+    if group_id:
+        group = db_groups.get_by_id(group_id)
+        if group is None or group.get("project_id") != project_id:
+            return None, {"status": "error", "message": "Group not found in this project."}
+        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if root is None:
+            return None, {
+                "status": "error",
+                "message": f"Group worktree is unavailable ({reason}); nothing was created.",
+            }
+        docs_root = root.resolve()
     else:
-        target = docs_root / name
+        row = _proj.get_by_id(project_id)
+        project_name = (row.get("project_name") or "").strip() if row else ""
+        settings = _proj.get_settings(project_id)
+        branch = (settings.get("branch") or "main").strip() if settings else "main"
+        if not project_name:
+            return None, {"status": "error", "message": "Project not found."}
+        # 0319 B0001: create inside the git base_branch checkout when integrated, so a
+        # new file/folder lands in the same tree the base file explorer shows.
+        docs_root = git_service.base_src_root(project_id, project_name, branch).resolve()
+
+    # parent_path arrives from the request, so it is guarded here rather than
+    # trusted to be the tree node path the UI happens to send.
+    segments = [seg for seg in (parent_path or "").replace("\\", "/").split("/") if seg]
+    if any(seg == ".." for seg in segments):
+        return None, {"status": "error", "message": "The parent path is invalid."}
+    target = docs_root.joinpath(*segments, name)
+    try:
+        target.relative_to(docs_root)
+    except ValueError:
+        return None, {"status": "error", "message": "The parent path is invalid."}
 
     if target.exists():
-        return {"status": "error", "message": "An item with the same name already exists."}
+        return None, {"status": "error", "message": "An item with the same name already exists."}
+    return target, None
+
+
+def create_storage_folder(
+    project_id: str, parent_path: str, name: str, group_id: str | None = None
+) -> dict:
+    """Create an empty folder inside the src tree (base checkout or group worktree)."""
+    target, err = _storage_create_target(project_id, parent_path, name, group_id)
+    if err is not None:
+        return err
 
     try:
         target.mkdir(parents=True, exist_ok=False)
@@ -5283,35 +5324,13 @@ def create_storage_folder(project_id: str, parent_path: str, name: str) -> dict:
     return {"status": "success"}
 
 
-def create_storage_file(project_id: str, parent_path: str, name: str) -> dict:
-    """Create an empty file inside the src tree."""
-    import re
-    from modules.flow_gate.db import projects as _proj
-    from modules.flow_gate.services import git_service
-
-    name = name.strip()
-    if not name:
-        return {"status": "error", "message": "Enter a name."}
-    if re.search(r'[/\\:*?"<>|]', name):
-        return {"status": "error", "message": "The name contains invalid characters."}
-
-    row = _proj.get_by_id(project_id)
-    project_name = (row.get("project_name") or "").strip() if row else ""
-    settings = _proj.get_settings(project_id)
-    branch = (settings.get("branch") or "main").strip() if settings else "main"
-    if not project_name:
-        return {"status": "error", "message": "Project not found."}
-
-    # 0319 B0001: create inside the git base_branch checkout when integrated, so a
-    # new file lands in the same tree the base file explorer shows.
-    docs_root = git_service.base_src_root(project_id, project_name, branch)
-    if parent_path:
-        target = docs_root / parent_path / name
-    else:
-        target = docs_root / name
-
-    if target.exists():
-        return {"status": "error", "message": "An item with the same name already exists."}
+def create_storage_file(
+    project_id: str, parent_path: str, name: str, group_id: str | None = None
+) -> dict:
+    """Create an empty file inside the src tree (base checkout or group worktree)."""
+    target, err = _storage_create_target(project_id, parent_path, name, group_id)
+    if err is not None:
+        return err
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

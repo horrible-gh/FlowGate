@@ -36,8 +36,9 @@ class SrcContentUpdate(BaseModel):
 class SrcDeleteRequest(BaseModel):
     path: str
     type: str
-    # NR0003 권장 5: the client sends its current group-branch context here so the
-    # server can refuse a group-scoped delete outright. Absent (base-checkout edit) → None.
+    # 0327 T0004: the client sends its current group-branch context here so the delete
+    # is resolved against THAT group's worktree instead of the base checkout (fail-closed,
+    # never a silent base fallback). Absent (base-checkout edit) → None.
     group_id: str | None = None
 
 
@@ -53,9 +54,33 @@ def get_files_tree(project_id: str, branch: str = Query("main", description="bra
     return {"data": tree}
 
 
-def _resolve_src_path(project_id: str, path: str):
+def _resolve_src_path(project_id: str, path: str, group_id: str | None = None):
     from modules.flow_gate.db import projects as _proj
     from modules.flow_gate.services import git_service
+
+    # 0327 T0004 (B0001 / NR0003 권고 3): downloading is a read, so the group-branch
+    # explorer may offer it — but it has to read the GROUP's tree. Resolving a group
+    # download against the base checkout would hand the user the base version of the
+    # file under a group tab, silently wrong. Fail-closed like the src-content reader.
+    if group_id:
+        from modules.flow_gate.db import groups as _groups
+
+        group = _groups.get_by_id(group_id)
+        if group is None or group.get("project_id") != project_id:
+            raise HTTPException(status_code=404, detail="Group not found in this project")
+        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if root is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Group worktree is unavailable ({reason}); base checkout was not used",
+            )
+        docs_root = root.resolve()
+        try:
+            full_path = (docs_root / path).resolve()
+            full_path.relative_to(docs_root)
+        except (ValueError, OSError):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return full_path
 
     row = _proj.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
@@ -76,10 +101,40 @@ def _resolve_src_path(project_id: str, path: str):
     return full_path
 
 
-def _resolve_delete_path(project_id: str, path: str):
-    """Resolve without following symlinks and reject any symlink component."""
+def _resolve_delete_path(project_id: str, path: str, group_id: str | None = None):
+    """Resolve without following symlinks and reject any symlink component.
+
+    0327 T0004: with *group_id* the ROOT becomes that group's worktree — everything
+    after it (containment, per-component symlink rejection) is the identical guard,
+    just anchored at the group root instead of the base checkout.
+    """
     from modules.flow_gate.db import projects as _proj
     from modules.flow_gate.services import git_service
+
+    if group_id:
+        # 0327 T0004: NR0003 권고 4 assumed "delete == hard-delete in the BASE checkout",
+        # which is why it was entangled with the finalize E3 base-contamination guard.
+        # Resolved against the group's own worktree the base is not touched at all, so a
+        # group delete is just a working-tree change on that group's branch — the same
+        # reasoning that already governs create/upload here. Fail-closed: an unresolvable
+        # worktree is a 409, never a quiet fallback that would delete from base.
+        from modules.flow_gate.db import groups as _groups
+
+        group = _groups.get_by_id(group_id)
+        if group is None or group.get("project_id") != project_id:
+            raise HTTPException(status_code=404, detail={"code": "GROUP_NOT_FOUND"})
+        wt_root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if wt_root is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "WORKTREE_UNAVAILABLE",
+                    "message": f"group worktree is unavailable ({reason}); base checkout was not used",
+                },
+            )
+        root = wt_root.resolve()
+        return _seal_under_root(root, path)
+
     row = _proj.get_by_id(project_id)
     project_name = (row.get("project_name") or "").strip() if row else ""
     settings = _proj.get_settings(project_id)
@@ -88,6 +143,11 @@ def _resolve_delete_path(project_id: str, path: str):
         raise HTTPException(status_code=404, detail="Not found")
     # 0319 B0001: delete targets the git base_branch checkout when integrated.
     root = git_service.base_src_root(project_id, project_name, branch).resolve()
+    return _seal_under_root(root, path)
+
+
+def _seal_under_root(root, path: str):
+    """Join *path* under *root*, refusing escapes and symlink components."""
     # NR0003 finding: normalize a SINGLE backslash to '/', matching _validate_path_param.
     # Replacing only a double backslash left 'foo\bar' as one literal component, so its
     # per-component symlink check was bypassed and resolution disagreed with validation.
@@ -148,7 +208,7 @@ def update_src_file_content(
 
 @router.delete("/projects/{project_id}/files", response_class=JSONResponse)
 def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
-    """Delete one file or directory from the editable base checkout."""
+    """Delete one file or directory from the base checkout, or from a group's worktree."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
     # NR0003 권장 4: deletion requires a WRITE permission (perm_document_delete), not read.
@@ -158,26 +218,36 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     # issued_to against the request project can only restrict access, never widen it.
     if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
         return _err(403, "FORBIDDEN", "insufficient permission for this operation")
-    # NR0003 권장 5: this endpoint manages ONLY the editable base checkout. A group-branch
-    # (read-only) context must never delete through here — the client hides the menu, but the
-    # server refuses group-scoped deletes outright rather than trusting the UI guard.
-    if (body.group_id or "").strip():
-        return _err(403, "FORBIDDEN", "deletion is not allowed on a group branch")
+    # 0327 T0004: group context is resolved, not refused. NR0003 권고 5's blanket 403 came
+    # from delete meaning "base checkout", which no longer holds — a group delete targets
+    # that group's own worktree. The permission gate above still runs FIRST and unchanged.
+    group_id = (body.group_id or "").strip() or None
     try: _validate_path_param(body.path)
     except HTTPException: return _err(400, "INVALID_PATH", "path is invalid")
     if body.path.replace("\\", "/").strip("/") in ("", "."): return _err(400, "INVALID_PATH", "project root cannot be deleted")
     if body.type not in ("file", "folder"): return _err(400, "TYPE_MISMATCH", "type must be file or folder")
-    try: full_path = _resolve_delete_path(project_id, body.path)
-    except HTTPException: return _err(400, "INVALID_PATH", "symbolic links are not allowed")
+    try: full_path = _resolve_delete_path(project_id, body.path, group_id)
+    except HTTPException as exc:
+        # Keep the group failures distinguishable instead of flattening every resolver
+        # error into INVALID_PATH: 403 here would tell the operator "no permission" for
+        # what is really a missing worktree, and mismatched semantics against the
+        # download/create/upload paths that already answer 404/409.
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if detail.get("code") == "GROUP_NOT_FOUND":
+            return _err(404, "GROUP_NOT_FOUND", "group not found in this project")
+        if detail.get("code") == "WORKTREE_UNAVAILABLE":
+            return _err(409, "WORKTREE_UNAVAILABLE", detail.get("message") or "group worktree is unavailable")
+        return _err(400, "INVALID_PATH", "symbolic links are not allowed")
     if not full_path.exists(): return _err(404, "NOT_FOUND", "path does not exist")
     actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
     if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
     try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
     except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
-    # NR0003 권장 8: like the src-content PATCH, this delete lands in the base checkout and
-    # leaves it dirty (blocking merge finalize for every group of this project). Return the
-    # base git status so the explorer can refresh its base-dirty markers and Git finalize
-    # warning immediately, instead of the contamination staying invisible until a later finalize.
+    # NR0003 권장 8: a BASE delete leaves the base checkout dirty (blocking merge finalize for
+    # every group of this project). Return the base git status so the explorer can refresh its
+    # base-dirty markers and Git finalize warning immediately, instead of the contamination
+    # staying invisible until a later finalize. A group delete never dirties base — the status
+    # is still returned (unchanged contract) and simply reports base as it already was.
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
     return {"deleted": body.path, "type": actual_type, "base_git": base_git}
@@ -307,6 +377,7 @@ def download_file(
     request: Request,
     project_id: str,
     path: str = Query(..., description="relative path from project root (POSIX '/' separator)"),
+    group_id: str | None = Query(None, description="read from this group's worktree instead of the base checkout"),
 ):
     """Single-file download.
 
@@ -314,6 +385,7 @@ def download_file(
     - Response: application/octet-stream, Content-Disposition RFC 5987 UTF-8 encoding.
     - Auth: verify_bearer() + perm_document_read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
+    - 0327 T0004: group_id downloads that group's worktree copy (NR0003 권고 3).
     """
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse):
@@ -321,7 +393,7 @@ def download_file(
 
     _validate_path_param(path)
 
-    full_path = _resolve_src_path(project_id, path)
+    full_path = _resolve_src_path(project_id, path, group_id)
     if not full_path.is_file():
         return _err(404, "FILE_NOT_FOUND", "file does not exist")
 
@@ -350,6 +422,7 @@ def download_zip(
     request: Request,
     project_id: str,
     path: str = Query(..., description="relative path from project root to the directory to compress"),
+    group_id: str | None = Query(None, description="read from this group's worktree instead of the base checkout"),
 ):
     """Directory ZIP streaming download.
 
@@ -359,6 +432,7 @@ def download_zip(
     - Content-Disposition RFC 5987 UTF-8 encoding.
     - Auth: verify_bearer() + perm_document_read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
+    - 0327 T0004: group_id zips that group's worktree copy (NR0003 권고 3).
     """
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse):
@@ -366,7 +440,7 @@ def download_zip(
 
     _validate_path_param(path)
 
-    full_path = _resolve_src_path(project_id, path)
+    full_path = _resolve_src_path(project_id, path, group_id)
     if not full_path.is_dir():
         return _err(404, "DIRECTORY_NOT_FOUND", "directory does not exist")
 

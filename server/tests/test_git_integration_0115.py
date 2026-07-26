@@ -1168,6 +1168,10 @@ class TestGitActions0162:
         pend_ids = {p["group_id"] for p in out["pending"]}
         assert {g_wait, g_conf} <= slot_ids
         assert g_done not in slot_ids            # terminal excluded from slots
+        # 0327 T0004 (B0001): every slot reports whether its worktree is really there,
+        # so the file explorer can offer create/upload on a working group instead of
+        # treating every selected group as read-only. These were provisioned above.
+        assert all(s["writable"] is True for s in out["slots"])
         assert pend_ids == {g_wait, g_conf} & pend_ids
         assert g_wait in pend_ids and g_conf in pend_ids
         assert g_done not in pend_ids

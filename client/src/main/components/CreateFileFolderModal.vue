@@ -55,6 +55,10 @@ const props = defineProps<{
   type: 'folder' | 'file'
   projectId: string
   parentPath: string
+  // 0327 T0004 (B0001 / NR0003 권고 1): when the explorer is showing a group branch
+  // with a live worktree, the new file/folder belongs in THAT worktree. Absent (base
+  // checkout) → unchanged behaviour. The server refuses if the worktree is gone.
+  groupId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +97,7 @@ async function submit() {
       project_id: props.projectId,
       parent_path: props.parentPath,
       name: trimmed,
+      ...(props.groupId ? { group_id: props.groupId } : {}),
     })
     const data = res.data as any
     if (data.status === 'error') {
