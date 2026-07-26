@@ -45,12 +45,23 @@
         :readonly="readonly"
         :group-id="groupId"
         @open="$emit('open', $event)"
+        @open-diff="$emit('open-diff', $event)"
         @tree-changed="$emit('tree-changed')"
       />
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
       <ContextMenuItem v-if="node.type === 'file'" icon="arrow-up-right" @click="openFile">
         {{ t('main.file_tree_node.open') }}
+      </ContextMenuItem>
+      <!-- 0326 R0001 / N0004 §1 — the ONLY new tree affordance: a menu entry directly
+           under "열기", on changed files only. Click/double-click/Enter and the tree's
+           badges stay exactly as they were (N0004 unapproved TR0003 §3-1·§3-2-a). -->
+      <ContextMenuItem
+        v-if="node.type === 'file' && (isDirty || isNew)"
+        icon="git-diff"
+        @click="openDiff"
+      >
+        {{ t('main.file_tree_node.view_changes') }}
       </ContextMenuItem>
       <template v-if="node.type === 'folder'">
         <ContextMenuItem icon="caret-right" @click="toggleExpand">
@@ -143,6 +154,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   open: [node: FileNode]
+  // 0326 R0001 — diff view, deliberately a SEPARATE event from `open`: the editor
+  // entry points (double-click / Enter / 우클릭 "열기") keep emitting `open`.
+  'open-diff': [node: FileNode]
   'tree-changed': []
 }>()
 
@@ -253,6 +267,11 @@ function handleDblClick() {
 function openFile() {
   handleDblClick()
   showCtx.value = false
+}
+
+function openDiff() {
+  showCtx.value = false
+  if (props.node.type === 'file') emit('open-diff', props.node)
 }
 
 function toggleExpand() {

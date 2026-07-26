@@ -92,6 +92,7 @@
                 :readonly="!canMutate"
                 :group-id="selectedGroup"
                 @open="openFile"
+                @open-diff="openDiff"
                 @tree-changed="reload"
               />
             </ul>
@@ -401,6 +402,28 @@ async function openFile(node: FileNode) {
     type,
     mdPath: type === 'md' ? node.path : null,
     projectId,
+  })
+}
+
+// 0326 R0001 — "변경 내용 보기". The tab id is prefixed `diff:` so it can never
+// collide with the editor tab for the same node (`node.id` in base mode,
+// `git:${groupId}:${node.id}` in group mode): both tabs coexist, exactly as
+// TR0003 §3 asked. The group-mode diff carries gitGroupId/gitCommit so the viewer
+// hits the group endpoint pinned to the tree snapshot the file was opened from.
+function openDiff(node: FileNode) {
+  const projectId = props.projectId
+  if (!projectId) return
+  const group = selectedGroup.value
+  tabsStore.openTab({
+    id: group ? `diff:${group}:${node.id}` : `diff:${node.id}`,
+    title: node.label,
+    path: node.path,
+    type: 'diff',
+    mdPath: null,
+    projectId,
+    gitGroupId: group,
+    gitCommit: group ? groupCommit.value : null,
+    readonly: true,
   })
 }
 
