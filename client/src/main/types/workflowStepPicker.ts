@@ -33,4 +33,10 @@ export interface WorkflowStepPickerState {
   fromDecision: boolean
   /** null unless a target is actually runnable — consumers gate their confirm button on this. */
   selection: WorkflowStepSelection | null
+  /**
+   * The loaded sequence steps (empty while loading / pre-decision). Optional so existing
+   * consumers that build this state as a literal need no change; the continuous dialog reads
+   * it to list the distinct doc types for per-document-type provider assignment (0317 D0004).
+   */
+  steps?: WorkflowStepItem[]
 }

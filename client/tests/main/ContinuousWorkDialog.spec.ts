@@ -8,13 +8,14 @@ import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 // (first non-done step) + disables earlier (done) steps so the run cannot skip or start in
 // the middle, and confirms a target item_seq + review-mode flag for the warning gate.
 
-const { getRequest } = vi.hoisted(() => ({ getRequest: vi.fn() }))
+const { getRequest, putRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn() }))
 
 vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
   getRequest,
   patchRequest: vi.fn(),
   postRequest: vi.fn(),
+  putRequest,
 }))
 
 // The LIVE /workflow/sequence is served by workflow_head_routes, whose shape is
@@ -49,6 +50,8 @@ function mountDialog() {
 }
 
 beforeEach(() => {
+  putRequest.mockReset()
+  putRequest.mockResolvedValue({ data: { ok: true } })
   getRequest.mockReset()
 })
 afterEach(() => {
@@ -230,5 +233,79 @@ describe('ContinuousWorkDialog', () => {
     expect(payload.fromDecision).toBe(true)
     expect(payload.targetSeq).toBe(-1)
     expect(payload.targetType).toBe('')
+  })
+
+  // 0317 T0010 rev4: the doc-type-keyed assignment table (D0004) was replaced by a per-STEP
+  // (item_seq) override table under a new "프로바이더" tab — the same doc TYPE appearing twice
+  // in a chain (two T steps) can now resolve to different providers. Session-scoped: it rides
+  // the confirm payload / start request only, never a persisted PUT.
+  // 0317 T0015: the per-step rows are shown directly (no "단계별로 다르게 지정" disclosure) and
+  // each select is pre-selected to the header default provider (no blank "use default" option).
+  it('overrides the provider for one specific step and reports it in the confirm payload', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mount(ContinuousWorkDialog, {
+      props: {
+        visible: true,
+        docRef: 'flowgate.default.0086.0001-R',
+        providers: [
+          { id: 'aip_fable', name: 'Fable' },
+          { id: 'aip_opus', name: 'Opus' },
+        ],
+        selectedProvider: 'aip_fable',
+      },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    // "기본 설정" is the default active tab (rev4 STATE1) — switch to "프로바이더".
+    const tabs = document.querySelectorAll('.cwd-tab')
+    expect(tabs).toHaveLength(2)
+    ;(tabs[1] as HTMLButtonElement).click()
+    await flushPromises()
+
+    // 0317 T0015: no per-step disclosure toggle — the step rows are shown directly.
+    expect(document.querySelector('.cwd-disclosure-btn')).toBeNull()
+    // One row per NOT-done step (the 2 done steps — N, NR — are excluded): T, TR, TS, TSR = 4.
+    const rows = document.querySelectorAll('.cwd-override-row')
+    expect(rows).toHaveLength(4)
+    const selects = document.querySelectorAll('.cwd-override-select') as NodeListOf<HTMLSelectElement>
+    // 0317 T0015: each step is pre-selected to the header default provider (not a blank option).
+    expect(selects[0].value).toBe('aip_fable')
+    expect(selects[3].value).toBe('aip_fable')
+    // Override the 2nd runnable step (TR, item_seq 4) to Opus.
+    selects[1].value = 'aip_opus'
+    selects[1].dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    next.click()
+    await flushPromises()
+
+    const ev = wrapper.emitted('confirm')
+    expect(ev).toHaveLength(1)
+    const payload = ev![0][0] as any
+    // Only the genuinely-overridden step is reported; steps left at the default are not.
+    expect(payload.providerOverrides).toEqual({ 4: 'aip_opus' })
+    // No project-level persistence — the old D0004 PUT never fires for a per-step override.
+    expect(putRequest).not.toHaveBeenCalled()
+  })
+
+  // 0317 T0010 rev4 STATE 4: the "프로바이더" tab is replaced by a guidance card (not disabled
+  // controls) when the project has zero registered providers; "기본 설정" stays usable either way.
+  it('shows an empty-provider guidance card when no providers are registered', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mount(ContinuousWorkDialog, {
+      props: { visible: true, docRef: 'flowgate.default.0086.0001-R', providers: [] },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(document.querySelector('.cwd-empty-card')).not.toBeNull()
+    expect(document.querySelector('.cwd-provider-block')).toBeNull()
+
+    wrapper.unmount()
   })
 })

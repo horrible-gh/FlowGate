@@ -105,6 +105,9 @@ const props = defineProps<{
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
   continuationInstructionMode?: 'auto_approved' | 'ai_direct'
+  // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode in
+  // ContinuousWorkDialog. Session-scoped — rides this start request only.
+  providerOverrides?: Record<number, string>
   autoStart?: boolean
   // Parallel-invoke extras (group 0223): context the matching copy-mention flow
   // assembles client-side; forwarded so the server rebuilds the identical prompt.
@@ -218,6 +221,9 @@ async function start() {
       body.continuation_target_seq = target?.seq ?? null
       body.continuation_review_mode = !!props.continuationReviewMode
       body.continuation_instruction_mode = props.continuationInstructionMode ?? 'auto_approved'
+      if (props.providerOverrides && Object.keys(props.providerOverrides).length) {
+        body.continuation_provider_overrides = props.providerOverrides
+      }
     }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)
     const data = res.data
