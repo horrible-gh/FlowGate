@@ -321,6 +321,25 @@
               />
             </div>
           </div>
+          <!-- 0326 R0001 — change view for one file, opened from the tree's
+               "변경 내용 보기". A read-only sibling of the editor tab for the same
+               path (ids differ by the `diff:` prefix), so both can stay open. -->
+          <div v-else-if="tab.type === 'diff'" class="card text-preview-card">
+            <div class="card-hd">
+              <span class="card-title">
+                <AppIcon name="git-diff" style="color:var(--text-m);" />
+                {{ t('main.file_diff.title') }}
+              </span>
+            </div>
+            <div class="card-bd text-preview-body">
+              <FileDiffViewer
+                :path="tab.path"
+                :project-id="tab.projectId ?? null"
+                :git-group-id="tab.gitGroupId ?? null"
+                :git-commit="tab.gitCommit ?? null"
+              />
+            </div>
+          </div>
           <div v-else-if="tab.type === 'too_large'" class="unsupported-view">
             <span>⚠️ {{ t('main.error.file_too_large') }}</span>
             <button @click="tabsStore.closeTab(tab.id)">{{ t('common.close') }}</button>
@@ -1137,6 +1156,7 @@ import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
 import AiRunMonitorCard from './AiRunMonitorCard.vue'
 import TextViewer from './TextViewer.vue'
+import FileDiffViewer from './FileDiffViewer.vue'
 import MdViewer from './MdViewer.vue'
 import DocHeader from './DocHeader.vue'
 import TestFailStrip from './TestFailStrip.vue'

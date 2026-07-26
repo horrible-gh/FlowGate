@@ -9,6 +9,8 @@ POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
 POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
 POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
+GET            /api/v1/projects/{project_id}/git/diff         (0326 NR0005 §4)
+GET            /api/v1/projects/{project_id}/git/groups/{group_id}/diff (0326 NR0005 §4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
 POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
@@ -292,6 +294,42 @@ def get_group_branch_changes(
     """Tracked paths changed from the base branch through the group worktree."""
     try:
         return git_service.read_group_changes(project_id, group_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/diff")
+def get_base_file_diff(
+    project_id: str,
+    path: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Old/new content of one base-checkout file (0326 R0001 / NR0005 §4).
+
+    HEAD blob vs the working tree — the same pair the base file explorer's dirty
+    markers are computed from. The client renders the line diff (NR0005 안 b).
+    """
+    try:
+        return git_service.read_base_file_diff(project_id, path)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/groups/{group_id}/diff")
+def get_group_file_diff(
+    project_id: str,
+    group_id: str,
+    path: str,
+    ref: str | None = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Old/new content of one group-branch file (0326 R0001 / NR0005 §4).
+
+    merge-base blob vs the group worktree (checkout-free fallback: the branch
+    commit's blob). ``ref`` pins the commit like the blob endpoint does.
+    """
+    try:
+        return git_service.read_group_file_diff(project_id, group_id, path, ref)
     except GitServiceError as exc:
         return _guard(exc)
 

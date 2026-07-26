@@ -2714,6 +2714,172 @@ def read_group_blob(
     }}
 
 
+# ── Single-file change view (0326 R0001 / NR0005 §4) ─────────────────────────
+#
+# "파일이 변경됐다"까지만 보이고 "어디가 어떻게" 바뀌었는지는 볼 수 없다는 R0001에
+# 대한 백엔드 절반. NR0005 §4 안 (b) 를 택했다: 서버는 patch 텍스트를 만들지 않고
+# 한 경로의 old/new 두 시점 내용만 내려주고, 라인 diff 는 클라이언트가 이미 가진
+# 엔진(useConflictChunks.buildChunkSideDiff)이 계산한다. 서버에서 `git diff` 를
+# 돌려 patch 를 파싱하는 것보다 기존 blob 리더(read_group_blob)와 그대로 겹치고,
+# 통합/분할 보기 전환이 서버 왕복 없이 끝난다.
+#
+# 두 벌인 이유도 §4 그대로다: 베이스 체크아웃은 디스크의 작업 트리를 읽지만,
+# 그룹 브랜치 뷰는 checkout-free 라 git 오브젝트에서 읽어야 한다.
+
+def _diff_side_payload(head: bytes, size: int) -> dict:
+    """One side of a diff from raw bytes. Binary sniff / 1 MiB cap mirror read_group_blob:
+    a diff of a binary or oversize file must degrade to a flag, never to a wall of
+    replacement characters."""
+    if b"\x00" in head[:BLOB_BINARY_SNIFF_BYTES]:
+        return {"exists": True, "binary": True, "truncated": False, "size": size, "content": None}
+    truncated = size > BLOB_MAX_RETURN_BYTES
+    body = head[:BLOB_MAX_RETURN_BYTES] if truncated else head[:size]
+    return {
+        "exists": True, "binary": False, "truncated": truncated, "size": size,
+        "content": body.decode("utf-8", errors="replace"),
+    }
+
+
+def _diff_side_missing() -> dict:
+    """The absent side of an add (no old) or a delete (no new)."""
+    return {"exists": False, "binary": False, "truncated": False, "size": 0, "content": None}
+
+
+def _diff_side_from_commit(base_root: Path, commit: Optional[str], path: str) -> dict:
+    """Blob content of ``path`` in ``commit``; missing path/commit → the absent side."""
+    if not commit:
+        return _diff_side_missing()
+    entry = _ls_tree_entry(base_root, commit, path)
+    if entry is None or entry[0] != "blob":
+        return _diff_side_missing()
+    sha = entry[1]
+    size = _cat_file_size(base_root, sha)
+    return _diff_side_payload(_cat_file_blob_head(base_root, sha, BLOB_MAX_RETURN_BYTES), size)
+
+
+def _diff_side_from_disk(root: Path, path: str) -> dict:
+    """Working-tree content of ``path`` under ``root``, containment-checked.
+
+    Mirrors _read_group_untracked_blob's resolve+relative_to guard so a symlink or a
+    crafted path can never read outside the checkout; anything unreadable is reported
+    as the absent side (i.e. "deleted"), never as a 500."""
+    try:
+        root_resolved = root.resolve()
+        file_path = (root_resolved / path).resolve()
+        file_path.relative_to(root_resolved)
+    except (ValueError, OSError):
+        return _diff_side_missing()
+    if not file_path.is_file():
+        return _diff_side_missing()
+    try:
+        size = file_path.stat().st_size
+        with open(file_path, "rb") as handle:
+            head = handle.read(BLOB_MAX_RETURN_BYTES)
+    except OSError:
+        return _diff_side_missing()
+    return _diff_side_payload(head, size)
+
+
+def _diff_status(old: dict, new: dict, path: str) -> str:
+    """git --name-status letter for the pair. Neither side existing is a 404: the
+    caller asked about a path that is neither in the old snapshot nor on disk."""
+    if not old["exists"] and not new["exists"]:
+        raise GitServiceError(404, "not_found", f"path '{path}' not found")
+    if not old["exists"]:
+        return "A"
+    if not new["exists"]:
+        return "D"
+    return "M"
+
+
+def read_base_file_diff(project_id: str, path: str) -> dict:
+    """old (HEAD blob) / new (working tree) content of one base-checkout file.
+
+    The base file explorer's dirty/untracked markers come from ``project_git_status``
+    (HEAD vs the checkout on disk), so the diff must be measured over exactly that
+    same pair — otherwise a file the tree marks as changed could open with an empty
+    diff."""
+    _validate_blob_path(path)
+    normalized = path.replace("\\", "/")
+    cfg = _require_enabled_config(project_id)
+    project_name = _project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    if _is_hidden_source_path(normalized):
+        # Same exposure rule as the file tree (dotfiles / *.db are never listed);
+        # a path the tree hides must not become readable through the diff view.
+        raise GitServiceError(404, "not_found", f"path '{path}' not found")
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = src_root(project_name, base_branch)
+    if not (base_root / ".git").exists():
+        raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
+    if not git_available():
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    head_proc = _run_git(
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    # An empty repository (no HEAD yet) is not an error here — every file simply
+    # reads as added.
+    head_commit = (head_proc.stdout or "").strip() if head_proc.returncode == 0 else ""
+    old = _diff_side_from_commit(base_root, head_commit or None, normalized)
+    new = _diff_side_from_disk(base_root, normalized)
+    return {"ok": True, "data": {
+        "group_id": None, "branch": base_branch, "base_branch": base_branch,
+        "commit": head_commit or None, "path": path,
+        "status": _diff_status(old, new, path), "old": old, "new": new,
+    }}
+
+
+def read_group_file_diff(
+    project_id: str, group_id: str, path: str, ref: Optional[str] = None
+) -> dict:
+    """old (merge-base blob) / new (group worktree, else branch commit) content.
+
+    The old side is the merge base with the configured base branch — the same
+    reference ``read_group_changes`` diffs against, so the tree's changed markers and
+    this view can never disagree. The new side prefers the live worktree file (which
+    is what ``read_group_changes`` measures, so uncommitted work shows up) and falls
+    back to the branch commit's blob for a finalized group whose worktree is gone.
+    ``ref`` pins the commit exactly as ``read_group_blob`` does."""
+    _validate_blob_path(path)
+    normalized = path.replace("\\", "/")
+    if _is_hidden_source_path(normalized):
+        raise GitServiceError(404, "not_found", f"path '{path}' not found")
+    base_root, branch, head_commit = resolve_group_ref(project_id, group_id)
+    commit = head_commit
+    if ref:
+        if not _REF_PIN_RE.match(ref):
+            raise GitServiceError(400, "invalid_ref", "ref must be a full 40-hex commit sha")
+        tproc = _run_git(["cat-file", "-t", ref], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+        if tproc.returncode != 0 or (tproc.stdout or "").strip() != "commit":
+            raise GitServiceError(404, "not_found", f"commit '{ref}' not found")
+        commit = ref
+
+    cfg = db_git.get_config(project_id) or {}
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    merge_proc = _run_git(
+        ["merge-base", f"refs/heads/{base_branch}", commit],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    merge_base = (merge_proc.stdout or "").strip()
+    if merge_proc.returncode != 0 or not merge_base:
+        raise GitServiceError(
+            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
+        )
+
+    old = _diff_side_from_commit(base_root, merge_base, normalized)
+    wt_path = _group_worktree_path(project_id, group_id, branch)
+    new = _diff_side_from_disk(wt_path, normalized) if wt_path is not None else _diff_side_missing()
+    if not new["exists"] and wt_path is None:
+        new = _diff_side_from_commit(base_root, commit, normalized)
+    return {"ok": True, "data": {
+        "group_id": group_id, "branch": branch, "base_branch": base_branch,
+        "commit": commit, "merge_base": merge_base, "path": path,
+        "status": _diff_status(old, new, path), "old": old, "new": new,
+    }}
+
+
 # ── Finalize execution (P0005 §5 / L0006 §2.6·§4.2) ──────────────────────────
 
 def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:

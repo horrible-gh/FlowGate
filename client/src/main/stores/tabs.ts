@@ -5,7 +5,10 @@ export interface Tab {
   id: string
   title: string
   path: string
-  type: 'md' | 'text' | 'unsupported' | 'too_large' | 'qtui'
+  // 0326 R0001 — 'diff' is a read-only change view of a path, opened from the file
+  // tree's "변경 내용 보기". It is a separate tab (id prefixed `diff:`) from the
+  // editor tab for the same file, so the two coexist instead of replacing each other.
+  type: 'md' | 'text' | 'unsupported' | 'too_large' | 'qtui' | 'diff'
   mdPath?: string | null
   typeCode?: string | null
   modifiedBy?: string | null

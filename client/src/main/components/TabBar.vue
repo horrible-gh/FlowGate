@@ -33,6 +33,14 @@
         @drop="dragDrop(idx)"
       >
         <span v-if="tab.typeCode" class="doc-tag" :class="`c-${tab.typeCode}`" style="font-size:.6rem; font-weight:700; padding:1px 4px; flex-shrink:0;">{{ tab.typeCode }}</span>
+        <!-- 0326 R0001 — a diff tab and the editor tab for the same file coexist and
+             share a title, so the diff one carries an icon to tell them apart. -->
+        <AppIcon
+          v-if="tab.type === 'diff'"
+          name="git-diff"
+          :title="t('main.file_diff.title')"
+          style="font-size:.72rem; flex-shrink:0;"
+        />
         <span class="tab-title">{{ getTabDisplayTitle(tab) }}</span>
         <span v-if="isTabGroupRunning(tab)" class="tab-invoke-badge">
           {{ t('main.ai_invoke_dialog.badge_running') }}
