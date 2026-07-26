@@ -79,10 +79,12 @@
       <ContextMenuItem icon="link" @click="copyLink">
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
-      <ContextMenuItem v-if="!readonly" icon="download-simple" @click="downloadNode">
+      <!-- 0327 T0004 (NR0003 권고 3): downloading is a read and is offered in every
+           view; a group context downloads that group's worktree copy, not the base one. -->
+      <ContextMenuItem icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
-      <ContextMenuItem v-if="!readonly" icon="trash" :danger="true" @click="deleteNode">
+      <ContextMenuItem v-if="canDelete" icon="trash" :danger="true" @click="deleteNode">
         {{ t('common.delete') }}
       </ContextMenuItem>
     </ContextMenu>
@@ -101,6 +103,7 @@
       :type="modalType"
       :project-id="projectId"
       :parent-path="node.path"
+      :group-id="groupId"
       @saved="onCreated"
     />
     <template v-if="node.type === 'folder'">
@@ -130,8 +133,10 @@ const props = defineProps<{
   node: FileNode
   allNodes: FileNode[]
   projectId: string
-  // 0186 P0005 — group-branch (checkout-free) view is read-only: suppress the
-  // create / upload / download / base-dirty affordances that target the base checkout.
+  // 0186 P0005 — a structurally read-only tree: suppress create / upload.
+  // 0327 T0004 (B0001 / NR0003 권고 1·5) — this no longer means "a group is selected".
+  // A group whose worktree is live accepts create/upload straight into that worktree,
+  // so only groups WITHOUT one (finalized, disposed, never provisioned) are read-only.
   readonly?: boolean
   groupId?: string | null
 }>()
@@ -174,6 +179,14 @@ const children = computed(() =>
 )
 
 const isSelected = computed(() => explorerStore.selectedFileNodeId === props.node.id)
+
+// 0327 T0004: delete follows the same rule as create/upload — available wherever the
+// tree is writable, which means the base checkout and any group with a live worktree.
+// (NR0003 권고 4 kept it blocked on the premise that delete always hit the BASE
+// checkout and so could trip the finalize E3 guard; resolved against the group's own
+// worktree it never touches base, so that premise no longer holds.) Read-only groups —
+// no worktree — keep hiding it.
+const canDelete = computed(() => !props.readonly)
 
 // Reuse the established base-dirty marker for either the editable base checkout
 // or the selected read-only group branch's tracked changes. 0192 T0005 §1: the
@@ -298,7 +311,12 @@ async function downloadNode() {
     const endpoint = isFile ? 'download' : 'download-zip'
     const fallbackName = isFile ? props.node.name : props.node.name + '.zip'
     const url = `/api/v1/projects/${encodeURIComponent(projectId)}/files/${endpoint}`
-    const res = await downloadBlobRequest(url, { path: props.node.path })
+    // 0327 T0004 (NR0003 권고 3): in a group view the bytes must come from that
+    // group's worktree — a base-checkout read would hand back a different file.
+    const res = await downloadBlobRequest(url, {
+      path: props.node.path,
+      ...(props.groupId ? { group_id: props.groupId } : {}),
+    })
     const disposition = res.headers['content-disposition'] as string | undefined
     const filename = extractFilenameFromDisposition(disposition, fallbackName)
     const objUrl = URL.createObjectURL(res.data)
@@ -313,6 +331,7 @@ async function downloadNode() {
     const status = e?.response?.status
     if (status === 404) showToast(t('main.file_tree_node.download_not_found'), 'danger')
     else if (status === 403) showToast(t('main.file_tree_node.download_forbidden'), 'danger')
+    else if (status === 409) showToast(t('main.file_tree_node.group_worktree_gone'), 'danger')
     else showToast(t('main.file_tree_node.download_failed'), 'danger')
   } finally {
     downloading.value = false
@@ -346,6 +365,10 @@ function deleteErrorMessage(e: any): string {
     case 'TYPE_MISMATCH': return t('main.file_tree_node.delete_type_mismatch')
     case 'FORBIDDEN': return t('main.file_tree_node.delete_forbidden')
     case 'DELETE_FAILED': return t('main.file_tree_node.delete_failed')
+    // 0327 T0004: the group's worktree went away between render and delete — a distinct
+    // situation from "no permission", so it gets its own message.
+    case 'WORKTREE_UNAVAILABLE': return t('main.file_tree_node.group_worktree_gone')
+    case 'GROUP_NOT_FOUND': return t('main.file_tree_node.delete_not_found')
   }
   if (status === 403) return t('main.file_tree_node.delete_forbidden')
   if (status === 404) return t('main.file_tree_node.delete_not_found')
@@ -385,8 +408,8 @@ async function confirmDelete() {
   try {
     const res = await api.delete(
       `/api/v1/projects/${encodeURIComponent(props.projectId)}/files`,
-      // group_id lets the server refuse a group-branch delete (NR0003 권장 5); it is
-      // omitted in the editable base-checkout view where groupId is null.
+      // 0327 T0004: group_id makes the server resolve the delete against THAT group's
+      // worktree (fail-closed — no base fallback); omitted in the base-checkout view.
       { data: { path: props.node.path, type: props.node.type, group_id: props.groupId ?? undefined } },
     )
     cleanupDeletedRefs()
@@ -408,7 +431,10 @@ async function confirmDelete() {
 
 function onCreated(payload: { name: string; type: 'file' | 'folder' }) {
   expanded.value = true
-  if (payload.type === 'file') {
+  // pendingSelectFilePath is consumed only by the base-checkout reload; setting it
+  // from a group-branch create would leave a stale path to be applied the next time
+  // the user switches back to base (0327 T0004).
+  if (payload.type === 'file' && !props.groupId) {
     const parentPath = props.node.path.replace(/\\/g, '/')
     explorerStore.pendingSelectFilePath = parentPath + '/' + payload.name
   }
@@ -439,7 +465,7 @@ async function onNodeDrop(e: DragEvent) {
   await uploadFiles(props.projectId, props.node.path, files, () => {
     expanded.value = true
     emit('tree-changed')
-  })
+  }, props.groupId)
 }
 
 // ── Upload button ────────────────────────────────────────────────────────────
@@ -464,7 +490,7 @@ async function onNodeFileSelected(e: Event) {
   await uploadFiles(props.projectId, props.node.path, files, () => {
     expanded.value = true
     emit('tree-changed')
-  })
+  }, props.groupId)
   input.value = ''
 }
 
@@ -479,7 +505,7 @@ async function onNodeFolderSelected(e: Event) {
   await uploadFiles(props.projectId, props.node.path, files, () => {
     expanded.value = true
     emit('tree-changed')
-  })
+  }, props.groupId)
   input.value = ''
 }
 </script>

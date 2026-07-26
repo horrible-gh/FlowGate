@@ -33,10 +33,39 @@ def _get_src_root(project_id: str, group_id: str | None = None):
     0115: delegates to the shared resolver (storage.paths) so an optional
     group_id routes to the group's git worktree when one is registered; the
     group-less call keeps the pre-0115 project-branch behavior unchanged.
+
+    0327 T0004 (B0001): when a group_id IS supplied the resolution is fail-closed.
+    The shared resolver falls back to the base checkout whenever a worktree cannot
+    be resolved — harmless for the internal callers it was built for, but now that
+    the file explorer uploads into a selected group, that fallback would drop the
+    user's files into the base checkout under a group-branch tab and dirty it for
+    every other group's finalize. Same contract as the src-content editor: resolve
+    the group's worktree exactly, or refuse (409).
     """
     from modules.flow_gate.storage.paths import resolve_project_src_root
 
-    root = resolve_project_src_root(project_id, group_id=group_id)
+    if group_id:
+        from modules.flow_gate.db import groups as _groups
+        from modules.flow_gate.services import git_service
+
+        group = _groups.get_by_id(group_id)
+        if group is None or group.get("project_id") != project_id:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": {"code": "GROUP_NOT_FOUND", "message": "Group not found in this project"}},
+            )
+        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+        if root is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": {
+                    "code": "WORKTREE_UNAVAILABLE",
+                    "message": f"Group worktree is unavailable ({reason}); base checkout was not used",
+                }},
+            )
+        return root.resolve()
+
+    root = resolve_project_src_root(project_id)
     if root is None:
         raise HTTPException(
             status_code=404,
@@ -178,8 +207,11 @@ async def upload_files(request: Request, project_id: str):
 
     # Resolve project src_root (0115: an optional group_id form field targets the
     # group's git worktree; absent → unchanged project-branch upload behavior).
+    # 0327 T0004: the group branch of _get_src_root hits the git ledger and stats the
+    # worktree, so the resolution runs off the event loop (0279 T0005 rule) — this is
+    # an async handler and that work would freeze every other in-flight request.
     group_id = str(form.get("group_id") or "").strip() or None
-    src_root_path = _get_src_root(project_id, group_id)
+    src_root_path = await anyio.to_thread.run_sync(_get_src_root, project_id, group_id)
     root_str = str(src_root_path)
 
     uploaded = []

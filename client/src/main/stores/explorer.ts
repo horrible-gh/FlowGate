@@ -68,7 +68,10 @@ export interface GitProjectStatus {
   // SEPARATE channel from base_dirty: folding untracked into base_dirty would widen
   // the E3 merge-finalize guard (git_service.py). Drives the file-tree new-file badge.
   base_untracked?: { count: number; files: string[]; truncated?: boolean }
-  slots: Array<{ group_id: string; branch: string | null; status: string; merge_id: number | null }>
+  // 0327 T0004 (B0001): `writable` = this slot still has a live worktree, so the file
+  // explorer can offer create/upload there instead of blanket read-only. Optional so a
+  // server that predates the field reads as not-writable (the previous behaviour).
+  slots: Array<{ group_id: string; branch: string | null; status: string; merge_id: number | null; writable?: boolean }>
   pending: Array<{
     group_id: string
     branch: string | null
@@ -300,10 +303,19 @@ export const useExplorerStore = defineStore('explorer', () => {
     loadingFile.value = true
     fileError.value = null
     try {
-      const res = await getTreeWithRetry<{ data: { branch: string; commit: string; nodes: FileNode[]; worktree_untracked?: string[] } }>(
+      type GroupTreePayload = {
+        branch: string
+        commit: string
+        nodes: FileNode[]
+        worktree_untracked?: string[]
+        // 0327 T0004 (B0001): worktree folders that hold no file yet — git reports
+        // them nowhere else, so they ride their own channel.
+        worktree_untracked_dirs?: string[]
+      }
+      const res = await getTreeWithRetry<{ data: GroupTreePayload }>(
         `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/tree`,
       )
-      const data = (res.data as any).data as { branch: string; commit: string; nodes: FileNode[]; worktree_untracked?: string[] }
+      const data = (res.data as any).data as GroupTreePayload
       const key = groupKey(pid, gid)
       const prev = groupBranchCommit.value[key]
       if (prev && prev !== data.commit) purgeGroupCommit(pid, gid, prev)
@@ -312,7 +324,10 @@ export const useExplorerStore = defineStore('explorer', () => {
       groupBranchTreeCache.value[`${key}:${data.commit}`] = nodes
       // 0315 TR (NR0003 권고 1) — untracked files ride a channel separate from the
       // commit-keyed tree cache, since they change without advancing the commit.
-      setGroupUntrackedFiles(pid, gid, data.worktree_untracked ?? [])
+      setGroupUntrackedFiles(pid, gid, [
+        ...(data.worktree_untracked ?? []),
+        ...(data.worktree_untracked_dirs ?? []),
+      ])
       return { branch: data.branch, commit: data.commit, nodes }
     } catch (e) {
       fileError.value = 'tree_load_failed'
@@ -378,7 +393,13 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   function isGroupUntrackedDir(pid: string, gid: string, folderPath: string): boolean {
-    return _anyUnder(groupUntrackedFiles.value[groupKey(pid, gid)], folderPath)
+    const files = groupUntrackedFiles.value[groupKey(pid, gid)]
+    // 0327 T0004 (B0001): a folder just created in the worktree holds no file, so the
+    // prefix scan alone would never mark it — the very folder the user made would be
+    // the one node without a "new" badge. Those paths are in the list on their own
+    // (worktree_untracked_dirs), so an exact match counts too.
+    if (files && files.includes(folderPath.replace(/\\/g, '/').replace(/\/+$/, ''))) return true
+    return _anyUnder(files, folderPath)
   }
 
   /** Fetch a single file from a group branch, pinned to the tree's commit so tree

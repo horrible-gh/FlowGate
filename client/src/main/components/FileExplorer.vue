@@ -45,9 +45,14 @@
       </div>
     </div>
     <template v-if="!layoutStore.fileExplorerCollapsed">
-      <div v-if="selectedGroup" class="fx-readonly-badge">
-        <AppIcon name="eye" />
-        <span>{{ t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
+      <!-- 0327 T0004 (NR0003 권고 4): the badge now says WHICH of the two group views
+           this is — an editable worktree or a worktree-less, fully read-only branch —
+           so "why can I not create anything here" has a visible answer. -->
+      <div v-if="selectedGroup" class="fx-readonly-badge" :class="{ 'fx-readonly-badge--rw': groupWritable }">
+        <AppIcon :name="groupWritable ? 'pencil-simple' : 'eye'" />
+        <span>{{ groupWritable
+          ? t('main.explorer.worktree_badge', { group: shortGroup(selectedGroup) })
+          : t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
         <span
           v-if="groupGitState && groupGitState.ahead_count > 0"
           class="fx-git-badge"
@@ -84,7 +89,7 @@
                 :node="node"
                 :all-nodes="nodes"
                 :project-id="projectId ?? ''"
-                :readonly="!!selectedGroup"
+                :readonly="!canMutate"
                 :group-id="selectedGroup"
                 @open="openFile"
                 @tree-changed="reload"
@@ -97,21 +102,25 @@
   </div>
 
   <ContextMenu v-model:visible="showRootCtx" :x="rootCtxX" :y="rootCtxY">
-    <ContextMenuItem icon="folder-simple-plus" @click="openRootCreateFolder">
-      {{ t('main.file_tree_node.new_folder') }}
-    </ContextMenuItem>
-    <ContextMenuItem icon="file-plus" @click="openRootCreateFile">
-      {{ t('main.file_tree_node.new_file') }}
-    </ContextMenuItem>
+    <template v-if="canMutate">
+      <ContextMenuItem icon="folder-simple-plus" @click="openRootCreateFolder">
+        {{ t('main.file_tree_node.new_folder') }}
+      </ContextMenuItem>
+      <ContextMenuItem icon="file-plus" @click="openRootCreateFile">
+        {{ t('main.file_tree_node.new_file') }}
+      </ContextMenuItem>
+    </template>
     <ContextMenuItem icon="arrow-clockwise" @click="refreshFromMenu">
       {{ t('main.file_tree_node.refresh') }}
     </ContextMenuItem>
-    <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFiles">
-      {{ t('main.file_tree_node.upload_files') }}
-    </ContextMenuItem>
-    <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFolder">
-      {{ t('main.file_tree_node.upload_folder') }}
-    </ContextMenuItem>
+    <template v-if="canMutate">
+      <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFiles">
+        {{ t('main.file_tree_node.upload_files') }}
+      </ContextMenuItem>
+      <ContextMenuItem icon="upload-simple" @click="triggerRootUploadFolder">
+        {{ t('main.file_tree_node.upload_folder') }}
+      </ContextMenuItem>
+    </template>
   </ContextMenu>
 
   <input ref="rootFileInputRef" type="file" multiple style="display:none" @change="onRootFileSelected" />
@@ -123,6 +132,7 @@
     :type="modalType"
     :project-id="projectId"
     parent-path=""
+    :group-id="selectedGroup"
     @saved="onRootCreated"
   />
 </template>
@@ -166,7 +176,11 @@ const rootDragOver = ref(false)
 // selectedGroup = null → base checkout (existing behaviour); a group_id → that
 // group's branch is read straight from Git objects (read-only, no checkout switch).
 const baseBranch = computed(() => projectStore.currentBranch || 'main')
-const groupSlots = ref<Array<{ group_id: string; branch: string; status: string }>>([])
+// `writable` (0327 T0004): the server tells us whether this slot still has a live
+// worktree behind it, so the explorer stops equating "a group is selected" with
+// "read-only" (B0001 / NR0003 발견 3). Optional so a pre-0327 server payload simply
+// reads as not-writable — the old, fully read-only behaviour.
+const groupSlots = ref<Array<{ group_id: string; branch: string; status: string; writable?: boolean }>>([])
 // selectedGroup restores from the store so an SSE-driven explorer remount
 // (group_view_refresh → refreshAll bumps explorerRefreshKey) keeps the group
 // tree in view instead of silently reverting to base (L0006 §2.4, 0186 finding 3).
@@ -179,6 +193,18 @@ const groupGitState = ref<{ ahead_count: number; status: string } | null>(null)
 function shortGroup(gid: string): string {
   return gid.split('.').pop() ?? gid
 }
+
+// 0327 T0004 (B0001 / NR0003 권고 1·5) — the selected group has a live worktree, so
+// creating and uploading land in that worktree. A group without one stays entirely
+// read-only, and base (no group selected) is unchanged.
+const groupWritable = computed(() =>
+  !!selectedGroup.value
+  && groupSlots.value.some((s) => s.group_id === selectedGroup.value && s.writable === true),
+)
+
+// The single gate for the structural mutations (new folder / new file / upload).
+// Delete is deliberately NOT covered here — it stays base-only (권고 4).
+const canMutate = computed(() => !selectedGroup.value || groupWritable.value)
 
 function groupLabel(s: { group_id: string; status: string }): string {
   const n = shortGroup(s.group_id)
@@ -379,7 +405,10 @@ async function openFile(node: FileNode) {
 }
 
 function onRootContextMenu(e: MouseEvent) {
-  if (selectedGroup.value) return // read-only group view: no root mutations
+  // 0327 T0004 (B0001 / NR0003 발견 1): this used to bail on ANY selected group, so the
+  // project-root right-click produced no menu at all — no new folder, no new file, not
+  // even refresh. The menu now always opens (as the per-node menu always has) and the
+  // mutating entries are the part that depends on the group being writable.
   rootCtxX.value = e.clientX
   rootCtxY.value = e.clientY
   showRootCtx.value = true
@@ -403,7 +432,9 @@ function refreshFromMenu() {
 }
 
 function onRootCreated(payload: { name: string; type: 'file' | 'folder' }) {
-  if (payload.type === 'file') {
+  // pendingSelectFilePath is consumed only by the base-checkout reload path; a
+  // group-branch create must not leave one behind for a later base view to apply.
+  if (payload.type === 'file' && !selectedGroup.value) {
     explorerStore.pendingSelectFilePath = payload.name
   }
   reload()
@@ -411,7 +442,7 @@ function onRootCreated(payload: { name: string; type: 'file' | 'folder' }) {
 
 // ── Root drag and drop ───────────────────────────────────────────────────────
 function onRootDragOver() {
-  if (selectedGroup.value) return
+  if (!canMutate.value) return
   rootDragOver.value = true
 }
 
@@ -424,10 +455,10 @@ function onRootDragLeave(e: DragEvent) {
 
 async function onRootDrop(e: DragEvent) {
   rootDragOver.value = false
-  if (selectedGroup.value) return
+  if (!canMutate.value) return
   if (!props.projectId || !e.dataTransfer?.items) return
   const files = await collectDropFiles(e.dataTransfer.items)
-  await uploadFiles(props.projectId, '', files, reload)
+  await uploadFiles(props.projectId, '', files, reload, selectedGroup.value)
 }
 
 // ── Root upload button ───────────────────────────────────────────────────────
@@ -450,7 +481,7 @@ async function onRootFileSelected(e: Event) {
     ;(f as any)._relativePath = f.name
     return f as File & { _relativePath?: string }
   })
-  await uploadFiles(props.projectId, '', files, reload)
+  await uploadFiles(props.projectId, '', files, reload, selectedGroup.value)
   input.value = ''
 }
 
@@ -463,7 +494,7 @@ async function onRootFolderSelected(e: Event) {
     ;(f as any)._relativePath = f.webkitRelativePath || f.name
     return f as File & { _relativePath?: string }
   })
-  await uploadFiles(props.projectId, '', files, reload)
+  await uploadFiles(props.projectId, '', files, reload, selectedGroup.value)
   input.value = ''
 }
 
@@ -543,6 +574,14 @@ watch(() => props.refreshToken, (next, prev) => {
   color: #93c5fd;
   background: rgba(59, 130, 246, 0.12);
   border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+/* 0327 T0004: the editable-worktree variant reads as "you can write here" rather
+   than the blue read-only notice, so the two group views are told apart at a glance. */
+.fx-readonly-badge--rw {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+  border-bottom-color: rgba(34, 197, 94, 0.25);
 }
 
 .fx-git-badge {

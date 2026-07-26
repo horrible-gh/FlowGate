@@ -64,12 +64,17 @@ export function useFileUpload() {
     targetPath: string,
     files: Array<File & { _relativePath?: string }>,
     onSuccess: () => void,
+    // 0327 T0004 (B0001 / NR0003 권고 2): upload into the selected group's worktree
+    // rather than the base checkout. The server resolves it fail-closed (409 when
+    // that worktree is gone), so omitting it keeps the base-checkout upload intact.
+    groupId?: string | null,
   ): Promise<void> {
     if (files.length === 0) return
     uploading.value = true
     try {
       const formData = new FormData()
       formData.append('target_path', targetPath)
+      if (groupId) formData.append('group_id', groupId)
       // Embed the relative path in the third argument (filename) so the backend can restore the directory structure (P007 §2-3)
       for (const file of files) {
         formData.append('files[]', file, file._relativePath ?? file.name)
@@ -94,6 +99,10 @@ export function useFileUpload() {
         showToast(t('main.file_tree_node.toast_upload_too_large'), 'danger')
       } else if (status === 403) {
         showToast(t('main.file_tree_node.toast_upload_forbidden'), 'danger')
+      } else if (status === 409) {
+        // The group's worktree is gone; the server refused rather than writing
+        // into the base checkout. Say so instead of a generic failure.
+        showToast(t('main.file_tree_node.toast_upload_no_worktree'), 'danger')
       } else {
         showToast(t('main.file_tree_node.toast_upload_failed'), 'danger')
       }

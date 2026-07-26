@@ -108,13 +108,18 @@ def api_get_group(group_id: str):
 
 @router.post("/storage/folder", response_class=JSONResponse)
 async def api_create_folder(request: Request):
-    """Create folder. Body: {project_id, parent_path, name}"""
+    """Create folder. Body: {project_id, parent_path, name, group_id?}
+
+    0327 T0004 (B0001): the optional group_id creates inside that group's worktree
+    so the explorer's "new folder" works while a group branch is selected.
+    """
     body = await request.json()
     result = await anyio.to_thread.run_sync(
         lambda: process_service.create_storage_folder(
             project_id=body.get("project_id", ""),
             parent_path=body.get("parent_path", ""),
             name=body.get("name", ""),
+            group_id=body.get("group_id") or None,
         )
     )
     if result.get("status") == "error":
@@ -124,13 +129,18 @@ async def api_create_folder(request: Request):
 
 @router.post("/storage/file", response_class=JSONResponse)
 async def api_create_file(request: Request):
-    """Create file. Body: {project_id, parent_path, name}"""
+    """Create file. Body: {project_id, parent_path, name, group_id?}
+
+    0327 T0004 (B0001): the optional group_id creates inside that group's worktree
+    so the explorer's "new file" works while a group branch is selected.
+    """
     body = await request.json()
     result = await anyio.to_thread.run_sync(
         lambda: process_service.create_storage_file(
             project_id=body.get("project_id", ""),
             parent_path=body.get("parent_path", ""),
             name=body.get("name", ""),
+            group_id=body.get("group_id") or None,
         )
     )
     if result.get("status") == "error":

@@ -6,8 +6,16 @@ Covers the NR0003 '필수 테스트' items that touch the server contract:
   - non-existent path (404 NOT_FOUND) and type mismatch (409 TYPE_MISMATCH)
   - root / absolute / '..' / drive-prefix / symlink rejection (400 INVALID_PATH)
   - unauthorized user and other-project token rejection (403 FORBIDDEN)
-  - group-branch (read-only) delete rejection (403 FORBIDDEN) — NR0003 권장 5
+  - group-scoped delete resolves that group's worktree — 0327 TR0005 (see below)
   - delete failure surfaces 500 DELETE_FAILED without corrupting the response contract
+
+0327 TR0005 supersedes NR0003 권고 4/권고 5 for the group case. Those recommendations
+assumed a group delete would hard-delete inside the BASE checkout, which is why they
+tied it to the finalize E3 base-contamination guard and refused every group delete with
+403. Group context is now resolved to that group's OWN worktree (fail-closed — never a
+base fallback), so base is not touched and the E3 reasoning no longer applies; the
+contract asserted here is the new one. The rest of this file (permission gate, path
+validation, 404/409, DELETE_FAILED) is unchanged.
 
 Auth is stubbed on the tree_routes module (verify_bearer / has_permission are imported
 there at module scope), the src root is redirected to an on-disk scratch dir, and the
@@ -178,18 +186,77 @@ def test_delete_worker_token_without_delete_permission_is_rejected(monkeypatch):
     assert (ROOT / "keep.md").exists()
 
 
-# ── group-branch guard (NR0003 권장 5) ────────────────────────────────────────
+# ── group-scoped delete (0327 TR0005 — supersedes NR0003 권고 4/권고 5) ─────────
 
-def test_delete_on_group_branch_is_rejected(monkeypatch):
+GID = "flowgate.default.0267"
+
+
+def _stub_group(monkeypatch, *, worktree: Path | None, exists: bool = True) -> None:
+    """Point the group lookup + worktree resolver at a controlled fixture."""
+    from modules.flow_gate.db import groups as db_groups
+
+    monkeypatch.setattr(
+        db_groups, "get_by_id",
+        lambda gid: {"group_id": gid, "project_id": PID} if (exists and gid == GID) else None,
+    )
+    monkeypatch.setattr(
+        git_service, "effective_src_root_ex",
+        lambda _pid, _gid: (worktree, "worktree" if worktree else "dir_missing"),
+    )
+
+
+def test_delete_on_group_resolves_group_worktree(monkeypatch):
+    """0327 TR0005: a group delete removes the file from THAT group's worktree and
+    leaves the base checkout's same-named file alone (so finalize's E3 base guard is
+    never involved — the reason the old 403 blanket rule existed)."""
+    client = _client(monkeypatch)
+    wt = ROOT.parent / "_scratch_tr0005_group_wt"
+    shutil.rmtree(wt, ignore_errors=True)
+    (wt / "docs").mkdir(parents=True, exist_ok=True)
+    (wt / "docs" / "gone.md").write_text("group copy", encoding="utf-8")
+    (ROOT / "docs").mkdir(parents=True, exist_ok=True)
+    (ROOT / "docs" / "gone.md").write_text("base copy", encoding="utf-8")
+    _stub_group(monkeypatch, worktree=wt)
+    try:
+        res = client.request(
+            "DELETE", _url(),
+            json={"path": "docs/gone.md", "type": "file", "group_id": GID},
+        )
+        assert res.status_code == 200
+        assert res.json()["deleted"] == "docs/gone.md"
+        assert not (wt / "docs" / "gone.md").exists()
+        assert (ROOT / "docs" / "gone.md").read_text(encoding="utf-8") == "base copy"
+    finally:
+        shutil.rmtree(wt, ignore_errors=True)
+
+
+def test_delete_on_group_without_worktree_is_409_and_spares_base(monkeypatch):
+    """Fail-closed: an unresolvable worktree must NOT fall back to the base checkout.
+    (The pre-0327 version of this test passed a group_id that does not exist at all;
+    that case is now asserted separately below as a 404.)"""
     client = _client(monkeypatch)
     (ROOT / "keep.md").write_text("k", encoding="utf-8")
+    _stub_group(monkeypatch, worktree=None)
     res = client.request(
         "DELETE", _url(),
-        json={"path": "keep.md", "type": "file", "group_id": "flowgate.default.0267"},
+        json={"path": "keep.md", "type": "file", "group_id": GID},
     )
-    assert res.status_code == 403
-    assert res.json()["error"]["code"] == "FORBIDDEN"
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "WORKTREE_UNAVAILABLE"
     assert (ROOT / "keep.md").exists()  # base checkout untouched
+
+
+def test_delete_on_unknown_group_is_404(monkeypatch):
+    client = _client(monkeypatch)
+    (ROOT / "keep.md").write_text("k", encoding="utf-8")
+    _stub_group(monkeypatch, worktree=None, exists=False)
+    res = client.request(
+        "DELETE", _url(),
+        json={"path": "keep.md", "type": "file", "group_id": "flowgate.default.9999"},
+    )
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "GROUP_NOT_FOUND"
+    assert (ROOT / "keep.md").exists()
 
 
 # ── delete failure ───────────────────────────────────────────────────────────
