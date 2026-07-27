@@ -202,14 +202,21 @@ const isSelected = computed(() => explorerStore.selectedFileNodeId === props.nod
 // no worktree — keep hiding it.
 const canDelete = computed(() => !props.readonly)
 
-// Reuse the established base-dirty marker for either the editable base checkout
-// or the selected read-only group branch's tracked changes. 0192 T0005 §1: the
-// marker now propagates to ANCESTOR FOLDERS — a folder is marked when it contains
+// Reuse the established base-dirty marker for either the base checkout or the
+// selected group branch's tracked changes. 0192 T0005 §1: the marker now
+// propagates to ANCESTOR FOLDERS — a folder is marked when it contains
 // a changed file (prefix match over the store's full path list). Without this an
 // edit inside a collapsed folder (whose children are not rendered) left no visible
 // trace anywhere in the tree.
+// 0333 T0004 (B0001 / NR0003 §3.2) — the gate is `groupId` ALONE, never `readonly`.
+// 0327 T0004 redefined `readonly` from "a group is selected" to "this group has no
+// live worktree", so `readonly && groupId` silently stopped matching the normal case
+// — a writable group branch — and every badge there fell back to the BASE checkout's
+// change list. The rule is about which data source describes this tree: a group tree
+// is described by that group's own change channels whether or not it is still
+// writable; only the base checkout (groupId == null) reads the base channels.
 const isDirty = computed(() => {
-  if (props.readonly && props.groupId) {
+  if (props.groupId) {
     return props.node.type === 'folder'
       ? explorerStore.isGroupChangedDir(props.projectId, props.groupId, props.node.path)
       : explorerStore.isGroupChangedPath(props.projectId, props.groupId, props.node.path)
@@ -229,8 +236,9 @@ const isDirty = computed(() => {
 // Priority (see template): a node reads as NEW before MODIFIED. For a file the two are
 // mutually exclusive (untracked vs tracked-modified); for a folder that holds both, the
 // new badge wins so the newly added file is never hidden — the whole point of B0001.
+// 0333 T0004 (B0001): same `groupId`-only gate as isDirty above — see that comment.
 const isNew = computed(() => {
-  if (props.readonly && props.groupId) {
+  if (props.groupId) {
     return props.node.type === 'folder'
       ? explorerStore.isGroupUntrackedDir(props.projectId, props.groupId, props.node.path)
       : explorerStore.isGroupUntrackedPath(props.projectId, props.groupId, props.node.path)
