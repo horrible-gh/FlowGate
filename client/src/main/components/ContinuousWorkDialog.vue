@@ -23,6 +23,7 @@
               :doc-ref="docRef"
               :active="visible"
               :step-tag="stepProviderTag"
+              :auto-handled-types="autoHandledTypes"
               @change="onPickerChange"
             />
           </div>
@@ -104,9 +105,16 @@
                   <!-- 0317 T0015: each execution step is shown directly (no "단계별로 다르게
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
-                       want to differ. -->
+                       want to differ.
+                       0337 R0001: the rows are the steps an AI worker will ACTUALLY run in this
+                       run — head through the chosen target, minus the instructions the server
+                       auto-approves. A step past the target, or one with no worker, gets no
+                       select because its value could never be used. -->
+                  <div v-if="excludedNote" class="cwd-scope-note">
+                    <AppIcon name="info" /> {{ excludedNote }}
+                  </div>
                   <div class="cwd-override-table">
-                    <div v-for="(item, idx) in runnableSteps" :key="item.item_seq" class="cwd-override-row">
+                    <div v-for="(item, idx) in executionSteps" :key="item.item_seq" class="cwd-override-row">
                       <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: idx + 1 }) }}</span>
                       <span class="doc-tag cwd-override-badge" :class="`c-${item.type}`">{{ item.type }}</span>
                       <span class="cwd-override-label">{{ item.label }}</span>
@@ -206,7 +214,49 @@ const activeTab = ref<'basic' | 'provider'>('basic')
 // same type appearing twice in one chain (e.g. two T steps) can resolve to different providers.
 const overrides = ref<Record<number, string>>({})
 
+// 0337 R0001 -----------------------------------------------------------------------------
+// A document step and an AI-execution step are not the same thing, and only the latter can
+// carry a provider.
+//   1) auto_approved: N/T are written and approved by the SERVER, with no AI worker and no
+//      provider lookup of their own (ai_invoke_service maps an N/T hop onto its paired report).
+//      They are therefore neither a stop point nor a provider choice.
+//   2) Whatever the mode, a step AFTER the chosen target never runs in this session, so its
+//      provider cannot be consumed either.
+// Both were being offered as choices; both are removed from the dialog here, and the confirm
+// payload is built from exactly the rows that remain.
+const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T']
+const autoHandledTypes = computed(
+  () => (instructionMode.value === 'auto_approved' ? AUTO_APPROVED_INSTRUCTION_TYPES : []),
+)
+
+/** Not-yet-done steps, i.e. everything the picker still offers. */
 const runnableSteps = computed(() => (picker.value.steps ?? []).filter(s => s.status !== 'done'))
+
+/** The steps an AI worker actually performs in THIS run — the provider table's rows. */
+const executionSteps = computed<WorkflowStepItem[]>(() => {
+  const sel = picker.value.selection
+  if (!sel || sel.fromDecision) return []
+  const autoHandled = new Set(autoHandledTypes.value)
+  return runnableSteps.value.filter(
+    s => s.item_seq <= sel.targetSeq && !autoHandled.has(String(s.type ?? '').toUpperCase()),
+  )
+})
+
+/** Why the provider list is shorter than the step list — stated, not left to be guessed. */
+const excludedNote = computed(() => {
+  const sel = picker.value.selection
+  if (!sel || sel.fromDecision) return ''
+  const autoHandled = new Set(autoHandledTypes.value)
+  const inRange = runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
+  const autoCount = inRange.filter(s => autoHandled.has(String(s.type ?? '').toUpperCase())).length
+  const beyondCount = runnableSteps.value.length - inRange.length
+  if (autoCount > 0 && beyondCount > 0) {
+    return t('main.continuous_work.provider_scope_note_both', { auto: autoCount, beyond: beyondCount })
+  }
+  if (autoCount > 0) return t('main.continuous_work.provider_scope_note_auto', { auto: autoCount })
+  if (beyondCount > 0) return t('main.continuous_work.provider_scope_note_beyond', { beyond: beyondCount })
+  return ''
+})
 
 // 0317 T0015: each step's select is pre-selected to the header default provider rather than a
 // blank "use default" option. `overrides` still stores ONLY genuine per-step overrides (a step
@@ -230,7 +280,10 @@ function providerName(id: string | undefined | null): string | null {
 }
 
 function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean } | null {
-  const stepNo = runnableSteps.value.findIndex(s => s.item_seq === item.item_seq)
+  // 0337 R0001: only a step that this run will actually hand to a provider gets a provider
+  // tag. Steps past the target and server-auto-approved instructions get none — the picker
+  // labels the latter "자동 승인" instead.
+  const stepNo = executionSteps.value.findIndex(s => s.item_seq === item.item_seq)
   if (stepNo < 0) return null
   const overrideId = overrides.value[item.item_seq]
   if (overrideId) {
@@ -259,12 +312,24 @@ const summaryText = computed(() => {
   })
 })
 
+// 0337 R0001: shrinking the target or switching to auto-approve invalidates the overrides that
+// were picked for the steps that just left the run. Drop them as soon as the row disappears, so
+// what the user sees in the table IS what the confirm payload carries — no stale key survives.
+watch(executionSteps, (steps) => {
+  const inRun = new Set(steps.map(s => s.item_seq))
+  const kept = Object.entries(overrides.value).filter(([seq]) => inRun.has(Number(seq)))
+  if (kept.length !== Object.keys(overrides.value).length) {
+    overrides.value = Object.fromEntries(kept)
+  }
+})
+
 function onProceed() {
   const sel = picker.value.selection
   if (!sel) return
+  const inRun = new Set(executionSteps.value.map(s => s.item_seq))
   const providerOverrides: Record<number, string> = {}
   for (const [seq, providerId] of Object.entries(overrides.value)) {
-    if (providerId) providerOverrides[Number(seq)] = providerId
+    if (providerId && inRun.has(Number(seq))) providerOverrides[Number(seq)] = providerId
   }
   emit('confirm', {
     targetSeq: sel.targetSeq,
@@ -467,6 +532,17 @@ watch(
 }
 .cwd-provider-label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
 .cwd-provider-select { flex: 1; min-width: 0; }
+/* 0337 R0001: sits between the default-provider row and the step list, outside the scroller —
+   the reason the list is shorter than the sequence must stay visible while the list scrolls. */
+.cwd-scope-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: .72rem;
+  line-height: 1.45;
+  color: var(--text-m);
+  flex-shrink: 0;
+}
 .cwd-override-table {
   display: flex;
   flex-direction: column;
