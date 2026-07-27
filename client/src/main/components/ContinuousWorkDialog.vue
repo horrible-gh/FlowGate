@@ -90,12 +90,14 @@
                 </div>
                 <div v-else class="cwd-provider-block">
                   <div class="cwd-provider-row">
-                    <label>{{ t('main.continuous_work.provider_default_label') }}</label>
+                    <label class="cwd-provider-label">{{ t('main.continuous_work.provider_default_label') }}</label>
                     <AiProviderSelect
+                      class="cwd-provider-select"
                       :providers="providers"
                       :model-value="selectedProvider"
                       :loading="providerLoading"
                       :errored="providerErrored"
+                      hide-label
                       @update:model-value="(v) => emit('update:provider', v)"
                     />
                   </div>
@@ -108,13 +110,13 @@
                       <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: idx + 1 }) }}</span>
                       <span class="doc-tag cwd-override-badge" :class="`c-${item.type}`">{{ item.type }}</span>
                       <span class="cwd-override-label">{{ item.label }}</span>
-                      <select
+                      <AiProviderSelect
                         class="cwd-override-select"
-                        :value="stepProviderValue(item.item_seq)"
-                        @change="onStepProviderChange(item.item_seq, ($event.target as HTMLSelectElement).value)"
-                      >
-                        <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
-                      </select>
+                        :providers="providers"
+                        :model-value="stepProviderValue(item.item_seq)"
+                        hide-label
+                        @update:model-value="(v) => onStepProviderChange(item.item_seq, v)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -303,15 +305,32 @@ watch(
   flex-direction: column;
   max-height: 88vh;
 }
+/* 0328 TR0005 rev4: the body itself must NOT scroll. While it did, a short window pushed the
+   whole right-hand column (tab bar + default-provider row included) into the body scroller, so
+   capping the per-step list alone could not keep those two fixed. The body now clips and each
+   column owns its own scrolling. */
 .modal-cwd .modal-bd {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   min-height: 0;
+  /* 0328 TR0005 rev6: one bound for BOTH columns. Each column used to cap its own list
+     (280px each), so the taller column decided the body height and the shorter one was left
+     with dead space under its last box — that is the misaligned bottom line the rejection
+     pointed at, and it got worse the more steps there were. Capping the body instead makes the
+     single grid row the only height authority: both columns are stretched to it and each one's
+     list flexes to fill, so the two bottom borders land on the same line at any step count. */
+  max-height: min(480px, 58vh);
 }
 .cwd-body {
   display: grid;
-  grid-template-columns: 1.15fr 1fr;
-  align-items: start;
+  /* rev6: even 5:5 split — the left "어디까지 연속 작업할지 선택" column was 1.15fr and read
+     as the wider half. */
+  grid-template-columns: 1fr 1fr;
+  /* A definite row height (not content-sized) is what makes the columns' min-height:0 bite —
+     without it the grid row grows to fit the tallest column and gets clipped by the body. */
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 0;
 }
 .cwd-col {
   padding: 18px 20px;
@@ -319,10 +338,33 @@ watch(
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
+}
+/* rev6: neither column scrolls as a whole any more — a column-level scrollbar would move its
+   last box off the shared bottom line. Both columns clip and the two step lists inside them are
+   the only scroll containers. */
+.cwd-col-steps { overflow: hidden; }
+/* rev6: make the picker fill the left column instead of sitting at its natural height, so its
+   step list's bottom border ends where the right column's summary card ends. Scoped to this
+   dialog's instance (:deep from .cwd-col-steps) — the shared picker used by the AI-invoke dialog
+   keeps its own self-capped geometry. */
+.cwd-col-steps :deep(.wsp) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cwd-col-steps :deep(.wsp-steps) {
+  /* The body cap above is what bounds it now; a second 280px cap here would re-open the gap. */
+  max-height: none;
+  flex: 1 1 auto;
+  /* min-height:0 (not a 72px floor): on a very short window a floor makes the column overflow
+     its clipped grid row, and the overflowing box's bottom border no longer matches the other
+     column's. Rows keep flex-shrink:0, so the list scrolls instead of squashing them. */
+  min-height: 0;
 }
 .cwd-col-options {
   border-left: 1px solid var(--border);
   background: var(--surface-h);
+  overflow: hidden;
 }
 .cwd-intro {
   margin: 0;
@@ -341,6 +383,8 @@ watch(
   display: flex;
   gap: 2px;
   border-bottom: 1px solid var(--border);
+  /* Outside every scroll container, and never squeezed: the tab bar stays put. */
+  flex-shrink: 0;
 }
 .cwd-tab {
   padding: 7px 14px;
@@ -361,6 +405,10 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Takes the height left over by the tab bar and summary, and passes the constraint down to
+     the per-step list (min-height:0 so the chain can actually shrink). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .cwd-toggle {
   display: flex;
@@ -403,25 +451,59 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cwd-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--surface);
+  /* Sibling of the scrolling list, never inside it: the default row stays put. */
+  flex-shrink: 0;
 }
-.cwd-provider-row { display: flex; align-items: center; gap: 8px; }
-.cwd-provider-row label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
-.cwd-provider-row > :not(label) { flex: 1; min-width: 0; }
+.cwd-provider-label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
+.cwd-provider-select { flex: 1; min-width: 0; }
 .cwd-override-table {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* rev5: the rejection asked for tighter vertical rhythm between step rows. */
+  gap: 4px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
+  /* 0328 TR0005 rev3: the step list grows with the sequence length and used to push the
+     summary/footer down without bound. Mirror the left-hand step picker (.wsp-steps in
+     WorkflowStepPicker.vue), which caps its own height and scrolls: only this per-step list
+     scrolls — the tab bar and the default-provider row sit outside it and stay put.
+     rev6: the 280px cap moved up to the dialog body (.modal-cwd .modal-bd), which bounds both
+     columns at once; keeping it here as well would stop this list short of the column bottom and
+     leave the summary card floating away from the left column's bottom line. */
+  overflow-y: auto;
+  /* rev4: also shrink below the cap when the window is short, so the list absorbs the squeeze
+     instead of overflowing the column and dragging the tab bar / default row along with it.
+     This is the dialog's ONLY per-step scroll container. */
+  flex: 1 1 auto;
+  /* rev6: the 72px floor is gone for the same reason as the left list — it would push the
+     summary card out of the clipped column on a short window and break the shared bottom line. */
+  min-height: 0;
+  /* Keeps the scrollbar off the row cards' right border when the list overflows. */
+  padding-right: 4px;
 }
 .cwd-override-row {
   display: flex;
   align-items: center;
   gap: 7px;
+  /* rev5: slim vertical padding — the row card was called out as too tall. */
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  /* Column flex items shrink by default; inside the capped scroll container that would
+     squash the rows instead of scrolling them. */
+  flex-shrink: 0;
 }
 .cwd-override-step-no {
   font-size: .66rem;
@@ -430,7 +512,11 @@ watch(
   min-width: 64px;
   flex-shrink: 0;
 }
-.cwd-override-badge { flex-shrink: 0; }
+/* 0328 TR0005 rev1: a fixed min-width keeps the badge column aligned across rows —
+   otherwise "T"/"TR"/"TSR" render at different widths and the label/select columns
+   that follow start at a different x per row, which is the "들쑥날쑥" the rejection
+   pointed at. */
+.cwd-override-badge { flex-shrink: 0; min-width: 34px; text-align: center; }
 .cwd-override-label {
   font-size: .74rem;
   color: var(--text);
@@ -440,14 +526,17 @@ watch(
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A fixed basis (not flex-grow) keeps every step's select the same width regardless
+   of how much space the badge/label ate on that row. */
 .cwd-override-select {
-  flex: 1.2;
+  flex: 0 0 160px;
   min-width: 0;
-  padding: 5px 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--text);
+}
+/* rev5: the row's height is set by the embedded select — compact it inside step rows only
+   (the default-provider row above keeps the regular size). */
+.cwd-override-select :deep(.aip-select-input) {
+  padding-top: 2px;
+  padding-bottom: 2px;
   font-size: .78rem;
 }
 .cwd-empty-card {
@@ -469,5 +558,6 @@ watch(
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 8px 10px;
+  flex-shrink: 0;
 }
 </style>

@@ -5,19 +5,22 @@
   <label class="aip-select" :class="{ 'aip-select--errored': errored }" :title="titleText">
     <AppIcon name="robot" class="aip-select-icon" />
     <span v-if="!hideLabel" class="aip-select-label">{{ t('main.ai_provider.run_label') }}</span>
-    <select
-      class="aip-select-input"
-      :value="modelValue"
-      :aria-label="t('main.ai_provider.run_label')"
-      :disabled="loading || providers.length === 0"
-      @change="onChange"
-    >
-      <option v-if="loading" value="">{{ t('main.ai_provider.loading') }}</option>
-      <option v-else-if="providers.length === 0" value="">{{ t('main.ai_provider.none') }}</option>
-      <option v-for="provider in providers" :key="provider.id" :value="provider.id">
-        {{ provider.name }}
-      </option>
-    </select>
+    <span class="aip-select-input-wrap">
+      <select
+        class="aip-select-input"
+        :value="modelValue"
+        :aria-label="t('main.ai_provider.run_label')"
+        :disabled="loading || providers.length === 0"
+        @change="onChange"
+      >
+        <option v-if="loading" value="">{{ t('main.ai_provider.loading') }}</option>
+        <option v-else-if="providers.length === 0" value="">{{ t('main.ai_provider.none') }}</option>
+        <option v-for="provider in providers" :key="provider.id" :value="provider.id">
+          {{ provider.name }}
+        </option>
+      </select>
+      <AppIcon name="caret-down" class="aip-select-caret" />
+    </span>
   </label>
 </template>
 
@@ -77,15 +80,34 @@ function onChange(event: Event) {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.aip-select-input {
+.aip-select-input-wrap {
+  position: relative;
+  display: flex;
   flex: 1;
   min-width: 120px;
-  padding: 5px 8px;
+}
+.aip-select-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 5px 26px 5px 8px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface);
   color: var(--text);
   font-size: .82rem;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.aip-select-caret {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-m);
+  font-size: .7rem;
+  pointer-events: none;
 }
 .aip-select--errored .aip-select-input {
   border-color: var(--danger);
