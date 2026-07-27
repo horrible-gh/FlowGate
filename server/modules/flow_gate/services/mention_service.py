@@ -97,10 +97,10 @@ def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> st
         _json({"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"}),
         "",
         f"Search text: POST {base}/remote/grep",
-        _json({"pattern": "TODO", "path": "", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
+        _json({"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
         "",
         f"List files: POST {base}/remote/glob",
-        _json({"path": "", "pattern": "**/*.py"}),
+        _json({"pattern": "**/*.py"}),
     ]
     if mutating:
         lines.extend([

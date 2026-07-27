@@ -652,6 +652,117 @@ def test_glob_matches(env):
     assert payload["total"] == 1
 
 
+# ── ⑤ grep/glob `path` contract (B0001 / NR0003) ───────────────────────────────
+# `path` is optional; omitting it defaults to the project source root. When present
+# it must be a non-empty in-root relative string — an explicit empty string is
+# rejected by the safety layer before the executor's root fallback ever runs, even
+# though the executor itself would treat "" the same as omission.
+
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_omitted_defaults_to_root(env, operation, extra):
+    env.make_grant(["grep"])
+    status, _ = _call(operation, dict(extra))
+    assert status == 200
+
+
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_empty_string_422(env, operation, extra):
+    env.make_grant(["grep"])
+    status, payload = _call(operation, {**extra, "path": ""})
+    assert status == 422
+    assert payload["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_dot_alias_200(env, operation, extra):
+    env.make_grant(["grep"])
+    status, _ = _call(operation, {**extra, "path": "."})
+    assert status == 200
+
+
+def test_path_subdir_scopes_grep_results(env):
+    env.make_grant(["grep"])
+    status, payload = _call("grep", {"pattern": "TODO", "path": "app"})
+    assert status == 200
+    files = {m["file"] for m in payload["matches"]}
+    assert files == {"app/main.py"}
+
+
+def test_path_subdir_scopes_glob_results(env):
+    env.make_grant(["grep"])
+    status, payload = _call("glob", {"pattern": "**/*.md", "path": "docs"})
+    assert status == 200
+    assert payload["paths"] == ["docs/readme.md"]
+
+
+@pytest.mark.parametrize("bad_path", ["/etc", "C:\\Windows", "..", 0])
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_invalid_values_422(env, operation, extra, bad_path):
+    env.make_grant(["grep"])
+    status, _ = _call(operation, {**extra, "path": bad_path})
+    assert status == 422
+
+
+# ── ⑤-b The worker mention's own examples must be executable (NR0003 §8-2) ─────
+# B0001 was reported by a worker who copied the grep/glob request body straight out
+# of the mention. Asserting only that the `path` key is gone (mention-side test) does
+# not prove the copied body is accepted, so run the emitted JSON through the real
+# handler. `step_type` covers both the mutating (T/TR) and read-only (N/NR) sections.
+
+def _mention_example(step_type: str, operation: str) -> dict:
+    """Parse the request-body JSON the worker mention prints under `POST .../remote/{op}`."""
+    import json as _json_mod
+    from modules.flow_gate.services import mention_service
+
+    text = mention_service.build_mention(
+        project=PROJECT_ID,
+        module="default",
+        group="0003",
+        parent_type="T" if step_type == "TR" else "N",
+        parent_doc_number="T0012" if step_type == "TR" else "N0011",
+        parent_title="계약 확인",
+        parent_doc_id="R0001",
+        head_type=step_type,
+        head_status="pending",
+        scratch_dir="",
+        raw_token=RAW_TOKEN,
+        api_base_url="http://localhost:8089/flowgate/api/v1",
+    )
+    start = text.index("{", text.index(f"/remote/{operation}"))
+    depth = 0
+    for i, ch in enumerate(text[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return _json_mod.loads(text[start:i + 1])
+    raise AssertionError(f"no closing brace for the {operation} example body")
+
+
+@pytest.mark.parametrize("step_type", ["TR", "NR"])
+@pytest.mark.parametrize("operation", ["grep", "glob"])
+def test_mention_example_body_is_accepted_verbatim(env, step_type, operation):
+    env.make_grant(["grep"])
+    body = _mention_example(step_type, operation)
+
+    assert "path" not in body, f"{operation} example still sends a path key: {body!r}"
+    status, payload = _call(operation, body)
+    assert status == 200, f"copied {operation} example rejected: {payload!r}"
+
+
 # ── Router wiring (HTTP surface) ──────────────────────────────────────────────────
 
 def test_router_envelope_and_status(env):

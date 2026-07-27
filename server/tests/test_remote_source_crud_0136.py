@@ -1,6 +1,7 @@
 """Remote source CRUD guidance in copied worker mentions (group 0136)."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,21 @@ def _mention(**overrides) -> str:
     return mention_service.build_mention(**params)
 
 
+def _json_block(text: str, heading: str) -> dict:
+    """Extract and parse the JSON object that follows a `POST ... {endpoint}` heading line."""
+    idx = text.index(heading)
+    start = text.index("{", idx)
+    depth = 0
+    for i, ch in enumerate(text[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise AssertionError(f"no closing brace for {heading!r} JSON block")
+
+
 def test_task_report_mention_includes_remote_source_crud_examples():
     text = _mention()
 
@@ -52,3 +68,18 @@ def test_investigation_report_mention_keeps_remote_source_read_only():
     assert "POST http://localhost:8089/flowgate/api/v1/remote/write" not in text
     assert "POST http://localhost:8089/flowgate/api/v1/remote/remove" not in text
     assert "read/search only" in text
+
+
+def test_remote_source_crud_examples_omit_path_field():
+    """grep/glob path is optional-when-omitted (project root default); a copied example
+    with `path: ""` fails the API's own safety check (B0001 / NR0003), so the examples
+    must omit the key rather than send an empty string."""
+    text = _mention()
+
+    grep_body = _json_block(text, "POST http://localhost:8089/flowgate/api/v1/remote/grep")
+    glob_body = _json_block(text, "POST http://localhost:8089/flowgate/api/v1/remote/glob")
+
+    assert "path" not in grep_body
+    assert "path" not in glob_body
+    assert grep_body["pattern"] == "TODO"
+    assert glob_body["pattern"] == "**/*.py"
