@@ -3,7 +3,13 @@
 // 요약(사이드바)은 "몇 파일 · 몇 줄"까지만 답하고, R0001 이 물은 "소스가 잘 됐는지"는
 // 실제 diff 를 읽어야 답이 난다. 이 스펙은 시안(TR0003 §4) 후보 ③의 구성 요소가 실제로
 // 동작하는지를 못박는다: 파일 목록(상태 배지 · 파일별 +/− · 검색 · 상태 필터),
-// 통합/분할 diff, 파일 간 이동, 그리고 실패·바이너리·미커밋 파일의 처리.
+// 통합/분할 diff, 파일 간 이동, 그리고 실패·바이너리·신규 파일의 처리.
+//
+// flowgate.default.0329 NR0003 — 서버 응답이 hunks 가 아니라 old/new 전체 내용으로
+// 바뀌었다(0326 NR0005 §4 의 계약으로 단일화). 목이 실제 서버 응답 모양을 흉내내지
+// 않으면 계약이 깨져도 이 스펙은 계속 초록으로 남는다는 것이 NR0003 §6 의 핵심
+// 발견이었으므로, 아래 목은 read_group_file_diff 가 실제로 반환하는 old/new 구조를
+// 그대로 따른다.
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -27,48 +33,30 @@ const CHANGES = [
   { path: 'assets/logo.png', status: 'M', insertions: null, deletions: null },
 ]
 
-// One modified hunk: 2 context lines, a replaced line, and one pure addition.
+// NR0003 (flowgate.default.0329) — the server ships old/new file CONTENT, not
+// pre-parsed hunks (the same contract flowgate.default.0326's base file explorer
+// uses); the dialog derives its own line diff via useFileDiff. One replaced line
+// plus one pure addition, framed by a context line on each side.
 const MODIFIED_DIFF = {
   path: 'server/services/git_service.py',
-  binary: false,
-  oversized: false,
-  untracked: false,
-  truncated: false,
-  insertions: 2,
-  deletions: 1,
-  hunks: [
-    {
-      old_start: 10,
-      old_lines: 3,
-      new_start: 10,
-      new_lines: 4,
-      section: 'def read_group_changes',
-      lines: [
-        { kind: 'context', old_lineno: 10, new_lineno: 10, text: 'keep one' },
-        { kind: 'del', old_lineno: 11, new_lineno: null, text: 'old line' },
-        { kind: 'add', old_lineno: null, new_lineno: 11, text: 'new line' },
-        { kind: 'add', old_lineno: null, new_lineno: 12, text: 'extra line' },
-        { kind: 'context', old_lineno: 12, new_lineno: 13, text: 'keep two' },
-      ],
-    },
-  ],
+  status: 'M',
+  old: { exists: true, binary: false, truncated: false, size: 26, content: 'keep one\nold line\nkeep two\n' },
+  new: { exists: true, binary: false, truncated: false, size: 42, content: 'keep one\nnew line\nextra line\nkeep two\n' },
 }
 
 function diffFor(path: string): Record<string, unknown> {
   if (path === 'assets/logo.png') {
-    return { ...MODIFIED_DIFF, path, binary: true, insertions: 0, deletions: 0, hunks: [] }
+    return {
+      ...MODIFIED_DIFF, path, status: 'M',
+      old: { exists: true, binary: true, truncated: false, size: 128, content: null },
+      new: { exists: true, binary: true, truncated: false, size: 130, content: null },
+    }
   }
   if (path.endsWith('.spec.ts')) {
     return {
-      ...MODIFIED_DIFF,
-      path,
-      untracked: true,
-      insertions: 1,
-      deletions: 0,
-      hunks: [{
-        old_start: 0, old_lines: 0, new_start: 1, new_lines: 1, section: '',
-        lines: [{ kind: 'add', old_lineno: null, new_lineno: 1, text: 'brand new content' }],
-      }],
+      ...MODIFIED_DIFF, path, status: 'A',
+      old: { exists: false, binary: false, truncated: false, size: 0, content: null },
+      new: { exists: true, binary: false, truncated: false, size: 19, content: 'brand new content\n' },
     }
   }
   return { ...MODIFIED_DIFF, path }
@@ -135,17 +123,16 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
       expect.stringContaining('/git/groups/flowgate.default.0325/diff?path='),
     )
     expect(wrapper.find('.gcd-diff-path').text()).toBe('server/services/git_service.py')
-    expect(wrapper.find('.gcd-hunk-hd').text()).toContain('@@ -10,3 +10,4 @@')
-    expect(wrapper.find('.gcd-hunk-hd').text()).toContain('def read_group_changes')
 
     const lines = wrapper.findAll('.gcd-line')
     expect(lines).toHaveLength(5)
     expect(lines[1].classes()).toContain('gcd-line-del')
+    expect(lines[1].text()).toContain('old line')
     expect(lines[2].classes()).toContain('gcd-line-add')
     expect(lines[2].text()).toContain('new line')
     // The gutter carries both sides: an added line has no old line number.
     expect(lines[2].findAll('.gcd-ln')[0].text()).toBe('')
-    expect(lines[2].findAll('.gcd-ln')[1].text()).toBe('11')
+    expect(lines[2].findAll('.gcd-ln')[1].text()).toBe('2')
   })
 
   it('pairs deletions with additions side by side in split view', async () => {
@@ -206,7 +193,7 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
     expect(wrapper.find('.gcd-diff-path').text()).toBe('server/services/git_service.py')
   })
 
-  it('flags binary and not-yet-committed files instead of rendering nonsense', async () => {
+  it('flags binary and newly-added files instead of rendering nonsense', async () => {
     const wrapper = mountDialog()
     await flushPromises()
 
@@ -215,9 +202,9 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
     expect(wrapper.find('.gcd-diff-state').text()).toContain('binary file')
     expect(wrapper.findAll('.gcd-line')).toHaveLength(0)
 
-    await wrapper.findAll('.gcd-file')[2].trigger('click')   // untracked spec file
+    await wrapper.findAll('.gcd-file')[2].trigger('click')   // brand-new spec file
     await flushPromises()
-    expect(wrapper.find('.gcd-notice').text()).toContain('not been committed')
+    expect(wrapper.find('.gcd-notice').text()).toContain('newly added file')
     expect(wrapper.findAll('.gcd-line')).toHaveLength(1)
   })
 

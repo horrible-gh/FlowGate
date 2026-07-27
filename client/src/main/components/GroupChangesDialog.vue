@@ -104,9 +104,9 @@
           <section class="gcd-diffwrap">
             <div class="gcd-diff-hd">
               <span class="gcd-diff-path" :title="selectedPath || ''">{{ selectedPath || '-' }}</span>
-              <span v-if="diff && !diff.binary" class="gcd-diff-lines">
-                <span class="gcd-add">+{{ diff.insertions.toLocaleString() }}</span>
-                <span class="gcd-del">−{{ diff.deletions.toLocaleString() }}</span>
+              <span v-if="selectedChange && hasLineStats(selectedChange)" class="gcd-diff-lines">
+                <span class="gcd-add">+{{ selectedChange.insertions ?? 0 }}</span>
+                <span class="gcd-del">−{{ selectedChange.deletions ?? 0 }}</span>
               </span>
               <div class="gcd-diff-nav">
                 <button type="button" :disabled="!canMove(-1)" @click="move(-1)">
@@ -127,40 +127,54 @@
                 <AppIcon name="arrows-clockwise" /> {{ t('main.group_changes.retry') }}
               </button>
             </div>
-            <div v-else-if="diff?.binary" class="gcd-diff-state">{{ t('main.group_changes.binary') }}</div>
-            <div v-else-if="diff?.oversized" class="gcd-diff-state">{{ t('main.group_changes.oversized') }}</div>
-            <div v-else-if="diff && !diff.hunks.length" class="gcd-diff-state">{{ t('main.group_changes.no_diff') }}</div>
+            <div v-else-if="diffBinary" class="gcd-diff-state">{{ t('main.group_changes.binary') }}</div>
+            <div v-else-if="diff && !hasDiffChanges" class="gcd-diff-state">{{ t('main.group_changes.no_diff') }}</div>
             <template v-else-if="diff">
-              <p v-if="diff.untracked" class="gcd-notice">{{ t('main.group_changes.untracked_note') }}</p>
-              <p v-if="diff.truncated" class="gcd-notice gcd-notice-warn">
+              <p v-if="diff.status === 'A'" class="gcd-notice">{{ t('main.group_changes.added_note') }}</p>
+              <p v-if="diffRows.approximate" class="gcd-notice gcd-notice-warn">
+                {{ t('main.file_diff.approximate') }}
+              </p>
+              <p v-else-if="diffTruncated" class="gcd-notice gcd-notice-warn">
                 {{ t('main.group_changes.truncated', { n: shownLineCount }) }}
               </p>
               <div class="gcd-diff" :class="`gcd-diff-${viewMode}`">
-                <template v-for="(hunk, hIdx) in diff.hunks" :key="hIdx">
-                  <div class="gcd-hunk-hd">
-                    @@ -{{ hunk.old_start }},{{ hunk.old_lines }} +{{ hunk.new_start }},{{ hunk.new_lines }} @@
-                    <span v-if="hunk.section" class="gcd-hunk-section">{{ hunk.section }}</span>
-                  </div>
-                  <template v-if="viewMode === 'unified'">
-                    <div
-                      v-for="(line, lIdx) in hunk.lines"
-                      :key="`u${hIdx}-${lIdx}`"
-                      class="gcd-line"
-                      :class="`gcd-line-${line.kind}`"
-                    >
-                      <span class="gcd-ln">{{ line.old_lineno ?? '' }}</span>
-                      <span class="gcd-ln">{{ line.new_lineno ?? '' }}</span>
-                      <span class="gcd-sign">{{ signOf(line.kind) }}</span>
-                      <span class="gcd-text">{{ line.text }}</span>
+                <template v-if="viewMode === 'unified'">
+                  <template v-for="(section, sIdx) in unifiedDiffSections" :key="`u${sIdx}`">
+                    <div v-if="section.kind === 'gap'" class="gcd-gap">
+                      {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
                     </div>
+                    <template v-else>
+                      <div
+                        v-for="(row, rIdx) in section.rows"
+                        :key="`u${sIdx}-${rIdx}`"
+                        class="gcd-line"
+                        :class="unifiedClass(row.status)"
+                      >
+                        <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
+                        <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
+                        <span class="gcd-sign">{{ row.sign }}</span>
+                        <span class="gcd-text">{{ row.line.line }}</span>
+                      </div>
+                    </template>
                   </template>
-                  <template v-else>
-                    <div v-for="(row, rIdx) in splitRows(hunk)" :key="`s${hIdx}-${rIdx}`" class="gcd-srow">
-                      <span class="gcd-ln">{{ row.left?.old_lineno ?? '' }}</span>
-                      <span class="gcd-text" :class="row.left ? `gcd-line-${row.left.kind}` : 'gcd-line-blank'">{{ row.left?.text ?? '' }}</span>
-                      <span class="gcd-ln">{{ row.right?.new_lineno ?? '' }}</span>
-                      <span class="gcd-text" :class="row.right ? `gcd-line-${row.right.kind}` : 'gcd-line-blank'">{{ row.right?.text ?? '' }}</span>
+                </template>
+                <template v-else>
+                  <template v-for="(section, sIdx) in diffSections" :key="`s${sIdx}`">
+                    <div v-if="section.kind === 'gap'" class="gcd-gap">
+                      {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
                     </div>
+                    <template v-else>
+                      <div
+                        v-for="(row, rIdx) in section.rows"
+                        :key="`s${sIdx}-${rIdx}`"
+                        class="gcd-srow"
+                      >
+                        <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
+                        <span class="gcd-text" :class="sideClass(row.left ? row.status : null, 'left')">{{ row.left?.line ?? '' }}</span>
+                        <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
+                        <span class="gcd-text" :class="sideClass(row.right ? row.status : null, 'right')">{{ row.right?.line ?? '' }}</span>
+                      </div>
+                    </template>
                   </template>
                 </template>
               </div>
@@ -176,13 +190,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
+import { useExplorerStore, type GroupChangeData, type GroupFileDiffData } from '../stores/explorer'
 import {
-  useExplorerStore,
-  type GroupChangeData,
-  type GroupDiffHunk,
-  type GroupDiffLine,
-  type GroupFileDiffData,
-} from '../stores/explorer'
+  buildDiffRows,
+  collapseCommonRows,
+  splitTextLines,
+  toUnifiedRows,
+  type DiffRow,
+  type DiffSection,
+  type UnifiedRow,
+} from '../composables/useFileDiff'
 
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
@@ -286,34 +303,55 @@ function barCells(change: GroupChangeData): string[] {
   return Array.from({ length: 5 }, (_, i) => (i < green ? 'p' : i < green + red ? 'm' : ''))
 }
 
-function signOf(kind: GroupDiffLine['kind']): string {
-  return kind === 'add' ? '+' : kind === 'del' ? '−' : ' '
-}
-
-const shownLineCount = computed(() =>
-  (diff.value?.hunks ?? []).reduce((sum, hunk) => sum + hunk.lines.length, 0),
+// NR0003 (0329) — the diff pane now reads through the same old/new-content contract
+// FileDiffViewer.vue uses (0326 NR0005 §4): the server ships two full file bodies and
+// the line diff is computed here with the engine the merge-conflict resolver already
+// uses (useFileDiff.ts / useConflictChunks.ts), so no server-side hunk parser exists.
+const selectedChange = computed(() =>
+  props.changes.find((change) => change.path === selectedPath.value) ?? null,
 )
 
-// Split view pairs each deleted run with the added run that follows it, so a modified
-// line sits side by side instead of stacked. Unpaired lines get a blank counterpart.
-function splitRows(hunk: GroupDiffHunk): { left: GroupDiffLine | null; right: GroupDiffLine | null }[] {
-  const rows: { left: GroupDiffLine | null; right: GroupDiffLine | null }[] = []
-  let index = 0
-  while (index < hunk.lines.length) {
-    const line = hunk.lines[index]
-    if (line.kind === 'context') {
-      rows.push({ left: line, right: line })
-      index += 1
-      continue
-    }
-    const dels: GroupDiffLine[] = []
-    const adds: GroupDiffLine[] = []
-    while (index < hunk.lines.length && hunk.lines[index].kind === 'del') dels.push(hunk.lines[index++])
-    while (index < hunk.lines.length && hunk.lines[index].kind === 'add') adds.push(hunk.lines[index++])
-    const pairs = Math.max(dels.length, adds.length)
-    for (let i = 0; i < pairs; i += 1) rows.push({ left: dels[i] ?? null, right: adds[i] ?? null })
-  }
-  return rows
+const diffBinary = computed(() => !!diff.value?.old.binary || !!diff.value?.new.binary)
+const diffTruncated = computed(() => !!diff.value?.old.truncated || !!diff.value?.new.truncated)
+
+const diffRows = computed(() => {
+  if (!diff.value || diffBinary.value) return { rows: [] as DiffRow[], approximate: false }
+  return buildDiffRows(
+    splitTextLines(diff.value.old.content ?? ''),
+    splitTextLines(diff.value.new.content ?? ''),
+  )
+})
+const hasDiffChanges = computed(() => diffRows.value.rows.some((row) => row.status !== 'common'))
+const diffSections = computed<DiffSection[]>(() => collapseCommonRows(diffRows.value.rows))
+const unifiedDiffSections = computed(() =>
+  diffSections.value.map((section) =>
+    section.kind === 'gap'
+      ? section
+      : { kind: 'rows' as const, rows: toUnifiedRows(section.rows) as UnifiedRow[] },
+  ),
+)
+
+const shownLineCount = computed(() => {
+  if (!diff.value) return 0
+  const side = diff.value.new.truncated ? diff.value.new : diff.value.old
+  return splitTextLines(side.content ?? '').length
+})
+
+// Split view: a row's left/right half needs its OWN class — a 'changed' row shows
+// removed on the left and added on the right, never the same colour on both sides.
+function sideClass(rowStatus: string | null, side: 'left' | 'right'): string {
+  if (!rowStatus) return 'gcd-line-blank'
+  if (rowStatus === 'common') return ''
+  if (rowStatus === 'changed') return 'gcd-line-changed'
+  return side === 'left' ? 'gcd-line-del' : 'gcd-line-add'
+}
+
+// Unified view: toUnifiedRows() only ever emits 'common' | 'removed' | 'added', and
+// the sign (-/+) already tells the direction, so the status maps to a class directly.
+function unifiedClass(rowStatus: string): string {
+  if (rowStatus === 'removed') return 'gcd-line-del'
+  if (rowStatus === 'added') return 'gcd-line-add'
+  return ''
 }
 
 function canMove(delta: number): boolean {
@@ -648,17 +686,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   tab-size: 2;
   background: #fff;
 }
-.gcd-hunk-hd {
-  padding: 5px 10px;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border-top: 1px solid #dbeafe;
-  border-bottom: 1px solid #dbeafe;
+.gcd-gap {
+  padding: 3px 12px;
+  color: var(--text-m, #64748b);
+  background: #f1f5f9;
+  border-top: 1px solid var(--border, #e2e8f0);
+  border-bottom: 1px solid var(--border, #e2e8f0);
   font-size: 0.71rem;
-  position: sticky;
-  top: 0;
 }
-.gcd-hunk-section { margin-left: 8px; color: var(--text-m, #64748b); }
 .gcd-line { display: grid; grid-template-columns: 46px 46px 14px minmax(0, 1fr); }
 .gcd-srow { display: grid; grid-template-columns: 46px minmax(0, 1fr) 46px minmax(0, 1fr); }
 .gcd-srow > .gcd-text:nth-child(2) { border-right: 1px solid var(--border, #e2e8f0); }
@@ -674,5 +709,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .gcd-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }
 .gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
+.gcd-line-changed, .gcd-text.gcd-line-changed { background: #fff7ed; }
 .gcd-line-blank { background: #f8fafc; }
 </style>

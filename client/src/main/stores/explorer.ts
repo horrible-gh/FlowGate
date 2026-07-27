@@ -54,22 +54,17 @@ export interface GroupChangesData {
   changes: GroupChangeData[]
 }
 
-// 0325 TR0007 rev1 — GET /projects/{pid}/git/groups/{gid}/diff (read_group_file_diff).
-// Hunks arrive pre-parsed so the viewer renders unified AND split from one structure.
-export interface GroupDiffLine {
-  kind: 'context' | 'add' | 'del'
-  old_lineno: number | null
-  new_lineno: number | null
-  text: string
-}
-
-export interface GroupDiffHunk {
-  old_start: number
-  old_lines: number
-  new_start: number
-  new_lines: number
-  section: string
-  lines: GroupDiffLine[]
+// flowgate.default.0329 NR0003 — GET /projects/{pid}/git/groups/{gid}/diff
+// (read_group_file_diff), unified onto the same old/new-content contract
+// flowgate.default.0326 NR0005 §4 uses for the base file explorer's diff viewer
+// (read_base_file_diff / FileDiffViewer.vue): the server ships raw content for
+// each side and the client derives its own line diff (useFileDiff.ts).
+export interface GroupDiffSide {
+  exists: boolean
+  binary: boolean
+  truncated: boolean
+  size: number
+  content: string | null
 }
 
 export interface GroupFileDiffData {
@@ -77,14 +72,11 @@ export interface GroupFileDiffData {
   branch: string
   commit: string | null
   base_branch?: string | null
+  merge_base?: string | null
   path: string
-  binary: boolean
-  oversized: boolean
-  untracked: boolean
-  truncated: boolean
-  insertions: number
-  deletions: number
-  hunks: GroupDiffHunk[]
+  status: 'M' | 'A' | 'D'
+  old: GroupDiffSide
+  new: GroupDiffSide
 }
 
 export interface GroupBlobData {

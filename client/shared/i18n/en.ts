@@ -1985,10 +1985,9 @@ export default {
       diff_failed: 'Could not load the diff for this file.',
       retry: 'Retry',
       binary: 'This is a binary file, so no content diff can be shown.',
-      oversized: 'The file is too large, so the content diff was skipped.',
       no_diff: 'This file has no changes against the base branch.',
-      untracked_note: 'This is a new file that has not been committed yet — its full content is shown as added.',
-      truncated: 'Too many changes: only the first {n} lines are shown.',
+      added_note: 'This is a newly added file, so its full content is shown as added.',
+      truncated: 'The content is too large: only the first {n} lines are shown.',
     },
     git_finalize: {
       refresh: 'Refresh',

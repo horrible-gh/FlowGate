@@ -2105,47 +2105,41 @@ class TestGroupExplorerUntracked:
         # so it never renders a made-up "+0".
         assert by_path["logo.bin"]["insertions"] is None
 
-    def test_file_diff_returns_hunks_for_tracked_and_untracked(self, grpexp_origin):
-        """0325 TR0007 rev1: [변경사항 열기] needs the actual diff, not just the file list.
-
-        Tracked edits are parsed out of `git diff -U3`; an untracked file has no diff
-        entry at all, so it is synthesized as one all-added hunk read off disk — the same
-        asymmetry NR0003 권고 2 fixed for the changes list. Binary is flagged, never text.
+    def test_file_diff_returns_old_new_for_tracked_and_untracked(self, grpexp_origin):
+        """NR0003 (flowgate.default.0329): [변경사항 열기] must read through the SAME
+        old/new-content contract the 0326 file explorer uses (flowgate.default.0326
+        NR0005 §4) — the merge-base blob is the old side, the live worktree file is the
+        new side, and the client derives its own line diff from the two bodies. Binary
+        is flagged on the side that actually is binary, never guessed from the pair.
         """
         from modules.flow_gate.services import git_service as svc
 
         wt = self._provision(svc)
-        # write_bytes so no platform newline translation muddies the line counts.
+        # write_bytes so no platform newline translation muddies the content compare.
         (wt / "README.md").write_bytes(b"one\ntwo\nthree\n")
         (wt / "brand_new.txt").write_bytes(b"a\nb\n")
         (wt / "logo.bin").write_bytes(b"\x89PNG\x00\x01\x02")
 
         tracked = svc.read_group_file_diff("grpexpprj", self.GROUP, "README.md")["data"]
-        assert tracked["untracked"] is False and tracked["binary"] is False
-        assert tracked["insertions"] == 3 and tracked["deletions"] == 1
-        assert tracked["truncated"] is False and tracked["base_branch"] == "main"
-        typed = [(line["kind"], line["text"]) for h in tracked["hunks"] for line in h["lines"]]
-        assert ("add", "one") in typed and ("add", "three") in typed
-        assert any(kind == "del" for kind, _ in typed)
-        # Both line numbers travel with every line so the split view can pair them and
-        # the unified view can print its gutter without re-deriving anything.
-        first_add = next(
-            line for h in tracked["hunks"] for line in h["lines"] if line["kind"] == "add"
-        )
-        assert first_add["new_lineno"] == 1 and first_add["old_lineno"] is None
+        assert tracked["status"] == "M" and tracked["base_branch"] == "main"
+        assert tracked["old"]["exists"] and tracked["old"]["binary"] is False
+        assert tracked["new"]["content"] == "one\ntwo\nthree\n"
+        assert tracked["new"]["binary"] is False and tracked["new"]["truncated"] is False
 
         fresh = svc.read_group_file_diff("grpexpprj", self.GROUP, "brand_new.txt")["data"]
-        assert fresh["untracked"] is True
-        assert fresh["insertions"] == 2 and fresh["deletions"] == 0
-        assert [line["text"] for line in fresh["hunks"][0]["lines"]] == ["a", "b"]
-        assert all(line["kind"] == "add" for line in fresh["hunks"][0]["lines"])
+        assert fresh["status"] == "A"
+        assert fresh["old"]["exists"] is False and fresh["old"]["content"] is None
+        assert fresh["new"]["content"] == "a\nb\n"
 
         binary = svc.read_group_file_diff("grpexpprj", self.GROUP, "logo.bin")["data"]
-        assert binary["binary"] is True and binary["hunks"] == []
+        assert binary["status"] == "A"
+        assert binary["new"]["binary"] is True and binary["new"]["content"] is None
 
     def test_file_diff_guards_paths(self, grpexp_origin):
         """The diff reader carries the blob reader's guards: no traversal, no hidden path,
-        and a 404 for anything the changes list would never have offered."""
+        and a 404 only when NEITHER side has the file. An unchanged tracked file is not
+        a 404 under the 0326 contract — its old/new content simply reads identical, which
+        is the client's cue to show "no changes", not the server's to hide the path."""
         from modules.flow_gate.services import git_service as svc
 
         wt = self._provision(svc)
@@ -2158,11 +2152,12 @@ class TestGroupExplorerUntracked:
             with pytest.raises(svc.GitServiceError):
                 svc.read_group_file_diff("grpexpprj", self.GROUP, bad)
 
-        # Exposure-filtered, unchanged and absent paths are all 404, never an empty diff
-        # that would read as "this file is fine". README.md is committed and untouched
-        # here: its empty diff must NOT be mistaken for a brand-new file and dumped as
-        # one all-added hunk.
-        for missing in (".hidden_new", "README.md", "nope/missing.txt"):
+        # Exposure-filtered and absent paths are 404; an unchanged tracked file is not.
+        for missing in (".hidden_new", "nope/missing.txt"):
             with pytest.raises(svc.GitServiceError) as exc:
                 svc.read_group_file_diff("grpexpprj", self.GROUP, missing)
             assert exc.value.status == 404
+
+        unchanged = svc.read_group_file_diff("grpexpprj", self.GROUP, "README.md")["data"]
+        assert unchanged["status"] == "M"
+        assert unchanged["old"]["content"] == unchanged["new"]["content"]
