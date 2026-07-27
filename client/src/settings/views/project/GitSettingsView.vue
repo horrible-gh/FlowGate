@@ -233,7 +233,10 @@ const form = ref({
   provider: 'generic',
   username: '',
   base_branch: 'main',
-  default_finalize_action: 'wait',
+  // 0331 NR0005 §4.1: an unconfigured project now seeds the approved
+  // default (머지 + 푸시). A config already saved as 'wait' is still loaded
+  // as 'wait' below — an explicit choice is never migrated away.
+  default_finalize_action: 'merge',
   enabled: false,
   translate_url: '',
   author_name: '',
@@ -315,7 +318,7 @@ function resetForm() {
     provider: 'generic',
     username: '',
     base_branch: 'main',
-    default_finalize_action: 'wait',
+    default_finalize_action: 'merge',
     enabled: false,
     translate_url: '',
     author_name: '',

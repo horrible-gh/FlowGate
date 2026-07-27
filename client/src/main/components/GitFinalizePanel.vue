@@ -19,26 +19,38 @@
       <p v-if="aheadBehindText" class="git-fin-meta">{{ aheadBehindText }}</p>
 
       <template v-if="state.status === 'awaiting_choice' || state.status === 'waiting'">
-        <div class="git-choice-row">
-          <label v-for="c in state.choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
-            <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
-            <span class="git-choice-label">{{ actionLabel(c) }}</span>
-            <span class="git-choice-desc">{{ actionDesc(c) }}</span>
-          </label>
-        </div>
-        <div v-if="state.aux_choices?.length" class="git-aux">
-          <button class="git-aux-toggle" type="button" @click="auxOpen = !auxOpen">
-            <AppIcon :name="auxOpen ? 'caret-down' : 'caret-right'" />
-            {{ t('main.git_finalize.aux_toggle') }}
-          </button>
-          <div v-if="auxOpen" class="git-choice-row git-choice-row--aux">
-            <label v-for="c in state.aux_choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
+        <!-- 0331 T0006: the approved v4 layout — two axes instead of a card list.
+             `action_axes` is additive, so a server that predates it still gets
+             the original cards below. -->
+        <GitFinalizeAxis
+          v-if="state.action_axes"
+          v-model="chosen"
+          :axes="state.action_axes"
+          name="git-fin"
+          :disabled="busy"
+        />
+        <template v-else>
+          <div class="git-choice-row">
+            <label v-for="c in state.choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
               <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
               <span class="git-choice-label">{{ actionLabel(c) }}</span>
               <span class="git-choice-desc">{{ actionDesc(c) }}</span>
             </label>
           </div>
-        </div>
+          <div v-if="state.aux_choices?.length" class="git-aux">
+            <button class="git-aux-toggle" type="button" @click="auxOpen = !auxOpen">
+              <AppIcon :name="auxOpen ? 'caret-down' : 'caret-right'" />
+              {{ t('main.git_finalize.aux_toggle') }}
+            </button>
+            <div v-if="auxOpen" class="git-choice-row git-choice-row--aux">
+              <label v-for="c in state.aux_choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
+                <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
+                <span class="git-choice-label">{{ actionLabel(c) }}</span>
+                <span class="git-choice-desc">{{ actionDesc(c) }}</span>
+              </label>
+            </div>
+          </div>
+        </template>
         <div v-if="showCommitInput" class="git-commit-msg">
           <div class="git-commit-msg-hd">
             <label class="git-commit-msg-label" for="git-commit-subject">
@@ -158,6 +170,8 @@ import {
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
+import GitFinalizeAxis from './GitFinalizeAxis.vue'
+import { actionNeedsCommitMessage, type FinalizeAxes } from '../composables/finalizeAxis'
 
 const props = defineProps<{ groupId: string }>()
 
@@ -183,6 +197,8 @@ interface GitFinState {
   default_action: string | null
   choices: string[]
   aux_choices?: string[]
+  // 0331: additive axis contract; absent on a pre-0331 server.
+  action_axes?: FinalizeAxes | null
   ahead_count: number | null
   behind_count: number | null
   merge_id: number | null
@@ -222,7 +238,16 @@ const aheadBehindText = computed(() => {
   if (!s || s.ahead_count == null || s.behind_count == null) return ''
   return t('main.git_finalize.ahead_behind', { ahead: s.ahead_count, behind: s.behind_count })
 })
-const showCommitInput = computed(() => ['merge', 'merge_only', 'push'].includes(chosen.value))
+// 0331: with the axis contract the server tells us which actions commit, and
+// `push` is no longer one of them (it now 409s on a dirty worktree instead of
+// absorbing it). A pre-0331 server has no action_axes — keep the old list there,
+// where `push` really did absorb.
+const LEGACY_COMMIT_ACTIONS = ['merge', 'merge_only', 'push']
+const showCommitInput = computed(() =>
+  state.value?.action_axes
+    ? actionNeedsCommitMessage(state.value.action_axes, chosen.value)
+    : LEGACY_COMMIT_ACTIONS.includes(chosen.value),
+)
 const commitMessageBlank = computed(() => !commitMessage.value.trim())
 const commitSourceLabel = computed(() =>
   commitSource.value ? t(`main.git_finalize.commit_source.${commitSource.value}`) : '',
@@ -414,7 +439,7 @@ async function postFinalize(
     )
     if (data.ok === false) {
       if (!retried && (await handleBaseDirty(data.error))) return postFinalize(payload, true)
-      showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+      showToast(finalizeErrorMessage(data.error), 'danger')
     } else {
       const r = data.result
       mergeCommit.value = r?.merge_commit || null
@@ -432,8 +457,19 @@ async function postFinalize(
   } catch (e: any) {
     const err = e?.response?.data?.error
     if (!retried && (await handleBaseDirty(err))) return postFinalize(payload, true)
-    showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(finalizeErrorMessage(err), 'danger')
   }
+}
+
+// 0331: the new `dirty_worktree` 409 is the one error the operator can act on
+// directly — it names the fix (커밋 축으로 옮기세요) instead of echoing the raw
+// server string, which is English-only and does not say what to press.
+function finalizeErrorMessage(err: any): string {
+  if (err?.code === 'dirty_worktree') {
+    const n = Array.isArray(err?.details?.files) ? err.details.files.length : 0
+    return t('main.git_finalize.dirty_push_blocked', { n })
+  }
+  return err?.message || t('main.git_finalize.failed')
 }
 
 // 0177 0007-CH: mirror GitActionMenu — the E3 base_dirty 409 is never auto-

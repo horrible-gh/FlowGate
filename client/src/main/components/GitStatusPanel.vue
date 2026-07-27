@@ -331,7 +331,11 @@ const aiProviderStore = useAiProviderStore()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
-const ACTIONS = ['merge', 'merge_only', 'wait'] as const
+// 0331 NR0005 §4.1: this header panel is the third finalize surface. It used to
+// offer only three of the actions, so work that could be finished from the
+// document panel could not be finished from here. Ordered like the approved v4
+// axis reads top-to-bottom (머지 → 커밋 → 대기, push variant first).
+const ACTIONS = ['merge', 'merge_only', 'commit_push', 'commit_only', 'push', 'wait'] as const
 
 interface Slot {
   group_id: string
@@ -630,7 +634,9 @@ async function execute(item: Pending) {
   // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
   // omit the field so git_service resolves the subject on the unmanned path.
   const payload: { action: string; commit_message?: string } = { action }
-  if (action !== 'wait') {
+  // 0331: `push` no longer absorbs a dirty worktree (it 409s instead), so a
+  // subject sent with it would describe a commit that is never made.
+  if (action !== 'wait' && action !== 'push') {
     const msg = (commitDrafts.value[item.group_id]?.message || '').trim()
     if (msg) payload.commit_message = msg
   }
@@ -653,7 +659,16 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
     )
     if (data.ok === false) {
       if (!handleBaseDirty(groupId, payload, data.error)) {
-        showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+        // 0331: name the fix for a blocked bare push instead of echoing the raw
+        // English server string.
+        const err = data.error
+        const msg =
+          err?.code === 'dirty_worktree'
+            ? t('main.git_finalize.dirty_push_blocked', {
+                n: Array.isArray(err?.details?.files) ? err.details.files.length : 0,
+              })
+            : err?.message || t('main.git_finalize.failed')
+        showToast(msg, 'danger')
       }
       return
     }
