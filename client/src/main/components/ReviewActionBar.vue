@@ -270,6 +270,17 @@
           <AppIcon name="git-branch" />
           {{ t('main.git_finalize.approve_heading', { branch: gitFin.branch || '-' }) }}
         </p>
+        <!-- 0331 T0006: identical axis control to the document panel. Before,
+             this dialog and the panel each rendered their own radio list and the
+             dialog silently offered fewer actions. -->
+        <GitFinalizeAxis
+          v-if="gitFin.action_axes"
+          v-model="gitChoice"
+          :axes="gitFin.action_axes"
+          name="ab-git-fin"
+          compact
+        />
+        <template v-else>
         <label
           v-for="c in gitFin.choices"
           :key="c"
@@ -298,6 +309,7 @@
             </label>
           </template>
         </div>
+        </template>
       </div>
     </ConfirmModal>
 
@@ -319,6 +331,8 @@ import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import GitFinalizeAxis from './GitFinalizeAxis.vue'
+import type { FinalizeAxes } from '../composables/finalizeAxis'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -395,6 +409,9 @@ interface GitFinState {
   default_action: string | null
   choices: string[]
   aux_choices?: string[]
+  // 0331: additive axis contract — same object the document panel renders, so
+  // the approval dialog offers exactly the same six choices.
+  action_axes?: FinalizeAxes | null
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitChoice = ref<string>('')

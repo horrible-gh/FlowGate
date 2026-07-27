@@ -8,6 +8,8 @@ Covers:
   - effective source-root resolution: fallback-first            → L0006 §2.2·§4.1
   - project git lock: acquire / busy / release / transfer       → L0006 §2.8
   - finalize guards (non-integrated group → 409)                → L0006 §4.2
+  - finalize action contract: additive commit_push/commit_only,
+    untouched UI choice lists, dirty `push` refusal            → 0331 NR0005 §2·§3
   - REAL git end-to-end (skipped when git is absent): clone +
     worktree provisioning (idempotent), finalize merge/push/wait,
     conflict session → resolve/abort                            → L0006 §2.4~§2.7
@@ -591,6 +593,138 @@ class TestFinalizeGuards:
         assert state["state"]["preview"] is True
 
 
+# ── finalize action contract (flowgate.default.0331 NR0005 §2·§3) ────────────
+
+class TestFinalizeActionContract0331:
+    """The action vocabulary widened additively: `push` no longer fabricates a
+    commit, `commit_push`/`commit_only` carry that behaviour explicitly, and the
+    constants the three finalize surfaces read are left alone on purpose so no UI
+    starts offering an action it cannot yet render (TR0007 §2)."""
+
+    GROUP = "gitprj.default.0109"
+
+    @pytest.fixture
+    def git_active_group(self, seed):
+        """A git-active group whose worktree dir does not exist — enough state to
+        get past `_finalize_context` and reach the action validator, and nothing
+        more, so no real git is needed."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        svc.save_config("gitprj", {
+            "repo_url": "https://example.com/team/repo.git",
+            "base_branch": "main",
+            "enabled": True,
+        })
+        db_git.register_worktree(self.GROUP, "gitprj", "gitprj_default_0109")
+        db_git.set_status(self.GROUP, "awaiting_choice")
+        yield self.GROUP
+
+    def test_action_vocabulary_is_additive(self):
+        from modules.flow_gate.services import git_service as svc
+
+        assert svc.ACTION_VALUES == (
+            "merge", "merge_only", "push", "commit_push", "commit_only", "wait",
+        )
+        # Deliberately untouched. The axis UI reads `action_axes` (below), so the
+        # legacy choice lists stay frozen as the fallback an older client renders
+        # (NR0005 §8 "additive"); widening them would change what that client
+        # shows without it knowing the new semantics. The project default stays
+        # narrow because its DB CHECK still only allows merge/push/wait.
+        assert svc.DEFAULT_FINALIZE_ACTION_VALUES == ("merge", "push", "wait")
+        assert svc.FINALIZE_MAIN_CHOICES == ("merge", "merge_only", "wait")
+        assert svc.FINALIZE_AUX_CHOICES == ("push",)
+
+    def test_finalize_state_publishes_the_axis_matrix(self, git_active_group):
+        from modules.flow_gate.services import git_service as svc
+
+        state = svc.get_finalize_state(git_active_group)["state"]
+        axes = state["action_axes"]
+        # Approved v4 order — 머지 → 커밋 → 대기 — comes from the server, so the
+        # three finalize surfaces cannot drift into different orders.
+        assert axes["scopes"] == ["merge", "commit", "none"]
+        assert axes["matrix"] == {
+            "merge": {"push": "merge", "no_push": "merge_only"},
+            "commit": {"push": "commit_push", "no_push": "commit_only"},
+            "none": {"push": "push", "no_push": "wait"},
+        }
+        # 3 scopes x push on/off covers the whole vocabulary exactly once: no
+        # action is unreachable from the UI and none is offered twice.
+        cells = [a for pair in axes["matrix"].values() for a in pair.values()]
+        assert sorted(cells) == sorted(svc.ACTION_VALUES)
+        # `push` is NOT a committing action any more (it 409s on dirty instead of
+        # absorbing), so the panel must not ask for a commit subject there.
+        assert set(axes["commit_actions"]) == set(svc.ACTION_VALUES) - {"push", "wait"}
+        # Additive: the legacy lists ride along untouched for an older client.
+        assert state["choices"] == list(svc.FINALIZE_MAIN_CHOICES)
+        assert state["aux_choices"] == list(svc.FINALIZE_AUX_CHOICES)
+
+    def test_axis_matrix_is_absent_when_nothing_is_actionable(self, git_active_group):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        # A terminal slot offers no choices; the axis payload has to disappear
+        # with them or the panel would render a live control over a done group.
+        db_git.set_status(git_active_group, "merged")
+        state = svc.get_finalize_state(git_active_group)["state"]
+        assert state["action_axes"] is None
+        assert state["choices"] == []
+
+    def test_finalize_validator_accepts_the_new_actions(self, git_active_group):
+        from modules.flow_gate.services import git_service as svc
+
+        # An unknown action stops at the 422 gate; the two new ones pass it and
+        # only fail later on this group's missing worktree dir (409). That gap is
+        # what proves the shared ACTION_VALUES gate let them through.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(git_active_group, "commit_rebase")
+        assert (exc.value.status, exc.value.code) == (422, "invalid_request")
+
+        for action in ("commit_push", "commit_only"):
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.finalize(git_active_group, action)
+            assert (exc.value.status, exc.value.code) == (409, "invalid_state")
+            assert "worktree directory is missing" in exc.value.message
+
+    def test_approval_ride_along_shares_the_action_gate(self, git_active_group):
+        from modules.flow_gate.services import git_service as svc
+
+        doc = {"type_code": "AC", "group_id": git_active_group}
+        for action in ("commit_push", "commit_only"):
+            assert svc.precheck_approve_git_action(doc, action) == git_active_group
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.precheck_approve_git_action(doc, "commit_rebase")
+        assert exc.value.status == 422
+
+    def test_project_default_action_stays_narrow(self, seed):
+        from modules.flow_gate.services import git_service as svc
+
+        # save_config validates against DEFAULT_FINALIZE_ACTION_VALUES, so a
+        # commit_* project default is still refused (and refused before any write).
+        for action in ("commit_push", "commit_only"):
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.save_config("gitprj", {
+                    "repo_url": "https://example.com/team/repo.git",
+                    "default_finalize_action": action,
+                })
+            assert exc.value.status == 422
+
+    def test_commit_actions_never_reach_the_merge_session_validator(self, seed):
+        from modules.flow_gate.db import git_integration as db_git
+
+        # db_git.ACTION_VALUES gates the finalize_action persisted on a conflict
+        # session. Only merge/merge_only can open one — commit_push/commit_only
+        # return before create_session — so it is intentionally NOT widened. Pin
+        # both halves: the narrow list, and its refusal of a commit_* value. If a
+        # later change ever routes commit_push through a session this test names
+        # the reason the insert blows up.
+        assert db_git.ACTION_VALUES == ("merge", "merge_only", "push", "wait")
+        for session_capable in ("merge", "merge_only"):
+            assert session_capable in db_git.ACTION_VALUES
+        with pytest.raises(ValueError):
+            db_git.create_session(self.GROUP, ["f.txt"], finalize_action="commit_push")
+
+
 # ── REAL git end-to-end (L0006 §2.4~§2.7) ────────────────────────────────────
 
 def _git(args, cwd=None, env_extra=None):
@@ -720,11 +854,97 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0101")
         (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=wt)
+        _git(["commit", "-m", "feat: branch only"], cwd=wt)
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "push")
         assert out["result"]["status"] == "pushed"
         heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
         assert "refs/heads/gitprj_default_0101" in heads
+
+    def test_push_action_rejects_dirty_worktree(self, origin_repo):
+        # NR flowgate.default.0331.0005 §3: `push` may only send commits that
+        # already exist. A dirty worktree used to be silently absorbed into a
+        # new commit and pushed — indistinguishable from `commit_push` — which
+        # risked publishing worker edits nobody confirmed. It must now be
+        # rejected (409) and leave the worktree untouched.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0106"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0106")
+        (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group, "push")
+        assert exc.value.status == 409
+        assert exc.value.code == "dirty_worktree"
+        assert exc.value.details["files"] == ["feature.txt"]
+
+        # nothing was committed or pushed; the group is still finalize-able.
+        assert _git(["status", "--porcelain"], cwd=wt).strip() == "?? feature.txt"
+        heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
+        assert "refs/heads/gitprj_default_0106" not in heads
+        assert db_git.get_state(group)["status"] == "awaiting_choice"
+
+    def test_commit_push_action_commits_dirty_then_pushes(self, origin_repo):
+        # NR flowgate.default.0331.0005 §3: `commit_push` is the action that
+        # replaces the old (mis-scoped) `push` behavior of absorbing dirty
+        # worktree edits — it commits them, then publishes the branch.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0107"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0107")
+        (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        out = svc.finalize(group, "commit_push", commit_message="feat: commit and push")
+        assert out["result"]["status"] == "pushed"
+        assert out["result"]["action"] == "commit_push"
+        heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
+        assert "refs/heads/gitprj_default_0107" in heads
+        # the group slot was torn down like a bare push (origin keeps the branch).
+        assert db_git.get_state(group)["worktree_registered"] == 0
+
+    def test_commit_only_action_keeps_worktree_waiting(self, origin_repo):
+        # NR flowgate.default.0331.0005 §3: `commit_only` commits dirty edits
+        # locally without pushing or merging, and — unlike merge/push — must NOT
+        # tear the slot down, since the group can still be merged/pushed/archived
+        # later.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0108"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0108")
+        (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        db_git.set_status(group, "awaiting_choice")
+
+        out = svc.finalize(group, "commit_only", commit_message="feat: commit only")
+        assert out["result"]["status"] == "waiting"
+        assert out["result"]["action"] == "commit_only"
+        heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
+        assert "refs/heads/gitprj_default_0108" not in heads
+
+        state = db_git.get_state(group)
+        assert state["worktree_registered"] == 1
+        assert state["status"] == "waiting"
+        assert _git(["status", "--porcelain"], cwd=wt).strip() == ""
+        assert _git(["log", "-1", "--format=%s"], cwd=wt).strip() == "feat: commit only"
+
+        # still finalize-able afterward (e.g. push it now) — commit_push does not
+        # touch the shared base checkout, unlike merge/merge_only.
+        pushed = svc.finalize(group, "commit_push")
+        assert pushed["result"]["status"] == "pushed"
+        heads = _git(["ls-remote", "--heads", str(origin_repo["bare"])])
+        assert "refs/heads/gitprj_default_0108" in heads
 
     def test_merge_only_unpushed_status_and_unmerge(self, origin_repo):
         from modules.flow_gate.db import git_integration as db_git

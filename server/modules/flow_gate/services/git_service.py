@@ -111,10 +111,27 @@ ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 # Per-project last-attempt ledger in the generic system_settings KV (no DDL).
 ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
 PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
-ACTION_VALUES = ("merge", "merge_only", "push", "wait")
+ACTION_VALUES = ("merge", "merge_only", "push", "commit_push", "commit_only", "wait")
 DEFAULT_FINALIZE_ACTION_VALUES = ("merge", "push", "wait")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
 FINALIZE_AUX_CHOICES = ("push",)
+# NR flowgate.default.0331.0005 §8 — the approved v4 mockup drives the finalize
+# UI from two INDEPENDENT axes (반영 범위 × 원격에 푸시) instead of a flat card
+# list, so 6 actions fit where 4 used to. Published ADDITIVELY next to the legacy
+# `choices`/`aux_choices` (which stay exactly as they were) so an older client
+# keeps rendering while the axis client prefers this matrix. Display order is the
+# approved one: 머지 → 커밋 → 대기.
+FINALIZE_AXIS_SCOPES = ("merge", "commit", "none")
+FINALIZE_AXIS_MATRIX = {
+    "merge": {"push": "merge", "no_push": "merge_only"},
+    "commit": {"push": "commit_push", "no_push": "commit_only"},
+    "none": {"push": "push", "no_push": "wait"},
+}
+# Actions that produce a commit and therefore need a commit subject from the
+# operator. `push` is deliberately absent: since the 0331 contract fix it only
+# ships existing commits and 409s on a dirty worktree, so asking for a message
+# there would promise a commit the server will not make.
+FINALIZE_COMMIT_ACTIONS = ("merge", "merge_only", "commit_push", "commit_only")
 SESSION_ACTION_DEFAULT = "merge"
 UNMERGE_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 # flowgate.default.0162 L §1 — group git status subsets.
@@ -1927,7 +1944,8 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 _NONE_STATE = {
     "branch": None, "base_branch": None, "status": "none", "default_action": None,
-    "choices": [], "aux_choices": [], "ahead_count": None, "behind_count": None, "merge_id": None,
+    "choices": [], "aux_choices": [], "action_axes": None,
+    "ahead_count": None, "behind_count": None, "merge_id": None,
 }
 
 
@@ -2183,6 +2201,14 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
         "aux_choices": list(FINALIZE_AUX_CHOICES if actionable else ()),
+        # Additive (NR 0331.0005 §8): the axis client renders from this and
+        # ignores choices/aux_choices; a client that does not know the key falls
+        # back to the legacy card list untouched above.
+        "action_axes": {
+            "scopes": list(FINALIZE_AXIS_SCOPES),
+            "matrix": {k: dict(v) for k, v in FINALIZE_AXIS_MATRIX.items()},
+            "commit_actions": list(FINALIZE_COMMIT_ACTIONS),
+        } if actionable else None,
         "ahead_count": ahead,
         "behind_count": behind,
         "merge_id": state.get("merge_id"),
@@ -3293,12 +3319,24 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
 
-        # Absorb leftover worker changes into the work branch. Both merge and
-        # push need the latest worker edits committed first. The subject is the
-        # user-confirmed message, or the resolver result on the unmanned path
-        # (flowgate.default.0173 L0004 §2.6). Resolve lazily so a clean worktree
-        # never triggers a translate round-trip.
-        if _dirty(wt_path):
+        # NR flowgate.default.0331.0005 §3: `push` sends only commits that
+        # already exist — it must never fabricate one. A dirty worktree under
+        # `push` is rejected (409) instead of silently absorbed, so it stays
+        # distinguishable from `commit_push` (which is allowed to commit first)
+        # and so uncommitted work is never lost to a bare push. merge/merge_only/
+        # commit_push/commit_only all still absorb leftover worker edits first;
+        # the subject is the user-confirmed message, or the resolver result on
+        # the unmanned path (flowgate.default.0173 L0004 §2.6), resolved lazily
+        # so a clean worktree never triggers a translate round-trip.
+        if action == "push":
+            if _dirty(wt_path):
+                raise GitServiceError(
+                    409, "dirty_worktree",
+                    "group worktree has uncommitted changes; use commit_push to "
+                    "commit and push together, or archive before pushing",
+                    details={"files": _dirty_files(wt_path)},
+                )
+        elif _dirty(wt_path):
             absorb_subject = finalize_subject()
             proc = _run_git(["add", "-A"], cwd=wt_path)
             if proc.returncode == 0:
@@ -3339,7 +3377,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # B flowgate.default.0172.0001-B: the user pressed no push, yet the work
         # branch appeared on the remote and default moved. Only the final merge
         # into default is intended to reach origin.
-        if action == "push":
+        if action in ("push", "commit_push"):
             proc = _run_git(
                 ["push", "origin", branch],
                 cwd=wt_path, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
@@ -3350,7 +3388,14 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             # 0182 NR0003 §5: drop the slot leftovers right away (origin keeps
             # the pushed branch; only the local worktree/ref/ledger go).
             _cleanup_group_slot(project_id, group_id)
-            return _finalize_result(group_id, project_id, "push", "pushed", pushed=True)
+            return _finalize_result(group_id, project_id, action, "pushed", pushed=True)
+
+        if action == "commit_only":
+            # NR §3: a local-only commit cannot be followed by terminal cleanup
+            # (nothing has left the worktree) — leave the group `waiting` so
+            # merge/push/archive can still be chosen for it later.
+            _set_status(group_id, "waiting")
+            return _finalize_result(group_id, project_id, "commit_only", "waiting")
 
         # action == "merge" / "merge_only"
         if _dirty(base_root, include_untracked=False):
