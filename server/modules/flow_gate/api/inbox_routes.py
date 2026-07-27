@@ -1136,6 +1136,52 @@ def _inbox_api_base(request: Request) -> str:
     return f"{base}{context}/api/v1"
 
 
+def _normalize_continuation_target(
+    target_seq: int,
+    instruction_mode: Optional[str],
+    completed_item: Optional[dict],
+    wfseq,
+) -> int:
+    """Return the effective continuous boundary for the selected instruction mode.
+
+    In ``auto_approved`` mode N/T are generated and approved by the server without an AI
+    worker. A target on either instruction therefore means its paired AI report (NR/TR);
+    otherwise the automatic instruction advance necessarily crosses the displayed boundary
+    before the first worker can submit anything. ``ai_direct`` keeps N/T as independent AI
+    targets. Any legacy/incomplete sequence data falls back to the original boundary.
+    """
+    if (instruction_mode or "auto_approved") != "auto_approved":
+        return target_seq
+    sequence_id = (completed_item or {}).get("sequence_id")
+    if sequence_id is None:
+        return target_seq
+
+    try:
+        items = wfseq.get_sequence_items(sequence_id)
+    except Exception:
+        return target_seq
+
+    target_idx = next(
+        (idx for idx, item in enumerate(items) if item.get("item_seq") == target_seq),
+        None,
+    )
+    if target_idx is None:
+        return target_seq
+
+    instruction_type = str(items[target_idx].get("type") or "").upper()
+    report_type = {"N": "NR", "T": "TR"}.get(instruction_type)
+    if report_type is None or target_idx + 1 >= len(items):
+        return target_seq
+
+    paired = items[target_idx + 1]
+    if str(paired.get("type") or "").upper() != report_type:
+        return target_seq
+    try:
+        return int(paired["item_seq"])
+    except (KeyError, TypeError, ValueError):
+        return target_seq
+
+
 def _continuation_self_chain(
     request: Request,
     token_rec: dict,
@@ -1198,6 +1244,13 @@ def _continuation_self_chain(
     from modules.flow_gate.db import workflow_sequences as _wfseq
     completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
     completed_seq = completed_item.get("item_seq") if completed_item else None
+    target_seq = _normalize_continuation_target(
+        target_seq,
+        instruction_mode,
+        completed_item,
+        _wfseq,
+    )
+    envelope["continuation_target_seq"] = target_seq
 
     # 0226 B0001 / NR0003 §1.2 (§5-3): a submission that did NOT fill the current head
     # slot (e.g. a doc_type differing from the head) proves no progress toward the

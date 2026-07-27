@@ -116,7 +116,11 @@ describe('AiInvokeDialog continuous target', () => {
     // Done steps cannot be targeted — no skipping / no mid-start.
     expect((steps[0] as HTMLButtonElement).disabled).toBe(true)
     expect((steps[1] as HTMLButtonElement).disabled).toBe(true)
-    expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
+    // 0337 R0001-1: this dialog chains in auto_approved mode unless told otherwise, so the T
+    // step (idx 2) is server-approved rather than AI-run and is not a stop point here either —
+    // both continuous entry points must agree on what can be selected.
+    expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
+    expect((steps[3] as HTMLButtonElement).disabled).toBe(false)
 
     // A user who knows nothing about the sequence can just press [Start]: the default target
     // is the last step, i.e. the whole remaining sequence.

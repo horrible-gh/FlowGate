@@ -55,6 +55,7 @@
               <WorkflowStepPicker
                 :doc-ref="sequenceDocRef || docRef"
                 :active="pickerActive"
+                :auto-handled-types="autoHandledTypes"
                 @change="onPickerChange"
               />
               <div v-if="pickerSummary" class="aiv-seq-summary">{{ pickerSummary }}</div>
@@ -153,6 +154,14 @@ const pickerActive = computed(() =>
   mode.value === 'continuous' &&
   props.actionScope !== 'workflow_decide' &&
   !props.autoStart,
+)
+
+// 0337 R0001-1: this dialog starts its chain with the same instruction mode the request carries
+// (auto_approved unless told otherwise), so its picker must exclude the same server-approved
+// N/T steps as ContinuousWorkDialog — otherwise the two continuous entry points would disagree
+// on what a valid stop point is.
+const autoHandledTypes = computed(() =>
+  (props.continuationInstructionMode ?? 'auto_approved') === 'auto_approved' ? ['N', 'T'] : [],
 )
 
 /** The chain's stop point, or null when nothing runnable is chosen yet. */

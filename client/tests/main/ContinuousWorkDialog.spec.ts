@@ -69,10 +69,82 @@ describe('ContinuousWorkDialog', () => {
     // The two done (pre-head) steps are disabled — no skipping / no mid-start.
     expect((steps[0] as HTMLButtonElement).disabled).toBe(true)
     expect((steps[1] as HTMLButtonElement).disabled).toBe(true)
-    expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
+    // 0337 R0001-1: the dialog opens in auto_approved mode, where the head (T, item_seq 3) is
+    // written and approved by the SERVER — it is executed but is not a stop point, so it is
+    // not offered as a choice either. TR (idx 3) onward stay selectable.
+    expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
+    expect((steps[3] as HTMLButtonElement).disabled).toBe(false)
     // Default target = last step → whole remaining sequence; [Next] is enabled.
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
     expect(next.disabled).toBe(false)
+  })
+
+  // 0337 R0001-1: "자동승인을 고르면 작업/프로바이더 둘다 N/T를 선택하도록 되어있는데 선택할
+  // 이유가 없지 않나?" — under auto-approve the server writes and approves N/T with no AI
+  // worker, so they must disappear from BOTH selections; ai_direct writes them with an AI, so
+  // there they remain ordinary, selectable execution steps.
+  it('excludes auto-approved N/T from the target choice and restores them in ai_direct', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    // auto_approved (default): the T step is read-only and labelled 자동 승인.
+    const steps = document.querySelectorAll('.wsp-step')
+    expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
+    expect(steps[2].querySelector('.wsp-step-tag--auto')?.textContent).toContain(
+      i18n.global.t('main.continuous_work.auto_step_tag'),
+    )
+    // Clicking it cannot move the target.
+    ;(steps[2] as HTMLButtonElement).click()
+    await flushPromises()
+    expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(steps[5])
+
+    // Switch N/T handling to "AI 직접 작성" → T becomes a real AI step again.
+    const aiRadio = document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement
+    aiRadio.checked = true
+    aiRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const afterSteps = document.querySelectorAll('.wsp-step')
+    expect((afterSteps[2] as HTMLButtonElement).disabled).toBe(false)
+    expect(afterSteps[2].querySelector('.wsp-step-tag--auto')).toBeNull()
+    ;(afterSteps[2] as HTMLButtonElement).click()
+    await flushPromises()
+
+    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    next.click()
+    await flushPromises()
+    const payload = wrapper.emitted('confirm')![0][0] as any
+    expect(payload.targetSeq).toBe(3)
+    expect(payload.targetType).toBe('T')
+  })
+
+  // 0337 R0001-1: switching INTO auto-approve while an N/T step is the chosen target must not
+  // leave a boundary the run can no longer honour — it re-points at the paired report that
+  // ends the same logical unit (T@3 → TR@4).
+  it('re-points an N/T target at its paired report when auto-approve is switched back on', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    const aiRadio = document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement
+    aiRadio.checked = true
+    aiRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+    ;(document.querySelectorAll('.wsp-step')[2] as HTMLButtonElement).click()
+    await flushPromises()
+
+    const autoRadio = document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement
+    autoRadio.checked = true
+    autoRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    next.click()
+    await flushPromises()
+    const payload = wrapper.emitted('confirm')![0][0] as any
+    expect(payload.targetSeq).toBe(4)
+    expect(payload.targetType).toBe('TR')
   })
 
   it('scrolls the running (head) step into view so completed steps do not hide it (R0001 0129)', async () => {
@@ -265,16 +337,17 @@ describe('ContinuousWorkDialog', () => {
 
     // 0317 T0015: no per-step disclosure toggle — the step rows are shown directly.
     expect(document.querySelector('.cwd-disclosure-btn')).toBeNull()
-    // One row per NOT-done step (the 2 done steps — N, NR — are excluded): T, TR, TS, TSR = 4.
+    // 0337 R0001-1: one row per step an AI worker actually runs. The 2 done steps (N, NR) and
+    // the auto-approved T are excluded → TR, TS, TSR = 3.
     const rows = document.querySelectorAll('.cwd-override-row')
-    expect(rows).toHaveLength(4)
+    expect(rows).toHaveLength(3)
     const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     // 0317 T0015: each step is pre-selected to the header default provider (not a blank option).
     expect(selects[0].value).toBe('aip_fable')
-    expect(selects[3].value).toBe('aip_fable')
-    // Override the 2nd runnable step (TR, item_seq 4) to Opus.
-    selects[1].value = 'aip_opus'
-    selects[1].dispatchEvent(new Event('change'))
+    expect(selects[2].value).toBe('aip_fable')
+    // Override the first AI-execution step (TR, item_seq 4) to Opus.
+    selects[0].value = 'aip_opus'
+    selects[0].dispatchEvent(new Event('change'))
     await flushPromises()
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -288,6 +361,57 @@ describe('ContinuousWorkDialog', () => {
     expect(payload.providerOverrides).toEqual({ 4: 'aip_opus' })
     // No project-level persistence — the old D0004 PUT never fires for a per-step override.
     expect(putRequest).not.toHaveBeenCalled()
+  })
+
+  // 0337 R0001-2: "작업을 6단계 중 5단계만 선택하면 마찬가지로 6단계의 프로바이더를 선택할
+  // 이유가 없잖아" — the provider table is the run, not the sequence. Shrinking the target must
+  // remove the rows beyond it, and an override already made for a removed row must not survive
+  // into the payload.
+  it('drops provider rows past the chosen stop point and forgets their overrides', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mount(ContinuousWorkDialog, {
+      props: {
+        visible: true,
+        docRef: 'flowgate.default.0086.0001-R',
+        providers: [
+          { id: 'aip_fable', name: 'Fable' },
+          { id: 'aip_opus', name: 'Opus' },
+        ],
+        selectedProvider: 'aip_fable',
+      },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+
+    // Whole remaining run (target = TSR@6): TR, TS, TSR.
+    let selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
+    expect(selects).toHaveLength(3)
+    // Override the LAST step (TSR, item_seq 6) — then take it out of the run.
+    selects[2].value = 'aip_opus'
+    selects[2].dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // Stop at step 5 of 6 (TS, item_seq 5): the 6th step's provider row disappears.
+    ;(document.querySelectorAll('.wsp-step')[4] as HTMLButtonElement).click()
+    await flushPromises()
+    selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
+    expect(selects).toHaveLength(2)
+    // ...and the step-6 provider tag is gone from the step list too.
+    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(2)
+
+    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    next.click()
+    await flushPromises()
+
+    const payload = wrapper.emitted('confirm')![0][0] as any
+    expect(payload.targetSeq).toBe(5)
+    // The stale item_seq 6 override is NOT carried into the run.
+    expect(payload.providerOverrides).toEqual({})
+
+    wrapper.unmount()
   })
 
   // 0317 T0010 rev4 STATE 4: the "프로바이더" tab is replaced by a guidance card (not disabled

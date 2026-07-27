@@ -46,8 +46,9 @@
               'wsp-step--in-range': idx >= headIdx && idx <= selectedIdx,
               'wsp-step--target': idx === selectedIdx,
               'wsp-step--head': idx === headIdx,
+              'wsp-step--auto': autoHandledIdx(idx),
             }"
-            :disabled="idx < headIdx"
+            :disabled="idx < headIdx || autoHandledIdx(idx)"
             @click="selectTarget(idx)"
           >
             <span class="wsp-step-dot">
@@ -66,6 +67,12 @@
             </span>
             <span v-else-if="idx < headIdx" class="wsp-step-tag wsp-step-tag--done">
               {{ t('main.continuous_work.done_tag') }}
+            </span>
+            <!-- 0337 R0001-1: a step the server generates and approves on its own is executed
+                 but is not a choice — it carries no AI worker, so it can be neither a stop
+                 point nor a provider target. Say so on the row instead of offering a control. -->
+            <span v-if="autoHandledIdx(idx)" class="wsp-step-tag wsp-step-tag--auto">
+              {{ t('main.continuous_work.auto_step_tag') }}
             </span>
             <span
               v-if="idx >= headIdx && stepTags[idx]"
@@ -118,6 +125,14 @@ const props = defineProps<{
    * picker stays provider-agnostic; callers that omit it (AiInvokeDialog) render no tag.
    */
   stepTag?: (item: WorkflowStepItem) => { text: string; override: boolean } | null
+  /**
+   * 0337 R0001-1: doc types the SERVER generates and approves by itself under the caller's
+   * instruction mode (auto_approved → N/T). Such a step still runs, but no AI worker performs
+   * it, so it is not a meaningful stop point: N+NR / T+TR is one logical unit whose boundary is
+   * the paired report. Those rows render read-only ("자동 승인") instead of being selectable.
+   * Callers that omit this prop keep the unrestricted picker.
+   */
+  autoHandledTypes?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -158,6 +173,36 @@ const headInProgress = computed(
 // Memoized per-step tags (0317 T0010 rev4): computed once per items/props.stepTag change
 // rather than re-invoked on every template re-render.
 const stepTags = computed(() => items.value.map(it => props.stepTag?.(it) ?? null))
+
+// 0337 R0001-1 ---------------------------------------------------------------------------
+// Which of the remaining steps the user may actually stop at. A server-auto-handled type
+// (auto_approved N/T) is executed without an AI worker, so picking it as the target would put
+// the displayed boundary one step away from the real one — the server auto-approves it and the
+// paired report runs anyway (NR0003 발견 3). Exclude it from the choice instead.
+const autoHandledTypeSet = computed(
+  () => new Set((props.autoHandledTypes ?? []).map(s => s.toUpperCase())),
+)
+const selectableIdxSet = computed(() => {
+  const remaining: number[] = []
+  for (let i = headIdx.value; i < items.value.length; i += 1) remaining.push(i)
+  const selectable = remaining.filter(
+    i => !autoHandledTypeSet.value.has(String(items.value[i].type ?? '').toUpperCase()),
+  )
+  // Guard: if EVERY remaining step is auto-handled there is no paired report to fall back to,
+  // and hiding every choice would lock the user out of continuous work entirely. Degrade to
+  // the unrestricted range rather than blocking the run.
+  return new Set(selectable.length > 0 ? selectable : remaining)
+})
+function autoHandledIdx(idx: number): boolean {
+  return idx >= headIdx.value && !selectableIdxSet.value.has(idx)
+}
+/** Last step the user may stop at — the natural "run the whole remaining sequence" default. */
+function lastSelectableIdx(): number {
+  for (let i = items.value.length - 1; i >= headIdx.value; i -= 1) {
+    if (selectableIdxSet.value.has(i)) return i
+  }
+  return -1
+}
 const stepCount = computed(() =>
   selectedIdx.value >= headIdx.value ? selectedIdx.value - headIdx.value + 1 : 0,
 )
@@ -199,9 +244,27 @@ const state = computed<WorkflowStepPickerState>(() => ({
 }))
 
 function selectTarget(idx: number) {
-  if (idx < headIdx.value) return
+  if (idx < headIdx.value || !selectableIdxSet.value.has(idx)) return
   selectedIdx.value = idx
 }
+
+// 0337 R0001-1: the caller can flip the instruction mode while the dialog is open, which
+// changes which steps are selectable under the user's feet. Re-point a now-unselectable target
+// at the step that actually ends that logical unit — the paired report right after it — rather
+// than silently keeping a boundary the run can no longer honour.
+function normalizeSelection() {
+  if (selectedIdx.value < 0 || items.value.length === 0) return
+  if (selectedIdx.value >= headIdx.value && selectableIdxSet.value.has(selectedIdx.value)) return
+  for (let i = selectedIdx.value + 1; i < items.value.length; i += 1) {
+    if (selectableIdxSet.value.has(i)) {
+      selectedIdx.value = i
+      return
+    }
+  }
+  selectedIdx.value = lastSelectableIdx()
+}
+
+watch(selectableIdxSet, normalizeSelection)
 
 // R0001: when a sequence has many completed steps the capped step list shows only the top
 // 'done' rows, leaving the step that is actually running (the head) — or, when everything is
@@ -282,8 +345,9 @@ async function loadSequence() {
       void revealActiveStep()
     } else {
       // Default to running the whole remaining sequence, so a user who knows nothing about
-      // the sequence can just confirm and get the natural result (NR0003 권고 1).
-      selectedIdx.value = items.value.length - 1
+      // the sequence can just confirm and get the natural result (NR0003 권고 1). 0337 R0001-1:
+      // the last SELECTABLE step — a trailing auto-handled instruction is not a stop point.
+      selectedIdx.value = lastSelectableIdx()
       // Bring the current execution point into view instead of leaving the user parked on the
       // completed steps at the top (R0001).
       void revealActiveStep()
@@ -404,6 +468,11 @@ watch(
 }
 .wsp-step-tag--head { background: var(--primary-l); color: var(--primary); }
 .wsp-step-tag--done { background: var(--surface-h); color: var(--text-m); }
+/* 0337 R0001-1: a server-auto-handled step is not dimmed like a completed one — it still runs
+   in this chain. It only reads as "not yours to choose": default cursor, no hover. */
+.wsp-step-tag--auto { background: var(--surface-h); color: var(--text-m); }
+.wsp-step--auto { cursor: default; }
+.wsp-step--auto .wsp-step-label { color: var(--text-m); }
 .wsp-prov-tag {
   font-size: .62rem;
   font-weight: 700;
