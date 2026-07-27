@@ -10,6 +10,7 @@
 .idea
 .claude
 .pytest_cache
+pytest-cache-files-*
 
 # Python virtualenvs & caches
 .venv
