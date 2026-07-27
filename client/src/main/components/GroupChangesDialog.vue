@@ -6,184 +6,203 @@
        옮겼다: 왼쪽 파일 목록(상태 배지 · 파일별 +/− · 경로 검색 · 상태 필터),
        오른쪽 통합/분할 diff, 파일 간 이동, 그리고 [승인 화면으로] 복귀.
        N0004 §1 이 반려한 것은 "승인 화면 본문에 항상 펼쳐진 diff 카드"였으므로,
-       여기서는 승인 화면을 덮지 않는 별도 오버레이로 열고 닫으면 원래 자리로
+       여기서는 문서 편집기와 같은 모달 셸로 열고 명시적으로 닫으면 원래 자리로
        그대로 돌아온다(승인 화면은 그대로 남아 있다). -->
-  <div class="gcd-overlay" @click.self="emit('close')">
-    <div class="gcd-dialog" role="dialog" aria-modal="true" :aria-label="t('main.group_changes.title')">
-      <div class="gcd-hd">
-        <div class="gcd-hd-text">
-          <h2><AppIcon name="git-diff" /> {{ t('main.group_changes.title') }}</h2>
-          <p>
-            <span class="gcd-mono">{{ branch || '-' }}</span>
-            ↔
-            <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
-            <span class="gcd-dot">·</span>
-            {{ t('main.group_changes.file_count', { n: changes.length }) }}
-            <span v-if="totals.known" class="gcd-hd-lines">
-              <span class="gcd-add">+{{ totals.insertions.toLocaleString() }}</span>
-              <span class="gcd-del">−{{ totals.deletions.toLocaleString() }}</span>
-            </span>
-          </p>
-        </div>
-        <button class="gcd-back" type="button" @click="emit('close')">
-          <AppIcon name="arrow-bend-up-left" /> {{ t('main.group_changes.back_to_approval') }}
-        </button>
-        <button class="gcd-close" type="button" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
-          <AppIcon name="x" />
-        </button>
-      </div>
-
-      <div v-if="!changes.length" class="gcd-blank">
-        <AppIcon name="check-circle" />
-        <span>{{ t('main.doc_info_panel.changes_empty') }}</span>
-      </div>
-
-      <template v-else>
-        <div class="gcd-toolbar">
-          <label class="gcd-search">
-            <AppIcon name="magnifying-glass" />
-            <input
-              v-model="query"
-              type="search"
-              :placeholder="t('main.group_changes.search_placeholder')"
-              :aria-label="t('main.group_changes.search_placeholder')"
-            />
-          </label>
-          <div class="gcd-chips">
-            <button
-              v-for="chip in filterChips"
-              :key="chip.key"
-              type="button"
-              class="gcd-chip"
-              :class="{ active: filter === chip.key }"
-              @click="filter = chip.key"
-            >
-              {{ chip.label }} <span class="gcd-chip-count">{{ chip.count }}</span>
-            </button>
-          </div>
-          <div class="gcd-tb-spacer"></div>
-          <div class="gcd-seg" role="group" :aria-label="t('main.group_changes.view_mode')">
-            <button type="button" :class="{ active: viewMode === 'unified' }" @click="viewMode = 'unified'">
-              {{ t('main.group_changes.view_unified') }}
-            </button>
-            <button type="button" :class="{ active: viewMode === 'split' }" @click="viewMode = 'split'">
-              {{ t('main.group_changes.view_split') }}
-            </button>
-          </div>
-        </div>
-
-        <div class="gcd-bd">
-          <aside class="gcd-filelist" :aria-label="t('main.group_changes.file_list')">
-            <p v-if="!visibleFiles.length" class="gcd-nomatch">{{ t('main.group_changes.no_match') }}</p>
-            <button
-              v-for="file in visibleFiles"
-              :key="file.path"
-              type="button"
-              class="gcd-file"
-              :class="{ active: file.path === selectedPath }"
-              @click="select(file.path)"
-            >
-              <span class="gcd-file-top">
-                <span class="gcd-badge" :class="`gcd-badge-${statusKind(file.status)}`">{{ statusBadge(file.status) }}</span>
-                <span class="gcd-file-name">{{ baseName(file.path) }}</span>
+  <teleport to="body">
+    <div class="modal-bg">
+      <div
+        class="modal-box document-modal document-modal--edit"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="t('main.group_changes.title')"
+      >
+        <div class="modal-hd">
+          <div class="gcd-hd-text">
+            <h2 class="modal-title"><AppIcon name="git-diff" /> {{ t('main.group_changes.title') }}</h2>
+            <p>
+              <span class="gcd-mono">{{ branch || '-' }}</span>
+              ↔
+              <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+              <span class="gcd-dot">·</span>
+              {{ t('main.group_changes.file_count', { n: changes.length }) }}
+              <span v-if="totals.known" class="gcd-hd-lines">
+                <span class="gcd-add">+{{ totals.insertions.toLocaleString() }}</span>
+                <span class="gcd-del">−{{ totals.deletions.toLocaleString() }}</span>
               </span>
-              <span class="gcd-file-dir">{{ dirName(file.path) }}</span>
-              <span class="gcd-file-stats">
-                <template v-if="hasLineStats(file)">
-                  <span class="gcd-add">+{{ file.insertions ?? 0 }}</span>
-                  <span class="gcd-del">−{{ file.deletions ?? 0 }}</span>
-                  <span class="gcd-bar" aria-hidden="true">
-                    <i v-for="(cell, idx) in barCells(file)" :key="idx" :class="cell"></i>
+            </p>
+          </div>
+          <div class="modal-hd-actions">
+            <button
+              class="modal-close"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="emit('close')"
+            >
+              <AppIcon name="x" />
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-bd gcd-modal-body">
+          <div v-if="!changes.length" class="gcd-blank">
+            <AppIcon name="check-circle" />
+            <span>{{ t('main.doc_info_panel.changes_empty') }}</span>
+          </div>
+
+          <template v-else>
+            <div class="gcd-toolbar">
+              <label class="gcd-search">
+                <AppIcon name="magnifying-glass" />
+                <input
+                  v-model="query"
+                  type="search"
+                  :placeholder="t('main.group_changes.search_placeholder')"
+                  :aria-label="t('main.group_changes.search_placeholder')"
+                />
+              </label>
+              <div class="gcd-chips">
+                <button
+                  v-for="chip in filterChips"
+                  :key="chip.key"
+                  type="button"
+                  class="gcd-chip"
+                  :class="{ active: filter === chip.key }"
+                  @click="filter = chip.key"
+                >
+                  {{ chip.label }} <span class="gcd-chip-count">{{ chip.count }}</span>
+                </button>
+              </div>
+              <div class="gcd-tb-spacer"></div>
+              <div class="gcd-seg" role="group" :aria-label="t('main.group_changes.view_mode')">
+                <button type="button" :class="{ active: viewMode === 'unified' }" @click="viewMode = 'unified'">
+                  {{ t('main.group_changes.view_unified') }}
+                </button>
+                <button type="button" :class="{ active: viewMode === 'split' }" @click="viewMode = 'split'">
+                  {{ t('main.group_changes.view_split') }}
+                </button>
+              </div>
+            </div>
+
+            <div class="gcd-bd">
+              <aside class="gcd-filelist" :aria-label="t('main.group_changes.file_list')">
+                <p v-if="!visibleFiles.length" class="gcd-nomatch">{{ t('main.group_changes.no_match') }}</p>
+                <button
+                  v-for="file in visibleFiles"
+                  :key="file.path"
+                  type="button"
+                  class="gcd-file"
+                  :class="{ active: file.path === selectedPath }"
+                  @click="select(file.path)"
+                >
+                  <span class="gcd-file-top">
+                    <span class="gcd-badge" :class="`gcd-badge-${statusKind(file.status)}`">{{ statusBadge(file.status) }}</span>
+                    <span class="gcd-file-name">{{ baseName(file.path) }}</span>
                   </span>
-                </template>
-                <span v-else class="gcd-file-nostat">{{ t('main.group_changes.stats_unknown') }}</span>
-              </span>
-            </button>
-          </aside>
-
-          <section class="gcd-diffwrap">
-            <div class="gcd-diff-hd">
-              <span class="gcd-diff-path" :title="selectedPath || ''">{{ selectedPath || '-' }}</span>
-              <span v-if="selectedChange && hasLineStats(selectedChange)" class="gcd-diff-lines">
-                <span class="gcd-add">+{{ selectedChange.insertions ?? 0 }}</span>
-                <span class="gcd-del">−{{ selectedChange.deletions ?? 0 }}</span>
-              </span>
-              <div class="gcd-diff-nav">
-                <button type="button" :disabled="!canMove(-1)" @click="move(-1)">
-                  <AppIcon name="caret-up" /> {{ t('main.group_changes.prev_file') }}
-                </button>
-                <button type="button" :disabled="!canMove(1)" @click="move(1)">
-                  <AppIcon name="caret-down" /> {{ t('main.group_changes.next_file') }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="diffLoading" class="gcd-diff-state">
-              <AppIcon name="spinner" spin /> {{ t('common.loading') }}
-            </div>
-            <div v-else-if="diffError" class="gcd-diff-state gcd-diff-error">
-              <span>{{ t('main.group_changes.diff_failed') }}</span>
-              <button type="button" class="gcd-retry" @click="loadDiff(selectedPath)">
-                <AppIcon name="arrows-clockwise" /> {{ t('main.group_changes.retry') }}
-              </button>
-            </div>
-            <div v-else-if="diffBinary" class="gcd-diff-state">{{ t('main.group_changes.binary') }}</div>
-            <div v-else-if="diff && !hasDiffChanges" class="gcd-diff-state">{{ t('main.group_changes.no_diff') }}</div>
-            <template v-else-if="diff">
-              <p v-if="diff.status === 'A'" class="gcd-notice">{{ t('main.group_changes.added_note') }}</p>
-              <p v-if="diffRows.approximate" class="gcd-notice gcd-notice-warn">
-                {{ t('main.file_diff.approximate') }}
-              </p>
-              <p v-else-if="diffTruncated" class="gcd-notice gcd-notice-warn">
-                {{ t('main.group_changes.truncated', { n: shownLineCount }) }}
-              </p>
-              <div class="gcd-diff" :class="`gcd-diff-${viewMode}`">
-                <template v-if="viewMode === 'unified'">
-                  <template v-for="(section, sIdx) in unifiedDiffSections" :key="`u${sIdx}`">
-                    <div v-if="section.kind === 'gap'" class="gcd-gap">
-                      {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
-                    </div>
-                    <template v-else>
-                      <div
-                        v-for="(row, rIdx) in section.rows"
-                        :key="`u${sIdx}-${rIdx}`"
-                        class="gcd-line"
-                        :class="unifiedClass(row.status)"
-                      >
-                        <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
-                        <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
-                        <span class="gcd-sign">{{ row.sign }}</span>
-                        <span class="gcd-text">{{ row.line.line }}</span>
-                      </div>
+                  <span class="gcd-file-dir">{{ dirName(file.path) }}</span>
+                  <span class="gcd-file-stats">
+                    <template v-if="hasLineStats(file)">
+                      <span class="gcd-add">+{{ file.insertions ?? 0 }}</span>
+                      <span class="gcd-del">−{{ file.deletions ?? 0 }}</span>
+                      <span class="gcd-bar" aria-hidden="true">
+                        <i v-for="(cell, idx) in barCells(file)" :key="idx" :class="cell"></i>
+                      </span>
                     </template>
-                  </template>
-                </template>
-                <template v-else>
-                  <template v-for="(section, sIdx) in diffSections" :key="`s${sIdx}`">
-                    <div v-if="section.kind === 'gap'" class="gcd-gap">
-                      {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
-                    </div>
-                    <template v-else>
-                      <div
-                        v-for="(row, rIdx) in section.rows"
-                        :key="`s${sIdx}-${rIdx}`"
-                        class="gcd-srow"
-                      >
-                        <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
-                        <span class="gcd-text" :class="sideClass(row.left ? row.status : null, 'left')">{{ row.left?.line ?? '' }}</span>
-                        <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
-                        <span class="gcd-text" :class="sideClass(row.right ? row.status : null, 'right')">{{ row.right?.line ?? '' }}</span>
-                      </div>
+                    <span v-else class="gcd-file-nostat">{{ t('main.group_changes.stats_unknown') }}</span>
+                  </span>
+                </button>
+              </aside>
+
+              <section class="gcd-diffwrap">
+                <div class="gcd-diff-hd">
+                  <span class="gcd-diff-path" :title="selectedPath || ''">{{ selectedPath || '-' }}</span>
+                  <span v-if="selectedChange && hasLineStats(selectedChange)" class="gcd-diff-lines">
+                    <span class="gcd-add">+{{ selectedChange.insertions ?? 0 }}</span>
+                    <span class="gcd-del">−{{ selectedChange.deletions ?? 0 }}</span>
+                  </span>
+                  <div class="gcd-diff-nav">
+                    <button type="button" :disabled="!canMove(-1)" @click="move(-1)">
+                      <AppIcon name="caret-up" /> {{ t('main.group_changes.prev_file') }}
+                    </button>
+                    <button type="button" :disabled="!canMove(1)" @click="move(1)">
+                      <AppIcon name="caret-down" /> {{ t('main.group_changes.next_file') }}
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="diffLoading" class="gcd-diff-state">
+                  <AppIcon name="spinner" spin /> {{ t('common.loading') }}
+                </div>
+                <div v-else-if="diffError" class="gcd-diff-state gcd-diff-error">
+                  <span>{{ t('main.group_changes.diff_failed') }}</span>
+                  <button type="button" class="gcd-retry" @click="loadDiff(selectedPath)">
+                    <AppIcon name="arrows-clockwise" /> {{ t('main.group_changes.retry') }}
+                  </button>
+                </div>
+                <div v-else-if="diffBinary" class="gcd-diff-state">{{ t('main.group_changes.binary') }}</div>
+                <div v-else-if="diff && !hasDiffChanges" class="gcd-diff-state">{{ t('main.group_changes.no_diff') }}</div>
+                <template v-else-if="diff">
+                  <p v-if="diff.status === 'A'" class="gcd-notice">{{ t('main.group_changes.added_note') }}</p>
+                  <p v-if="diffRows.approximate" class="gcd-notice gcd-notice-warn">
+                    {{ t('main.file_diff.approximate') }}
+                  </p>
+                  <p v-else-if="diffTruncated" class="gcd-notice gcd-notice-warn">
+                    {{ t('main.group_changes.truncated', { n: shownLineCount }) }}
+                  </p>
+                  <div class="gcd-diff" :class="`gcd-diff-${viewMode}`">
+                    <template v-if="viewMode === 'unified'">
+                      <template v-for="(section, sIdx) in unifiedDiffSections" :key="`u${sIdx}`">
+                        <div v-if="section.kind === 'gap'" class="gcd-gap">
+                          {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
+                        </div>
+                        <template v-else>
+                          <div
+                            v-for="(row, rIdx) in section.rows"
+                            :key="`u${sIdx}-${rIdx}`"
+                            class="gcd-line"
+                            :class="unifiedClass(row.status)"
+                          >
+                            <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
+                            <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
+                            <span class="gcd-sign">{{ row.sign }}</span>
+                            <span class="gcd-text">{{ row.line.line }}</span>
+                          </div>
+                        </template>
+                      </template>
                     </template>
-                  </template>
+                    <template v-else>
+                      <template v-for="(section, sIdx) in diffSections" :key="`s${sIdx}`">
+                        <div v-if="section.kind === 'gap'" class="gcd-gap">
+                          {{ t('main.file_diff.skipped_lines', { n: section.count }) }}
+                        </div>
+                        <template v-else>
+                          <div
+                            v-for="(row, rIdx) in section.rows"
+                            :key="`s${sIdx}-${rIdx}`"
+                            class="gcd-srow"
+                          >
+                            <span class="gcd-ln">{{ row.leftNumber ?? '' }}</span>
+                            <span class="gcd-text" :class="sideClass(row.left ? row.status : null, 'left')">{{ row.left?.line ?? '' }}</span>
+                            <span class="gcd-ln">{{ row.rightNumber ?? '' }}</span>
+                            <span class="gcd-text" :class="sideClass(row.right ? row.status : null, 'right')">{{ row.right?.line ?? '' }}</span>
+                          </div>
+                        </template>
+                      </template>
+                    </template>
+                  </div>
                 </template>
-              </div>
-            </template>
-          </section>
+              </section>
+            </div>
+          </template>
         </div>
-      </template>
+        <div class="modal-ft">
+          <button class="btn btn-secondary gcd-back" type="button" @click="emit('close')">
+            <AppIcon name="arrow-bend-up-left" /> {{ t('main.group_changes.back_to_approval') }}
+          </button>
+        </div>
+      </div>
     </div>
-  </div>
+  </teleport>
 </template>
 
 <script setup lang="ts">
@@ -429,44 +448,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <style scoped>
-.gcd-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.46);
-}
-.gcd-dialog {
+.gcd-modal-body {
   display: flex;
   flex-direction: column;
-  width: min(1280px, calc(100vw - 48px));
-  height: min(880px, calc(100vh - 48px));
-  background: var(--bg, #fff);
-  color: var(--text, #0f172a);
-  border-radius: 8px;
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
+  min-height: 0;
+  padding: 0;
   overflow: hidden;
 }
-.gcd-hd {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
 .gcd-hd-text { min-width: 0; flex: 1 1 auto; }
-.gcd-hd h2 { margin: 0; font-size: 0.98rem; line-height: 1.3; display: flex; align-items: center; gap: 7px; }
-.gcd-hd p { margin: 3px 0 0; font-size: 0.74rem; color: var(--text-m, #64748b); }
+.gcd-hd-text .modal-title { margin: 0; line-height: 1.3; display: flex; align-items: center; gap: 7px; }
+.gcd-hd-text p { margin: 3px 0 0; font-size: 0.74rem; color: var(--text-m, #64748b); }
 .gcd-mono { font-family: var(--mono, ui-monospace, monospace); }
 .gcd-dot { margin: 0 5px; }
 .gcd-hd-lines { margin-left: 7px; display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
 .gcd-add { color: var(--success, #15803d); font-weight: 600; }
 .gcd-del { color: var(--danger, #b91c1c); font-weight: 600; }
-.gcd-back,
 .gcd-retry {
   flex: 0 0 auto;
   display: inline-flex;
@@ -474,16 +470,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   gap: 6px;
   padding: 7px 11px;
   font-size: 0.74rem;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  background: var(--bg, #fff);
-  color: inherit;
-  cursor: pointer;
-}
-.gcd-close {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 8px;
   background: var(--bg, #fff);

@@ -81,7 +81,7 @@ function mountDialog(changes: unknown[] = CHANGES) {
       baseBranch: 'main',
       changes,
     },
-    global: { plugins: [i18n], stubs: { AppIcon: true } },
+    global: { plugins: [i18n], stubs: { AppIcon: true, teleport: true } },
   })
 }
 
@@ -111,8 +111,8 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
 
     // Header totals mirror the sidebar summary: 60+120+90+0, 4+3+0+40.
     expect(wrapper.find('.gcd-hd-lines').text().replace(/\s+/g, '')).toBe('+270−47')
-    expect(wrapper.find('.gcd-hd').text()).toContain('flowgate_default_0325')
-    expect(wrapper.find('.gcd-hd').text()).toContain('main')
+    expect(wrapper.find('.modal-hd').text()).toContain('flowgate_default_0325')
+    expect(wrapper.find('.modal-hd').text()).toContain('main')
   })
 
   it('opens the first file and renders its unified diff', async () => {
@@ -230,7 +230,7 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
     await wrapper.find('.gcd-back').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
 
-    await wrapper.find('.gcd-close').trigger('click')
+    await wrapper.find('.modal-close').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(2)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))

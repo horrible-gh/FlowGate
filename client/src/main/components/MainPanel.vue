@@ -4374,30 +4374,12 @@ watch(textWrapEnabled, (enabled) => {
   accent-color: var(--primary);
 }
 
-.modal-hd-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.document-modal {
-  width: min(1180px, 94vw);
-  /* `%`, not vh: the full view is centred inside `.modal-bg--below-header`, whose height is
-     already the viewport minus the header. A vh height overflows that shorter container and
-     the excess is split evenly above and below, dropping the box's bottom edge off-screen. */
-  height: min(860px, 100%);
-}
-
 .document-modal__body {
   padding: 0;
 }
 
 .document-modal__body :deep(.md-viewer) {
   height: 100%;
-}
-
-.document-modal--edit {
-  width: min(1120px, 94vw);
 }
 
 .document-editor {
@@ -4413,11 +4395,6 @@ watch(textWrapEnabled, (enabled) => {
      the textarea AND this body scrollable, both scrolled at once →
      the reported double scrollbar. Clipping here leaves only the textarea. */
   overflow: hidden;
-}
-
-.document-modal--edit .modal-ft {
-  /* Chrome, not part of the scroll track: never let the body squeeze it out. */
-  flex-shrink: 0;
 }
 
 .document-editor__textarea {
@@ -4514,7 +4491,3 @@ watch(textWrapEnabled, (enabled) => {
   position: relative;
 }
 </style>
-
-
-
-

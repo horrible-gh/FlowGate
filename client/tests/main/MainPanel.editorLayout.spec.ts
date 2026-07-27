@@ -4,12 +4,20 @@ import { describe, expect, it } from 'vitest'
 
 // Comments are stripped so that prose describing the bug (which quotes both
 // braces and `vh` declarations) can never satisfy or break an assertion.
-const source = readFileSync(
+const mainPanelSource = readFileSync(
   join(process.cwd(), 'src/main/components/MainPanel.vue'),
   'utf8',
 ).replace(/\/\*[\s\S]*?\*\//g, '')
+const sharedCssSource = readFileSync(
+  join(process.cwd(), 'shared/app.css'),
+  'utf8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
+const groupChangesSource = readFileSync(
+  join(process.cwd(), 'src/main/components/GroupChangesDialog.vue'),
+  'utf8',
+)
 
-function cssRule(selector: string): string {
+function cssRule(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = source.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`))
   expect(match, `missing CSS rule for ${selector}`).not.toBeNull()
@@ -18,7 +26,7 @@ function cssRule(selector: string): string {
 
 describe('document edit modal layout', () => {
   it('keeps the editor body shrinkable so the footer stays inside the box', () => {
-    const rule = cssRule('.document-editor')
+    const rule = cssRule(mainPanelSource, '.document-editor')
 
     // A viewport-unit minimum here is a flex shrink floor that the px-capped
     // `.document-modal` track cannot absorb, so the footer gets pushed out of
@@ -28,16 +36,16 @@ describe('document edit modal layout', () => {
   })
 
   it('never lets the footer be squeezed out of the track', () => {
-    expect(cssRule('.document-modal--edit .modal-ft')).toMatch(/flex-shrink:\s*0/)
+    expect(cssRule(sharedCssSource, '.document-modal--edit .modal-ft')).toMatch(/flex-shrink:\s*0/)
   })
 
   it('leaves the textarea as the sole scroll container', () => {
     // The body clips instead of scrolling, and the textarea fills the track
     // rather than pinning its own height — together that means exactly one
     // scrollbar (the prior double-scrollbar regression).
-    expect(cssRule('.document-editor')).toMatch(/overflow:\s*hidden/)
+    expect(cssRule(mainPanelSource, '.document-editor')).toMatch(/overflow:\s*hidden/)
 
-    const textarea = cssRule('.document-editor__textarea')
+    const textarea = cssRule(mainPanelSource, '.document-editor__textarea')
     expect(textarea).toMatch(/flex:\s*1 1 auto/)
     expect(textarea).toMatch(/min-height:\s*0/)
     expect(textarea).not.toMatch(/(min-)?height:\s*[\d.]+v(h|min|max)/)
@@ -46,6 +54,20 @@ describe('document edit modal layout', () => {
   it('bounds the modal height so the box itself defines the track', () => {
     // `100%`, not a vh cap: the same rule serves the full view, which is centred inside
     // `.modal-bg--below-header` (a container already shorter than the viewport).
-    expect(cssRule('.document-modal')).toMatch(/height:\s*min\(860px,\s*100%\)/)
+    expect(cssRule(sharedCssSource, '.document-modal')).toMatch(/height:\s*min\(860px,\s*100%\)/)
+  })
+
+  it('uses one shared shell for the editor and group changes dialog', () => {
+    const shell = /class="modal-box document-modal document-modal--edit"/
+    expect(mainPanelSource).toMatch(shell)
+    expect(groupChangesSource).toMatch(shell)
+    expect(groupChangesSource).toMatch(/<teleport to="body">/)
+    expect(groupChangesSource).not.toMatch(/gcd-(overlay|dialog)/)
+    expect(groupChangesSource).not.toMatch(/@click\.self/)
+
+    const modalRuleCount = [mainPanelSource, sharedCssSource, groupChangesSource]
+      .map((source) => source.match(/\.document-modal\s*\{/g)?.length ?? 0)
+      .reduce((sum, count) => sum + count, 0)
+    expect(modalRuleCount).toBe(1)
   })
 })
