@@ -3,6 +3,7 @@
     role="treeitem"
     :aria-expanded="node.type === 'folder' ? expanded : undefined"
     :aria-selected="isSelected"
+    :aria-disabled="isDeleted || undefined"
     :tabindex="0"
     class="tree-node"
     @click.stop="handleClick"
@@ -21,7 +22,13 @@
       </span>
       <span class="tree-ico"><AppIcon :name="iconFA.name" :style="{ color: iconFA.color }" /></span>
       <span
-        v-if="isNew"
+        v-if="isDeleted"
+        class="tree-deleted-marker"
+        :title="t('main.file_diff.status_deleted')"
+        :aria-label="t('main.file_diff.status_deleted')"
+      >D</span>
+      <span
+        v-else-if="isNew"
         class="tree-new-marker"
         :title="t('main.file_tree_node.new_badge')"
         :aria-label="t('main.file_tree_node.new_badge')"
@@ -32,7 +39,14 @@
         :title="t('main.file_tree_node.modified_badge')"
         :aria-label="t('main.file_tree_node.modified_badge')"
       >></span>
-      <span class="tree-lbl" :class="{ 'tree-lbl--dirty': isDirty && !isNew, 'tree-lbl--new': isNew }">{{ node.label }}</span>
+      <span
+        class="tree-lbl"
+        :class="{
+          'tree-lbl--deleted': isDeleted,
+          'tree-lbl--dirty': isDirty && !isDeleted && !isNew,
+          'tree-lbl--new': isNew && !isDeleted,
+        }"
+      >{{ node.label }}</span>
       <span v-if="downloading" class="tree-loading"><AppIcon name="spinner" spin /></span>
     </div>
     <ul v-if="node.type === 'folder' && expanded" class="tree-children">
@@ -50,14 +64,17 @@
       />
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
-      <ContextMenuItem v-if="node.type === 'file'" icon="arrow-up-right" @click="openFile">
+      <ContextMenuItem v-if="isDeleted" icon="arrow-counter-clockwise" @click="restoreFile">
+        {{ t('main.file_tree_node.restore_file') }}
+      </ContextMenuItem>
+      <ContextMenuItem v-if="node.type === 'file' && !isDeleted" icon="arrow-up-right" @click="openFile">
         {{ t('main.file_tree_node.open') }}
       </ContextMenuItem>
       <!-- 0326 R0001 / N0004 §1 — the ONLY new tree affordance: a menu entry directly
            under "열기", on changed files only. Click/double-click/Enter and the tree's
            badges stay exactly as they were (N0004 unapproved TR0003 §3-1·§3-2-a). -->
       <ContextMenuItem
-        v-if="node.type === 'file' && (isDirty || isNew)"
+        v-if="node.type === 'file' && !isDeleted && (isDirty || isNew)"
         icon="git-diff"
         @click="openDiff"
       >
@@ -87,12 +104,12 @@
           </ContextMenuItem>
         </template>
       </template>
-      <ContextMenuItem icon="link" @click="copyLink">
+      <ContextMenuItem v-if="!isDeleted" icon="link" @click="copyLink">
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
       <!-- 0327 T0004 (NR0003 권고 3): downloading is a read and is offered in every
            view; a group context downloads that group's worktree copy, not the base one. -->
-      <ContextMenuItem icon="download-simple" @click="downloadNode">
+      <ContextMenuItem v-if="!isDeleted" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
       <ContextMenuItem v-if="canDelete" icon="trash" :danger="true" @click="deleteNode">
@@ -179,6 +196,7 @@ const showModal = ref(false)
 const modalType = ref<'folder' | 'file'>('folder')
 const downloading = ref(false)
 const deleting = ref(false)
+const restoring = ref(false)
 const showDeleteConfirm = ref(false)
 const nodeDragOver = ref(false)
 const nodeFileInputRef = ref<HTMLInputElement | null>(null)
@@ -200,7 +218,15 @@ const isSelected = computed(() => explorerStore.selectedFileNodeId === props.nod
 // checkout and so could trip the finalize E3 guard; resolved against the group's own
 // worktree it never touches base, so that premise no longer holds.) Read-only groups —
 // no worktree — keep hiding it.
-const canDelete = computed(() => !props.readonly)
+// 0340 T0004 (B0001 / NR0003 §2·§3) — deletion is a file-only state. Ancestor
+// folders deliberately keep their ordinary dirty marker so a collapsed subtree
+// still advertises a change without making the folder itself look deleted.
+const isDeleted = computed(() =>
+  !!props.groupId
+  && props.node.type === 'file'
+  && explorerStore.isGroupDeletedPath(props.projectId, props.groupId, props.node.path),
+)
+const canDelete = computed(() => !props.readonly && !isDeleted.value)
 
 // Reuse the established base-dirty marker for either the base checkout or the
 // selected group branch's tracked changes. 0192 T0005 §1: the marker now
@@ -225,6 +251,7 @@ const isDirty = computed(() => {
     ? explorerStore.isBaseDirtyDir(props.projectId, props.node.path)
     : explorerStore.isBaseDirtyPath(props.projectId, props.node.path)
 })
+
 
 // 0308 T0004 (NR0003 권고 2·3·5) — new (untracked) file marker, a channel parallel to
 // isDirty. base_dirty deliberately excludes untracked files (folding them in would widen
@@ -267,7 +294,7 @@ function handleClick() {
 }
 
 function handleDblClick() {
-  if (props.node.type === 'file') {
+  if (props.node.type === 'file' && !isDeleted.value) {
     emit('open', props.node)
   }
 }
@@ -300,6 +327,33 @@ async function copyLink() {
   // write and surface a failure via the manual-copy fallback modal.
   const ok = await copyToClipboard(props.node.path)
   if (!ok) openClipboardFallback(props.node.path)
+}
+
+async function restoreFile() {
+  if (!props.projectId || !props.groupId || !isDeleted.value || restoring.value) return
+  showCtx.value = false
+  restoring.value = true
+  try {
+    await api.post(
+      `/api/v1/projects/${encodeURIComponent(props.projectId)}/git/groups/${encodeURIComponent(props.groupId)}/restore`,
+      { path: props.node.path },
+    )
+    explorerStore.invalidateProject(props.projectId)
+    emit('tree-changed')
+    showToast(t('main.file_tree_node.restore_done'), 'success')
+  } catch (e: any) {
+    const code = e?.response?.data?.detail?.code
+    const status = e?.response?.status
+    if (code === 'FILE_NOT_DELETED' || status === 409) {
+      showToast(t('main.file_tree_node.restore_not_deleted'), 'danger')
+    } else if (status === 403) {
+      showToast(t('main.file_tree_node.restore_forbidden'), 'danger')
+    } else {
+      showToast(t('main.file_tree_node.restore_failed'), 'danger')
+    }
+  } finally {
+    restoring.value = false
+  }
 }
 
 function openCreateFolder() {
@@ -547,6 +601,17 @@ async function onNodeFolderSelected(e: Event) {
   font-weight: 700;
   line-height: 1;
   color: var(--git-modified, #e2c08d);
+}
+.tree-lbl--deleted {
+  color: var(--danger, #dc2626);
+  text-decoration: line-through;
+}
+.tree-deleted-marker {
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--danger, #dc2626);
 }
 .tree-lbl--new {
   color: var(--git-added, #73c991);

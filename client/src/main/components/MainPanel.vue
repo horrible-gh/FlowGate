@@ -1635,6 +1635,35 @@ watch(
   { immediate: true },
 )
 
+function isDeletedGroupFileTab(tab: Tab | null): boolean {
+  return !!tab
+    && isFileTab(tab)
+    && !!tab.projectId
+    && !!tab.gitGroupId
+    && explorerStore.isGroupDeletedPath(tab.projectId, tab.gitGroupId, getTabSourcePath(tab))
+}
+
+// 0340 T0004 (B0001 / NR0003 §3): the tree blocks every normal open entry point,
+// but a tab may already be open when a worker deletes its path. React to the same
+// status map and tear down that stale editor/full-view state before a committed blob
+// can make the deleted file appear to still exist.
+watch(
+  () => tabs.value
+    .filter((tab) => isDeletedGroupFileTab(tab))
+    .map((tab) => tab.id)
+    .join('|'),
+  (deletedTabIds) => {
+    if (!deletedTabIds) return
+    const ids = new Set(deletedTabIds.split('|'))
+    if (fullViewTab.value && ids.has(fullViewTab.value.id)) void closeFullView()
+    if (editTab.value && ids.has(editTab.value.id)) closeEditModal()
+    for (const tab of [...tabs.value]) {
+      if (ids.has(tab.id)) tabsStore.closeTab(tab.id)
+    }
+  },
+  { immediate: true },
+)
+
 if (typeof window !== 'undefined') {
   window.addEventListener('click', () => {
     if (editDropdownTabId.value !== null) closeEditDropdown()

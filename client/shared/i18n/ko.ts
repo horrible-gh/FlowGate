@@ -1561,6 +1561,11 @@ export default {
     file_tree_node: {
       open: '열기',
       view_changes: '변경 내용 보기',
+      restore_file: '파일 복원',
+      restore_done: '파일을 복원했습니다.',
+      restore_not_deleted: '이 파일은 더 이상 삭제 상태가 아닙니다. 목록을 새로고침해 주세요.',
+      restore_forbidden: '파일을 복원할 권한이 없습니다.',
+      restore_failed: '파일을 복원하지 못했습니다.',
       new_folder: '새 폴더 만들기',
       new_file: '새 파일 만들기',
       refresh: '리프래시',
