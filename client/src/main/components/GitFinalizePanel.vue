@@ -1,7 +1,7 @@
 <template>
   <!-- 0115 R0001-4: git finalize panel - visible only for git-integrated groups
        whose worktree exists (status !== 'none'); everyone else sees nothing. -->
-  <div v-if="state && state.status !== 'none'" class="card git-fin-card">
+  <div v-if="state && state.status !== 'none'" class="card git-fin-card" :class="{ 'is-archive-selected': archiveSelected }">
     <div class="card-hd">
       <span class="card-title">
         <AppIcon name="git-branch" style="color:var(--text-m);" />
@@ -27,12 +27,12 @@
           v-model="chosen"
           :axes="state.action_axes"
           name="git-fin"
-          :disabled="busy"
+          :disabled="busy || archiveSelected"
         />
         <template v-else>
           <div class="git-choice-row">
             <label v-for="c in state.choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
-              <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
+              <input type="radio" name="git-fin-action" :value="c" v-model="chosen" :disabled="archiveSelected" />
               <span class="git-choice-label">{{ actionLabel(c) }}</span>
               <span class="git-choice-desc">{{ actionDesc(c) }}</span>
             </label>
@@ -44,13 +44,66 @@
             </button>
             <div v-if="auxOpen" class="git-choice-row git-choice-row--aux">
               <label v-for="c in state.aux_choices" :key="c" class="git-choice" :class="{ sel: chosen === c }">
-                <input type="radio" name="git-fin-action" :value="c" v-model="chosen" />
+                <input type="radio" name="git-fin-action" :value="c" v-model="chosen" :disabled="archiveSelected" />
                 <span class="git-choice-label">{{ actionLabel(c) }}</span>
                 <span class="git-choice-desc">{{ actionDesc(c) }}</span>
               </label>
             </div>
           </div>
         </template>
+        <p v-if="archiveSelected" class="gf-axis-summary gf-axis-summary--archive">
+          <AppIcon name="info" />
+          <span>{{ t('main.git_finalize.archive.summary') }}</span>
+        </p>
+
+        <!-- sqyjx6bt v4: archive is an amber, reversible keep zone outside the
+             scope×push axes. Selecting it makes the normal axes mutually
+             exclusive and reveals exactly what survives plus the optional reason. -->
+        <section v-if="state.archive_action" class="gf-keep-zone">
+          <div class="gf-keep-hd">
+            <span><AppIcon name="archive" /> {{ t('main.git_finalize.archive.zone_title') }}</span>
+            <span class="gf-keep-hd-note">
+              <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.archive.reversible') }}
+            </span>
+          </div>
+          <label class="gf-choice-keep" :class="{ sel: archiveSelected }">
+            <input v-model="archiveSelected" type="checkbox" :disabled="busy" />
+            <span>
+              <strong>
+                {{ t('main.git_finalize.archive.choice') }}
+                <span class="new-badge">{{ t('main.git_finalize.archive.new_badge') }}</span>
+              </strong>
+              <small>{{ t('main.git_finalize.archive.choice_desc') }}</small>
+            </span>
+          </label>
+          <div v-if="archiveSelected" class="gf-keep-detail">
+            <div class="gf-keep-preserve">
+              <span><AppIcon name="git-commit" /> {{ t('main.git_finalize.archive.commits', { n: archivePreview.commit_count }) }}</span>
+              <span><AppIcon name="file-plus" /> {{ t('main.git_finalize.archive.files', { n: archivePreview.changed_file_count }) }}</span>
+              <span><AppIcon name="git-branch" /> {{ t('main.git_finalize.archive.ref') }}</span>
+            </div>
+            <label class="gf-keep-reason">
+              <span>{{ t('main.git_finalize.archive.reason_label') }}</span>
+              <input
+                v-model="archiveReason"
+                class="form-ctrl"
+                type="text"
+                maxlength="500"
+                :placeholder="t('main.git_finalize.archive.reason_placeholder')"
+                :disabled="busy"
+              />
+            </label>
+            <p class="gf-keep-restore-hint">
+              <AppIcon name="info" />
+              <span>{{ t('main.git_finalize.archive.restore_hint') }}</span>
+            </p>
+            <button class="gf-archive-link" type="button" :disabled="busy" @click="emit('open-archive', props.groupId)">
+              <AppIcon name="archive" />
+              {{ t('main.git_finalize.archive.open', { n: state.archive_count ?? 0 }) }}
+            </button>
+          </div>
+        </section>
+
         <div v-if="showCommitInput" class="git-commit-msg">
           <div class="git-commit-msg-hd">
             <label class="git-commit-msg-label" for="git-commit-subject">
@@ -74,9 +127,16 @@
           </p>
         </div>
         <div class="flex" style="justify-content:flex-end; margin-top:10px;">
-          <button class="btn btn-primary" :disabled="runDisabled" @click="runFinalize">
-            <AppIcon name="play" />
-            {{ busy ? t('main.git_finalize.running') : t('main.git_finalize.execute') }}
+          <button
+            class="btn"
+            :class="archiveSelected ? 'btn-keep' : 'btn-primary'"
+            :disabled="runDisabled"
+            @click="runFinalize"
+          >
+            <AppIcon :name="archiveSelected ? 'archive' : 'play'" />
+            {{ archiveSelected
+              ? (busy ? t('main.git_finalize.archive.running') : t('main.git_finalize.archive.execute'))
+              : (busy ? t('main.git_finalize.running') : t('main.git_finalize.execute')) }}
           </button>
         </div>
       </template>
@@ -174,6 +234,10 @@ import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import { actionNeedsCommitMessage, type FinalizeAxes } from '../composables/finalizeAxis'
 
 const props = defineProps<{ groupId: string }>()
+const emit = defineEmits<{
+  'open-archive': [groupId: string]
+  'archived': [groupId: string]
+}>()
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -199,6 +263,14 @@ interface GitFinState {
   aux_choices?: string[]
   // 0331: additive axis contract; absent on a pre-0331 server.
   action_axes?: FinalizeAxes | null
+  // 0339: sqyjx6bt v4 keeps archive outside the scope×push matrix.
+  archive_action?: 'stash' | null
+  archive_count?: number
+  archive_preview?: {
+    commit_count: number
+    changed_file_count: number
+    head_ref: string
+  } | null
   ahead_count: number | null
   behind_count: number | null
   merge_id: number | null
@@ -218,6 +290,13 @@ const conflictError = ref('')
 const conflictDialogOpen = ref(false)
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const auxOpen = ref(false)
+const archiveSelected = ref(false)
+const archiveReason = ref('')
+const archivePreview = computed(() => state.value?.archive_preview ?? {
+  commit_count: Math.max(Number(state.value?.ahead_count ?? 0), 0),
+  changed_file_count: 0,
+  head_ref: '',
+})
 
 const statusLabel = computed(() =>
   state.value ? t(`main.git_finalize.status.${state.value.status}`) : '',
@@ -244,16 +323,21 @@ const aheadBehindText = computed(() => {
 // where `push` really did absorb.
 const LEGACY_COMMIT_ACTIONS = ['merge', 'merge_only', 'push']
 const showCommitInput = computed(() =>
-  state.value?.action_axes
-    ? actionNeedsCommitMessage(state.value.action_axes, chosen.value)
-    : LEGACY_COMMIT_ACTIONS.includes(chosen.value),
+  !archiveSelected.value && (
+    state.value?.action_axes
+      ? actionNeedsCommitMessage(state.value.action_axes, chosen.value)
+      : LEGACY_COMMIT_ACTIONS.includes(chosen.value)
+  ),
 )
 const commitMessageBlank = computed(() => !commitMessage.value.trim())
 const commitSourceLabel = computed(() =>
   commitSource.value ? t(`main.git_finalize.commit_source.${commitSource.value}`) : '',
 )
 const runDisabled = computed(
-  () => busy.value || !chosen.value || (showCommitInput.value && commitMessageBlank.value),
+  () => busy.value || (
+    !archiveSelected.value
+    && (!chosen.value || (showCommitInput.value && commitMessageBlank.value))
+  ),
 )
 function restoreSuggested() {
   commitMessage.value = commitSuggested.value
@@ -415,13 +499,31 @@ async function copyConflictMention() {
 }
 
 async function runFinalize() {
-  if (!props.groupId || !chosen.value) return
+  if (!props.groupId) return
+  if (!archiveSelected.value && !chosen.value) return
   if (showCommitInput.value && commitMessageBlank.value) return
   busy.value = true
   try {
+    if (archiveSelected.value) {
+      await postRequest(`/api/v1/groups/${props.groupId}/git/archive`, {
+        reason: archiveReason.value.trim() || null,
+      })
+      showToast(t('main.git_finalize.archive.success'), 'success')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+          detail: { group_id: props.groupId, status: 'archived' },
+        }))
+      }
+      emit('archived', props.groupId)
+      archiveSelected.value = false
+      archiveReason.value = ''
+      return
+    }
     const payload: { action: string; commit_message?: string } = { action: chosen.value }
     if (showCommitInput.value) payload.commit_message = commitMessage.value.trim()
     await postFinalize(payload, false)
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchState()
@@ -561,7 +663,11 @@ onUnmounted(() => {
   }
 })
 
-watch(() => props.groupId, fetchState, { immediate: true })
+watch(() => props.groupId, () => {
+  archiveSelected.value = false
+  archiveReason.value = ''
+  void fetchState()
+}, { immediate: true })
 
 defineExpose({ fetchState })
 </script>
@@ -712,6 +818,174 @@ defineExpose({ fetchState })
 }
 .git-marker-warning {
   color: #b45309;
+}
+
+/* sqyjx6bt v4 — the reversible archive overlay is visually and semantically
+   separate from the scope×push axes. Red remains reserved for purge. */
+.git-fin-card.is-archive-selected :deep(.gf-axis-row) {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.git-fin-card.is-archive-selected :deep(.gf-axis-summary) {
+  display: none;
+}
+.gf-axis-summary--archive {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: var(--r, 8px);
+  background: rgba(254, 243, 199, 0.45);
+  color: #92400e;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+.gf-axis-summary--archive :deep(svg) {
+  margin-top: 2px;
+  color: var(--warning, #d97706);
+}
+.gf-keep-zone {
+  margin-top: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  border-radius: var(--r, 8px);
+  background: rgba(255, 251, 235, 0.58);
+}
+.gf-keep-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #92400e;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.gf-keep-hd > span,
+.gf-keep-hd-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.gf-keep-hd-note {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b45309;
+}
+.gf-choice-keep {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  border-radius: var(--r, 8px);
+  background: var(--surface, #fff);
+  cursor: pointer;
+  transition: all var(--tr, 0.15s ease);
+}
+.gf-choice-keep:hover,
+.gf-choice-keep.sel {
+  border-color: var(--warning, #d97706);
+  background: rgba(254, 243, 199, 0.5);
+}
+.gf-choice-keep input {
+  margin-top: 2px;
+  accent-color: var(--warning, #d97706);
+}
+.gf-choice-keep > span {
+  min-width: 0;
+}
+.gf-choice-keep strong {
+  display: block;
+  color: var(--text, #1e293b);
+  font-size: 0.8rem;
+}
+.gf-choice-keep small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-m, #64748b);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.new-badge {
+  display: inline-flex;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 0.62rem;
+  vertical-align: 1px;
+}
+.gf-keep-detail {
+  padding: 10px 2px 0;
+}
+.gf-keep-preserve {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gf-keep-preserve > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 0.69rem;
+  font-weight: 600;
+}
+.gf-keep-reason {
+  display: block;
+  margin-top: 9px;
+  color: var(--text, #1e293b);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.gf-keep-reason .form-ctrl {
+  width: 100%;
+  margin-top: 5px;
+  font-size: 0.76rem;
+}
+.gf-keep-restore-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 9px 0 0;
+  color: var(--text-m, #64748b);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+.gf-keep-restore-hint :deep(svg) {
+  margin-top: 2px;
+  color: var(--warning, #d97706);
+}
+.gf-archive-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 9px;
+  padding: 5px 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text-s, #475569);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gf-archive-link:hover:not(:disabled) {
+  border-color: var(--warning, #d97706);
+  color: #b45309;
+}
+.btn-keep {
+  background: var(--warning, #d97706);
+  color: #fff;
+}
+.btn-keep:hover:not(:disabled) {
+  background: #b45309;
 }
 </style>
 
