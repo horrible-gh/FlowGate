@@ -233,6 +233,10 @@ class EditableSourceUpdate(BaseModel):
     content: str
 
 
+class DeletedGroupFileRestore(BaseModel):
+    path: str
+
+
 def _editable_source_root(project_id: str, group_id: Optional[str]) -> tuple[pathlib.Path, Optional[str]]:
     from modules.flow_gate.services import git_service
 
@@ -397,6 +401,69 @@ def update_editable_source_content(
     return response
 
 
+def _group_path_is_deleted(project_id: str, group_id: str, path: str) -> bool:
+    """Best-effort deletion check for stale/forged group blob requests."""
+    from modules.flow_gate.services import git_service
+
+    normalized = path.replace("\\", "/")
+    try:
+        payload = git_service.read_group_changes(project_id, group_id)
+    except Exception:
+        return False
+    return any(
+        change.get("path", "").replace("\\", "/") == normalized
+        and change.get("status") == "D"
+        for change in payload.get("data", {}).get("changes", [])
+    )
+
+
+@router.post("/projects/{project_id}/git/groups/{group_id}/restore")
+def restore_deleted_group_file(
+    project_id: str,
+    group_id: str,
+    body: DeletedGroupFileRestore,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Restore one deleted tracked file from the group's current HEAD."""
+    from modules.flow_gate.services import git_service
+
+    normalized = body.path.replace("\\", "/")
+    full_path, root, _resolved_group_id = _editable_source_path(
+        project_id, normalized, group_id
+    )
+    if not _group_path_is_deleted(project_id, group_id, normalized):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "FILE_NOT_DELETED",
+                "message": "File is not deleted in this group",
+            },
+        )
+
+    proc = git_service._run_git(
+        ["checkout", "HEAD", "--", normalized],
+        cwd=root,
+    )
+    if proc.returncode != 0 or not full_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "RESTORE_FAILED",
+                "message": "Failed to restore the deleted file",
+            },
+        )
+
+    _emit_source_edit_refresh(project_id, group_id, normalized)
+    return {
+        "ok": True,
+        "data": {
+            "group_id": group_id,
+            "path": normalized,
+            "restored": True,
+        },
+    }
+
+
 @router.get("/projects/{project_id}/git/groups/{group_id}/blob")
 def get_editable_group_blob(
     project_id: str,
@@ -412,6 +479,15 @@ def get_editable_group_blob(
         project_id, path, group_id
     )
     if not full_path.is_file():
+        # 0340 T0004 (B0001 / NR0003 §3): a deleted path still exists in the
+        # branch HEAD tree, so a stale editor tab can ask for it even though the
+        # group worktree no longer has bytes. Distinguish that intentional deletion
+        # from an unknown path and never fall back to the committed blob.
+        if _group_path_is_deleted(project_id, group_id, path):
+            raise HTTPException(
+                status_code=410,
+                detail={"code": "FILE_DELETED", "message": "File was deleted in this group"},
+            )
         raise HTTPException(status_code=404, detail="Not found")
 
     from modules.flow_gate.services import git_service

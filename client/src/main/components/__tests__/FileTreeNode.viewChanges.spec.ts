@@ -11,10 +11,11 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
 }))
 vi.mock('@shared/api', () => ({
-  default: { get: vi.fn(), delete: vi.fn(), head: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), head: vi.fn() },
   downloadBlobRequest: vi.fn(),
 }))
 
+import api from '@shared/api'
 import FileTreeNode from '../FileTreeNode.vue'
 import { useExplorerStore, type FileNode } from '../../stores/explorer'
 
@@ -37,14 +38,14 @@ function fileNode(path: string): FileNode {
 // be unmounted between tests — clearing innerHTML instead would detach live Vue nodes.
 const mounted: Array<{ unmount: () => void }> = []
 
-function mountNode(node: FileNode, options: { groupId?: string | null } = {}) {
+function mountNode(node: FileNode, options: { groupId?: string | null; readonly?: boolean } = {}) {
   const wrapper = mount(FileTreeNode, {
     attachTo: document.body,
     props: {
       node,
       allNodes: [node],
       projectId: PROJECT_ID,
-      readonly: !!options.groupId,
+      readonly: options.readonly ?? !!options.groupId,
       groupId: options.groupId ?? null,
     },
   })
@@ -122,6 +123,33 @@ describe('FileTreeNode — 변경 내용 보기', () => {
     // and resolved against the group's own worktree), so it is expected here now.
     expect(labels).not.toContain('common.delete')
     expect(labels).toContain('main.file_tree_node.download')
+  })
+
+  it('offers only file restore for a deleted file and refreshes after restoring', async () => {
+    const groupId = 'flowgate.default.0340'
+    const node = fileNode('docs/gone.md')
+    vi.mocked(api.post).mockResolvedValueOnce({ data: { ok: true } } as any)
+    useExplorerStore().$patch({
+      groupChangedFiles: { [`${PROJECT_ID}:${groupId}`]: [node.path] },
+      groupChangeStatuses: { [`${PROJECT_ID}:${groupId}`]: { [node.path]: 'D' } },
+    })
+    const wrapper = mountNode(node, { groupId, readonly: false })
+    await openContextMenu(wrapper)
+
+    const labels = menuLabels()
+    expect(labels).toEqual(['main.file_tree_node.restore_file'])
+
+    const items = [...document.body.querySelectorAll('.ctx-item')] as HTMLElement[]
+    items[0].click()
+    await wrapper.vm.$nextTick()
+
+    expect(api.post).toHaveBeenCalledWith(
+      `/api/v1/projects/${PROJECT_ID}/git/groups/${groupId}/restore`,
+      { path: node.path },
+    )
+    expect(wrapper.emitted('tree-changed')).toBeTruthy()
+    expect(wrapper.emitted('open-diff')).toBeUndefined()
+    expect(wrapper.emitted('open')).toBeUndefined()
   })
 
   it('never offers the entry on a folder row', async () => {

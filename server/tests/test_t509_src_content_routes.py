@@ -6,7 +6,13 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app import app
+from modules.flow_gate.api.inbox_routes import (
+    DeletedGroupFileRestore,
+    _group_path_is_deleted,
+    restore_deleted_group_file,
+)
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.services import git_service
 from modules.flow_gate.storage import paths as storage_paths
 
 
@@ -83,3 +89,68 @@ def test_src_content_patch_returns_404_for_missing_file(monkeypatch):
     )
     assert patch_res.status_code == 404
     assert patch_res.json()["detail"] == "Not found"
+
+def test_group_deleted_path_uses_change_status_and_normalizes_separators(monkeypatch):
+    monkeypatch.setattr(
+        git_service,
+        "read_group_changes",
+        lambda _project_id, _group_id: {
+            "data": {
+                "changes": [
+                    {"path": "docs/gone.md", "status": "D"},
+                    {"path": "docs/edited.md", "status": "M"},
+                ]
+            }
+        },
+    )
+
+    assert _group_path_is_deleted("p1", "g1", "docs\\gone.md") is True
+    assert _group_path_is_deleted("p1", "g1", "docs/edited.md") is False
+    assert _group_path_is_deleted("p1", "g1", "docs/missing.md") is False
+
+
+def test_restore_deleted_group_file_checks_out_head_and_emits_refresh(monkeypatch):
+    root = _prepare_root() / "worktree"
+    target = root / "docs" / "gone.md"
+    target.parent.mkdir(parents=True)
+    calls = []
+
+    monkeypatch.setattr(
+        "modules.flow_gate.api.inbox_routes._editable_source_path",
+        lambda _project_id, _path, group_id: (target, root, group_id),
+    )
+    monkeypatch.setattr(
+        "modules.flow_gate.api.inbox_routes._group_path_is_deleted",
+        lambda _project_id, _group_id, _path: True,
+    )
+    monkeypatch.setattr(
+        "modules.flow_gate.api.inbox_routes._emit_source_edit_refresh",
+        lambda project_id, group_id, path: calls.append(("refresh", project_id, group_id, path)),
+    )
+
+    class Result:
+        returncode = 0
+
+    def fake_run(args, cwd):
+        calls.append(("git", args, cwd))
+        target.write_text("restored", encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr(git_service, "_run_git", fake_run)
+
+    result = restore_deleted_group_file(
+        "p1",
+        "g1",
+        DeletedGroupFileRestore(path="docs\\gone.md"),
+        user={"user_id": "u1"},
+    )
+
+    assert result["data"] == {
+        "group_id": "g1",
+        "path": "docs/gone.md",
+        "restored": True,
+    }
+    assert calls == [
+        ("git", ["checkout", "HEAD", "--", "docs/gone.md"], root),
+        ("refresh", "p1", "g1", "docs/gone.md"),
+    ]

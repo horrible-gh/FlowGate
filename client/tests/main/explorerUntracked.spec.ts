@@ -130,6 +130,44 @@ describe('explorer store — group-branch new (untracked) file markers', () => {
     expect(store.isGroupChangedPath('p1', 'g1', 'brand-new.py')).toBe(false)
   })
 
+  it('preserves tracked statuses and clears stale deletion state on refresh', async () => {
+    getRequest
+      .mockResolvedValueOnce({
+        data: { data: { changes: [
+          { path: 'docs\\gone.md', status: 'D' },
+          { path: 'docs/edited.md', status: 'M' },
+        ] } },
+      })
+      .mockResolvedValueOnce({
+        data: { data: { changes: [{ path: 'docs/edited.md', status: 'M' }] } },
+      })
+    const store = useExplorerStore()
+
+    await store.fetchGroupBranchChanges('p1', 'g1')
+
+    expect(store.groupChangeStatus('p1', 'g1', 'docs/gone.md')).toBe('D')
+    expect(store.isGroupDeletedPath('p1', 'g1', 'docs/gone.md')).toBe(true)
+    expect(store.isGroupDeletedPath('p1', 'g1', 'docs/edited.md')).toBe(false)
+
+    await store.fetchGroupBranchChanges('p1', 'g1')
+
+    expect(store.groupChangeStatus('p1', 'g1', 'docs/gone.md')).toBeUndefined()
+    expect(store.isGroupDeletedPath('p1', 'g1', 'docs/gone.md')).toBe(false)
+  })
+
+  it('invalidates changed paths and their status map together', async () => {
+    getRequest.mockResolvedValueOnce({
+      data: { data: { changes: [{ path: 'gone.md', status: 'D' }] } },
+    })
+    const store = useExplorerStore()
+
+    await store.fetchGroupBranchChanges('p1', 'g1')
+    store.invalidateProject('p1')
+
+    expect(store.isGroupChangedPath('p1', 'g1', 'gone.md')).toBe(false)
+    expect(store.isGroupDeletedPath('p1', 'g1', 'gone.md')).toBe(false)
+  })
+
   it('serves an untracked blob fresh every time (commit=null → never cached)', async () => {
     const blob = (content: string) => ({
       data: { data: {

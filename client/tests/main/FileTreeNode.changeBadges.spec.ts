@@ -51,8 +51,9 @@ function mountNode(target: any, props: Record<string, unknown> = {}) {
   })
 }
 
-/** '' | 'new' | 'dirty' — what the row actually renders. */
+/** '' | 'new' | 'dirty' | 'deleted' — what the row actually renders. */
 function badge(wrapper: ReturnType<typeof mount>): string {
+  if (wrapper.find('.tree-deleted-marker').exists()) return 'deleted'
   if (wrapper.find('.tree-new-marker').exists()) return 'new'
   if (wrapper.find('.tree-dirty-marker').exists()) return 'dirty'
   return ''
@@ -99,13 +100,41 @@ describe('FileTreeNode change badges — writable group branch (B0001)', () => {
     expect(badge(mountNode(DIR, { groupId: GID, readonly: false }))).toBe('new')
   })
 
-  // B0001 also asked whether DELETE behaves. A deleted file has no tree node to badge
-  // (the same structural limit VSCode's explorer has), but the group's change list
-  // carries its D-status path, so the folder it was deleted from is marked changed —
-  // the deletion is never invisible in the tree.
+  // A deleted file remains in the group branch's HEAD-backed tree, while its ancestor
+  // folders keep the ordinary dirty propagation so a collapsed deletion stays visible.
   it('marks the ancestor folder of a DELETED file as modified', () => {
-    useExplorerStore().$patch({ groupChangedFiles: { [`${PID}:${GID}`]: ['docs/gone.md'] } })
+    useExplorerStore().$patch({
+      groupChangedFiles: { [`${PID}:${GID}`]: ['docs/gone.md'] },
+      groupChangeStatuses: { [`${PID}:${GID}`]: { 'docs/gone.md': 'D' } },
+    })
     expect(badge(mountNode(DIR, { groupId: GID, readonly: false }))).toBe('dirty')
+  })
+
+  it('renders a deleted file in danger styling with a D marker and strike-through', () => {
+    useExplorerStore().$patch({
+      groupChangedFiles: { [`${PID}:${GID}`]: ['docs/a.md'] },
+      groupChangeStatuses: { [`${PID}:${GID}`]: { 'docs/a.md': 'D' } },
+    })
+    const wrapper = mountNode(FILE, { groupId: GID, readonly: false })
+
+    expect(badge(wrapper)).toBe('deleted')
+    expect(wrapper.find('.tree-lbl--deleted').exists()).toBe(true)
+    expect(wrapper.find('.tree-lbl--dirty').exists()).toBe(false)
+    expect(wrapper.find('.tree-deleted-marker').attributes('aria-label')).toBeTruthy()
+  })
+
+  it('does not emit open for deleted-file double-click or keyboard activation', async () => {
+    useExplorerStore().$patch({
+      groupChangedFiles: { [`${PID}:${GID}`]: ['docs/a.md'] },
+      groupChangeStatuses: { [`${PID}:${GID}`]: { 'docs/a.md': 'D' } },
+    })
+    const wrapper = mountNode(FILE, { groupId: GID, readonly: false })
+
+    await wrapper.trigger('dblclick')
+    await wrapper.trigger('keydown', { key: 'Enter' })
+    await wrapper.trigger('keydown', { key: ' ' })
+
+    expect(wrapper.emitted('open')).toBeUndefined()
   })
 
   // Priority contract (template order): NEW wins over MODIFIED on a folder holding both.

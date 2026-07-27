@@ -191,6 +191,11 @@ export const useExplorerStore = defineStore('explorer', () => {
   const groupBranchTreeCache = ref<Record<string, FileNode[]>>({}) // `${pid}:${gid}:${commit}` -> nodes
   const groupBlobCache = ref<Record<string, GroupBlobData>>({})    // `${pid}:${gid}:${commit}:${path}` -> blob
   const groupChangedFiles = ref<Record<string, string[]>>({})      // `${pid}:${gid}` -> normalized tracked-change paths
+  // 0340 T0004 (B0001 / NR0003 §1) — keep the Git status that accompanies each
+  // changed path. The path-only list above remains the compatibility channel for
+  // ancestor-folder dirty propagation; this parallel map lets file rows distinguish
+  // a deletion from an ordinary modification without changing the server contract.
+  const groupChangeStatuses = ref<Record<string, Record<string, string>>>({})
   // 0315 TR (NR0003 권고 1·2·4) — new (untracked) files in a group worktree, the
   // group-branch analogue of baseUntrackedFiles. The tree read returns them on a
   // separate `worktree_untracked` channel because they change without advancing the
@@ -305,6 +310,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(groupChangedFiles.value)) {
       if (key.startsWith(`${pid}:`)) delete groupChangedFiles.value[key]
     }
+    for (const key of Object.keys(groupChangeStatuses.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupChangeStatuses.value[key]
+    }
     for (const key of Object.keys(groupUntrackedFiles.value)) {
       if (key.startsWith(`${pid}:`)) delete groupUntrackedFiles.value[key]
     }
@@ -385,15 +393,25 @@ export const useExplorerStore = defineStore('explorer', () => {
     )
     const data = (res.data as any).data as GroupChangesData
     const changes = (data.changes ?? []) as GroupChangeData[]
+    const trackedChanges = changes
+      .filter((change) => change.status !== '?')
+      .map((change) => ({
+        path: change.path.replace(/\\/g, '/'),
+        status: change.status,
+      }))
     // 0315 TR (NR0003 권고 2) — the server now also lists untracked files here with a
     // '?' status. Those drive the NEW badge (via the tree's worktree_untracked channel),
     // not the MODIFIED ('>') badge, so keep only tracked changes in groupChangedFiles;
     // otherwise a brand-new file would light up as "modified" instead of "new".
     groupChangedFiles.value = {
       ...groupChangedFiles.value,
-      [groupKey(pid, gid)]: changes
-        .filter((change) => change.status !== '?')
-        .map((change) => change.path.replace(/\\/g, '/')),
+      [groupKey(pid, gid)]: trackedChanges.map((change) => change.path),
+    }
+    groupChangeStatuses.value = {
+      ...groupChangeStatuses.value,
+      [groupKey(pid, gid)]: Object.fromEntries(
+        trackedChanges.map((change) => [change.path, change.status]),
+      ),
     }
     return { ...data, changes }
   }
@@ -414,6 +432,14 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   function isGroupChangedPath(pid: string, gid: string, path: string): boolean {
     return (groupChangedFiles.value[groupKey(pid, gid)] ?? []).includes(path.replace(/\\/g, '/'))
+  }
+
+  function groupChangeStatus(pid: string, gid: string, path: string): string | undefined {
+    return groupChangeStatuses.value[groupKey(pid, gid)]?.[path.replace(/\\/g, '/')]
+  }
+
+  function isGroupDeletedPath(pid: string, gid: string, path: string): boolean {
+    return groupChangeStatus(pid, gid, path) === 'D'
   }
 
   // 0192 T0005 §1 — folder-level "modified" propagation. The dirty/changed marker
@@ -671,7 +697,8 @@ export const useExplorerStore = defineStore('explorer', () => {
     getCachedFileTree, getCachedGroupTree,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
     fetchGroupBranchChangeSet, fetchGroupBranchDiff,
-    currentGroupCommit, groupChangedFiles, isGroupChangedPath, isGroupChangedDir,
+    currentGroupCommit, groupChangedFiles, groupChangeStatuses,
+    groupChangeStatus, isGroupDeletedPath, isGroupChangedPath, isGroupChangedDir,
     groupUntrackedFiles, setGroupUntrackedFiles, isGroupUntrackedPath, isGroupUntrackedDir,
     expandedFileNodes, expandedGroupNodes,
     isFileNodeExpanded, setFileNodeExpanded, setFileNodesExpanded,

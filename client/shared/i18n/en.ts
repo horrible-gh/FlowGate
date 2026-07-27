@@ -1562,6 +1562,11 @@ export default {
     file_tree_node: {
       open: 'Open',
       view_changes: 'View Changes',
+      restore_file: 'Restore File',
+      restore_done: 'The file was restored.',
+      restore_not_deleted: 'This file is no longer deleted. Refresh the list and try again.',
+      restore_forbidden: 'You do not have permission to restore this file.',
+      restore_failed: 'Failed to restore the file.',
       new_folder: 'New Folder',
       new_file: 'New File',
       refresh: 'Refresh',
