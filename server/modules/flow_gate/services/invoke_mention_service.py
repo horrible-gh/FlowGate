@@ -57,6 +57,62 @@ def _locale(locale: Optional[str]) -> str:
     return locale if locale in ("ko", "en", "ja") else "ko"
 
 
+def _chat_lookup_sections(
+    *, base: str, raw_token: str, project: str, group_name: str
+) -> list[str]:
+    """Read-only source + document search block for the chat mention (0334 R0001).
+
+    R0001's symptom: asked to check something in the source, the chat worker had no
+    API for anything outside its own CH document, so it guessed at a local directory
+    and reported the guess as fact. The scopes were never the problem — a chat token
+    already resolves to ["read", "grep"] (glob shares grep's scope), and verify_bearer
+    accepts it on /search/documents* — the mention simply never said so (NR0003 발견
+    1/4). So this adds text, not permission.
+
+    The source section is the same builder N/NR mentions use, asked for a "CH" step so
+    it renders its read/search-only variant, behind the same source-mode gate: when the
+    project runs in local mode there is no remote source API to advertise (발견 3).
+    Document search stays either way — it reads storage, not the source tree.
+
+    Kept deliberately small. TR0044.0010 rev4 rejected a chat mention padded with
+    non-chat sections, and compactness is still the rule here (발견 9).
+    """
+    # Lazy: mention_service pulls in the full mention stack, and this module is
+    # imported by the invoke path at request time.
+    from modules.flow_gate.services import mention_service
+
+    sections: list[str] = []
+    source_included = mention_service._include_remote_source_crud(project)
+    if source_included:
+        section = mention_service._remote_source_crud_section(base, raw_token, "CH")
+        if section:
+            sections.append(section)
+
+    search_lines = [
+        f"Search documents by title/doc id: GET {base}/search/documents?q=<keyword>&project={project}",
+        f"Search inside document bodies: GET {base}/search/documents/content?q=<keyword>&project={project}",
+        f"List documents in this group: GET {base}/list/groups/{group_name}/documents?limit=5",
+        f"Authorization: Bearer {raw_token}",
+    ]
+    if source_included:
+        search_lines += [
+            "",
+            # 발견 5: every remote path is root-relative and the server picks the root
+            # (this group's worktree, else the project branch checkout). Naming an
+            # absolute path here would just give the worker a new wrong thing to trust.
+            "Source paths are relative to the project source root, which the server resolves",
+            "on its own (this group's worktree, otherwise the project branch checkout). Do not",
+            "guess local absolute paths or search your own filesystem — use the APIs above.",
+        ]
+    search_lines += [
+        "",
+        # 발견 8: a successful edit consumes the token and its remote grant dies with it.
+        "Submitting below consumes this token, so finish all reading and searching first.",
+    ]
+    sections.append("## Document search and lookup rules\n---\n" + "\n".join(search_lines))
+    return sections
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -129,6 +185,12 @@ def build_conversation_mention(
     ]
     if provider_hint:
         lines += ["", provider_hint]
+    # Before the submit block, not after: the worker reads it in the order it must act
+    # (look things up, then submit), and the inbox JSON stays the tail of the mention.
+    for section in _chat_lookup_sections(
+        base=api_base, raw_token=raw_token, project=project, group_name=group_name
+    ):
+        lines += ["", section]
     lines += [
         "",
         f"Submit: POST {api_base}/inbox",

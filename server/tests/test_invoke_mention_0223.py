@@ -10,8 +10,20 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from modules.flow_gate.api.v1.ai_invoke_routes import _ALLOWED_SCOPES, _TOKEN_SCOPE
 from modules.flow_gate.services import invoke_mention_service as ims
+
+
+def _submitted_body(text: str) -> dict:
+    """The inbox JSON the worker is told to POST.
+
+    0334: the mention now carries API examples that are themselves JSON, so the
+    first '{' in the text is no longer the submission body. The submission block is
+    still the tail of the mention by construction, so anchor on it.
+    """
+    return json.loads(text[text.index("{", text.index("Submit: POST")):])
 
 
 class TestScopeMap:
@@ -45,9 +57,10 @@ class TestConversationMention:
         assert lines[0] == "## Conversation (대화)"
         assert "Conversation document: p.default.0001.0008-CH" in lines
         assert "Read the full conversation: GET http://h:1/api/v1/document?doc_id=p.default.0001.0008-CH" in lines
-        assert lines.count("Authorization: Bearer RAW") == 2
+        # Read, source/document lookup, and submit each carry their own credential line.
+        assert lines.count("Authorization: Bearer RAW") == 4
         assert "Submit: POST http://h:1/api/v1/inbox" in lines
-        body = json.loads(text[text.index("{"):])
+        body = _submitted_body(text)
         assert body["action"] == "edit"
         assert body["edit_reason"] == "worker_self"
         assert body["module"] == "default"
@@ -58,7 +71,7 @@ class TestConversationMention:
             doc_id="d", project="p", module=None, group_name="g",
             raw_token="RAW", api_base_url="http://h:1/api/v1",
         )
-        body = json.loads(text[text.index("{"):])
+        body = _submitted_body(text)
         assert "module" not in body
 
     def test_absolute_host_survives_into_the_mention(self):
@@ -101,6 +114,79 @@ class TestConversationMention:
             provider="we(ird)name",
         )
         assert "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>" in text
+
+
+class TestConversationMentionLookupBlock:
+    """0334 R0001 — the chat mention must carry the read-only lookup APIs.
+
+    Without them a chat worker asked about the source had nothing to call, guessed
+    at a local directory and reported the guess as fact. The scopes were always
+    there; the text was not.
+    """
+
+    @staticmethod
+    def _mention(monkeypatch, *, remote_mode: bool = True) -> str:
+        from modules.flow_gate.services import mention_service
+
+        monkeypatch.setattr(
+            mention_service, "_include_remote_source_crud", lambda project: remote_mode
+        )
+        return ims.build_conversation_mention(
+            doc_id="p.default.0001.0008-CH",
+            project="p",
+            module="default",
+            group_name="p.default.0001",
+            raw_token="RAW",
+            api_base_url="http://h:1/api/v1",
+        )
+
+    def test_source_search_endpoints_are_offered(self, monkeypatch):
+        text = self._mention(monkeypatch)
+        assert "POST http://h:1/api/v1/remote/read" in text
+        assert "POST http://h:1/api/v1/remote/grep" in text
+        assert "POST http://h:1/api/v1/remote/glob" in text
+
+    def test_source_block_stays_read_only(self, monkeypatch):
+        # The chat token resolves to ["read", "grep"]; advertising a mutating call
+        # would hand the worker an instruction its grant refuses.
+        text = self._mention(monkeypatch)
+        assert "/remote/write" not in text
+        assert "/remote/remove" not in text
+        assert "read/search only" in text
+
+    def test_document_search_is_pinned_to_the_token_project(self, monkeypatch):
+        text = self._mention(monkeypatch)
+        assert "GET http://h:1/api/v1/search/documents?q=<keyword>&project=p" in text
+        assert "GET http://h:1/api/v1/search/documents/content?q=<keyword>&project=p" in text
+        assert "GET http://h:1/api/v1/list/groups/p.default.0001/documents?limit=5" in text
+
+    def test_guards_against_guessing_local_paths(self, monkeypatch):
+        text = self._mention(monkeypatch)
+        assert "guess local absolute paths" in text
+        # A stale legacy column, not the resolved root — naming it would reintroduce
+        # exactly the wrong-directory failure this block exists to stop.
+        assert "/source-path" not in text
+
+    def test_warns_that_submitting_consumes_the_token(self, monkeypatch):
+        text = self._mention(monkeypatch)
+        assert "consumes this token" in text
+
+    def test_local_source_mode_drops_source_apis_but_keeps_document_search(self, monkeypatch):
+        text = self._mention(monkeypatch, remote_mode=False)
+        assert "/remote/read" not in text
+        assert "Remote project source CRUD" not in text
+        assert "source root" not in text
+        assert "GET http://h:1/api/v1/search/documents?q=<keyword>&project=p" in text
+        assert "consumes this token" in text
+
+    @pytest.mark.parametrize("remote_mode", [True, False])
+    def test_submission_json_remains_the_tail_of_the_mention(self, monkeypatch, remote_mode):
+        # The lookup block goes BEFORE the submit block, so "search, then submit" is
+        # both the reading order and the required order (a submit consumes the token).
+        text = self._mention(monkeypatch, remote_mode=remote_mode)
+        assert text.index("remote/read" if remote_mode else "search/documents") < text.index("Submit: POST")
+        assert _submitted_body(text)["edit_reason"] == "worker_self"
+        assert text.rstrip().endswith("}")
 
 
 class TestRejectionSection:
