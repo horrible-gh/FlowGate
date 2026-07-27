@@ -83,6 +83,8 @@ def test_item_count_cap():
 @pytest.mark.parametrize("path", [
     ".git/config", ".venv/lib/x.py", "server/app.db", "server/app.sqlite3",
     "client/node_modules/pkg/index.js", "server/modules/__pycache__/a.pyc", "client/dist/app.js",
+    "pytest-cache-files-abcd1234/README.md",
+    "server/pytest-cache-files-incomplete/CACHEDIR.TAG",
 ])
 def test_excluded_paths(path):
     assert trs.is_excluded_path(path) is True

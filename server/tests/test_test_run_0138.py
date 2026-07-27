@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 
 def _resp_json(resp) -> dict:
     return json.loads(bytes(resp.body).decode("utf-8"))
+
+
+def test_execution_env_disables_pytest_cacheprovider():
+    from modules.flow_gate.services import test_run_service
+
+    env = test_run_service._execution_env(43123, Path("test-scratch"))
+
+    assert env["PYTEST_ADDOPTS"] == "-p no:cacheprovider"
+    assert env["FLOWGATE_TEST_SCRATCH"] == "test-scratch"
 
 
 def test_parse_test_cases_success():

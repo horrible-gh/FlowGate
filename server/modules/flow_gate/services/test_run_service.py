@@ -1062,13 +1062,18 @@ def _execution_env(port: int, scratch: Path) -> dict[str, str]:
     FLOWGATE_TEST_OS / FLOWGATE_TEST_SHELL (0277 B0001 -> NR0003 §4 F3) let a TS branch at
     run time instead of guessing the host: the same cmd string is handed to cmd.exe on
     Windows and /bin/sh on POSIX, and until these existed a TS had no way to tell which.
-    Additive — existing TS documents are unaffected.
+    PYTEST_ADDOPTS disables pytest's cacheprovider for FlowGate-managed runs. The provider
+    creates ``pytest-cache-files-*`` beside ``.pytest_cache`` before its atomic rename;
+    a killed or contending process can strand those directories in the source worktree.
+    FlowGate does not rely on pytest's cross-run cache, so managed runs keep all transient
+    state in FLOWGATE_TEST_SCRATCH instead of writing cache scaffolding into source.
     """
     return {
         "FLOWGATE_TEST_PORT": str(port),
         "FLOWGATE_TEST_SCRATCH": str(scratch),
         "FLOWGATE_TEST_OS": test_command_service.current_os(),
         "FLOWGATE_TEST_SHELL": test_command_service.current_shell(),
+        "PYTEST_ADDOPTS": "-p no:cacheprovider",
     }
 
 

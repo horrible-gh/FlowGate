@@ -90,6 +90,7 @@ _EXCLUDED_DIR_SEGMENTS = frozenset({
     "node_modules", "__pycache__", "dist", "build", ".venv", "venv",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "htmlcov", ".tox", "site-packages",
 })
+_EXCLUDED_DIR_PREFIXES = ("pytest-cache-files-",)
 
 
 def is_excluded_path(path: str) -> bool:
@@ -100,6 +101,8 @@ def is_excluded_path(path: str) -> bool:
     if segments[0].startswith("."):
         return True
     if any(seg in _EXCLUDED_DIR_SEGMENTS for seg in segments):
+        return True
+    if any(seg.startswith(_EXCLUDED_DIR_PREFIXES) for seg in segments):
         return True
     return segments[-1].lower().endswith(_EXCLUDED_SUFFIXES)
 
