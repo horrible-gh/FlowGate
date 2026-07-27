@@ -275,9 +275,10 @@
              dialog silently offered fewer actions. -->
         <GitFinalizeAxis
           v-if="gitFin.action_axes"
-          v-model="gitChoice"
+          v-model="gitNormalChoice"
           :axes="gitFin.action_axes"
           name="ab-git-fin"
+          :disabled="gitArchiveSelected"
           compact
         />
         <template v-else>
@@ -285,9 +286,9 @@
           v-for="c in gitFin.choices"
           :key="c"
           class="ab-git-choice"
-          :class="{ sel: gitChoice === c }"
+          :class="{ sel: gitNormalChoice === c }"
         >
-          <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitChoice" />
+          <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitNormalChoice" :disabled="gitArchiveSelected" />
           <span class="ab-git-choice-label">{{ gitActionLabel(c) }}</span>
           <span class="ab-git-choice-desc">{{ gitActionDesc(c) }}</span>
         </label>
@@ -301,15 +302,34 @@
               v-for="c in gitFin.aux_choices"
               :key="c"
               class="ab-git-choice ab-git-choice--aux"
-              :class="{ sel: gitChoice === c }"
+              :class="{ sel: gitNormalChoice === c }"
             >
-              <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitChoice" />
+              <input type="radio" name="ab-git-fin-action" :value="c" v-model="gitNormalChoice" :disabled="gitArchiveSelected" />
               <span class="ab-git-choice-label">{{ gitActionLabel(c) }}</span>
               <span class="ab-git-choice-desc">{{ gitActionDesc(c) }}</span>
             </label>
           </template>
         </div>
         </template>
+
+        <!-- sqyjx6bt v4: archive is outside the two axes and disables them when
+             selected. The approval dialog intentionally keeps the compact form. -->
+        <section v-if="gitFin.archive_action" class="ab-git-keep-zone">
+          <div class="ab-git-keep-hd">
+            <span><AppIcon name="archive" /> {{ t('main.git_finalize.archive.zone_title') }}</span>
+            <span><AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.archive.approve_reversible') }}</span>
+          </div>
+          <label class="ab-git-keep-choice" :class="{ sel: gitArchiveSelected }">
+            <input v-model="gitArchiveSelected" type="checkbox" />
+            <span>
+              <strong>
+                {{ t('main.git_finalize.archive.choice') }}
+                <span class="ab-git-new-badge">{{ t('main.git_finalize.archive.new_badge') }}</span>
+              </strong>
+              <small>{{ t('main.git_finalize.archive.approve_desc') }}</small>
+            </span>
+          </label>
+        </section>
       </div>
     </ConfirmModal>
 
@@ -412,9 +432,12 @@ interface GitFinState {
   // 0331: additive axis contract — same object the document panel renders, so
   // the approval dialog offers exactly the same six choices.
   action_axes?: FinalizeAxes | null
+  // 0339: separate overlay, deliberately not a fourth scope.
+  archive_action?: 'stash' | null
 }
 const gitFin = ref<GitFinState | null>(null)
-const gitChoice = ref<string>('')
+const gitNormalChoice = ref<string>('')
+const gitArchiveSelected = ref(false)
 const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
 // Show the choice only for an AC doc whose group slot is still actionable —
 // awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
@@ -443,8 +466,9 @@ async function fetchGitFin() {
       `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
     )
     gitFin.value = data.state
-    gitChoice.value = data.state.default_action || 'wait'
-    gitAuxOpen.value = !!data.state.aux_choices?.includes(gitChoice.value)
+    gitNormalChoice.value = data.state.default_action || 'wait'
+    gitArchiveSelected.value = false
+    gitAuxOpen.value = !!data.state.aux_choices?.includes(gitNormalChoice.value)
   } catch {
     gitFin.value = null // 403/404/500 — no git block, plain approve
   }
@@ -698,8 +722,8 @@ async function doApprove() {
     // it before approving and runs the finalize after — a git failure surfaces as
     // { git: { ok: false } } at HTTP 200 without reverting the approval.
     const body: Record<string, unknown> = { doc_id: props.docId, comment: null }
-    if (showGitFinalizeBlock.value && gitChoice.value) {
-      body.git_action = gitChoice.value
+    if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
+      body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
     }
     const res = await postRequest<any>(
       `/api/v1/documents/review_transitions/approve`,
@@ -724,6 +748,8 @@ async function doApprove() {
       showToast(t('main.git_finalize.pushed_toast'), 'success')
     } else if (git?.result?.status === 'waiting') {
       showToast(t('main.git_finalize.waiting_toast'), 'success')
+    } else if (git?.result?.status === 'archived') {
+      showToast(t('main.git_finalize.archive.success'), 'success')
     }
     if (git) {
       dispatchGitStatusEvent(git)
@@ -1156,6 +1182,79 @@ onBeforeUnmount(() => {
 }
 .ab-git-aux-toggle:hover {
   color: var(--primary);
+}
+
+/* sqyjx6bt v4 compact archive overlay for the final-approval dialog. */
+.ab-git-fin:has(.ab-git-keep-choice input:checked) :deep(.gf-axis-row) {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.ab-git-keep-zone {
+  margin-top: 8px;
+  padding: 9px 10px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  border-radius: var(--r, 8px);
+  background: rgba(255, 251, 235, 0.58);
+}
+.ab-git-keep-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+  color: #92400e;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.ab-git-keep-hd > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ab-git-keep-hd > span:last-child {
+  color: #b45309;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.ab-git-keep-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  border-radius: var(--r, 8px);
+  background: var(--surface, #fff);
+  cursor: pointer;
+}
+.ab-git-keep-choice.sel {
+  border-color: var(--warning, #d97706);
+  background: rgba(254, 243, 199, 0.5);
+}
+.ab-git-keep-choice input {
+  margin-top: 2px;
+  accent-color: var(--warning, #d97706);
+}
+.ab-git-keep-choice strong,
+.ab-git-keep-choice small {
+  display: block;
+}
+.ab-git-keep-choice strong {
+  font-size: 0.76rem;
+}
+.ab-git-keep-choice small {
+  margin-top: 2px;
+  color: var(--text-m, #64748b);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+.ab-git-new-badge {
+  display: inline-flex;
+  margin-left: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 0.6rem;
 }
 </style>
 
