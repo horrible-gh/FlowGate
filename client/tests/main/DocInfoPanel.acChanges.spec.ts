@@ -27,14 +27,12 @@ const CHANGES = [
 ]
 
 // 0325 TR0007 rev1 — the per-file diff the [변경사항 열기] viewer reads. Matched BEFORE
-// the changes list because both URLs live under /git/groups/{gid}/.
+// the changes list because both URLs live under /git/groups/{gid}/. flowgate.default.0329
+// NR0003: the server ships old/new file content (0326 NR0005 §4 contract), not hunks.
 const FILE_DIFF = {
-  binary: false, oversized: false, untracked: false, truncated: false,
-  insertions: 1, deletions: 0,
-  hunks: [{
-    old_start: 1, old_lines: 1, new_start: 1, new_lines: 2, section: '',
-    lines: [{ kind: 'add', old_lineno: null, new_lineno: 2, text: 'added line' }],
-  }],
+  status: 'M',
+  old: { exists: true, binary: false, truncated: false, size: 9, content: 'kept line\n' },
+  new: { exists: true, binary: false, truncated: false, size: 21, content: 'kept line\nadded line\n' },
 }
 
 function routeRequest(changes: unknown[] = CHANGES, finalize = { ahead_count: 2, behind_count: 0 }) {
