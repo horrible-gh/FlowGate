@@ -268,7 +268,7 @@ describe('ContinuousWorkDialog', () => {
     // One row per NOT-done step (the 2 done steps — N, NR — are excluded): T, TR, TS, TSR = 4.
     const rows = document.querySelectorAll('.cwd-override-row')
     expect(rows).toHaveLength(4)
-    const selects = document.querySelectorAll('.cwd-override-select') as NodeListOf<HTMLSelectElement>
+    const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     // 0317 T0015: each step is pre-selected to the header default provider (not a blank option).
     expect(selects[0].value).toBe('aip_fable')
     expect(selects[3].value).toBe('aip_fable')
