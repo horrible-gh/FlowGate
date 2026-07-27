@@ -117,9 +117,11 @@ describe('FileTreeNode — 변경 내용 보기', () => {
 
     const labels = menuLabels()
     expect(labels).toContain('main.file_tree_node.view_changes')
-    // read-only mode still hides the mutating entries — unchanged by this feature.
-    expect(labels).not.toContain('main.file_tree_node.download')
+    // read-only mode still hides the MUTATING entries — unchanged by this feature.
+    // 0327 T0004 moved download out of that set (it is a read, offered in every view
+    // and resolved against the group's own worktree), so it is expected here now.
     expect(labels).not.toContain('common.delete')
+    expect(labels).toContain('main.file_tree_node.download')
   })
 
   it('never offers the entry on a folder row', async () => {
