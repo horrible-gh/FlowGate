@@ -677,3 +677,45 @@ def test_router_envelope_and_status(env):
     r2 = client.post("/flowgate/api/v1/remote/read", json={"path": "app/main.py"})
     assert r2.status_code == 401
     assert r2.json()["error"]["code"] == "unauthorized"
+
+
+# ── Step-type resolution (0334 R0001 / NR0003 발견 7) ─────────────────────────
+
+def _step_type_for(monkeypatch, *, doc_type, head_type):
+    """Resolve a doc_ref's step type against a stubbed sequence + document store."""
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.services import remote_tool_service
+
+    monkeypatch.setattr(
+        db_documents, "get_by_id", lambda _d: {"type_code": doc_type} if doc_type else None)
+    monkeypatch.setattr(
+        db_wfseq, "get_sequence_for_member_doc",
+        lambda _d: {"id": 1} if head_type else None)
+    monkeypatch.setattr(db_wfseq, "get_sequence_by_doc_id", lambda _d: None)
+    monkeypatch.setattr(
+        db_wfseq, "get_effective_head", lambda _s: {"type": head_type} if head_type else None)
+    return remote_tool_service._worker_token_step_type({"doc_ref": "d1"})
+
+
+def test_chat_doc_keeps_its_own_type_over_the_sequence_head(monkeypatch):
+    # A CH is auto-completed on creation, so the effective head is already the NEXT
+    # slot. Following it would give a chat token source write/remove while its mention
+    # promises read/search only — the worker acts on the mention it was handed.
+    assert _step_type_for(monkeypatch, doc_type="CH", head_type="T") == "CH"
+
+    from modules.flow_gate.services import remote_tool_service
+    assert remote_tool_service._scopes_for_worker_token(
+        {"action_scope": "edit", "doc_ref": "d1"}) == ["read", "grep"]
+
+
+def test_non_chat_doc_still_follows_the_sequence_head(monkeypatch):
+    assert _step_type_for(monkeypatch, doc_type="R", head_type="TR") == "TR"
+
+
+def test_doc_type_is_the_fallback_when_there_is_no_sequence(monkeypatch):
+    assert _step_type_for(monkeypatch, doc_type="TR", head_type=None) == "TR"
+
+
+def test_unknown_doc_resolves_to_no_step_type(monkeypatch):
+    assert _step_type_for(monkeypatch, doc_type=None, head_type=None) is None

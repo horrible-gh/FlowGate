@@ -52,6 +52,9 @@ _logger = logging.getLogger(__name__)
 OPS = ("read", "write", "grep", "glob", "remove")
 _WORKER_GRANT_PREFIX = "worker_"
 _MUTATING_WORK_TYPES = {"T", "TR"}
+# Types whose own document type decides their source scope, ignoring any workflow
+# sequence they happen to sit in (see _worker_token_step_type).
+_SELF_SCOPED_WORK_TYPES = {"CH"}
 
 # 0279 T0005 (NR0003 원인 2): directory names never worth walking for a source
 # scan. `server/.venv` alone dominated the measured 40s grep — it is dependency
@@ -297,11 +300,23 @@ def _scopes_for_worker_token(token_rec: dict) -> list[str]:
 
 
 def _worker_token_step_type(token_rec: dict) -> Optional[str]:
-    """Resolve the workflow head type for a next-step worker token."""
+    """Resolve the workflow head type for a next-step worker token.
+
+    A chat document answers for itself. Chat is auto-completed the moment it is
+    created, so when a CH sits in a workflow sequence get_effective_head() already
+    points at the NEXT pending slot — and if that slot is T/TR the chat token would
+    inherit source write/remove, while its mention says read/search only (0334
+    NR0003 발견 7). The worker acts on the mention it was given, so the scope has to
+    match the promise: a CH doc_ref is pinned to its own type here.
+    """
     doc_ref = token_rec.get("doc_ref")
     if not doc_ref:
         return None
     try:
+        doc = db_documents.get_by_id(doc_ref)
+        own_type = str(doc["type_code"]) if doc and doc.get("type_code") else None
+        if own_type in _SELF_SCOPED_WORK_TYPES:
+            return own_type
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
         if seq is None:
             seq = db_wfseq.get_sequence_by_doc_id(doc_ref)
@@ -309,12 +324,9 @@ def _worker_token_step_type(token_rec: dict) -> Optional[str]:
             head = db_wfseq.get_effective_head(seq["id"])
             if head and head.get("type"):
                 return str(head["type"])
-        doc = db_documents.get_by_id(doc_ref)
-        if doc and doc.get("type_code"):
-            return str(doc["type_code"])
+        return own_type
     except Exception:
         return None
-    return None
 
 
 # ── ③ Path safety / ④ request validity ───────────────────────────────────────
