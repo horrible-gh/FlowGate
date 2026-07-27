@@ -60,7 +60,7 @@ function mountPanel(typeCode: string, groupId: string | null = 'flowgate.default
       nextStepIndex: null,
       collapsed: false,
     },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], stubs: { teleport: true } },
   })
 }
 
@@ -173,13 +173,13 @@ describe('DocInfoPanel source-change summary (0325 R0001)', () => {
     expect(open.exists()).toBe(true)
     expect(open.text()).toContain('Open changes')
     // Nothing is fetched or mounted until it is actually clicked.
-    expect(wrapper.find('.gcd-dialog').exists()).toBe(false)
+    expect(wrapper.find('.modal-box.document-modal.document-modal--edit').exists()).toBe(false)
     expect(getRequest).not.toHaveBeenCalledWith(expect.stringContaining('/diff?path='))
 
     await open.trigger('click')
     await flushPromises()
 
-    const dialog = wrapper.find('.gcd-dialog')
+    const dialog = wrapper.find('.modal-box.document-modal.document-modal--edit')
     expect(dialog.exists()).toBe(true)
     // The viewer gets the file set the summary already loaded — no second /changes call.
     expect(wrapper.findAll('.gcd-file')).toHaveLength(CHANGES.length)
@@ -189,7 +189,7 @@ describe('DocInfoPanel source-change summary (0325 R0001)', () => {
     // Closing returns to the approval screen with the summary still in place.
     await wrapper.find('.gcd-back').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.gcd-dialog').exists()).toBe(false)
+    expect(wrapper.find('.modal-box.document-modal.document-modal--edit').exists()).toBe(false)
     expect(wrapper.find('.dip-chg-headline').exists()).toBe(true)
   })
 
