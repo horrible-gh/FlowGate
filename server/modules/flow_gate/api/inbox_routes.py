@@ -2161,8 +2161,14 @@ def _continuation_self_chain(
     #  • Copy-mention semi-manned run (no engine worker to re-spawn): keep minting next_token so
     #    the human's external AI self-continues exactly as before.
     from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-    if _ai_invoke.has_active_run(token_rec.get("group_id")):
-        _ai_invoke.request_auto_resume(token_rec.get("group_id"), {
+    _continuation_group = token_rec.get("group_id")
+    if _ai_invoke.has_active_run(_continuation_group):
+        # Snapshot the current hop before queueing the next one. The worker will emit its
+        # ordinary ai_invoke_finished event before the replacement worker can start, so the
+        # browser needs this explicit handoff marker to keep the chain-level monitor live
+        # across that intentional run-id boundary (0345 B0001).
+        _handoff_status = _ai_invoke.get_active_status(_continuation_group)
+        _ai_invoke.request_auto_resume(_continuation_group, {
             "doc_ref": spine_doc_ref,
             "target_seq": target_seq,
             "review_mode": review_mode,
@@ -2178,7 +2184,50 @@ def _continuation_self_chain(
         # No next_token: the worker stops after this hop; the engine re-spawns the next hop's
         # worker (re-resolving its provider) once this one settles. The step just completed is
         # already auto-approved above, so advance_workflow at re-spawn finds the next head.
+        envelope["continuation_pending"] = True
         envelope["continuation_respawn"] = True
+        # Reuse the existing lifecycle channel so deployed clients that do not know the
+        # marker simply refresh the same running run, while MainPanel can distinguish this
+        # from a real start through continuation_pending. Best-effort: the queue above is the
+        # source of truth and an SSE delivery failure must never stop unattended work.
+        try:
+            from modules.flow_gate.api.v1.events.publisher import (
+                FlowEvent,
+                broadcast_event_threadsafe,
+            )
+            from modules.flow_gate.api.v1.events.event_types import EventType
+
+            _handoff_run_id = _handoff_status.get("run_id")
+            if _handoff_run_id:
+                broadcast_event_threadsafe(FlowEvent(
+                    event_type=EventType.AI_INVOKE_STARTED,
+                    payload={
+                        "run_id": _handoff_run_id,
+                        "group_id": _continuation_group,
+                        "doc_ref": _handoff_status.get("doc_ref") or spine_doc_ref,
+                        "mode": "continuous",
+                        "status": "running",
+                        "docs_target": _handoff_status.get("docs_target"),
+                        "docs_reached_so_far": _handoff_status.get("docs_reached_so_far"),
+                        "provider": _handoff_status.get("provider"),
+                        "attempt_no": _handoff_status.get("attempt_no"),
+                        "started_at": _handoff_status.get("started_at"),
+                        "elapsed_ms": _handoff_status.get("elapsed_ms"),
+                        "continuation_pending": True,
+                        "continuation_completed_doc_id": canonical_doc_id,
+                        "continuation_completed_item_seq": completed_seq,
+                        "continuation_target_seq": target_seq,
+                    },
+                    audience="*",
+                    project=project,
+                    group_id=_continuation_group,
+                    doc_id=spine_doc_ref,
+                ))
+        except Exception as _handoff_exc:  # noqa: BLE001 — presentation signal only
+            import LogAssist.log as logger
+            logger.warning(
+                f"[inbox] continuation handoff signal failed (ignored): {_handoff_exc}"
+            )
         return envelope
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
