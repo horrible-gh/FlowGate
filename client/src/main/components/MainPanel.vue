@@ -786,6 +786,7 @@
          See flowgate.default.0310.0003-NR. -->
     <ReviewActionBar
       v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
+      :key="`${activeTabId}:${reviewActionBarGitEpoch}`"
       :mode="getActionBarMode(activeTabId)!"
       :doc-id="activeTabId"
       :project-id="exposedValue(docHeaderRefs[activeTabId]?.docProjectId) ?? ''"
@@ -1368,6 +1369,10 @@ const gitArchiveProjectId = ref('')
 const gitArchives = ref<GitArchiveItem[]>([])
 const gitArchivePicked = ref<string[]>([])
 const gitArchivePurgeConfirmed = ref(false)
+// A standalone archive can happen while the AC tab remains mounted. Remounting
+// its action bar forces the approval-preview fetch to discard the pre-archive
+// git_action before the next click.
+const reviewActionBarGitEpoch = ref(0)
 
 const gitArchiveCopies: Record<string, Record<string, string>> = {
   ko: {
@@ -1434,6 +1439,7 @@ async function onGitArchived(groupId: string) {
   const projectId = gitArchiveProject(groupId)
   if (!projectId) return
   gitArchiveProjectId.value = projectId
+  reviewActionBarGitEpoch.value += 1
   await refreshAfterGitArchive()
 }
 

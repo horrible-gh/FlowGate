@@ -542,9 +542,11 @@ def _git_archive_key(group_id: str) -> str:
 
 
 def _git_archive_ref_segment(group_id: str) -> str:
-    # sqyjx6bt v4 exposes refs/flowgate/archive/{group}/..., where ``group`` is
-    # the terminal group number (for example 0339), not the qualified doc group.
-    group_segment = (group_id or "").rsplit(".", 1)[-1]
+    # Refs live in the project-wide base checkout, so the terminal number alone
+    # is not unique (default.0001 and fileforge.0001 would overwrite each other).
+    # Drop only the project prefix and retain module + group number.
+    parts = (group_id or "").split(".")
+    group_segment = "_".join(parts[1:] if len(parts) > 1 else parts)
     segment = re.sub(r"[^A-Za-z0-9._-]+", "_", group_segment).strip(".")
     while ".." in segment:
         segment = segment.replace("..", "._.")
@@ -630,6 +632,31 @@ def _git_archive_run(
     return proc
 
 
+def _git_archive_existing_ref(base_root: pathlib.Path, ref_name: str) -> Optional[str]:
+    """Return an existing partial-archive ref without treating it as foreign data."""
+    from modules.flow_gate.services import git_service
+
+    proc = git_service._run_git(
+        ["show-ref", "--verify", "--quiet", ref_name], cwd=base_root
+    )
+    if proc.returncode == 1:
+        return None
+    if proc.returncode != 0:
+        _git_archive_error(
+            500,
+            "archive_ref_failed",
+            f"could not validate archive ref '{ref_name}': "
+            f"{git_service._last_line(proc.stderr)}",
+        )
+    resolved = _git_archive_run(
+        ["rev-parse", "--verify", ref_name],
+        cwd=base_root,
+        code="archive_ref_failed",
+        message=f"could not resolve partial archive ref '{ref_name}'",
+    )
+    return (resolved.stdout or "").strip() or None
+
+
 def _emit_git_archive_refresh(project_id: str, group_id: str, operation: str) -> None:
     """Best-effort convergence for group tree, Git slot list, and open tabs."""
     try:
@@ -681,13 +708,22 @@ def _archive_group_git(
 
     existing = _git_archive_record(group_id)
     state = git_service.db_git.get_state(group_id)
-    if (
-        existing
-        and existing.get("status") == "archived"
-        and (state is None or not state.get("worktree_registered"))
-        and group.get("deleted_at")
-    ):
+    if existing and existing.get("status") == "archived":
+        if state is not None and state.get("worktree_registered"):
+            _git_archive_error(
+                409,
+                "archive_already_exists",
+                f"group '{group_id}' already has a completed archive; "
+                "restore or permanently delete it before archiving new work",
+            )
         return {"ok": True, "result": {**existing, "idempotent": True}}
+    if existing and existing.get("status") != "archiving":
+        _git_archive_error(
+            409,
+            "invalid_state",
+            f"archive for '{group_id}' has unsupported status "
+            f"'{existing.get('status') or 'none'}'",
+        )
 
     # A fresh request must be a real finalize choice.  An interrupted request
     # already has durable refs and resumes below without taking a second stash.
@@ -706,6 +742,22 @@ def _archive_group_git(
     try:
         record = _git_archive_record(group_id)
         state = git_service.db_git.get_state(group_id)
+        if record and record.get("status") == "archived":
+            if state is not None and state.get("worktree_registered"):
+                _git_archive_error(
+                    409,
+                    "archive_already_exists",
+                    f"group '{group_id}' already has a completed archive; "
+                    "restore or permanently delete it before archiving new work",
+                )
+            return {"ok": True, "result": {**record, "idempotent": True}}
+        if record and record.get("status") != "archiving":
+            _git_archive_error(
+                409,
+                "invalid_state",
+                f"archive for '{group_id}' has unsupported status "
+                f"'{record.get('status') or 'none'}'",
+            )
         if record is None:
             if state is None or not state.get("worktree_registered"):
                 _git_archive_error(
@@ -723,6 +775,11 @@ def _archive_group_git(
             ref_segment = _git_archive_ref_segment(group_id)
             head_ref = f"refs/flowgate/archive/{ref_segment}/head"
             stash_ref = f"refs/flowgate/archive/{ref_segment}/stash"
+            # A module-qualified ref with no archive record can only be this
+            # group's interrupted transaction.  Re-pin head to the current
+            # branch and carry a completed partial stash forward instead of
+            # permanently blocking the group or deleting preserved bytes.
+            partial_stash_sha = _git_archive_existing_ref(base_root, stash_ref)
             _git_archive_run(
                 ["update-ref", head_ref, head_sha], cwd=base_root,
                 code="archive_ref_failed", message="could not preserve the group branch",
@@ -735,7 +792,14 @@ def _archive_group_git(
             changed_entries = [
                 item for item in (status_proc.stdout or "").split("\0") if item
             ]
-            stash_sha: Optional[str] = None
+            stash_sha: Optional[str] = partial_stash_sha
+            if partial_stash_sha and changed_entries:
+                _git_archive_error(
+                    409,
+                    "archive_retry_conflict",
+                    "a partial archive stash and newer worktree changes both exist; "
+                    "commit or otherwise clear the newer changes before retrying",
+                )
             if changed_entries:
                 _git_archive_run(
                     [
@@ -783,6 +847,7 @@ def _archive_group_git(
                 "project_id": project_id,
                 "group_id": group_id,
                 "branch": branch,
+                "git_status": state.get("status") or "awaiting_choice",
                 "base_branch": base_branch,
                 "reason": re.sub(r"\s+", " ", reason or "").strip()[:500] or None,
                 "actor_user_id": actor_user_id,
@@ -809,7 +874,17 @@ def _archive_group_git(
                     "the archive refs are safe, but the worktree could not be released; retry",
                 )
 
-        db_groups.update(group_id, {"deleted_at": now_iso()})
+        # An archived slot is inactive. Keeping awaiting_choice here made an AC
+        # approval race a stale git_action into the precheck and fail with 422.
+        # The pre-archive status is retained in the archive record for restore.
+        if git_service.db_git.get_state(group_id) is not None:
+            git_service.db_git.set_status(group_id, "none")
+
+        # Do not soft-delete the group row. The document tree fetches project
+        # documents independently of active groups, so deleting only the group
+        # turned every retained document into a visible "Uncategorized" orphan.
+        # Final-approved groups already use the explorer's normal hidden toggle;
+        # the archive record and inactive Git slot are the archive source of truth.
         record["status"] = "archived"
         _save_git_archive_record(record, actor_user_id)
     finally:
@@ -832,6 +907,7 @@ def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> d
     cfg = git_service.db_git.get_config(project_id)
     if cfg is None or not cfg.get("enabled"):
         _git_archive_error(409, "invalid_state", "git integration is not enabled")
+    state = git_service.db_git.get_state(group_id)
 
     holder = f"archive-restore:{uuid.uuid4()}"
     if not git_service._acquire_lock(project_id, holder):
@@ -895,6 +971,14 @@ def _restore_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> d
                 )
 
         git_service.db_git.register_worktree(group_id, project_id, branch)
+        restored_status = (
+            record.get("git_status")
+            or (state or {}).get("status")
+            or "awaiting_choice"
+        )
+        git_service.db_git.set_status(group_id, restored_status)
+        # Backward compatibility for archives created before group soft deletion
+        # was removed: restoring an old record also repairs its tree membership.
         db_groups.update(group_id, {"deleted_at": None})
         git_service._run_git(["update-ref", "-d", head_ref], cwd=base_root)
         if stash_ref:
@@ -923,9 +1007,9 @@ def _purge_group_git_archive(group_id: str, actor_user_id: Optional[str]) -> dic
     if record is None or record.get("status") != "archived":
         _git_archive_error(404, "archive_not_found", f"archive for '{group_id}' not found")
     group = db_groups.get_by_id(group_id)
-    if group is None or not group.get("deleted_at"):
+    if group is None:
         _git_archive_error(
-            409, "invalid_state", "only a hidden archived group can be permanently deleted",
+            409, "invalid_state", "the archived group no longer exists",
         )
     project_id = record.get("project_id") or group.get("project_id")
     state = git_service.db_git.get_state(group_id)
