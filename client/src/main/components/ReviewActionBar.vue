@@ -500,6 +500,16 @@ function dispatchGitStatusEvent(git: any) {
   }))
 }
 
+function matchesGitGroup(e: Event): boolean {
+  const detail = (e as CustomEvent).detail || {}
+  const eventGroup = detail.group_id || detail.groupId
+  return !eventGroup || eventGroup === props.groupId
+}
+
+function onGitStatusChanged(e: Event) {
+  if (matchesGitGroup(e)) void fetchGitFin()
+}
+
 watch([() => props.docId, () => props.groupId, isAcDoc], fetchGitFin, { immediate: true })
 
 const currentMode = computed(() => props.mode ?? 'review')
@@ -708,6 +718,28 @@ async function fetchServerReviewStatus(): Promise<string | null> {
   }
 }
 
+function isGitInvalidRequest(e: any): boolean {
+  return (
+    e?.response?.status === 422
+    && e?.response?.data?.error?.code === 'invalid_request'
+  )
+}
+
+async function postApproveWithGitRetry(body: Record<string, unknown>) {
+  const url = `/api/v1/documents/review_transitions/approve`
+  try {
+    return await postRequest<any>(url, body)
+  } catch (e: any) {
+    if (!body.git_action || !isGitInvalidRequest(e)) throw e
+
+    // The slot can be archived by another tab/session between preview and click.
+    // Converge the local choice state, then retry the approval exactly once
+    // without the stale ride-along action.
+    await fetchGitFin()
+    return postRequest<any>(url, { doc_id: props.docId, comment: null })
+  }
+}
+
 function onApproveClick() {
   if (!canApprove.value) return
   showApproveConfirm.value = true
@@ -725,10 +757,7 @@ async function doApprove() {
     if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
       body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
     }
-    const res = await postRequest<any>(
-      `/api/v1/documents/review_transitions/approve`,
-      body,
-    )
+    const res = await postApproveWithGitRetry(body)
     const git = (res.data as any)?.git
     if (git && git.ok === false) {
       // Approval stood; only the git post-step failed — say so, don't block.
@@ -908,10 +937,16 @@ function onOutsideClick() {
 // NR0011), so nothing floats over this bar and the measuring is gone.
 onMounted(() => {
   window.addEventListener('click', onOutsideClick)
+  window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
+  window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
+  window.addEventListener('fg:git_status_open', onGitStatusChanged)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', onOutsideClick)
+  window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
+  window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
+  window.removeEventListener('fg:git_status_open', onGitStatusChanged)
 })
 </script>
 
@@ -1257,6 +1292,5 @@ onBeforeUnmount(() => {
   font-size: 0.6rem;
 }
 </style>
-
 
 
