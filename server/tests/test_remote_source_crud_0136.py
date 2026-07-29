@@ -50,7 +50,7 @@ def _tool_section(text: str) -> str:
 def test_task_report_mention_names_the_full_tool_set():
     section = _tool_section(_mention())
 
-    assert "도구: read, grep, glob, write, remove" in section
+    assert "도구: read, grep, glob, stat, write, patch, remove" in section
     assert "Authorization: Bearer raw-token-0136" in section
     # The one thing the worker must know before it can look anything up.
     assert "GET http://localhost:8089/flowgate/api/v1/help/tools" in section

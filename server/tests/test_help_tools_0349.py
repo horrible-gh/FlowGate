@@ -47,8 +47,8 @@ def test_list_requires_bearer_and_reuses_error_envelope(monkeypatch):
 @pytest.mark.parametrize(
     "token_rec, expected_kind, expected_names",
     [
-        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "write", "remove"]),
-        ({"project": "flowgate", "action_scope": "review"}, "read", ["read", "grep", "glob"]),
+        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "write", "patch", "remove"]),
+        ({"project": "flowgate", "action_scope": "review"}, "read", ["read", "grep", "glob", "stat"]),
         ({"project": "flowgate", "action_scope": "test_run"}, "none", []),
     ],
 )
