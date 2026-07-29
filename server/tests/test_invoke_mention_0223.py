@@ -141,18 +141,20 @@ class TestConversationMentionLookupBlock:
         )
 
     def test_source_search_endpoints_are_offered(self, monkeypatch):
+        # 0349 TR-2: the tools are named and their usage is one help call away, instead of
+        # one request-format block per tool inlined here.
         text = self._mention(monkeypatch)
-        assert "POST http://h:1/api/v1/remote/read" in text
-        assert "POST http://h:1/api/v1/remote/grep" in text
-        assert "POST http://h:1/api/v1/remote/glob" in text
+        assert "도구: read, grep, glob" in text
+        assert "GET http://h:1/api/v1/help/tools" in text
+        assert "http://h:1/api/v1/help/tools/{name}" in text
 
     def test_source_block_stays_read_only(self, monkeypatch):
         # The chat token resolves to ["read", "grep"]; advertising a mutating call
         # would hand the worker an instruction its grant refuses.
         text = self._mention(monkeypatch)
-        assert "/remote/write" not in text
-        assert "/remote/remove" not in text
-        assert "read/search only" in text
+        tool_section = text.split("## Remote project source CRUD")[1].split("\n\n## ")[0]
+        assert "write" not in tool_section
+        assert "remove" not in tool_section
 
     def test_document_search_is_pinned_to_the_token_project(self, monkeypatch):
         text = self._mention(monkeypatch)
@@ -173,7 +175,7 @@ class TestConversationMentionLookupBlock:
 
     def test_local_source_mode_drops_source_apis_but_keeps_document_search(self, monkeypatch):
         text = self._mention(monkeypatch, remote_mode=False)
-        assert "/remote/read" not in text
+        assert "help/tools" not in text
         assert "Remote project source CRUD" not in text
         assert "source root" not in text
         assert "GET http://h:1/api/v1/search/documents?q=<keyword>&project=p" in text
@@ -184,7 +186,7 @@ class TestConversationMentionLookupBlock:
         # The lookup block goes BEFORE the submit block, so "search, then submit" is
         # both the reading order and the required order (a submit consumes the token).
         text = self._mention(monkeypatch, remote_mode=remote_mode)
-        assert text.index("remote/read" if remote_mode else "search/documents") < text.index("Submit: POST")
+        assert text.index("help/tools" if remote_mode else "search/documents") < text.index("Submit: POST")
         assert _submitted_body(text)["edit_reason"] == "worker_self"
         assert text.rstrip().endswith("}")
 

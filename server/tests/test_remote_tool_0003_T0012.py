@@ -219,7 +219,7 @@ def test_invalid_token_401(env):
 
 def test_worker_token_lazily_gets_remote_grant(env, monkeypatch):
     from modules.flow_gate.services import remote_tool_service
-    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "TR")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TR", False))
     worker_token = "raw-worker-token-0136"
     env.make_worker_token(worker_token, action_scope="edit")
 
@@ -263,7 +263,7 @@ def test_worker_remote_grant_expires_when_backing_token_consumed(env):
 
 def test_next_step_worker_token_gets_crud_for_task_report_head(env, monkeypatch):
     from modules.flow_gate.services import remote_tool_service
-    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "TR")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TR", False))
     worker_token = "raw-next-token-0136"
     env.make_worker_token(worker_token, token_id="tok_next_tr", action_scope="new")
 
@@ -279,7 +279,7 @@ def test_next_step_worker_token_gets_crud_for_task_report_head(env, monkeypatch)
 
 def test_next_step_worker_token_is_read_only_for_investigation_head(env, monkeypatch):
     from modules.flow_gate.services import remote_tool_service
-    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "NR")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("NR", False))
     worker_token = "raw-next-token-readonly-0136"
     env.make_worker_token(worker_token, token_id="tok_next_nr", action_scope="new")
 
@@ -295,7 +295,7 @@ def test_next_step_worker_token_is_read_only_for_investigation_head(env, monkeyp
 
 def test_edit_worker_token_is_read_only_for_non_task_head(env, monkeypatch):
     from modules.flow_gate.services import remote_tool_service
-    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "CH")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("CH", False))
     worker_token = "raw-edit-token-readonly-0179"
     env.make_worker_token(worker_token, token_id="tok_edit_ch", action_scope="edit")
 
@@ -332,7 +332,7 @@ def test_existing_worker_grant_scopes_are_reconciled_for_non_task_edit(env, monk
     from modules.flow_gate.db import remote_tool_grants as db_grants
     from modules.flow_gate.services import remote_tool_service, token_service
 
-    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type", lambda _rec: "CH")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("CH", False))
     worker_token = "raw-existing-edit-token-0179"
     env.make_worker_token(worker_token, token_id="tok_existing_edit_ch", action_scope="edit")
 
@@ -721,42 +721,32 @@ def test_path_invalid_values_422(env, operation, extra, bad_path):
 # not prove the copied body is accepted, so run the emitted JSON through the real
 # handler. `step_type` covers both the mutating (T/TR) and read-only (N/NR) sections.
 
-def _mention_example(step_type: str, operation: str) -> dict:
-    """Parse the request-body JSON the worker mention prints under `POST .../remote/{op}`."""
-    import json as _json_mod
-    from modules.flow_gate.services import mention_service
+def _worker_example(step_type: str, operation: str) -> dict:
+    """The request body a worker on this step is handed for `{operation}`.
 
-    text = mention_service.build_mention(
-        project=PROJECT_ID,
-        module="default",
-        group="0003",
-        parent_type="T" if step_type == "TR" else "N",
-        parent_doc_number="T0012" if step_type == "TR" else "N0011",
-        parent_title="계약 확인",
-        parent_doc_id="R0001",
-        head_type=step_type,
-        head_status="pending",
-        scratch_dir="",
-        raw_token=RAW_TOKEN,
-        api_base_url="http://localhost:8089/flowgate/api/v1",
+    0349 TR-2: the mention no longer prints request bodies — it names the tools and points
+    at GET /help/tools/{name}, which serves this example. So the copy path being tested is
+    now help → worker, and the example is read from the same catalog that endpoint renders
+    (tool_registry), for the same reason as before: whatever the worker is handed must be
+    accepted verbatim by the live API, not merely look plausible.
+    """
+    import json as _json_mod
+    from modules.flow_gate.services import tool_registry
+
+    kind, _reason = tool_registry.kind_for_step("new", step_type)
+    assert operation in tool_registry.tool_names(kind), (
+        f"{operation} is not offered to a {step_type} step; the example would never be read"
     )
-    start = text.index("{", text.index(f"/remote/{operation}"))
-    depth = 0
-    for i, ch in enumerate(text[start:], start):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return _json_mod.loads(text[start:i + 1])
-    raise AssertionError(f"no closing brace for the {operation} example body")
+    detail = tool_registry.build_tool_detail(operation, "ko", "http://localhost:8089/flowgate/api/v1")
+    # Round-trip through JSON: the worker copies serialized text, not a Python dict.
+    return _json_mod.loads(_json_mod.dumps(detail["example_request"]["body"]))
 
 
 @pytest.mark.parametrize("step_type", ["TR", "NR"])
 @pytest.mark.parametrize("operation", ["grep", "glob"])
-def test_mention_example_body_is_accepted_verbatim(env, step_type, operation):
+def test_help_example_body_is_accepted_verbatim(env, step_type, operation):
     env.make_grant(["grep"])
-    body = _mention_example(step_type, operation)
+    body = _worker_example(step_type, operation)
 
     assert "path" not in body, f"{operation} example still sends a path key: {body!r}"
     status, payload = _call(operation, body)
@@ -830,3 +820,27 @@ def test_doc_type_is_the_fallback_when_there_is_no_sequence(monkeypatch):
 
 def test_unknown_doc_resolves_to_no_step_type(monkeypatch):
     assert _step_type_for(monkeypatch, doc_type=None, head_type=None) is None
+
+# ── TR-1 TSR worker-token scope expansion (0349 T0008) ─────────────────────
+
+@pytest.mark.parametrize("action_scope", ["new", "edit"])
+def test_next_step_worker_token_gets_crud_for_tsr_head(monkeypatch, action_scope):
+    from modules.flow_gate.services import remote_tool_service
+
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", lambda _rec: ("TSR", False))
+    assert remote_tool_service._scopes_for_worker_token({
+        "action_scope": action_scope,
+        "doc_ref": "flowgate.default.0349.0001-R",
+    }) == ["read", "write", "grep", "remove"]
+
+
+def test_test_run_token_still_gets_no_remote_grant(monkeypatch):
+    from modules.flow_gate.services import remote_tool_service
+
+    def unexpected(_rec):
+        raise AssertionError("test_run scope must not resolve or receive a source grant")
+    monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", unexpected)
+    assert remote_tool_service._scopes_for_worker_token({
+        "action_scope": "test_run",
+        "doc_ref": "flowgate.default.0349.0001-R",
+    }) == []

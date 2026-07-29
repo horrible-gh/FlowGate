@@ -9,10 +9,18 @@ Authentication required (Bearer token)
 GET /api/v1/help/question
 Authentication required (Bearer token)
 """
+import json
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from modules.flow_gate.db import documents as db_documents
+from modules.flow_gate.db import events as db_events
 from modules.flow_gate.db import templates as db_templates
+from modules.flow_gate import template_provision
+from modules.flow_gate.services import auth_outbound, remote_tool_service, tool_registry
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.help_url import help_url, outbound_api_base
 
@@ -86,6 +94,136 @@ def get_help_question(request: Request):
     })
 
 
+_logger = logging.getLogger(__name__)
+
+
+def _record_help_tools_event(
+    token_rec: dict,
+    *,
+    view: str,
+    tool: Optional[str],
+    kind: str,
+    locale: str,
+    source_mode: Optional[str],
+    http_status: int,
+) -> None:
+    """Best-effort audit for authenticated help views."""
+    doc_ref = token_rec.get("doc_ref")
+    if not doc_ref:
+        _logger.warning("Skipping help_tools_viewed event: authenticated token has no doc_ref")
+        return
+    try:
+        if db_documents.get_by_id(doc_ref) is None:
+            _logger.warning("Skipping help_tools_viewed event: document %s does not exist", doc_ref)
+            return
+        note = json.dumps(
+            {
+                "view": view,
+                "tool": tool,
+                "kind": kind,
+                "locale": locale,
+                "source_mode": source_mode,
+                "http_status": http_status,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        db_events.insert_event(
+            doc_id=doc_ref,
+            event_type="help_tools_viewed",
+            note=note,
+        )
+    except Exception:
+        _logger.warning("Failed to record help_tools_viewed event for %s", doc_ref, exc_info=True)
+
+
+def _tools_context(request: Request, locale: Optional[str]):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth, None, None
+    normalized_locale = template_provision.normalize_locale(
+        locale if locale is not None else request.headers.get("x-locale")
+    )
+    registry = tool_registry.resolve_registry(
+        auth,
+        auth.get("project"),
+        normalized_locale,
+    )
+    return auth, normalized_locale, registry
+
+
+@router.get("/help/tools")
+def get_help_tools(request: Request, locale: Optional[str] = None):
+    """Remote source tools available to this authenticated token."""
+    auth, normalized_locale, registry = _tools_context(request, locale)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    base_url = outbound_api_base()
+    payload = {
+        "ok": True,
+        "version": tool_registry.VERSION,
+        "base_url": base_url,
+        "locale": normalized_locale,
+        "kind": registry["kind"],
+        "source_mode": registry["source_mode"],
+        "reason": registry["reason"],
+        "detail_url": f"{base_url}/help/tools/{{name}}",
+        "tools": registry["tools"],
+        "notes": registry["notes"],
+    }
+    _record_help_tools_event(
+        auth,
+        view="list",
+        tool=None,
+        kind=registry["kind"],
+        locale=normalized_locale,
+        source_mode=registry["source_mode"],
+        http_status=200,
+    )
+    return JSONResponse(content=payload)
+
+
+@router.get("/help/tools/{name}")
+def get_help_tool(request: Request, name: str, locale: Optional[str] = None):
+    """Request contract and example for one remote source tool."""
+    auth, normalized_locale, registry = _tools_context(request, locale)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    if name not in remote_tool_service.OPS:
+        status = 404
+        response = auth_outbound._fail(status, f"Unknown tool: {name}")
+    elif name not in {item["name"] for item in registry["tools"]}:
+        status = 403
+        response = auth_outbound._fail(
+            status, f"Tool '{name}' is not available for this token"
+        )
+    else:
+        status = 200
+        base_url = outbound_api_base()
+        response = JSONResponse(content={
+            "ok": True,
+            "version": tool_registry.VERSION,
+            "base_url": base_url,
+            "locale": normalized_locale,
+            "kind": registry["kind"],
+            "tool": tool_registry.build_tool_detail(name, normalized_locale, base_url),
+            "notes": tool_registry.detail_notes(name, normalized_locale),
+        })
+
+    _record_help_tools_event(
+        auth,
+        view="detail",
+        tool=name,
+        kind=registry["kind"],
+        locale=normalized_locale,
+        source_mode=registry["source_mode"],
+        http_status=status,
+    )
+    return response
+
+
 @router.get("/help")
 def get_help():
     """Single entry point for API usage. Unauthenticated access allowed."""
@@ -123,6 +261,8 @@ def get_help():
             {"method": "POST", "path": "/workflow/{doc_id}/advance", "summary": "Advance to next step (number assignment + token issue + ment creation)", "auth": "bearer_token", "example": "/workflow/R016/advance"},
             {"method": "GET", "path": "/help/doc_type", "summary": "Document type code list", "auth": "bearer_token"},
             {"method": "GET", "path": "/help/question", "summary": "Query registration guide (register as document-bound query data, not a Q document)", "auth": "bearer_token"},
+            {"method": "GET", "path": "/help/tools", "summary": "Remote source tools available to this token (name + one-line summary)", "auth": "bearer_token"},
+            {"method": "GET", "path": "/help/tools/{name}", "summary": "Usage detail for one remote source tool (request format + example)", "auth": "bearer_token", "example": "/help/tools/read"},
             {"method": "GET", "path": "/events/stream", "summary": "SSE screen push stream (screen only)", "auth": "session_cookie"},
         ],
         "notes": [

@@ -36,6 +36,7 @@ from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import engine_recipe_service
+from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,10 @@ logger = logging.getLogger(__name__)
 # investigation document were implementing code on their own. The mention must
 # state the scope boundary explicitly; implementation belongs in a T (work-instruction) doc.
 _INVESTIGATION_ONLY_TYPES = {"N", "NR"}
-_REMOTE_MUTATING_WORK_TYPES = {"T", "TR"}
+# The "which step types may mutate source" constant used to live here as a second copy of
+# remote_tool_service's, and the two had already drifted (this one lacked TSR). 0349 D0004
+# D-2 removes the duplicate: tool_registry.kind_for_step is now the only judge, and both
+# this mention and the permission check ask it.
 
 
 # ── API base path (including CONTEXT) ────────────────────────────────────────
@@ -74,50 +78,67 @@ def _section(header: str, body: str) -> str:
     return f"## {header}\n---\n{body}"
 
 
-def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> str:
-    """Return the remote project-source API guide for worker mentions.
+def _remote_source_crud_lines(
+    base: str,
+    raw_token: str,
+    step_type: Optional[str],
+    *,
+    action_scope: str = "new",
+    locale: str = "ko",
+    kind: Optional[str] = None,
+) -> list[str]:
+    """The five mention lines that survive the 0349 shrink (P0005 [참고] / D0004 D-4).
 
-    T/TR workers receive full source CRUD. Other document types receive read/search
-    guidance only, so investigation/review/design mentions do not contradict their
-    scope boundary by advertising mutating source operations.
+    Every request format, field description and JSON example the mention used to carry now
+    lives behind GET /help/tools — the mention was growing one block per tool and workers
+    were reading the top and skipping the rest (R0001). What stays is exactly what a worker
+    that never calls help must still know: call help first, do not touch the disk, which
+    tools exist, the token, and where the detail is. All five are built from fixed strings
+    plus ``kind``, so no lookup failure can empty the section (D0004 D-6).
+
+    ``kind`` comes from tool_registry — the same judge the permission check uses — so the
+    mention can no longer advertise a tool the server would refuse. Pass it directly when
+    the caller holds a token rather than a step type (see q_answer_invoke_service); leave it
+    None to have the step type judged here.
     """
     if not raw_token:
-        return ""
-
-    def _json(data: dict) -> str:
-        return json.dumps(data, ensure_ascii=False, indent=2)
-
-    mutating = step_type in _REMOTE_MUTATING_WORK_TYPES
-    lines = [
-        "Use these endpoints when you need to inspect or change the remote project's source tree.",
-        "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
+        return []
+    loc = template_provision.normalize_locale(locale)
+    if kind is None:
+        kind, _reason = tool_registry.kind_for_step(action_scope, step_type)
+    names = tool_registry.tool_names(kind)
+    if not names:
+        # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
+        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 정상3).
+        return []
+    text = tool_registry.MENTION_LINES[loc]
+    return [
+        text["first_action"].format(url=f"{base}/help/tools"),
+        text["no_disk_edit"],
+        f"{text['tools_label']}: " + ", ".join(names),
         f"Authorization: Bearer {raw_token}",
-        "",
-        f"Read file: POST {base}/remote/read",
-        _json({"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"}),
-        "",
-        f"Search text: POST {base}/remote/grep",
-        _json({"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
-        "",
-        f"List files: POST {base}/remote/glob",
-        _json({"pattern": "**/*.py"}),
+        text["detail"].format(url=f"{base}/help/tools/{{name}}"),
     ]
-    if mutating:
-        lines.extend([
-            "",
-            f"Create or replace file: POST {base}/remote/write",
-            _json({"path": "app/main.py", "content": "<complete file content>", "mode": "create|overwrite|append", "encoding": "utf-8"}),
-            "",
-            f"Delete file: POST {base}/remote/remove",
-            _json({"path": "app/obsolete.py"}),
-            "",
-            "After write/remove succeeds, summarize the changed source files in the task report.",
-        ])
-    else:
-        lines.extend([
-            "",
-            "This document type is read/search only for source access. Do not call write/remove in this step.",
-        ])
+
+
+def _remote_source_crud_section(
+    base: str,
+    raw_token: str,
+    step_type: Optional[str],
+    *,
+    action_scope: str = "new",
+    locale: str = "ko",
+) -> str:
+    """``_remote_source_crud_lines`` as a mention section.
+
+    The header stays "Remote project source CRUD": changing the title at the same time as
+    the body would mix two causes into every regression failure (P0005 [참고]).
+    """
+    lines = _remote_source_crud_lines(
+        base, raw_token, step_type, action_scope=action_scope, locale=locale
+    )
+    if not lines:
+        return ""
     return _section("Remote project source CRUD", "\n".join(lines))
 
 
@@ -1046,7 +1067,9 @@ def build_mention(
 
     source_crud_section = ""
     if _include_remote_source_crud(project):
-        source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
+        source_crud_section = _remote_source_crud_section(
+            base, raw_token, scope_type, action_scope=action_scope, locale=locale
+        )
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
@@ -1056,8 +1079,15 @@ def build_mention(
         # inside s8_body so workers stop offering options the remote run can't answer.
         # In continuous mode the header/body swap to the unmanned work block (s8_header).
         _section(s8_header, s8_body),
-        _section(s2_header, s2_body),
     ]
+    # 0349 D0004 D-5: the tool section moves up to the highest slot it is allowed to take —
+    # under the identity header and the continuous/clarification block (which tell the worker
+    # who it is and how to ask), above the instruction/scope/authoring sections it used to
+    # sit below. It was previously buried after the template and authoring blocks, which is
+    # where long mentions stop being read.
+    if source_crud_section:
+        sections.append(source_crud_section)
+    sections.append(_section(s2_header, s2_body))
     if scope_section:
         sections.append(scope_section)
     if nt_authoring_section:
@@ -1088,8 +1118,6 @@ def build_mention(
             sections.append(_section("Engine recipes (environment setup)", engine_recipes_body))
     if template_section:
         sections.append(template_section)
-    if source_crud_section:
-        sections.append(source_crud_section)
     sections.append(_section("Reference documents", s3_body))
     if review_section:
         sections.append(review_section)
@@ -1324,9 +1352,20 @@ def build_workflow_decision_mention(
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", clarification_body),
+    ]
+    # 0349 D0004 D-3: a workflow_decide token already resolves to ["read", "grep"] server
+    # side, but this mention never said so — the worker deciding a sequence could not read
+    # the source it was deciding about, and would not have known it was allowed to.
+    if _include_remote_source_crud(project):
+        decision_tools = _remote_source_crud_section(
+            base, raw_token, doc_type, action_scope="workflow_decide", locale=locale
+        )
+        if decision_tools:
+            sections.append(decision_tools)
+    sections.extend([
         _section("Workflow decision instructions", s2_body),
         _section("Reference documents", s3_body),
-    ]
+    ])
 
     if group_recent_docs:
         lines = [
@@ -1634,9 +1673,20 @@ def build_review_mention(
         # R0001/T0004: hoist the clarification guide (with the no-choices guard)
         # directly under the document-identity header so it is actually read.
         _section("Clarification guide", s8_body),
+    ]
+    # 0349 D0004 D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
+    # TR against the source it claims to have changed needs exactly that, and the mention
+    # withholding it made the reviewer take the report's word for it.
+    if _include_remote_source_crud(project):
+        review_tools = _remote_source_crud_section(
+            base, raw_token, doc_type, action_scope="review", locale=locale
+        )
+        if review_tools:
+            sections.append(review_tools)
+    sections.extend([
         _section("Review instructions", s2_body),
         _section("Reference documents", s3_body),
-    ]
+    ])
     if s4_section:
         sections.append(s4_section)
     sections.append(_section("Review submission", s5_body))

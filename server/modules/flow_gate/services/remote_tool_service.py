@@ -55,7 +55,8 @@ _logger = logging.getLogger(__name__)
 
 OPS = ("read", "write", "grep", "glob", "remove", "patch", "stat")
 _WORKER_GRANT_PREFIX = "worker_"
-_MUTATING_WORK_TYPES = {"T", "TR"}
+# The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
+# point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
 # Types whose own document type decides their source scope, ignoring any workflow
 # sequence they happen to sit in (see _worker_token_step_type).
 _SELF_SCOPED_WORK_TYPES = {"CH"}
@@ -288,8 +289,8 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
             return None
         return existing if _reconcile_worker_grant_scopes(existing) else None
 
-    # 0115 H2: mutating (T/TR) workers get their group worktree (re)guaranteed at
-    # the _MUTATING_WORK_TYPES judgement point — the backstop for a failed or
+    # 0115 H2: mutating (T/TR/TSR) workers get their group worktree (re)guaranteed at
+    # the kind judgement point — the backstop for a failed or
     # restarted H1 (decide-time) provisioning. Idempotent and never raises; on
     # failure source access simply keeps resolving to the fallback branch folder.
     if group_id and "write" in scopes:
@@ -302,53 +303,64 @@ def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict
     return grant
 
 
+_SCOPES_BY_KIND = {
+    "read_write": ["read", "write", "grep", "remove"],
+    "read": ["read", "grep"],
+    "none": [],
+}
+
+
 def _scopes_for_worker_token(token_rec: dict) -> list[str]:
     """Map a document worker token to remote source scopes.
 
-    Implementation work (T/TR) receives full CRUD. Investigation/review/design
+    0349 D0004 D-2: the judgement itself lives in the tool registry — the same call the
+    mention builders and /help/tools make — and this function only renames its answer into
+    scope vocabulary. When the two judged independently (they did until now), the mention
+    could advertise a tool this function then refused.
+
+    Implementation work (T/TR/TSR) receives full CRUD. Investigation/review/design
     handoffs receive read/search only so their source-access instructions cannot
     silently override the document-level "do not modify source" scope.
     """
-    action_scope = token_rec.get("action_scope")
-    if action_scope in {"review", "workflow_decide"}:
-        return ["read", "grep"]
-    if action_scope not in {"new", "edit"}:
-        return []
+    from modules.flow_gate.services import tool_registry  # lazy — import cycle
 
-    step_type = _worker_token_step_type(token_rec)
-    if step_type in _MUTATING_WORK_TYPES:
-        return ["read", "write", "grep", "remove"]
-    return ["read", "grep"]
+    kind, _reason = tool_registry.kind_for_token(token_rec)
+    return list(_SCOPES_BY_KIND.get(kind, []))
 
 
-def _worker_token_step_type(token_rec: dict) -> Optional[str]:
-    """Resolve the workflow head type for a next-step worker token.
+def _worker_token_step_type_result(token_rec: dict) -> tuple[Optional[str], bool]:
+    """Resolve the workflow head type and preserve whether lookup raised.
 
     A chat document answers for itself. Chat is auto-completed the moment it is
     created, so when a CH sits in a workflow sequence get_effective_head() already
-    points at the NEXT pending slot — and if that slot is T/TR the chat token would
-    inherit source write/remove, while its mention says read/search only (0334
-    NR0003 발견 7). The worker acts on the mention it was given, so the scope has to
-    match the promise: a CH doc_ref is pinned to its own type here.
+    points at the NEXT pending slot — and if that slot is T/TR/TSR the chat token
+    would inherit source write/remove, while its mention says read/search only.
+    The worker acts on the mention it was given, so a CH doc_ref is pinned to its
+    own type here.
     """
     doc_ref = token_rec.get("doc_ref")
     if not doc_ref:
-        return None
+        return None, False
     try:
         doc = db_documents.get_by_id(doc_ref)
         own_type = str(doc["type_code"]) if doc and doc.get("type_code") else None
         if own_type in _SELF_SCOPED_WORK_TYPES:
-            return own_type
+            return own_type, False
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
         if seq is None:
             seq = db_wfseq.get_sequence_by_doc_id(doc_ref)
         if seq is not None:
             head = db_wfseq.get_effective_head(seq["id"])
             if head and head.get("type"):
-                return str(head["type"])
-        return own_type
+                return str(head["type"]), False
+        return own_type, False
     except Exception:
-        return None
+        return None, True
+
+
+def _worker_token_step_type(token_rec: dict) -> Optional[str]:
+    """Backward-compatible value-only wrapper for existing callers."""
+    return _worker_token_step_type_result(token_rec)[0]
 
 
 # ── ③ Path safety / ④ request validity ───────────────────────────────────────
