@@ -109,6 +109,10 @@ const props = defineProps<{
   // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode in
   // ContinuousWorkDialog. Session-scoped — rides this start request only.
   providerOverrides?: Record<number, string>
+  // 0346 T0005: [전달멘트] tab values from ContinuousWorkDialog — a common note for every
+  // hop, and item_seq -> note for steps the user singled out. Session-scoped, same as above.
+  defaultMessage?: string
+  messageOverrides?: Record<number, string>
   autoStart?: boolean
   // Parallel-invoke extras (group 0223): context the matching copy-mention flow
   // assembles client-side; forwarded so the server rebuilds the identical prompt.
@@ -232,6 +236,10 @@ async function start() {
       body.continuation_instruction_mode = props.continuationInstructionMode ?? 'auto_approved'
       if (props.providerOverrides && Object.keys(props.providerOverrides).length) {
         body.continuation_provider_overrides = props.providerOverrides
+      }
+      if (props.defaultMessage) body.continuation_default_note = props.defaultMessage
+      if (props.messageOverrides && Object.keys(props.messageOverrides).length) {
+        body.continuation_note_overrides = props.messageOverrides
       }
     }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)

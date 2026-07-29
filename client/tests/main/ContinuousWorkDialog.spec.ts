@@ -330,8 +330,9 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
 
     // "기본 설정" is the default active tab (rev4 STATE1) — switch to "프로바이더".
+    // flowgate.default.0346 T0005 added a third [전달멘트] tab alongside these two.
     const tabs = document.querySelectorAll('.cwd-tab')
-    expect(tabs).toHaveLength(2)
+    expect(tabs).toHaveLength(3)
     ;(tabs[1] as HTMLButtonElement).click()
     await flushPromises()
 
@@ -431,5 +432,104 @@ describe('ContinuousWorkDialog', () => {
     expect(document.querySelector('.cwd-provider-block')).toBeNull()
 
     wrapper.unmount()
+  })
+
+  // flowgate.default.0346 T0005 / D0004 §3-1~§3-3: the [전달멘트] tab collects a common note
+  // (whole chain) and per-step notes (individual hops), both carried — unmodified — into the
+  // confirm payload. Neither is persisted; both ride this run's start request only.
+  describe('전달멘트 tab (0346 T0005)', () => {
+    it('fills the common and per-step notes and reports them in the confirm payload', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const tabs = document.querySelectorAll('.cwd-tab')
+      ;(tabs[2] as HTMLButtonElement).click()
+      await flushPromises()
+
+      const defaultInput = document.querySelector('.cwd-message-default-input') as HTMLInputElement
+      defaultInput.value = '이 그룹은 결제 모듈 리팩터링입니다'
+      defaultInput.dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      // 3 rows: TR, TS, TSR (same run scope as the provider tab's table).
+      const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      expect(rowInputs).toHaveLength(3)
+      rowInputs[0].value = 'TR: 결제 실패 케이스도 문서화해줘'
+      rowInputs[0].dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.defaultMessage).toBe('이 그룹은 결제 모듈 리팩터링입니다')
+      expect(payload.messageOverrides).toEqual({ 4: 'TR: 결제 실패 케이스도 문서화해줘' })
+
+      wrapper.unmount()
+    })
+
+    it('treats a whitespace-only per-step note as no override', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
+      await flushPromises()
+
+      const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      rowInputs[0].value = '   '
+      rowInputs[0].dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.defaultMessage).toBe('')
+      expect(payload.messageOverrides).toEqual({})
+
+      wrapper.unmount()
+    })
+
+    it('drops a per-step note when its row leaves the run and resets both fields on reopen', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
+      await flushPromises()
+
+      // Note the LAST row (TSR, item_seq 6), then shrink the target past it.
+      let rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      rowInputs[2].value = 'TSR용 멘트'
+      rowInputs[2].dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      ;(document.querySelectorAll('.wsp-step')[4] as HTMLButtonElement).click()
+      await flushPromises()
+      rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      expect(rowInputs).toHaveLength(2)
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      expect((wrapper.emitted('confirm')![0][0] as any).messageOverrides).toEqual({})
+
+      // Reopening the dialog must not carry the note forward (D0004 §3-1: 닫았다 다시 열면 초기화).
+      await wrapper.setProps({ visible: false })
+      await flushPromises()
+      await wrapper.setProps({ visible: true })
+      await flushPromises()
+      ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
+      await flushPromises()
+      expect((document.querySelector('.cwd-message-default-input') as HTMLInputElement).value).toBe('')
+      const freshRowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      freshRowInputs.forEach((el) => expect(el.value).toBe(''))
+
+      wrapper.unmount()
+    })
   })
 })

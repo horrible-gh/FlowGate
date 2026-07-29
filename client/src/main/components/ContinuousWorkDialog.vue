@@ -43,6 +43,12 @@
                   :class="{ 'cwd-tab--active': activeTab === 'provider' }"
                   @click="activeTab = 'provider'"
                 >{{ t('main.continuous_work.tab_provider') }}</button>
+                <button
+                  type="button"
+                  class="cwd-tab"
+                  :class="{ 'cwd-tab--active': activeTab === 'message' }"
+                  @click="activeTab = 'message'"
+                >{{ t('main.continuous_work.tab_message') }}</button>
               </div>
 
               <!-- 기본 설정: AI review mode (R0001) + N/T instruction handling. -->
@@ -84,7 +90,7 @@
                    재정의 단위가 문서 타입에서 실행 단계로 바뀌었다 — 같은 T가 두 번 나와도 서로
                    다른 프로바이더를 지정할 수 있다). Session-scoped: it rides the run's start
                    request, not a persisted project setting. -->
-              <div v-else class="cwd-tab-panel">
+              <div v-else-if="activeTab === 'provider'" class="cwd-tab-panel">
                 <div v-if="!providers || providers.length === 0" class="cwd-empty-card">
                   <AppIcon name="warning" />
                   {{ t('main.continuous_work.empty_provider_text') }}
@@ -124,6 +130,41 @@
                         :model-value="stepProviderValue(item.item_seq)"
                         hide-label
                         @update:model-value="(v) => onStepProviderChange(item.item_seq, v)"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 전달멘트 (flowgate.default.0346 T0005 / D0004): a common note for the whole
+                   chain and/or an individual note per step, both prepended to the hop's prompt
+                   as a "사용자 메시지" section server-side. Unlike the provider tab, this one has
+                   no "등록된 것이 없다" empty state — it depends on nothing external. -->
+              <div v-else class="cwd-tab-panel">
+                <div class="cwd-provider-block">
+                  <div class="cwd-provider-row">
+                    <label class="cwd-provider-label">{{ t('main.continuous_work.message_default_label') }}</label>
+                    <input
+                      v-model="defaultMessage"
+                      type="text"
+                      class="cwd-message-input cwd-message-default-input"
+                      :placeholder="t('main.continuous_work.message_default_placeholder')"
+                    />
+                  </div>
+                  <div v-if="excludedNote" class="cwd-scope-note">
+                    <AppIcon name="info" /> {{ excludedNote }}
+                  </div>
+                  <div class="cwd-override-table">
+                    <div v-for="(item, idx) in executionSteps" :key="item.item_seq" class="cwd-override-row">
+                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: idx + 1 }) }}</span>
+                      <span class="doc-tag cwd-override-badge" :class="`c-${item.type}`">{{ item.type }}</span>
+                      <span class="cwd-override-label">{{ item.label }}</span>
+                      <input
+                        :value="messageOverrides[item.item_seq] ?? ''"
+                        type="text"
+                        class="cwd-message-input cwd-override-message-input"
+                        :placeholder="t('main.continuous_work.message_step_placeholder')"
+                        @input="onStepMessageChange(item.item_seq, ($event.target as HTMLInputElement).value)"
                       />
                     </div>
                   </div>
@@ -192,6 +233,10 @@ const emit = defineEmits<{
     // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode.
     // Session-scoped (rides this run's start request only, never persisted).
     providerOverrides: Record<number, string>
+    // 0346 T0005: [전달멘트] tab — a common note for every hop, and item_seq -> note for the
+    // steps the user singled out. Session-scoped, same as providerOverrides above.
+    defaultMessage: string
+    messageOverrides: Record<number, string>
   }]
 }>()
 
@@ -208,11 +253,16 @@ const picker = ref<WorkflowStepPickerState>({
   steps: [],
 })
 
-const activeTab = ref<'basic' | 'provider'>('basic')
+const activeTab = ref<'basic' | 'provider' | 'message'>('basic')
 // 0317 T0010 rev4: item_seq -> provider_id. Replaces the D0004 per-doc-type map (chainDocTypes/
 // assignments) — the override unit moved from document TYPE to individual STEP INSTANCE, so the
 // same type appearing twice in one chain (e.g. two T steps) can resolve to different providers.
 const overrides = ref<Record<number, string>>({})
+// 0346 T0005: [전달멘트] tab state — a common note plus item_seq -> note overrides, mirroring
+// `overrides` above but additive rather than replacing (D0004 §3-3: 개별 멘트가 공통 멘트를
+// 밀어내지 않는다).
+const defaultMessage = ref('')
+const messageOverrides = ref<Record<number, string>>({})
 
 // 0337 R0001 -----------------------------------------------------------------------------
 // A document step and an AI-execution step are not the same thing, and only the latter can
@@ -274,6 +324,15 @@ function onStepProviderChange(itemSeq: number, value: string) {
   overrides.value = next
 }
 
+// 0346 T0005 §2-1 항목 4: blank (or whitespace-only) input is the same as "no individual note
+// for this step" — mirrors onStepProviderChange's "같으면 삭제" rule with a "비면 삭제" rule.
+function onStepMessageChange(itemSeq: number, value: string) {
+  const next = { ...messageOverrides.value }
+  if (!value.trim()) delete next[itemSeq]
+  else next[itemSeq] = value
+  messageOverrides.value = next
+}
+
 function providerName(id: string | undefined | null): string | null {
   if (!id) return null
   return props.providers?.find(p => p.id === id)?.name ?? null
@@ -321,6 +380,12 @@ watch(executionSteps, (steps) => {
   if (kept.length !== Object.keys(overrides.value).length) {
     overrides.value = Object.fromEntries(kept)
   }
+  // 0346 T0005: the [전달멘트] per-step notes follow the exact same rule — a step that leaves
+  // the run must not leave a stale note behind it.
+  const keptMessages = Object.entries(messageOverrides.value).filter(([seq]) => inRun.has(Number(seq)))
+  if (keptMessages.length !== Object.keys(messageOverrides.value).length) {
+    messageOverrides.value = Object.fromEntries(keptMessages)
+  }
 })
 
 function onProceed() {
@@ -331,6 +396,10 @@ function onProceed() {
   for (const [seq, providerId] of Object.entries(overrides.value)) {
     if (providerId && inRun.has(Number(seq))) providerOverrides[Number(seq)] = providerId
   }
+  const messageOverridesOut: Record<number, string> = {}
+  for (const [seq, note] of Object.entries(messageOverrides.value)) {
+    if (note && note.trim() && inRun.has(Number(seq))) messageOverridesOut[Number(seq)] = note
+  }
   emit('confirm', {
     targetSeq: sel.targetSeq,
     targetType: sel.targetType,
@@ -340,6 +409,8 @@ function onProceed() {
     stepCount: sel.stepCount,
     fromDecision: sel.fromDecision,
     providerOverrides,
+    defaultMessage: defaultMessage.value.trim(),
+    messageOverrides: messageOverridesOut,
   })
 }
 
@@ -356,6 +427,8 @@ watch(
       instructionMode.value = 'auto_approved'
       activeTab.value = 'basic'
       overrides.value = {}
+      defaultMessage.value = ''
+      messageOverrides.value = {}
     }
   },
   { immediate: true },
@@ -613,6 +686,31 @@ watch(
 .cwd-override-select :deep(.aip-select-input) {
   padding-top: 2px;
   padding-bottom: 2px;
+  font-size: .78rem;
+}
+/* 0346 T0005: [전달멘트] tab text inputs — the header row uses the regular provider-select
+   sizing, the per-step row uses the compact override sizing (mirrors .cwd-override-select).
+   rev1: `font: inherit` pulled in the page's base font-size (larger than the provider select's
+   own .82rem), and the 6px/10px padding didn't match the select's 5px/8px either — next to the
+   프로바이더 tab's default-provider select the 전달멘트 tab's common-note input read as visibly
+   bigger. Match `.aip-select-input`'s font-size/vertical padding exactly (AiProviderSelect.vue)
+   so the two tabs' default-row controls read as the same size. */
+.cwd-message-input {
+  font-size: .82rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+}
+.cwd-message-default-input {
+  flex: 1;
+  min-width: 0;
+}
+.cwd-override-message-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 2px 8px;
   font-size: .78rem;
 }
 .cwd-empty-card {

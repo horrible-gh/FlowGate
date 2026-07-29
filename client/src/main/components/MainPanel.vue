@@ -1104,6 +1104,8 @@
       :continuation-review-mode="aiInvokeContinuationReviewMode"
       :continuation-instruction-mode="aiInvokeContinuationInstructionMode"
       :provider-overrides="aiInvokeProviderOverrides"
+      :default-message="aiInvokeDefaultMessage"
+      :message-overrides="aiInvokeMessageOverrides"
       :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
@@ -1743,6 +1745,10 @@ const continuousInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_appro
 // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
 // through the consent gate to the start request (session-scoped, never persisted).
 const continuousProviderOverrides = ref<Record<number, string>>({})
+// 0346 T0005: [전달멘트] tab values, carried from ContinuousWorkDialog's confirm payload
+// through to the consent gate's start request (session-scoped, never persisted).
+const continuousDefaultMessage = ref('')
+const continuousMessageOverrides = ref<Record<number, string>>({})
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1785,6 +1791,9 @@ const aiInvokeContinuationReviewMode = ref(false)
 const aiInvokeContinuationInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
 // 0317 T0010 rev4: item_seq -> provider_id overrides forwarded onto the start request.
 const aiInvokeProviderOverrides = ref<Record<number, string>>({})
+// 0346 T0005: [전달멘트] tab values forwarded onto the start request.
+const aiInvokeDefaultMessage = ref('')
+const aiInvokeMessageOverrides = ref<Record<number, string>>({})
 const aiInvokeAutoStart = ref(false)
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 type AiInvokeLifecycleDetail = {
@@ -2217,6 +2226,9 @@ function openAiInvokeDialog(
     instructionMode?: 'auto_approved' | 'ai_direct'
     // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog.
     providerOverrides?: Record<number, string>
+    // 0346 T0005: [전달멘트] tab values chosen in ContinuousWorkDialog.
+    defaultMessage?: string
+    messageOverrides?: Record<number, string>
     autoStart?: boolean
     // 0242 NR0003 권고 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
@@ -2243,6 +2255,8 @@ function openAiInvokeDialog(
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
   aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? 'auto_approved'
   aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
+  aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
+  aiInvokeMessageOverrides.value = preset?.messageOverrides ?? {}
   aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
@@ -3591,6 +3605,8 @@ function onContinuousDialogConfirm(payload: {
   stepCount: number
   fromDecision: boolean
   providerOverrides: Record<number, string>
+  defaultMessage: string
+  messageOverrides: Record<number, string>
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
@@ -3598,6 +3614,8 @@ function onContinuousDialogConfirm(payload: {
   continuousReviewMode.value = payload.reviewMode
   continuousInstructionMode.value = payload.instructionMode
   continuousProviderOverrides.value = payload.providerOverrides
+  continuousDefaultMessage.value = payload.defaultMessage
+  continuousMessageOverrides.value = payload.messageOverrides
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -3628,6 +3646,8 @@ async function onContinuousWarnConfirm() {
       reviewMode: continuousReviewMode.value,
       instructionMode: continuousInstructionMode.value,
       providerOverrides: continuousProviderOverrides.value,
+      defaultMessage: continuousDefaultMessage.value,
+      messageOverrides: continuousMessageOverrides.value,
       autoStart: true,
     },
   )
