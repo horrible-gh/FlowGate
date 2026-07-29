@@ -47,6 +47,10 @@ class AiInvokeStartRequest(BaseModel):
     # 0317 T0010 rev4: item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
     # per-step override table. Session-scoped — consulted once, at start_run, never persisted.
     continuation_provider_overrides: Optional[dict[str, str]] = None
+    # 0346 T0005: [전달멘트] tab values — a common note for every hop and item_seq (string
+    # keys) -> note overrides for individual hops. Session-scoped, same as the provider map.
+    continuation_default_note: Optional[str] = None
+    continuation_note_overrides: Optional[dict[str, str]] = None
     provider_id: Optional[str] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
@@ -429,6 +433,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issue_builder=issue_builder,
             merge_id=body.merge_id,
             continuation_provider_overrides=body.continuation_provider_overrides,
+            continuation_default_note=body.continuation_default_note,
+            continuation_note_overrides=body.continuation_note_overrides,
         )
     except HTTPException as exc:
         return _err(exc)

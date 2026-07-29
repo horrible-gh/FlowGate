@@ -42,7 +42,7 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import git_service, process_runner, token_service
+from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -577,6 +577,11 @@ def start_run(
     # ContinuousWorkDialog's per-step override table. Session-scoped — this run's start
     # request is the only place it lives; never persisted (T0010 Q&A: session-scoped o1).
     continuation_provider_overrides: Optional[dict] = None,
+    # 0346 T0005: [전달멘트] tab values — a common note for every hop and/or item_seq -> note
+    # overrides for individual hops. Never persisted (D0004 §4: session-scoped, like the
+    # provider overrides above).
+    continuation_default_note: Optional[str] = None,
+    continuation_note_overrides: Optional[dict] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -719,6 +724,29 @@ def start_run(
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
 
+    # 0346 T0005 §2-5 / D0004 §3-3: the [전달멘트] tab's common note and/or this hop's
+    # individual note are prepended here, at the single point every hop's prompt (built by
+    # whichever of the three builders ran above) has already converged into one string — see
+    # D0004 §3-4 for why the builders themselves are never touched. Unlike the provider
+    # override, an individual note does NOT replace the common one: D0004 §3-3 treats them as
+    # stackable ("무엇을 위한 것인가" + "너는 무엇을 맡는가"), so both are adopted when present.
+    # A resolution failure must not stall the hop (same contract as the provider override).
+    if mode == "continuous" and (continuation_note_overrides or continuation_default_note):
+        try:
+            notes: list[str] = []
+            if continuation_default_note and continuation_default_note.strip():
+                notes.append(continuation_default_note.strip())
+            if continuation_note_overrides:
+                hop_note = _resolve_continuation_hop_note(doc_ref, continuation_note_overrides)
+                if hop_note:
+                    notes.append(hop_note)
+            if notes:
+                mention = invoke_mention_service.prepend_messages_section(
+                    mention, notes, continuation_locale,
+                )
+        except Exception:  # noqa: BLE001 — a note failure must not stall the hop
+            logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
+
     if scope_oracle_run:
         # After issue() (the judge target comes from the token) but before the worker is
         # launched below, so the baseline cannot include the work this run is about to do.
@@ -785,6 +813,15 @@ def start_run(
         # re-spawned hop can re-apply it (it never touches a token; it is session-scoped).
         "continuation_provider_overrides": (
             continuation_provider_overrides if mode == "continuous" else None
+        ),
+        # 0346 T0005: the [전달멘트] tab's note bundle rides the run forward the same way the
+        # provider override map does, so a re-spawned hop (_maybe_auto_resume_hop ->
+        # _spawn_auto_resume) can re-apply it. Session-scoped — never persisted on a token.
+        "continuation_note_overrides": (
+            continuation_note_overrides if mode == "continuous" else None
+        ),
+        "continuation_default_note": (
+            continuation_default_note if mode == "continuous" else None
         ),
         # 0317 T0013 결함 ③: the header default provider pin rides the run too. Without it a
         # re-spawned hop that has NO per-step override lost the user's chosen default and fell
@@ -943,6 +980,36 @@ def _resolve_continuation_hop_override(
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop override resolution failed for %s", doc_ref,
                        exc_info=True)
+        return None
+
+
+def _resolve_continuation_hop_note(doc_ref: str, overrides: dict) -> Optional[str]:
+    """The individual note assigned to THIS hop's item_seq (flowgate.default.0346 T0005 —
+    CWD's [전달멘트] tab per-step input), or None when this hop has no individual note.
+
+    Deliberately mirrors _resolve_continuation_hop_override step for step — same
+    _hop_worker_item_seq fold, same str/int dual key lookup — because the two tables must
+    resolve the SAME item_seq for the SAME hop (D0004 구현 시 반드시 지켜야 할 제약 1-2): if they
+    ever disagreed, the row a user sees in ContinuousWorkDialog would carry a provider meant
+    for one hop and a note meant for another. Never raises: a resolution failure degrades to
+    "no individual note", exactly like the provider override.
+    """
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        head = db_wfseq.get_effective_head(seq["id"])
+        if not head:
+            return None
+        item_seq = _hop_worker_item_seq(seq["id"], head)
+        if item_seq is None:
+            return None
+        note = overrides.get(str(item_seq), overrides.get(item_seq))
+        if not note or not str(note).strip():
+            return None
+        return str(note).strip()
+    except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
+        logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
         return None
 
 
@@ -2051,6 +2118,11 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         **pending,
         "provider_overrides": run.get("continuation_provider_overrides"),
         "base_provider_id": run.get("continuation_base_provider_id"),
+        # 0346 T0005: carry the [전달멘트] note bundle forward the same way — the first-hop-only
+        # gap is the exact regression shape this fix is guarding against (D0004 구현 시 반드시
+        # 지켜야 할 제약 4).
+        "note_overrides": run.get("continuation_note_overrides"),
+        "default_note": run.get("continuation_default_note"),
     }
     try:
         _spawn_auto_resume(group_id, pending)
@@ -2077,6 +2149,8 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     api_base_url = pending["api_base_url"]
     overrides = pending.get("provider_overrides")
     base_provider_id = pending.get("base_provider_id")
+    note_overrides = pending.get("note_overrides")
+    default_note = pending.get("default_note")
 
     parts = group_id.split(".")
     project_id = parts[0]
@@ -2117,6 +2191,8 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         issue_builder=_issue_next,
         provider_id=base_provider_id,
         continuation_provider_overrides=overrides,
+        continuation_note_overrides=note_overrides,
+        continuation_default_note=default_note,
     )
 
 

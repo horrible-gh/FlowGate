@@ -234,3 +234,86 @@ describe('AiInvokeDialog continuous target', () => {
     wrapper.unmount()
   })
 })
+
+// flowgate.default.0346 T0005 §2-3: the [전달멘트] tab's values arrive here as props (via
+// MainPanel's openAiInvokeDialog preset) and must land on the /ai-invoke/start body as
+// continuation_default_note / continuation_note_overrides. This is the one hop the dialog
+// spec and the server spec each half-cover: ContinuousWorkDialog.spec.ts proves the confirm
+// payload, test_ai_invoke_continuation_note_0346.py proves start_run's injection — a props
+// name typo between them would drop every note silently, with both suites still green.
+describe('AiInvokeDialog 전달멘트 forwarding (0346 T0005)', () => {
+  function mountAutoStart(props: Record<string, unknown> = {}) {
+    return mountDialog({
+      actionScope: 'new',
+      docRef: ROOT,
+      sequenceDocRef: ROOT,
+      initialMode: 'continuous',
+      initialTargetSeq: 4,
+      autoStart: true,
+      ...props,
+    })
+  }
+
+  it('puts the common note and the per-step notes on the start body', async () => {
+    const wrapper = mountAutoStart({
+      defaultMessage: '이 그룹은 결제 모듈 리팩터링입니다',
+      messageOverrides: { 4: 'TR: 결제 실패 케이스도 문서화해줘' },
+    })
+    await flushPromises()
+
+    expect(startBody()).toMatchObject({
+      mode: 'continuous',
+      continuation_default_note: '이 그룹은 결제 모듈 리팩터링입니다',
+      continuation_note_overrides: { 4: 'TR: 결제 실패 케이스도 문서화해줘' },
+    })
+
+    wrapper.unmount()
+  })
+
+  it('carries a common note with no per-step notes, and vice versa', async () => {
+    const commonOnly = mountAutoStart({ defaultMessage: '공통 멘트', messageOverrides: {} })
+    await flushPromises()
+    expect(startBody().continuation_default_note).toBe('공통 멘트')
+    expect(startBody()).not.toHaveProperty('continuation_note_overrides')
+    commonOnly.unmount()
+
+    postRequest.mockClear()
+    const perStepOnly = mountAutoStart({ defaultMessage: '', messageOverrides: { 4: '개별 멘트' } })
+    await flushPromises()
+    expect(startBody().continuation_note_overrides).toEqual({ 4: '개별 멘트' })
+    expect(startBody()).not.toHaveProperty('continuation_default_note')
+    perStepOnly.unmount()
+  })
+
+  it('omits both keys entirely when the user typed no note', async () => {
+    // T0005 §3 제약 5: an un-noted run must reach the server exactly as it did before this
+    // feature — not with empty-string / empty-object fields the server would have to ignore.
+    const wrapper = mountAutoStart()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).not.toHaveProperty('continuation_default_note')
+    expect(body).not.toHaveProperty('continuation_note_overrides')
+
+    wrapper.unmount()
+  })
+
+  it('never sends notes on a single run', async () => {
+    // The note fields live inside the mode === 'continuous' branch; a single run must not
+    // carry them even if a caller passes the props.
+    const wrapper = mountDialog({
+      defaultMessage: '공통 멘트',
+      messageOverrides: { 4: '개별 멘트' },
+    })
+    await flushPromises()
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body.mode).toBe('single')
+    expect(body).not.toHaveProperty('continuation_default_note')
+    expect(body).not.toHaveProperty('continuation_note_overrides')
+
+    wrapper.unmount()
+  })
+})
