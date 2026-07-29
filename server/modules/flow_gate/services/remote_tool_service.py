@@ -9,7 +9,10 @@ P0005 (message format) and DB0007 (storage):
   ④ Request validity → 422 invalid_request     (logged as error)
   ⑤ Execute operation → 404 / 409 / 413 / 503  (logged per result)
   ⑥ History logging (both success and failure, after authentication passes)
-  ⑦ Completion ment (on write/remove success) → 200 response
+  ⑦ Completion ment (on mutating-op success) → 200 response
+
+0347 (P0004 / L0005) adds `patch` (exact old_string/new_string edit), `stat`
+(metadata only) and a byte window (`offset`/`length`) on `read`.
 
 The router is thin and delegates everything here. This module owns the P0005
 common envelope, the fail-fast error ordering (L0006 §7), op-logging timing
@@ -23,10 +26,11 @@ matching file_transfer_routes._get_src_root.
 """
 from __future__ import annotations
 
+import codecs
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -49,7 +53,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "write", "grep", "glob", "remove")
+OPS = ("read", "write", "grep", "glob", "remove", "patch", "stat")
 _WORKER_GRANT_PREFIX = "worker_"
 _MUTATING_WORK_TYPES = {"T", "TR"}
 # Types whose own document type decides their source scope, ignoring any workflow
@@ -64,13 +68,28 @@ _SELF_SCOPED_WORK_TYPES = {"CH"}
 _SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pycache__"})
 
 # operation → required scope (P0005 §3.2 / L0006 §3.2 / DB0007 §5). glob shares the grep scope.
+# 0347 P0004 §0.4: patch/stat deliberately reuse the existing write/read scopes — no new
+# scope value, so remote_tool_grant_scope needs no migration and an investigation token that
+# only holds read/grep is barred from patch automatically.
 OP_SCOPE = {
     "read": "read",
     "write": "write",
     "grep": "grep",
     "glob": "grep",
     "remove": "remove",
+    "patch": "write",
+    "stat": "read",
 }
+
+# 0347 L0005 §1: the mutating-op set used to be the literal ("write", "remove") repeated at
+# three decision points (mutation source-root gate / explorer SSE / continuation ment). patch
+# has to appear at all three, and a single constant is what stops a future op from reaching
+# two of them and silently landing in the base checkout (0205). `stat` is NOT here — it reads.
+_MUTATING_OPS = frozenset({"write", "remove", "patch"})
+
+# ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
+# pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
+_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "write", "remove", "patch", "stat"})
 
 # HTTP status → P0005 §6 error code.
 ERROR_CODE_BY_STATUS = {
@@ -93,9 +112,12 @@ RESULT_BY_STATUS = {
     503: "unavailable",
 }
 
-_MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write payload guard (413)
-_MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — unbounded read guard (413)
+_MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write/patch result guard (413)
+_MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard (413, 0347 P0004 §7.3)
 _GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning (NR0011 §2)
+_STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
+
+_JST = timezone(timedelta(hours=9))
 
 
 class _OpError(Exception):
@@ -338,7 +360,7 @@ def _present_path_fields(op: str, body: dict) -> list[str]:
     is present and not None) are returned here.
     """
     out: list[str] = []
-    if op in ("read", "write", "remove"):
+    if op in _PATH_VALIDATE_SINGLE_FIELD_OPS:
         if body.get("path") is not None:
             out.append(body["path"])
     elif op == "grep":
@@ -375,6 +397,9 @@ def _validate_required(op: str, body: dict) -> None:
     if op == "read":
         _require_str(body, "path")
         _validate_max_int(body, "max_bytes")
+        # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
+        _validate_max_int(body, "offset")
+        _validate_max_int(body, "length")
     elif op == "write":
         _require_str(body, "path")
         # content is required but an empty body (empty file) is legal.
@@ -398,6 +423,24 @@ def _validate_required(op: str, body: dict) -> None:
             raise _OpError(422)
     elif op == "glob":
         _require_str(body, "pattern")
+    elif op == "patch":
+        _require_str(body, "path")
+        # An empty old_string would match everywhere (and at every character
+        # boundary) — the one input that makes exact-match patching meaningless.
+        old_string = _require_str(body, "old_string")
+        if not isinstance(body.get("new_string"), str):
+            raise _OpError(422)
+        if body.get("replace_all") is not None and not isinstance(body["replace_all"], bool):
+            raise _OpError(422)
+        if old_string == body["new_string"]:
+            raise _OpError(
+                422,
+                details={"reason": "no_op_edit"},
+                message="old_string과 new_string이 동일합니다.",
+            )
+        _validate_encoding(body)
+    elif op == "stat":
+        _require_str(body, "path")
 
 
 def _validate_max_int(body: dict, key: str) -> None:
@@ -603,10 +646,86 @@ def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
         return _exec_grep(body, root)
     if op == "glob":
         return _exec_glob(body, root)
+    if op == "patch":
+        return _exec_patch(body, root)
+    if op == "stat":
+        return _exec_stat(body, root)
     raise _OpError(422)  # unreachable (op validated earlier)
 
 
+# ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
+
+def _detect_dominant_eol(sample: bytes) -> str:
+    """'lf' / 'crlf' / 'mixed' / 'none' for a byte sample.
+
+    patch (the CRLF retry decision, P0004 §1.5) and stat (its `eol` field) must
+    share ONE definition — two private variants produce the contradiction "patch
+    retried because the file is crlf, but stat reports mixed".
+    """
+    crlf = sample.count(b"\r\n")
+    lone_lf = sample.count(b"\n") - crlf
+    if crlf and lone_lf:
+        return "mixed"
+    if crlf:
+        return "crlf"
+    if lone_lf:
+        return "lf"
+    return "none"
+
+
+def _contains_only_lf_newline(text: str) -> bool:
+    return "\n" in text and "\r\n" not in text
+
+
+def _is_utf8_encoding(encoding: str) -> bool:
+    """True for the UTF-8 family, where the continuation-byte rule below holds.
+
+    Other multi-byte encodings (UTF-16 …) are left unadjusted — L0005 DEFERRED.
+    """
+    try:
+        return codecs.lookup(encoding).name in ("utf-8", "utf-8-sig")
+    except LookupError:
+        return False
+
+
+def _utf8_sequence_len(byte: int) -> int:
+    """Bytes in the UTF-8 sequence this lead byte starts, or 0 if not a lead byte."""
+    if byte < 0x80:
+        return 1
+    if 0xC0 <= byte < 0xE0:
+        return 2
+    if 0xE0 <= byte < 0xF0:
+        return 3
+    if 0xF0 <= byte < 0xF8:
+        return 4
+    return 0  # continuation byte (0x80–0xBF) or invalid lead
+
+
+def _leading_continuation_len(raw: bytes) -> int:
+    i = 0
+    while i < len(raw) and 0x80 <= raw[i] < 0xC0:
+        i += 1
+    return i
+
+
+def _trim_incomplete_trailing_sequence(raw: bytes) -> bytes:
+    """Drop a multi-byte sequence the window cut in half, so the caller can
+    re-read it whole from `offset + returned_bytes`."""
+    for k in (1, 2, 3):
+        if len(raw) < k:
+            break
+        seq_len = _utf8_sequence_len(raw[len(raw) - k])
+        if seq_len > k:
+            return raw[: len(raw) - k]
+    return raw
+
+
 def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0347 P0004 §7: byte window (`offset`/`length`) on top of the original read.
+
+    `offset`/`length` absent → byte-identical to the previous behaviour, plus the
+    three new report-only fields (`offset`/`returned_bytes`/`eof`).
+    """
     target = resolve_in_root(root, body["path"])
     if target is None:
         raise _OpError(422)  # symlink/realpath escape (③ category)
@@ -614,26 +733,252 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         raise _OpError(404)
     size = target.stat().st_size
     max_bytes = body.get("max_bytes")
+    length = body.get("length")
+    offset = body.get("offset") or 0
     encoding = body.get("encoding") or "utf-8"
-    if max_bytes is None and size > _MAX_READ_BYTES:
-        raise _OpError(413)
-    truncated = False
+
+    window_start = min(offset, size)   # past EOF → empty window, not an error (§8)
+    if offset == 0 and length is None and max_bytes is None:
+        # Legacy call: the 413 guard still judges the WHOLE file, exactly as before.
+        if size > _MAX_READ_BYTES:
+            raise _OpError(413)
+        window_size = size
+    else:
+        bounds = [v for v in (length, max_bytes) if v is not None]
+        window_size = min(bounds) if bounds else size - window_start
+        # P0004 §7.3: the guard now measures the effective WINDOW, so a 200MB file
+        # can be walked in slices. Intended behaviour change — a max_bytes above
+        # 100MB used to skip the guard entirely and now raises 413.
+        if window_size > _MAX_READ_BYTES:
+            raise _OpError(413)
+
+    to_read = max(min(window_start + window_size, size) - window_start, 0)
     with open(target, "rb") as fh:
-        if max_bytes is not None and size > max_bytes:
-            raw = fh.read(max_bytes)
-            truncated = True
-        else:
-            raw = fh.read()
+        if window_start:
+            fh.seek(window_start)
+        raw = fh.read(to_read)
+
+    # Report the offset as requested (P0004 §8 echoes an out-of-range offset back);
+    # only the character-boundary correction moves it.
+    adj_start = offset
+    if _is_utf8_encoding(encoding):
+        if window_start > 0:
+            skipped = _leading_continuation_len(raw)
+            adj_start += skipped
+            raw = raw[skipped:]
+        # Only trim when more of the file follows. At EOF the trailing bytes are
+        # all there is, and dropping them would leave eof=False forever — the
+        # caller's walk would never terminate.
+        if adj_start + len(raw) < size:
+            raw = _trim_incomplete_trailing_sequence(raw)
+
     content = raw.decode(encoding, errors="replace")
+    returned_bytes = len(raw)
+    consumed = adj_start + returned_bytes
     return (
         {
             "path": body["path"],
             "content": content,
             "encoding": encoding,
             "size": size,
-            "truncated": truncated,
+            "offset": adj_start,
+            "returned_bytes": returned_bytes,
+            "eof": consumed >= size,
+            "truncated": consumed < size,
         },
-        size,
+        returned_bytes,
+    )
+
+
+def _atomic_write_bytes(target: Path, data: bytes, mode: Optional[int] = None) -> None:
+    """Write via a sibling temp file + os.replace, so a crash mid-write can never
+    leave the original half-written (0347 L0005 §2.5).
+
+    The replacement is a brand-new file, so the original's permission bits are
+    carried over explicitly — otherwise patching an executable script would
+    silently drop its +x.
+    """
+    tmp = target.with_name(target.name + ".flowgate-patch.tmp")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if mode is not None:
+            try:
+                os.chmod(tmp, mode)
+            except OSError:
+                pass   # best-effort (no-op on Windows) — never fail the patch for this
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0347 P0004 §1 — exact-match partial edit.
+
+    Line-numbered patching silently edits the wrong place once an earlier change
+    shifts the file, and still answers 200. So: exact match only, 0 hits → 404,
+    2+ hits without replace_all → 409, and nothing is written in either case.
+    Untouched bytes are never rewritten, which is what keeps a CRLF file from
+    turning into a whole-file diff the way full-overwrite `write` did.
+    """
+    target = resolve_in_root(root, body["path"])
+    if target is None:
+        raise _OpError(422)
+    if not target.exists():
+        raise _OpError(404, details={"reason": "file_not_found", "path": body["path"]})
+    if target.is_dir():
+        raise _OpError(404, details={"reason": "not_a_file", "path": body["path"]})
+    if not target.is_file():
+        raise _OpError(404, details={"reason": "file_not_found", "path": body["path"]})
+
+    encoding = body.get("encoding") or "utf-8"
+    replace_all = bool(body.get("replace_all"))
+    old_string = body["old_string"]
+    new_string = body["new_string"]   # ④ already guaranteed old != new
+
+    original_mode = target.stat().st_mode
+    with open(target, "rb") as fh:
+        raw_bytes = fh.read()
+    try:
+        # strict, never errors="replace": a lenient decode would write U+FFFD back
+        # over the untouched part of the file and corrupt the original (P0004 §12.1-5).
+        text = raw_bytes.decode(encoding)
+    except (UnicodeDecodeError, ValueError):
+        raise _OpError(422, details={"reason": "not_text", "path": body["path"]})
+
+    eol = _detect_dominant_eol(raw_bytes)
+    match_count = text.count(old_string)
+    eol_normalized = False
+
+    # 2nd pass (P0004 §1.5): a CRLF file with an old_string copied as LF. Skipped
+    # for 'mixed' files, where guessing which newline was meant is not safe.
+    if match_count == 0 and eol == "crlf" and _contains_only_lf_newline(old_string):
+        alt_old = old_string.replace("\n", "\r\n")
+        alt_count = text.count(alt_old)
+        if alt_count > 0:
+            old_string = alt_old
+            new_string = new_string.replace("\n", "\r\n")
+            match_count = alt_count
+            eol_normalized = True
+
+    if match_count == 0:
+        raise _OpError(
+            404,
+            details={"reason": "no_match", "match_count": 0, "path": body["path"]},
+            message="old_string과 일치하는 내용을 찾지 못했습니다 (0건).",
+        )
+    if match_count >= 2 and not replace_all:
+        raise _OpError(
+            409,
+            details={
+                "reason": "multiple_matches",
+                "match_count": match_count,
+                "path": body["path"],
+            },
+            message=(
+                f"old_string이 {match_count}곳에서 일치합니다. 앞뒤 문맥을 포함해 "
+                "유일하게 만들거나 replace_all=true를 지정하세요."
+            ),
+        )
+
+    if replace_all:
+        new_text = text.replace(old_string, new_string)
+        replacements = match_count
+    else:
+        new_text = text.replace(old_string, new_string, 1)
+        replacements = 1
+
+    try:
+        new_bytes = new_text.encode(encoding, errors="strict")
+    except UnicodeError:
+        # new_string cannot be represented in the file's encoding — same 422 the
+        # write op returns for the identical situation.
+        raise _OpError(422)
+    if len(new_bytes) > _MAX_WRITE_BYTES:
+        raise _OpError(413)
+
+    # All-or-nothing: match, replace and encode all succeeded, so this is the one
+    # and only touch of the disk (P0004 §1.4).
+    _atomic_write_bytes(target, new_bytes, original_mode)
+
+    return (
+        {
+            "path": body["path"],
+            "replacements": replacements,
+            "size_before": len(raw_bytes),
+            "size_after": len(new_bytes),
+            "bytes_written": len(new_bytes),
+            "encoding": encoding,
+            "eol": eol,
+            "eol_normalized": eol_normalized,
+        },
+        len(new_bytes),
+    )
+
+
+def _exec_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0347 P0004 §9 — existence/kind/size/mtime/EOL without the content.
+
+    Absence answers 200 with exists=false, the one deliberate exception to the
+    pipeline's "target missing → 404": the whole point of stat is to report "not
+    there", and 404 would force every caller into exception handling and blur the
+    line against a permission or path error. An *unsafe* path is still 422 —
+    "unsafe path" is not "path that does not exist" (§9.2).
+    """
+    target = resolve_in_root(root, body["path"])
+    if target is None:
+        raise _OpError(422)
+
+    absent = {
+        "path": body["path"], "exists": False, "type": None,
+        "size": None, "mtime": None, "eol": None, "binary": None,
+    }
+    if not target.exists():
+        return absent, None
+
+    try:
+        st = target.stat()
+    except OSError:
+        return absent, None
+    mtime_iso = datetime.fromtimestamp(st.st_mtime, _JST).isoformat(timespec="seconds")
+
+    if target.is_dir():
+        return (
+            {
+                "path": body["path"], "exists": True, "type": "dir",
+                "size": None, "mtime": mtime_iso, "eol": None, "binary": None,
+            },
+            None,
+        )
+    if not target.is_file():
+        return (
+            {
+                "path": body["path"], "exists": True, "type": "other",
+                "size": None, "mtime": mtime_iso, "eol": None, "binary": None,
+            },
+            None,
+        )
+
+    with open(target, "rb") as fh:
+        sample = fh.read(_STAT_SAMPLE_BYTES)
+    binary = b"\x00" in sample
+    return (
+        {
+            "path": body["path"],
+            "exists": True,
+            "type": "file",
+            "size": st.st_size,
+            "mtime": mtime_iso,
+            "eol": None if binary else _detect_dominant_eol(sample),
+            "binary": binary,
+        },
+        None,   # bytes_processed always NULL — stat does not return content
     )
 
 
@@ -905,7 +1250,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         # Resolve the target source root. write/remove must not silently fall
         # back to the base checkout when the group worktree is missing (0205
         # §2.3) — they use the mutation gate, which raises a 409 with the cause.
-        if op in ("write", "remove"):
+        if op in _MUTATING_OPS:
             root = _resolve_root_for_mutation(grant, op)
         else:
             root = _resolve_src_root(grant, op)
@@ -944,10 +1289,10 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
     # right away" complaint. Broadcast file_explorer_refresh on a successful mutation
     # so the tree, change list and '>' markers refresh live. Best-effort; a delivery
     # failure must never turn a successful op into an error.
-    if op in ("write", "remove"):
+    if op in _MUTATING_OPS:
         _emit_explorer_refresh(grant, op)
-    # ⑦ Completion ment — only on successful state-changing operations (write/remove) (L0006 §6.1).
-    continuation = _continuation(grant) if op in ("write", "remove") else None
+    # ⑦ Completion ment — only on successful state-changing operations (L0006 §6.1).
+    continuation = _continuation(grant) if op in _MUTATING_OPS else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
 
 
