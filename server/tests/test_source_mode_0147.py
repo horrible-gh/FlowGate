@@ -56,7 +56,7 @@ def test_mention_keeps_remote_crud_by_default(monkeypatch):
     assert "## Remote project source CRUD" in out
     # 0349 TR-2: the section shrank to a help pointer, so the marker for "this step may
     # write" is the tool list, not a /remote/write example.
-    assert "도구: read, grep, glob, write, remove" in out
+    assert "도구: read, grep, glob, stat, write, patch, remove" in out
 
 
 def test_mention_omits_remote_crud_in_local_mode(monkeypatch):

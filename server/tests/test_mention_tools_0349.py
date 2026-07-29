@@ -77,7 +77,7 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
     assert len(body) == 5
     assert body[0] == "첫 행동으로 GET http://h/flowgate/api/v1/help/tools 를 호출해 각 도구의 사용법을 확인하세요."
     assert body[1].startswith("디스크의 프로젝트 소스를 직접 편집하지 마세요")
-    assert body[2] == "도구: read, grep, glob, write, remove"
+    assert body[2] == "도구: read, grep, glob, stat, write, patch, remove"
     assert body[3] == "Authorization: Bearer RAW"
     assert body[4] == "도구별 상세: GET http://h/flowgate/api/v1/help/tools/{name}"
 
@@ -85,16 +85,16 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
 def test_no_disk_edit_line_sits_next_to_the_tool_names_not_inside_help():
     """D-4: the accident this line prevents is a worker that never opened help."""
     body = _section(_build()).splitlines()
-    assert body.index("도구: read, grep, glob, write, remove") - 1 == next(
+    assert body.index("도구: read, grep, glob, stat, write, patch, remove") - 1 == next(
         i for i, line in enumerate(body) if line.startswith("디스크의")
     )
 
 
 @pytest.mark.parametrize("locale,tools_line", [
-    ("ko", "도구: read, grep, glob, write, remove"),
-    ("ja", "ツール: read, grep, glob, write, remove"),
-    ("en", "Tools: read, grep, glob, write, remove"),
-    ("zh", "도구: read, grep, glob, write, remove"),  # unsupported → ko, never a 400
+    ("ko", "도구: read, grep, glob, stat, write, patch, remove"),
+    ("ja", "ツール: read, grep, glob, stat, write, patch, remove"),
+    ("en", "Tools: read, grep, glob, stat, write, patch, remove"),
+    ("zh", "도구: read, grep, glob, stat, write, patch, remove"),  # unsupported → ko, never a 400
 ])
 def test_section_follows_the_worker_locale(locale, tools_line):
     assert tools_line in _section(_build(locale=locale))
@@ -103,14 +103,14 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 # ── D-3 / D-1: advertised set per step and scope ─────────────────────────────
 
 @pytest.mark.parametrize("head_type,expected", [
-    ("T", "read, grep, glob, write, remove"),
-    ("TR", "read, grep, glob, write, remove"),
+    ("T", "read, grep, glob, stat, write, patch, remove"),
+    ("TR", "read, grep, glob, stat, write, patch, remove"),
     # TSR is the single widening in this whole change (D-2): the test-report step really
     # does edit test code, and TR-1 already gave its token write scope.
-    ("TSR", "read, grep, glob, write, remove"),
-    ("NR", "read, grep, glob"),
-    ("D", "read, grep, glob"),
-    ("TS", "read, grep, glob"),
+    ("TSR", "read, grep, glob, stat, write, patch, remove"),
+    ("NR", "read, grep, glob, stat"),
+    ("D", "read, grep, glob, stat"),
+    ("TS", "read, grep, glob, stat"),
 ])
 def test_tool_list_matches_the_step_type(head_type, expected):
     assert f"도구: {expected}" in _section(_build(head_type=head_type))
@@ -118,7 +118,7 @@ def test_tool_list_matches_the_step_type(head_type, expected):
 
 def test_edit_mention_judges_by_the_document_being_revised():
     text = _build(action_scope="edit", parent_type="NR", head_type="TR")
-    assert "도구: read, grep, glob" in _section(text)
+    assert "도구: read, grep, glob, stat" in _section(text)
     assert "write" not in _section(text)
 
 
@@ -132,7 +132,7 @@ def test_review_mention_now_advertises_the_read_tools():
         token_rec=_TOKEN_REC, target_doc=_TARGET_DOC,
         api_base_url="http://h/flowgate/api/v1", raw_token="RAW",
     )
-    assert "도구: read, grep, glob" in _section(text)
+    assert "도구: read, grep, glob, stat" in _section(text)
     assert "write" not in _section(text)
 
 
@@ -142,7 +142,7 @@ def test_workflow_decision_mention_now_advertises_the_read_tools():
         target_doc={"doc_id": "p.default.0349.0001-R", "type_code": "R", "seq": 1, "title": "t"},
         api_base_url="http://h/flowgate/api/v1", raw_token="RAW",
     )
-    assert "도구: read, grep, glob" in _section(text)
+    assert "도구: read, grep, glob, stat" in _section(text)
 
 
 def test_sequence_edit_mention_still_advertises_nothing():
@@ -168,7 +168,7 @@ def test_answer_mention_follows_the_registry_instead_of_a_fixed_kind(monkeypatch
         raw_token="RAW", scratch_dir="S", api_base_url="http://h/flowgate/api/v1",
     )
     assert "[소스 도구]" in text
-    assert "도구: read, grep, glob, write, remove" in text
+    assert "도구: read, grep, glob, stat, write, patch, remove" in text
     assert text.index("[소스 도구]") < text.index("[질의]")
 
 
@@ -234,4 +234,4 @@ def test_failed_step_lookup_is_demoted_to_read_never_raised_to_write():
 
     assert kind == "read"
     assert reason == "step_lookup_failed"
-    assert tool_registry.tool_names(kind) == ["read", "grep", "glob"]
+    assert tool_registry.tool_names(kind) == ["read", "grep", "glob", "stat"]

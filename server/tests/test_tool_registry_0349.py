@@ -25,7 +25,7 @@ def test_kind_read_write_for_new_or_edit_t_tr_tsr(monkeypatch, action_scope, ste
     assert result["kind"] == "read_write"
     assert result["reason"] is None
     assert [item["name"] for item in result["tools"]] == [
-        "read", "grep", "glob", "write", "remove"
+        "read", "grep", "glob", "stat", "write", "patch", "remove"
     ]
 
 
@@ -36,7 +36,7 @@ def test_kind_read_for_review_and_workflow_decide_without_step_lookup(monkeypatc
     monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", unexpected)
     result = tool_registry.resolve_registry({"action_scope": action_scope}, "flowgate", "ja")
     assert result["kind"] == "read"
-    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob"]
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
 
 
 def test_kind_none_for_unassigned_scopes_and_user_jwt():
@@ -63,7 +63,7 @@ def test_lookup_exception_degrades_to_read_with_reason(monkeypatch):
     )
     assert result["kind"] == "read"
     assert result["reason"] == "step_lookup_failed"
-    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob"]
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
 
 
 def test_local_mode_overrides_kind_to_none(monkeypatch):
