@@ -9,6 +9,7 @@ POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
 POST           /api/v1/projects/{project_id}/git/base-commit  (0177 L0002 §2.3)
 POST           /api/v1/projects/{project_id}/git/base-revert  (0177 L0002 §2.4)
+POST           /api/v1/projects/{project_id}/git/base-remove  (0350 T0004)
 GET            /api/v1/projects/{project_id}/git/diff         (0326 NR0005 §4)
 GET            /api/v1/projects/{project_id}/git/groups/{group_id}/diff (0326 NR0005 §4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
@@ -266,6 +267,28 @@ def post_git_base_revert(
     """Per-file restore of the base checkout to HEAD (0177 L0002 §2.4)."""
     try:
         return git_service.base_revert(project_id, body.files)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class BaseRemoveBody(BaseModel):
+    # Base-checkout-relative UNTRACKED paths to delete (1+ required). Unlike
+    # base-revert this is destructive: the file has no committed copy to fall
+    # back to, so the caller loses it for good.
+    files: list[str] = []
+
+
+@router.post("/projects/{project_id}/git/base-remove")
+def post_git_base_remove(
+    project_id: str,
+    body: BaseRemoveBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Delete untracked files from the base checkout (0350 T0004) — the "remove"
+    half of the base_untracked_conflict 409's "commit or remove them" guidance
+    that base-commit alone could not fulfil."""
+    try:
+        return git_service.base_remove(project_id, body.files)
     except GitServiceError as exc:
         return _guard(exc)
 

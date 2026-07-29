@@ -99,6 +99,21 @@
         <div class="git-base-untracked__msg">
           {{ t('main.git_status.base_untracked_alert', { n: baseUntrackedCount }) }}
         </div>
+        <!-- 0350 T0004: a merge/merge_only bounced off these exact paths (409
+             base_untracked_conflict) — name the retry so committing or deleting
+             them below is understood to resume it, not just clean up the list. -->
+        <div v-if="pendingFinalize?.blockedFiles?.length" class="git-base-untracked__blocked" role="alert">
+          <AppIcon name="warning" />
+          <span>{{ t('main.git_status.base_untracked_conflict_pending', { n: pendingFinalize.blockedFiles.length }) }}</span>
+          <button
+            class="git-base-dirty-alert__close"
+            type="button"
+            :title="t('common.close')"
+            @click="pendingFinalize = null"
+          >
+            <AppIcon name="x" />
+          </button>
+        </div>
         <label v-for="f in baseUntrackedFiles" :key="f" class="git-base-untracked-row">
           <input
             type="checkbox"
@@ -132,6 +147,17 @@
           >
             <AppIcon name="check" />
             {{ t('main.git_status.base_untracked_commit_btn', { n: untrackedPicked.length }) }}
+          </button>
+          <!-- Destructive: no committed copy survives, so it never shares the
+               commit button's styling/wording (T0004 §2.3). -->
+          <button
+            class="btn btn-sm git-base-untracked-remove-btn"
+            type="button"
+            :disabled="busy || !untrackedPicked.length"
+            @click="doRemoveUntracked"
+          >
+            <AppIcon name="trash" />
+            {{ t('main.git_status.base_untracked_remove_btn', { n: untrackedPicked.length }) }}
           </button>
         </div>
       </div>
@@ -398,14 +424,22 @@ const explorerStore = useExplorerStore()
 // A merge finalize that bounced off the E3 base_dirty 409 parks here; after the
 // user commits (or reverts everything) it is re-posted with the ORIGINAL action
 // and absorb commit_message. Cleared on any finalize success or explicit close.
+// 0350 T0004: `blockedFiles` marks a park caused by `base_untracked_conflict`
+// (as opposed to `base_dirty`) — those never-committed paths, not the tracked
+// dirty set, are what must clear before the retry below is allowed to fire.
 const pendingFinalize = ref<{
   groupId: string
   payload: { action: string; commit_message?: string }
+  blockedFiles?: string[]
 } | null>(null)
 
 const baseDirtyFiles = computed(() => status.value?.base_dirty?.files ?? [])
+// A park from base_untracked_conflict must NOT open the tracked-dirty alert
+// below (its copy and its "병합 재시도" button both assume a base_dirty park) —
+// the untracked section further down already carries that park's UI.
 const showBaseDirtySection = computed(
-  () => baseDirtyFiles.value.length > 0 || !!pendingFinalize.value,
+  () => baseDirtyFiles.value.length > 0 ||
+    (!!pendingFinalize.value && !pendingFinalize.value.blockedFiles?.length),
 )
 
 // Mirrors git_service.default_base_commit_message (L0002 §2.2): what the user
@@ -713,6 +747,11 @@ function handleBaseDirty(
   if (err?.code === 'base_untracked_conflict') {
     const blocked: string[] = Array.isArray(err.details?.files) ? err.details.files : []
     untrackedPicked.value = blocked
+    // 0350 T0004 (NR0003 §1 발견 4): park the original finalize so committing or
+    // deleting the blocked paths below can resume it automatically — mirrors the
+    // base_dirty park just below, but keyed off the untracked file set instead of
+    // the tracked one.
+    pendingFinalize.value = { groupId, payload, blockedFiles: blocked }
     showToast(
       t('main.git_status.base_untracked_conflict_toast', { files: blocked.join(', ') }),
       'danger',
@@ -753,8 +792,10 @@ async function doBaseCommit() {
     baseCommitMsg.value = ''
     baseCommitEdited.value = false
     // Commit-then-merge: the parked finalize resumes as soon as the base is clean
-    // (an idempotent {committed:false} race result resumes just the same).
-    if (pendingFinalize.value && remaining.length === 0) {
+    // (an idempotent {committed:false} race result resumes just the same). Only
+    // for a base_dirty park — an untracked-conflict park resumes from the
+    // untracked section's own commit/delete actions instead (below).
+    if (pendingFinalize.value && !pendingFinalize.value.blockedFiles?.length && remaining.length === 0) {
       const { groupId, payload } = pendingFinalize.value
       await runFinalize(groupId, payload)
     }
@@ -764,6 +805,20 @@ async function doBaseCommit() {
     busy.value = false
     await fetchStatus()
   }
+}
+
+// 0350 T0004: true once none of the parked untracked-conflict's blocking paths
+// remain in the base checkout's untracked set — i.e. they were all committed or
+// deleted, so the merge that bounced off them can be retried.
+function untrackedBlockCleared(remainingUntracked: string[]): boolean {
+  const blocked = pendingFinalize.value?.blockedFiles
+  if (!blocked || !blocked.length) return false
+  return !blocked.some((f) => remainingUntracked.includes(f))
+}
+async function resumeIfUntrackedCleared(remainingUntracked: string[]) {
+  if (!untrackedBlockCleared(remainingUntracked)) return
+  const { groupId, payload } = pendingFinalize.value!
+  await runFinalize(groupId, payload)
 }
 
 // 0296 T0004: commit exactly the picked new files. `paths` is what makes the
@@ -801,6 +856,10 @@ async function doCommitUntracked() {
     }
     untrackedPicked.value = []
     untrackedCommitMsg.value = ''
+    // 0350 T0004: a merge parked on base_untracked_conflict resumes as soon as
+    // every path it named is gone from the untracked set.
+    const remainingUntracked: string[] = Array.isArray(r?.remaining_untracked) ? r.remaining_untracked : []
+    await resumeIfUntrackedCleared(remainingUntracked)
   } catch (e: any) {
     const err = e?.response?.data?.error
     // A .gitignore'd path can never be committed (NR0003 §C4) — the server says
@@ -815,6 +874,40 @@ async function doCommitUntracked() {
     } else {
       showToast(err?.message || t('main.git_status.failed'), 'danger')
     }
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+// 0350 T0004: the "remove" half of the base_untracked_conflict 409's "commit or
+// remove them" guidance — irreversible (no committed copy survives), so it is a
+// distinct danger-styled action the operator must explicitly confirm, never
+// grouped with the commit button above.
+async function doRemoveUntracked() {
+  if (busy.value || !props.projectId || !untrackedPicked.value.length) return
+  const targets = [...untrackedPicked.value]
+  const ok = window.confirm(
+    t('main.git_status.base_untracked_remove_confirm', { n: targets.length, files: targets.join(', ') }),
+  )
+  if (!ok) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+      `/api/v1/projects/${props.projectId}/git/base-remove`,
+      { files: targets },
+    )
+    if (data.ok === false) {
+      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      return
+    }
+    const r = data.result
+    showToast(t('main.git_status.base_untracked_remove_done', { n: targets.length }), 'success')
+    untrackedPicked.value = []
+    const remainingUntracked: string[] = Array.isArray(r?.remaining_untracked) ? r.remaining_untracked : []
+    await resumeIfUntrackedCleared(remainingUntracked)
+  } catch (e: any) {
+    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1453,5 +1546,36 @@ defineExpose({ fetchStatus })
   margin-top: 6px;
   font-size: 0.72rem;
   color: var(--text-m);
+}
+/* 0350 T0004 — a merge is parked on exactly these paths; danger-coloured (unlike
+   the neutral untracked note above it) since it names a blocked action. */
+.git-base-untracked__blocked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.76rem;
+}
+.git-base-untracked__blocked > i {
+  color: #b91c1c;
+  flex: none;
+}
+.git-base-untracked__blocked > span {
+  flex: 1 1 auto;
+}
+/* Delete is irreversible (no committed copy survives) — a distinct danger-outline
+   treatment so it is never mistaken for the primary commit button beside it. */
+.git-base-untracked-remove-btn {
+  background: #fff;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+.git-base-untracked-remove-btn:hover:not(:disabled) {
+  background: #fef2f2;
 }
 </style>

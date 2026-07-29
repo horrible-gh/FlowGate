@@ -2137,6 +2137,14 @@ export default {
       base_dirty_revert_merge: '되돌리고 머지',
       base_dirty_revert_note: '되돌리면 아래 파일의 미커밋 변경이 사라집니다.',
       base_dirty_still: '아직 미커밋 변경이 남아 있습니다. 다시 선택하세요.',
+      // 0350 T0004 — base_untracked_conflict: base 체크아웃의 커밋되지 않은 새
+      // 파일이 그룹 브랜치가 만들려는 경로와 겹쳐 머지가 거부된 경우.
+      untracked_conflict_dialog_title: '미커밋 새 파일 처리',
+      untracked_conflict_dialog_body: 'base 체크아웃에 아직 커밋되지 않은 새 파일이 그룹 작업과 같은 경로에 있어 머지를 진행할 수 없습니다. 이 파일을 커밋한 뒤 머지할지, 삭제한 뒤 머지할지 선택하세요.',
+      untracked_conflict_commit: '커밋 후 머지',
+      untracked_conflict_remove: '삭제 후 머지',
+      untracked_conflict_remove_note: '삭제하면 아래 파일이 base 체크아웃에서 영구적으로 사라집니다(커밋 이력 없음, 복구 불가).',
+      untracked_conflict_still: '아직 차단 파일이 남아 있습니다. 다시 선택하세요.',
     },
     git_status: {
       title: 'Git 현황',
@@ -2183,6 +2191,10 @@ export default {
       base_untracked_commit_done: '새 파일 {n}개를 커밋했습니다 ({commit})',
       base_untracked_ignored: '.gitignore 로 제외된 파일은 커밋할 수 없습니다: {files}',
       base_untracked_conflict_toast: 'base 체크아웃의 커밋되지 않은 새 파일이 머지를 막고 있습니다: {files} — 커밋하거나 삭제한 뒤 다시 시도하세요',
+      base_untracked_conflict_pending: '차단된 파일 {n}개를 커밋하거나 삭제하면 중단된 머지가 자동으로 다시 시도됩니다.',
+      base_untracked_remove_btn: '선택한 {n}개 삭제',
+      base_untracked_remove_confirm: '선택한 파일 {n}개를 base 체크아웃에서 영구적으로 삭제합니다. 커밋 이력이 없으므로 되돌릴 수 없습니다.\n{files}\n계속할까요?',
+      base_untracked_remove_done: '새 파일 {n}개를 삭제했습니다',
       cleanup_btn: '종결 브랜치 정리 ({n})',
       cleanup_done: '종결 브랜치 {n}건을 정리했습니다',
       cleanup_partial: '{n}건 정리, {failed}건 실패 (서버 로그 참조)',

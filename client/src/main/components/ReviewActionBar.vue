@@ -763,8 +763,18 @@ async function doApprove() {
       // Approval stood; only the git post-step failed — say so, don't block.
       // base_dirty (E3) is actionable: name the guidance and let dispatchGitStatusEvent
       // open the header Git panel where the files are listed (T0010 §b).
+      // base_untracked_conflict (0350 T0004) is its sibling: never-committed base
+      // files blocking the same merge. Same treatment — Korean guidance naming the
+      // blocked paths, then hand off to the Git panel, which now parks this
+      // finalize and retries it once the operator commits or deletes them.
       if (git.error?.code === 'base_dirty') {
         showToast(t('main.git_finalize.base_dirty_toast'), 'warning')
+      } else if (git.error?.code === 'base_untracked_conflict') {
+        const blocked: string[] = Array.isArray(git.error?.details?.files) ? git.error.details.files : []
+        showToast(
+          t('main.git_status.base_untracked_conflict_toast', { files: blocked.join(', ') }),
+          'warning',
+        )
       } else {
         showToast(git.error?.message || t('main.git_finalize.failed'), 'warning')
       }
