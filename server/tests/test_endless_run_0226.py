@@ -53,15 +53,16 @@ def _item(item_seq, type_, result=None):
 
 
 class TestContinuationDocsTarget:
+    """Mode-explicit worker counts: legacy cases are auto_approved; 0353 adds ai_direct."""
     def test_counts_only_worker_items_up_to_target(self, monkeypatch):
         _Wfseq([
             _item(1, "N", "d-N"), _item(2, "NR", "d-NR"),
             _item(3, "T"), _item(4, "TR"), _item(5, "TS"), _item(6, "TSR"),
         ]).install(monkeypatch)
         # target 4: pending ≤ 4 = T(3)+TR(4); the T auto-completes as a draft ⇒ 1.
-        assert svc._continuation_docs_target("doc", 4) == 1
+        assert svc._continuation_docs_target("doc", 4, continuation_instruction_mode="auto_approved") == 1
         # target 6: TR + TS + TSR ⇒ 3.
-        assert svc._continuation_docs_target("doc", 6) == 3
+        assert svc._continuation_docs_target("doc", 6, continuation_instruction_mode="auto_approved") == 3
 
     def test_sparse_item_seq_after_edit_workflow_pending(self, monkeypatch):
         # 0226 B0001 ②: renumbered pending tail (18–21) — the old group-seq
@@ -69,22 +70,44 @@ class TestContinuationDocsTarget:
         _Wfseq([
             _item(18, "T"), _item(19, "TR"), _item(20, "TS"), _item(21, "TSR"),
         ]).install(monkeypatch)
-        assert svc._continuation_docs_target("doc", 21) == 3
+        assert svc._continuation_docs_target("doc", 21, continuation_instruction_mode="auto_approved") == 3
 
     def test_realized_items_do_not_count_when_pending_only(self, monkeypatch):
         _Wfseq([
             _item(1, "T", "d-T"), _item(2, "TR", "d-TR"), _item(3, "TS"), _item(4, "TSR"),
         ]).install(monkeypatch)
-        assert svc._continuation_docs_target("doc", 4) == 2                       # TS + TSR
-        assert svc._continuation_docs_target("doc", 4, pending_only=False) == 3    # + TR
+        assert svc._continuation_docs_target("doc", 4, continuation_instruction_mode="auto_approved") == 2                       # TS + TSR
+        assert svc._continuation_docs_target("doc", 4, pending_only=False, continuation_instruction_mode="auto_approved") == 3    # + TR
 
     def test_to_end_has_no_upper_bound(self, monkeypatch):
         _Wfseq([_item(1, "N", "d"), _item(2, "NR", "d"), _item(3, "M")]).install(monkeypatch)
-        assert svc._continuation_docs_target("doc", None, pending_only=False) == 2  # NR + M
+        assert svc._continuation_docs_target("doc", None, pending_only=False, continuation_instruction_mode="auto_approved") == 2  # NR + M
+
+    @pytest.mark.parametrize("instruction_type", ["N", "T"])
+    def test_ai_direct_single_instruction_target_counts_one(self, monkeypatch, instruction_type):
+        _Wfseq([_item(1, instruction_type)]).install(monkeypatch)
+        assert svc._continuation_docs_target(
+            "doc", 1, continuation_instruction_mode="ai_direct"
+        ) == 1
+
+    def test_ai_direct_mixed_target_counts_instructions_and_reports(self, monkeypatch):
+        _Wfseq([
+            _item(1, "N"), _item(2, "NR"), _item(3, "T"), _item(4, "TR"),
+        ]).install(monkeypatch)
+        assert svc._continuation_docs_target(
+            "doc", 4, continuation_instruction_mode="ai_direct"
+        ) == 4
+
+    @pytest.mark.parametrize("instruction_mode", ["auto_approved", "ai_direct"])
+    def test_ts_counts_in_both_modes(self, monkeypatch, instruction_mode):
+        _Wfseq([_item(1, "TS")]).install(monkeypatch)
+        assert svc._continuation_docs_target(
+            "doc", 1, continuation_instruction_mode=instruction_mode
+        ) == 1
 
     def test_undecided_sequence_returns_none(self, monkeypatch):
         _Wfseq([], decided=False).install(monkeypatch)
-        assert svc._continuation_docs_target("doc", 5) is None
+        assert svc._continuation_docs_target("doc", 5, continuation_instruction_mode="auto_approved") is None
 
 
 # ── §5-2: honest live counter + unclamped final count ────────────────────────
@@ -110,6 +133,7 @@ def _run_dict(tmp_path, *, docs_target, baseline_seq=4, action_scope="new",
         "dirty_baseline": None, "source_root": None,
         "api_base_url": "", "chain_source": "system", "raw_token": "x",
         "action_scope": action_scope, "target_to_end": target_to_end,
+        "continuation_instruction_mode": "auto_approved",
     }
     Path(run["scratch_dir"]).mkdir(parents=True, exist_ok=True)
     return run
