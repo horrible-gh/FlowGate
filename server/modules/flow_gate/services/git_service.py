@@ -4957,6 +4957,94 @@ def base_revert(project_id: str, files: list[str]) -> dict:
         db_git.release_lock(project_id, holder)
 
 
+def base_remove(project_id: str, files: list[str]) -> dict:
+    """POST …/projects/{id}/git/base-remove — delete untracked files from the base
+    checkout (0350 T0004 / NR0003 §8 R4).
+
+    The `base_untracked_conflict` 409 has always told the operator to "commit or
+    remove them", but only the commit half (`base_commit(..., paths=...)`) ever
+    shipped. This is the missing remove: for a base-checkout file that was never
+    meant to be kept (a stray local experiment, a build artifact that slipped past
+    .gitignore), deleting it is the only way to clear a merge that wants to create
+    the same path — committing it would just relocate the conflict into base's own
+    history.
+
+    Deliberately its own function/route, never folded into `base_revert` (which
+    restores TRACKED content to HEAD): revert is non-destructive by construction
+    (the content survives in HEAD), while this discards the only copy of a file
+    that was never committed anywhere. Kept behind the same base-root
+    containment/lock/merge-in-progress gates as base_commit/base_revert, and
+    revalidates every path as untracked-and-not-ignored right before deleting —
+    never trusts a caller-supplied list on its own.
+    """
+    _, base_root = _require_base_checkout(project_id)
+    cleaned = [str(f or "").strip() for f in (files or [])]
+    cleaned = [f for f in cleaned if f]
+    if not cleaned:
+        raise GitServiceError(422, "invalid_request", "files must name at least one path")
+    for f in cleaned:
+        # Reject absolute paths and parent traversal BEFORE the lock — the
+        # operation must never reach outside the base checkout.
+        norm = f.replace("\\", "/")
+        if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+            raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
+    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+    if not git_available():
+        raise GitServiceError(
+            500, "git_unavailable",
+            "git binary not found on server (install git in the runtime image)",
+        )
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
+    try:
+        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+        if _merge_in_progress(base_root):
+            raise GitServiceError(
+                409, "invalid_state", "a merge is in progress; resolve or abort it first"
+            )
+        # Re-derive "untracked" right now (not from what the caller remembers) —
+        # the same freshness discipline as base_commit's `paths` mode. A path that
+        # is tracked or already gone is never a valid delete target.
+        untracked = set(_untracked_files(base_root, limit=0))
+        unknown = [p for p in cleaned if p not in untracked]
+        if unknown:
+            # `.gitignore` first, same as base_commit: an ignored file needs its own
+            # honest error, never a silent `clean -f -x`.
+            ignored = _ignored_paths(base_root, unknown)
+            if ignored:
+                raise GitServiceError(
+                    422, "path_ignored",
+                    "these paths are excluded by .gitignore and cannot be removed",
+                    details={"files": ignored},
+                )
+            raise GitServiceError(
+                422, "invalid_request",
+                "these paths are not untracked files in the base checkout",
+                details={"files": unknown},
+            )
+        results: list[dict] = []
+        for f in cleaned:
+            # `git clean -f` is a second, git-enforced guard on top of the
+            # revalidation above (it refuses tracked/ignored paths on its own) and
+            # runs as a literal argv pathspec — no shell, no globbing — matching
+            # base_commit's `add -- <files>` / base_revert's `checkout HEAD -- <path>`.
+            proc = _run_git(["clean", "-f", "-q", "--", f], cwd=base_root)
+            results.append({"path": f, "result": "removed" if proc.returncode == 0 else "error"})
+        return {
+            "ok": all(r["result"] != "error" for r in results),
+            "result": {
+                "results": results,
+                "remaining_untracked": _untracked_files(base_root),
+            },
+        }
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
 # ── Approval-ride-along git action (flowgate.default.0162 P §1 / L §2.1) ──────
 
 def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:

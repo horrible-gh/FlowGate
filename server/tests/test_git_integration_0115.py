@@ -2190,6 +2190,337 @@ class TestBaseUntrackedCommit0296:
         assert out["committed"] is True and out["files"] == ["artifact.tmp"]
 
 
+# ── flowgate.default.0350 T0004: base_untracked_conflict integrated recovery ──
+#
+# NR0003's conclusion: the 409 is correct Git behaviour (data-loss prevention),
+# but the product only ever implemented half of its own "commit or remove them"
+# guidance (commit only) and never exercised the full "revert → untracked
+# survives → merge alone → 409 → in-app recovery → retry succeeds" flow
+# end-to-end. These fixtures/tests are that missing coverage (NR §7 items 1-6);
+# item 7 (the four surfaces' client-side handling) is covered by client vitest.
+
+@pytest.fixture(scope="class")
+def untracked_conflict_origin(seed):
+    """A dedicated bare origin + enabled project + provisioned base checkout,
+    mirroring `base_origin`/`untracked_origin` but kept separate so this class's
+    sequential same-path collisions never interact with theirs."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "utcprj", "project_name": "UtcProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0350-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    (seedwt / ".gitignore").write_text("*.secret\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("utcprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("utcprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "tmp": tmp, "base": src_root("UtcProj", "main")}
+    svc.delete_config("utcprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _make_untracked_collision(
+    svc, db_git, src_root, group, path, content="group version\n",
+    project_id="utcprj", project_name="UtcProj",
+):
+    """Provision a group worktree, stage `path` for its absorb commit (finalize
+    commits worker edits before it ever touches the base checkout), and leave the
+    caller to drop the SAME path, uncommitted, into the shared base checkout —
+    the exact B0001 collision. Returns the worktree Path."""
+    module = group.split(".", 2)[1]
+    assert svc.ensure_worktree(project_id, module, group) == "ok"
+    wt = src_root(project_name, group.replace(".", "_"))
+    (wt / path).write_text(content, encoding="utf-8")
+    db_git.set_status(group, "awaiting_choice")
+    return wt
+
+
+@needs_git
+class TestBaseUntrackedConflictEndToEnd0350:
+    """NR0003 §7 items 1-4: the full collision, both actions, side-effect-free
+    failure, the exact B0001 ordering, and the non-conflicting control case."""
+
+    def test_merge_and_merge_only_both_hit_the_same_409(self, untracked_conflict_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_conflict_origin["base"]
+        for action, group in [
+            ("merge", "utcprj.default.0350a"),
+            ("merge_only", "utcprj.default.0350b"),
+        ]:
+            _make_untracked_collision(svc, db_git, src_root, group, "clash.txt")
+            (base / "clash.txt").write_text("base version\n", encoding="utf-8")
+            try:
+                with pytest.raises(svc.GitServiceError) as exc:
+                    svc.finalize(group, action)
+                assert exc.value.status == 409
+                assert exc.value.code == "base_untracked_conflict"
+                assert exc.value.details == {"files": ["clash.txt"]}
+            finally:
+                (base / "clash.txt").unlink()
+
+    def test_failure_is_side_effect_free(self, untracked_conflict_origin):
+        """NR §7 item 2: group stays `waiting`, the base file content and the
+        group branch/worktree all survive, and no MERGE_HEAD is left behind —
+        git refuses the collision before a merge session ever opens."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_conflict_origin["base"]
+        group = "utcprj.default.0350c"
+        wt = _make_untracked_collision(svc, db_git, src_root, group, "clash2.txt")
+        (base / "clash2.txt").write_text("base pre-existing\n", encoding="utf-8")
+        try:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.finalize(group, "merge_only")
+            assert exc.value.code == "base_untracked_conflict"
+
+            state = db_git.get_state(group)
+            assert state["status"] == "waiting"
+            assert (base / "clash2.txt").read_text(encoding="utf-8") == "base pre-existing\n"
+            assert wt.is_dir() and (wt / "clash2.txt").is_file()
+            branches = _git(["branch", "--list", "utcprj_default_0350c"], cwd=base).strip()
+            assert "utcprj_default_0350c" in branches
+            assert not (base / ".git" / "MERGE_HEAD").exists()
+        finally:
+            (base / "clash2.txt").unlink()
+
+    def test_revert_tracked_then_untracked_only_matches_b0001_order(self, untracked_conflict_origin):
+        """NR §7 item 3: B0001's actual sequence — a tracked base edit AND an
+        untracked collision file both present, revert clears only the tracked
+        one, and merge THEN fails on the untracked-only leftover (not the E3
+        guard, which the first finalize hit instead)."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_conflict_origin["base"]
+        group = "utcprj.default.0350d"
+        _make_untracked_collision(svc, db_git, src_root, group, "clash3.txt")
+        (base / "README.md").write_text("hotfixed\n", encoding="utf-8")   # tracked
+        (base / "clash3.txt").write_text("base pre-existing\n", encoding="utf-8")  # untracked collision
+        try:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.finalize(group, "merge_only")
+            assert exc.value.code == "base_dirty"          # tracked guard fires first
+            assert exc.value.details == {"files": ["README.md"]}
+
+            rev = svc.base_revert("utcprj", ["README.md"])
+            assert rev["result"]["remaining"] == []
+
+            with pytest.raises(svc.GitServiceError) as exc2:
+                svc.finalize(group, "merge_only")
+            assert exc2.value.code == "base_untracked_conflict"
+            assert exc2.value.details == {"files": ["clash3.txt"]}
+        finally:
+            (base / "clash3.txt").unlink()
+
+    def test_noncolliding_untracked_never_blocks_merge(self, untracked_conflict_origin):
+        """NR §7 item 4: an untracked base file on a DIFFERENT path is advisory
+        only — merge proceeds and the file is simply left behind, proving this
+        stayed a path-intersection guard and never widened into "any base
+        untracked file blocks everything" (the 0165.0009 regression)."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_conflict_origin["base"]
+        group = "utcprj.default.0350e"
+        _make_untracked_collision(svc, db_git, src_root, group, "own_work.txt")
+        (base / "unrelated_build_artifact.tmp").write_text("junk\n", encoding="utf-8")
+
+        out = svc.finalize(group, "merge_only")
+        assert out["result"]["status"] == "merged"
+        assert (base / "unrelated_build_artifact.tmp").is_file()
+        (base / "unrelated_build_artifact.tmp").unlink()
+
+
+@pytest.fixture(scope="class")
+def untracked_remove_origin(seed):
+    """A SEPARATE dedicated bare origin + project from `untracked_conflict_origin`
+    — one project id per fixture, one fixture per class (repo convention, see
+    `grpexp_origin`): `projects.create` does not tolerate a repeated project id
+    across two class-scoped fixture instantiations in the same test module run."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "utcrmprj", "project_name": "UtcRmProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0350-rm-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    (seedwt / ".gitignore").write_text("*.secret\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("utcrmprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("utcrmprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "tmp": tmp, "base": src_root("UtcRmProj", "main")}
+    svc.delete_config("utcrmprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestBaseRemoveAndRetry0350:
+    """NR0003 §7 items 5-6 / §8 R4: the missing `base_remove` API, and both
+    recovery paths (delete, and the existing selective commit) unblocking a
+    retried finalize with the action contract intact."""
+
+    def test_remove_deletes_and_validates(self, untracked_remove_origin):
+        from modules.flow_gate.services import git_service as svc
+
+        base = untracked_remove_origin["base"]
+        (base / "gone.txt").write_text("delete me\n", encoding="utf-8")
+
+        # path validation happens before anything reaches git
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_remove("utcrmprj", [])
+        assert exc.value.status == 422
+        for bad in ["/etc/passwd", "../outside.txt", "a/../../b"]:
+            with pytest.raises(svc.GitServiceError) as exc:
+                svc.base_remove("utcrmprj", [bad])
+            assert exc.value.status == 422 and exc.value.code == "invalid_request"
+
+        # a TRACKED file is never a delete target — that is base_revert's job
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_remove("utcrmprj", ["README.md"])
+        assert exc.value.status == 422 and exc.value.code == "invalid_request"
+        assert exc.value.details == {"files": ["README.md"]}
+        assert (base / "README.md").is_file()   # untouched by the refusal
+
+        # a gitignore'd path gets its own honest code, never a silent force-clean
+        (base / "keys.secret").write_text("shh\n", encoding="utf-8")
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_remove("utcrmprj", ["keys.secret"])
+        assert exc.value.code == "path_ignored"
+        assert exc.value.details == {"files": ["keys.secret"]}
+        (base / "keys.secret").unlink()
+
+        # a path git does not currently see as untracked (never existed) is refused
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.base_remove("utcrmprj", ["never_existed.txt"])
+        assert exc.value.status == 422 and exc.value.code == "invalid_request"
+        assert exc.value.details == {"files": ["never_existed.txt"]}
+
+        out = svc.base_remove("utcrmprj", ["gone.txt"])["result"]
+        assert out["results"] == [{"path": "gone.txt", "result": "removed"}]
+        assert not (base / "gone.txt").exists()
+        assert "gone.txt" not in out["remaining_untracked"]
+
+    def test_remove_then_retry_merge_pushes(self, untracked_remove_origin):
+        """NR §7 item 5: delete the blocking file → the parked finalize retries
+        and `merge` still pushes (the action contract is unaffected by how the
+        conflict was cleared)."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_remove_origin["base"]
+        group = "utcrmprj.default.0350f"
+        _make_untracked_collision(
+            svc, db_git, src_root, group, "clash5.txt",
+            project_id="utcrmprj", project_name="UtcRmProj",
+        )
+        (base / "clash5.txt").write_text("base pre-existing\n", encoding="utf-8")
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group, "merge")
+        assert exc.value.code == "base_untracked_conflict"
+
+        rm = svc.base_remove("utcrmprj", ["clash5.txt"])["result"]
+        assert rm["results"] == [{"path": "clash5.txt", "result": "removed"}]
+
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "merged"
+        assert out["result"]["pushed"] is True
+        files = _git(
+            ["ls-tree", "--name-only", "main"], cwd=untracked_remove_origin["bare"]
+        ).split()
+        assert "clash5.txt" in files   # the group's own copy landed via the merge
+
+    def test_remove_then_retry_merge_only_stays_local(self, untracked_remove_origin):
+        """`merge_only` retried the same way must still report pushed=false."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_remove_origin["base"]
+        group = "utcrmprj.default.0350g"
+        _make_untracked_collision(
+            svc, db_git, src_root, group, "clash6.txt",
+            project_id="utcrmprj", project_name="UtcRmProj",
+        )
+        (base / "clash6.txt").write_text("base pre-existing\n", encoding="utf-8")
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group, "merge_only")
+        assert exc.value.code == "base_untracked_conflict"
+
+        svc.base_remove("utcrmprj", ["clash6.txt"])
+        out = svc.finalize(group, "merge_only")
+        assert out["result"]["status"] == "merged"
+        assert out["result"]["pushed"] is False
+
+    def test_selective_commit_then_retry_also_unblocks(self, untracked_remove_origin):
+        """NR §7 item 6: GitStatusPanel's existing selective-commit path (base
+        commit with explicit `paths`) resolves the same 409 just as well as
+        delete — the server side of the client's auto-retry."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base = untracked_remove_origin["base"]
+        group = "utcrmprj.default.0350h"
+        _make_untracked_collision(
+            svc, db_git, src_root, group, "clash7.txt",
+            project_id="utcrmprj", project_name="UtcRmProj",
+        )
+        (base / "clash7.txt").write_text("base pre-existing, worth keeping\n", encoding="utf-8")
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.finalize(group, "merge_only")
+        blocked = exc.value.details["files"]
+        assert blocked == ["clash7.txt"]
+
+        committed = svc.base_commit("utcrmprj", "fix: keep the base copy", blocked)["result"]
+        assert committed["committed"] is True
+
+        out = svc.finalize(group, "merge_only")
+        assert out["result"]["status"] == "conflict"    # both sides now hold real, different content
+        # ...which is a normal content conflict — the untracked-collision 409 is
+        # gone, proving the commit alone unblocked the merge attempt.
+        assert out["result"]["merge_id"] is not None
+
+
 @pytest.fixture(scope="class")
 def grpexp_origin(seed):
     """A bare origin + enabled project dedicated to the group-explorer tests. Uses its

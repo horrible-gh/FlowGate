@@ -208,6 +208,9 @@
   <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
        (no silent auto-commit) before the finalize retries. -->
   <GitBaseDirtyDialog ref="baseDirtyDialog" />
+  <!-- 0350 T0004: base_untracked_conflict's sibling — commit / delete / cancel
+       before the finalize retries. -->
+  <GitUntrackedConflictDialog ref="untrackedConflictDialog" />
 </template>
 
 <script setup lang="ts">
@@ -230,6 +233,7 @@ import {
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
+import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import { actionNeedsCommitMessage, type FinalizeAxes } from '../composables/finalizeAxis'
 
@@ -247,6 +251,7 @@ const projectStore = useProjectStore()
 const aiProviderStore = useAiProviderStore()
 const { initConflictFile } = useConflictChunks()
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
+const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
 
 interface GitCommitMessage {
   suggested: string
@@ -540,7 +545,7 @@ async function postFinalize(
       payload,
     )
     if (data.ok === false) {
-      if (!retried && (await handleBaseDirty(data.error))) return postFinalize(payload, true)
+      if (!retried && (await handleFinalizeConflict(data.error))) return postFinalize(payload, true)
       showToast(finalizeErrorMessage(data.error), 'danger')
     } else {
       const r = data.result
@@ -558,7 +563,7 @@ async function postFinalize(
     }
   } catch (e: any) {
     const err = e?.response?.data?.error
-    if (!retried && (await handleBaseDirty(err))) return postFinalize(payload, true)
+    if (!retried && (await handleFinalizeConflict(err))) return postFinalize(payload, true)
     showToast(finalizeErrorMessage(err), 'danger')
   }
 }
@@ -584,6 +589,21 @@ async function handleBaseDirty(err: any): Promise<boolean> {
   const files = Array.isArray(err.details?.files) ? err.details.files : []
   const outcome = await baseDirtyDialog.value.resolve(projectId, files)
   return outcome === 'proceed'
+}
+
+// 0350 T0004 (NR0003 §8 R2): the sibling failure — untracked new files in the
+// base checkout sit on a path the merge wants to create. Same non-auto-resolve
+// rule as base_dirty: the operator picks commit or delete before the retry.
+async function handleUntrackedConflict(err: any): Promise<boolean> {
+  const projectId = projectStore.currentProjectId
+  if (err?.code !== 'base_untracked_conflict' || !projectId || !untrackedConflictDialog.value) return false
+  const files = Array.isArray(err.details?.files) ? err.details.files : []
+  const outcome = await untrackedConflictDialog.value.resolve(projectId, files)
+  return outcome === 'proceed'
+}
+
+async function handleFinalizeConflict(err: any): Promise<boolean> {
+  return (await handleBaseDirty(err)) || (await handleUntrackedConflict(err))
 }
 
 async function submitResolve() {

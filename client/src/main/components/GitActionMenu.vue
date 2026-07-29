@@ -86,6 +86,9 @@
     <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
          (no silent auto-commit) before the finalize retries. -->
     <GitBaseDirtyDialog ref="baseDirtyDialog" />
+    <!-- 0350 T0004: base_untracked_conflict's sibling — commit / delete / cancel
+         before the finalize retries. -->
+    <GitUntrackedConflictDialog ref="untrackedConflictDialog" />
   </div>
 </template>
 
@@ -100,6 +103,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
 import GitStatusPanel from './GitStatusPanel.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
+import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -129,6 +133,7 @@ const busy = ref(false)
 const dropdownOpen = ref(false)
 const panelOpen = ref(false)
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
+const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
 
 function statusLabel(s: string): string {
   return t(`main.git_finalize.status.${s}`)
@@ -209,7 +214,7 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
       { action: item.default_action },
     )
     if (data.ok === false) {
-      if (!retried && (await handleBaseDirty(data.error))) return runFinalize(item, true)
+      if (!retried && (await handleFinalizeConflict(data.error))) return runFinalize(item, true)
       showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
     } else {
       const r = data.result
@@ -227,7 +232,7 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
     }
   } catch (e: any) {
     const err = e?.response?.data?.error
-    if (!retried && (await handleBaseDirty(err))) return runFinalize(item, true)
+    if (!retried && (await handleFinalizeConflict(err))) return runFinalize(item, true)
     showToast(err?.message || t('main.git_finalize.failed'), 'danger')
   }
 }
@@ -242,6 +247,19 @@ async function handleBaseDirty(err: any): Promise<boolean> {
   const files = Array.isArray(err.details?.files) ? err.details.files : []
   const outcome = await baseDirtyDialog.value.resolve(projectId.value, files)
   return outcome === 'proceed'
+}
+
+// 0350 T0004: base_untracked_conflict's sibling — same non-auto-resolve rule,
+// commit or delete is the operator's call before [execute] retries.
+async function handleUntrackedConflict(err: any): Promise<boolean> {
+  if (err?.code !== 'base_untracked_conflict' || !projectId.value || !untrackedConflictDialog.value) return false
+  const files = Array.isArray(err.details?.files) ? err.details.files : []
+  const outcome = await untrackedConflictDialog.value.resolve(projectId.value, files)
+  return outcome === 'proceed'
+}
+
+async function handleFinalizeConflict(err: any): Promise<boolean> {
+  return (await handleBaseDirty(err)) || (await handleUntrackedConflict(err))
 }
 
 function toggleDropdown() {
