@@ -159,6 +159,30 @@ def test_notice_carries_all_five_blocks():
     assert "대개" in notice
 
 
+def test_tr_instructions_use_a_path_placeholder_instead_of_project_files():
+    notice = trs.build_notice({
+        "codes": [trs.TRV_FORMAT],
+        "branch": "b",
+        "worktree": "w",
+        "detected": [],
+        "unconfirmed": [],
+        "unreported": [],
+        "out_of_scope": [],
+        "format_errors": ["목록 형식이 아닌 줄: x"],
+    })
+    placeholder = "<저장소 루트 기준 상대경로. 바뀐 파일마다 한 줄씩 추가>"
+    old_examples = (
+        "server/modules/flow_gate/api/inbox_routes.py",
+        "client/src/main/components/MainPanel.vue",
+    )
+
+    assert trs.TR_SECTION_GUIDE.count(placeholder) == 1
+    assert notice.count(placeholder) == 1
+    for old_example in old_examples:
+        assert old_example not in trs.TR_SECTION_GUIDE
+        assert old_example not in notice
+
+
 def test_notice_truncates_long_lists_but_keeps_the_true_count():
     detected = [f"server/f{i}.py" for i in range(120)]
     notice = trs.build_notice({
