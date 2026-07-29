@@ -7,7 +7,7 @@ Covers the storage/resolver/API contract:
   • resolve_doctype_provider (the hop decider): mapped+enabled -> id; unmapped/disabled -> None
   • FK cascade: a provider dropped from the routing chain drops its assignment
   • ai_invoke hop wiring: _prioritize_chain (배정 우선 + 폴백 tail) and
-    _resolve_continuation_hop_provider (N/T head -> paired report type -> assignment)
+    _resolve_continuation_hop_provider (auto-approved N/T -> paired report assignment)
 
 Uses TESTING=1 with a file-backed SQLite DB, mirroring test_ai_settings_api.py.
 """
@@ -298,7 +298,7 @@ class TestHopWiring:
         # Unknown provider leaves the chain untouched.
         assert _prioritize_chain(chain, "zzz") == chain
 
-    def test_resolve_hop_maps_instruction_head_to_report_type(self, monkeypatch):
+    def test_auto_approved_resolve_hop_maps_instruction_head_to_report_type(self, monkeypatch):
         from modules.flow_gate.services import ai_invoke_service as svc
         from modules.flow_gate.settings.ai_settings_service import save_doctype_providers
 
@@ -309,7 +309,11 @@ class TestHopWiring:
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
         # Effective head is the T instruction step; AUTO_REPORT_MAP folds T -> TR.
         monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _s: {"type": "T"})
-        assert svc._resolve_continuation_hop_provider("proj_001", "proj_001.default.0317.0001-R") == ids["Opus"]
+        assert svc._resolve_continuation_hop_provider(
+            "proj_001",
+            "proj_001.default.0317.0001-R",
+            continuation_instruction_mode="auto_approved",
+        ) == ids["Opus"]
 
     def test_resolve_hop_none_when_no_sequence(self, monkeypatch):
         from modules.flow_gate.services import ai_invoke_service as svc
@@ -455,7 +459,7 @@ class TestPerHopRespawn:
 
 
 class TestPerStepOverrideOffByOne:
-    """0317 T0013 결함 ① + 3-hop 관통: the per-step override lookup must fold an instruction
+    """0317 T0013 auto-approved regression: the override lookup folds an instruction
     head to its paired report row before keying the override map. _expand_auto_reports lays
     each report step (TR) right after its instruction step (T), each with its OWN item_seq;
     at a hop boundary the effective head is the T slot, but the worker fills the following TR
@@ -478,20 +482,28 @@ class TestPerStepOverrideOffByOne:
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda _s: list(self._ITEMS))
         return svc
 
-    def test_report_row_override_is_found_via_head_fold(self, monkeypatch):
+    def test_auto_approved_report_row_override_is_found_via_head_fold(self, monkeypatch):
         svc = self._wire(monkeypatch, head_item_seq=1)  # head = T@1 → worker fills TR@2
         chain = [{"id": "aip_fable"}, {"id": "aip_opus"}]
         # Keyed on the visible TR row (item_seq 2). Pre-fix this missed (lookup used seq 1).
         assert svc._resolve_continuation_hop_override(
-            "flowgate.default.0317.0001-R", {"2": "aip_opus"}, chain) == "aip_opus"
+            "flowgate.default.0317.0001-R",
+            {"2": "aip_opus"},
+            chain,
+            continuation_instruction_mode="auto_approved",
+        ) == "aip_opus"
 
-    def test_instruction_row_override_does_not_resolve(self, monkeypatch):
+    def test_auto_approved_instruction_row_override_does_not_resolve(self, monkeypatch):
         svc = self._wire(monkeypatch, head_item_seq=1)
         chain = [{"id": "aip_fable"}, {"id": "aip_opus"}]
         # The instruction slot is not the worker's deliverable, so an override on it is not
         # applied — the fold targets the report row the worker actually produces.
         assert svc._resolve_continuation_hop_override(
-            "flowgate.default.0317.0001-R", {"1": "aip_opus"}, chain) is None
+            "flowgate.default.0317.0001-R",
+            {"1": "aip_opus"},
+            chain,
+            continuation_instruction_mode="auto_approved",
+        ) is None
 
     def test_three_hops_resolve_three_distinct_providers(self, monkeypatch):
         # The literal user ask — "각 단계별로 다른 프로바이더" — keyed on the three TR rows,
@@ -502,7 +514,11 @@ class TestPerStepOverrideOffByOne:
         for head_seq in (1, 3, 5):
             svc = self._wire(monkeypatch, head_item_seq=head_seq)
             picked.append(svc._resolve_continuation_hop_override(
-                "flowgate.default.0317.0001-R", overrides, chain))
+                "flowgate.default.0317.0001-R",
+                overrides,
+                chain,
+                continuation_instruction_mode="auto_approved",
+            ))
         assert picked == ["aip_fable", "aip_opus", "aip_gpt"]
 
     def test_non_instruction_head_uses_its_own_seq(self, monkeypatch):
@@ -511,10 +527,18 @@ class TestPerStepOverrideOffByOne:
         svc = self._wire(monkeypatch, head_item_seq=2, head_type="TR")
         chain = [{"id": "aip_fable"}, {"id": "aip_opus"}]
         assert svc._resolve_continuation_hop_override(
-            "flowgate.default.0317.0001-R", {"2": "aip_opus"}, chain) == "aip_opus"
+            "flowgate.default.0317.0001-R",
+            {"2": "aip_opus"},
+            chain,
+            continuation_instruction_mode="auto_approved",
+        ) == "aip_opus"
 
     def test_disabled_override_degrades_to_none(self, monkeypatch):
         svc = self._wire(monkeypatch, head_item_seq=1)
         chain = [{"id": "aip_fable"}]  # aip_opus no longer enabled
         assert svc._resolve_continuation_hop_override(
-            "flowgate.default.0317.0001-R", {"2": "aip_opus"}, chain) is None
+            "flowgate.default.0317.0001-R",
+            {"2": "aip_opus"},
+            chain,
+            continuation_instruction_mode="auto_approved",
+        ) is None

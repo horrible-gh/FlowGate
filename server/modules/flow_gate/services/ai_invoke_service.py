@@ -292,6 +292,7 @@ def _continuation_docs_target(
     target_item_seq: Optional[int],
     *,
     pending_only: bool = True,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> Optional[int]:
     """docs_target in the workflow item_seq coordinate system (0226 B0001 / NR0003 §5-1).
 
@@ -300,9 +301,9 @@ def _continuation_docs_target(
     edit_workflow_pending renumbers the pending tail past max_item_seq). The former
     ``target - get_group_max_seq()`` subtraction mixed the two spaces, yielding
     arbitrary targets (the reported 0/9 and 4/3). Count instead the sequence items up
-    to the target that will land as worker-visible documents: instruction heads (N/T,
-    INSTRUCTION_AUTO_TYPES) are auto-created server-side as drafts, which the
-    document-reach oracle never counts, so they are excluded here symmetrically.
+    to the target that will land as worker-visible documents. In ``auto_approved``, N/T
+    instruction heads are server-created drafts and remain excluded; in ``ai_direct``
+    they are independent worker documents and are counted (0353 B0001 / NR0003 §8).
 
     ``pending_only=True`` counts only unrealized slots (start-of-run admission).
     The to-end resolution paths pass False: the whole freshly-decided sequence is the
@@ -310,8 +311,13 @@ def _continuation_docs_target(
     ``target_item_seq=None`` means "no upper bound" (to-end).
     Returns None when the doc has no decided workflow sequence.
     """
-    from modules.flow_gate.services.workflow_decision_service import INSTRUCTION_AUTO_TYPES
+    from modules.flow_gate.services.workflow_decision_service import (
+        CONTINUATION_INSTRUCTION_AUTO_APPROVED,
+        INSTRUCTION_AUTO_TYPES,
+        normalize_continuation_instruction_mode,
+    )
 
+    instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
     seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
     if seq is None:
         return None
@@ -326,7 +332,10 @@ def _continuation_docs_target(
             continue
         if pending_only and item.get("result_doc_id") is not None:
             continue
-        if (item.get("type") or "").upper() in INSTRUCTION_AUTO_TYPES:
+        if (
+            instruction_mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED
+            and (item.get("type") or "").upper() in INSTRUCTION_AUTO_TYPES
+        ):
             continue
         count += 1
     return count
@@ -598,6 +607,13 @@ def start_run(
     0259 B0001: that opt-in is now only an OVERRIDE. A scope that produces no document gets
     its default judge from `_SCOPE_PROBES` here in the engine, so forgetting to pass one no
     longer silently falls back to the unreachable document oracle."""
+    from modules.flow_gate.services.workflow_decision_service import (
+        normalize_continuation_instruction_mode,
+    )
+
+    continuation_instruction_mode = normalize_continuation_instruction_mode(
+        continuation_instruction_mode
+    )
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
@@ -608,7 +624,10 @@ def start_run(
     step_override_provider = None
     if mode == "continuous" and continuation_provider_overrides:
         step_override_provider = _resolve_continuation_hop_override(
-            doc_ref, continuation_provider_overrides, chain,
+            doc_ref,
+            continuation_provider_overrides,
+            chain,
+            continuation_instruction_mode=continuation_instruction_mode,
         )
     if step_override_provider:
         chain = _prioritize_chain(chain, step_override_provider)
@@ -625,7 +644,11 @@ def start_run(
         # 0317 D0004: no explicit pin on a continuous hop — consult the per-document-type
         # 배정 규칙. The assigned provider (if any, and if enabled) leads the chain; the rest
         # stay as the fallback tail so a startup failure still degrades gracefully (§3).
-        hop_provider = _resolve_continuation_hop_provider(project_id, doc_ref)
+        hop_provider = _resolve_continuation_hop_provider(
+            project_id,
+            doc_ref,
+            continuation_instruction_mode=continuation_instruction_mode,
+        )
         if hop_provider:
             chain = _prioritize_chain(chain, hop_provider)
     if not chain:
@@ -681,7 +704,11 @@ def start_run(
         # 0226 B0001 / NR0003 §5-1: the target is a workflow item_seq, never a group
         # document seq — derive docs_target from the sequence's pending worker items.
         target = int(continuation_target_seq or 0)
-        resolved_target = _continuation_docs_target(doc_ref, target)
+        resolved_target = _continuation_docs_target(
+            doc_ref,
+            target,
+            continuation_instruction_mode=continuation_instruction_mode,
+        )
         if resolved_target is None:
             raise HTTPException(status_code=422, detail={
                 "code": "validation_failed",
@@ -737,7 +764,11 @@ def start_run(
             if continuation_default_note and continuation_default_note.strip():
                 notes.append(continuation_default_note.strip())
             if continuation_note_overrides:
-                hop_note = _resolve_continuation_hop_note(doc_ref, continuation_note_overrides)
+                hop_note = _resolve_continuation_hop_note(
+                    doc_ref,
+                    continuation_note_overrides,
+                    continuation_instruction_mode=continuation_instruction_mode,
+                )
                 if hop_note:
                     notes.append(hop_note)
             if notes:
@@ -881,14 +912,17 @@ def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
     }
 
 
-def _resolve_continuation_hop_provider(project_id: str, doc_ref: str) -> Optional[str]:
-    """The doc-type-assigned provider for the step this continuation session is about to run
-    (flowgate.default.0317 D0004 §2 홉 프로바이더 결정기), or None to use the default chain.
+def _resolve_continuation_hop_provider(
+    project_id: str,
+    doc_ref: str,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+) -> Optional[str]:
+    """Return the doc-type-assigned provider for the worker hop, or the default-chain tier.
 
-    The next slot's *type* is the workflow effective head; instruction heads (N/T) auto-
-    complete server-side, so the type the WORKER actually produces is the paired report
-    (AUTO_REPORT_MAP: N->NR, T->TR, TS->TSR). We resolve the assignment for that worker
-    deliverable type. Never raises — any lookup gap degrades to the default chain (D0004 §3).
+    Only ``auto_approved`` N/T heads fold to their paired report type. ``ai_direct`` N/T
+    and TS in either mode are worker-authored, so they resolve their own head type
+    (flowgate.default.0353 B0001 / NR0003). Never raises: lookup gaps fall through.
     """
     try:
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
@@ -898,13 +932,23 @@ def _resolve_continuation_hop_provider(project_id: str, doc_ref: str) -> Optiona
         if not head:
             return None
         head_type = (head.get("type") or "").upper()
-        from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
-        worker_type = AUTO_REPORT_MAP.get(head_type, head_type)
-        # Prefer an assignment keyed by the worker deliverable type (TR/NR/TSR); fall back to
-        # one keyed by the raw sequence step type (T/N/TS) so a rule written against the visible
-        # step — the way the settings screen lists them (D0004 §6) — still takes effect.
+        from modules.flow_gate.services.workflow_decision_service import (
+            AUTO_REPORT_MAP,
+            CONTINUATION_INSTRUCTION_AUTO_APPROVED,
+            INSTRUCTION_AUTO_TYPES,
+            normalize_continuation_instruction_mode,
+        )
+
+        fold_to_report = (
+            normalize_continuation_instruction_mode(continuation_instruction_mode)
+            == CONTINUATION_INSTRUCTION_AUTO_APPROVED
+            and head_type in INSTRUCTION_AUTO_TYPES
+        )
+        worker_type = AUTO_REPORT_MAP.get(head_type, head_type) if fold_to_report else head_type
+        # Preserve the legacy auto-approved preference: report assignment first, raw N/T
+        # assignment second. Non-folded heads resolve only their own worker-authored type.
         assigned = ai_settings_service.resolve_doctype_provider(project_id, worker_type)
-        if assigned is None and worker_type != head_type:
+        if assigned is None and fold_to_report and worker_type != head_type:
             assigned = ai_settings_service.resolve_doctype_provider(project_id, head_type)
         return assigned
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
@@ -913,28 +957,36 @@ def _resolve_continuation_hop_provider(project_id: str, doc_ref: str) -> Optiona
         return None
 
 
-def _hop_worker_item_seq(seq_id: int, head: dict) -> Optional[int]:
-    """The item_seq of the slot the worker will actually FILL this hop.
+def _hop_worker_item_seq(
+    seq_id: int,
+    head: dict,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+) -> Optional[int]:
+    """Return the item_seq of the slot this worker fills.
 
-    _expand_auto_reports places every report step (NR/TR/TSR) immediately after its
-    instruction step, and instruction heads (N/T/TS) auto-complete server-side during
-    advance — so when the effective head is an instruction step, the worker's real
-    deliverable is that following report slot, NOT the head slot. Fold to the report slot's
-    item_seq so a per-step override keyed to the visible report row (the way
-    ContinuousWorkDialog lists the runnable steps) is found — the item_seq-level twin of the
-    TYPE fold _resolve_continuation_hop_provider does through AUTO_REPORT_MAP. Without this
-    fold the override lookup uses the instruction slot's seq and misses every time, so a
-    report-row override never takes effect (0317 T0013 결함 ①: 단계 어긋남). A non-instruction
-    head fills its own slot, so its own item_seq is returned unchanged.
+    ``auto_approved`` N/T heads are server-created and fold to the paired NR/TR slot.
+    ``ai_direct`` N/T heads and TS in both modes are independent worker hops and retain
+    their own item_seq (flowgate.default.0353 B0001 / NR0003). Missing or unknown modes
+    normalize to the legacy ``auto_approved`` behavior.
     """
     head_item_seq = head.get("item_seq")
-    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
-    report_type = AUTO_REPORT_MAP.get((head.get("type") or "").upper())
-    if not report_type or head_item_seq is None:
+    head_type = (head.get("type") or "").upper()
+    from modules.flow_gate.services.workflow_decision_service import (
+        AUTO_REPORT_MAP,
+        CONTINUATION_INSTRUCTION_AUTO_APPROVED,
+        INSTRUCTION_AUTO_TYPES,
+        normalize_continuation_instruction_mode,
+    )
+
+    fold_to_report = (
+        normalize_continuation_instruction_mode(continuation_instruction_mode)
+        == CONTINUATION_INSTRUCTION_AUTO_APPROVED
+        and head_type in INSTRUCTION_AUTO_TYPES
+    )
+    report_type = AUTO_REPORT_MAP.get(head_type)
+    if not fold_to_report or not report_type or head_item_seq is None:
         return head_item_seq
-    # The report slot _expand_auto_reports attaches is the first slot of that type AFTER the
-    # instruction head; scan in item_seq order so the pairing stays unambiguous even when the
-    # same instruction type repeats later in the chain.
     for item in sorted(
         db_wfseq.get_sequence_items(seq_id) or [],
         key=lambda i: i.get("item_seq") or 0,
@@ -948,18 +1000,16 @@ def _hop_worker_item_seq(seq_id: int, head: dict) -> Optional[int]:
 
 
 def _resolve_continuation_hop_override(
-    doc_ref: str, overrides: dict, chain: list[dict],
+    doc_ref: str,
+    overrides: dict,
+    chain: list[dict],
+    *,
+    continuation_instruction_mode: Optional[str] = None,
 ) -> Optional[str]:
-    """The provider explicitly overridden for THIS hop's item_seq (flowgate.default.0317
-    T0010 rev4 — CWD's per-step override table), or None to fall through to an explicit pin
-    / the doc-type resolver / the default chain.
+    """Return the enabled provider override keyed to this mode-aware worker item_seq.
 
-    ``overrides`` keys are item_seq, as strings (JSON object keys) or ints (already-decoded
-    dict from a same-process caller) — both are tried. The looked-up item_seq is the slot the
-    worker will actually fill (_hop_worker_item_seq), so an instruction head folds to its
-    paired report row before lookup. Never raises: a lookup gap or an override naming a
-    provider that is no longer enabled degrades to the next tier, exactly like
-    _resolve_continuation_hop_provider.
+    String JSON keys and integer keys are both accepted. A missing or disabled provider
+    silently falls through to the explicit pin / doc-type / default tiers.
     """
     try:
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
@@ -968,14 +1018,18 @@ def _resolve_continuation_hop_override(
         head = db_wfseq.get_effective_head(seq["id"])
         if not head:
             return None
-        item_seq = _hop_worker_item_seq(seq["id"], head)
+        item_seq = _hop_worker_item_seq(
+            seq["id"],
+            head,
+            continuation_instruction_mode=continuation_instruction_mode,
+        )
         if item_seq is None:
             return None
         provider_id = overrides.get(str(item_seq), overrides.get(item_seq))
         if not provider_id:
             return None
         if not any(p.get("id") == provider_id for p in chain):
-            return None  # overridden provider is no longer enabled — degrade silently
+            return None
         return provider_id
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop override resolution failed for %s", doc_ref,
@@ -983,16 +1037,16 @@ def _resolve_continuation_hop_override(
         return None
 
 
-def _resolve_continuation_hop_note(doc_ref: str, overrides: dict) -> Optional[str]:
-    """The individual note assigned to THIS hop's item_seq (flowgate.default.0346 T0005 —
-    CWD's [전달멘트] tab per-step input), or None when this hop has no individual note.
+def _resolve_continuation_hop_note(
+    doc_ref: str,
+    overrides: dict,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+) -> Optional[str]:
+    """Return the individual note for the same mode-aware item_seq as the provider override.
 
-    Deliberately mirrors _resolve_continuation_hop_override step for step — same
-    _hop_worker_item_seq fold, same str/int dual key lookup — because the two tables must
-    resolve the SAME item_seq for the SAME hop (D0004 구현 시 반드시 지켜야 할 제약 1-2): if they
-    ever disagreed, the row a user sees in ContinuousWorkDialog would carry a provider meant
-    for one hop and a note meant for another. Never raises: a resolution failure degrades to
-    "no individual note", exactly like the provider override.
+    Keeping both resolvers on `_hop_worker_item_seq` preserves the D0004 constraint that a
+    visible row's provider and note always address the same hop. Failures degrade to no note.
     """
     try:
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
@@ -1001,7 +1055,11 @@ def _resolve_continuation_hop_note(doc_ref: str, overrides: dict) -> Optional[st
         head = db_wfseq.get_effective_head(seq["id"])
         if not head:
             return None
-        item_seq = _hop_worker_item_seq(seq["id"], head)
+        item_seq = _hop_worker_item_seq(
+            seq["id"],
+            head,
+            continuation_instruction_mode=continuation_instruction_mode,
+        )
         if item_seq is None:
             return None
         note = overrides.get(str(item_seq), overrides.get(item_seq))
@@ -1468,7 +1526,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     # 0226 NR0003 §5-1: resolved_target is an item_seq — count the decided
                     # sequence's worker items instead of subtracting the group doc seq.
                     resolved = _continuation_docs_target(
-                        run["doc_ref"], resolved_target, pending_only=False
+                        run["doc_ref"],
+                        resolved_target,
+                        pending_only=False,
+                        continuation_instruction_mode=run["continuation_instruction_mode"],
                     )
                     if resolved is not None:
                         run["docs_target"] = resolved
@@ -1801,7 +1862,10 @@ def _settle_and_judge(run: dict) -> None:
                 # 0226 NR0003 §5-1: to-end scope = every worker item of the decided
                 # sequence (item_seq space), not a group doc seq subtraction.
                 resolved = _continuation_docs_target(
-                    run["doc_ref"], None, pending_only=False
+                    run["doc_ref"],
+                    None,
+                    pending_only=False,
+                    continuation_instruction_mode=run["continuation_instruction_mode"],
                 )
                 if resolved is not None:
                     run["docs_target"] = resolved

@@ -132,7 +132,15 @@ def _capture_cmd(tmp_path):
     return cmd, outfile
 
 
-def _start(env, mention, *, note_overrides=None, default_note=None, target_seq=4):
+def _start(
+    env,
+    mention,
+    *,
+    note_overrides=None,
+    default_note=None,
+    target_seq=4,
+    instruction_mode="auto_approved",
+):
     cmd, outfile = _capture_cmd(env["tmp"])
     env["chain"]["providers"] = [_provider(cmd=cmd)]
     env["chain"]["registered_count"] = 1
@@ -145,7 +153,7 @@ def _start(env, mention, *, note_overrides=None, default_note=None, target_seq=4
         mode="continuous",
         continuation_target_seq=target_seq,
         continuation_review_mode=False,
-        continuation_instruction_mode="auto_approved",
+        continuation_instruction_mode=instruction_mode,
         continuation_locale="ko",
         issued_to="usr_admin",
         api_base_url="http://127.0.0.1:1/flowgate/api/v1",
@@ -189,15 +197,30 @@ class TestResolveHopNote:
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
         return wfseq
 
-    def test_report_row_note_is_found_via_head_fold(self, monkeypatch):
+    def test_auto_approved_report_row_note_is_found_via_head_fold(self, monkeypatch):
         # head = T@3 -> worker fills TR@4; keyed on the visible TR row (string key, JSON body shape).
         self._wire(monkeypatch, head_item_seq=3)
-        assert svc._resolve_continuation_hop_note(ROOT_DOC, {"4": "TR용 멘트"}) == "TR용 멘트"
+        assert svc._resolve_continuation_hop_note(
+            ROOT_DOC,
+            {"4": "TR용 멘트"},
+            continuation_instruction_mode="auto_approved",
+        ) == "TR용 멘트"
 
-    def test_instruction_row_note_does_not_resolve(self, monkeypatch):
-        # A note keyed on the instruction slot itself (not its paired report) never applies.
+    def test_auto_approved_instruction_row_note_does_not_resolve(self, monkeypatch):
         self._wire(monkeypatch, head_item_seq=3)
-        assert svc._resolve_continuation_hop_note(ROOT_DOC, {"3": "T용 멘트"}) is None
+        assert svc._resolve_continuation_hop_note(
+            ROOT_DOC,
+            {"3": "T용 멘트"},
+            continuation_instruction_mode="auto_approved",
+        ) is None
+
+    def test_ai_direct_instruction_row_note_resolves_without_report_fold(self, monkeypatch):
+        self._wire(monkeypatch, head_item_seq=3)
+        assert svc._resolve_continuation_hop_note(
+            ROOT_DOC,
+            {"3": "T용 멘트", "4": "TR용 멘트"},
+            continuation_instruction_mode="ai_direct",
+        ) == "T용 멘트"
 
     def test_int_key_also_resolves(self, monkeypatch):
         # Same-process callers (never JSON-decoded) may hand an int key.
@@ -228,6 +251,19 @@ class TestPromptInjectionEndToEnd:
         _wait_finished(res["run_id"])
         expected = invoke_mention_service.prepend_messages_section(
             MENTION, ["이 단계는 결제 실패 케이스도 다뤄줘"], "ko",
+        )
+        assert _read(outfile).decode("utf-8") == expected
+
+    def test_ai_direct_instruction_note_reaches_spawned_worker(self, note_env):
+        res, outfile = _start(
+            note_env,
+            MENTION,
+            note_overrides={"3": "T 직접 작성 멘트", "4": "TR 멘트"},
+            instruction_mode="ai_direct",
+        )
+        _wait_finished(res["run_id"])
+        expected = invoke_mention_service.prepend_messages_section(
+            MENTION, ["T 직접 작성 멘트"], "ko",
         )
         assert _read(outfile).decode("utf-8") == expected
 
