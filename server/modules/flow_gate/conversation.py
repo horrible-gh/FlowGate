@@ -1,4 +1,4 @@
-"""Conversation (CH) turn serialization, parsing, and carry-over.
+"""Conversation (CH) turn serialization and parsing.
 
 Single source of truth for the chat turn wire format shared by the serializer
 (accumulation side) and the parser (render side), per L0044.0008 §6. The body of
@@ -16,11 +16,12 @@ Turns are separated by exactly one blank line. Speaker tokens are fixed constant
 otherwise look like a turn header is escaped with a leading backslash so the parser
 does not mistake it for a boundary; the escape round-trips exactly.
 
-Carry-over (§7): the body is replaced wholesale on every edit, so its size grows
-linearly with the conversation and approaches the inbox content cap. When the body
-reaches CARRYOVER_RATIO of the cap, the logic opens a successor CH document and
-carries the most recent turns over as its intro (decision ⓐ — reuse the existing
-edit surface, no new endpoint).
+Byte-cap carry-over (former §7) is retired (group 0351 T5, D0002 §3-6): turns now
+accumulate in the shared append-only store (conversation_turn_service) instead of a
+wholesale-rewritten file body, so a conversation never approaches the old inbox
+content cap and no successor document is ever opened for it. serialize_conversation/
+parse_conversation stay the shared wire format for rendering (conversation_markdown_service)
+and for reading conversations split by the retired mechanism before this change.
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ _USER_SPEAKER_BY_LOCALE: dict[str, str] = {
     "ja": "🧑 ユーザー",
 }
 # Bare user names (emoji/provider already stripped) that normalize to the "user" key,
-# mapped to the locale they were written in so carry-over (§7) can preserve the variant.
+# mapped to the locale they were written in so re-serialization can preserve the variant.
 _USER_NAME_TO_LOCALE: dict[str, str] = {"사용자": "ko", "User": "en", "ユーザー": "ja"}
 _AI_NAMES = frozenset({"AI"})
 
@@ -62,8 +63,8 @@ _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 # "## 🤖 AI(claude-opus-4-8) · …". The turn header is the only metadata slot the wire
 # format has, so the provider rides there. The suffix is OPTIONAL, so every turn
 # written before this change keeps parsing unchanged. speaker_key() strips it, which
-# is what keeps the parser/renderer/carry-over downstream of it untouched — see the
-# warning in that docstring.
+# is what keeps the parser/renderer downstream of it untouched — see the warning in
+# that docstring.
 #
 # 0306 NR0003 발견 1: the user label may now be Korean, English, or Japanese (emoji
 # still optional). All three normalize to "user" (speaker_key). Because _HEADERLIKE_RE
@@ -127,8 +128,8 @@ def speaker_key(label: str) -> str:
 
 def user_locale_of(label: str) -> Optional[str]:
     """The UI locale a user turn header was written in ("ko"/"en"/"ja"), or None when the
-    label is not a user turn (0306 NR0003 발견 1). Lets carry-over (§7) re-serialize a
-    turn in its original language instead of collapsing every user turn to Korean."""
+    label is not a user turn (0306 NR0003 발견 1). Lets a turn be re-serialized in its
+    original language instead of collapsing every user turn to Korean."""
     bare, _ = _strip_speaker_decorations(label)
     return _USER_NAME_TO_LOCALE.get(bare)
 
@@ -143,14 +144,6 @@ def speaker_provider(label: str) -> Optional[str]:
     known = bare in _USER_NAME_TO_LOCALE or bare in _AI_NAMES
     return provider if known else None
 
-# ── Carry-over (§7) ────────────────────────────────────────────────────────────
-# Fraction of the inbox content cap at which a conversation rolls over to a
-# successor document. 80% leaves margin so the final combined turn cannot trip the
-# hard 422 limit at the boundary.
-CARRYOVER_RATIO = 0.8
-# Default number of trailing turns carried into the successor document's intro.
-CARRYOVER_KEEP_TURNS = 20
-
 
 class _TurnBase(TypedDict):
     speaker: str  # "user" | "ai" (unknown tokens fall back to the raw label)
@@ -161,10 +154,10 @@ class _TurnBase(TypedDict):
 class Turn(_TurnBase, total=False):
     # 0293: provider recorded in the header's parentheses; absent/None = not recorded.
     # Optional so existing Turn(speaker=…, ts=…, body=…) construction stays valid, and
-    # so carry-over (§7) can re-serialize a turn without losing its provider.
+    # so re-serializing a turn never loses its provider.
     provider: Optional[str]
     # 0306: the UI locale a user turn header was written in ("ko"/"en"/"ja"), so
-    # carry-over re-serializes it in the same language. Absent on AI turns and on turns
+    # re-serialization keeps it in the same language. Absent on AI turns and on turns
     # constructed without one (which then serialize to the ko fallback).
     locale: Optional[str]
 
@@ -310,35 +303,3 @@ def serialize_conversation(turns: list[Turn], intro: str = "") -> str:
             )
         )
     return ("\n\n".join(parts) + "\n") if parts else ""
-
-
-# ── Carry-over helpers (§7) ────────────────────────────────────────────────────
-def content_byte_len(content: str) -> int:
-    """UTF-8 byte length — the same measure the inbox cap check uses."""
-    return len(content.encode("utf-8"))
-
-
-def should_carry_over(content_bytes: int, max_bytes: int) -> bool:
-    """True once the body reaches CARRYOVER_RATIO of the content cap (§7)."""
-    if max_bytes <= 0:
-        return False
-    return content_bytes >= int(max_bytes * CARRYOVER_RATIO)
-
-
-def tail_turns(content: str, keep_turns: int = CARRYOVER_KEEP_TURNS) -> list[Turn]:
-    """The most recent *keep_turns* turns of a conversation body."""
-    if keep_turns <= 0:
-        return []
-    return parse_conversation(content)["turns"][-keep_turns:]
-
-
-def build_carryover_intro(
-    prev_doc_id: str,
-    content: str,
-    keep_turns: int = CARRYOVER_KEEP_TURNS,
-) -> str:
-    """Build the successor conversation's starting body: a continuation note plus the
-    most recent turns of *content*, so the chat reads as unbroken (§7)."""
-    kept = tail_turns(content, keep_turns)
-    note = f"> 이전 대화에서 이어집니다 (continued from {prev_doc_id})"
-    return serialize_conversation(kept, intro=note)

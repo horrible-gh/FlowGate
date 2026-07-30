@@ -23,6 +23,14 @@ export interface SearchResultItem {
   // Phase 2 (content search) only: body excerpt + which field matched.
   snippet?: string | null
   matched_in?: 'body' | 'title' | 'doc_id' | null
+  // 0351 T4 — distinguishes a document-body hit from a conversation-turn hit once the
+  // backend merges the two into one result list. Absent on Phase 1 (meta) results.
+  match_kind?: 'document_body' | 'conversation_turn' | null
+  // conversation_turn only: which turn matched, so the result can open the chat at
+  // that exact position and show who said it.
+  seq?: number | null
+  speaker?: 'user' | 'ai' | null
+  display_name?: string | null
 }
 
 export interface SearchFacets {

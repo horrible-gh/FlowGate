@@ -22,6 +22,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import invoke_mention_service
+from modules.flow_gate.services import token_service
 from modules.flow_gate.services import workflow_decision_service
 from modules.flow_gate.workflow import prompt_copy_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
@@ -70,7 +71,7 @@ _TOKEN_SCOPE = {
     "new": "new",
     "edit": "edit",
     "workflow_decide": "workflow_decide",
-    "chat": "edit",
+    "chat": "chat",
     "rework": "edit",
     "vr_correction": "edit",
     "next_step_message": "new",
@@ -258,6 +259,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 module=body.module,
                 group_name=group_id,
                 raw_token=raw_token,
+                token_id=token_service.inspect_for_replay(raw_token)["token_id"],
                 api_base_url=_token_routes._build_api_base(request),
                 # 0293: the AI turn header carries the provider. Unlike the copy path,
                 # here the server knows who is being invoked — but only when the run
@@ -265,6 +267,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 provider=ai_invoke_service.resolve_pinned_provider_name(
                     body.project, body.provider_id,
                 ),
+                provider_id=body.provider_id,
             )
         if body.action_scope == "rework":
             doc = db_docs.get_by_id(body.doc_ref) or {}

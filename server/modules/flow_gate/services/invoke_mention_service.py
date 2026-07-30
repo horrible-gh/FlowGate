@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from modules.flow_gate.db import conversation_turns
+
 # Mirrors client SECTION_SEPARATOR / MESSAGES_SEPARATOR (mentionMessages.ts).
 SECTION_SEPARATOR = "\n\n"
 MESSAGES_SEPARATOR = "\n\n"
@@ -107,7 +109,7 @@ def _chat_lookup_sections(
     search_lines += [
         "",
         # 발견 8: a successful edit consumes the token and its remote grant dies with it.
-        "Submitting below consumes this token, so finish all reading and searching first.",
+        "Submitting your turn consumes this token, so finish all reading and searching first.",
     ]
     sections.append("## Document search and lookup rules\n---\n" + "\n".join(search_lines))
     return sections
@@ -120,52 +122,34 @@ def build_conversation_mention(
     module: Optional[str],
     group_name: str,
     raw_token: str,
+    token_id: str,
     api_base_url: str,
     provider: Optional[str] = None,
+    provider_id: Optional[str] = None,
 ) -> str:
-    """The chat (CH) mention — the ONE builder for both chat paths (0293 T0005).
+    """Build the single-turn chat mention used by copy and in-app invoke paths.
 
-    Compact chat-only mention: read the CH conversation, append ONE AI turn,
-    submit the full body via inbox action:edit (edit_reason=worker_self).
-
-    Until 0293 this was a port of the browser's buildConversationMention
-    (useFlowGateToken.ts), kept byte-identical by hand. The client builder is gone:
-    POST /token/issue now accepts action_scope='chat' and returns this text as its
-    `mention`, so the copy path and the invoke path read the same bytes by
-    construction rather than by discipline (NR0004 발견 3).
-
-    *provider* (NR0004 발견 4/5) is the value the SERVER knows for this run — the
-    enabled provider's display name — and is only passed when the run is pinned to a
-    single provider, because the mention is built before the fallback chain has
-    picked one. When it is None the worker is asked to fill the slot in itself, and
-    "I don't know" is an accepted answer: the parentheses are simply omitted and the
-    UI draws no badge (there is no forgery threat here — the user knows who they
-    pasted the mention to)."""
-    if provider and ")" not in provider:
-        # Server-known value: no instruction, the worker copies the header verbatim.
-        header_line = f"## 🤖 AI({provider}) · <ISO-8601 timestamp>"
-        provider_hint = None
-    else:
-        header_line = "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>"
-        provider_hint = (
-            "Replace <your model name> with your own model name. If you do not know it, "
-            "drop the parentheses entirely and write `## 🤖 AI` — that is a valid header."
-        )
+    A pinned provider resumes from the cursor the server tracks for that provider.
+    An unpinned copy/fallback mention starts at zero because the eventual participant
+    is not known when the mention is issued. ``provider`` is display text only;
+    identity comes exclusively from the token-bound ``provider_id``.
+    """
+    del module  # Kept in the public signature for the two established call sites.
+    after_seq = (
+        conversation_turns.get_last_read_seq(doc_id, f"provider:{provider_id}")
+        if provider_id
+        else 0
+    )
     api_base = api_base_url.rstrip("/")
-    body: dict = {"action": "edit", "project": project}
-    if module:
-        body["module"] = module
-    body.update({
-        "group_name": group_name,
-        "doc_id": doc_id,
-        # inbox validates edit_reason against {rejected, qna_followup, user_comment,
-        # worker_self}; an AI appending its own conversation turn is a self-initiated edit.
-        "edit_reason": "worker_self",
-        "content": "<the full conversation body, with your new turn appended at the end>",
-    })
-    from urllib.parse import quote
-
-    doc_q = quote(doc_id, safe="")
+    display_name = provider or "<your model name>"
+    payload_lines = [
+        "{",
+        '  "body": "<your reply>",',
+        f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
+        '  "based_on_seq": <the head_seq you got from your last read>,',
+        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
+        "}",
+    ]
     lines = [
         "## Conversation (대화)",
         "---",
@@ -174,32 +158,43 @@ def build_conversation_mention(
         "clarification registration, no review. Just talk.",
         "",
         f"Conversation document: {doc_id}",
-        f"Read the full conversation: GET {api_base}/document?doc_id={doc_q}",
+        "",
+        "Read what you have not read yet:",
+        f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1",
         f"Authorization: Bearer {raw_token}",
         "",
-        "To reply, append ONE new turn to the END of the existing body in this exact",
-        "format, then submit the COMPLETE body (every existing turn + your new one):",
+        "The after_seq above is YOUR last read position — the server tracks it, do not compute",
+        "it yourself. `head` carries the document intro and the opening of the conversation as",
+        "background; read it first, then the turns. If `next_after_seq` is not null, call again",
+        "with that value until it is null. Reading does not consume this token.",
         "",
-        header_line,
-        "<your reply>",
+        "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
+        "longer where the conversation lives.",
+        "",
+        f"Submit: POST {api_base}/conversation/{doc_id}/turn",
+        f"Authorization: Bearer {raw_token}",
+        "",
+        *payload_lines,
+        "",
+        "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
+        "from your last read — not a guess. If someone speaks while you are writing, your turn is",
+        "still kept in order and marked as written without having seen theirs.",
     ]
-    if provider_hint:
-        lines += ["", provider_hint]
-    # Before the submit block, not after: the worker reads it in the order it must act
-    # (look things up, then submit), and the inbox JSON stays the tail of the mention.
+    if provider:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. The server",
+            "fixed it to the pinned provider name; keep the value shown above.",
+        ]
+    else:
+        lines += [
+            "display_name is a badge only and is not used to determine identity. If you do not",
+            "know your own model name, omit the field.",
+        ]
     for section in _chat_lookup_sections(
         base=api_base, raw_token=raw_token, project=project, group_name=group_name
     ):
         lines += ["", section]
-    lines += [
-        "",
-        f"Submit: POST {api_base}/inbox",
-        f"Authorization: Bearer {raw_token}",
-        "",
-        json.dumps(body, indent=2, ensure_ascii=False),
-    ]
     return "\n".join(lines)
-
 
 def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     """Port of buildRejectionSection (useFlowGateToken.ts).

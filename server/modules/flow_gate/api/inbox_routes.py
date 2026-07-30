@@ -2782,64 +2782,6 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     return JSONResponse(content=resp_content, status_code=201)
 
 
-def _carry_over_conversation(
-    project: str,
-    module: str,
-    group: dict,
-    prev_doc_id: str,
-    prev_content: str,
-    actor_user_id: str,
-) -> str:
-    """L0044.0008 §7: open a successor CH document carrying the most recent turns of
-    *prev_content* as its intro, and return its doc_id.
-
-    Reuses the same creation primitives as _handle_new (numbering → path → file → DB)
-    and marks the successor auto-approved (L-AUTO §3.3), since a conversation is an
-    auto-complete, non-gate document. Raises on failure; callers guard it so a failed
-    carry-over never breaks the edit that already committed.
-    """
-    from modules.flow_gate import conversation as _conv
-
-    doc_code = numbering_service.reserve_document(
-        group_id=group["group_id"], doc_type="CH", module=module,
-    )
-    new_doc_id = _build_doc_id(group["group_id"], doc_code)
-    try:
-        _, seq = parse_doc_code(doc_code)
-    except ValueError:
-        m = re.search(r"(\d+)$", doc_code)
-        seq = int(m.group(1)) if m else 0
-
-    project_settings = db_projects.get_settings(project)
-    branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
-    stored_path = _resolve_storage_path(project, module, group, new_doc_id, branch=branch)
-    stored_path.parent.mkdir(parents=True, exist_ok=True)
-    stored_path.write_text(
-        _conv.build_carryover_intro(prev_doc_id, prev_content), encoding="utf-8",
-    )
-
-    now = now_iso()
-    db_docs.create({
-        "doc_id": new_doc_id,
-        "project_id": project,
-        "module": module,
-        "group_id": group["group_id"],
-        "type_code": "CH",
-        "seq": seq,
-        "title": "대화 (이어서)",
-        "file_path": to_storage_relative(stored_path, project),
-        "status": "open",
-        "owner_id": actor_user_id,
-        "triggered_by": prev_doc_id,
-        "revision_no": 0,
-        "created_at": now,
-        "updated_at": now,
-    })
-    # L-AUTO (§3.3): auto-complete types are created already-approved.
-    db_docs.update(new_doc_id, {"doc_review_status": "approved"})
-    return new_doc_id
-
-
 def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: edit (D020 §3-4-2)."""
 
@@ -3280,27 +3222,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             except Exception as _rr_exc:
                 logger.warning(f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}")
 
-    # ── Step 7.6: Conversation carry-over (L0044.0008 §7) ──────────────────────────
-    # A CH body is replaced wholesale on every turn, so it grows toward the inbox
-    # content cap. When it reaches CARRYOVER_RATIO of the cap, open a successor CH
-    # document that carries the most recent turns as its intro, so the chat continues
-    # without ever tripping the hard 422 limit. Best-effort: a failure here must never
-    # break the edit that already succeeded (decision ⓐ — reuse the edit surface).
-    carried_over_doc_id: Optional[str] = None
-    if (
-        isinstance(content, str)
-        and (existing_doc.get("type_code") or "").upper() in {"CH"}
-    ):
-        try:
-            from modules.flow_gate import conversation as _conv
-            if _conv.should_carry_over(len(content.encode("utf-8")), _content_max()):
-                carried_over_doc_id = _carry_over_conversation(
-                    project, module, group, doc_id, content, actor_user_id,
-                )
-        except Exception as _co_exc:
-            import LogAssist.log as logger
-            logger.warning(f"[inbox edit] conversation carry-over failed (ignored): {_co_exc}")
-
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(
         token_id=token_rec["token_id"],
@@ -3402,9 +3323,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "revision_no": new_revision_no,
         "message": f"{doc_id} registered. You may end the session.",
     }
-    if carried_over_doc_id:
-        # L0044.0008 §7: the conversation rolled over; subsequent turns go here.
-        resp_body["carried_over_doc_id"] = carried_over_doc_id
     return JSONResponse(content=resp_body)
 
 

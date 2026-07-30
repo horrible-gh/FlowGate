@@ -743,6 +743,8 @@ export default {
       search_clear: '検索をクリア',
       search_content_label: '本文も検索',
       search_no_results: '一致するドキュメントがありません。',
+      // 0351 T4 — 会話ターン検索結果のキャプション ("ターン #9")。
+      search_turn_position: 'ターン #{seq}',
       group_select: 'ブランチ',
       base_branch: '基準ブランチ ({branch})',
       readonly_badge: 'グループ {group} ブランチを閲覧中（作業ツリーなし・読み取り専用）',
@@ -1422,6 +1424,16 @@ export default {
       manual_copy_again: '再コピー',
       manual_copy_copied: 'メントをコピーしました。',
       manual_copy_retry_failed: 'コピーに失敗しました。下のテキストを選択してコピーしてください。',
+      // 0351 T2 — ターン単位の会話画面(既読境界・すれ違い・過去分の読み込み・参加者行)。
+      read_boundary: 'ここまで既読',
+      stale_notice: 'この返答は上の発言(#{seq})を見ていない状態で書かれました。',
+      participants_label: '参加者',
+      participant_position: '最後に読んだ位置 #{seq}',
+      load_older: '以前の会話を読み込む',
+      loading_older: '以前の会話を読み込み中…',
+      send_pending_failed: '送信できませんでした。',
+      send_retry: '再送信',
+      continued_from: '以前の会話から継続: {doc}',
     },
     review_reject_dialog: {
       title: '差し戻し処理',

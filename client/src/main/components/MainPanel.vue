@@ -1914,9 +1914,36 @@ function onAiInvokeLifecycle(event: Event): void {
   scheduleContinuationReconcile(groupId, runId)
 }
 
-onMounted(() => window.addEventListener('fg:ai_invoke', onAiInvokeLifecycle))
+// 0351 T4: a conversation-turn search result (GroupExplorer) opens this CH tab and
+// asks the mounted ConversationView to scroll to one turn. GroupExplorer does not
+// hold a reference to that instance — this component does (convViewRefs) — so the
+// two talk through a window event, same idiom as fg:group_tree_changed. The ref may
+// not exist yet if this is a brand new tab; retry once past the next paint before
+// giving up (dropping a jump is a missed scroll, not a broken feature).
+function onConversationJumpSeq(event: Event) {
+  const detail = (event as CustomEvent<{ docId?: string; seq?: number }>).detail
+  const docId = detail?.docId
+  const seq = detail?.seq
+  if (!docId || !seq) return
+  void nextTick(() => {
+    const target = convViewRefs[docId]
+    if (target?.jumpToSeq) {
+      void target.jumpToSeq(seq)
+      return
+    }
+    requestAnimationFrame(() => {
+      void convViewRefs[docId]?.jumpToSeq?.(seq)
+    })
+  })
+}
+
+onMounted(() => {
+  window.addEventListener('fg:ai_invoke', onAiInvokeLifecycle)
+  window.addEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
+})
 onBeforeUnmount(() => {
   window.removeEventListener('fg:ai_invoke', onAiInvokeLifecycle)
+  window.removeEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
   for (const groupId of continuationReconcileTimers.keys()) {
     clearContinuationReconcile(groupId)
   }

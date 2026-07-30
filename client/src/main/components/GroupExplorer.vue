@@ -136,9 +136,9 @@
         <ul v-else class="sdb-results" data-test="explorer-search-results">
           <li
             v-for="row in searchResultRows"
-            :key="row.docId"
+            :key="row.matchKind === 'conversation_turn' ? `${row.docId}:${row.seq}` : row.docId"
             class="sdb-result"
-            data-test="explorer-search-result"
+            :data-test="row.matchKind === 'conversation_turn' ? 'explorer-search-result-turn' : 'explorer-search-result'"
             @click="openSearchResult(row)"
           >
             <div class="sdb-result-head">
@@ -146,6 +146,12 @@
               <span class="sdb-result-id" data-test="explorer-search-result-id">{{ row.docId }}</span>
             </div>
             <div v-if="row.title" class="sdb-result-title" data-test="explorer-search-result-title">{{ row.title }}</div>
+            <!-- Conversation-turn hit (0351 T4): who said it + which turn, instead of the
+                 plain document snippet. -->
+            <div v-if="row.matchKind === 'conversation_turn'" class="sdb-result-turn-meta" data-test="explorer-search-turn-meta">
+              <span class="sdb-result-turn-speaker">{{ row.speakerLabel }}</span>
+              <span class="sdb-result-turn-seq">{{ t('main.explorer.search_turn_position', { seq: row.seq }) }}</span>
+            </div>
             <p v-if="row.snippet" class="sdb-result-snippet" data-test="explorer-search-snippet">{{ row.snippet }}</p>
           </li>
         </ul>
@@ -244,6 +250,10 @@ interface SearchRow {
   title: string
   snippet: string | null
   node: GroupNode | null
+  // 0351 T4 — conversation-turn hit fields (undefined for a plain document result).
+  matchKind: 'document_body' | 'conversation_turn' | null
+  seq: number | null
+  speakerLabel: string
 }
 
 // Resolve each backend hit against the already-loaded project tree so opening a
@@ -254,12 +264,19 @@ interface SearchRow {
 const searchResultRows = computed<SearchRow[]>(() =>
   searchResults.value.map((r) => {
     const node = nodes.value.find((n) => n.node_type === 'document' && n.id === r.doc_id) ?? null
+    const isTurn = r.match_kind === 'conversation_turn'
+    const speakerLabel = isTurn
+      ? r.display_name || t(r.speaker === 'ai' ? 'main.conversation_view.speaker_ai' : 'main.conversation_view.speaker_user')
+      : ''
     return {
       docId: r.doc_id,
       typeCode: node?.type_code ?? r.type ?? null,
       title: r.title ?? '',
       snippet: r.snippet ?? null,
       node,
+      matchKind: r.match_kind ?? null,
+      seq: r.seq ?? null,
+      speakerLabel,
     }
   }),
 )
@@ -291,7 +308,35 @@ function clearSearch() {
   resetSearch()
 }
 
+// 0351 T4 (P0003 시나리오 16): a conversation-turn result opens the chat tab and asks
+// it to scroll to that exact turn. Cross-tree signal (GroupExplorer does not own the
+// mounted ConversationView instance — MainPanel does), same window-event idiom this
+// file already uses for fg:group_tree_changed.
+function openConversationSearchResult(row: SearchRow) {
+  if (row.node) {
+    openDocument(row.node)
+  } else {
+    tabsStore.openTab({
+      id: row.docId,
+      title: row.title || row.docId,
+      path: '',
+      type: 'unsupported',
+      typeCode: row.typeCode ?? 'CH',
+      projectId: props.projectId ?? undefined,
+    })
+  }
+  if (row.seq != null) {
+    window.dispatchEvent(
+      new CustomEvent('fg:conversation_jump_seq', { detail: { docId: row.docId, seq: row.seq } }),
+    )
+  }
+}
+
 function openSearchResult(row: SearchRow) {
+  if (row.matchKind === 'conversation_turn') {
+    openConversationSearchResult(row)
+    return
+  }
   if (row.node) {
     openDocument(row.node)
     return
@@ -672,5 +717,21 @@ watch(() => props.refreshToken, (next, prev) => {
   /* Was opacity:0.7 on inherited near-black text — still black. Use an explicit
      dimmed-white instead so the snippet is legible on the dark sidebar. */
   color: rgba(255, 255, 255, 0.6);
+}
+/* Conversation-turn search result (0351 T4) — who said it + which turn, in place of
+   the plain document caption row. */
+.sdb-result-turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 0.72rem;
+}
+.sdb-result-turn-speaker {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+.sdb-result-turn-seq {
+  color: rgba(255, 255, 255, 0.5);
 }
 </style>

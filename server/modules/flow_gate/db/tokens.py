@@ -74,8 +74,8 @@ def create(data: dict[str, Any]) -> dict:
         "(token_id, hash, pepper_id, project, group_id, doc_ref, "
         "action_scope, issued_to, created_at, expires_at, consumed_at, revoked_at, scratch_dir, "
         "continuation_target_seq, continuation_review_mode, continuation_locale, "
-        "merge_id, continuation_instruction_mode) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "merge_id, continuation_instruction_mode, provider_id, ai_run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -91,6 +91,8 @@ def create(data: dict[str, Any]) -> dict:
             data.get("continuation_locale"),
             data.get("merge_id"),
             data.get("continuation_instruction_mode"),
+            data.get("provider_id"),
+            data.get("ai_run_id"),
         ],
     )
     _invalidate_token_cache()

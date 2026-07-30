@@ -27,8 +27,25 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
+from modules.flow_gate.db import conversation_turns as turn_store
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.storage.paths import resolve_storage_path
+
+# ── T4 conversation-turn search (L0004 §1-4 / §2-15) ────────────────────────────
+# Single source of truth for the read-side numbers; do not inline these values.
+SEARCH_TURN_LIMIT = 50
+SEARCH_TURNS_PER_DOC = 3
+SEARCH_SNIPPET_CHARS = 120
+SEARCH_SNIPPET_LEAD = 40
+
+_LIKE_ESCAPE_RE = re.compile(r"([\\%_])")
+
+
+def _escape_like(value: str) -> str:
+    """Escape a LIKE pattern's special characters so a literal ``%``/``_`` cannot act
+    as a wildcard (paired with ``ESCAPE '\\'`` in the query)."""
+    return _LIKE_ESCAPE_RE.sub(r"\\\1", value)
 
 # doc_id -> (mtime, original_text, lowered_text), least-recently-used first.
 #
@@ -249,7 +266,24 @@ def _item(doc: dict, snippet: Optional[str], matched_in: str) -> dict:
         "updated_at": doc.get("updated_at"),
         "snippet": snippet,
         "matched_in": matched_in,
+        # T4: distinguishes a document-body hit from a conversation-turn hit once the
+        # two are merged into one result list (list_routes.search_documents_content).
+        # ``matched_in`` is kept as-is above — existing clients still read it.
+        "match_kind": "document_body",
     }
+
+
+def _is_migrated_conversation(doc: dict) -> bool:
+    """True for a CH document whose body of record has moved to the turn store.
+
+    Its file stops changing the moment migration completes (T1), so matching that
+    frozen file's text would surface stale content AND duplicate the same
+    conversation's turn-search hit (T4 §5). Title/doc_id matching is unaffected —
+    those come from document metadata, not the file body.
+    """
+    if (doc.get("type_code") or "").upper() != "CH":
+        return False
+    return turn_store.migration_state(doc.get("doc_id") or "") == "migrated"
 
 
 def search_document_bodies(
@@ -281,7 +315,7 @@ def search_document_bodies(
         snippet: Optional[str] = None
         body_preview: Optional[str] = None
 
-        cached = _get_cached(doc)
+        cached = None if _is_migrated_conversation(doc) else _get_cached(doc)
         if cached is not None:
             text, lowered = cached
             body_preview = _body_preview(text)
@@ -302,3 +336,102 @@ def search_document_bodies(
     total = len(matches)
     page = matches[offset:offset + limit] if offset < total else []
     return page, total
+
+
+def _turn_snippet(body: str, needle_lower: str) -> Optional[str]:
+    """Excerpt around the first match in a turn body (mirrors ``_snippet`` above, with
+    the turn-search-specific lead/tail sizes)."""
+    lowered = body.lower()
+    idx = lowered.find(needle_lower)
+    if idx < 0:
+        return None
+    start = max(0, idx - SEARCH_SNIPPET_LEAD)
+    end = min(len(body), start + SEARCH_SNIPPET_CHARS)
+    frag = _WS.sub(" ", body[start:end]).strip()
+    if start > 0:
+        frag = "…" + frag
+    if end < len(body):
+        frag = frag + "…"
+    return frag
+
+
+def search_conversation_turns(
+    q: str,
+    project: str = None,
+    status: str = None,
+    limit: int = SEARCH_TURN_LIMIT,
+    per_doc: int = SEARCH_TURNS_PER_DOC,
+) -> list[dict]:
+    """Conversation-turn body search (T4, L0004 §2-15 / P0003 시나리오 16).
+
+    Case-insensitive (``LOWER`` on both sides); a literal ``%``/``_``/``\\`` in the
+    query is escaped so it cannot act as a wildcard. At most ``per_doc`` turns are
+    returned per document (a very active chat must not crowd out every other result),
+    and at most ``SEARCH_TURN_LIMIT`` turns are scanned/returned overall. Only fully
+    migrated conversations participate, so an in-progress migration can never leak a
+    partial turn set. Ordering is the L0004 contract: newest ``created_at`` first,
+    then document id and descending sequence as deterministic tie-breakers.
+    """
+    needle = (q or "").strip()
+    effective_limit = max(0, min(int(limit), SEARCH_TURN_LIMIT))
+    if not needle or effective_limit == 0:
+        return []
+    store = get_store()
+    from modules.flow_gate.db import dialect as _dialect_mod
+    # A raw single backslash is a valid one-character ESCAPE literal in SQLite and
+    # PostgreSQL, but MySQL's default (backslash-escaping) string-literal parsing
+    # would read '\' as an escaped quote and never close the string; '\\' escapes
+    # down to the same one-character backslash there. Same effective ESCAPE
+    # character on every dialect, different literal spelling.
+    escape_literal = "'\\\\'" if store.dialect == _dialect_mod.MYSQL else "'\\'"
+    like_pattern = "%" + _escape_like(needle) + "%"
+    clauses = [f"LOWER(t.body) LIKE LOWER(?) ESCAPE {escape_literal}"]
+    params: list = [like_pattern]
+    if project:
+        clauses.append("d.project_id = ?")
+        params.append(project)
+    if status:
+        clauses.append("d.status = ?")
+        params.append(status)
+    where_sql = " AND ".join(clauses)
+    rows = get_store()._fetch_all(
+        "SELECT t.doc_id AS doc_id, t.seq AS seq, t.speaker AS speaker, "
+        "t.display_name AS display_name, t.body AS body, t.created_at AS created_at, "
+        "d.title AS title, d.status AS status, d.project_id AS project_id, "
+        "d.group_id AS group_id "
+        "FROM conversation_turns t JOIN documents d ON d.doc_id = t.doc_id "
+        "JOIN conversation_docs c ON c.doc_id = t.doc_id "
+        f"WHERE c.migration_state = 'migrated' AND {where_sql} "
+        "ORDER BY t.created_at DESC, t.doc_id ASC, t.seq DESC LIMIT ?",
+        params + [effective_limit],
+    )
+    needle_lower = needle.lower()
+    per_doc_count: dict[str, int] = {}
+    items: list[dict] = []
+    for row in rows:
+        if len(items) >= effective_limit:
+            break
+        doc_id = row["doc_id"]
+        seen = per_doc_count.get(doc_id, 0)
+        if seen >= per_doc:
+            continue
+        snippet = _turn_snippet(row.get("body") or "", needle_lower)
+        if snippet is None:
+            continue
+        per_doc_count[doc_id] = seen + 1
+        items.append({
+            "doc_id": doc_id,
+            "type": "CH",
+            "title": row.get("title"),
+            "status": row.get("status"),
+            "project_id": row.get("project_id"),
+            "group_id": row.get("group_id"),
+            "snippet": snippet,
+            "matched_in": "body",
+            "match_kind": "conversation_turn",
+            "seq": int(row["seq"]),
+            "speaker": row.get("speaker"),
+            "display_name": row.get("display_name"),
+            "created_at": row.get("created_at"),
+        })
+    return items

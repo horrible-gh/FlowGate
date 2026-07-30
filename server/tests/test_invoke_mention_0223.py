@@ -16,14 +16,9 @@ from modules.flow_gate.api.v1.ai_invoke_routes import _ALLOWED_SCOPES, _TOKEN_SC
 from modules.flow_gate.services import invoke_mention_service as ims
 
 
-def _submitted_body(text: str) -> dict:
-    """The inbox JSON the worker is told to POST.
-
-    0334: the mention now carries API examples that are themselves JSON, so the
-    first '{' in the text is no longer the submission body. The submission block is
-    still the tail of the mention by construction, so anchor on it.
-    """
-    return json.loads(text[text.index("{", text.index("Submit: POST")):])
+def _submission_block(text: str) -> str:
+    """Return the append instruction, whose based_on_seq placeholder is pseudo-JSON."""
+    return text[text.index("Submit: POST"):]
 
 
 class TestScopeMap:
@@ -33,9 +28,9 @@ class TestScopeMap:
             assert scope in _ALLOWED_SCOPES
 
     def test_extra_scopes_map_to_inbox_honoured_token_scopes(self):
-        # The inbox only honours new/edit/review/workflow_decide grants; every
-        # extra invoke scope must ride one of those.
-        assert _TOKEN_SCOPE["chat"] == "edit"
+        # Chat has its own append-only worker endpoints; other extra scopes still
+        # ride the inbox-honoured new/edit grants.
+        assert _TOKEN_SCOPE["chat"] == "chat"
         assert _TOKEN_SCOPE["rework"] == "edit"
         assert _TOKEN_SCOPE["vr_correction"] == "edit"
         assert _TOKEN_SCOPE["next_step_message"] == "new"
@@ -44,77 +39,98 @@ class TestScopeMap:
 
 
 class TestConversationMention:
-    def test_matches_client_shape(self):
-        text = ims.build_conversation_mention(
-            doc_id="p.default.0001.0008-CH",
-            project="p",
-            module="default",
-            group_name="p.default.0001",
-            raw_token="RAW",
-            api_base_url="http://h:1/api/v1",
-        )
+    TOKEN_ID = "tok_20260729_000071"
+
+    @staticmethod
+    def _build(**overrides):
+        args = {
+            "doc_id": "p.default.0001.0008-CH",
+            "project": "p",
+            "module": "default",
+            "group_name": "p.default.0001",
+            "raw_token": "RAW",
+            "token_id": TestConversationMention.TOKEN_ID,
+            "api_base_url": "http://h:1/api/v1",
+        }
+        args.update(overrides)
+        return ims.build_conversation_mention(**args)
+
+    def test_matches_turn_append_contract(self):
+        text = self._build()
         lines = text.split("\n")
         assert lines[0] == "## Conversation (대화)"
         assert "Conversation document: p.default.0001.0008-CH" in lines
-        assert "Read the full conversation: GET http://h:1/api/v1/document?doc_id=p.default.0001.0008-CH" in lines
-        # Read, source/document lookup, and submit each carry their own credential line.
-        assert lines.count("Authorization: Bearer RAW") == 4
-        assert "Submit: POST http://h:1/api/v1/inbox" in lines
-        body = _submitted_body(text)
-        assert body["action"] == "edit"
-        assert body["edit_reason"] == "worker_self"
-        assert body["module"] == "default"
-        assert body["doc_id"] == "p.default.0001.0008-CH"
+        assert (
+            "GET http://h:1/api/v1/conversation/p.default.0001.0008-CH/turns"
+            "?after_seq=0&include_head=1"
+        ) in lines
+        assert "Submit: POST http://h:1/api/v1/conversation/p.default.0001.0008-CH/turn" in lines
+        submit = _submission_block(text)
+        assert f'"idempotency_key": "{self.TOKEN_ID}"' in submit
+        assert '"based_on_seq": <the head_seq you got from your last read>' in submit
+        assert '"display_name": "<your model name>"' in submit
+        assert "Reading does not consume this token." in text
+        assert text.index("Submit: POST") < text.index("## Document search and lookup rules")
 
-    def test_module_omitted_when_none(self):
-        text = ims.build_conversation_mention(
-            doc_id="d", project="p", module=None, group_name="g",
-            raw_token="RAW", api_base_url="http://h:1/api/v1",
-        )
-        body = _submitted_body(text)
-        assert "module" not in body
+    def test_old_full_body_contract_is_absent(self):
+        text = self._build()
+        assert "/document?doc_id=" not in text
+        assert "COMPLETE body" not in text
+        assert "## 🤖 AI(" not in text
+        assert '"action": "edit"' not in text
+        assert "/inbox" not in text
 
     def test_absolute_host_survives_into_the_mention(self):
-        # Guard inherited from client/tests/main/buildConversationMention.host.spec.ts,
-        # deleted with the TS builder in 0293. Group 0103 B0001 was "the chat copy mention
-        # shows no host anywhere" — a host-less URL is unusable to a worker on another
-        # machine, and this is now the only place that property is pinned.
-        text = ims.build_conversation_mention(
-            doc_id="d", project="p", module=None, group_name="g",
-            raw_token="RAW", api_base_url="http://192.168.0.9:8088/flowgate/api/v1",
+        text = self._build(
+            doc_id="d",
+            api_base_url="http://192.168.0.9:8088/flowgate/api/v1",
         )
-        assert "GET http://192.168.0.9:8088/flowgate/api/v1/document?doc_id=d" in text
-        assert "POST http://192.168.0.9:8088/flowgate/api/v1/inbox" in text
+        assert (
+            "GET http://192.168.0.9:8088/flowgate/api/v1/conversation/d/turns"
+            "?after_seq=0&include_head=1"
+        ) in text
+        assert "POST http://192.168.0.9:8088/flowgate/api/v1/conversation/d/turn" in text
 
-    def test_no_provider_asks_the_worker_to_fill_the_slot(self):
-        # Copy path: the server cannot know who the user will paste this to.
-        text = ims.build_conversation_mention(
-            doc_id="d", project="p", module=None, group_name="g",
-            raw_token="RAW", api_base_url="http://h:1/api/v1",
+    def test_unpinned_mention_starts_at_zero_without_reading_a_provider_cursor(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(
+            ims.conversation_turns,
+            "get_last_read_seq",
+            lambda *args: called.append(args) or 99,
         )
-        assert "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>" in text
-        # "I don't know" must be an accepted answer, not a forced guess.
-        assert "drop the parentheses entirely" in text
+        text = self._build(provider_id=None)
+        assert "?after_seq=0&include_head=1" in text
+        assert called == []
 
-    def test_known_provider_is_baked_in_verbatim(self):
-        # Invoke path with a pinned provider: nothing for the worker to decide.
-        text = ims.build_conversation_mention(
-            doc_id="d", project="p", module=None, group_name="g",
-            raw_token="RAW", api_base_url="http://h:1/api/v1",
-            provider="Claude Opus",
+    def test_pinned_provider_cursor_is_baked_into_after_seq(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            ims.conversation_turns,
+            "get_last_read_seq",
+            lambda doc_id, participant_key: calls.append((doc_id, participant_key)) or 13,
         )
-        assert "## 🤖 AI(Claude Opus) · <ISO-8601 timestamp>" in text
+        text = self._build(provider="Claude Opus", provider_id="cx_claude_opus")
+        assert "?after_seq=13&include_head=1" in text
+        assert calls == [("p.default.0001.0008-CH", "provider:cx_claude_opus")]
+
+    def test_no_provider_asks_the_worker_to_fill_or_omit_display_name(self):
+        text = self._build()
+        assert '"display_name": "<your model name>"' in text
+        assert "omit the field" in text
+        assert "not used to determine identity" in text
+
+    def test_known_provider_is_baked_into_display_name_verbatim(self, monkeypatch):
+        monkeypatch.setattr(ims.conversation_turns, "get_last_read_seq", lambda *args: 0)
+        text = self._build(provider="Claude Opus", provider_id="cx_claude_opus")
+        assert '"display_name": "Claude Opus"' in text
+        assert "pinned provider name" in text
         assert "<your model name>" not in text
 
-    def test_provider_containing_a_paren_falls_back_to_self_report(self):
-        # ")" would break HEADER_RE, so such a name is never baked in.
-        text = ims.build_conversation_mention(
-            doc_id="d", project="p", module=None, group_name="g",
-            raw_token="RAW", api_base_url="http://h:1/api/v1",
-            provider="we(ird)name",
-        )
-        assert "## 🤖 AI(<your model name>) · <ISO-8601 timestamp>" in text
-
+    def test_provider_containing_a_paren_is_safe_in_json(self, monkeypatch):
+        monkeypatch.setattr(ims.conversation_turns, "get_last_read_seq", lambda *args: 0)
+        text = self._build(provider="we(ird)name", provider_id="weird")
+        assert '"display_name": "we(ird)name"' in text
+        assert "## 🤖 AI(" not in text
 
 class TestConversationMentionLookupBlock:
     """0334 R0001 — the chat mention must carry the read-only lookup APIs.
@@ -137,6 +153,7 @@ class TestConversationMentionLookupBlock:
             module="default",
             group_name="p.default.0001",
             raw_token="RAW",
+            token_id="tok_20260729_000071",
             api_base_url="http://h:1/api/v1",
         )
 
@@ -181,12 +198,16 @@ class TestConversationMentionLookupBlock:
 
     @pytest.mark.parametrize("remote_mode", [True, False])
     def test_submission_json_remains_the_tail_of_the_mention(self, monkeypatch, remote_mode):
-        # The lookup block goes BEFORE the submit block, so "search, then submit" is
-        # both the reading order and the required order (a submit consumes the token).
+        # The new turn submission contract comes first; lookup guidance closes the mention
+        # with the warning that submission consumes the token.
         text = self._mention(monkeypatch, remote_mode=remote_mode)
-        assert text.index("remote/read" if remote_mode else "search/documents") < text.index("Submit: POST")
-        assert _submitted_body(text)["edit_reason"] == "worker_self"
-        assert text.rstrip().endswith("}")
+        assert text.index("Submit: POST") < text.index(
+            "remote/read" if remote_mode else "search/documents"
+        )
+        assert '"idempotency_key": "tok_20260729_000071"' in _submission_block(text)
+        assert text.rstrip().endswith(
+            "Submitting your turn consumes this token, so finish all reading and searching first."
+        )
 
 
 class TestRejectionSection:

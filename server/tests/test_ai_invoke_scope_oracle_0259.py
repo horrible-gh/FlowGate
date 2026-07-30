@@ -169,10 +169,9 @@ class TestPerfectWorkerSucceeds:
         assert run["outcome"] == "complete"
         assert run["oracle_mismatch"] is False
 
-    def test_chat_and_rework_reach_the_engine_as_edit_and_succeed(self, world):
-        # The route maps chat/rework/vr_correction onto the `edit` TOKEN scope before
-        # start_run sees them, and all three land as an in-place revision — so this is the
-        # same assertion for all three. A `chat` key in the registry would be dead code.
+    def test_rework_and_vr_correction_still_reach_the_engine_as_edit(self, world):
+        # Only chat moved to its append-only scope. Rework and VR correction continue
+        # to revise the bound document under an edit token.
         run = _run(world, "edit", work=world.do_edit)
         assert run["outcome"] == "complete"
 
@@ -287,13 +286,13 @@ class TestEveryWireScopeHasAJudge:
             token_scope = routes._TOKEN_SCOPE.get(wire_scope, wire_scope)
             assert token_scope in svc._SCOPE_PROBES, wire_scope
 
-    def test_chat_is_not_a_token_scope(self):
-        # Guard on the correction NR0003 made after review: `chat` is mapped to `edit`
-        # before the engine sees it, so a "chat" key in _SCOPE_PROBES would be dead code.
+    def test_chat_has_its_own_append_only_scope_probe(self):
+        # 0351 T3: chat no longer revises the document through inbox/edit. The engine
+        # receives the literal chat scope and judges success by the conversation head.
         from modules.flow_gate.api.v1 import ai_invoke_routes as routes
 
-        assert routes._TOKEN_SCOPE["chat"] == "edit"
-        assert "chat" not in svc._SCOPE_PROBES
+        assert routes._TOKEN_SCOPE["chat"] == "chat"
+        assert svc._SCOPE_PROBES["chat"] is svc._probe_conversation_head
 
 
 # ── Fast-fail (NR0003 §3) ────────────────────────────────────────────────────

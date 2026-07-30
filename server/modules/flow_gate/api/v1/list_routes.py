@@ -460,9 +460,18 @@ def search_documents_content(
     offset: int = 0,
 ):
     """Full document search incl. body text (Phase 2). Same auth/validation/paging
-    as Phase 1; each item adds a ``snippet`` (excerpt for body matches) and
-    ``matched_in`` (body|title|doc_id). Reads bodies from the filesystem via a
-    self-healing mtime cache — no schema/migration, multi-dialect safe."""
+    as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
+    (body|title|doc_id), and ``match_kind`` (``document_body``|``conversation_turn``).
+
+    Reads document bodies from the filesystem via a self-healing mtime cache — no
+    schema/migration, multi-dialect safe. A migrated CH conversation's turns (T4,
+    L0004 §2-15) are searched separately and appended after the document-body page:
+    ``total``/``offset``/``limit`` keep their original document-body-only meaning
+    (paging contract preserved for existing callers), and the bounded conversation-turn
+    matches (at most ``content_search_service.SEARCH_TURN_LIMIT``, capped per document
+    at ``SEARCH_TURNS_PER_DOC``) ride along uncounted and unpaged — the same fixed
+    bound applies to every page rather than needing a second cursor. They are omitted
+    entirely when an explicit ``type`` facet rules out CH."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -482,9 +491,15 @@ def search_documents_content(
         q=query, project=project, doc_type=type, status=status,
         limit=limit, offset=offset,
     )
+    turn_items: list = []
+    if not type or "CH".startswith(type.strip().upper()):
+        turn_items = content_search_service.search_conversation_turns(
+            q=query, project=project, status=status,
+        )
     return JSONResponse(content={
         "ok": True, "query": query, "scope": "content", "total": total,
-        "offset": offset, "limit": limit, "items": items,
+        "offset": offset, "limit": limit, "items": items + turn_items,
+        "turn_total": len(turn_items),
     })
 
 

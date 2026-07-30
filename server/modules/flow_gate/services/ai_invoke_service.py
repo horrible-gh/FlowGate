@@ -34,6 +34,7 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 
+from modules.flow_gate.db import conversation_turns as db_conversation_turns
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
@@ -399,6 +400,10 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
 # document oracle; `completion_oracle` stays as the per-call override.
 
 
+def _probe_conversation_head(doc_id: str) -> int:
+    """Highest stored turn seq for an append-only chat run."""
+    return db_conversation_turns.current_head_seq(doc_id)
+
 def _probe_doc_revision(doc_id: str) -> int:
     """Revisions of the bound document. `_handle_edit` does `revision_no = revision_no + 1`."""
     return int((db_docs.get_by_id(doc_id) or {}).get("revision_no") or 0)
@@ -443,12 +448,11 @@ def _probe_sequence_max_item(doc_id: str) -> int:
     return int(db_wfseq.get_max_item_seq(seq["id"]) or 0)
 
 
-# Keyed by TOKEN scope — the value `start_run` actually receives. The route maps
-# chat/rework/vr_correction onto `edit` before calling, and all three land as an in-place
-# revision of the bound document (chat included: the conversation worker submits the whole
-# CH body via inbox action:'edit', see invoke_mention_service.build_conversation_mention),
-# so the `edit` probe covers them. A `chat` key here would be dead code.
+# Keyed by TOKEN scope — the value `start_run` actually receives. Chat is no longer
+# remapped to edit: its append-only endpoint advances the conversation head without
+# revising the document row, so it needs its own completion probe.
 _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
+    "chat": _probe_conversation_head,
     "edit": _probe_doc_revision,
     "review": _probe_doc_reviews,
     "test_run": _probe_test_runs,
@@ -698,6 +702,10 @@ def start_run(
                                    f"{target}"}],
             })
 
+    # Allocate the run identity before token issuance so a chat turn can retain
+    # its server-owned source_run_id and provider identity in the token.
+    run_id = _next_run_id()
+
     if issue_builder is not None:
         issue = issue_builder()
         mention = issue.get("mention")
@@ -713,6 +721,8 @@ def start_run(
             continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
             continuation_locale=continuation_locale if mode == "continuous" else None,
             merge_id=merge_id if action_scope == "resolve_conflict" else None,
+            provider_id=provider_id,
+            ai_run_id=run_id,
         )
         mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
     if not mention:
@@ -753,7 +763,6 @@ def start_run(
         completion_oracle = _scope_oracle(action_scope, issue.get("token_id"), doc_ref)
 
     _cleanup_retained_scratches(project_id)
-    run_id = _next_run_id()
     scratch = _create_scratch(project_id, run_id)
 
     doc = db_docs.get_by_id(doc_ref) or {}

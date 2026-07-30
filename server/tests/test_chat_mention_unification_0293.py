@@ -4,9 +4,16 @@ R0001 asked to show WHICH AI answered a CH turn. NR0004 found the chat mention e
 twice (Python + TypeScript) and that the invoke path builds its mention BEFORE the run
 picks a provider. These tests pin the two invariants that came out of that:
 
-  1. /token/issue's "chat" wire scope mints an EDIT token but serves the CH mention, so
-     the [멘트복사] path and the in-app AI 호출 path read the same builder.
+  1. /token/issue's "chat" wire scope serves the CH mention, so the [멘트복사] path and
+     the in-app AI 호출 path read the same builder.
   2. A provider name is only claimed when fallback is structurally impossible.
+
+Group 0351 superseded HALF of invariant 1. "chat" used to be a mention selector layered
+on an edit grant because the inbox honoured no such action and a literal chat token
+would have been unusable. It now IS a grant: the append-only conversation endpoints
+(POST/GET /api/v1/conversation/{doc_id}/turn[s]) accept action_scope="chat" and nothing
+else, and an edit token is explicitly refused there. What survives unchanged is the part
+the group actually cared about — one mention builder for both chat entrances.
 
 Pure-unit (no HTTP harness): both invariants live in module-level tables and one helper.
 """
@@ -42,11 +49,17 @@ class TestChatWireScope:
     def test_token_issue_accepts_chat(self):
         assert "chat" in token_routes._WIRE_SCOPES
 
-    def test_chat_is_a_mention_selector_not_a_grant(self):
-        # The inbox only honours new/edit/review/workflow_decide, so a literal "chat"
-        # token would be unusable. Both chat entrances must map it onto edit.
-        assert token_routes._WIRE_TOKEN_SCOPE["chat"] == "edit"
-        assert ai_invoke_routes._TOKEN_SCOPE["chat"] == "edit"
+    def test_chat_now_mints_its_own_append_only_grant(self):
+        # 0351: the conversation turn endpoints authorise on action_scope="chat", so the
+        # token issued for a chat mention must carry that scope rather than borrowing an
+        # edit grant. Minting "edit" here would 403 every worker that follows the mention.
+        assert token_routes._WIRE_TOKEN_SCOPE["chat"] == "chat"
+
+    def test_both_chat_entrances_mint_the_same_append_only_grant(self):
+        # T3 completes the transition: both [멘트복사] and in-app [AI 호출] mint
+        # the only scope accepted by the worker conversation endpoints.
+        assert ai_invoke_routes._TOKEN_SCOPE["chat"] == "chat"
+        assert ai_invoke_routes._TOKEN_SCOPE["chat"] == token_routes._WIRE_TOKEN_SCOPE["chat"]
 
     def test_other_scopes_pass_through_unmapped(self):
         for scope in ("new", "edit", "resolve_conflict"):
