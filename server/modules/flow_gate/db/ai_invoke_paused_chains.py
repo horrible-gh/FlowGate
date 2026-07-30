@@ -21,14 +21,18 @@ def upsert(
     continuation_target_seq: Optional[int],
     docs_target: Optional[int],
     docs_reached: int,
+    chain_id: Optional[str] = None,
+    chain_docs_target: Optional[int] = None,
+    chain_docs_reached: int = 0,
 ) -> None:
     """Record (or refresh) the paused row for a group — idempotent on repeat pause."""
     now = now_iso()
     get_store()._execute(
         "INSERT INTO ai_invoke_paused_chains"
         "(group_id, doc_ref, mode, paused_by, paused_at,"
-        " continuation_target_seq, docs_target, docs_reached, created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?) "
+        " continuation_target_seq, docs_target, docs_reached,"
+        " chain_id, chain_docs_target, chain_docs_reached, created_at, updated_at) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -36,9 +40,13 @@ def upsert(
         "continuation_target_seq = excluded.continuation_target_seq, "
         "docs_target = excluded.docs_target, "
         "docs_reached = excluded.docs_reached, "
+        "chain_id = excluded.chain_id, "
+        "chain_docs_target = excluded.chain_docs_target, "
+        "chain_docs_reached = excluded.chain_docs_reached, "
         "updated_at = excluded.updated_at",
         [group_id, doc_ref, paused_by, paused_at,
-         continuation_target_seq, docs_target, docs_reached, now, now],
+         continuation_target_seq, docs_target, docs_reached,
+         chain_id, chain_docs_target, chain_docs_reached, now, now],
     )
 
 

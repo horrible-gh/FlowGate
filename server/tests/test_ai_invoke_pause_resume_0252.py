@@ -55,12 +55,15 @@ class FakePausedStore:
         self.rows: dict[str, dict] = {}
 
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
-               continuation_target_seq, docs_target, docs_reached):
+               continuation_target_seq, docs_target, docs_reached,
+               chain_id=None, chain_docs_target=None, chain_docs_reached=0):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
             "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
+            "chain_id": chain_id, "chain_docs_target": chain_docs_target,
+            "chain_docs_reached": chain_docs_reached,
         }
 
     def get_by_group(self, group_id):
@@ -232,6 +235,9 @@ class TestPauseRun:
             assert row["paused_by"] == "usr_admin"
             assert row["continuation_target_seq"] == 3
             assert row["docs_target"] == 2  # pending worker items (P, L)
+            assert row["chain_id"] == res["chain_id"]
+            assert row["chain_docs_target"] == 2
+            assert row["chain_docs_reached"] == 0
 
             # get_status surfaces the accepted request (reload-proof card state).
             assert svc.get_status(res["run_id"])["status"] == "pause_requested"
@@ -249,13 +255,20 @@ class TestPauseRun:
         # with the fast-echo finish).
         res = _start(fake_env, cmd=_slow_cmd(1))
         svc.pause_run(res["run_id"], "usr_admin")
+        # The in-flight hop completes after the request snapshot but before the
+        # boundary stop. Its document must be included in the persisted chain count.
+        fake_env["docs"].docs.append({
+            "doc_id": f"{GROUP}.0002-P", "seq": 2, "status": "open",
+        })
         # The inbox boundary hook fires while the run is still alive (the worker is
         # blocked on the inbox response at the boundary) — simulate that ordering.
         svc.mark_user_paused(GROUP)
         run = _wait_finished(res["run_id"])
         assert run["end_reason"] == "user_paused"
         # The paused row is the resume coordinate — the boundary stop must keep it.
-        assert GROUP in fake_env["paused"].rows
+        row = fake_env["paused"].rows[GROUP]
+        assert row["chain_docs_reached"] == 1
+        assert row["chain_docs_target"] == 2
 
     def test_non_paused_finish_cleans_row(self, fake_env):
         # Pause accepted but the chain ended before any boundary (worker exit):
@@ -274,6 +287,7 @@ def _seed_paused(fake_env, target=3):
         group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
         paused_at="2026-07-17T00:00:00+09:00",
         continuation_target_seq=target, docs_target=3, docs_reached=1,
+        chain_id="aiv_paused_chain", chain_docs_target=3, chain_docs_reached=1,
     )
 
 
@@ -303,6 +317,9 @@ class TestResumeChain:
         assert res["ok"] is True
         assert res["mode"] == "continuous"
         assert res["docs_target"] == 2          # pending_only re-derivation (P, L)
+        assert res["chain_id"] == "aiv_paused_chain"
+        assert res["chain_docs_target"] == 3
+        assert res["chain_docs_reached"] == 1
         assert GROUP not in fake_env["paused"].rows
         # The resume rides the SAME advance_workflow path as every self-chain hop.
         assert calls and calls[0]["continuation_target_seq"] == 3

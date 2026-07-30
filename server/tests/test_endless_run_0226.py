@@ -119,7 +119,10 @@ def _run_dict(tmp_path, *, docs_target, baseline_seq=4, action_scope="new",
         "project_id": "flowgate", "module": "default",
         "group_id": "flowgate.default.0226",
         "doc_ref": "flowgate.default.0226.0001-B",
-        "docs_target": docs_target, "baseline_seq": baseline_seq,
+        "docs_target": docs_target,
+        "chain_id": "aiv_chain_0226", "chain_docs_target": docs_target,
+        "chain_docs_reached": 0, "chain_docs_accounted": False,
+        "baseline_seq": baseline_seq,
         "timeout_sec": 60, "provider": None, "provider_id": "aip_x",
         "attempt_no": 1, "fallback_history": [],
         "started_at": "t", "started_mono": time.monotonic(),
@@ -159,6 +162,7 @@ class TestHonestCounters:
         monkeypatch.setattr(svc.db_docs, "get_group_max_seq", lambda g: 9)
         status = svc.get_status("aiv_0226")
         assert status["docs_reached_so_far"] == 2
+        assert status["chain_docs_reached"] == 2
 
     def test_settle_keeps_overrun_visible(self, monkeypatch, tmp_path):
         # 4 docs landed against a target of 3: previously clamped to 3/3 at the end,
@@ -172,6 +176,7 @@ class TestHonestCounters:
         svc._settle_and_judge(run)
         assert run["docs_reached"] == 4
         assert run["docs_target"] == 3
+        assert run["chain_docs_reached"] == 4
         assert run["outcome"] == "complete"
 
     def test_to_end_settle_resolves_target_from_worker_items(self, monkeypatch, tmp_path):
@@ -193,7 +198,53 @@ class TestHonestCounters:
         svc._settle_and_judge(run)
         assert run["docs_target"] == 2      # NR + TR (old math: max item_seq 4 - baseline 4 = 0)
         assert run["docs_reached"] == 2     # drafts stay invisible to the oracle
+        assert run["chain_docs_target"] == 2
+        assert run["chain_docs_reached"] == 2
         assert run["outcome"] == "complete"
+
+    def test_five_hop_chain_target_is_fixed_and_reached_is_monotonic(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setattr(svc, "ORACLE_SETTLE_SEC", 0)
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+        chain_id = "aiv_chain_five_hops"
+        chain_reached = 0
+        all_docs = []
+
+        for hop in range(5):
+            all_docs.append({
+                "doc_id": f"flowgate.default.0226.{hop + 2:04d}-TR",
+                "seq": hop + 1,
+                "status": "open",
+            })
+            run = _run_dict(
+                tmp_path, docs_target=5 - hop, baseline_seq=hop,
+            )
+            run.update({
+                "run_id": f"aiv_hop_{hop + 1}",
+                "chain_id": chain_id,
+                "chain_docs_target": 5,
+                "chain_docs_reached": chain_reached,
+                "chain_docs_accounted": False,
+            })
+            monkeypatch.setattr(svc, "_runs", {run["run_id"]: run})
+            _fake_group_docs(monkeypatch, all_docs)
+
+            live = svc.get_status(run["run_id"])
+            assert live["chain_id"] == chain_id
+            assert live["chain_docs_target"] == 5
+            assert live["chain_docs_reached"] == hop + 1
+
+            svc._settle_and_judge(run)
+            finished = svc.get_status(run["run_id"])
+            assert finished["docs_target"] == 5 - hop
+            assert finished["docs_reached"] == 1
+            assert finished["chain_id"] == chain_id
+            assert finished["chain_docs_target"] == 5
+            assert finished["chain_docs_reached"] == hop + 1
+            chain_reached = finished["chain_docs_reached"]
+
+        assert chain_reached == 5
 
 
 # ── §5-3: chain stop defense (slot-less submission pauses) ───────────────────

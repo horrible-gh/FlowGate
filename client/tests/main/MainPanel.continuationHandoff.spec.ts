@@ -88,7 +88,9 @@ describe('MainPanel continuous invoke handoff', () => {
       doc_ref: 'flowgate.default.0345.0001-B',
       mode: 'continuous',
       docs_target: 3,
-      docs_reached_so_far: 0,
+      chain_id: 'airun-hop-1',
+      chain_docs_target: 3,
+      chain_docs_reached: 0,
     })
     const wrapper = mountPanel()
 
@@ -99,6 +101,9 @@ describe('MainPanel continuous invoke handoff', () => {
       status: 'running',
       docs_target: 3,
       docs_reached_so_far: 1,
+      chain_id: 'airun-hop-1',
+      chain_docs_target: 3,
+      chain_docs_reached: 1,
       continuation_pending: true,
     })
     lifecycle('finished', {
@@ -109,6 +114,9 @@ describe('MainPanel continuous invoke handoff', () => {
       end_reason: 'exited',
       docs_target: 3,
       docs_reached: 1,
+      chain_id: 'airun-hop-1',
+      chain_docs_target: 3,
+      chain_docs_reached: 1,
       duration_ms: 2_500,
     })
 
@@ -116,6 +124,8 @@ describe('MainPanel continuous invoke handoff', () => {
     expect(handoff.runId).toBe('airun-hop-1')
     expect(handoff.phase).toBe('running')
     expect(handoff.docsReachedSoFar).toBe(1)
+    expect(handoff.chainDocsReached).toBe(1)
+    expect(handoff.chainDocsTarget).toBe(3)
     expect(handoff.finishedPayload).toBeNull()
 
     lifecycle('started', {
@@ -123,8 +133,10 @@ describe('MainPanel continuous invoke handoff', () => {
       group_id: groupId,
       mode: 'continuous',
       status: 'running',
-      docs_target: 3,
-      docs_reached_so_far: 1,
+      docs_target: 2,
+      chain_id: 'airun-hop-1',
+      chain_docs_target: 3,
+      chain_docs_reached: 1,
     })
     lifecycle('finished', {
       run_id: 'airun-hop-1',
@@ -134,11 +146,18 @@ describe('MainPanel continuous invoke handoff', () => {
       end_reason: 'exited',
       docs_target: 3,
       docs_reached: 1,
+      chain_id: 'airun-hop-1',
+      chain_docs_target: 3,
+      chain_docs_reached: 1,
     })
 
     const replacement = store.runsByGroup[groupId]
     expect(replacement.runId).toBe('airun-hop-2')
     expect(replacement.phase).toBe('running')
+    expect(replacement.docsTarget).toBe(2)
+    expect(replacement.docsReachedSoFar).toBe(0)
+    expect(replacement.chainDocsTarget).toBe(3)
+    expect(replacement.chainDocsReached).toBe(1)
 
     wrapper.unmount()
   })

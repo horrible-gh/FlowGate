@@ -68,6 +68,24 @@ describe('AiRunMonitorCard (dashboard)', () => {
     wrapper.unmount()
   })
 
+  it('shows chain progress instead of the shrinking hop target', async () => {
+    const wrapper = mountCard()
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0357'
+    store.trackStarted({
+      run_id: 'run-hop-2', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+      docs_target: 4, chain_id: 'run-hop-1',
+      chain_docs_target: 5, chain_docs_reached: 1,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.airm-row-meta').text()).toContain(
+      t('main.ai_miniplayer.progress', { reached: 1, target: 5 }),
+    )
+    wrapper.unmount()
+  })
+
   it('opens the waiting Q — not the run document — from an awaiting row', async () => {
     const wrapper = mountCard()
     const store = useAiInvokeRunsStore()

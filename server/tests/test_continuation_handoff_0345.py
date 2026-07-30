@@ -34,6 +34,9 @@ def _invoke_engine_handoff(monkeypatch, broadcaster):
         "status": "running",
         "docs_target": 3,
         "docs_reached_so_far": 1,
+        "chain_id": "airun-hop-1",
+        "chain_docs_target": 3,
+        "chain_docs_reached": 1,
         "provider": {"id": "provider-1", "name": "Provider One"},
         "attempt_no": 1,
         "started_at": "2026-07-28T12:00:00+00:00",
@@ -93,6 +96,9 @@ def test_engine_handoff_queues_respawn_and_broadcasts_pending_marker(monkeypatch
     assert event.project == "flowgate"
     assert event.group_id == "flowgate.default.0345"
     assert event.payload["run_id"] == "airun-hop-1"
+    assert event.payload["chain_id"] == "airun-hop-1"
+    assert event.payload["chain_docs_target"] == 3
+    assert event.payload["chain_docs_reached"] == 1
     assert event.payload["continuation_pending"] is True
     assert event.payload["continuation_completed_doc_id"] == "flowgate.default.0345.0006-M"
     assert event.payload["continuation_completed_item_seq"] == 2

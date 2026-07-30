@@ -38,6 +38,9 @@ export interface AiInvokeRunEntry {
   attemptNo: number
   docsTarget: number
   docsReachedSoFar: number
+  chainId: string | null
+  chainDocsTarget: number
+  chainDocsReached: number
   startedAt: string | null
   elapsedMs: number
   providerSwitches: AiInvokeProviderSwitch[]
@@ -138,9 +141,17 @@ function startedEntry(
   payload: Record<string, any>,
   previous?: AiInvokeRunEntry,
 ): AiInvokeRunEntry {
+  const runId = String(payload.run_id ?? previous?.runId ?? '')
   const sameRun = previous?.runId === String(payload.run_id ?? '')
+  const docsTarget = Number(payload.docs_target ?? (sameRun ? previous?.docsTarget : 1) ?? 1)
+  const docsReachedSoFar = Number(
+    payload.docs_reached_so_far ?? (sameRun ? previous?.docsReachedSoFar : 0) ?? 0,
+  )
+  const payloadChainId = nullableString(payload.chain_id)
+  const sameChain = payloadChainId != null && previous?.chainId === payloadChainId
+  const chainId = payloadChainId ?? (sameRun ? previous?.chainId ?? null : null)
   return {
-    runId: String(payload.run_id ?? previous?.runId ?? ''),
+    runId,
     groupId: String(payload.group_id ?? previous?.groupId ?? ''),
     docRef: String(payload.doc_ref ?? (sameRun ? previous?.docRef : '') ?? ''),
     phase: payload.status === 'pause_requested' ? 'pause_requested' : 'running',
@@ -148,8 +159,15 @@ function startedEntry(
     cancelling: payload.status === 'cancelling',
     provider: normalizeProvider(payload, sameRun ? previous?.provider ?? null : null),
     attemptNo: Number(payload.attempt_no ?? (sameRun ? previous?.attemptNo : 1) ?? 1),
-    docsTarget: Number(payload.docs_target ?? (sameRun ? previous?.docsTarget : 1) ?? 1),
-    docsReachedSoFar: Number(payload.docs_reached_so_far ?? (sameRun ? previous?.docsReachedSoFar : 0) ?? 0),
+    docsTarget,
+    docsReachedSoFar,
+    chainId,
+    chainDocsTarget: Number(
+      payload.chain_docs_target ?? (sameChain ? previous?.chainDocsTarget : docsTarget) ?? docsTarget,
+    ),
+    chainDocsReached: Number(
+      payload.chain_docs_reached ?? (sameChain ? previous?.chainDocsReached : docsReachedSoFar) ?? docsReachedSoFar,
+    ),
     startedAt: nullableString(payload.started_at) ?? (sameRun ? previous?.startedAt ?? null : null),
     elapsedMs: Number(payload.elapsed_ms ?? (sameRun ? previous?.elapsedMs : 0) ?? 0),
     providerSwitches: sameRun ? previous?.providerSwitches ?? [] : [],
@@ -176,6 +194,8 @@ function startedEntry(
 
 function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry): AiInvokeRunEntry {
   // A paused chain has no live run (P0008 S5) — the card is keyed by group alone.
+  const docsTarget = Number(payload.docs_target ?? previous?.docsTarget ?? 0)
+  const docsReached = Number(payload.docs_reached ?? previous?.docsReachedSoFar ?? 0)
   return {
     runId: previous?.runId ?? '',
     groupId: String(payload.group_id ?? previous?.groupId ?? ''),
@@ -185,8 +205,15 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     cancelling: false,
     provider: previous?.provider ?? null,
     attemptNo: previous?.attemptNo ?? 1,
-    docsTarget: Number(payload.docs_target ?? previous?.docsTarget ?? 0),
-    docsReachedSoFar: Number(payload.docs_reached ?? previous?.docsReachedSoFar ?? 0),
+    docsTarget,
+    docsReachedSoFar: docsReached,
+    chainId: nullableString(payload.chain_id) ?? previous?.chainId ?? null,
+    chainDocsTarget: Number(payload.chain_docs_target ?? previous?.chainDocsTarget ?? docsTarget),
+    chainDocsReached: Number(
+      payload.chain_docs_reached
+        ?? (payload.chain_id != null || previous?.chainId != null ? previous?.chainDocsReached : docsReached)
+        ?? docsReached,
+    ),
     startedAt: null,
     elapsedMs: previous?.elapsedMs ?? 0,
     providerSwitches: [],
@@ -380,6 +407,14 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       attemptNo: Number(payload.attempt_no ?? base.attemptNo),
       docsTarget: Number(payload.docs_target ?? base.docsTarget),
       docsReachedSoFar: Number(payload.docs_reached ?? payload.docs_reached_so_far ?? base.docsReachedSoFar),
+      chainId: nullableString(payload.chain_id) ?? base.chainId,
+      chainDocsTarget: Number(payload.chain_docs_target ?? base.chainDocsTarget ?? payload.docs_target ?? base.docsTarget),
+      chainDocsReached: Number(
+        payload.chain_docs_reached
+          ?? (base.chainId != null
+            ? base.chainDocsReached
+            : payload.docs_reached ?? payload.docs_reached_so_far ?? base.docsReachedSoFar),
+      ),
       elapsedMs: Number(payload.duration_ms ?? payload.elapsed_ms ?? base.elapsedMs),
       providerSwitches: finishedSwitches.length > 0 ? finishedSwitches : base.providerSwitches,
       finishedPayload: { ...payload },

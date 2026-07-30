@@ -163,6 +163,31 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
+  it('renders chain progress without regressing at a new hop', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0357'
+    store.trackStarted({
+      run_id: 'run-hop-1', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+      docs_target: 5, chain_id: 'run-hop-1',
+      chain_docs_target: 5, chain_docs_reached: 0,
+    })
+    store.trackStarted({
+      run_id: 'run-hop-2', group_id: groupId, mode: 'continuous',
+      docs_target: 4, chain_id: 'run-hop-1',
+      chain_docs_target: 5, chain_docs_reached: 1,
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('.aiv-mini__progress-text').text()).toBe(
+      t('main.ai_miniplayer.progress', { reached: 1, target: 5 }),
+    )
+    expect(wrapper.find('.aiv-mini__progress-fill').attributes('style')).toContain('width: 20%')
+    wrapper.unmount()
+  })
+
   it('renders a resume button and paused state for a paused chain', async () => {
     const wrapper = mountPlayer()
     const store = useAiInvokeRunsStore()

@@ -83,12 +83,12 @@
 
           <!-- Progress moves ONLY on document/step arrival (D0007 decision 5); the
                spinner above is the sole liveness cue and mimics no data. -->
-          <div v-if="entry.mode === 'continuous' || entry.docsTarget > 1" class="aiv-mini__progress">
+          <div v-if="entry.mode === 'continuous' || targetFor(entry) > 1" class="aiv-mini__progress">
             <div class="aiv-mini__progress-track">
               <div class="aiv-mini__progress-fill" :style="{ width: progressPercent(entry) }" />
             </div>
             <span class="aiv-mini__progress-text">
-              {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: entry.docsTarget }) }}
+              {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: targetFor(entry) }) }}
             </span>
           </div>
 
@@ -282,7 +282,14 @@ function outcomeLabel(entry: AiInvokeRunEntry): string {
   return t('main.ai_invoke_dialog.outcome_none')
 }
 
+function targetFor(entry: AiInvokeRunEntry): number {
+  const chainTarget = Number(entry.chainDocsTarget)
+  return Number.isFinite(chainTarget) ? chainTarget : entry.docsTarget
+}
+
 function reachedFor(entry: AiInvokeRunEntry): number {
+  const chainReached = Number(entry.chainDocsReached)
+  if (Number.isFinite(chainReached)) return chainReached
   return entry.phase === 'finished' || entry.phase === 'paused'
     ? Math.max(entry.docsReached, entry.docsReachedSoFar)
     : entry.docsReachedSoFar
@@ -290,7 +297,7 @@ function reachedFor(entry: AiInvokeRunEntry): number {
 
 function progressPercent(entry: AiInvokeRunEntry): string {
   // L0009 §2.9: ratio pinned to 0 when the target is unknown/zero (no divide-by-zero).
-  const target = entry.docsTarget
+  const target = targetFor(entry)
   if (!Number.isFinite(target) || target <= 0) return '0%'
   const ratio = Math.min(1, Math.max(0, reachedFor(entry) / target))
   return `${Math.round(ratio * 100)}%`

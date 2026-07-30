@@ -591,6 +591,12 @@ def start_run(
     # provider overrides above).
     continuation_default_note: Optional[str] = None,
     continuation_note_overrides: Optional[dict] = None,
+    # 0357 T0004: an unmanned continuous chain is made of a fresh run per hop.
+    # These internal handoff values keep display progress at chain lifetime while
+    # docs_target/docs_reached retain their existing per-run judging semantics.
+    chain_id: Optional[str] = None,
+    chain_docs_target: Optional[int] = None,
+    chain_docs_reached: Optional[int] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -785,6 +791,18 @@ def start_run(
 
     _cleanup_retained_scratches(project_id)
     run_id = _next_run_id()
+    if mode == "continuous":
+        chain_id = chain_id or run_id
+        if chain_docs_target is None:
+            chain_docs_target = docs_target
+        if chain_docs_reached is None:
+            chain_docs_reached = 0
+    else:
+        # A single run is a degenerate one-hop chain. Returning the same payload
+        # shape keeps clients simple without changing the run counters' meaning.
+        chain_id = run_id
+        chain_docs_target = docs_target
+        chain_docs_reached = 0
     scratch = _create_scratch(project_id, run_id)
 
     doc = db_docs.get_by_id(doc_ref) or {}
@@ -803,6 +821,10 @@ def start_run(
         "group_id": group_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
+        "chain_id": chain_id,
+        "chain_docs_target": int(chain_docs_target or 0),
+        "chain_docs_reached": int(chain_docs_reached or 0),
+        "chain_docs_accounted": False,
         "baseline_seq": baseline_seq,
         "timeout_sec": RUN_TIMEOUT_CAP_SEC if target_to_end else min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC),
         "provider": None,
@@ -892,6 +914,9 @@ def start_run(
         "group_id": group_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
+        "chain_id": run["chain_id"],
+        "chain_docs_target": run["chain_docs_target"],
+        "chain_docs_reached": run["chain_docs_reached"],
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
         ),
@@ -1095,6 +1120,9 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "doc_ref": run["doc_ref"],
             "mode": run["mode"],
             "docs_target": run["docs_target"],
+            "chain_id": run["chain_id"],
+            "chain_docs_target": run["chain_docs_target"],
+            "chain_docs_reached": run["chain_docs_reached"],
             "provider_id": chain[0].get("id"),
             "provider_name": chain[0].get("name"),
             "attempt_no": 1,
@@ -1533,6 +1561,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     )
                     if resolved is not None:
                         run["docs_target"] = resolved
+                        # A to-end workflow-decision run starts before the sequence
+                        # exists, so its chain target is resolved exactly once here.
+                        if run.get("chain_docs_target", 0) <= 0:
+                            run["chain_docs_target"] = resolved
                     max_turns = max(max_turns, turn + max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
                 if next_token:
                     current_token = next_token
@@ -1869,6 +1901,8 @@ def _settle_and_judge(run: dict) -> None:
                 )
                 if resolved is not None:
                     run["docs_target"] = resolved
+                    if run.get("chain_docs_target", 0) <= 0:
+                        run["chain_docs_target"] = resolved
         except Exception:
             logger.warning("ai-invoke workflow oracle failed for %s", run["run_id"], exc_info=True)
 
@@ -1877,6 +1911,9 @@ def _settle_and_judge(run: dict) -> None:
     docs_reached = len(new_docs)
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
+    if not run.get("chain_docs_accounted"):
+        run["chain_docs_reached"] = int(run.get("chain_docs_reached") or 0) + docs_reached
+        run["chain_docs_accounted"] = True
     # 0317 TR0011 (Q153 opt-1): under per-hop re-spawn each continuous hop delivers ONE
     # document and then hands the chain off (the self-chain withheld next_token and queued
     # the next hop). Judge such a hop against 1, not the whole remaining chain target, so an
@@ -1957,13 +1994,32 @@ def _finish_run_record(run: dict) -> None:
     # reason OTHER than the boundary pause (natural finish, cancel, worker failure before
     # the boundary) must not leave the paused row behind, or the bootstrap would revive a
     # ghost "paused" card for a chain that is actually over.
-    if run["mode"] == "continuous" and run.get("end_reason") != "user_paused":
+    if run["mode"] == "continuous":
         try:
             from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-            db_paused.delete_by_group(run["group_id"])
+            if run.get("end_reason") != "user_paused":
+                db_paused.delete_by_group(run["group_id"])
+            else:
+                # pause_run snapshots at request time, before the in-flight hop reaches
+                # its boundary. Refresh it after settlement so resume/bootstrap includes
+                # the document that completed while the pause was pending.
+                row = db_paused.get_by_group(run["group_id"])
+                if row is not None:
+                    db_paused.upsert(
+                        group_id=row["group_id"],
+                        doc_ref=row["doc_ref"],
+                        paused_by=row["paused_by"],
+                        paused_at=row["paused_at"],
+                        continuation_target_seq=row.get("continuation_target_seq"),
+                        docs_target=run.get("docs_target"),
+                        docs_reached=int(run.get("docs_reached") or 0),
+                        chain_id=run.get("chain_id"),
+                        chain_docs_target=run.get("chain_docs_target"),
+                        chain_docs_reached=int(run.get("chain_docs_reached") or 0),
+                    )
         except Exception:
             logger.warning(
-                "ai-invoke paused-row cleanup failed for %s", run["run_id"], exc_info=True
+                "ai-invoke paused-row finalization failed for %s", run["run_id"], exc_info=True
             )
 
     _broadcast(run, "ai_invoke_finished", finished_payload(run))
@@ -1980,6 +2036,9 @@ def finished_payload(run: dict) -> dict:
         "outcome": run["outcome"],
         "docs_reached": run["docs_reached"],
         "docs_target": run["docs_target"],
+        "chain_id": run.get("chain_id"),
+        "chain_docs_target": int(run.get("chain_docs_target") or 0),
+        "chain_docs_reached": int(run.get("chain_docs_reached") or 0),
         "reached_doc_ids": run["reached_doc_ids"],
         "end_reason": run["end_reason"],
         "exit_code": run["exit_code"],
@@ -2035,6 +2094,12 @@ def get_status(run_id: str) -> dict:
         "group_id": run["group_id"],
         "docs_target": run["docs_target"],
         "docs_reached_so_far": docs_so_far,
+        "chain_id": run.get("chain_id"),
+        "chain_docs_target": int(run.get("chain_docs_target") or 0),
+        "chain_docs_reached": (
+            int(run.get("chain_docs_reached") or 0)
+            + (0 if run.get("chain_docs_accounted") else docs_so_far)
+        ),
         "provider": run["provider"],
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
@@ -2097,6 +2162,12 @@ def pause_run(run_id: str, user_id: str) -> dict:
         continuation_target_seq=run.get("continuation_target_seq"),
         docs_target=run.get("docs_target"),
         docs_reached=docs_reached,
+        chain_id=run.get("chain_id"),
+        chain_docs_target=run.get("chain_docs_target"),
+        chain_docs_reached=(
+            int(run.get("chain_docs_reached") or 0)
+            + (0 if run.get("chain_docs_accounted") else docs_reached)
+        ),
     )
     return {
         "ok": True,
@@ -2187,6 +2258,9 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # 지켜야 할 제약 4).
         "note_overrides": run.get("continuation_note_overrides"),
         "default_note": run.get("continuation_default_note"),
+        "chain_id": run.get("chain_id"),
+        "chain_docs_target": run.get("chain_docs_target"),
+        "chain_docs_reached": run.get("chain_docs_reached"),
     }
     try:
         _spawn_auto_resume(group_id, pending)
@@ -2215,6 +2289,9 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     base_provider_id = pending.get("base_provider_id")
     note_overrides = pending.get("note_overrides")
     default_note = pending.get("default_note")
+    chain_id = pending.get("chain_id")
+    chain_docs_target = pending.get("chain_docs_target")
+    chain_docs_reached = pending.get("chain_docs_reached")
 
     parts = group_id.split(".")
     project_id = parts[0]
@@ -2257,6 +2334,9 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         continuation_provider_overrides=overrides,
         continuation_note_overrides=note_overrides,
         continuation_default_note=default_note,
+        chain_id=chain_id,
+        chain_docs_target=chain_docs_target,
+        chain_docs_reached=chain_docs_reached,
     )
 
 
@@ -2311,6 +2391,9 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     continuation_target_seq=row.get("continuation_target_seq"),
                     docs_target=row.get("docs_target"),
                     docs_reached=int(row.get("docs_reached") or 0),
+                    chain_id=row.get("chain_id"),
+                    chain_docs_target=row.get("chain_docs_target"),
+                    chain_docs_reached=int(row.get("chain_docs_reached") or 0),
                 )
             except Exception:
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
@@ -2377,6 +2460,9 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 api_base_url=api_base_url,
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,
+                chain_id=row.get("chain_id"),
+                chain_docs_target=row.get("chain_docs_target"),
+                chain_docs_reached=row.get("chain_docs_reached"),
             )
         except HTTPException:
             _restore_row()
@@ -2438,6 +2524,9 @@ def active_all(user_id: str) -> dict:
             "continuation_target_seq": row.get("continuation_target_seq"),
             "docs_target": row.get("docs_target"),
             "docs_reached": int(row.get("docs_reached") or 0),
+            "chain_id": row.get("chain_id"),
+            "chain_docs_target": row.get("chain_docs_target"),
+            "chain_docs_reached": int(row.get("chain_docs_reached") or 0),
             "pending_q_doc_ids": _open_q_doc_ids(row["group_id"]),
         })
     return {"ok": True, "runs": runs, "paused": paused}
