@@ -3319,6 +3319,21 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
 
+        # T4 (flowgate.default.0351 §6): freeze this group's migrated conversations
+        # into their markdown files now, before any commit/absorb below, so the file
+        # that lands in the git snapshot matches the DB record of truth from this
+        # point on. Skipped for a bare `push` — that action requires an already-clean
+        # worktree (see the dirty check right below) and must not be newly dirtied by
+        # this write; a group with pending conversation writes should use commit_push
+        # instead. A write failure here is logged and never blocks finalize — the DB
+        # stays authoritative regardless of whether the file update landed.
+        if action != "push":
+            try:
+                from modules.flow_gate.services import conversation_markdown_service
+                conversation_markdown_service.snapshot_group_conversations(project_id, group_id)
+            except Exception:
+                _log.exception("conversation markdown snapshot failed for group %s", group_id)
+
         # NR flowgate.default.0331.0005 §3: `push` sends only commits that
         # already exist — it must never fabricate one. A dirty worktree under
         # `push` is rejected (409) instead of silently absorbed, so it stays

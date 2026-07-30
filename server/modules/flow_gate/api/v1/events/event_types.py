@@ -16,3 +16,8 @@ class EventType(str, Enum):
     AI_INVOKE_STARTED                     = "ai_invoke_started"            # 0187: AI run launched (first provider)
     AI_INVOKE_PROVIDER_SWITCHED           = "ai_invoke_provider_switched"  # 0187: startup-failure fallback hop
     AI_INVOKE_FINISHED                    = "ai_invoke_finished"           # 0187: document-reach verdict payload
+    # 0351 T2 / P0003 시나리오 6: one appended conversation turn, carried in the payload.
+    # Chat bodies no longer travel through DOCUMENT_EXPLORER_REFRESH — that event stays
+    # an explorer signal, and a screen showing this conversation appends the single turn
+    # instead of re-fetching the whole document.
+    CONVERSATION_TURN_APPENDED            = "conversation_turn_appended"

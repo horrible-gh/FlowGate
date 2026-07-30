@@ -41,14 +41,55 @@ const PROVIDERS_RESPONSE = {
   },
 }
 
-// getRequest serves BOTH the conversation content load and the provider list. Default:
+// 0351 T2: the conversation is loaded as TURNS through a cursor endpoint, not as a
+// markdown body — these helpers build the P0003 §0-2 wire shape the view now consumes.
+function turn(seq: number, over: Partial<Record<string, unknown>> = {}) {
+  return {
+    seq,
+    speaker: 'user',
+    participant_key: 'user:u1',
+    display_name: 'sjm',
+    locale: 'ko',
+    body: `turn ${seq}`,
+    based_on_seq: seq - 1,
+    stale_since_seq: null,
+    source_run_id: null,
+    created_at: '2026-07-29T10:00:00+09:00',
+    ...over,
+  }
+}
+
+function turnsPage(rows: unknown[] = [], over: Partial<Record<string, unknown>> = {}) {
+  const seqs = rows.map((r) => (r as { seq: number }).seq)
+  return {
+    data: {
+      ok: true,
+      doc_id: DOC_ID,
+      after_seq: 0,
+      before_seq: null,
+      limit: 50,
+      head_seq: seqs.length ? Math.max(...seqs) : 0,
+      next_after_seq: null,
+      prev_before_seq: null,
+      has_more: false,
+      truncated_by: null,
+      head: { intro: '', opening_turns: [], carried_over_from: null, total_turns: rows.length, head_seq: seqs.length ? Math.max(...seqs) : 0 },
+      turns: rows,
+      participants: [],
+      me: null,
+      ...over,
+    },
+  }
+}
+
+// getRequest serves BOTH the conversation turn pages and the provider list. Default:
 // one enabled provider present, so the "Call AI" radio/button is available.
-function withProviders() {
+function withProviders(rows: unknown[] = []) {
   getRequest.mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
       return Promise.resolve(PROVIDERS_RESPONSE)
     }
-    return Promise.resolve({ data: { content: '' } })
+    return Promise.resolve(turnsPage(rows))
   })
 }
 
@@ -57,7 +98,7 @@ function withoutProviders() {
     if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
       return Promise.resolve({ data: { ok: true, project: 'flowgate', providers: [], default_provider_id: null } })
     }
-    return Promise.resolve({ data: { content: '' } })
+    return Promise.resolve(turnsPage())
   })
 }
 
@@ -74,7 +115,9 @@ beforeEach(() => {
   delete window.__accessToken__
   getRequest.mockReset()
   withProviders()
-  postRequest.mockReset().mockResolvedValue({ data: { content: '' } })
+  postRequest.mockReset().mockResolvedValue({
+    data: { ok: true, doc_id: DOC_ID, replayed: false, head_seq: 1, turn: turn(1), me: null },
+  })
   showToast.mockReset()
 })
 
@@ -104,7 +147,7 @@ describe('ConversationView inline provider selector', () => {
           },
         })
       }
-      return Promise.resolve({ data: { content: '' } })
+      return Promise.resolve(turnsPage())
     })
     const wrapper = mountView()
     await flushPromises()
@@ -164,7 +207,10 @@ describe('ConversationView send-time action', () => {
     expect(wrapper.emitted('copy-mention')).toBeUndefined()
   })
 
-  it('posts the trimmed message body and speaker to the conversation turn endpoint', async () => {
+  // 0351 T2 / P0003 시나리오 3: the request carries the trimmed body, a per-message
+  // idempotency key and what the sender had actually read. `speaker` is gone — the
+  // server decides the author from the session, so claiming one is meaningless.
+  it('posts the trimmed body with an idempotency key and the read position', async () => {
     const wrapper = mountView()
     await flushPromises()
     await wrapper.find('textarea').setValue('  hello worker  ')
@@ -172,17 +218,52 @@ describe('ConversationView send-time action', () => {
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
-      { body: 'hello worker', speaker: 'user' },
+      expect.objectContaining({ body: 'hello worker', based_on_seq: 0 }),
     )
+    const payload = postRequest.mock.calls[0][1] as { idempotency_key: string; speaker?: string }
+    expect(payload.idempotency_key).toMatch(/^sess_/)
+    expect(payload.speaker).toBeUndefined()
+  })
+
+  it('reuses the same idempotency key when a retry follows a transient failure', async () => {
+    // A retry that minted a new key would store the message twice; the same key makes
+    // the server replay instead (P0003 시나리오 4).
+    postRequest
+      .mockRejectedValueOnce({ response: { status: 503 } })
+      .mockResolvedValueOnce({
+        data: { ok: true, doc_id: DOC_ID, replayed: false, head_seq: 1, turn: turn(1), me: null },
+      })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('hello worker')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    const first = postRequest.mock.calls[0][1] as { idempotency_key: string }
+    const second = postRequest.mock.calls[1][1] as { idempotency_key: string }
+    expect(postRequest).toHaveBeenCalledTimes(2)
+    expect(second.idempotency_key).toBe(first.idempotency_key)
+  })
+
+  it('does not retry a decision the server already made', async () => {
+    // 422 is an answer, not a blip — repeating it just repeats the same rejection.
+    postRequest.mockRejectedValue({ response: { status: 422, data: { detail: 'Turn body must not be empty.' } } })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('hello worker')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.conv-row.is-failed').exists()).toBe(true)
   })
 
   it('renders FastAPI validation details as readable toast text', async () => {
-    postRequest.mockRejectedValueOnce({
+    postRequest.mockRejectedValue({
       response: {
+        status: 422,
         data: {
           detail: [
             { loc: ['body', 'body'], msg: 'Field required', type: 'missing' },
-            { loc: ['body', 'speaker'], msg: 'Input should be user or ai' },
+            { loc: ['body', 'idempotency_key'], msg: 'Field required' },
           ],
         },
       },
@@ -193,7 +274,7 @@ describe('ConversationView send-time action', () => {
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     expect(showToast).toHaveBeenCalledWith(
-      'Failed to send message: body.body: Field required (missing); body.speaker: Input should be user or ai',
+      'Failed to send message: body.body: Field required (missing); body.idempotency_key: Field required',
       'danger',
     )
   })
@@ -422,7 +503,7 @@ describe('ConversationView chat AI invoke', () => {
         if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
           return Promise.resolve(PROVIDERS_RESPONSE)
         }
-        return Promise.resolve({ data: { content: '' } })
+        return Promise.resolve(turnsPage())
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
       const btns = wrapper.findAll('.conv-assist-btn')
@@ -465,7 +546,7 @@ describe('ConversationView chat AI invoke', () => {
         if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
           return Promise.resolve(PROVIDERS_RESPONSE)
         }
-        return Promise.resolve({ data: { content: '## AI · 2026-07-16T13:00:00Z\n\nreply\n' } })
+        return Promise.resolve(turnsPage([turn(1, { speaker: 'ai', display_name: 'Opus', body: 'reply' })]))
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
       const btns = wrapper.findAll('.conv-assist-btn')
@@ -516,7 +597,7 @@ describe('ConversationView chat AI invoke', () => {
         if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
           return Promise.resolve(PROVIDERS_RESPONSE)
         }
-        return Promise.resolve({ data: { content: '## AI · 2026-07-16T13:00:00Z\n\nreply\n' } })
+        return Promise.resolve(turnsPage([turn(1, { speaker: 'ai', display_name: 'Opus', body: 'reply' })]))
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
       const btns = wrapper.findAll('.conv-assist-btn')
@@ -553,7 +634,7 @@ describe('ConversationView chat AI invoke', () => {
         if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
           return Promise.resolve(PROVIDERS_RESPONSE)
         }
-        return Promise.resolve({ data: { content: '' } })
+        return Promise.resolve(turnsPage())
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
       const btns = wrapper.findAll('.conv-assist-btn')
@@ -657,7 +738,7 @@ describe('ConversationView draft persistence', () => {
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
-      { body: 'still sends', speaker: 'user' },
+      expect.objectContaining({ body: 'still sends' }),
     )
   })
 })
@@ -676,7 +757,7 @@ describe('ConversationView running-call recovery on mount', () => {
       if (typeof url === 'string' && url.includes('ai-invoke/active')) {
         return Promise.resolve({ data: payload })
       }
-      return Promise.resolve({ data: { content: '' } })
+      return Promise.resolve(turnsPage())
     })
   }
 
@@ -732,7 +813,7 @@ describe('ConversationView running-call recovery on mount', () => {
       if (typeof url === 'string' && url.includes('ai-invoke/active')) {
         return Promise.reject({ response: { status: 500 } })
       }
-      return Promise.resolve({ data: { content: '' } })
+      return Promise.resolve(turnsPage())
     })
     const wrapper = mountView()
     await flushPromises()
@@ -741,30 +822,33 @@ describe('ConversationView running-call recovery on mount', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 })
-// 0293 R0001: the AI turn header may name the provider — "## 🤖 AI(claude-opus-4-8) · …".
+// 0293 R0001, carried onto the turn contract by 0351 T2: the model name now arrives as
+// the turn's own `display_name` field instead of being encoded into a markdown header.
+// It stays a BADGE — identity is participant_key, so a renamed model is the same speaker.
 describe('ConversationView provider badge', () => {
-  function withContent(content: string) {
+  function withRows(rows: unknown[]) {
     getRequest.mockImplementation((url: unknown) => {
       if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
         return Promise.resolve(PROVIDERS_RESPONSE)
       }
-      return Promise.resolve({ data: { content } })
+      return Promise.resolve(turnsPage(rows))
     })
   }
 
-  it('renders the provider recorded in the header', async () => {
-    withContent('## 🤖 AI(claude-opus-4-8) · 2026-07-22T13:00:00Z\nreply\n')
+  it('renders the model name recorded on the turn', async () => {
+    withRows([turn(1, { speaker: 'ai', display_name: 'claude-opus-4-8', body: 'reply' })])
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.find('.conv-provider').text()).toBe('claude-opus-4-8')
-    // Still an AI bubble, and the reply text is untouched by the header change.
+    // Still an AI bubble, and the reply text is untouched.
     expect(wrapper.find('.conv-row--ai').exists()).toBe(true)
     expect(wrapper.find('.conv-body').text()).toBe('reply')
   })
 
-  it('draws no badge when the header records nothing', async () => {
-    // Absence of information, not a warning state — pre-0293 turns look exactly like this.
-    withContent('## 🤖 AI · 2026-07-22T13:00:00Z\nreply\n')
+  it('draws no badge when the turn records no model name', async () => {
+    // Absence of information, not a warning state — a worker that does not know its own
+    // name simply omits the field.
+    withRows([turn(1, { speaker: 'ai', display_name: null, body: 'reply' })])
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.find('.conv-provider').exists()).toBe(false)
@@ -787,7 +871,7 @@ describe('ConversationView provider badge', () => {
         if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
           return Promise.resolve(PROVIDERS_RESPONSE)
         }
-        return Promise.resolve({ data: { content: '## 🤖 AI(claude-opus-4-8) · 2026-07-22T13:00:00Z\nreply\n' } })
+        return Promise.resolve(turnsPage([turn(1, { speaker: 'ai', display_name: 'claude-opus-4-8', body: 'reply' })]))
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
       const btns = wrapper.findAll('.conv-assist-btn')

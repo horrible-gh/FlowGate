@@ -743,6 +743,8 @@ export default {
       search_clear: 'Clear search',
       search_content_label: 'Search document content',
       search_no_results: 'No matching documents.',
+      // 0351 T4 — conversation-turn search result caption ("Turn #9").
+      search_turn_position: 'Turn #{seq}',
       group_select: 'Branch',
       base_branch: 'Base branch ({branch})',
       readonly_badge: 'Viewing group {group} branch (read-only — no worktree)',
@@ -1423,6 +1425,16 @@ export default {
       manual_copy_again: 'Copy again',
       manual_copy_copied: 'Mention copied.',
       manual_copy_retry_failed: 'The copy failed. Select the text below and copy it yourself.',
+      // 0351 T2 — turn-based conversation view (read boundary, crossed talk, paging).
+      read_boundary: 'Read up to here',
+      stale_notice: 'This reply was written without having seen the turn above (#{seq}).',
+      participants_label: 'Participants',
+      participant_position: 'Last read position #{seq}',
+      load_older: 'Load earlier messages',
+      loading_older: 'Loading earlier messages…',
+      send_pending_failed: 'Could not send.',
+      send_retry: 'Send again',
+      continued_from: 'Continued from an earlier conversation: {doc}',
     },
     review_reject_dialog: {
       title: 'Reject Document',

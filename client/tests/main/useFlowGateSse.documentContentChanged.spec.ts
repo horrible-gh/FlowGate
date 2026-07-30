@@ -210,3 +210,65 @@ describe('useFlowGateSse document content bridge', () => {
     wrapper.unmount()
   })
 })
+
+// 0351 T2 / P0003 시나리오 6. A conversation turn is pushed with its BODY, so the open
+// chat appends one bubble. Routing it through the explorer refresh — which is what used
+// to carry chat updates — made every line of conversation re-read the whole document.
+describe('useFlowGateSse conversation turn bridge', () => {
+  it('re-broadcasts an appended turn as a doc-scoped window event', () => {
+    const wrapper = mount(Harness, { global: { plugins: [i18n] } })
+    const seen: CustomEvent[] = []
+    const onTurn = (e: Event) => seen.push(e as CustomEvent)
+    window.addEventListener('fg:conversation_turn', onTurn)
+
+    const turn = {
+      seq: 14, speaker: 'ai', participant_key: 'provider:cx_opus',
+      display_name: 'Claude Opus 5', locale: null, body: 'reply',
+      based_on_seq: 13, stale_since_seq: null,
+      source_run_id: 'run_1', created_at: '2026-07-29T10:00:00+09:00',
+    }
+    MockEventSource.instance?.emit('conversation_turn_appended', {
+      project: 'flowgate',
+      group_id: 'flowgate.default.0351',
+      doc_id: 'flowgate.default.0351.0002-CH',
+      payload: {
+        doc_id: 'flowgate.default.0351.0002-CH',
+        head_seq: 14,
+        turn,
+        participant: { participant_key: 'provider:cx_opus', kind: 'ai', last_read_seq: 13 },
+      },
+    })
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0].detail.doc_id).toBe('flowgate.default.0351.0002-CH')
+    expect(seen[0].detail.turn).toEqual(turn)
+    expect(seen[0].detail.head_seq).toBe(14)
+    expect(seen[0].detail.participant.participant_key).toBe('provider:cx_opus')
+    // A chat message is not an explorer change: no toast, no tree notification.
+    expect(showToast).not.toHaveBeenCalled()
+
+    window.removeEventListener('fg:conversation_turn', onTurn)
+    wrapper.unmount()
+  })
+
+  it('survives a malformed payload without breaking the stream', () => {
+    const wrapper = mount(Harness, { global: { plugins: [i18n] } })
+    const seen: Event[] = []
+    const onTurn = (e: Event) => seen.push(e)
+    window.addEventListener('fg:conversation_turn', onTurn)
+
+    MockEventSource.instance?.listeners.get('conversation_turn_appended')?.(
+      { data: '{ not json' } as MessageEvent,
+    )
+    expect(seen).toHaveLength(0)
+
+    // The stream keeps working afterwards.
+    MockEventSource.instance?.emit('conversation_turn_appended', {
+      payload: { doc_id: 'flowgate.default.0351.0002-CH', head_seq: 1, turn: { seq: 1 } },
+    })
+    expect(seen).toHaveLength(1)
+
+    window.removeEventListener('fg:conversation_turn', onTurn)
+    wrapper.unmount()
+  })
+})

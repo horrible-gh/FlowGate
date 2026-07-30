@@ -743,6 +743,8 @@ export default {
       search_clear: '검색 지우기',
       search_content_label: '내용까지 검색',
       search_no_results: '일치하는 문서가 없습니다.',
+      // 0351 T4 — 대화 턴 검색 결과 캡션 ("9번째 턴").
+      search_turn_position: '{seq}번째 턴',
       group_select: '브랜치',
       base_branch: '기준 브랜치 ({branch})',
       readonly_badge: '그룹 {group} 브랜치 열람 중 (작업 폴더 없음 · 읽기전용)',
@@ -1422,6 +1424,16 @@ export default {
       manual_copy_again: '다시 복사',
       manual_copy_copied: '멘트를 복사했습니다.',
       manual_copy_retry_failed: '복사에 실패했습니다. 아래 텍스트를 직접 선택해 복사하세요.',
+      // 0351 T2 — 턴 단위 대화 화면(읽음 경계·엇갈림·이전 구간·참가자 줄).
+      read_boundary: '여기까지 읽음',
+      stale_notice: '이 답은 위의 말(#{seq})을 보지 못한 상태에서 작성되었습니다.',
+      participants_label: '참여자',
+      participant_position: '마지막 읽은 위치 #{seq}',
+      load_older: '이전 대화 더 보기',
+      loading_older: '이전 대화를 불러오는 중…',
+      send_pending_failed: '전송하지 못했습니다.',
+      send_retry: '다시 보내기',
+      continued_from: '이전 대화에서 이어짐: {doc}',
     },
     review_reject_dialog: {
       title: '반려 처리',

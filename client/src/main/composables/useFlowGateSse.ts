@@ -329,6 +329,13 @@ export function useFlowGateSse(refreshAll: () => void) {
         // of the explorer + open documents on every (re)open. (NR0003 item 2 /
         // 0291 D0005 §3-3)
         invalidateAndRefresh(undefined, true)
+        // An open conversation cannot resync by re-reading a document — its turns were
+        // pushed one at a time and the missed ones are simply gone from this stream. It
+        // closes the gap itself by asking for everything after its last known seq
+        // (P0003 시나리오 7), which needs this explicit "the stream came back" signal.
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fg:sse_reconnected'))
+        }
       }
       forceResyncOnOpen = false
       hadPreviousConnection = true
@@ -403,6 +410,29 @@ export function useFlowGateSse(refreshAll: () => void) {
         const pid = data.project ?? projectStore.currentProjectId
         if (payload.select === true && docId && pid === projectStore.currentProjectId) {
           void explorerStore.revealDocInGroupTree(pid, docId)
+        }
+      } catch { /* ignore parse errors */ }
+    })
+
+    // One appended conversation turn (0351 T2 / P0003 시나리오 6). Carries the turn
+    // itself, so the open chat appends a single bubble — no document re-fetch, and
+    // deliberately no invalidateAndRefresh: a chat message is not an explorer change,
+    // and routing it through the tree refresh is what used to re-read the whole
+    // document on every line of conversation.
+    source.addEventListener('conversation_turn_appended', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const p = data.payload ?? {}
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fg:conversation_turn', {
+            detail: {
+              project: data.project ?? null,
+              doc_id: p.doc_id ?? data.doc_id ?? null,
+              head_seq: p.head_seq ?? null,
+              turn: p.turn ?? null,
+              participant: p.participant ?? null,
+            },
+          }))
         }
       } catch { /* ignore parse errors */ }
     })

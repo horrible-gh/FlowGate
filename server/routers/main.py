@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from . import files as _files_router
 from modules.flow_gate.auth.auth_api import router as _auth_router
 from modules.flow_gate.documents.routers.documents import router as _documents_router
+from modules.flow_gate.documents.routers.conversation_turns import router as _conversation_turns_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
 from modules.flow_gate.settings.routers.users import router as _settings_users_router
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
@@ -37,6 +38,7 @@ from modules.flow_gate.api.v1.test_run_routes import router as _test_run_router
 from modules.flow_gate.api.v1.ai_invoke_routes import router as _ai_invoke_router
 from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_recipe_router
 from modules.flow_gate.api.v1.git_routes import router as _git_router
+from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from config import settings
@@ -121,6 +123,7 @@ app.add_middleware(RequestScopeMiddleware)
 # app.include_router(register.router, prefix=f"{CONTEXT}/register", tags=["Register"])
 app.include_router(_auth_router, prefix=f"{CONTEXT}/auth", tags=["Auth"])
 app.include_router(_documents_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
+app.include_router(_conversation_turns_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_settings_system_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemSettings"])
 app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["UserAdmin"])
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])
@@ -151,6 +154,7 @@ app.include_router(_test_run_router, prefix=f"{CONTEXT}", tags=["TestRun"])
 app.include_router(_ai_invoke_router, prefix=f"{CONTEXT}", tags=["AiInvoke"])
 app.include_router(_engine_recipe_router, prefix=f"{CONTEXT}", tags=["EngineRecipes"])
 app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
+app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 app.add_middleware(
     CORSMiddleware,

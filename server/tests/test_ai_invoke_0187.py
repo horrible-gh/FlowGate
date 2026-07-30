@@ -124,14 +124,17 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(
         svc.ai_settings_service, "get_provider_secret", lambda scope, pid: None
     )
-    monkeypatch.setattr(
-        svc.token_service, "issue",
-        lambda **kw: {
+    issues: list[dict] = []
+
+    def _issue(**kwargs):
+        issues.append(dict(kwargs))
+        return {
             "raw_token": "tok_raw_test", "token_id": "tok_20260710_000001",
             "expires_at": "2026-07-11T00:00:00+00:00",
             "scratch_dir": str(tmp_path / "tokwork"),
-        },
-    )
+        }
+
+    monkeypatch.setattr(svc.token_service, "issue", _issue)
     monkeypatch.setattr(svc.token_service, "revoke", lambda *a, **kw: None)
     monkeypatch.setattr(
         svc.storage_paths, "get_storage_root",
@@ -157,7 +160,10 @@ def fake_env(monkeypatch, tmp_path):
         svc, "_broadcast", lambda run, event_type, payload: events.append((event_type, payload))
     )
 
-    return {"docs": docs, "wfseq": wfseq, "chain": chain_holder, "events": events, "tmp": tmp_path}
+    return {
+        "docs": docs, "wfseq": wfseq, "chain": chain_holder, "events": events,
+        "issues": issues, "tmp": tmp_path,
+    }
 
 
 def _start(fake_env, providers, mode="single", target=None, mention="## prompt\ndo the work\n", provider_id=None,
@@ -195,6 +201,16 @@ def _wait_finished(run_id, timeout=30.0):
         time.sleep(0.05)
     raise AssertionError(f"run {run_id} did not finish within {timeout}s")
 
+
+def test_issued_token_is_bound_to_the_pinned_provider_and_run(fake_env):
+    cmd = f'"{PY}" -c "import sys; sys.stdin.read(); print(\'ok\')"'
+    provider = _provider(cmd=cmd, pid="cx_pinned")
+    result = _start(fake_env, [provider], provider_id="cx_pinned")
+    issued = fake_env["issues"][-1]
+
+    assert issued["provider_id"] == "cx_pinned"
+    assert issued["ai_run_id"] == result["run_id"]
+    _wait_finished(result["run_id"])
 
 # ── ① Normal exit (harness case 1) ───────────────────────────────────────────
 

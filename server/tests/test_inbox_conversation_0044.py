@@ -5,7 +5,11 @@ Exercises the real inbox new/edit handlers (TestClient + all-migrations sqlite) 
     not pending_review) even with no matching workflow head.
   - L0044.0008 §8 (I-SSE): a CH edit by a non-owner subject still delivers a
     DOCUMENT_EXPLORER_REFRESH to the owner's audience.
-  - L0044.0008 §7: at the carry-over threshold the edit opens a successor CH doc.
+
+The former §7 byte-cap carry-over (successor CH opened at 80% of the content cap)
+was removed in group 0351 T5 (D0002 §3-6): turns now accumulate in the shared
+append-only store instead of a wholesale-rewritten file body, so an inbox edit
+never rolls a conversation over anymore.
 
 Scaffolding mirrors test_inbox_step9_wiring.py.
 """
@@ -290,14 +294,15 @@ def test_ch_edit_by_non_owner_broadcasts_to_owner(seed_data, tmp_path):
     assert any(c.args[0].audience == "usr_ai_bot" for c in publish_event.await_args_list)
 
 
-# ── §7 carry-over at the content threshold ─────────────────────────────────────
-def test_ch_edit_carries_over_at_threshold(seed_data, tmp_path, monkeypatch):
-    from modules.flow_gate.db import documents as db_docs
-
+# ── retired §7: carry-over no longer triggers, even past the old threshold ─────
+def test_ch_edit_past_old_carryover_threshold_never_rolls_over(seed_data, tmp_path, monkeypatch):
+    """Group 0351 T5 (D0002 §3-6): the byte-cap carry-over is removed. An edit that
+    would have crossed the old 80% threshold now just saves normally — no successor
+    CH is opened and the response never carries a carried_over_doc_id."""
     doc_id = "testprj-__ALL__-0001-CH0004"
     _make_ch_doc(doc_id, tmp_path, "---\ntype: CH\n---\nstart", owner="usr_test_001", seq=4)
 
-    # Tiny cap so a normal edit crosses the 80% carry-over line (but stays < 100%).
+    # Same tiny cap the old carry-over test used to cross the retired 80% line.
     monkeypatch.setenv("FLOWGATE_INBOX_CONTENT_MAX", "200")
     big_body = "---\ntype: CH\n---\n" + ("x" * 170)  # ~187 bytes: ≥80% of 200, <200
     assert 160 <= len(big_body.encode("utf-8")) < 200
@@ -308,7 +313,7 @@ def test_ch_edit_carries_over_at_threshold(seed_data, tmp_path, monkeypatch):
     with patch(
         "modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
         return_value="0005-CH",
-    ), patch(
+    ) as reserve_patch, patch(
         "modules.flow_gate.api.inbox_routes.document_path",
         return_value=tmp_path / "docs" / "0005-CH_document.md",
     ):
@@ -324,9 +329,6 @@ def test_ch_edit_carries_over_at_threshold(seed_data, tmp_path, monkeypatch):
         )
 
     assert resp.status_code == 200, resp.text
-    carried = resp.json().get("carried_over_doc_id")
-    assert carried, "expected a successor conversation doc id in the response"
-    successor = db_docs.get_by_id(carried)
-    assert successor is not None
-    assert successor["type_code"] == "CH"
-    assert successor["doc_review_status"] == "approved"  # L-AUTO on successor too
+    assert "carried_over_doc_id" not in resp.json()
+    # No successor CH0005 was reserved/created for this edit.
+    reserve_patch.assert_not_called()

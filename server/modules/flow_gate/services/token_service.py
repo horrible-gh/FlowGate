@@ -141,6 +141,8 @@ def issue(
     continuation_locale: Optional[str] = None,
     merge_id: Optional[int] = None,
     continuation_instruction_mode: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -190,6 +192,8 @@ def issue(
         "continuation_locale": continuation_locale,
         "merge_id": merge_id,
         "continuation_instruction_mode": continuation_instruction_mode,
+        "provider_id": provider_id,
+        "ai_run_id": ai_run_id,
     })
 
     db_events.create({
@@ -218,6 +222,8 @@ def issue(
         "continuation_locale": continuation_locale,
         "merge_id": merge_id,
         "continuation_instruction_mode": continuation_instruction_mode,
+        "provider_id": provider_id,
+        "ai_run_id": ai_run_id,
     }
 
 
@@ -269,6 +275,34 @@ def verify(raw_token: str) -> dict:
         if resolved_scratch is not None:
             token_rec["scratch_dir"] = str(resolved_scratch)
 
+    return token_rec
+
+
+def inspect_for_replay(raw_token: str) -> dict:
+    """Authenticate a raw worker token while allowing a consumed-row replay.
+
+    Revocation, expiry, and hash checks remain identical to verify(); only the
+    consumed_at rejection is deferred to the conversation adapter, which first
+    checks whether the exact idempotent turn already exists.
+    """
+    token_rec = _find_token_by_raw(raw_token)
+    if token_rec is None:
+        raise HTTPException(status_code=401, detail="Token is invalid")
+    if token_rec.get("revoked_at"):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+    expires_at = datetime.fromisoformat(token_rec["expires_at"])
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=401,
+            detail="Token has expired. Please inform the user of the copied message result.",
+        )
+    stored_scratch = token_rec.get("scratch_dir")
+    if stored_scratch:
+        resolved_scratch = resolve_storage_dir(stored_scratch, token_rec.get("project"))
+        if resolved_scratch is not None:
+            token_rec["scratch_dir"] = str(resolved_scratch)
     return token_rec
 
 

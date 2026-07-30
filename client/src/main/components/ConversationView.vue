@@ -1,33 +1,100 @@
 <template>
   <div class="conv-view">
-    <div ref="scrollEl" class="conv-scroll">
+    <div ref="scrollEl" class="conv-scroll" @scroll.passive="onScroll">
       <div v-if="loading" class="conv-state">{{ t('common.loading') }}</div>
       <template v-else>
+        <!-- Background (D0002 §6): the document intro and, for a conversation that was
+             split by the retired carry-over, where it continues from. Drawn once at the
+             very top — it is the same on every request, so it never re-renders. -->
+        <div v-if="head?.carried_over_from" class="conv-continued">
+          <AppIcon name="arrow-up" />
+          {{ t('main.conversation_view.continued_from', { doc: head.carried_over_from }) }}
+        </div>
+        <!-- Earlier turns are fetched on demand (D0002 §6: 위로 올리면 이전 구간을 이어서
+             불러옴). The whole conversation is never pulled in one go. -->
+        <button
+          v-if="hasMoreBefore"
+          type="button"
+          class="conv-older"
+          :disabled="loadingOlder"
+          @click="loadOlder()"
+        >
+          <AppIcon :name="loadingOlder ? 'spinner' : 'arrow-up'" :spin="loadingOlder" />
+          {{ loadingOlder ? t('main.conversation_view.loading_older') : t('main.conversation_view.load_older') }}
+        </button>
+
         <p v-if="turns.length === 0" class="conv-state conv-empty">
           <AppIcon name="chats" />
           {{ t('main.conversation_view.empty') }}
         </p>
-        <div
-          v-for="(turn, i) in turns"
-          :key="i"
-          class="conv-row"
-          :class="turn.speaker === 'user' ? 'conv-row--user' : 'conv-row--ai'"
-        >
-          <div class="conv-bubble">
-            <div class="conv-meta">
-              <span class="conv-speaker">
-                <AppIcon :name="turn.speaker === 'user' ? 'user' : 'robot'" />
-                {{ turn.speaker === 'user' ? t('main.conversation_view.speaker_user') : t('main.conversation_view.speaker_ai') }}
-              </span>
-              <!-- 0293 R0001: which AI answered. Drawn only when the turn header recorded
-                   it — a missing provider is absent information, not a warning state. -->
-              <span v-if="turn.provider" class="conv-provider" :title="turn.provider">{{ turn.provider }}</span>
-              <span v-if="turn.ts" class="conv-ts">{{ formatTs(turn.ts) }}</span>
-            </div>
-            <div class="conv-body">{{ turn.body }}</div>
+
+        <template v-for="turn in turns" :key="turn.localId ?? turn.seq">
+          <!-- Read boundary (D0002 §6): drawn immediately above the first turn this user
+               has not seen, so re-entering a conversation shows where the new talk starts. -->
+          <div v-if="isBoundaryBefore(turn)" class="conv-boundary">
+            <span>{{ t('main.conversation_view.read_boundary') }}</span>
           </div>
-        </div>
+          <div
+            class="conv-row"
+            :class="[
+              turn.speaker === 'user' ? 'conv-row--user' : 'conv-row--ai',
+              { 'is-pending': turn.pending, 'is-failed': turn.failed },
+            ]"
+            :data-seq="turn.seq || undefined"
+          >
+            <div class="conv-bubble">
+              <div class="conv-meta">
+                <span class="conv-speaker">
+                  <AppIcon :name="turn.speaker === 'user' ? 'user' : 'robot'" />
+                  {{ turn.speaker === 'user' ? t('main.conversation_view.speaker_user') : t('main.conversation_view.speaker_ai') }}
+                </span>
+                <!-- 0293 R0001 / P0003 §0-2: the model name is a BADGE only. Identity is
+                     participant_key, so a renamed model is still the same participant. -->
+                <span v-if="turn.display_name" class="conv-provider" :title="turn.display_name">
+                  {{ turn.display_name }}
+                </span>
+                <span v-if="turn.created_at" class="conv-ts">{{ formatTs(turn.created_at) }}</span>
+                <span v-if="turn.pending" class="conv-ts">{{ t('main.conversation_view.sending') }}</span>
+              </div>
+              <div class="conv-body">{{ turn.body }}</div>
+              <!-- Crossed talk (P0003 시나리오 12): this reply was written without having
+                   seen the turn above it. Nothing was overwritten — order preserved it —
+                   but the reader needs to know the reply is not answering that turn. -->
+              <p v-if="turn.stale_since_seq" class="conv-stale">
+                <AppIcon name="warning" />
+                {{ t('main.conversation_view.stale_notice', { seq: turn.stale_since_seq }) }}
+              </p>
+              <!-- A failed optimistic bubble is kept, not dropped: resending reuses the
+                   SAME idempotency key, so a turn that did reach the server replays
+                   instead of doubling (L0004 §2-17). -->
+              <p v-if="turn.failed" class="conv-failed">
+                <AppIcon name="warning" />
+                {{ t('main.conversation_view.send_pending_failed') }}
+                <button type="button" class="conv-retry" @click="retryTurn(turn)">
+                  {{ t('main.conversation_view.send_retry') }}
+                </button>
+              </p>
+            </div>
+          </div>
+        </template>
       </template>
+    </div>
+
+    <!-- Participant strip (D0002 §6): who is in this conversation and how far each has
+         got. Filled by the same call that loads the turns — there is no separate
+         participants endpoint (P0003 시나리오 1). -->
+    <div v-if="participants.length > 0" class="conv-participants">
+      <span class="conv-participants-label">{{ t('main.conversation_view.participants_label') }}</span>
+      <span
+        v-for="p in participants"
+        :key="p.participant_key"
+        class="conv-participant"
+        :title="t('main.conversation_view.participant_position', { seq: p.last_read_seq })"
+      >
+        <AppIcon :name="p.kind === 'user' ? 'user' : 'robot'" />
+        {{ p.display_name || p.participant_key }}
+        <em>#{{ p.last_read_seq }}</em>
+      </span>
     </div>
 
     <!-- Group 0235 (D0005 / P0007 / L0008): the composer's helper row now separates
@@ -183,12 +250,63 @@ import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 
+// P0003 §0-2. The conversation of record is a list of turns, not a markdown body, so
+// this component no longer parses a document — it receives turn objects and appends
+// them one at a time.
 interface ConvTurn {
-  speaker: string // 'user' | 'ai' | raw label
-  ts: string
+  seq: number
+  speaker: string // 'user' | 'ai'
+  participant_key?: string
+  display_name?: string | null
+  locale?: string | null
   body: string
-  provider?: string // 0293: header's parenthesized provider; absent = not recorded
+  based_on_seq?: number | null
+  stale_since_seq?: number | null
+  source_run_id?: string | null
+  created_at?: string
+  // Client-only, for an optimistic bubble that has no server seq yet (L0004 §2-17).
+  localId?: string
+  idempotencyKey?: string
+  pending?: boolean
+  failed?: boolean
 }
+
+// P0003 §0-4.
+interface ConvParticipant {
+  participant_key: string
+  kind: string
+  display_name?: string | null
+  first_seen_seq: number
+  last_read_seq: number
+  last_written_seq: number
+  last_seen_at?: string | null
+}
+
+interface ConvHead {
+  intro?: string
+  carried_over_from?: string | null
+  total_turns?: number
+  head_seq?: number
+}
+
+interface TurnsPage {
+  turns: ConvTurn[]
+  participants?: ConvParticipant[]
+  me?: ConvParticipant | null
+  head?: ConvHead | null
+  head_seq: number
+  next_after_seq: number | null
+  prev_before_seq: number | null
+  has_more: boolean
+}
+
+// L0004 §1-5 화면 파라미터 — single source of truth, do not inline these numbers.
+const TURN_PAGE_SIZE = 50
+const PREPEND_PAGE_SIZE = 30
+const CATCHUP_MAX_ROUNDS = 20
+const SEND_RETRY_MAX = 2
+const VIEWED_DEBOUNCE_MS = 1000
+const PREPEND_TRIGGER_PX = 60
 
 const props = defineProps<{
   docId: string
@@ -320,6 +438,16 @@ watch([providersResolving, hasProviders], () => {
 })
 
 const turns = ref<ConvTurn[]>([])
+const participants = ref<ConvParticipant[]>([])
+const head = ref<ConvHead | null>(null)
+// The highest seq the server has confirmed. This is the recovery datum: after a dropped
+// stream we ask for everything after it (P0003 시나리오 7), so it must come from the
+// server's post-commit MAX(seq), never from the seq we happened to be assigned.
+const headSeq = ref(0)
+// This user's read boundary, as the server knows it.
+const readSeq = ref(0)
+const hasMoreBefore = ref(false)
+const loadingOlder = ref(false)
 const draft = ref(loadDraft(props.docId))
 const loading = ref(false)
 const sending = ref(false)
@@ -389,98 +517,53 @@ async function onManualCopyAgain() {
   manualCopyEl.value?.select()
 }
 
-// ── Wire-format parser — the render side of L0044.0008 §6. Mirrors the server's
-// conversation.parse_conversation: lines matching the turn header are boundaries,
-// everything before the first boundary is the intro (turn 0), and header-like body
-// lines are unescaped. The server is the single source of truth for the format; this
-// only reads it.
-// R0127.0001: the leading emoji is OPTIONAL on parse, so a hand-typed header
-// ("## AI · …", "## 사용자 · …", or "##  AI · …" with extra spaces) is still read as
-// a turn. Kept in lockstep with the server (conversation.py is the source of truth).
-// 0293 R0001: the AI label may carry the provider in parentheses —
-// "## 🤖 AI(claude-opus-4-8) · …". Optional, so every pre-0293 turn parses unchanged.
-// 0306 NR0003 발견 1: the user label is localized — ko 사용자 / en User / ja ユーザー,
-// emoji still optional — and all normalize to 'user' (speakerKey). The server writes
-// each new user turn in its author's locale; this side only needs to READ every
-// locale's header so a mixed-language CH renders every turn with the right role.
-const USER_NAMES = ['사용자', 'User', 'ユーザー']
-const SPEAKER_ALT = '(?:🧑 )?(?:사용자|User|ユーザー)|(?:🤖 )?AI(?:\\([^)]*\\))?'
-const HEADER_RE = new RegExp(`^##\\s+(${SPEAKER_ALT}) · (\\S+)\\s*$`)
-const HEADERLIKE_RE = new RegExp(`^\\\\*##\\s+(?:${SPEAKER_ALT}) · \\S+\\s*$`)
-const PROVIDER_RE = /^(.*?)\(([^)]*)\)$/
+// ── Turn list maintenance ────────────────────────────────────────────────────
+// Reconciliation keys on `seq` alone. `idempotency_key` is deliberately absent from the
+// response turn object (P0003 §0-2), so an optimistic bubble is matched by its local id
+// and everything else by the sequence number the server assigned.
+function turnsUrl(): string {
+  return `/api/v1/documents/${encodeURIComponent(props.docId)}/conversation/turns`
+}
 
-function stripSpeakerDecorations(label: string): { bare: string; provider?: string } {
-  let s = label
-  for (const prefix of ['🧑 ', '🤖 ']) {
-    if (s.startsWith(prefix)) { s = s.slice(prefix.length); break }
+function hasSeq(seq: number): boolean {
+  return seq > 0 && turns.value.some((turn) => turn.seq === seq)
+}
+
+/** Insert in seq order, ignoring a turn already on screen. Optimistic bubbles (seq 0)
+ *  always sort last — they are, by definition, the newest thing this client knows. */
+function insertInSeqOrder(turn: ConvTurn): void {
+  if (hasSeq(turn.seq)) return
+  const list = turns.value
+  let at = list.length
+  for (let i = 0; i < list.length; i++) {
+    const other = list[i]
+    if (!other.seq || other.seq > turn.seq) { at = i; break }
   }
-  const m = PROVIDER_RE.exec(s)
-  if (!m) return { bare: s }
-  const provider = m[2].trim()
-  return { bare: m[1], ...(provider ? { provider } : {}) }
+  list.splice(at, 0, turn)
 }
 
-// The provider suffix MUST be stripped here, not just ignored by the renderer. The chat
-// AI-call success test counts turns with speaker === 'ai' before and after the run
-// (pollRun); a label that kept its parentheses would still render as an AI bubble but
-// never be counted, so every successful reply would be reported as "no reply".
-function speakerKey(label: string): string {
-  const { bare } = stripSpeakerDecorations(label)
-  if (USER_NAMES.includes(bare)) return 'user'
-  if (bare === 'AI') return 'ai'
-  return label
+function applyPage(page: TurnsPage): void {
+  for (const turn of page.turns ?? []) insertInSeqOrder(turn)
+  headSeq.value = Math.max(headSeq.value, Number(page.head_seq) || 0)
+  if (page.participants && page.participants.length > 0) participants.value = page.participants
+  if (page.me) readSeq.value = Math.max(readSeq.value, Number(page.me.last_read_seq) || 0)
+  if (page.head) head.value = page.head
 }
 
-// undefined = not recorded (pre-0293 turn, or a model that does not know its own name).
-// The badge is simply omitted — absence of information, not a warning.
-function speakerProvider(label: string): string | undefined {
-  const { bare, provider } = stripSpeakerDecorations(label)
-  return bare === 'AI' || USER_NAMES.includes(bare) ? provider : undefined
+function oldestSeq(): number {
+  const confirmed = turns.value.filter((turn) => turn.seq > 0)
+  return confirmed.length > 0 ? confirmed[0].seq : headSeq.value + 1
 }
 
-function unescapeLine(line: string): string {
-  if (line.startsWith('\\') && HEADERLIKE_RE.test(line.slice(1))) return line.slice(1)
-  return line
-}
-
-function parseConversation(content: string): { intro: string; turns: ConvTurn[] } {
-  const introLines: string[] = []
-  const parsed: ConvTurn[] = []
-  let curSpeaker: string | null = null
-  let curTs = ''
-  let curProvider: string | undefined
-  let curBody: string[] = []
-  let started = false
-
-  const flush = () => {
-    if (curSpeaker === null) return
-    const body = [...curBody]
-    if (body.length && body[body.length - 1] === '') body.pop()
-    parsed.push({
-      speaker: curSpeaker,
-      ts: curTs,
-      body: body.join('\n'),
-      ...(curProvider ? { provider: curProvider } : {}),
-    })
-  }
-
-  for (const line of content.split('\n')) {
-    const m = HEADER_RE.exec(line)
-    if (m) {
-      flush()
-      curSpeaker = speakerKey(m[1])
-      curProvider = speakerProvider(m[1])
-      curTs = m[2]
-      curBody = []
-      started = true
-    } else if (!started) {
-      introLines.push(line)
-    } else {
-      curBody.push(unescapeLine(line))
-    }
-  }
-  flush()
-  return { intro: introLines.join('\n').replace(/\n+$/, ''), turns: parsed }
+/** Draw the boundary immediately above the first turn the user has not read. Suppressed
+ *  when everything on screen is new (nothing has been read yet) — a line above the very
+ *  first bubble would say nothing. */
+function isBoundaryBefore(turn: ConvTurn): boolean {
+  if (readSeq.value <= 0 || !turn.seq || turn.seq <= readSeq.value) return false
+  const earlier = turns.value.filter((other) => other.seq > 0 && other.seq <= readSeq.value)
+  if (earlier.length === 0) return false
+  const firstUnread = turns.value.find((other) => other.seq > readSeq.value)
+  return firstUnread?.seq === turn.seq
 }
 
 function formatTs(ts: string): string {
@@ -535,6 +618,14 @@ function describeErrorDetail(value: unknown): string {
   }
   return String(value)
 }
+/** True when the reader is already following the tail, so a new turn may pull the view
+ *  down. Anything further up is a deliberate scroll into history — leave it alone. */
+function isPinnedToBottom(): boolean {
+  const el = scrollEl.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
 function scrollToBottom() {
   const pin = () => {
     const el = scrollEl.value
@@ -551,25 +642,137 @@ function scrollToBottom() {
   })
 }
 
+async function fetchPage(params: Record<string, unknown>): Promise<TurnsPage | null> {
+  try {
+    const res = await getRequest<TurnsPage>(turnsUrl(), params)
+    return (res.data as TurnsPage) ?? null
+  } catch {
+    // A conversation that cannot be read right now is an empty screen, not a crash;
+    // the composer stays usable and SSE//turns will fill it in on the next attempt.
+    return null
+  }
+}
+
+/** Full (re)entry: background + everything this user has not read, then enough earlier
+ *  context to make the screen readable. P0003 시나리오 1. */
 async function load(): Promise<ConvTurn[]> {
   if (!props.docId) return []
   loading.value = true
   try {
-    const res = await getRequest<{ content: string }>(
-      `/api/v1/documents/content?doc_id=${encodeURIComponent(props.docId)}`,
-    )
-    const content = (res.data as any)?.content ?? ''
-    const p = parseConversation(content)
-    turns.value = p.turns
-    scrollToBottom()
-    return p.turns
-  } catch {
-    // A fresh CH doc may have no file yet (404) — treat as an empty conversation.
     turns.value = []
-    return []
+    participants.value = []
+    head.value = null
+    headSeq.value = 0
+    readSeq.value = 0
+    hasMoreBefore.value = false
+
+    // No cursor: the server resumes from the position it remembers for this user, so
+    // the client never computes where it left off (D0002 §3-4).
+    const first = await fetchPage({ include_head: 1, limit: TURN_PAGE_SIZE })
+    if (first) {
+      applyPage(first)
+      let cursor = first.next_after_seq
+      for (let round = 0; cursor != null && round < CATCHUP_MAX_ROUNDS; round++) {
+        const next = await fetchPage({ after_seq: cursor, limit: TURN_PAGE_SIZE })
+        if (!next) break
+        applyPage(next)
+        cursor = next.next_after_seq
+      }
+      // Everything already read still lives above the boundary; pull one page of it so
+      // re-entering a conversation shows context rather than a bare "여기까지 읽음" line.
+      hasMoreBefore.value = oldestSeq() > 1
+      if (hasMoreBefore.value && turns.value.length < PREPEND_PAGE_SIZE) {
+        await loadOlder({ keepScroll: false })
+      }
+    }
+    scrollToBottom()
+    scheduleViewedReport()
+    return turns.value
   } finally {
     loading.value = false
   }
+}
+
+/** Scroll-up paging (P0003 시나리오 2). The prepended block's height is added back to
+ *  scrollTop so the conversation does not jump under the reader's eyes. */
+async function loadOlder(opts: { keepScroll?: boolean } = {}): Promise<void> {
+  if (loadingOlder.value) return
+  const before = oldestSeq()
+  if (before <= 1) { hasMoreBefore.value = false; return }
+  loadingOlder.value = true
+  const el = scrollEl.value
+  const heightBefore = el?.scrollHeight ?? 0
+  const topBefore = el?.scrollTop ?? 0
+  try {
+    const page = await fetchPage({ before_seq: before, limit: PREPEND_PAGE_SIZE })
+    if (!page) return
+    applyPage(page)
+    hasMoreBefore.value = page.prev_before_seq != null || oldestSeq() > 1
+    if (opts.keepScroll !== false) {
+      await nextTick()
+      const target = scrollEl.value
+      if (target) target.scrollTop = topBefore + (target.scrollHeight - heightBefore)
+    }
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+// ── Read reporting (L0004 §1-3 / §2-8) ───────────────────────────────────────
+// Debounced, foreground-only, and only for a bubble whose BOTTOM is actually inside the
+// viewport. The debounce exists to stop dozens of notices per second of scrolling, not
+// to guess at attention.
+let viewedTimer: ReturnType<typeof setTimeout> | null = null
+let reportedViewed = 0
+
+function highestVisibleSeq(): number {
+  const el = scrollEl.value
+  if (!el) return 0
+  const limit = el.scrollTop + el.clientHeight
+  let best = 0
+  for (const node of Array.from(el.querySelectorAll<HTMLElement>('[data-seq]'))) {
+    const seq = Number(node.dataset.seq ?? 0)
+    if (!seq) continue
+    if (node.offsetTop + node.offsetHeight <= limit + 1) best = Math.max(best, seq)
+  }
+  return best
+}
+
+function scheduleViewedReport(): void {
+  if (viewedTimer !== null) clearTimeout(viewedTimer)
+  viewedTimer = setTimeout(() => {
+    viewedTimer = null
+    void reportViewed()
+  }, VIEWED_DEBOUNCE_MS)
+}
+
+async function reportViewed(): Promise<void> {
+  if (disposed || !props.docId) return
+  if (typeof document !== 'undefined' && document.hidden) return
+  const seq = highestVisibleSeq()
+  if (seq <= 0 || seq <= reportedViewed || seq <= readSeq.value) return
+  reportedViewed = seq
+  try {
+    const res = await postRequest<{ me?: ConvParticipant }>(
+      `/api/v1/documents/${encodeURIComponent(props.docId)}/conversation/read`,
+      { last_read_seq: seq, reason: 'viewed' },
+    )
+    const me = (res.data as any)?.me
+    // The boundary only ever moves forward, and the server's value wins — a cursor is
+    // monotonic there, so a racing notice cannot pull the line back.
+    if (me) readSeq.value = Math.max(readSeq.value, Number(me.last_read_seq) || 0)
+  } catch {
+    // Losing a read notice costs a boundary line, not a message. Retry on next scroll.
+    reportedViewed = 0
+  }
+}
+
+function onScroll(): void {
+  const el = scrollEl.value
+  if (el && el.scrollTop <= PREPEND_TRIGGER_PX && hasMoreBefore.value && !loadingOlder.value) {
+    void loadOlder()
+  }
+  scheduleViewedReport()
 }
 
 // Back to IDLE: no run is in flight, so the button is a send button again.
@@ -760,8 +963,10 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
         // cancelled. The server always stamps end_reason='cancelled' on a real kill.
         const stopped = data?.end_reason === 'cancelled'
         releaseRun()
-        const loadedTurns = await load()
-        const aiTurns = loadedTurns.filter((turn) => turn.speaker === 'ai').length
+        // The reply has usually already arrived over SSE; catchUp() only closes a gap,
+        // so verifying the run no longer costs a full reload of the conversation.
+        await catchUp()
+        const aiTurns = turns.value.filter((turn) => turn.speaker === 'ai').length
         // A run the user stopped on purpose is not a failure (0264 R0001).
         if (stopped) {
           showToast(t('main.ai_invoke_dialog.end_cancelled'), 'info')
@@ -790,32 +995,98 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
   releaseRun()
 }
 
+function newIdempotencyKey(): string {
+  const uuid =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`
+  return `sess_${uuid}`
+}
+
+/** POST one turn, replacing its optimistic bubble on success.
+ *
+ *  The key is generated ONCE per message and reused by every retry, so a turn the
+ *  server already stored comes back as a replay (200) instead of being written twice
+ *  (P0003 시나리오 4). 404/400/409/422 are decisions, not blips — retrying them only
+ *  repeats the same answer.
+ */
+async function postTurn(temp: ConvTurn): Promise<boolean> {
+  for (let attempt = 0; attempt <= SEND_RETRY_MAX; attempt++) {
+    try {
+      const res = await postRequest<{ turn: ConvTurn; head_seq: number; me?: ConvParticipant }>(
+        `/api/v1/documents/${encodeURIComponent(props.docId)}/conversation/turn`,
+        {
+          body: temp.body,
+          idempotency_key: temp.idempotencyKey,
+          based_on_seq: temp.based_on_seq ?? 0,
+        },
+      )
+      const data = res.data as any
+      const saved: ConvTurn | undefined = data?.turn
+      const at = turns.value.findIndex((turn) => turn.localId === temp.localId)
+      if (saved && !hasSeq(saved.seq)) {
+        // Swap the placeholder for the numbered turn, in place, so the bubble does not
+        // visibly jump. Only this one turn arrives — never the whole body (P0003 시나리오 3).
+        if (at >= 0) turns.value.splice(at, 1, saved)
+        else insertInSeqOrder(saved)
+      } else if (at >= 0) {
+        // Already on screen (SSE beat the response, or this was a replay) — drop the
+        // duplicate placeholder rather than showing the message twice.
+        turns.value.splice(at, 1)
+      }
+      headSeq.value = Math.max(headSeq.value, Number(data?.head_seq) || 0)
+      if (data?.me) readSeq.value = Math.max(readSeq.value, Number(data.me.last_read_seq) || 0)
+      return true
+    } catch (e: any) {
+      const status = e?.response?.status
+      if ([400, 404, 409, 422].includes(status) || attempt === SEND_RETRY_MAX) {
+        const detail = describeErrorDetail(e?.response?.data?.detail ?? e?.response?.data ?? e)
+        showToast(t('main.conversation_view.send_failed', { detail }), 'danger')
+        return false
+      }
+    }
+  }
+  return false
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   // Block a new send while the send button is busy — either already posting a turn
   // OR spinning through a chat AI call (R0001: one turn at a time, progress on send).
   if (!text || busy.value) return
+  const temp: ConvTurn = {
+    seq: 0,
+    speaker: 'user',
+    body: text,
+    // What this message was written in response to. If someone speaks while it is in
+    // flight the server keeps the order and marks the crossing — it does not reject.
+    based_on_seq: headSeq.value,
+    stale_since_seq: null,
+    created_at: new Date().toISOString(),
+    localId: newIdempotencyKey(),
+    idempotencyKey: '',
+    pending: true,
+  }
+  temp.idempotencyKey = temp.localId
+  turns.value.push(temp)
+  scrollToBottom()
+
   sending.value = true
   try {
-    const res = await postRequest<{ content: string; carried_over_doc_id?: string }>(
-      `/api/v1/documents/${encodeURIComponent(props.docId)}/conversation/turn`,
-      { body: text, speaker: 'user' },
-    )
-    const data = res.data as any
-    const p = parseConversation(data?.content ?? '')
-    turns.value = p.turns
+    const ok = await postTurn(temp)
+    if (!ok) {
+      // The draft is NOT cleared on failure (P0003 시나리오 17) and the bubble is kept
+      // with a retry that reuses the same key — either route resends without doubling.
+      const at = turns.value.findIndex((turn) => turn.localId === temp.localId)
+      if (at >= 0) turns.value.splice(at, 1, { ...temp, pending: false, failed: true })
+      return
+    }
     draft.value = ''
     persistDraft(props.docId, '')
     resetInputHeight()
     scrollToBottom()
-    if (data?.carried_over_doc_id) {
-      showToast(
-        t('main.conversation_view.carried_over', { doc: data.carried_over_doc_id }),
-        'info',
-      )
-    }
-    // D0005 §3-2: dispatch the send-time action only AFTER the turn was accepted
-    // (turns refreshed above). Never fires on a failed send (catch below).
+    // D0005 §3-2: dispatch the send-time action only AFTER the turn was accepted.
+    // Never fires on a failed send.
     const action = sendAction.value
     if (action === 'copy_mention') {
       emit('copy-mention', { auto: true })
@@ -823,26 +1094,85 @@ async function send(): Promise<void> {
       void invokeAi('auto')
     }
     void nextTick(() => inputEl.value?.focus())
-  } catch (e: any) {
-    const detail = describeErrorDetail(e?.response?.data?.detail ?? e?.response?.data ?? e)
-    showToast(t('main.conversation_view.send_failed', { detail }), 'danger')
   } finally {
     sending.value = false
   }
 }
 
-// Live updates: the server broadcasts a DOCUMENT_EXPLORER_REFRESH on every turn
-// (§8). useFlowGateSse re-dispatches it as fg:document_content_changed, so an AI
-// reply (or a turn from another tab) reloads the chat without an F5 — the same
-// bridge MdViewer uses.
+async function retryTurn(turn: ConvTurn): Promise<void> {
+  if (!turn.localId || sending.value) return
+  const at = turns.value.findIndex((item) => item.localId === turn.localId)
+  if (at >= 0) turns.value.splice(at, 1, { ...turn, pending: true, failed: false })
+  sending.value = true
+  try {
+    const ok = await postTurn(turn)
+    if (!ok) {
+      const back = turns.value.findIndex((item) => item.localId === turn.localId)
+      if (back >= 0) turns.value.splice(back, 1, { ...turn, pending: false, failed: true })
+    }
+  } finally {
+    sending.value = false
+  }
+}
+
+// ── Live delivery (P0003 시나리오 6) ─────────────────────────────────────────
+// The server pushes the appended TURN, so this appends one bubble instead of
+// re-fetching the document. A turn already on screen — typically our own, echoed back
+// before the POST response landed — is ignored by seq.
+function onSseTurn(e: Event) {
+  const detail = (e as CustomEvent).detail as {
+    doc_id?: string
+    head_seq?: number
+    turn?: ConvTurn
+    participant?: ConvParticipant
+  } | undefined
+  if (!detail?.turn || detail.doc_id !== props.docId) return
+  const atBottom = isPinnedToBottom()
+  if (!hasSeq(detail.turn.seq)) insertInSeqOrder(detail.turn)
+  headSeq.value = Math.max(headSeq.value, Number(detail.head_seq) || detail.turn.seq || 0)
+  if (detail.participant) {
+    const at = participants.value.findIndex(
+      (p) => p.participant_key === detail.participant!.participant_key,
+    )
+    if (at >= 0) participants.value.splice(at, 1, detail.participant)
+    else participants.value.push(detail.participant)
+  }
+  // Only follow the conversation when the reader was already at the bottom; yanking a
+  // reader who scrolled up into history is worse than a missed scroll.
+  if (atBottom) scrollToBottom()
+  scheduleViewedReport()
+}
+
+/** Fill the gap left by a dropped stream (P0003 시나리오 7). Live delivery is an
+ *  optimisation, not the record — the conversation must be correct with no SSE at all. */
+async function catchUp(): Promise<void> {
+  if (disposed || !props.docId) return
+  let cursor: number | null = headSeq.value
+  for (let round = 0; cursor != null && round < CATCHUP_MAX_ROUNDS; round++) {
+    const page = await fetchPage({ after_seq: cursor, limit: TURN_PAGE_SIZE })
+    if (!page) return
+    applyPage(page)
+    cursor = page.next_after_seq
+  }
+  scheduleViewedReport()
+}
+
+function onSseReconnected() {
+  void catchUp()
+}
+
+// A CH document changed out-of-band by something other than a turn append (a rename,
+// a workflow decision). The turn stream owns the conversation body, so this only
+// re-reads the head — it must not re-pull the whole conversation on every message.
 function onContentChanged(e: Event) {
   const detail = (e as CustomEvent).detail as { doc_id?: string | null } | undefined
   if (detail?.doc_id !== props.docId) return
-  void load()
+  void catchUp()
 }
 
 watch(() => props.docId, (docId) => {
   draft.value = loadDraft(docId)
+  reportedViewed = 0
   void nextTick(autoGrow)
   void load()
 })
@@ -858,19 +1188,48 @@ onMounted(() => {
   void nextTick(autoGrow)
   if (projectCode.value) void providerStore.ensureLoaded(projectCode.value)
   void adoptActiveRun()
+  window.addEventListener('fg:conversation_turn', onSseTurn)
+  window.addEventListener('fg:sse_reconnected', onSseReconnected)
   window.addEventListener('fg:document_content_changed', onContentChanged)
 })
 
 onBeforeUnmount(() => {
   disposed = true
+  if (viewedTimer !== null) {
+    clearTimeout(viewedTimer)
+    viewedTimer = null
+  }
+  window.removeEventListener('fg:conversation_turn', onSseTurn)
+  window.removeEventListener('fg:sse_reconnected', onSseReconnected)
   window.removeEventListener('fg:document_content_changed', onContentChanged)
 })
+
+// 0351 T4 (P0003 시나리오 16): a conversation-turn search result names a seq that may
+// sit further back than what is currently loaded. Page older history in (reusing the
+// same loadOlder the scroll-up trigger uses) until that turn is present, then scroll
+// it into view. MainPanel calls this via the same ref map it already keeps for
+// scrollToBottom, in response to the fg:conversation_jump_seq window event.
+async function jumpToSeq(seq: number): Promise<void> {
+  if (!seq || seq <= 0) return
+  if (turns.value.length === 0 && !loading.value) await load()
+  let rounds = 0
+  while (!hasSeq(seq) && hasMoreBefore.value && rounds < CATCHUP_MAX_ROUNDS) {
+    await loadOlder({ keepScroll: false })
+    rounds += 1
+  }
+  await nextTick()
+  const target = scrollEl.value?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
+  if (!target) return
+  target.scrollIntoView({ block: 'center' })
+  target.classList.add('conv-turn--jump-highlight')
+  setTimeout(() => target.classList.remove('conv-turn--jump-highlight'), 2000)
+}
 
 // scrollToBottom is exposed for the CH full view (0263 R0001): teleporting this component
 // between the card and the dialog detaches and re-attaches .conv-scroll, and a re-attached
 // element comes back at scrollTop 0 — the log stuck at the TOP, the same symptom rev8 fixed
 // for new turns. The mover re-pins once the node lands.
-defineExpose({ load, scrollToBottom })
+defineExpose({ load, scrollToBottom, jumpToSeq })
 </script>
 
 <style scoped>
@@ -939,6 +1298,21 @@ defineExpose({ load, scrollToBottom })
   border-bottom-left-radius: 3px;
 }
 
+/* 0351 T4 — brief flash on the turn a search result jumped to, so the reader's eye
+   lands on the right bubble instead of just the scroll position. */
+.conv-row.conv-turn--jump-highlight .conv-bubble {
+  animation: conv-turn-jump-flash 2s ease-out;
+}
+
+@keyframes conv-turn-jump-flash {
+  0% {
+    box-shadow: 0 0 0 2px var(--accent, #2563eb);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 .conv-meta {
   display: flex;
   align-items: baseline;
@@ -984,6 +1358,139 @@ defineExpose({ load, scrollToBottom })
   color: var(--text-s);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* An optimistic bubble is dimmed until the server gives it a number, so "sent" and
+   "recorded" never look the same. */
+.conv-row.is-pending .conv-bubble {
+  opacity: 0.62;
+}
+
+.conv-row.is-failed .conv-bubble {
+  border-color: var(--danger, #dc2626);
+}
+
+.conv-stale,
+.conv-failed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0 0;
+  font-size: .68rem;
+  line-height: 1.45;
+}
+
+.conv-stale {
+  color: var(--warning, #b45309);
+}
+
+.conv-failed {
+  color: var(--danger, #dc2626);
+}
+
+.conv-retry {
+  padding: 1px 7px;
+  font-size: .66rem;
+  font-family: inherit;
+  color: var(--danger, #dc2626);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+/* "Read up to here" (D0002 §6) — a rule across the log, not a bubble, because it marks
+   a position between turns rather than a message. */
+.conv-boundary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: .66rem;
+  font-weight: 700;
+  color: var(--primary, #2563eb);
+  opacity: 0.85;
+}
+
+.conv-boundary::before,
+.conv-boundary::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.conv-continued {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: .68rem;
+  color: var(--text-m);
+  background: var(--bg-subtle, #f1f5f9);
+  border-radius: 6px;
+}
+
+.conv-older {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px;
+  font-size: .7rem;
+  font-family: inherit;
+  color: var(--text-m);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.conv-older:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.conv-older:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Participant strip — who is here and how far each has read (D0002 §6). */
+.conv-participants {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 14px;
+  border-top: 1px solid var(--border);
+  font-size: .68rem;
+  color: var(--text-m);
+}
+
+.conv-participants-label {
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.conv-participant {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  background: var(--bg-subtle, #f1f5f9);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 999px;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-participant em {
+  font-style: normal;
+  opacity: 0.7;
 }
 
 /* Modern chat composer (rev5): a subtle helper row above a single rounded message

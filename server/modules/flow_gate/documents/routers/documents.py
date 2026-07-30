@@ -26,9 +26,11 @@ from pydantic import BaseModel, Field
 
 from modules.flow_gate import db
 from modules.flow_gate.auth.middleware import get_current_user
+from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import document_service, document_types, template_service
 from modules.flow_gate.numbering import numbering_service
+from modules.flow_gate.services import conversation_markdown_service, conversation_query_service
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.storage.paths import get_storage_root
 
@@ -326,19 +328,6 @@ class RootTypeConvert(BaseModel):
     """Convert a workflow root document between R and B (NR0066.0003 §5)."""
     new_type: Literal["R", "B"]
 
-
-class ConversationTurnAppend(BaseModel):
-    """A single conversation (CH) turn submitted from the session UI (L0044.0008 §6).
-
-    The body is the human's message text. `speaker` is accepted for backward
-    compatibility but IGNORED by the route: this is the human session path, so the
-    server fixes the author role to "user" at the trust boundary (0306 NR0003 발견 3) —
-    only the AI worker's token-bound path records "ai" turns. The wire format
-    (headers / escaping / locale) is built server-side by the shared serializer, so the
-    FE never constructs it.
-    """
-    body: str = Field(..., min_length=1)
-    speaker: Literal["user", "ai"] = "user"
 
 
 class TransitionRequest(BaseModel):
@@ -2405,16 +2394,60 @@ def get_document(
     return out
 
 
+def _conversation_compat_block(doc_id: str, projection: bool) -> dict:
+    """P0003 시나리오 15 compatibility summary for an old link into a CH document.
+
+    ``projection`` is repeated inside this block (as well as at the response's top
+    level) because both a legacy client reading the flat field and one reading the
+    nested summary must be able to tell "this content did not come from the file."
+    """
+    return {
+        "is_conversation": True,
+        "head_seq": conv_turn_store.current_head_seq(doc_id),
+        "total_turns": conv_turn_store.count_turns(doc_id),
+        "participants": len(conv_turn_store.list_participants(doc_id)),
+        "turns_url": f"/api/v1/documents/{doc_id}/conversation/turns",
+        "projection": projection,
+    }
+
+
 @router.get("/{doc_id}/content")
 @require_permission("perm_document_read")
 def get_document_content(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Return the content of the Markdown file linked to the document."""
+    """Return the content of the Markdown file linked to the document.
+
+    A CH document degrades to a compatibility mode (T4 / P0003 시나리오 15): once
+    migrated, ``content`` is the deterministic render of its current turns (not the
+    file, which stops changing the moment migration completes), and the response
+    carries a ``conversation`` summary block plus ``projection: true`` so a screen or
+    an old bookmark can tell this string is not an editable file body. A LEGACY
+    (migration ``failed``) conversation keeps returning its file verbatim, same as
+    before, with ``projection: false``. Every other document type's shape is
+    unchanged — this endpoint serves all of them.
+    """
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+    if (doc.get("type_code") or "").upper() in CONVERSATION_TYPE_CODES:
+        state = conversation_query_service._ensure_readable_rows(doc_id)
+        if state == "failed":
+            file_path = _document_file_path(doc)
+            content = file_path.read_text(encoding="utf-8") if file_path.is_file() else ""
+            return {
+                "content": content,
+                "projection": False,
+                "conversation": _conversation_compat_block(doc_id, False),
+            }
+        rendered = conversation_markdown_service.render_markdown(doc_id)
+        return {
+            "content": rendered["content"],
+            "projection": True,
+            "conversation": _conversation_compat_block(doc_id, True),
+        }
 
     file_path = _document_file_path(doc)
     if not file_path.is_file():
@@ -2554,123 +2587,6 @@ def convert_root_type(
         )
     }
 
-
-@router.post("/{doc_id}/conversation/turn", status_code=201)
-@require_permission("perm_document_update")
-def append_conversation_turn(
-    doc_id: str,
-    body: ConversationTurnAppend,
-    request: Request,
-    current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Append one turn to a conversation (CH) document from the session UI.
-
-    The conversation body IS the chat log (L0044.0008 §6); this is the human-side
-    counterpart to the AI worker's inbox-edit accumulation path, which is token-bound
-    and so unavailable to a logged-in PM viewing the chat. The reject on TR0044.0010
-    rev1 was that selecting CH just yielded a plain document with workflow buttons and
-    no way to converse — this endpoint (plus the FE ConversationView composer) makes a
-    CH document actually conversational.
-
-    The turn is serialized server-side via the shared `conversation` module (single
-    source of truth — the FE never builds the wire format), the file is re-saved
-    wholesale (same model as the AI accumulation path), and on overflow the chat rolls
-    over to a successor CH doc (§7). An all-audience SSE refresh lets every open chat
-    view — the owner's and the AI worker's — update live (§8). This is a sync route
-    (worker thread), so SSE goes through the threadsafe broadcaster: a bare
-    asyncio.get_event_loop() would raise here (the 0059 trap).
-    """
-    from modules.flow_gate import conversation as _conv
-
-    doc = document_service.get_document(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
-    if (doc.get("type_code") or "").upper() not in CONVERSATION_TYPE_CODES:
-        raise HTTPException(status_code=400, detail="Not a conversation document.")
-    _reject_if_group_disposed(doc)
-    final_approved = document_service.is_final_approved(doc)
-    if not document_service.is_document_editable(doc, final_approved=final_approved):
-        raise HTTPException(status_code=422, detail="Conversation is closed for new turns.")
-
-    text = body.body.strip()
-    if not text:
-        raise HTTPException(status_code=422, detail="Turn body must not be empty.")
-
-    from modules.flow_gate.db.connection import now_iso
-
-    file_path = _document_file_path(doc)
-    existing = file_path.read_text(encoding="utf-8") if file_path.is_file() else ""
-    # 0306 NR0003 발견 1: record the new user turn in the caller's UI locale. The FE
-    # sends X-Locale on every request (client/shared/api.ts), so the session composer
-    # needs no new field; a region tag ("en-US") or unknown value degrades to ko in the
-    # serializer. 발견 3: role is a trust-boundary decision, not client data — this human
-    # session path always writes a "user" turn regardless of body.speaker.
-    locale = (request.headers.get("X-Locale") or "ko").strip().lower().split("-")[0]
-    new_content = _conv.append_turn(existing, "user", now_iso(), text, locale=locale)
-
-    # Enforce the same content cap the inbox edit path uses, so a session turn cannot
-    # push the body past the hard limit the carry-over threshold is sized against.
-    from modules.flow_gate.api.inbox_routes import _content_max
-
-    max_bytes = _content_max()
-    if max_bytes > 0 and len(new_content.encode("utf-8")) > max_bytes:
-        raise HTTPException(status_code=422, detail="Conversation content limit exceeded.")
-
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(new_content, encoding="utf-8")
-    document_service.update_document(
-        doc_id,
-        {"file_path": storage_paths.to_storage_relative(file_path, doc.get("project_id"))},
-        actor_user_id=current_user["user_id"],
-    )
-
-    # §7 carry-over: best-effort, must never break the turn that already committed.
-    carried_over_doc_id: Optional[str] = None
-    try:
-        if _conv.should_carry_over(len(new_content.encode("utf-8")), max_bytes):
-            from modules.flow_gate.api.inbox_routes import _carry_over_conversation
-
-            carried_over_doc_id = _carry_over_conversation(
-                doc.get("project_id"),
-                doc.get("module"),
-                {"group_id": doc.get("group_id")},
-                doc_id,
-                new_content,
-                current_user["user_id"],
-            )
-    except Exception as _co_exc:  # pragma: no cover - defensive
-        _log.warning("[conversation turn] carry-over failed (ignored): %s", _co_exc)
-
-    # §8 live delivery: refresh every open chat view (owner + AI worker), not just the
-    # sender's, so a turn appears on the other side without an F5.
-    try:
-        from modules.flow_gate.api.v1.events.publisher import (
-            FlowEvent,
-            broadcast_event_threadsafe,
-        )
-        from modules.flow_gate.api.v1.events.event_types import EventType
-
-        broadcast_event_threadsafe(FlowEvent(
-            event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
-            payload={
-                "operation": "updated",
-                "doc_id": doc_id,
-                "type": doc.get("type_code"),
-                "title": doc.get("title"),
-                "status": doc.get("status"),
-            },
-            audience="*",
-            project=doc.get("project_id"),
-            group_id=doc.get("group_id"),
-            doc_id=doc_id,
-        ))
-    except Exception as _sse_exc:  # pragma: no cover - defensive
-        _log.warning("[conversation turn] SSE publish failed (ignored): %s", _sse_exc)
-
-    resp: dict = {"ok": True, "doc_id": doc_id, "content": new_content}
-    if carried_over_doc_id:
-        resp["carried_over_doc_id"] = carried_over_doc_id
-    return resp
 
 
 @router.patch("/{doc_id}/workflow")

@@ -1,7 +1,10 @@
-"""T0044.0009 — conversation (CH) type: serializer/parser, carry-over, registration.
+"""T0044.0009 — conversation (CH) type: serializer/parser, registration.
 
-Covers L0044.0008 §2 (type registration), §6 (turn serialization/parsing/escaping),
-and §7 (carry-over threshold/tail). Pure-unit + migration-row checks (no HTTP).
+Covers L0044.0008 §2 (type registration) and §6 (turn serialization/parsing/escaping).
+Pure-unit + migration-row checks (no HTTP). The former §7 byte-cap carry-over
+(should_carry_over/tail_turns/build_carryover_intro) was removed in group 0351 T5
+(D0002 §3-6) — turns now accumulate in the shared append-only store instead of a
+wholesale-rewritten file body, so no conversation ever approaches the old cap.
 """
 from __future__ import annotations
 
@@ -164,15 +167,14 @@ def test_provider_slot_is_optional_and_emoji_less_form_works():
     assert conv.speaker_provider("AI()") is None
 
 
-def test_provider_survives_roundtrip_and_carryover():
-    # Carry-over re-serializes the tail into the successor document (§7); dropping the
-    # provider there would silently blank the badge at every rollover.
+def test_provider_survives_roundtrip():
+    # Re-serializing turns (e.g. for markdown rendering) must not drop the provider —
+    # dropping it there would silently blank the badge.
     turns = [conv.Turn(speaker="ai", ts="2026-07-22T10:00:00+09:00", body="hi",
                        provider="claude-opus-4-8")]
     text = conv.serialize_conversation(turns)
     assert text.splitlines()[0] == "## 🤖 AI(claude-opus-4-8) · 2026-07-22T10:00:00+09:00"
     assert conv.serialize_conversation(conv.parse_conversation(text)["turns"]) == text
-    assert "AI(claude-opus-4-8)" in conv.build_carryover_intro("p.m.0001.0001-CH", text)
 
 
 def test_provider_with_closing_paren_is_dropped_to_keep_header_parseable():
@@ -245,8 +247,8 @@ def test_localized_header_like_body_lines_are_escaped_in_any_language():
         assert parsed["turns"][0]["body"] == sneaky
 
 
-def test_carryover_preserves_user_locale_variant():
-    # Re-serializing the tail (§7) must keep an en/ja user turn in its language, not
+def test_serialize_preserves_user_locale_variant():
+    # Re-serializing turns must keep an en/ja user turn in its own language, not
     # collapse it to Korean.
     text = (
         "## 🧑 User · 2026-07-23T10:00:00+09:00\nhi\n\n"
@@ -254,39 +256,15 @@ def test_carryover_preserves_user_locale_variant():
     )
     again = conv.serialize_conversation(conv.parse_conversation(text)["turns"])
     assert again == text
-    intro = conv.build_carryover_intro("flowgate.default.0306.0001-CH", text, keep_turns=2)
-    assert "## 🧑 User · " in intro and "## 🧑 ユーザー · " in intro
 
 
-# ── §7: carry-over threshold / tail ───────────────────────────────────────────
-def test_should_carry_over_at_80_percent():
-    assert conv.should_carry_over(80, 100) is True
-    assert conv.should_carry_over(79, 100) is False
-    assert conv.should_carry_over(100, 100) is True
-    assert conv.should_carry_over(10, 0) is False  # guard: no cap
-
-
-def test_tail_turns_returns_most_recent():
-    turns = [
-        conv.Turn(speaker="user", ts=f"2026-06-14T10:00:{i:02d}+09:00", body=f"turn {i}")
-        for i in range(5)
-    ]
-    text = conv.serialize_conversation(turns)
-    tail = conv.tail_turns(text, keep_turns=2)
-    assert [t["body"] for t in tail] == ["turn 3", "turn 4"]
-    assert conv.tail_turns(text, keep_turns=0) == []
-
-
-def test_build_carryover_intro_carries_recent_turns():
-    turns = [
-        conv.Turn(speaker="user", ts=f"2026-06-14T10:00:{i:02d}+09:00", body=f"turn {i}")
-        for i in range(4)
-    ]
-    text = conv.serialize_conversation(turns)
-    intro = conv.build_carryover_intro("flowgate.default.0044.0010-CH", text, keep_turns=2)
-    assert "continued from flowgate.default.0044.0010-CH" in intro
-    assert "turn 3" in intro and "turn 2" in intro
-    assert "turn 0" not in intro
+def test_carryover_helpers_are_retired():
+    # Group 0351 T5 (D0002 §3-6): the byte-cap carry-over is removed — turns
+    # accumulate in the shared append-only store instead of a wholesale-rewritten
+    # file body, so this rollover machinery no longer exists on the module.
+    for name in ("should_carry_over", "tail_turns", "build_carryover_intro",
+                 "CARRYOVER_RATIO", "CARRYOVER_KEEP_TURNS", "content_byte_len"):
+        assert not hasattr(conv, name), f"conversation.{name} should have been removed"
 
 
 # ── §2: type registration ─────────────────────────────────────────────────────

@@ -33,11 +33,9 @@ from config import settings
 router = APIRouter(prefix="/api/v1", tags=["TokenIssue"])
 
 # Wire scopes accepted on the request, and the TOKEN scope each one is minted under.
-# Only "chat" differs from its own name: it is a mention selector layered on an edit
-# grant (0293). Kept in the same shape as ai_invoke_routes._TOKEN_SCOPE on purpose —
-# the two chat paths must agree on both the grant and the mention.
+# Chat has a dedicated append-only grant; its wire scope also selects the compact mention.
 _WIRE_SCOPES = ("new", "edit", "chat", "resolve_conflict")
-_WIRE_TOKEN_SCOPE = {"chat": "edit"}
+_WIRE_TOKEN_SCOPE = {"chat": "chat"}
 
 
 class TokenIssueRequest(BaseModel):
@@ -45,9 +43,7 @@ class TokenIssueRequest(BaseModel):
     module: Optional[str] = None
     group: str
     # "new" | "edit" | "chat" | "resolve_conflict" | null → auto-determined (T244 §1-2).
-    # "chat" is a MENTION scope, not a grant: it mints an ordinary edit token and only
-    # swaps the mention for the compact CH one (0293 — same rule as
-    # ai_invoke_routes._TOKEN_SCOPE, which has mapped "chat"→"edit" since group 0223).
+    # "chat" mints the dedicated append-only conversation grant.
     action_scope: Optional[str] = None
     doc_ref: Optional[str] = None
     selected_docs: Optional[list] = None  # T384: selected document list (for mention reference doc inclusion)
@@ -184,6 +180,7 @@ def issue_token(
             module=body.module,
             group_name=canonical_group_id,
             raw_token=result["raw_token"],
+            token_id=result["token_id"],
             api_base_url=_build_api_base(request),
         )
     else:
