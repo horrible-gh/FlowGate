@@ -110,7 +110,30 @@ describe('aiInvokeRuns store', () => {
     expect(run.providerSwitches).toHaveLength(1)
     expect(run.providerSwitches[0].reason).toBe('fast_fail')
     expect(run.reachedDocIds).toEqual(['flowgate.default.1001.0002-TR'])
+    expect(run.chainDocsReached).toBe(1) // legacy payload falls back to run progress
     expect(run.finishedPayload?.last_message).toBe('done')
+  })
+
+  it('keeps chain progress when a continuous hop starts with a new run id', () => {
+    const groupId = 'flowgate.default.0357'
+    store.trackStarted({
+      run_id: 'run-hop-1', group_id: groupId, mode: 'continuous',
+      docs_target: 5, chain_id: 'run-hop-1',
+      chain_docs_target: 5, chain_docs_reached: 0,
+    })
+    store.trackStarted({
+      run_id: 'run-hop-2', group_id: groupId, mode: 'continuous',
+      docs_target: 4, chain_id: 'run-hop-1',
+      chain_docs_target: 5, chain_docs_reached: 1,
+    })
+
+    const run = store.runsByGroup[groupId]
+    expect(run.runId).toBe('run-hop-2')
+    expect(run.docsTarget).toBe(4)
+    expect(run.docsReachedSoFar).toBe(0)
+    expect(run.chainId).toBe('run-hop-1')
+    expect(run.chainDocsTarget).toBe(5)
+    expect(run.chainDocsReached).toBe(1)
   })
 
   it('normalizes registration diagnostics from a finished payload', () => {

@@ -44,8 +44,8 @@
               <span class="airm-row-meta">
                 {{ stateLabel(entry) }}
                 <template v-if="entry.provider?.name"> · {{ entry.provider.name }}</template>
-                <template v-if="entry.docsTarget > 1">
-                  · {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: entry.docsTarget }) }}
+                <template v-if="targetFor(entry) > 1">
+                  · {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: targetFor(entry) }) }}
                 </template>
               </span>
             </span>
@@ -125,7 +125,14 @@ function modeLabel(entry: AiInvokeRunEntry): string {
     : t('main.ai_miniplayer.mode_single')
 }
 
+function targetFor(entry: AiInvokeRunEntry): number {
+  const chainTarget = Number(entry.chainDocsTarget)
+  return Number.isFinite(chainTarget) ? chainTarget : entry.docsTarget
+}
+
 function reachedFor(entry: AiInvokeRunEntry): number {
+  const chainReached = Number(entry.chainDocsReached)
+  if (Number.isFinite(chainReached)) return chainReached
   return entry.phase === 'finished' || entry.phase === 'paused'
     ? Math.max(entry.docsReached, entry.docsReachedSoFar)
     : entry.docsReachedSoFar
