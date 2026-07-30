@@ -64,6 +64,48 @@ def test_investigation_report_mention_keeps_remote_source_read_only():
     assert "remove" not in section
 
 
+def test_investigation_report_mention_read_only_note_follows_locale():
+    """The read-only step advertises the read tools, and says so in the worker's locale.
+
+    0349 moved the "do not call write/remove" prose behind GET /help/tools (NOTES.read_only),
+    so what the mention itself must still get right per locale is the tool line and the help
+    pointer around it — assert those instead of the retired sentence (B0001 rev2 intent).
+    """
+    section_en = _tool_section(
+        _mention(parent_type="N", parent_doc_number="N0002", head_type="NR", locale="en")
+    )
+    assert "Tools: read, grep, glob, stat" in section_en
+    assert "write" not in section_en
+    assert "remove" not in section_en
+
+    section_ja = _tool_section(
+        _mention(parent_type="N", parent_doc_number="N0002", head_type="NR", locale="ja")
+    )
+    assert "ツール: read, grep, glob, stat" in section_ja
+    assert "write" not in section_ja
+    assert "remove" not in section_ja
+
+
+def test_task_report_mention_crud_prose_follows_locale():
+    """Every line the shrunk section still carries follows the worker's locale.
+
+    The guide prose this used to assert (intro / paths / after_write) moved into the
+    /help/tools notes with 0349; the surviving mention lines come from
+    tool_registry.MENTION_LINES, so the locale guarantee is asserted against those.
+    """
+    ko = _tool_section(_mention(locale="ko"))
+    assert "첫 행동으로 GET" in ko
+    assert "도구별 상세: GET" in ko
+
+    en = _tool_section(_mention(locale="en"))
+    assert "As your first action, call GET" in en
+    assert "Per-tool detail: GET" in en
+
+    ja = _tool_section(_mention(locale="ja"))
+    assert "最初の行動として GET" in ja
+    assert "ツール別の詳細: GET" in ja
+
+
 def test_mention_no_longer_carries_request_formats():
     """The shrink itself (R0001): one block per tool is what made the mention unreadable.
 

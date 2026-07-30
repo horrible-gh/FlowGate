@@ -46,8 +46,9 @@ def list_document_types(
         cond_params.append(series)
     cond = " AND ".join(cond_parts)
 
-    # locale param goes first. project_id params drive the active template lookup.
-    params: list = [locale, project_id, project_id, project_id, project_id] + cond_params
+    # locale param goes first (once for type_name, once for description). project_id
+    # params drive the active template lookup.
+    params: list = [locale, locale, project_id, project_id, project_id, project_id] + cond_params
     sql = f"""
         SELECT dt.id,
                dt.project_id,
@@ -66,6 +67,13 @@ def list_document_types(
                     WHERE  dtn.document_type_id = dt.id AND dtn.locale = 'ko'),
                    dt.type_code
                ) AS type_name,
+               COALESCE(
+                   (SELECT dtd.description FROM document_type_descriptions dtd
+                    WHERE  dtd.document_type_id = dt.id AND dtd.locale = ?),
+                   (SELECT dtd.description FROM document_type_descriptions dtd
+                    WHERE  dtd.document_type_id = dt.id AND dtd.locale = 'ko'),
+                   dt.description
+               ) AS description,
                (
                    SELECT dtt.template_path
                    FROM   document_type_templates dtt
@@ -120,8 +128,8 @@ def create_document_type(data: dict[str, Any]) -> dict:
     )
     # Store localized name in document_type_names if provided
     type_name = data.get("type_name")
+    locale = data.get("locale", "ko")
     if type_name and row:
-        locale = data.get("locale", "ko")
         try:
             store._execute(
                 "INSERT INTO document_type_names (document_type_id, locale, type_name)"
@@ -132,13 +140,27 @@ def create_document_type(data: dict[str, Any]) -> dict:
             )
         except Exception:
             pass  # document_type_names may not exist in legacy environments
+    # Store localized description in document_type_descriptions if provided
+    description = data.get("description")
+    if description and row:
+        try:
+            store._execute(
+                "INSERT INTO document_type_descriptions (document_type_id, locale, description)"
+                " VALUES (?, ?, ?)"
+                " ON CONFLICT(document_type_id, locale) DO UPDATE SET"
+                " description = excluded.description",
+                [row["id"], locale, description],
+            )
+        except Exception:
+            pass  # document_type_descriptions may not exist in legacy environments
     return row  # type: ignore[return-value]
 
 
 def update_document_type(id: int, updates: dict[str, Any]) -> Optional[dict]:
     store = get_store()
-    # Extract type_name before building the SQL to avoid updating a removed column
+    # Extract type_name/description before building the SQL to avoid updating removed columns
     type_name = updates.pop("type_name", None)
+    description = updates.pop("description", None)
     locale = updates.pop("locale", "ko")
     updates = {k: v for k, v in updates.items() if k not in ("id", "created_at")}
     updates["updated_at"] = now_iso()
@@ -158,6 +180,17 @@ def update_document_type(id: int, updates: dict[str, Any]) -> Optional[dict]:
             )
         except Exception:
             pass  # document_type_names may not exist in legacy environments
+    if description:
+        try:
+            store._execute(
+                "INSERT INTO document_type_descriptions (document_type_id, locale, description)"
+                " VALUES (?, ?, ?)"
+                " ON CONFLICT(document_type_id, locale) DO UPDATE SET"
+                " description = excluded.description",
+                [id, locale, description],
+            )
+        except Exception:
+            pass  # document_type_descriptions may not exist in legacy environments
     return get_document_type(id)
 
 

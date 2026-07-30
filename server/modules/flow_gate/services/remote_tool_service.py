@@ -43,6 +43,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import token_service
 from modules.flow_gate.storage.paths import src_root
+from modules.flow_gate import template_provision
 from modules.flow_gate.storage.safe_path import (
     is_safe_relative,
     resolve_in_root,
@@ -448,7 +449,6 @@ def _validate_required(op: str, body: dict) -> None:
             raise _OpError(
                 422,
                 details={"reason": "no_op_edit"},
-                message="old_string과 new_string이 동일합니다.",
             )
         _validate_encoding(body)
     elif op == "stat":
@@ -883,7 +883,6 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         raise _OpError(
             404,
             details={"reason": "no_match", "match_count": 0, "path": body["path"]},
-            message="old_string과 일치하는 내용을 찾지 못했습니다 (0건).",
         )
     if match_count >= 2 and not replace_all:
         raise _OpError(
@@ -893,10 +892,6 @@ def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
                 "match_count": match_count,
                 "path": body["path"],
             },
-            message=(
-                f"old_string이 {match_count}곳에서 일치합니다. 앞뒤 문맥을 포함해 "
-                "유일하게 만들거나 replace_all=true를 지정하세요."
-            ),
         )
 
     if replace_all:
@@ -1156,24 +1151,114 @@ def _envelope(
     return env
 
 
+# Generic per-status envelope text (P0005 §6), one set per worker display locale
+# (0355 T0015: this dict used to carry only Korean text regardless of the worker's
+# requested locale — the 7 status codes below were always rendered in Korean even
+# when the calling worker's continuation_locale was ja/en).
 _ERROR_MESSAGES = {
-    401: "토큰이 없거나 유효하지 않습니다.",
-    403: "해당 작업을 수행할 권한이 없습니다.",
-    404: "대상 경로를 찾을 수 없습니다.",
-    409: "대상 파일이 이미 존재합니다 (mode=create).",
-    413: "요청 또는 대상 크기가 허용치를 초과했습니다.",
-    422: "요청 형식이 올바르지 않습니다.",
-    503: "서버가 일시적으로 요청을 처리할 수 없습니다.",
+    "ko": {
+        401: "토큰이 없거나 유효하지 않습니다.",
+        403: "해당 작업을 수행할 권한이 없습니다.",
+        404: "대상 경로를 찾을 수 없습니다.",
+        409: "대상 파일이 이미 존재합니다 (mode=create).",
+        413: "요청 또는 대상 크기가 허용치를 초과했습니다.",
+        422: "요청 형식이 올바르지 않습니다.",
+        503: "서버가 일시적으로 요청을 처리할 수 없습니다.",
+    },
+    "en": {
+        401: "The token is missing or invalid.",
+        403: "You do not have permission to perform this operation.",
+        404: "The target path could not be found.",
+        409: "The target file already exists (mode=create).",
+        413: "The request or target size exceeds the allowed limit.",
+        422: "The request format is invalid.",
+        503: "The server is temporarily unable to process the request.",
+    },
+    "ja": {
+        401: "トークンが存在しないか無効です。",
+        403: "この操作を行う権限がありません。",
+        404: "対象のパスが見つかりません。",
+        409: "対象のファイルは既に存在します (mode=create)。",
+        413: "リクエストまたは対象のサイズが許容範囲を超えています。",
+        422: "リクエストの形式が正しくありません。",
+        503: "サーバーが一時的にリクエストを処理できません。",
+    },
 }
 
 
-def _fail_envelope(op: str, status: int) -> dict:
+_CUSTOM_ERROR_MESSAGES = {
+    "no_op_edit": {
+        "ko": "old_string과 new_string이 동일합니다.",
+        "en": "old_string and new_string must be different.",
+        "ja": "old_string と new_string は異なる値にしてください。",
+    },
+    "no_match": {
+        "ko": "old_string과 일치하는 내용을 찾지 못했습니다 (0건).",
+        "en": "No content matching old_string was found (0 matches).",
+        "ja": "old_string に一致する内容が見つかりませんでした (0件)。",
+    },
+    "multiple_matches": {
+        "ko": "old_string이 {match_count}곳에서 일치합니다. 앞뒤 문맥을 포함해 유일하게 만들거나 replace_all=true를 지정하세요.",
+        "en": "old_string matches {match_count} locations. Include surrounding context to make it unique, or set replace_all=true.",
+        "ja": "old_string は {match_count} 箇所に一致します。前後の文脈を含めて一意にするか、replace_all=true を指定してください。",
+    },
+}
+
+_CONTINUATION_MESSAGES = {
+    "ko": {
+        "with_report": "작업을 완료했습니다. 변경 내용을 레포트({report_doc_id})에 이어 정리해 제출을 계속해 주세요.",
+        "without_report": "작업을 완료했습니다. 변경 내용을 작업 레포트(TR)로 정리해 제출을 이어가 주세요.",
+    },
+    "en": {
+        "with_report": "The operation is complete. Continue by documenting and submitting the changes in report {report_doc_id}.",
+        "without_report": "The operation is complete. Continue by documenting and submitting the changes in a task report (TR).",
+    },
+    "ja": {
+        "with_report": "作業が完了しました。変更内容をレポート({report_doc_id})にまとめ、提出を続けてください。",
+        "without_report": "作業が完了しました。変更内容を作業レポート(TR)にまとめ、提出を続けてください。",
+    },
+}
+
+
+def _locale_for_grant(grant: Optional[dict]) -> str:
+    """Worker display locale for a resolved grant, or the ko fallback.
+
+    Mirrors mention_service's continuation_locale convention: a worker grant is
+    backed by an inbox token carrying `continuation_locale` (set from the
+    unmanned chain's chosen locale, group 0099 B0001), so the error envelope
+    should match the same language the worker's mentions are already in. A
+    grant with no backing token (legacy / non-worker grant, or auth failure
+    where `grant` is None) has no locale signal, so it falls back to ko —
+    unchanged prior behavior.
+    """
+    if grant is None:
+        return template_provision.FALLBACK_LOCALE
+    token_rec = _worker_token_for_grant(grant)
+    if not token_rec:
+        return template_provision.FALLBACK_LOCALE
+    return template_provision.normalize_locale(token_rec.get("continuation_locale"))
+
+
+def _fail_envelope(op: str, status: int, locale: str = "ko") -> dict:
     code = ERROR_CODE_BY_STATUS[status]
+    messages = _ERROR_MESSAGES.get(locale) or _ERROR_MESSAGES[template_provision.FALLBACK_LOCALE]
     return _envelope(
         False,
         op,
-        error={"code": code, "message": _ERROR_MESSAGES.get(status, code)},
+        error={"code": code, "message": messages.get(status, code)},
     )
+
+
+def _op_error_message(exc: _OpError, locale: str) -> str:
+    code = ERROR_CODE_BY_STATUS[exc.status]
+    messages = _ERROR_MESSAGES.get(locale) or _ERROR_MESSAGES[template_provision.FALLBACK_LOCALE]
+    reason = (exc.details or {}).get("reason")
+    custom = _CUSTOM_ERROR_MESSAGES.get(reason, {}).get(locale)
+    if custom:
+        return custom.format(**(exc.details or {}))
+    if exc.message and (locale == "ko" or not re.search(r"[가-힣]", exc.message)):
+        return exc.message
+    return messages.get(exc.status, code)
 
 
 def _log_targets(op: str, body: dict) -> tuple[Optional[str], Optional[str]]:
@@ -1218,16 +1303,12 @@ def _log(
         pass
 
 
-def _continuation(grant: dict) -> dict:
-    """⑦ — completion ment for state-changing success (P0005 §5 / L0006 §6.2)."""
+def _continuation(grant: dict, locale: str = "ko") -> dict:
+    """⑦ — locale-safe completion ment for mutation success (P0005 §5 / L0006 §6.2)."""
     report_doc_id = grant.get("report_doc_id")
-    if report_doc_id:
-        ment = (
-            f"작업을 완료했습니다. 변경 내용을 레포트({report_doc_id})에 이어 "
-            "정리해 제출을 계속해 주세요."
-        )
-    else:
-        ment = "작업을 완료했습니다. 변경 내용을 작업 레포트(TR)로 정리해 제출을 이어가 주세요."
+    copy = _CONTINUATION_MESSAGES.get(locale) or _CONTINUATION_MESSAGES["ko"]
+    key = "with_report" if report_doc_id else "without_report"
+    ment = copy[key].format(report_doc_id=report_doc_id)
     return {"ment": ment, "report_doc_id": report_doc_id, "next_action": "write_report"}
 
 
@@ -1246,9 +1327,11 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
     if grant is None:
         return 401, _fail_envelope(op, 401)
 
+    locale = _locale_for_grant(grant)
+
     # Unknown operation name: no scope mapping + cannot be stored in the op enum, so not logged → 422.
     if op not in OP_SCOPE:
-        return 422, _fail_envelope(op, 422)
+        return 422, _fail_envelope(op, 422, locale)
 
     log_path, log_pattern = _log_targets(op, body)
     try:
@@ -1276,22 +1359,22 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
             code = ERROR_CODE_BY_STATUS[exc.status]
             error = {
                 "code": code,
-                "message": exc.message or _ERROR_MESSAGES.get(exc.status, code),
+                "message": _op_error_message(exc, locale),
             }
             if exc.details is not None:
                 error["details"] = exc.details
             return exc.status, _envelope(False, op, error=error)
-        return exc.status, _fail_envelope(op, exc.status)
+        return exc.status, _fail_envelope(op, exc.status, locale)
     except OSError:
         # Unexpected I/O failure → 503 unavailable (logged to history).
         _log(grant, op, log_path, log_pattern, status=503)
-        return 503, _fail_envelope(op, 503)
+        return 503, _fail_envelope(op, 503, locale)
     except Exception:
         # Trap every other unexpected exception in the envelope so it cannot leak to the
         # router as a bare 500 — since the attempt passed authentication, ⑥ history is also
         # recorded ('every response = P0005 envelope' contract).
         _log(grant, op, log_path, log_pattern, status=503)
-        return 503, _fail_envelope(op, 503)
+        return 503, _fail_envelope(op, 503, locale)
 
     # ⑥ Success history
     _log(grant, op, log_path, log_pattern, status=200, bytes_processed=nbytes)
@@ -1304,7 +1387,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
     if op in _MUTATING_OPS:
         _emit_explorer_refresh(grant, op)
     # ⑦ Completion ment — only on successful state-changing operations (L0006 §6.1).
-    continuation = _continuation(grant) if op in _MUTATING_OPS else None
+    continuation = _continuation(grant, locale) if op in _MUTATING_OPS else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
 
 

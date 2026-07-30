@@ -1126,7 +1126,7 @@
         <div class="modal-box modal-lg git-archive-modal" role="dialog" aria-modal="true">
           <div class="modal-hd">
             <span class="modal-title">
-              <AppIcon name="archive" /> {{ gitArchiveCopy.title }}
+              <AppIcon name="archive" /> {{ t('main.git_archive_panel.title') }}
               <span class="badge badge-yellow">{{ gitArchives.length }}</span>
             </span>
             <button class="modal-close" type="button" :disabled="gitArchiveBusy" @click="closeGitArchive">
@@ -1136,19 +1136,19 @@
           <div class="modal-bd git-archive-body">
             <div class="git-archive-intro">
               <AppIcon name="arrow-counter-clockwise" />
-              <span>{{ gitArchiveCopy.intro }}</span>
+              <span>{{ t('main.git_archive_panel.intro') }}</span>
             </div>
             <div v-if="gitArchiveLoading" class="git-archive-state">
-              <AppIcon name="spinner" spin /> {{ gitArchiveCopy.loading }}
+              <AppIcon name="spinner" spin /> {{ t('main.git_archive_panel.loading') }}
             </div>
             <div v-else-if="gitArchiveError" class="git-archive-state git-archive-state--error">
               {{ gitArchiveError }}
               <button class="btn btn-secondary btn-sm" type="button" @click="fetchGitArchives">
-                {{ gitArchiveCopy.retry }}
+                {{ t('main.git_archive_panel.retry') }}
               </button>
             </div>
             <div v-else-if="gitArchives.length === 0" class="git-archive-state">
-              {{ gitArchiveCopy.empty }}
+              {{ t('main.git_archive_panel.empty') }}
             </div>
             <div v-else class="git-archive-list">
               <article v-for="item in gitArchives" :key="item.group_id" class="git-archive-row">
@@ -1157,21 +1157,21 @@
                   type="checkbox"
                   :value="item.group_id"
                   :disabled="gitArchiveBusy || item.status !== 'archived'"
-                  :title="gitArchiveCopy.pick"
+                  :title="t('main.git_archive_panel.pick')"
                 />
                 <div class="git-archive-row__body">
                   <strong>
                     {{ item.group_id }}: {{ item.title }}
-                    <span class="badge badge-gray">{{ gitArchiveCopy.archived }}</span>
+                    <span class="badge badge-gray">{{ t('main.git_archive_panel.archived') }}</span>
                   </strong>
                   <span class="git-archive-branch">{{ item.branch }}</span>
                   <span>
                     {{ formatGitArchiveTime(item.archived_at) }} ·
-                    {{ gitArchiveCopy.commits }} {{ item.commit_count ?? 0 }} ·
-                    {{ gitArchiveCopy.files }} {{ item.changed_file_count ?? 0 }} ·
-                    {{ gitArchiveCopy.base }} <code class="git-archive-sha">{{ shortGitSha(item.base_sha) }}</code>
+                    {{ t('main.git_archive_panel.commits') }} {{ item.commit_count ?? 0 }} ·
+                    {{ t('main.git_archive_panel.files') }} {{ item.changed_file_count ?? 0 }} ·
+                    {{ t('main.git_archive_panel.base') }} <code class="git-archive-sha">{{ shortGitSha(item.base_sha) }}</code>
                   </span>
-                  <span v-if="item.reason" class="git-archive-reason">{{ gitArchiveCopy.reason }}: {{ item.reason }}</span>
+                  <span v-if="item.reason" class="git-archive-reason">{{ t('main.git_archive_panel.reason') }}: {{ item.reason }}</span>
                   <code class="git-archive-refs">
                     {{ item.head_ref }} → {{ shortGitSha(item.head_sha) }}
                     <template v-if="item.stash_ref"><br />{{ item.stash_ref }} → {{ shortGitSha(item.stash_sha) }}</template>
@@ -1183,16 +1183,16 @@
                   :disabled="gitArchiveBusy || item.status !== 'archived'"
                   @click="restoreGitArchive(item)"
                 >
-                  <AppIcon name="arrow-counter-clockwise" /> {{ gitArchiveCopy.restore }}
+                  <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_archive_panel.restore') }}
                 </button>
               </article>
             </div>
             <div v-if="gitArchives.length" class="git-archive-purge">
-              <strong><AppIcon name="warning" /> {{ gitArchiveCopy.purgeTitle }}</strong>
-              <p>{{ gitArchiveCopy.purgeDesc }}</p>
+              <strong><AppIcon name="warning" /> {{ t('main.git_archive_panel.purge_title') }}</strong>
+              <p>{{ t('main.git_archive_panel.purge_desc') }}</p>
               <label>
                 <input v-model="gitArchivePurgeConfirmed" type="checkbox" :disabled="gitArchiveBusy" />
-                {{ gitArchiveCopy.purgeConfirm }}
+                {{ t('main.git_archive_panel.purge_confirm') }}
               </label>
               <button
                 class="btn btn-danger btn-sm"
@@ -1200,13 +1200,13 @@
                 :disabled="gitArchiveBusy || !gitArchivePurgeConfirmed || gitArchivePicked.length === 0"
                 @click="purgeGitArchives"
               >
-                <AppIcon name="trash" /> {{ gitArchiveCopy.purge }} ({{ gitArchivePicked.length }})
+                <AppIcon name="trash" /> {{ t('main.git_archive_panel.purge') }} ({{ gitArchivePicked.length }})
               </button>
             </div>
           </div>
           <div class="modal-ft">
             <button class="btn btn-ghost btn-sm" type="button" :disabled="gitArchiveBusy" @click="closeGitArchive">
-              {{ gitArchiveCopy.close }}
+              {{ t('main.git_archive_panel.close') }}
             </button>
           </div>
         </div>
@@ -1294,58 +1294,7 @@ import QTDetailViewer from './QTDetailViewer.vue'
 import DocInfoPanel from './DocInfoPanel.vue'
 import ConversationView from './ConversationView.vue'
 
-const { t, locale, mergeLocaleMessage } = useI18n()
-
-// The approved archive action is delivered in this scoped two-file change. Add
-// the server-driven action labels to the global composer before child finalize
-// controls render; existing locale files remain backward-compatible.
-const gitArchiveFinalizeMessages: Record<string, any> = {
-  ko: {
-    main: { git_finalize: { archive: {
-      zone_title: '반영하지 않고 치우기', reversible: '되돌릴 수 있음',
-      choice: '보관하기', new_badge: '신규',
-      choice_desc: '변경사항을 통째로 보존한 채, 이 그룹을 Git 관리 목록에서만 숨깁니다.',
-      summary: '현재 선택: 변경을 반영하지 않고 전용 ref에 보관한 뒤 그룹을 목록에서 숨깁니다.',
-      commits: '커밋 {n}개 보존', files: '미커밋 변경 {n}파일 보존', ref: '브랜치 ref 보존',
-      reason_label: '보관 사유 (선택)', reason_placeholder: '나중에 다시 볼 때 알 수 있도록 사유를 남겨 주세요.',
-      restore_hint: '지우는 동작이 아닙니다. 그룹·브랜치 목록에서는 사라지고 워크트리는 회수되지만, 보관함에서 복구하면 브랜치·워크트리·목록 노출이 보관 직전 상태로 되살아납니다.',
-      open: '보관함 열기 — 보관된 그룹 {n}개', execute: '보관하기', running: '보관 중…',
-      success: '변경을 전용 ref에 보존하고 그룹을 목록에서 숨겼습니다.',
-      approve_reversible: '보관함에서 복구 가능', approve_desc: '커밋·미커밋 변경을 보존한 채 목록에서만 숨깁니다.',
-    } } },
-  },
-  en: {
-    main: { git_finalize: { archive: {
-      zone_title: 'Put away without applying', reversible: 'Reversible',
-      choice: 'Archive', new_badge: 'New',
-      choice_desc: 'Preserve every change, then hide this group only from Git management lists.',
-      summary: 'Current choice: preserve changes in named refs and hide the group without applying them.',
-      commits: 'Preserve {n} commits', files: 'Preserve {n} uncommitted files', ref: 'Preserve branch ref',
-      reason_label: 'Archive reason (optional)', reason_placeholder: 'Leave context for when this work is revisited.',
-      restore_hint: 'Nothing is deleted. The group and branch disappear from lists and the worktree is released; Restore recreates all three from the archived refs.',
-      open: 'Open archive — {n} archived groups', execute: 'Archive', running: 'Archiving…',
-      success: 'Changes were preserved in named refs and the group was hidden.',
-      approve_reversible: 'Restorable from archive', approve_desc: 'Preserve committed and uncommitted changes and hide only from lists.',
-    } } },
-  },
-  ja: {
-    main: { git_finalize: { archive: {
-      zone_title: '反映せず片付ける', reversible: '元に戻せます',
-      choice: '保管する', new_badge: '新規',
-      choice_desc: '変更をすべて保存したまま、このグループをGit管理一覧からのみ非表示にします。',
-      summary: '現在の選択: 変更を反映せず専用refに保管し、グループを一覧から非表示にします。',
-      commits: 'コミット{n}件を保存', files: '未コミット{n}ファイルを保存', ref: 'ブランチrefを保存',
-      reason_label: '保管理由（任意）', reason_placeholder: '後で再開するときに分かる理由を残してください。',
-      restore_hint: '削除ではありません。一覧から非表示になりワークツリーは回収されますが、保管庫から復元するとブランチ・ワークツリー・一覧表示が元に戻ります。',
-      open: '保管庫を開く — {n}グループ', execute: '保管する', running: '保管中…',
-      success: '変更を専用refに保存し、グループを一覧から非表示にしました。',
-      approve_reversible: '保管庫から復元可能', approve_desc: 'コミット済み・未コミットの変更を保存し、一覧からのみ非表示にします。',
-    } } },
-  },
-}
-for (const [messageLocale, messages] of Object.entries(gitArchiveFinalizeMessages)) {
-  mergeLocaleMessage(messageLocale, messages)
-}
+const { t, locale } = useI18n()
 
 interface GitArchiveItem {
   status: 'archiving' | 'archived'
@@ -1377,46 +1326,6 @@ const gitArchivePurgeConfirmed = ref(false)
 // git_action before the next click.
 const reviewActionBarGitEpoch = ref(0)
 
-const gitArchiveCopies: Record<string, Record<string, string>> = {
-  ko: {
-    open: '보관함 열기', title: '보관함',
-    intro: '보관된 그룹은 목록에서만 숨겨집니다. 커밋과 미커밋 변경은 전용 ref에 남으며 복구하면 브랜치와 워크트리가 되살아납니다.',
-    loading: '보관함을 불러오는 중…', retry: '다시 시도', empty: '보관된 그룹이 없습니다.',
-    pick: '영구 삭제 대상으로 선택', archived: '보관됨', commits: '커밋', files: '미커밋 파일', base: 'base', reason: '사유',
-    restore: '복구', purgeTitle: '영구 삭제',
-    purgeDesc: '선택한 항목의 보존 ref를 제거합니다. 이 작업만 되돌릴 수 없습니다.',
-    purgeConfirm: '보관된 변경이 영구히 삭제된다는 것을 확인했습니다.',
-    purge: '선택 항목 영구 삭제', close: '닫기', restored: '그룹을 보관 직전 상태로 복구했습니다.',
-    purged: '선택한 보관 항목을 영구 삭제했습니다.', failed: 'Git 보관함 작업에 실패했습니다.',
-  },
-  en: {
-    open: 'Open archive', title: 'Archive',
-    intro: 'Archived groups are only hidden from lists. Named refs retain committed and uncommitted changes; restore recreates the branch and worktree.',
-    loading: 'Loading archive…', retry: 'Retry', empty: 'No archived groups.',
-    pick: 'Select for permanent deletion', archived: 'Archived', commits: 'commits', files: 'uncommitted files', base: 'base', reason: 'Reason',
-    restore: 'Restore', purgeTitle: 'Permanent deletion',
-    purgeDesc: 'Remove the preserved refs for selected items. Only this operation cannot be undone.',
-    purgeConfirm: 'I understand the archived changes will be deleted permanently.',
-    purge: 'Delete selected permanently', close: 'Close', restored: 'The group was restored to its pre-archive state.',
-    purged: 'The selected archives were permanently deleted.', failed: 'The Git archive operation failed.',
-  },
-  ja: {
-    open: '保管庫を開く', title: '保管庫',
-    intro: '保管したグループは一覧からのみ非表示になります。コミット済み・未コミットの変更は専用refに残り、復元するとブランチとワークツリーが戻ります。',
-    loading: '保管庫を読み込み中…', retry: '再試行', empty: '保管されたグループはありません。',
-    pick: '完全削除の対象に選択', archived: '保管済み', commits: 'コミット', files: '未コミットファイル', base: 'base', reason: '理由',
-    restore: '復元', purgeTitle: '完全削除',
-    purgeDesc: '選択項目の保存refを削除します。この操作だけは元に戻せません。',
-    purgeConfirm: '保管した変更が完全に削除されることを確認しました。',
-    purge: '選択項目を完全削除', close: '閉じる', restored: 'グループを保管直前の状態に復元しました。',
-    purged: '選択した保管項目を完全に削除しました。', failed: 'Git保管庫の操作に失敗しました。',
-  },
-}
-const gitArchiveCopy = computed(() => {
-  const key = String(locale.value || 'ko').toLowerCase().split('-')[0]
-  return gitArchiveCopies[key] ?? gitArchiveCopies.ko
-})
-
 function gitArchiveProject(groupId: string): string {
   return (groupId || '').split('.', 1)[0] || projectStore.currentProjectId || ''
 }
@@ -1425,7 +1334,7 @@ function gitArchiveFailure(error: any): string {
   return error?.response?.data?.error?.message
     || error?.response?.data?.detail
     || error?.message
-    || gitArchiveCopy.value.failed
+    || t('main.git_archive_panel.failed')
 }
 
 async function openGitArchive(groupId: string) {
@@ -1491,7 +1400,7 @@ async function restoreGitArchive(item: GitArchiveItem) {
   gitArchiveError.value = ''
   try {
     await postRequest(`/api/v1/groups/${encodeURIComponent(item.group_id)}/git/archive/restore`, {})
-    showToast(gitArchiveCopy.value.restored, 'success')
+    showToast(t('main.git_archive_panel.restored'), 'success')
     await Promise.all([fetchGitArchives(), refreshAfterGitArchive()])
   } catch (error: any) {
     gitArchiveError.value = gitArchiveFailure(error)
@@ -1515,7 +1424,7 @@ async function purgeGitArchives() {
     }
     gitArchivePicked.value = []
     gitArchivePurgeConfirmed.value = false
-    showToast(gitArchiveCopy.value.purged, 'success')
+    showToast(t('main.git_archive_panel.purged'), 'success')
     await Promise.all([fetchGitArchives(), refreshAfterGitArchive()])
   } catch (error: any) {
     gitArchiveError.value = gitArchiveFailure(error)

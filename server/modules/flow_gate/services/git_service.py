@@ -97,7 +97,7 @@ BOILERPLATE_BLACKLIST = frozenset({
 })
 # ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
 # Default subject for an explicit base-checkout commit: "fix: a.py, b.py", or the
-# abbreviated "fix: a.py 외 N건" when the joined list overflows COMMIT_SUBJECT_MAX.
+# abbreviated "fix: a.py and N more" when the joined list overflows COMMIT_SUBJECT_MAX.
 BASE_COMMIT_MSG_PREFIX = "fix: "
 BASE_COMMIT_MSG_JOINER = ", "
 ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
@@ -4739,14 +4739,14 @@ def default_base_commit_message(files: list[str]) -> str:
     """Deterministic default subject for a base-checkout commit (L0002 §2.2).
 
     "fix: a.py, b.py"; when the joined list overflows COMMIT_SUBJECT_MAX the
-    abbreviated "fix: a.py 외 N건" is used (hard-cut as a last resort so the
+    abbreviated "fix: a.py and N more" is used (hard-cut as a last resort so the
     result is always a valid subject). The FE seeds its input with the same
     rule, so either side may materialize the message with identical output.
     """
     subject = BASE_COMMIT_MSG_PREFIX + BASE_COMMIT_MSG_JOINER.join(files)
     if len(subject) <= COMMIT_SUBJECT_MAX:
         return subject
-    subject = f"{BASE_COMMIT_MSG_PREFIX}{files[0]} 외 {len(files) - 1}건"
+    subject = f"{BASE_COMMIT_MSG_PREFIX}{files[0]} and {len(files) - 1} more"
     return subject[:COMMIT_SUBJECT_MAX]
 
 

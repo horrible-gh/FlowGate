@@ -56,17 +56,37 @@ class TestCaseParseError(ValueError):
         self.detail = detail
 
 
+# T0009: TS 문법의 영어 별칭. 파서는 아래 두 이름을 모두 받고, 필드명도 별칭으로
+# 정규화해서 이후 로직(예: fields.get("기대", "")) 은 그대로 한국어 키를 쓴다.
+TEST_CASES_SECTION_NAMES = ("테스트 케이스", "Test Cases")
+SETUP_SECTION_NAMES = ("테스트 준비", "Setup")
+TEARDOWN_SECTION_NAMES = ("테스트 정리", "Teardown")
+
+_FIELD_ALIASES = {
+    "expect": "기대",
+    "expected": "기대",
+    "start": "기동",
+    "wait": "대기",
+}
+_DISPLAY_FIELD = {"기대": "expect", "기동": "start", "대기": "wait"}
+
+
+def _normalize_field(field: str) -> str:
+    return _FIELD_ALIASES.get(field.strip().lower(), field.strip())
+
+
 def parse_test_cases(content: str) -> list[dict]:
     lines = (content or "").splitlines()
+    headings = {f"## {name}" for name in TEST_CASES_SECTION_NAMES}
     section_start: Optional[int] = None
     for idx, line in enumerate(lines):
-        if line.strip() == "## 테스트 케이스":
+        if line.strip() in headings:
             section_start = idx + 1
             break
     if section_start is None:
         raise TestCaseParseError(
             "no_test_cases",
-            "No '## 테스트 케이스' section or zero valid case blocks.",
+            "No '## Test Cases' section or zero valid case blocks.",
         )
 
     section: list[str] = []
@@ -92,7 +112,7 @@ def parse_test_cases(content: str) -> list[dict]:
     if not blocks:
         raise TestCaseParseError(
             "no_test_cases",
-            "No '## 테스트 케이스' section or zero valid case blocks.",
+            "No '## Test Cases' section or zero valid case blocks.",
         )
     if len(blocks) > MAX_CASES_PER_TS:
         raise TestCaseParseError(
@@ -121,7 +141,7 @@ def parse_test_cases(content: str) -> list[dict]:
         for line in block_lines:
             m = field_re.match(line.strip())
             if m:
-                fields[m.group(1).strip()] = m.group(2).strip()
+                fields[_normalize_field(m.group(1))] = m.group(2).strip()
         cmd = _strip_wrapping_backticks(fields.get("cmd", "")).strip()
         expect = fields.get("기대", "").strip()
         if not cmd:
@@ -134,7 +154,7 @@ def parse_test_cases(content: str) -> list[dict]:
             )
         if not expect:
             raise TestCaseParseError(
-                "invalid_case_block", f"{case_no}: required field '기대' missing"
+                "invalid_case_block", f"{case_no}: required field 'expect' missing"
             )
         cases.append(
             {
@@ -152,7 +172,7 @@ def parse_test_plan(content: str) -> dict:
     return {
         "setup": _parse_step_section(
             content,
-            "테스트 준비",
+            SETUP_SECTION_NAMES,
             allowed={"cmd": "setup", "기동": "service", "대기": "wait"},
             prefix="SETUP",
             max_steps=MAX_SETUP_STEPS,
@@ -160,7 +180,7 @@ def parse_test_plan(content: str) -> dict:
         "cases": parse_test_cases(content),
         "teardown": _parse_step_section(
             content,
-            "테스트 정리",
+            TEARDOWN_SECTION_NAMES,
             allowed={"cmd": "teardown"},
             prefix="CLEAN",
             max_steps=MAX_TEARDOWN_STEPS,
@@ -170,16 +190,20 @@ def parse_test_plan(content: str) -> dict:
 
 def _parse_step_section(
     content: str,
-    section_name: str,
+    section_names: tuple[str, ...],
     *,
     allowed: dict[str, str],
     prefix: str,
     max_steps: int,
 ) -> list[dict]:
-    section = _extract_h2_section(content, section_name)
+    section = _extract_h2_section(content, section_names)
     if section is None:
         return []
 
+    # Error output is locale-neutral English. Parser aliases may remain Korean
+    # internally, but must never leak into an en/ja API response.
+    section_name = section_names[-1]
+    allowed_display = "/".join(_DISPLAY_FIELD.get(k, k) for k in allowed)
     field_re = re.compile(r"^-\s*([^:]+):\s*(.*)$")
     steps: list[dict] = []
     service_count = 0
@@ -194,23 +218,24 @@ def _parse_step_section(
             raise TestCaseParseError(
                 "invalid_case_block",
                 f"{section_name}: step {len(steps) + 1} has no recognized field "
-                f"(allowed: {'/'.join(allowed.keys())})",
+                f"(allowed: {allowed_display})",
             )
-        field = m.group(1).strip()
+        field = _normalize_field(m.group(1))
         if field not in allowed:
-            if section_name == "테스트 정리":
-                detail = "테스트 정리: only 'cmd' is allowed"
+            if section_name == "Teardown":
+                detail = "Teardown: only 'cmd' is allowed"
             else:
                 detail = (
                     f"{section_name}: step {len(steps) + 1} has no recognized field "
-                    f"(allowed: {'/'.join(allowed.keys())})"
+                    f"(allowed: {allowed_display})"
                 )
             raise TestCaseParseError("invalid_case_block", detail)
         value = _strip_wrapping_backticks(m.group(2).strip()).strip()
         if not value:
+            display_field = _DISPLAY_FIELD.get(field, field)
             raise TestCaseParseError(
                 "invalid_case_block",
-                f"{section_name}: step {len(steps) + 1} has empty '{field}'",
+                f"{section_name}: step {len(steps) + 1} has empty '{display_field}'",
             )
         if "\n" in value or "\r" in value:
             raise TestCaseParseError(
@@ -240,12 +265,12 @@ def _parse_step_section(
     return steps
 
 
-def _extract_h2_section(content: str, section_name: str) -> Optional[list[str]]:
+def _extract_h2_section(content: str, section_names: tuple[str, ...]) -> Optional[list[str]]:
     lines = (content or "").splitlines()
     start: Optional[int] = None
-    header = f"## {section_name}"
+    headers = {f"## {name}" for name in section_names}
     for idx, line in enumerate(lines):
-        if line.strip() == header:
+        if line.strip() in headers:
             start = idx + 1
             break
     if start is None:
