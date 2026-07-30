@@ -28,7 +28,7 @@ from modules.flow_gate.services import mention_service
 
 # ── (§5.3 b / WI-7) mention carries the N/T authoring guide only for ai_direct N/T heads ──
 
-def _nt_mention(head_type: str) -> str:
+def _nt_mention(head_type: str, locale: str = "ko") -> str:
     return mention_service.build_mention_from_token_rec(
         token_rec={
             "project": "flowgate",
@@ -45,6 +45,7 @@ def _nt_mention(head_type: str) -> str:
         api_base_url="http://h/flow_gate/api/v1",
         raw_token="RAW",
         continuous=True,
+        locale=locale,
     )
 
 
@@ -80,6 +81,35 @@ def test_nt_and_ts_authoring_are_mutually_exclusive_by_head():
     ts_mention = _nt_mention("TS")
     assert "Test scenario authoring (TS)" in ts_mention
     assert "Instruction authoring" not in ts_mention
+
+
+# ── N/T + TS authoring guides now follow the worker's requested locale (this was one of
+# three sections in mention_service.py that stayed English-fixed regardless of locale) ──
+
+def test_nt_authoring_guide_follows_locale():
+    ko = _nt_mention("T", locale="ko")
+    assert "작업지시" in ko and "완료 기준" in ko
+
+    en = _nt_mention("T", locale="en")
+    assert "work-instruction" in en and "Completion criteria" in en
+    assert "완료 기준" not in en
+
+    ja = _nt_mention("N", locale="ja")
+    assert "調査範囲" in ja
+    assert "조사 범위" not in ja
+
+
+def test_ts_authoring_guide_follows_locale():
+    ko = _nt_mention("TS", locale="ko")
+    assert "## 테스트 준비" in ko and "## 테스트 케이스" in ko
+
+    en = _nt_mention("TS", locale="en")
+    assert "## Setup" in en and "## Test Cases" in en
+    assert "Write this TS as an executable spec" in en
+
+    ja = _nt_mention("TS", locale="ja")
+    assert "## Setup" in ja and "## Test Cases" in ja
+    assert "実行可能なスペック" in ja
 
 
 # ── (§5.3 c / WI-6) inbox self-chain carries the mode onto the next hop ───────────────

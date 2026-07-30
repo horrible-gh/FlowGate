@@ -67,7 +67,31 @@ def test_investigation_report_mention_keeps_remote_source_read_only():
     assert "POST http://localhost:8089/flowgate/api/v1/remote/grep" in text
     assert "POST http://localhost:8089/flowgate/api/v1/remote/write" not in text
     assert "POST http://localhost:8089/flowgate/api/v1/remote/remove" not in text
+    # Default locale is ko (B0001 rev2 follow-up: this section now follows the
+    # worker's requested locale like every other section in the mention).
+    assert "읽기/검색만" in text
+
+
+def test_investigation_report_mention_read_only_note_follows_locale():
+    text = _mention(parent_type="N", parent_doc_number="N0002", head_type="NR", locale="en")
     assert "read/search only" in text
+
+    text_ja = _mention(parent_type="N", parent_doc_number="N0002", head_type="NR", locale="ja")
+    assert "読み取り/検索のみ" in text_ja
+
+
+def test_task_report_mention_crud_prose_follows_locale():
+    ko = _mention(locale="ko")
+    assert "원격 프로젝트의 소스 트리를" in ko
+    assert "작업 리포트에 요약" in ko
+
+    en = _mention(locale="en")
+    assert "Use these endpoints" in en
+    assert "summarize the changed source files" in en
+
+    ja = _mention(locale="ja")
+    assert "リモートプロジェクトのソースツリー" in ja
+    assert "作業レポートに要約" in ja
 
 
 def test_remote_source_crud_examples_omit_path_field():

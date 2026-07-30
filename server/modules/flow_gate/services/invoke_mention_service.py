@@ -84,7 +84,10 @@ def _chat_lookup_sections(
     sections: list[str] = []
     source_included = mention_service._include_remote_source_crud(project)
     if source_included:
-        section = mention_service._remote_source_crud_section(base, raw_token, "CH")
+        # build_conversation_mention has no locale parameter of its own (chat mention
+        # stays English-only by design — see its docstring); pin "en" explicitly rather
+        # than falling through to the shared function's ko default.
+        section = mention_service._remote_source_crud_section(base, raw_token, "CH", "en")
         if section:
             sections.append(section)
 
@@ -167,7 +170,7 @@ def build_conversation_mention(
 
     doc_q = quote(doc_id, safe="")
     lines = [
-        "## Conversation (대화)",
+        "## Conversation",
         "---",
         "You are a participant in an ongoing conversation. Read the latest messages and",
         "reply naturally and concisely. This is a chat — no document headers, no Q /",

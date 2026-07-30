@@ -419,7 +419,7 @@ def _build_help_client():
 
 
 
-def _issue_bearer(tmp_path) -> str:
+def _issue_bearer(tmp_path, continuation_locale=None) -> str:
 
     from modules.flow_gate.services import token_service
 
@@ -436,6 +436,8 @@ def _issue_bearer(tmp_path) -> str:
             doc_ref=None,
 
             issued_to="usr_r018",
+
+            continuation_locale=continuation_locale,
 
         )
 
@@ -1601,7 +1603,10 @@ class TestHelpDocType:
 
     def test_doc_type_item_has_required_fields(self, seed, tmp_path):
 
-        """Each item includes the type_code, name, series, description, and locale fields."""
+        """Each item includes the type_code, name, series, and description fields.
+
+        No 'locale' field is baked into the item — the row never carried a real
+        per-item locale, so echoing a fixed value there was a lie (T0017)."""
 
         client = self._build_help_client()
 
@@ -1629,40 +1634,100 @@ class TestHelpDocType:
 
             assert "description" in item, f"description missing: {item}"
 
-            assert "locale" in item, f"locale missing: {item}"
+            assert "locale" not in item, f"stale hardcoded locale field found: {item}"
 
 
 
-    def test_doc_type_item_locale_default_ko(self, seed, tmp_path):
+    def test_doc_type_honors_request_locale(self, seed, tmp_path):
 
-        """The default locale must be 'ko' or None (for rows with NULL description)."""
+        """T0017: the doc_type list must follow the worker token's continuation_locale
+
+        instead of always querying with the ko default."""
 
         client = self._build_help_client()
 
-        raw = _issue_bearer(tmp_path)
+        raw_default = _issue_bearer(tmp_path)
 
-        resp = client.get(
+        resp_default = client.get(
 
             "/api/v1/help/doc_type",
 
-            headers={"Authorization": f"Bearer {raw}"},
+            headers={"Authorization": f"Bearer {raw_default}"},
 
         )
 
-        assert resp.status_code == 200
+        assert resp_default.status_code == 200
 
-        items = resp.json()
+        default_names = {item["type_code"]: item["name"] for item in resp_default.json()}
 
-        for item in items:
+        assert default_names["R"] == "요건정의"
 
-            locale = item.get("locale")
+        raw_ja = _issue_bearer(tmp_path, continuation_locale="ja")
 
-            assert locale == "ko" or locale is None, (
+        resp_ja = client.get(
 
-                f"locale must be 'ko' or None: {item}"
+            "/api/v1/help/doc_type",
 
-            )
+            headers={"Authorization": f"Bearer {raw_ja}"},
 
+        )
+
+        assert resp_ja.status_code == 200
+
+        ja_names = {item["type_code"]: item["name"] for item in resp_ja.json()}
+
+        assert ja_names["R"] == "要件定義"
+
+        raw_en = _issue_bearer(tmp_path, continuation_locale="en")
+
+        resp_en = client.get(
+
+            "/api/v1/help/doc_type",
+
+            headers={"Authorization": f"Bearer {raw_en}"},
+
+        )
+
+        assert resp_en.status_code == 200
+
+        en_names = {item["type_code"]: item["name"] for item in resp_en.json()}
+
+        assert en_names["R"] == "Requirements"
+
+
+    def test_doc_type_description_honors_request_locale(self, seed, tmp_path):
+        """T0019: the description text is stored per locale (like type_name) and
+        must follow the worker token's continuation_locale instead of always
+        being None (the field previously had no backing column at all)."""
+
+        client = self._build_help_client()
+
+        raw_default = _issue_bearer(tmp_path)
+        resp_default = client.get(
+            "/api/v1/help/doc_type",
+            headers={"Authorization": f"Bearer {raw_default}"},
+        )
+        assert resp_default.status_code == 200
+        default_desc = {item["type_code"]: item["description"] for item in resp_default.json()}
+        assert default_desc["R"] == "무엇을·왜 만들지를 정의하는 문서. 기능·비기능 요구사항을 정리한다."
+
+        raw_ja = _issue_bearer(tmp_path, continuation_locale="ja")
+        resp_ja = client.get(
+            "/api/v1/help/doc_type",
+            headers={"Authorization": f"Bearer {raw_ja}"},
+        )
+        assert resp_ja.status_code == 200
+        ja_desc = {item["type_code"]: item["description"] for item in resp_ja.json()}
+        assert ja_desc["R"] == "何を・なぜ作るかを定義する文書。機能・非機能要件を整理する。"
+
+        raw_en = _issue_bearer(tmp_path, continuation_locale="en")
+        resp_en = client.get(
+            "/api/v1/help/doc_type",
+            headers={"Authorization": f"Bearer {raw_en}"},
+        )
+        assert resp_en.status_code == 200
+        en_desc = {item["type_code"]: item["description"] for item in resp_en.json()}
+        assert en_desc["R"] == "Defines what to build and why. Captures functional and non-functional requirements."
 
 
     def test_doc_type_no_auth_returns_401(self):

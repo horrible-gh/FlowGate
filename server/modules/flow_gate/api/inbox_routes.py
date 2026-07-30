@@ -94,6 +94,22 @@ def _truthy(v) -> bool:
     return False
 
 
+_DRY_RUN_COPY = {
+    "ko": {
+        "limit": "Dry-run 한도({limit}회) 도달. 실제 제출하거나 새 토큰을 요청하세요.",
+        "ok": "Dry-run OK. 이대로 제출하면 등록됩니다. 아무것도 등록되지 않았습니다.",
+    },
+    "en": {
+        "limit": "The dry-run limit ({limit}) has been reached. Submit for real or request a new token.",
+        "ok": "Dry-run OK. Submitting this payload will register it; this check registered nothing.",
+    },
+    "ja": {
+        "limit": "Dry-runの上限({limit}回)に達しました。実際に提出するか、新しいトークンを要求してください。",
+        "ok": "Dry-run OK。このペイロードを提出すると登録されます。この確認では何も登録されていません。",
+    },
+}
+
+
 def _maybe_dry_run(
     body: dict, token_rec: dict, would_register: dict
 ) -> Optional[JSONResponse]:
@@ -117,15 +133,15 @@ def _maybe_dry_run(
         return None
 
     limit = _dryrun_max()
+    locale = token_rec.get("continuation_locale")
+    copy = _DRY_RUN_COPY.get(locale) or _DRY_RUN_COPY["ko"]
     cnt = int(token_rec.get("dry_run_count") or 0)
     if cnt >= limit:
         # P0006 §3.5: limit-exceeded body carries the counters alongside the _fail shape.
         return JSONResponse(status_code=429, content={
             "ok": False,
             "http_status": 429,
-            "error_message": (
-                f"Dry-run 한도({limit}회) 도달. 실제 제출하거나 새 토큰을 요청하세요."
-            ),
+            "error_message": copy["limit"].format(limit=limit),
             "help_url": _help_url(),
             "dry_run_count": cnt,
             "dry_run_remaining": 0,
@@ -139,7 +155,7 @@ def _maybe_dry_run(
         "would_register": would_register,
         "dry_run_count": cnt + 1,
         "dry_run_remaining": limit - (cnt + 1),
-        "message": "Dry-run OK. 이대로 제출하면 등록됩니다. 아무것도 등록되지 않았습니다.",
+        "message": copy["ok"],
     })
 
 
@@ -2425,11 +2441,20 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     tr_scope_result: Optional[dict] = None
     if doc_type.upper() == "TR":
         try:
+            from modules.flow_gate import template_provision as _template_provision
+
             scope_body = body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
+            # T2/TR2 (NR0003 §1-4): 반려 안내문의 언어. 통로는 이미 있다 — 토큰의
+            # continuation_locale(무인 작업자)이 헤더보다 앞선다(0355 L0007 §2-1과
+            # 같은 순서, group 0099 B0001 과 같은 이유).
+            scope_locale = _template_provision.normalize_locale(
+                token_rec.get("continuation_locale") or request.headers.get("x-locale")
+            )
             tr_scope_result = tr_scope_service.evaluate(
-                project_id=project, group_id=group["group_id"], body=scope_body or ""
+                project_id=project, group_id=group["group_id"], body=scope_body or "",
+                locale=scope_locale,
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 TR 접수를 막아선 안 된다
             tr_scope_result = None
@@ -3016,11 +3041,18 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     edit_tr_scope: Optional[dict] = None
     if str(existing_doc.get("type_code") or "").upper() == "TR":
         try:
+            from modules.flow_gate import template_provision as _template_provision
+
             scope_body = edit_body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
+            # T2/TR2 (NR0003 §1-4): 반려 안내문의 언어 — new 경로(위 Step 5.7)와 같은 규칙.
+            scope_locale = _template_provision.normalize_locale(
+                token_rec.get("continuation_locale") or request.headers.get("x-locale")
+            )
             edit_tr_scope = tr_scope_service.evaluate(
-                project_id=project, group_id=group["group_id"], body=scope_body or ""
+                project_id=project, group_id=group["group_id"], body=scope_body or "",
+                locale=scope_locale,
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 재제출을 막아선 안 된다
             edit_tr_scope = None

@@ -101,7 +101,7 @@ function defaultMessage(list: string[]): string {
   if (!list.length) return ''
   const joined = 'fix: ' + list.join(', ')
   if (joined.length <= COMMIT_SUBJECT_MAX) return joined
-  return `fix: ${list[0]} 외 ${list.length - 1}건`.slice(0, COMMIT_SUBJECT_MAX)
+  return `fix: ${list[0]} and ${list.length - 1} more`.slice(0, COMMIT_SUBJECT_MAX)
 }
 const suggested = computed(() => defaultMessage(files.value))
 

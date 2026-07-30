@@ -74,7 +74,48 @@ def _section(header: str, body: str) -> str:
     return f"## {header}\n---\n{body}"
 
 
-def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> str:
+# Remote source-CRUD guide prose, per locale (B0001 rev2 follow-up: this section was
+# still English-fixed regardless of the worker's requested locale). Endpoint labels
+# ("Read file:", "Search text:", ...) and the JSON bodies are protocol grammar and stay
+# unchanged in every locale so the copy-paste POST reads identically.
+_REMOTE_CRUD_TEXT = {
+    "ko": {
+        "intro": "원격 프로젝트의 소스 트리를 확인하거나 변경할 때 아래 엔드포인트를 사용하십시오.",
+        "paths": "모든 경로는 프로젝트 소스 루트 기준 상대경로입니다; 절대경로나 '..' 구간을 보내지 마십시오.",
+        "read_file": "파일 읽기",
+        "search_text": "텍스트 검색",
+        "list_files": "파일 목록",
+        "write_file": "파일 생성/덮어쓰기",
+        "delete_file": "파일 삭제",
+        "after_write": "write/remove가 성공하면 변경한 소스 파일을 작업 리포트에 요약하십시오.",
+        "read_only": "이 문서 유형은 소스 접근이 읽기/검색만 가능합니다. 이 단계에서 write/remove를 호출하지 마십시오.",
+    },
+    "ja": {
+        "intro": "リモートプロジェクトのソースツリーを確認・変更する際は、以下のエンドポイントを使用してください。",
+        "paths": "すべてのパスはプロジェクトソースルート基準の相対パスです; 絶対パスや '..' を含むパスは送らないでください。",
+        "read_file": "ファイル読み取り",
+        "search_text": "テキスト検索",
+        "list_files": "ファイル一覧",
+        "write_file": "ファイル作成/上書き",
+        "delete_file": "ファイル削除",
+        "after_write": "write/removeが成功したら、変更したソースファイルを作業レポートに要約してください。",
+        "read_only": "この文書種別はソースアクセスが読み取り/検索のみです。このステップでwrite/removeを呼び出さないでください。",
+    },
+    "en": {
+        "intro": "Use these endpoints when you need to inspect or change the remote project's source tree.",
+        "paths": "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
+        "read_file": "Read file",
+        "search_text": "Search text",
+        "list_files": "List files",
+        "write_file": "Create or replace file",
+        "delete_file": "Delete file",
+        "after_write": "After write/remove succeeds, summarize the changed source files in the task report.",
+        "read_only": "This document type is read/search only for source access. Do not call write/remove in this step.",
+    },
+}
+
+
+def _remote_source_crud_section(base: str, raw_token: str, step_type: str, locale: str = "ko") -> str:
     """Return the remote project-source API guide for worker mentions.
 
     T/TR workers receive full source CRUD. Other document types receive read/search
@@ -87,36 +128,38 @@ def _remote_source_crud_section(base: str, raw_token: str, step_type: str) -> st
     def _json(data: dict) -> str:
         return json.dumps(data, ensure_ascii=False, indent=2)
 
+    loc = template_provision.normalize_locale(locale)
+    txt = _REMOTE_CRUD_TEXT[loc]
     mutating = step_type in _REMOTE_MUTATING_WORK_TYPES
     lines = [
-        "Use these endpoints when you need to inspect or change the remote project's source tree.",
-        "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
+        txt["intro"],
+        txt["paths"],
         f"Authorization: Bearer {raw_token}",
         "",
-        f"Read file: POST {base}/remote/read",
+        f"{txt['read_file']}: POST {base}/remote/read",
         _json({"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"}),
         "",
-        f"Search text: POST {base}/remote/grep",
+        f"{txt['search_text']}: POST {base}/remote/grep",
         _json({"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20}),
         "",
-        f"List files: POST {base}/remote/glob",
+        f"{txt['list_files']}: POST {base}/remote/glob",
         _json({"pattern": "**/*.py"}),
     ]
     if mutating:
         lines.extend([
             "",
-            f"Create or replace file: POST {base}/remote/write",
+            f"{txt['write_file']}: POST {base}/remote/write",
             _json({"path": "app/main.py", "content": "<complete file content>", "mode": "create|overwrite|append", "encoding": "utf-8"}),
             "",
-            f"Delete file: POST {base}/remote/remove",
+            f"{txt['delete_file']}: POST {base}/remote/remove",
             _json({"path": "app/obsolete.py"}),
             "",
-            "After write/remove succeeds, summarize the changed source files in the task report.",
+            txt["after_write"],
         ])
     else:
         lines.extend([
             "",
-            "This document type is read/search only for source access. Do not call write/remove in this step.",
+            txt["read_only"],
         ])
     return _section("Remote project source CRUD", "\n".join(lines))
 
@@ -514,27 +557,122 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
 # TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
 # it remotely from the project source root. Without this block the worker receives a
 # generic new-document mention and the TS it writes fails parse_test_plan
-# (no_test_cases / invalid_case_block). The three H2 headers are Korean literals
-# because test_run_service.parse_test_plan matches them verbatim, regardless of locale.
+# (no_test_cases / invalid_case_block). The three H2 headers and the 기대/기동/대기
+# fields are matched verbatim by test_run_service.parse_test_plan; T0009 added the
+# English aliases (Setup/Test Cases/Teardown, expect|expected/start/wait) as a second
+# accepted spelling, not a replacement — either form parses. This guide was still
+# English-fixed regardless of the worker's requested locale (B0001 rev2 follow-up); it
+# now follows the same convention TR0012 set for the TR grammar: the ko request shows
+# the Korean form as the primary example, en/ja requests show the English form as the
+# primary example (there is no ja grammar alias — T0009/0355), and both note the other
+# spelling still parses. 'cmd' and the section/field GRAMMAR TOKENS themselves are
+# never translated — only the surrounding prose is.
 _TS_AUTHORING_TYPES = {"TS"}
 
-
-def _ts_authoring_section() -> str:
-    host_os = test_command_service.current_os()
-    body = (
+_TS_AUTHORING_TEXT = {
+    "ko": (
+        "이 TS를 실행 가능한 스펙으로 작성하십시오. FlowGate는 프로젝트 소스 루트에서 이를\n"
+        "원격으로 실행합니다 — 로컬에서 실행 중인 서비스가 있다고 가정하지 마십시오. 아래 순서로\n"
+        "H2 섹션 세 개를 사용하십시오:\n\n"
+        "## 테스트 준비        (선택; 있으면 순서대로 가장 먼저 실행)\n"
+        "- cmd: <셸 명령, 한 줄>                          # 준비 단계\n"
+        "- 기동: <서버 시작 명령, 백그라운드 실행>        # 오래 떠 있는 서비스\n"
+        "- 대기: {PORT}                                    # 127.0.0.1:{PORT} 가 응답할 때까지 대기\n\n"
+        "## 테스트 케이스       (필수; 최소 한 개)\n"
+        "### TC-1: <제목>\n"
+        "- cmd: <한 줄 명령; 종료코드 0이면 PASS>\n"
+        "- 기대: <기대하는 동작, 사람이 읽을 수 있게>\n\n"
+        "## 테스트 정리        (선택; 실패해도 항상 실행)\n"
+        "- cmd: <정리 명령>\n\n"
+        "영어 별칭도 허용됩니다(철자가 달라도 섹션 단위로 둘 다 파싱됩니다):\n"
+        "'## Setup' / '## Test Cases' / '## Teardown', 그리고 필드는 '기대' 대신 'expect'\n"
+        "(또는 'expected'), '기동' 대신 'start', '대기' 대신 'wait'. 'cmd'는 어느 쪽이든 동일합니다.\n\n"
+        "자리표시자 — {PORT}: FlowGate가 할당하는 포트(환경변수 FLOWGATE_TEST_PORT로도 제공);\n"
+        "{SCRATCH}: 실행별 스크래치 디렉터리, 종료 후 삭제(환경변수 FLOWGATE_TEST_SCRATCH).\n"
+        "실제 테스트 코드를 이 단계에서 저장소에 커밋하십시오(자동 생성 없음).\n"
+        "제한: 케이스 최대 50개, 준비/정리 단계 최대 20개, 서비스 최대 5개. 판정은 종료코드 0 여부뿐입니다.\n\n"
+        "프레임워크 무관: 유일한 판정 기준은 프로세스 종료 코드(0 = 통과)입니다. pytest, `npm test`,\n"
+        "`npx vitest run`, `go test`, `cargo test`, 순수 스크립트 등 어떤 러너를 써도 됩니다.\n"
+        "Python 전용이 아니므로 테스트 대상 코드에 맞는 것을 고르십시오.\n\n"
+        "{shell_guidance}"
+        "cmd는 SOURCE ROOT에서 실행되므로 먼저 서브프로젝트로 cd 하십시오. 예시 —\n"
+        "프런트엔드 Vitest 스위트(client/에 위치, 설정은 client/vitest.config.ts):\n\n"
+        "## 테스트 준비\n"
+        "- cmd: cd client && npm install          # vitest 설치; `npm ci` 대신 install 사용(esbuild lock)\n"
+        "## 테스트 케이스\n"
+        "### TC-1: 프런트엔드 유닛 스위트가 통과한다\n"
+        "- cmd: cd client && npm test             # == `vitest run`; 종료코드 0이면 PASS\n"
+        "- 기대: 모든 Vitest 스펙이 통과(종료코드 0)\n"
+        "### TC-2: 프런트엔드 타입체크가 깨끗하다\n"
+        "- cmd: cd client && npm run typecheck    # == `vue-tsc -b`; 종료코드 0이면 PASS\n"
+        "- 기대: TS 에러 없음(종료코드 0)\n\n"
+        "클라이언트를 건드리는 변경이면 둘을 항상 짝지으십시오: Vitest는 타입체크 없이 트랜스파일하므로\n"
+        "타입 에러가 `npm test`는 통과하고 배포 빌드에서만 드러납니다(flowgate.default.0300 B0001 ->\n"
+        "NR0003 §4). 타입체크 케이스가 이 틈을 막습니다.\n\n"
+        "(`cd X && <runner>`는 cmd.exe와 /bin/sh 양쪽에서 동작하는 유일한 체이닝 형태라\n"
+        "예시에서 이 형태를 씁니다.)\n\n"
+        "JS 러너를 쓰려면 FlowGate 호스트 PATH에 Node/npm이 있어야 합니다; 새로 받은 소스 트리에는\n"
+        "node_modules가 없으므로 위 install 준비 단계가 필요합니다."
+    ),
+    "ja": (
+        "このTSを実行可能なスペックとして作成してください。FlowGateはプロジェクトソースルートから\n"
+        "リモートでこれを実行します — ローカルで動いているサービスがあると仮定しないでください。\n"
+        "以下の順でH2セクションを3つ使ってください:\n\n"
+        "## Setup        (任意; あれば最初に順番に実行)\n"
+        "- cmd: <シェルコマンド、1行>                     # 準備ステップ\n"
+        "- start: <サーバ起動コマンド、バックグラウンド実行>  # 常駐サービス\n"
+        "- wait: {PORT}                                    # 127.0.0.1:{PORT} が応答するまで待機\n\n"
+        "## Test Cases       (必須; 最低1件)\n"
+        "### TC-1: <タイトル>\n"
+        "- cmd: <1行コマンド; 終了コード0でPASS>\n"
+        "- expect: <期待する動作、人が読める形で>\n\n"
+        "## Teardown        (任意; 失敗しても常に実行)\n"
+        "- cmd: <後始末コマンド>\n\n"
+        "従来の韓国語のセクション名とフィールド名も引き続き受け付けますが、\n"
+        "このロケールでは上記の英語表記を使用してください。\n\n"
+        "プレースホルダ — {PORT}: FlowGateが割り当てるポート(環境変数FLOWGATE_TEST_PORTでも取得可);\n"
+        "{SCRATCH}: 実行ごとのスクラッチディレクトリ、終了後に削除(環境変数FLOWGATE_TEST_SCRATCH)。\n"
+        "実際のテストコードはこのステップでリポジトリにコミットしてください(自動生成なし)。\n"
+        "上限: ケース最大50件、setup/teardownステップ最大20件、サービス最大5件。判定は終了コード0のみです。\n\n"
+        "フレームワーク非依存: 唯一の判定基準はプロセスの終了コード(0 = 合格)です。pytest、`npm test`、\n"
+        "`npx vitest run`、`go test`、`cargo test`、素のスクリプトなど、どのランナーでも構いません。\n"
+        "Python専用ではないので、テスト対象のコードに合ったものを選んでください。\n\n"
+        "{shell_guidance}"
+        "cmdはSOURCE ROOTで実行されるので、まずサブプロジェクトへcdしてください。例 —\n"
+        "フロントエンドVitestスイート(client/にあり、設定はclient/vitest.config.ts):\n\n"
+        "## Setup\n"
+        "- cmd: cd client && npm install          # vitestをインストール; `npm ci`ではなくinstallを使う(esbuild lock)\n"
+        "## Test Cases\n"
+        "### TC-1: frontend unit suite is green\n"
+        "- cmd: cd client && npm test             # == `vitest run`; 終了コード0でPASS\n"
+        "- expect: すべてのVitestスペックが合格(終了コード0)\n"
+        "### TC-2: frontend type check is clean\n"
+        "- cmd: cd client && npm run typecheck    # == `vue-tsc -b`; 終了コード0でPASS\n"
+        "- expect: TSエラーなし(終了コード0)\n\n"
+        "クライアントに触れる変更では常にこの2つを対にしてください: Vitestは型チェックなしで\n"
+        "トランスパイルするため、型エラーが`npm test`では通過しデプロイビルドでのみ表面化します\n"
+        "(flowgate.default.0300 B0001 -> NR0003 §4)。typecheckケースがこの隙間を塞ぎます。\n\n"
+        "(`cd X && <runner>`はcmd.exeと/bin/shの両方で動く唯一のチェイン形式なので、\n"
+        "例ではこの形式を使っています。)\n\n"
+        "JSランナーを使うにはFlowGateホストのPATHにNode/npmが必要です; 新規のソースツリーには\n"
+        "node_modulesが無いため、上記のinstall準備ステップが必要です。"
+    ),
+    "en": (
         "Write this TS as an executable spec. FlowGate runs it remotely from the project\n"
         "source root — do NOT assume any locally-running service. Use three H2 sections in\n"
         "this order:\n\n"
-        "## 테스트 준비        (optional; runs first, in order)\n"
+        "## Setup        (optional; runs first, in order)\n"
         "- cmd: <shell command, single line>            # setup step\n"
-        "- 기동: <server start command, backgrounded>   # long-lived service\n"
-        "- 대기: {PORT}                                  # wait until 127.0.0.1:{PORT} accepts\n\n"
-        "## 테스트 케이스       (required; at least one case)\n"
+        "- start: <server start command, backgrounded>  # long-lived service\n"
+        "- wait: {PORT}                                  # wait until 127.0.0.1:{PORT} accepts\n\n"
+        "## Test Cases       (required; at least one case)\n"
         "### TC-1: <title>\n"
         "- cmd: <single-line command; PASS iff exit code 0>\n"
-        "- 기대: <expected behavior, human-readable>\n\n"
-        "## 테스트 정리        (optional; always runs, even on failure)\n"
+        "- expect: <expected behavior, human-readable>\n\n"
+        "## Teardown        (optional; always runs, even on failure)\n"
         "- cmd: <cleanup command>\n\n"
+        "Legacy Korean section and field spellings remain accepted, but use the English\n"
+        "spellings shown above for this locale.\n\n"
         "Placeholders — {PORT}: port FlowGate allocates (also env FLOWGATE_TEST_PORT);\n"
         "{SCRATCH}: per-run scratch dir, deleted afterward (env FLOWGATE_TEST_SCRATCH).\n"
         "Commit the actual test code to the repo in this step (no auto-generation).\n"
@@ -542,18 +680,18 @@ def _ts_authoring_section() -> str:
         "Framework-agnostic: the ONLY verdict is the process exit code (0 = pass). Any\n"
         "runner works — pytest, `npm test`, `npx vitest run`, `go test`, `cargo test`, a bare\n"
         "script. This is NOT Python-only; pick whatever matches the code under test.\n\n"
-        + _ts_host_shell_guidance(host_os) +
+        "{shell_guidance}"
         "Because cmd runs at the SOURCE ROOT, cd into the subproject first. Example — the\n"
         "frontend Vitest suite (lives in client/, config at client/vitest.config.ts):\n\n"
-        "## 테스트 준비\n"
+        "## Setup\n"
         "- cmd: cd client && npm install          # installs vitest; use install, NOT `npm ci` (esbuild lock)\n"
-        "## 테스트 케이스\n"
+        "## Test Cases\n"
         "### TC-1: frontend unit suite is green\n"
         "- cmd: cd client && npm test             # == `vitest run`; PASS iff exit 0\n"
-        "- 기대: all Vitest specs pass (exit 0)\n"
+        "- expect: all Vitest specs pass (exit 0)\n"
         "### TC-2: frontend type check is clean\n"
         "- cmd: cd client && npm run typecheck    # == `vue-tsc -b`; PASS iff exit 0\n"
-        "- 기대: no TS errors (exit 0)\n\n"
+        "- expect: no TS errors (exit 0)\n\n"
         "Pair the two whenever a change touches the client: Vitest transpiles without type\n"
         "checking, so a type error passes `npm test` and only surfaces in the deploy build\n"
         "(flowgate.default.0300 B0001 -> NR0003 §4). The typecheck case closes that gap.\n\n"
@@ -561,7 +699,16 @@ def _ts_authoring_section() -> str:
         "which is why the example uses it.)\n\n"
         "Node/npm must be on the FlowGate host PATH for JS runners; a fresh source tree has\n"
         "no node_modules, so the install setup step above is required."
-    )
+    ),
+}
+
+
+def _ts_authoring_section(locale: str = "ko") -> str:
+    loc = template_provision.normalize_locale(locale)
+    host_os = test_command_service.current_os()
+    # {PORT}/{SCRATCH} in the text above are literal placeholders shown to the worker,
+    # not str.format fields — use a plain marker replace so they survive untouched.
+    body = _TS_AUTHORING_TEXT[loc].replace("{shell_guidance}", _ts_host_shell_guidance(host_os, loc))
     return _section("Test scenario authoring (TS)", body)
 
 
@@ -570,34 +717,79 @@ def _ts_authoring_section() -> str:
 # Windows and /bin/sh on POSIX. The guide never said which, so workers defaulted to POSIX
 # and their commands failed outright once FlowGate moved to a Windows host. State the
 # actual host shell and name the idioms that do not survive it.
-_TS_WINDOWS_SHELL_GUIDANCE = (
-    "HOST SHELL — this FlowGate host is WINDOWS (os.name=nt). Every cmd is interpreted by\n"
-    "cmd.exe, NOT /bin/sh. POSIX-only syntax fails here. Do NOT use: rm -rf (use `rmdir /s /q`\n"
-    "or `del /q`), ls, cat, grep, touch, which, `export VAR=x` (use `set VAR=x`), `$VAR`\n"
-    "(use `%VAR%`), `$(cmd)` substitution, single-quoted 'strings' (cmd.exe does not strip\n"
-    "them — use double quotes), `2>/dev/null` (use `2>nul`), `&&`-chained `source`/`.`, and\n"
-    "`/`-rooted absolute paths. Portable alternatives are preferred where they exist: `&&`\n"
-    "chaining, `cd`, and any language-level runner (python -m pytest, npm test, go test)\n"
-    "behave the same on both platforms — reach for those before writing shell-specific code.\n"
-    "If a step genuinely needs POSIX semantics, write it as a script in the repo and invoke\n"
-    "it through an interpreter that is on PATH (e.g. `python tools/check.py`) rather than\n"
-    "inlining shell builtins.\n\n"
-)
+_TS_WINDOWS_SHELL_GUIDANCE = {
+    "ko": (
+        "HOST SHELL — 이 FlowGate 호스트는 WINDOWS입니다(os.name=nt). 모든 cmd는 /bin/sh가 아닌\n"
+        "cmd.exe로 해석됩니다. POSIX 전용 문법은 여기서 동작하지 않습니다. 쓰지 마십시오: rm -rf\n"
+        "(대신 `rmdir /s /q` 또는 `del /q`), ls, cat, grep, touch, which, `export VAR=x`(대신\n"
+        "`set VAR=x`), `$VAR`(대신 `%VAR%`), `$(cmd)` 치환, 작은따옴표 'strings'(cmd.exe는 이를\n"
+        "벗겨내지 않습니다 — 큰따옴표 사용), `2>/dev/null`(대신 `2>nul`), `&&`로 이어진\n"
+        "`source`/`.`, `/`로 시작하는 절대경로. 존재한다면 이식 가능한 대안을 우선하십시오: `&&`\n"
+        "체이닝, `cd`, 언어 수준 러너(python -m pytest, npm test, go test)는 두 플랫폼에서 동일하게\n"
+        "동작하므로 셸 전용 코드를 쓰기 전에 먼저 검토하십시오. 정말 POSIX 동작이 필요한 단계라면\n"
+        "셸 빌트인을 인라인으로 쓰지 말고 저장소에 스크립트로 작성해 PATH에 있는 인터프리터로\n"
+        "실행하십시오(예: `python tools/check.py`).\n\n"
+    ),
+    "ja": (
+        "HOST SHELL — このFlowGateホストはWINDOWSです(os.name=nt)。すべてのcmdは/bin/shではなく\n"
+        "cmd.exeで解釈されます。POSIX専用の文法はここでは動作しません。使わないでください: rm -rf\n"
+        "(代わりに`rmdir /s /q`または`del /q`)、ls、cat、grep、touch、which、`export VAR=x`\n"
+        "(代わりに`set VAR=x`)、`$VAR`(代わりに`%VAR%`)、`$(cmd)`置換、シングルクォート\n"
+        "'strings'(cmd.exeはこれを取り除きません — ダブルクォートを使用)、`2>/dev/null`\n"
+        "(代わりに`2>nul`)、`&&`で連結した`source`/`.`、`/`で始まる絶対パス。存在する場合は\n"
+        "移植可能な代替を優先してください: `&&`チェイン、`cd`、言語レベルのランナー\n"
+        "(python -m pytest, npm test, go test)は両プラットフォームで同じ動作をするため、\n"
+        "シェル専用コードを書く前にまずこちらを検討してください。本当にPOSIXの動作が必要な\n"
+        "ステップなら、シェルビルトインをインラインで書かず、リポジトリにスクリプトとして書いて\n"
+        "PATH上のインタプリタから実行してください(例: `python tools/check.py`)。\n\n"
+    ),
+    "en": (
+        "HOST SHELL — this FlowGate host is WINDOWS (os.name=nt). Every cmd is interpreted by\n"
+        "cmd.exe, NOT /bin/sh. POSIX-only syntax fails here. Do NOT use: rm -rf (use `rmdir /s /q`\n"
+        "or `del /q`), ls, cat, grep, touch, which, `export VAR=x` (use `set VAR=x`), `$VAR`\n"
+        "(use `%VAR%`), `$(cmd)` substitution, single-quoted 'strings' (cmd.exe does not strip\n"
+        "them — use double quotes), `2>/dev/null` (use `2>nul`), `&&`-chained `source`/`.`, and\n"
+        "`/`-rooted absolute paths. Portable alternatives are preferred where they exist: `&&`\n"
+        "chaining, `cd`, and any language-level runner (python -m pytest, npm test, go test)\n"
+        "behave the same on both platforms — reach for those before writing shell-specific code.\n"
+        "If a step genuinely needs POSIX semantics, write it as a script in the repo and invoke\n"
+        "it through an interpreter that is on PATH (e.g. `python tools/check.py`) rather than\n"
+        "inlining shell builtins.\n\n"
+    ),
+}
 
-_TS_POSIX_SHELL_GUIDANCE = (
-    "HOST SHELL — this FlowGate host is POSIX (os.name=posix). Every cmd is interpreted by\n"
-    "/bin/sh (NOT bash): avoid bashisms such as [[ ]], arrays, and `source` (use `.`).\n"
-    "Windows-only syntax (%VAR%, `set VAR=x`, backslash paths, `2>nul`) will not work.\n"
-    "Prefer language-level runners (python -m pytest, npm test, go test) over shell builtins —\n"
-    "they keep the TS portable if this project is ever moved to a Windows host.\n\n"
-)
+_TS_POSIX_SHELL_GUIDANCE = {
+    "ko": (
+        "HOST SHELL — 이 FlowGate 호스트는 POSIX입니다(os.name=posix). 모든 cmd는 /bin/sh로\n"
+        "해석됩니다(bash 아님): [[ ]], 배열, `source`(대신 `.`) 같은 bash 전용 문법을 피하십시오.\n"
+        "Windows 전용 문법(%VAR%, `set VAR=x`, 백슬래시 경로, `2>nul`)은 동작하지 않습니다.\n"
+        "셸 빌트인보다 언어 수준 러너(python -m pytest, npm test, go test)를 우선하십시오 —\n"
+        "이 프로젝트가 나중에 Windows 호스트로 옮겨져도 TS의 이식성이 유지됩니다.\n\n"
+    ),
+    "ja": (
+        "HOST SHELL — このFlowGateホストはPOSIXです(os.name=posix)。すべてのcmdは/bin/shで\n"
+        "解釈されます(bashではありません): [[ ]]、配列、`source`(代わりに`.`)のような\n"
+        "bash専用文法は避けてください。Windows専用の文法(%VAR%, `set VAR=x`, バックスラッシュ\n"
+        "パス, `2>nul`)は動作しません。シェルビルトインより言語レベルのランナー\n"
+        "(python -m pytest, npm test, go test)を優先してください — このプロジェクトが\n"
+        "将来Windowsホストへ移されてもTSの移植性が保たれます。\n\n"
+    ),
+    "en": (
+        "HOST SHELL — this FlowGate host is POSIX (os.name=posix). Every cmd is interpreted by\n"
+        "/bin/sh (NOT bash): avoid bashisms such as [[ ]], arrays, and `source` (use `.`).\n"
+        "Windows-only syntax (%VAR%, `set VAR=x`, backslash paths, `2>nul`) will not work.\n"
+        "Prefer language-level runners (python -m pytest, npm test, go test) over shell builtins —\n"
+        "they keep the TS portable if this project is ever moved to a Windows host.\n\n"
+    ),
+}
 
 
-def _ts_host_shell_guidance(host_os: str) -> str:
+def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
     """The shell-specific do/don't block, chosen from the host FlowGate actually runs on."""
+    loc = template_provision.normalize_locale(locale)
     if host_os == test_command_service.OS_WINDOWS:
-        return _TS_WINDOWS_SHELL_GUIDANCE
-    return _TS_POSIX_SHELL_GUIDANCE
+        return _TS_WINDOWS_SHELL_GUIDANCE[loc]
+    return _TS_POSIX_SHELL_GUIDANCE[loc]
 
 
 # ── N/T instruction authoring (group 0230 R0001 / T0005 WI-7) ────────────────────
@@ -612,40 +804,109 @@ def _ts_host_shell_guidance(host_os: str) -> str:
 # code, so the section is only ever emitted when the flag is on — no regression to managed runs.
 _NT_AUTHORING_TYPES = {"N", "T"}
 
-
-def _nt_authoring_section(scope_type: str) -> str:
-    """Authoring guidance for an instruction document the worker writes directly (N or T)."""
-    stype = (scope_type or "").upper()
-    if stype == "N":
-        body = (
-            "You are authoring this N (조사지시 / investigation-instruction) directly instead of\n"
+# This guide was still English-fixed regardless of the worker's requested locale (B0001
+# rev2 follow-up). Unlike _ts_authoring_section, the bullet labels below (목적/배경, 조사
+# 범위, ...) are plain prose headings for the worker to fill in — nothing here is matched
+# by a parser — so, unlike the TS grammar tokens, they translate freely per locale.
+_NT_AUTHORING_TEXT = {
+    "ko": {
+        "N": (
+            "고정 템플릿을 서버가 내려주는 대신, 이 N(조사지시 / investigation-instruction)을\n"
+            "직접 작성하는 것입니다. 이 그룹의 실제 맥락과 그것이 뒷받침하는 요건을 반영하십시오.\n"
+            "좋은 N은 아무것도 조사하거나 구현하지 않습니다 — 짝을 이루는 NR이 수행할 조사를\n"
+            "지시(DIRECT)할 뿐입니다. 다음을 다루십시오:\n"
+            "- 목적/배경: 왜 이 조사가 필요한지(근거가 되는 R/B와 연결).\n"
+            "- 조사 범위: NR이 답해야 할 구체적인 질문 + 살펴볼 코드/영역.\n"
+            "- 산출물 기대: NR이 도출해야 할 결론(근본 원인, 좌표, 재사용 앵커).\n"
+            "지시문으로만 남기십시오: 무엇을 알아내야 하는지만 이름 붙이고, 결과 자체는 이어지는\n"
+            "NR에 담으십시오. 이 단계에서 소스 코드를 수정하지 마십시오."
+        ),
+        "T": (
+            "고정 템플릿을 서버가 내려주는 대신, 이 T(작업지시 / work-instruction)를 직접\n"
+            "작성하는 것입니다. 이 그룹의 실제 맥락과 선행 조사의 결과를 반영하십시오. 좋은 T는\n"
+            "짝을 이루는 TR이 수행할 작업을 지시(DIRECT)합니다. 다음을 다루십시오:\n"
+            "- 목적/범위: 무엇을 왜 변경하는지(근거가 되는 R/B + NR과 연결).\n"
+            "- 작업 항목: 구체적이고 순서가 있는 작업 항목(건드릴 파일/영역, 접근 방식).\n"
+            "- 완료 기준: TR이 완료를 어떻게 증명하는지(GREEN으로 돌려야 할 테스트, 인수 기준).\n"
+            "지시문으로만 남기십시오: 작업을 지시하고, 구현과 증거는 이어지는 TR에 담으십시오.\n"
+            "이 단계에서 코드를 구현하지 말고 지시 내용만 작성하십시오."
+        ),
+        "footer": (
+            "\n\n위 'Instruction to include next document header' 섹션에 주어진 다음 문서 헤더를\n"
+            "(next_type / project / module / group / title / target_id) 그대로 포함하십시오.\n"
+            "제출되면 이 지시문은 다른 관리형 지시문과 마찬가지로 자동 승인되며(non-{M,CH}),\n"
+            "무인 체인은 짝을 이루는 리포트 단계로 진행됩니다."
+        ),
+    },
+    "ja": {
+        "N": (
+            "サーバが固定テンプレートを出す代わりに、このN(調査指示 / investigation-instruction)を\n"
+            "あなた自身が作成します。このグループの実際の文脈と、それが支える要件を反映してください。\n"
+            "良いNは何も調査・実装しません — 対になるNRが行う調査を指示(DIRECT)するだけです。\n"
+            "以下をカバーしてください:\n"
+            "- 目的/背景: なぜこの調査が必要か(根拠となるR/Bに結び付ける)。\n"
+            "- 調査範囲: NRが答えるべき具体的な質問 + 調べるべきコード/領域。\n"
+            "- 成果物への期待: NRが導くべき結論(根本原因、座標、再利用アンカー)。\n"
+            "あくまで指示文にとどめてください: 何を明らかにすべきかだけを名指しし、結果そのものは\n"
+            "後に続くNRに書いてください。このステップではソースコードを変更しないでください。"
+        ),
+        "T": (
+            "サーバが固定テンプレートを出す代わりに、このT(作業指示 / work-instruction)を\n"
+            "あなた自身が作成します。このグループの実際の文脈と、先行調査の結果を反映してください。\n"
+            "良いTは対になるTRが行う作業を指示(DIRECT)します。以下をカバーしてください:\n"
+            "- 目的/範囲: 何をなぜ変更するのか(根拠となるR/B + NRに結び付ける)。\n"
+            "- 作業項目: 具体的で順序立った作業項目(触れるファイル/領域、アプローチ)。\n"
+            "- 完了基準: TRがどう完了を証明するか(GREENにすべきテスト、受け入れ基準)。\n"
+            "あくまで指示文にとどめてください: 作業を指示し、実装と証拠は後に続くTRに書いて\n"
+            "ください。このステップではコードを実装せず、指示内容だけを書いてください。"
+        ),
+        "footer": (
+            "\n\n上記の「Instruction to include next document header」セクションに示された次の\n"
+            "文書ヘッダー(next_type / project / module / group / title / target_id)をそのまま\n"
+            "含めてください。提出されるとこの指示文は他の管理下の指示文と同様に自動承認され\n"
+            "(non-{M,CH})、無人チェーンは対になるレポート段階へ進みます。"
+        ),
+    },
+    "en": {
+        "N": (
+            "You are authoring this N (investigation-instruction) directly instead of\n"
             "the server emitting a fixed template. Reflect the actual context of this group and\n"
             "the requirement it serves. A good N does NOT investigate or implement anything — it\n"
             "DIRECTS the investigation the paired NR will carry out. Cover:\n"
-            "- 목적/배경: why this investigation is needed (tie it to the driving R/B).\n"
-            "- 조사 범위: the concrete questions the NR must answer + the code/areas to inspect.\n"
-            "- 산출물 기대: what the NR should conclude (root cause, coordinates, reuse anchors).\n"
+            "- Purpose/background: why this investigation is needed (tie it to the driving R/B).\n"
+            "- Investigation scope: the concrete questions the NR must answer + the code/areas to inspect.\n"
+            "- Expected output: what the NR should conclude (root cause, coordinates, reuse anchors).\n"
             "Keep it an instruction: name what to find out, not the findings themselves — those\n"
             "belong in the NR that follows. Do NOT modify source code in this step."
-        )
-    else:  # T (and any other instruction head routed here)
-        body = (
-            "You are authoring this T (작업지시 / work-instruction) directly instead of the server\n"
+        ),
+        "T": (
+            "You are authoring this T (work-instruction) directly instead of the server\n"
             "emitting a fixed template. Reflect the actual context of this group and the findings\n"
             "of the preceding investigation. A good T DIRECTS the work the paired TR will carry\n"
             "out. Cover:\n"
-            "- 목적/범위: what change is being made and why (tie it to the driving R/B + NR).\n"
-            "- 작업 항목: the concrete, ordered work items (files/areas to touch, the approach).\n"
-            "- 완료 기준: how the TR proves it is done (tests to run GREEN, acceptance checks).\n"
+            "- Purpose/scope: what change is being made and why (tie it to the driving R/B + NR).\n"
+            "- Work items: the concrete, ordered work items (files/areas to touch, the approach).\n"
+            "- Completion criteria: how the TR proves it is done (tests to run GREEN, acceptance checks).\n"
             "Keep it an instruction: direct the work; the implementation + evidence belong in the\n"
             "TR that follows. Do NOT implement the code in this step — write the directive."
-        )
-    body += (
-        "\n\nInclude the next-document header exactly as given in the 'Instruction to include next\n"
-        "document header' section above (next_type / project / module / group / title / target_id).\n"
-        "On submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\n"
-        "the unmanned chain proceeds to its paired report step."
-    )
+        ),
+        "footer": (
+            "\n\nInclude the next-document header exactly as given in the 'Instruction to include next\n"
+            "document header' section above (next_type / project / module / group / title / target_id).\n"
+            "On submit this instruction is auto-approved (non-{M,CH}) like any managed instruction and\n"
+            "the unmanned chain proceeds to its paired report step."
+        ),
+    },
+}
+
+
+def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
+    """Authoring guidance for an instruction document the worker writes directly (N or T)."""
+    stype = (scope_type or "").upper()
+    loc = template_provision.normalize_locale(locale)
+    texts = _NT_AUTHORING_TEXT[loc]
+    body = texts["N"] if stype == "N" else texts["T"]
+    body += texts["footer"]
     return _section(f"Instruction authoring ({stype})", body)
 
 
@@ -813,14 +1074,14 @@ def build_mention(
     # and {PORT}/{SCRATCH} conventions, else the TS it writes cannot be parsed/run.
     ts_authoring_section = ""
     if scope_type in _TS_AUTHORING_TYPES:
-        ts_authoring_section = _ts_authoring_section()
+        ts_authoring_section = _ts_authoring_section(locale)
 
     # ── N/T instruction authoring guidance (group 0230 R0001 / T0005 WI-7) ────
     # Only reached when the run chose ai_direct: in auto_approved mode N/T are
     # auto-completed server-side and never arrive here as a worker mention.
     nt_authoring_section = ""
     if scope_type in _NT_AUTHORING_TYPES:
-        nt_authoring_section = _nt_authoring_section(scope_type)
+        nt_authoring_section = _nt_authoring_section(scope_type, locale)
 
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
@@ -933,7 +1194,7 @@ def build_mention(
         if str(doc_type_value).upper() == "TR":
             post_body["content"] = (
                 "<Fill this in>\n\n"
-                + tr_scope_service.TR_SECTION_PLACEHOLDER
+                + tr_scope_service.tr_section_placeholder(template_provision.normalize_locale(locale))
             )
         else:
             post_body["content"] = "<Fill this in>"
@@ -951,7 +1212,7 @@ def build_mention(
     # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
     # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
     if is_edit and str(parent_type or "").upper() == "TR":
-        commit_hint = f"\n{tr_scope_service.TR_SECTION_GUIDE}"
+        commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
     if not is_edit and str(head_type or "").upper() == "TR":
         commit_hint = (
             "\nThe optional `commit_message` is an English one-line commit subject "
@@ -959,7 +1220,7 @@ def build_mention(
             "in the Conventional Commits form and in English; omit it if unsure.\n"
             # 0299 D0004 §3.9: 작업 지시가 검증의 전제다. 형식 안내가 먼저 나가야
             # 대조할 대상이 생기고, 반려당한 뒤에 처음 형식을 배우는 일이 없다.
-            f"\n{tr_scope_service.TR_SECTION_GUIDE}"
+            f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
         )
     content_source_hint = (
         "Choose exactly one document source (XOR):\n"
@@ -1046,7 +1307,7 @@ def build_mention(
 
     source_crud_section = ""
     if _include_remote_source_crud(project):
-        source_crud_section = _remote_source_crud_section(base, raw_token, scope_type)
+        source_crud_section = _remote_source_crud_section(base, raw_token, scope_type, locale)
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [

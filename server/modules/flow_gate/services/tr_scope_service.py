@@ -46,14 +46,43 @@ TRV_UNREPORTED = "TRV-004"        # 신고 누락
 TRV_FORMAT = "TRV-005"            # 형식 오류
 TRV_NO_SCOPE = "TRV-006"          # 범위 확인 불가
 
-CODE_LABELS: dict[str, str] = {
-    TRV_MISSING_SECTION: "섹션 누락 — `## 변경 파일` 섹션이 없거나 비어 있습니다.",
-    TRV_OUT_OF_SCOPE: "범위 밖 신고 — 신고한 경로가 배정된 작업 폴더 밖을 가리킵니다.",
-    TRV_UNCONFIRMED: "신고분 미확인 — 신고했는데 배정된 작업 폴더에 그 변경이 없습니다.",
-    TRV_UNREPORTED: "신고 누락 — 작업 폴더에 변경이 있는데 신고 목록에 없습니다.",
-    TRV_FORMAT: "형식 오류 — 항목 표기가 규칙에 어긋납니다.",
-    TRV_NO_SCOPE: "범위 확인 불가 — 배정된 작업 폴더를 확인할 수 없습니다(서버 측 사정).",
+# T2/TR2 (0355 NR0003 §1-4): 반려 안내문·작성 안내문이 966자 전부 한국어였고
+# 언어를 바꿀 방법이 없었다. 사유 코드 라벨을 언어별로 두고, ko 를 default 로
+# 남겨 기존 호출부(로그 등)와 호환한다.
+_CODE_LABELS_BY_LOCALE: dict[str, dict[str, str]] = {
+    "ko": {
+        TRV_MISSING_SECTION: "섹션 누락 — `## 변경 파일`(영어 별칭 `## Changed Files`) 섹션이 없거나 비어 있습니다.",
+        TRV_OUT_OF_SCOPE: "범위 밖 신고 — 신고한 경로가 배정된 작업 폴더 밖을 가리킵니다.",
+        TRV_UNCONFIRMED: "신고분 미확인 — 신고했는데 배정된 작업 폴더에 그 변경이 없습니다.",
+        TRV_UNREPORTED: "신고 누락 — 작업 폴더에 변경이 있는데 신고 목록에 없습니다.",
+        TRV_FORMAT: "형식 오류 — 항목 표기가 규칙에 어긋납니다.",
+        TRV_NO_SCOPE: "범위 확인 불가 — 배정된 작업 폴더를 확인할 수 없습니다(서버 측 사정).",
+    },
+    "en": {
+        TRV_MISSING_SECTION: "Missing section — the `## Changed Files` section is missing or empty.",
+        TRV_OUT_OF_SCOPE: "Out-of-scope report — a reported path points outside the assigned work folder.",
+        TRV_UNCONFIRMED: "Unconfirmed report — the change was reported but was not found in the assigned work folder.",
+        TRV_UNREPORTED: "Unreported change — the work folder has a change missing from the report list.",
+        TRV_FORMAT: "Format error — an item's notation violates the required format.",
+        TRV_NO_SCOPE: "Scope unavailable — the assigned work folder could not be verified (server-side condition).",
+    },
+    "ja": {
+        TRV_MISSING_SECTION: "セクション欠落 — `## Changed Files` セクションが無いか空です。",
+        TRV_OUT_OF_SCOPE: "範囲外の報告 — 報告されたパスが割り当てられた作業フォルダの外を指しています。",
+        TRV_UNCONFIRMED: "未確認の報告 — 報告されましたが、割り当てられた作業フォルダにその変更が見つかりません。",
+        TRV_UNREPORTED: "未報告の変更 — 作業フォルダに変更がありますが、報告リストにありません。",
+        TRV_FORMAT: "形式エラー — 項目の表記が規則に違反しています。",
+        TRV_NO_SCOPE: "範囲確認不可 — 割り当てられた作業フォルダを確認できません(サーバー側の事情)。",
+    },
 }
+
+CODE_LABELS: dict[str, str] = _CODE_LABELS_BY_LOCALE["ko"]
+
+
+def _code_label(code: str, locale: str) -> str:
+    table = _CODE_LABELS_BY_LOCALE.get(locale, _CODE_LABELS_BY_LOCALE["ko"])
+    return table.get(code, CODE_LABELS.get(code, code))
+
 
 # ── 적용 단계 (D0004 §3.6) ───────────────────────────────────────────────────
 STAGE_OBSERVE = "observe"
@@ -67,6 +96,7 @@ VERDICT_REJECT = "reject"
 VERDICT_SKIPPED = "skipped"
 
 SECTION_HEADING = "## 변경 파일"
+SECTION_HEADING_EN = "## Changed Files"  # T0009: 파서가 받아주는 영어 별칭 (표시용 정식 명칭은 한국어 그대로)
 NONE_MARKER = "없음"
 MAX_ITEMS = 200
 _MAX_LISTED = 40  # 반려 안내문에 실제로 나열하는 최대 줄 수 (D0004 §3.8-3)
@@ -109,9 +139,15 @@ def is_excluded_path(path: str) -> bool:
 
 # ── 신고목록 파서 (D0004 §3.2) ────────────────────────────────────────────────
 
-_HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s*변경\s*파일\s*$")
+# T0009: "변경 파일" 과 영어 별칭 "Changed Files" 를 둘 다 받는다 — 표기가 늘 뿐,
+# 정식 명칭(재제출 안내에 쓰는 SECTION_HEADING)은 여전히 한국어다.
+_HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s*(변경\s*파일|Changed\s+Files)\s*$", re.IGNORECASE)
 _NEXT_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
 _ITEM_RE = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+_NONE_VARIANTS = frozenset({
+    NONE_MARKER, f"- {NONE_MARKER}",
+    "none", "None", "N/A", "- none", "- None", "- N/A",
+})
 
 
 class ReportedFiles:
@@ -177,7 +213,7 @@ def parse_reported_files(body: str) -> ReportedFiles:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped in (NONE_MARKER, f"- {NONE_MARKER}", "none", "None", "N/A"):
+        if stripped in _NONE_VARIANTS:
             result.declared_none = True
             continue
         match = _ITEM_RE.match(line)
@@ -222,10 +258,12 @@ def resolve_stage(project_id: str) -> Optional[str]:
 
 # ── 대조 판정 (D0004 §3.4 / §3.7) ────────────────────────────────────────────
 
-def evaluate(project_id: str, group_id: str, body: str) -> dict:
+def evaluate(project_id: str, group_id: str, body: str, locale: str = "ko") -> dict:
     """TR 본문을 판정한다. 부작용 없음 — dry-run 과 실등록이 같은 함수를 호출한다.
 
     반환 dict 는 그대로 dry-run 응답, 문서 meta, 이벤트 metadata 에 실린다.
+    ``locale`` 은 거부됐을 때 붙는 안내문(``notice``)의 언어만 정한다(T2/TR2) — 판정
+    자체는 언어와 무관하다.
     """
     stage = resolve_stage(project_id)
     if stage is None:
@@ -289,7 +327,7 @@ def evaluate(project_id: str, group_id: str, body: str) -> dict:
         "scope_reason": actual.get("reason"),
     }
     if verdict == VERDICT_REJECT:
-        result["notice"] = build_notice(result)
+        result["notice"] = build_notice(result, locale)
     return result
 
 
@@ -316,81 +354,85 @@ def _verdict_for(codes: list[str], stage: str) -> str:
     return VERDICT_PASS  # 관측 — 기록만 하고 작업자에게는 아무것도 보이지 않는다
 
 
-# ── 반려 안내문 (D0004 §3.8) ─────────────────────────────────────────────────
+# ── 반려 안내문 (D0004 §3.8, 언어 전달 T2/TR2 — NR0003 §1-4) ────────────────
+#
+# NR0003 §1-4 가 실측한 문제: TR 반려 안내문이 966자 전부 한국어였고 언어를
+# 바꿀 방법이 없었다. 이 함수를 부르는 자리(inbox_routes._handle_new)는 이미
+# 토큰/헤더에서 locale 을 정해 두고 있었으므로(L0007 §2-2 "통로는 이미 있다"),
+# 여기서 할 일은 그 값을 받아 안내문을 그 언어로 짓는 것뿐이다.
 
-def _bullet_list(paths: list[str]) -> str:
+_SUPPORTED_NOTICE_LOCALES = ("ko", "en", "ja")
+
+
+def _normalize_notice_locale(locale: str) -> str:
+    return locale if locale in _SUPPORTED_NOTICE_LOCALES else "ko"
+
+
+def _spelling_changed_files(locale: str) -> str:
+    """구역 제목의 언어별 표기. 일본어 요청에도 영어 정식 표기가 나간다 — 이 문법
+    글자에 일본어 별칭은 만들지 않았으므로(0355 T0009), 알려주는 표기도 영어다."""
+    return SECTION_HEADING if _normalize_notice_locale(locale) == "ko" else SECTION_HEADING_EN
+
+
+def _spelling_none(locale: str) -> str:
+    return NONE_MARKER if _normalize_notice_locale(locale) == "ko" else "None"
+
+
+_BULLET_EMPTY = {"ko": "  (없음)", "en": "  (none)", "ja": "  (なし)"}
+_BULLET_MORE = {
+    "ko": "  … 외 {rest}건 (전체 {total}건)",
+    "en": "  … and {rest} more (total {total})",
+    "ja": "  … 他{rest}件(全{total}件)",
+}
+
+
+def _bullet_list(paths: list[str], locale: str = "ko") -> str:
+    loc = _normalize_notice_locale(locale)
     if not paths:
-        return "  (없음)"
+        return _BULLET_EMPTY[loc]
     shown = paths[:_MAX_LISTED]
     lines = [f"  - {p}" for p in shown]
     if len(paths) > len(shown):
-        lines.append(f"  … 외 {len(paths) - len(shown)}건 (전체 {len(paths)}건)")
+        lines.append(_BULLET_MORE[loc].format(rest=len(paths) - len(shown), total=len(paths)))
     return "\n".join(lines)
 
 
-def build_notice(result: dict) -> str:
-    """거부 사유별 재작업 지시서.
-
-    오류 통보가 아니라 지시서인 것이 요점이다. "형식 오류입니다" 한 줄만 던지면
-    같은 것을 그대로 다시 제출한다. 어조는 단정이 아니라 추정으로 쓴다 — 실제
-    원인이 다를 수 있는데 단정하면 엉뚱한 곳을 고치게 된다.
-    """
-    codes: list[str] = result.get("codes") or []
-    parts: list[str] = ["TR 제출이 작업범위 검증에서 반려되었습니다."]
-
-    # 1. 왜 반려인지
-    parts.append("\n[1] 반려 사유")
-    for code in codes:
-        parts.append(f"  - {code}: {CODE_LABELS.get(code, code)}")
-
-    # 2. 어디서 작업했어야 하는지 — 사고의 대부분이 자기 위치를 몰라서 생기므로
-    #    이 두 줄의 효과가 가장 크다.
-    parts.append("\n[2] 이 작업에 배정된 위치")
-    parts.append(f"  브랜치   : {result.get('branch') or '(확인 불가)'}")
-    parts.append(f"  작업 폴더: {result.get('worktree') or '(확인 불가)'}")
-    parts.append("  이 폴더 밖에서 편집한 내용은 이 작업의 산출물로 집계되지 않습니다.")
-
-    # 3. 서버가 실제로 본 변경 목록
-    parts.append(f"\n[3] 서버가 작업 폴더에서 실제로 관측한 변경 ({len(result.get('detected') or [])}건)")
-    parts.append(_bullet_list(result.get("detected") or []))
-    if result.get("unconfirmed"):
-        parts.append("\n  신고했지만 작업 폴더에서 찾지 못한 경로:")
-        parts.append(_bullet_list(result.get("unconfirmed") or []))
-        parts.append(
+_NOTICE: dict[str, dict[str, str]] = {
+    "ko": {
+        "head": "TR 제출이 작업범위 검증에서 반려되었습니다.",
+        "reason_heading": "\n[1] 반려 사유",
+        "location_heading": "\n[2] 이 작업에 배정된 위치",
+        "branch_label": "  브랜치   : {branch}",
+        "worktree_label": "  작업 폴더: {worktree}",
+        "unavailable": "(확인 불가)",
+        "location_note": "  이 폴더 밖에서 편집한 내용은 이 작업의 산출물로 집계되지 않습니다.",
+        "observed_heading": "\n[3] 서버가 작업 폴더에서 실제로 관측한 변경 ({count}건)",
+        "unconfirmed_heading": "\n  신고했지만 작업 폴더에서 찾지 못한 경로:",
+        "unconfirmed_note": (
             "  이런 형태는 대개 배정된 작업 폴더가 아닌 다른 위치(원본 레포/main 등)에서"
             " 파일을 직접 편집했을 때 나타납니다. 저장하지 않았거나 경로를 잘못 적은"
             " 경우일 수도 있으니 확인해 보십시오."
-        )
-    if result.get("unreported"):
-        parts.append("\n  작업 폴더에 있는데 신고 목록에 없는 경로:")
-        parts.append(_bullet_list(result.get("unreported") or []))
-    if result.get("out_of_scope"):
-        parts.append("\n  배정 범위 밖을 가리키는 신고 경로(절대경로 또는 '..' 포함):")
-        parts.append(_bullet_list(result.get("out_of_scope") or []))
-    if result.get("format_errors"):
-        parts.append("\n  형식 오류:")
-        parts.append(_bullet_list(result.get("format_errors") or []))
-
-    # 4. 어떻게 다시 제출하는지
-    parts.append(
-        "\n[4] 다시 제출하는 방법\n"
-        "  TR 본문에 아래 섹션을 그대로 포함하고, 작업 지시에 동봉된 것과 같은\n"
-        "  Artifact registration POST 를 다시 호출하십시오(주소·토큰·prev_doc_id 동일).\n"
-        "\n"
-        f"  {SECTION_HEADING}\n"
-        "\n"
-        "  - <저장소 루트 기준 상대경로. 바뀐 파일마다 한 줄씩 추가>\n"
-        "\n"
-        "  규칙: 저장소 루트 기준 상대경로, 구분자는 '/', 한 줄에 하나, '- ' 로 시작.\n"
-        "  앞에 '/' 를 붙이지 않고 './' 로 시작하지 않으며 '..' 을 포함하지 않습니다.\n"
-        "  새로 만든/고친/지운 파일을 모두 적고, 이름을 바꾼 경우 바뀐 뒤 경로만 적습니다.\n"
-        f"  바꾼 파일이 하나도 없으면 항목 대신 '{NONE_MARKER}' 한 줄만 적습니다.\n"
-        "  본 제출 전에 같은 본문으로 \"dry_run\": true 를 보내 판정을 미리 확인할 수 있습니다."
-    )
-
-    # 5. 되돌리는 법 — 이게 없으면 원본 레포에 쓰레기가 남은 채 재제출만 반복된다.
-    if TRV_OUT_OF_SCOPE in codes or TRV_UNCONFIRMED in codes:
-        parts.append(
+        ),
+        "unreported_heading": "\n  작업 폴더에 있는데 신고 목록에 없는 경로:",
+        "out_of_scope_heading": "\n  배정 범위 밖을 가리키는 신고 경로(절대경로 또는 '..' 포함):",
+        "format_errors_heading": "\n  형식 오류:",
+        "resubmit": (
+            "\n[4] 다시 제출하는 방법\n"
+            "  TR 본문에 아래 섹션을 그대로 포함하고, 작업 지시에 동봉된 것과 같은\n"
+            "  Artifact registration POST 를 다시 호출하십시오(주소·토큰·prev_doc_id 동일).\n"
+            "\n"
+            "  {heading}\n"
+            "\n"
+            "  - <저장소 루트 기준 상대경로. 바뀐 파일마다 한 줄씩 추가>\n"
+            "\n"
+            "  규칙: 저장소 루트 기준 상대경로, 구분자는 '/', 한 줄에 하나, '- ' 로 시작.\n"
+            "  앞에 '/' 를 붙이지 않고 './' 로 시작하지 않으며 '..' 을 포함하지 않습니다.\n"
+            "  새로 만든/고친/지운 파일을 모두 적고, 이름을 바꾼 경우 바뀐 뒤 경로만 적습니다.\n"
+            "  바꾼 파일이 하나도 없으면 항목 대신 '{none}'(또는 'None') 한 줄만 적습니다.\n"
+            f"  영어 별칭: 섹션 제목은 '{SECTION_HEADING_EN}' 로 적어도 받습니다.\n"
+            "  본 제출 전에 같은 본문으로 \"dry_run\": true 를 보내 판정을 미리 확인할 수 있습니다."
+        ),
+        "revert": (
             "\n[5] 배정 범위 밖에 쓴 내용이 있다면\n"
             "  1) 먼저 그 위치(원본 레포/main 등)의 변경을 되돌리십시오. 그대로 두면\n"
             "     다음 작업자가 그 오염을 물려받습니다.\n"
@@ -398,7 +440,155 @@ def build_notice(result: dict) -> str:
             "     CRUD 엔드포인트(/remote/write, /remote/remove)를 쓰면 서버가 이 작업의\n"
             "     워크트리에만 쓰므로 위치를 잘못 잡는 일이 없습니다.\n"
             "  3) 그다음 이 TR 을 다시 제출하십시오."
-        )
+        ),
+    },
+    "en": {
+        "head": "The TR submission was rejected by work-scope verification.",
+        "reason_heading": "\n[1] Rejection reason",
+        "location_heading": "\n[2] Location assigned to this task",
+        "branch_label": "  Branch     : {branch}",
+        "worktree_label": "  Work folder: {worktree}",
+        "unavailable": "(unavailable)",
+        "location_note": "  Edits made outside this folder are not counted as output for this task.",
+        "observed_heading": "\n[3] Changes the server actually observed in the work folder ({count})",
+        "unconfirmed_heading": "\n  Paths reported but not found in the work folder:",
+        "unconfirmed_note": (
+            "  This usually happens when a file was edited directly in a location other"
+            " than the assigned work folder (e.g. the original repo/main). It could also"
+            " mean the change was not saved, or the path was written incorrectly — please check."
+        ),
+        "unreported_heading": "\n  Paths present in the work folder but missing from the report list:",
+        "out_of_scope_heading": "\n  Reported paths pointing outside the assigned scope (absolute path or containing '..'):",
+        "format_errors_heading": "\n  Format errors:",
+        "resubmit": (
+            "\n[4] How to resubmit\n"
+            "  Include the section below verbatim in the TR body, and call the same\n"
+            "  Artifact registration POST included with the work instruction again\n"
+            "  (same URL/token/prev_doc_id).\n"
+            "\n"
+            "  {heading}\n"
+            "\n"
+            "  - <path relative to the repository root. Add one line per changed file>\n"
+            "\n"
+            "  Rule: paths are relative to the repository root, separator '/', one per line,\n"
+            "  starting with '- '. Do not prefix with '/', do not start with './', and do not\n"
+            "  include '..'. List every file you created/changed/deleted; for renames, list\n"
+            "  only the new path.\n"
+            "  If you changed no files, write a single line '{none}' instead of items.\n"
+            "  You can preview the verdict beforehand by sending the same body with"
+            " \"dry_run\": true."
+        ),
+        "revert": (
+            "\n[5] If you wrote anything outside the assigned scope\n"
+            "  1) First revert the change at that location (original repo/main, etc).\n"
+            "     Leaving it in place hands the contamination to the next worker.\n"
+            "  2) Re-apply the same change in the work folder from [2] above. The remote\n"
+            "     source CRUD endpoints (/remote/write, /remote/remove) write only into\n"
+            "     this task's worktree, so you cannot mis-target the location.\n"
+            "  3) Then resubmit this TR."
+        ),
+    },
+    "ja": {
+        "head": "TRの提出は作業範囲検証で却下されました。",
+        "reason_heading": "\n[1] 却下理由",
+        "location_heading": "\n[2] この作業に割り当てられた場所",
+        "branch_label": "  ブランチ    : {branch}",
+        "worktree_label": "  作業フォルダ: {worktree}",
+        "unavailable": "(確認不可)",
+        "location_note": "  このフォルダの外で編集した内容は、この作業の成果物として集計されません。",
+        "observed_heading": "\n[3] サーバーが作業フォルダで実際に観測した変更({count}件)",
+        "unconfirmed_heading": "\n  報告されたが作業フォルダで見つからなかったパス:",
+        "unconfirmed_note": (
+            "  これは通常、割り当てられた作業フォルダ以外の場所(元のリポジトリ/main など)で"
+            "ファイルを直接編集した場合に発生します。保存し忘れたか、パスを誤って"
+            "記載した可能性もあるため確認してください。"
+        ),
+        "unreported_heading": "\n  作業フォルダにはあるが、報告リストに無いパス:",
+        "out_of_scope_heading": "\n  割り当てられた範囲外を指す報告パス(絶対パスまたは '..' を含む):",
+        "format_errors_heading": "\n  形式エラー:",
+        "resubmit": (
+            "\n[4] 再提出の方法\n"
+            "  TR本文に以下のセクションをそのまま含め、作業指示に添付されたものと同じ\n"
+            "  Artifact registration POST を再度呼び出してください(URL・トークン・\n"
+            "  prev_doc_id は同一)。\n"
+            "\n"
+            "  {heading}\n"
+            "\n"
+            "  - <リポジトリルート基準の相対パス。変更したファイルごとに1行追加>\n"
+            "\n"
+            "  規則: リポジトリルート基準の相対パス、区切りは '/'、1行に1件、'- ' で開始。\n"
+            "  先頭に '/' を付けず、'./' で始めず、'..' を含めません。新規作成・変更・\n"
+            "  削除したファイルをすべて記載し、名前を変更した場合は変更後のパスのみ\n"
+            "  記載します。\n"
+            "  変更したファイルが一つも無い場合は、項目の代わりに '{none}' の1行のみを\n"
+            "  記載します。\n"
+            "  本提出の前に、同じ本文で \"dry_run\": true を送ると判定を事前に確認できます。"
+        ),
+        "revert": (
+            "\n[5] 割り当てられた範囲外に書いた内容がある場合\n"
+            "  1) まずその場所(元のリポジトリ/main など)の変更を元に戻してください。\n"
+            "     そのままにすると、次の作業者がその汚染を引き継ぐことになります。\n"
+            "  2) 上記[2]の作業フォルダで同じ変更を再度適用してください。リモートソース\n"
+            "     CRUDエンドポイント(/remote/write, /remote/remove)を使うと、サーバーは\n"
+            "     この作業のワークツリーにのみ書き込むため、場所を誤ることがありません。\n"
+            "  3) その後、このTRを再提出してください。"
+        ),
+    },
+}
+
+
+def build_notice(result: dict, locale: str = "ko") -> str:
+    """거부 사유별 재작업 지시서.
+
+    오류 통보가 아니라 지시서인 것이 요점이다. "형식 오류입니다" 한 줄만 던지면
+    같은 것을 그대로 다시 제출한다. 어조는 단정이 아니라 추정으로 쓴다 — 실제
+    원인이 다를 수 있는데 단정하면 엉뚱한 곳을 고치게 된다.
+
+    ``locale`` 은 안내문 전체의 언어를 정한다(T2/TR2). 구역 번호(``[1]``~``[5]``)와
+    사유 코드(``TRV-00N``)는 언어와 무관하게 그대로 남는다 — 번역 대상이 아니다.
+    """
+    loc = _normalize_notice_locale(locale)
+    strings = _NOTICE[loc]
+    codes: list[str] = result.get("codes") or []
+    parts: list[str] = [strings["head"]]
+
+    # 1. 왜 반려인지
+    parts.append(strings["reason_heading"])
+    for code in codes:
+        parts.append(f"  - {code}: {_code_label(code, loc)}")
+
+    # 2. 어디서 작업했어야 하는지 — 사고의 대부분이 자기 위치를 몰라서 생기므로
+    #    이 두 줄의 효과가 가장 크다.
+    parts.append(strings["location_heading"])
+    parts.append(strings["branch_label"].format(branch=result.get("branch") or strings["unavailable"]))
+    parts.append(strings["worktree_label"].format(worktree=result.get("worktree") or strings["unavailable"]))
+    parts.append(strings["location_note"])
+
+    # 3. 서버가 실제로 본 변경 목록
+    parts.append(strings["observed_heading"].format(count=len(result.get("detected") or [])))
+    parts.append(_bullet_list(result.get("detected") or [], loc))
+    if result.get("unconfirmed"):
+        parts.append(strings["unconfirmed_heading"])
+        parts.append(_bullet_list(result.get("unconfirmed") or [], loc))
+        parts.append(strings["unconfirmed_note"])
+    if result.get("unreported"):
+        parts.append(strings["unreported_heading"])
+        parts.append(_bullet_list(result.get("unreported") or [], loc))
+    if result.get("out_of_scope"):
+        parts.append(strings["out_of_scope_heading"])
+        parts.append(_bullet_list(result.get("out_of_scope") or [], loc))
+    if result.get("format_errors"):
+        parts.append(strings["format_errors_heading"])
+        parts.append(_bullet_list(result.get("format_errors") or [], loc))
+
+    # 4. 어떻게 다시 제출하는지
+    parts.append(strings["resubmit"].format(
+        heading=_spelling_changed_files(loc), none=_spelling_none(loc),
+    ))
+
+    # 5. 되돌리는 법 — 이게 없으면 원본 레포에 쓰레기가 남은 채 재제출만 반복된다.
+    if TRV_OUT_OF_SCOPE in codes or TRV_UNCONFIRMED in codes:
+        parts.append(strings["revert"])
     return "\n".join(parts)
 
 
@@ -421,23 +611,85 @@ def verdict_from_meta(meta) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
-# ── 작업 지시에 실리는 안내 (D0004 §3.9) ─────────────────────────────────────
+# ── 작업 지시에 실리는 안내 (D0004 §3.9, 언어 전달 T2/TR2) ───────────────────
 
-TR_SECTION_GUIDE = (
-    "TR 본문에는 아래 섹션을 반드시 포함하십시오. 서버가 이 목록을 배정된 작업\n"
-    "폴더(워크트리)의 실제 변경과 대조하며, 어긋나면 제출이 반려될 수 있습니다.\n"
-    "\n"
-    f"{SECTION_HEADING}\n"
-    "\n"
-    "- <저장소 루트 기준 상대경로. 바뀐 파일마다 한 줄씩 추가>\n"
-    "\n"
-    "저장소 루트 기준 상대경로로, 구분자는 '/', 한 줄에 하나씩 '- ' 로 시작해 적습니다.\n"
-    "앞에 '/' 를 붙이거나 './' 로 시작하거나 '..' 을 포함하면 범위 밖 신고로 봅니다.\n"
-    "새로 만든/고친/지운 파일을 모두 적고, 이름을 바꾼 경우 바뀐 뒤 경로만 적습니다.\n"
-    f"바꾼 파일이 하나도 없으면 항목 대신 '{NONE_MARKER}' 한 줄만 적습니다(최대 200개).\n"
-)
+_TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {
+    "ko": (
+        "TR 본문에는 아래 섹션을 반드시 포함하십시오. 서버가 이 목록을 배정된 작업\n"
+        "폴더(워크트리)의 실제 변경과 대조하며, 어긋나면 제출이 반려될 수 있습니다.\n"
+        "\n"
+        "{heading}\n"
+        "\n"
+        "- <저장소 루트 기준 상대경로. 바뀐 파일마다 한 줄씩 추가>\n"
+        "\n"
+        "저장소 루트 기준 상대경로로, 구분자는 '/', 한 줄에 하나씩 '- ' 로 시작해 적습니다.\n"
+        "앞에 '/' 를 붙이거나 './' 로 시작하거나 '..' 을 포함하면 범위 밖 신고로 봅니다.\n"
+        "새로 만든/고친/지운 파일을 모두 적고, 이름을 바꾼 경우 바뀐 뒤 경로만 적습니다.\n"
+        "바꾼 파일이 하나도 없으면 항목 대신 '{none}'(또는 'None') 한 줄만 적습니다(최대 200개).\n"
+        f"영어로 작성해도 됩니다 — 섹션 제목은 '{SECTION_HEADING_EN}' 로 적어도 똑같이 받습니다.\n"
+    ),
+    "en": (
+        "Include the section below in the TR body. The server compares this list\n"
+        "against the actual changes in the assigned work folder (worktree); a\n"
+        "mismatch may cause the submission to be rejected.\n"
+        "\n"
+        "{heading}\n"
+        "\n"
+        "- <path relative to the repository root. Add one line per changed file>\n"
+        "\n"
+        "Paths are relative to the repository root, separator '/', one per line,\n"
+        "starting with '- '. A leading '/', a './' prefix, or '..' is treated as an\n"
+        "out-of-scope report. List every file you created/changed/deleted; for\n"
+        "renames, list only the new path.\n"
+        "If you changed no files, write a single line '{none}' instead of items (up to 200).\n"
+    ),
+    "ja": (
+        "TR本文には以下のセクションを必ず含めてください。サーバーはこのリストを、\n"
+        "割り当てられた作業フォルダ(ワークツリー)の実際の変更と照合し、食い違いが\n"
+        "あれば提出が却下されることがあります。\n"
+        "\n"
+        "{heading}\n"
+        "\n"
+        "- <リポジトリルート基準の相対パス。変更したファイルごとに1行追加>\n"
+        "\n"
+        "リポジトリルート基準の相対パスで、区切りは '/'、1行に1件、'- ' で始めて\n"
+        "記載します。先頭に '/' を付ける、'./' で始める、'..' を含む場合は範囲外の\n"
+        "報告とみなします。新規作成・変更・削除したファイルをすべて記載し、名前を\n"
+        "変更した場合は変更後のパスのみ記載します。\n"
+        "変更したファイルが一つも無い場合は、項目の代わりに '{none}' の1行のみを\n"
+        "記載します(最大200件)。\n"
+    ),
+}
 
-TR_SECTION_PLACEHOLDER = (
-    f"{SECTION_HEADING}\n\n"
-    "- <저장소 루트 기준 상대경로. 바꾼 파일이 없으면 이 목록 대신 '없음' 한 줄>\n"
-)
+
+def tr_section_guide(locale: str = "ko") -> str:
+    """작업 지시에 실리는 TR 작성 안내문 (D0004 §3.9, T2/TR2 언어 전달).
+
+    NR0003 §1-4: 이전에는 이 안내문도 966자 반려 안내문과 함께 전부 한국어였다.
+    """
+    loc = _normalize_notice_locale(locale)
+    return _TR_SECTION_GUIDE_TEMPLATES[loc].format(
+        heading=_spelling_changed_files(loc), none=_spelling_none(loc),
+    )
+
+
+# 하위호환: 기존 호출부(ko 고정 화면·문서)는 모듈 상수를 그대로 쓴다.
+TR_SECTION_GUIDE = tr_section_guide("ko")
+
+
+_TR_SECTION_PLACEHOLDER_TEMPLATES: dict[str, str] = {
+    "ko": "{heading}\n\n- <저장소 루트 기준 상대경로. 바꾼 파일이 없으면 이 목록 대신 '{none}' 한 줄>\n",
+    "en": "{heading}\n\n- <path relative to the repository root. If nothing changed, write a single '{none}' line instead>\n",
+    "ja": "{heading}\n\n- <リポジトリルート基準の相対パス。変更が無い場合はこの代わりに '{none}' の1行のみ>\n",
+}
+
+
+def tr_section_placeholder(locale: str = "ko") -> str:
+    """새 TR ``content`` 자리에 미리 넣어 두는 빈 섹션 (T1, T2/TR2 언어 전달)."""
+    loc = _normalize_notice_locale(locale)
+    return _TR_SECTION_PLACEHOLDER_TEMPLATES[loc].format(
+        heading=_spelling_changed_files(loc), none=_spelling_none(loc),
+    )
+
+
+TR_SECTION_PLACEHOLDER = tr_section_placeholder("ko")

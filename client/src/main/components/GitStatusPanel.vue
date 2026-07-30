@@ -449,7 +449,7 @@ function defaultBaseCommitMessage(files: string[]): string {
   if (!files.length) return ''
   const joined = 'fix: ' + files.join(', ')
   if (joined.length <= COMMIT_SUBJECT_MAX) return joined
-  return `fix: ${files[0]} 외 ${files.length - 1}건`.slice(0, COMMIT_SUBJECT_MAX)
+  return `fix: ${files[0]} and ${files.length - 1} more`.slice(0, COMMIT_SUBJECT_MAX)
 }
 
 const baseCommitSuggested = computed(() => defaultBaseCommitMessage(baseDirtyFiles.value))

@@ -54,7 +54,7 @@ class TestConversationMention:
             api_base_url="http://h:1/api/v1",
         )
         lines = text.split("\n")
-        assert lines[0] == "## Conversation (대화)"
+        assert lines[0] == "## Conversation"
         assert "Conversation document: p.default.0001.0008-CH" in lines
         assert "Read the full conversation: GET http://h:1/api/v1/document?doc_id=p.default.0001.0008-CH" in lines
         # Read, source/document lookup, and submit each carry their own credential line.

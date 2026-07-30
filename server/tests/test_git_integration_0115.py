@@ -1480,7 +1480,7 @@ class TestDefaultBaseCommitMessage0177:
 
         files = [f"dir/deep/path/file_{i:03}.py" for i in range(30)]
         msg = svc.default_base_commit_message(files)
-        assert msg == f"fix: {files[0]} 외 29건"
+        assert msg == f"fix: {files[0]} and 29 more"
         assert len(msg) <= svc.COMMIT_SUBJECT_MAX
 
     def test_extreme_path_hard_cut(self):

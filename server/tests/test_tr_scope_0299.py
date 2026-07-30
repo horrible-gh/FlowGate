@@ -203,6 +203,101 @@ def test_revert_block_is_omitted_when_nothing_was_written_elsewhere():
     assert "[5]" not in notice
 
 
+# ── 언어 전달 (0355 T2/TR2, NR0003 §1-4) ─────────────────────────────────────
+
+import re as _re
+
+_HANGUL = _re.compile(r"[가-힣]")
+_KANA = _re.compile(r"[ぁ-んァ-ヶ]")
+
+_SAMPLE_RESULT = {
+    "codes": [trs.TRV_UNCONFIRMED, trs.TRV_UNREPORTED],
+    "branch": "flowgate_default_0355",
+    "worktree": "C:/storage/flowgate/src/FlowGate/flowgate_default_0355",
+    "detected": ["server/x.py"],
+    "unconfirmed": ["server/a.py"],
+    "unreported": ["server/y.py"],
+    "out_of_scope": [],
+    "format_errors": [],
+}
+
+
+def test_notice_default_locale_is_unchanged_korean():
+    """locale 인자를 안 주면 기존 호출부(로그 등)와 완전히 같아야 한다."""
+    notice = trs.build_notice(_SAMPLE_RESULT)
+    assert notice == trs.build_notice(_SAMPLE_RESULT, "ko")
+    assert _HANGUL.search(notice)
+
+
+def test_notice_en_has_no_korean_but_keeps_structure_and_codes():
+    notice = trs.build_notice(_SAMPLE_RESULT, "en")
+    assert not _HANGUL.search(notice), "en notice must not contain Korean"
+    assert not _KANA.search(notice), "en notice must not contain Japanese"
+    for marker in ("[1]", "[2]", "[3]", "[4]"):
+        assert marker in notice
+    assert trs.TRV_UNCONFIRMED in notice and trs.TRV_UNREPORTED in notice
+    assert "flowgate_default_0355" in notice  # 자리표시자 값은 번역하지 않는다
+    assert "server/a.py" in notice and "server/y.py" in notice
+    assert trs.SECTION_HEADING_EN in notice  # 재제출 안내의 구역 제목도 영어
+
+
+def test_notice_ja_has_japanese_no_korean_and_english_grammar_heading():
+    notice = trs.build_notice(_SAMPLE_RESULT, "ja")
+    assert not _HANGUL.search(notice), "ja notice must not contain Korean"
+    assert _KANA.search(notice), "ja notice must contain Japanese"
+    assert "flowgate_default_0355" in notice
+    # 일본어 별칭은 만들지 않았으므로(0355 T0009) 구역 제목은 영어 정식 표기로 안내한다.
+    assert trs.SECTION_HEADING_EN in notice
+    assert trs.SECTION_HEADING not in notice
+
+
+def test_notice_unknown_locale_falls_back_to_korean():
+    notice = trs.build_notice(_SAMPLE_RESULT, "fr")
+    assert notice == trs.build_notice(_SAMPLE_RESULT, "ko")
+
+
+def test_tr_section_guide_localized_no_leak_and_keeps_placeholder_shape():
+    ko = trs.tr_section_guide("ko")
+    en = trs.tr_section_guide("en")
+    ja = trs.tr_section_guide("ja")
+
+    assert ko == trs.TR_SECTION_GUIDE  # 하위호환: 모듈 상수는 ko 렌더링과 같다
+    assert _HANGUL.search(ko)
+
+    assert not _HANGUL.search(en) and not _KANA.search(en)
+    assert trs.SECTION_HEADING_EN in en
+
+    assert not _HANGUL.search(ja) and _KANA.search(ja)
+    assert trs.SECTION_HEADING_EN in ja and trs.SECTION_HEADING not in ja
+
+
+def test_tr_section_placeholder_localized():
+    ko = trs.tr_section_placeholder("ko")
+    en = trs.tr_section_placeholder("en")
+
+    assert ko == trs.TR_SECTION_PLACEHOLDER
+    assert trs.SECTION_HEADING in ko and "없음" in ko
+
+    assert trs.SECTION_HEADING_EN in en and "None" in en
+    assert not _HANGUL.search(en)
+
+
+def test_evaluate_threads_locale_into_rejected_notice(monkeypatch):
+    """evaluate() 의 locale 인자가 반려 안내문까지 전달되는지 (T2/TR2)."""
+    monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
+    monkeypatch.setattr(
+        trs.git_service, "collect_scope_changes",
+        lambda project_id, group_id: {
+            "available": True, "reason": "worktree",
+            "worktree": "C:/wt", "branch": "work", "paths": [],
+        },
+    )
+    result = trs.evaluate("p", "g", "## 변경 파일\n\n- /etc/passwd\n", locale="en")
+    assert result["verdict"] == trs.VERDICT_REJECT
+    assert not _HANGUL.search(result["notice"])
+    assert "TRV-002" in result["notice"]
+
+
 # ── 실제 변경 수집 (D0004 §3.3) ──────────────────────────────────────────────
 
 def _git(repo: Path, *args: str) -> str:

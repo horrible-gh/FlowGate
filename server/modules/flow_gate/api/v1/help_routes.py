@@ -12,6 +12,7 @@ Authentication required (Bearer token)
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from modules.flow_gate import template_provision
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.help_url import help_url, outbound_api_base
@@ -30,14 +31,14 @@ def get_help_doc_type(request: Request):
     if isinstance(auth, JSONResponse):
         return auth
 
-    rows = db_templates.list_document_types(project_id=None)
+    locale = template_provision.normalize_locale(auth.get("continuation_locale"))
+    rows = db_templates.list_document_types(project_id=None, locale=locale)
     result = [
         {
             "type_code": r["type_code"],
             "name": r["type_name"],
             "series": r["series"],
             "description": r.get("description"),
-            "locale": r.get("locale", "ko"),
         }
         for r in rows
         if r.get("is_active", 1)
@@ -45,23 +46,47 @@ def get_help_doc_type(request: Request):
     return JSONResponse(content=result)
 
 
+_QUESTION_HELP_COPY = {
+    "ko": {
+        "note": "질의는 Q 문서가 아니라 해당 문서의 질의 데이터로 등록합니다. 콘솔 선택지를 강요하지 마세요.",
+        "titles": ("기능 범위", "질의 우선순위"),
+        "bodies": (
+            "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
+            "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
+        ),
+    },
+    "en": {
+        "note": "Register a query as query data on the relevant document, not as a Q document. Do not force console choices.",
+        "titles": ("Feature scope", "Query priority"),
+        "bodies": (
+            "The R0001 body has only one line, so the DS design scope is unclear. What are the specific feature scope and acceptance criteria?",
+            "The mention says next_type is DS, but clarification is needed. Should the query be registered first, or should DS be drafted with explicit assumptions?",
+        ),
+    },
+    "ja": {
+        "note": "質問はQ文書ではなく、対象文書の質問データとして登録します。コンソールで選択肢を強制しないでください。",
+        "titles": ("機能範囲", "質問の優先順位"),
+        "bodies": (
+            "R0001の本文が1行だけなので、DS設計の対象が不明確です。具体的な機能範囲と受入基準は何ですか。",
+            "メンションのnext_typeはDSですが、確認が必要です。先に質問を登録するべきですか、それとも前提を明記してDSを作成するべきですか。",
+        ),
+    },
+}
+
+
 @router.get("/help/question")
 def get_help_question(request: Request):
-    """Query registration guide (group 0022 Q/A/V revamp §4).
-
-    A query is NO LONGER a Q document. When a worker hits an ambiguous point, register it as
-    document-bound query data on the relevant document — do not create a Q document and do not
-    force a console choice. The console only receives a notice; the user answers freely in the
-    document's [Q&A] panel.
-
-    Auth: Bearer token required.
-    """
+    """Localized query-registration guide for authenticated workers."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
 
+    locale = template_provision.normalize_locale(auth.get("continuation_locale"))
+    copy = _QUESTION_HELP_COPY[locale]
+    titles = copy["titles"]
+    bodies = copy["bodies"]
     return JSONResponse(content={
-        "note": "질의는 Q 문서가 아니라 해당 문서의 질의 데이터로 등록합니다. 콘솔 선택지를 강요하지 마세요.",
+        "note": copy["note"],
         "example": {
             "method": "POST",
             "url": "/flowgate/api/v1/q/{doc_id}/questions",
@@ -72,19 +97,12 @@ def get_help_question(request: Request):
             "body": {
                 "asker_kind": "ai",
                 "questions": [
-                    {
-                        "title": "기능 범위",
-                        "body": "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
-                    },
-                    {
-                        "title": "질의 우선순위",
-                        "body": "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
-                    },
+                    {"title": titles[0], "body": bodies[0]},
+                    {"title": titles[1], "body": bodies[1]},
                 ],
             },
         },
     })
-
 
 @router.get("/help")
 def get_help():
