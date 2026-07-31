@@ -255,6 +255,19 @@ describe('DocWorkflow — stepStates props (T839 D031 v2)', () => {
     expect(wrapper.findAll('.wf-step').length).toBe(2)
   })
 
+  it('NR4b: R undecided → shows Manual Decision and emits decide-workflow', async () => {
+    const wrapper = mountComp({
+      tab: { id: 'test.doc', typeCode: 'R' },
+      workflowDecided: false,
+      stepStates: [],
+    })
+    const button = wrapper.find('.wf-edit-btn')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toContain('Manual Decision')
+    await button.trigger('click')
+    expect(wrapper.emitted('decide-workflow')).toHaveLength(1)
+  })
+
   it('NR5: R wf_done (all done) → all steps show "done" class, no wf-next-action', () => {
     const wrapper = mountComp({
       tab: { id: 'test.doc', typeCode: 'R' },

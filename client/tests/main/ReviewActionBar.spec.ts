@@ -231,12 +231,11 @@ describe('ReviewActionBar', () => {
     expect(btn.attributes('disabled')).toBeUndefined()
   })
 
-  it('R2. R decided + head=in_progress → main button opens dropdown; only the Proceed item is disabled (R0001 ③-a)', async () => {
-    // R0001 ③-a moved the "proceed now" action into the dropdown. The main button no
-    // longer fires next-action and is never disabled — it just toggles the dropdown so
-    // the create-empty / copy-mention items stay reachable even when the next step has
-    // already started. The canNextAction gating that used to disable the main button
-    // now disables only the "Proceed to Next Step" dropdown item.
+  it('R2. R decided + head=in_progress → main button opens dropdown; no Proceed item is offered here (0366 T0007)', async () => {
+    // 0366 T0007 removed the [다음 단계 진행] (Proceed to Next Step) dropdown item from the
+    // action bar entirely — it is no longer a canNextAction-gated dropdown item, since the
+    // sole remaining entry to NextActionModal is the workflow strip's current-step cell
+    // (DocWorkflow.vue), which already carries its own canNextAction gate.
     const wrapper = mount(ReviewActionBar, {
       props: {
         ...defaultProps,
@@ -252,7 +251,7 @@ describe('ReviewActionBar', () => {
     const mainBtn = wrapper.find('.ab-dd-toggle')
     expect(mainBtn.exists()).toBe(true)
     expect(mainBtn.text()).toContain('D')
-    // Main button is always enabled now — it only opens the dropdown.
+    // Main button is always enabled — it only opens the dropdown.
     expect(mainBtn.attributes('disabled')).toBeUndefined()
 
     await mainBtn.trigger('click')
@@ -260,17 +259,13 @@ describe('ReviewActionBar', () => {
     expect(wrapper.find('.ab-split-dd').exists()).toBe(true)
     expect(wrapper.emitted('next-action')).toBeFalsy()
 
-    // The Proceed item carries the canNextAction gate.
-    const proceedItem = wrapper
-      .findAll('.ab-split-dd .ab-split-item')
-      .find(i => i.text().includes('Proceed to Next Step'))
-    expect(proceedItem).toBeTruthy()
-    expect(proceedItem!.attributes('disabled')).toBeDefined()
+    const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+    expect(items.some(i => i.text().includes('Proceed to Next Step'))).toBe(false)
     expect(wrapper.text()).not.toContain('Approve')
     expect(wrapper.text()).not.toContain('Reject')
   })
 
-  it('R2-1. next mode: main button click opens the dropdown and does NOT emit next-action (R0001 ③-a)', async () => {
+  it('R2-1. next mode: main button click opens the dropdown and does NOT emit next-action (0366 T0007)', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: {
         ...defaultProps,
@@ -288,12 +283,10 @@ describe('ReviewActionBar', () => {
     expect(wrapper.find('.ab-split-dd').exists()).toBe(true)
     expect(wrapper.emitted('next-action')).toBeFalsy()
 
-    // The Proceed item still drives the actual next-action emit.
-    const proceedItem = wrapper
-      .findAll('.ab-split-dd .ab-split-item')
-      .find(i => i.text().includes('Proceed to Next Step'))!
-    await proceedItem.trigger('click')
-    expect(wrapper.emitted('next-action')).toHaveLength(1)
+    // No dropdown item drives next-action any more — that action is reachable only
+    // via the workflow strip's current-step cell (DocWorkflow.vue @next-action).
+    const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+    expect(items.some(i => i.text().includes('Proceed to Next Step'))).toBe(false)
   })
 
   it('R2-2. next mode dropdown exposes a direct "Copy Mention" item that emits copy-next-mention (R0001 ③-b)', async () => {
@@ -312,21 +305,18 @@ describe('ReviewActionBar', () => {
     })
     await wrapper.find('.ab-dd-toggle').trigger('click')
     const items = wrapper.findAll('.ab-split-dd .ab-split-item')
-    // Order per reviewer (rev3, reversed): 승인 문서 생성 → 빈 문서 생성 → 멘트 복사 → 다음 단계 진행.
-    // create-approved shows because nextStepCode 'T' is in the N/T whitelist.
-    // Group 0223: [Invoke AI] rides directly after every [Copy Mention] (병행 배치).
+    // Order per reviewer: 승인 문서 생성 → 빈 문서 생성 → 멘트 복사 → AI 호출.
+    // 0366 T0007 dropped [다음 단계 진행] entirely. The final item retains the
+    // continuous-work behavior under the [Invoke AI] label.
     expect(items.map(i => i.text())).toEqual([
       'Create Approved Doc',
       'Create Empty Doc',
       'Copy Mention',
       'Invoke AI',
-      'Proceed to Next Step',
-      // R0001 (0086): continuous (unmanned) work entry.
-      'Continuous Work',
     ])
     const invokeItem = items.find(i => i.text().includes('Invoke AI'))!
     await invokeItem.trigger('click')
-    expect(wrapper.emitted('invoke-next-ai')).toHaveLength(1)
+    expect(wrapper.emitted('continuous-work')).toHaveLength(1)
     await wrapper.find('.ab-dd-toggle').trigger('click')
     const copyItem = wrapper.findAll('.ab-split-dd .ab-split-item').find(i => i.text().includes('Copy Mention'))!
     await copyItem.trigger('click')
@@ -351,10 +341,10 @@ describe('ReviewActionBar', () => {
     })
     await wrapper.find('.ab-dd-toggle').trigger('click')
     const labels = wrapper.findAll('.ab-split-dd .ab-split-item').map(i => i.text())
-    // create-approved is gone for TS; the normal token path (copy mention / proceed) remains.
+    // create-approved is gone for TS; the normal token path (copy mention) remains.
     expect(labels).not.toContain('Create Approved Doc')
     expect(labels).toContain('Copy Mention')
-    expect(labels).toContain('Proceed to Next Step')
+    expect(labels).not.toContain('Proceed to Next Step')
   })
 
   it('R3. R undecided → [워크플로 결정] button', () => {
@@ -393,21 +383,18 @@ describe('ReviewActionBar', () => {
     await wrapper.find('.ab-dd-toggle').trigger('click')
     const items = wrapper.findAll('.ab-split-dd .ab-split-item')
 
-    // R0001 rev4: reviewer-specified order — 멘트 복사 → 명령어 실행 → 수동 결정.
-    // R0001 (0086): continuous (unmanned) work entry appended.
-    // R0001 (0223): in-app [Invoke AI] entry inserted after Run Command.
+    // The old standalone AI entry is removed; continuous-work keeps its behavior under [Invoke AI].
     expect(items.map(item => item.text())).toEqual([
       'Copy Mention',
       'Run Command',
-      'Invoke AI',
       'Manual Decision',
-      'Continuous Work',
+      'Invoke AI',
     ])
-    await items[3].trigger('click')
+    await items[2].trigger('click')
     expect(wrapper.emitted('decide-workflow')).toHaveLength(1)
   })
 
-  it('R3-2. workflow AI actions emit the active document payload', async () => {
+  it('R3-2. workflow mention and command actions emit the active document payload', async () => {
     const props = {
       ...defaultProps,
       docId: 'test.p.0001.0001-R',
@@ -436,10 +423,6 @@ describe('ReviewActionBar', () => {
     await wrapper.find('.ab-dd-toggle').trigger('click')
     await wrapper.findAll('.ab-split-item')[1].trigger('click')
     expect(wrapper.emitted('invoke-workflow-command')?.[0]).toEqual([payload])
-
-    await wrapper.find('.ab-dd-toggle').trigger('click')
-    await wrapper.findAll('.ab-split-item')[2].trigger('click')
-    expect(wrapper.emitted('invoke-workflow-ai')?.[0]).toEqual([payload])
   })
 
   it('R4. R wf_done → info mode, empty action area', () => {

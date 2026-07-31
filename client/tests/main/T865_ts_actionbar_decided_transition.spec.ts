@@ -213,7 +213,7 @@ describe('T865-S4 — decided + head in_progress: [Next step] disabled (guard), 
     expect(dState?.className).toBe('current')
   })
 
-  it('component: mode=next, canNextAction=false → next button present (opens dropdown); proceed item disabled, not hidden (R0001 ③-a)', async () => {
+  it('component: mode=next, canNextAction=false → next button present (opens dropdown); no proceed item in the action bar (0366 T0007)', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: { ...BASE_PROPS, reviewStatus: 'wf_in_progress', mode: 'next', canNextAction: false, nextStepLabel: 'D' },
       global: { plugins: [i18n] },
@@ -221,16 +221,13 @@ describe('T865-S4 — decided + head in_progress: [Next step] disabled (guard), 
     const nextBtn = wrapper.find('.sfb-actions button.btn-primary')
     expect(nextBtn.exists()).toBe(true)
     expect(nextBtn.text()).toContain('D')
-    // R0001 ③-a: the main button opens the dropdown and is no longer disabled. The
-    // guard (canNextAction=false) now disables the in-dropdown "Proceed" item, so the
-    // next step still cannot be started while the head doc is in progress.
+    // R0001 ③-a: the main button opens the dropdown and is no longer disabled.
     expect(nextBtn.attributes('disabled')).toBeUndefined()
     await wrapper.find('.ab-dd-toggle').trigger('click')
-    const proceedItem = wrapper
-      .findAll('.ab-split-dd .ab-split-item')
-      .find(i => i.text().includes('Proceed to Next Step'))
-    expect(proceedItem).toBeTruthy()
-    expect(proceedItem!.attributes('disabled')).toBeDefined()
+    // 0366 T0007: [다음 단계 진행] was removed from the action bar entirely — the
+    // canNextAction guard now lives solely on the workflow strip's current-step cell.
+    const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+    expect(items.some(i => i.text().includes('Proceed to Next Step'))).toBe(false)
     expect(wrapper.text()).not.toContain('Decide')
     expect(wrapper.text()).not.toContain('Approve')
     expect(wrapper.text()).not.toContain('Reject')

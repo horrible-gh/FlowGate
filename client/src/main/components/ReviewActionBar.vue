@@ -70,16 +70,13 @@
               <button class="ab-split-item" type="button" @click="onWorkflowCommandClick">
                 <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
               </button>
-              <button class="ab-split-item" type="button" @click="onWorkflowAiClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
               <button class="ab-split-item" type="button" @click="onWorkflowManualClick">
                 <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
               </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
               <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
             </div>
           </div>
@@ -126,24 +123,19 @@
               <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
-                <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
-              </button>
               <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
             </div>
           </div>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
                  mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking
-                 the button opens the dropdown (no dialog). The proceed/copy/create actions
-                 all live as dropdown items; order per reviewer (rev3, reversed):
-                 Create approved doc → Create empty doc → Copy mention → Proceed to next step. -->
+                 the button opens the dropdown (no dialog). The copy/create actions live as
+                 dropdown items; order per reviewer (rev3, reversed):
+                 Create approved doc → Create empty doc → Copy mention.
+                 T0007: [다음 단계 진행] (proceed) is no longer an item here — the current-step
+                 cell in the workflow strip (DocWorkflow.vue) is the sole entry to NextActionModal. -->
             <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
               <AppIcon name="arrow-right" />
               {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
@@ -161,17 +153,10 @@
               <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
-                <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
-              </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
               <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
+                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
             </div>
           </div>
@@ -394,12 +379,10 @@ const emit = defineEmits<{
   'invoke-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'invoke-rework-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'invoke-review-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
-  'invoke-next-ai': []
   'revision-complete': [nextStatus?: string | null]
   'decide-workflow': []
   'copy-workflow-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'invoke-workflow-command': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
-  'invoke-workflow-ai': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'next-action': []
   'copy-next-mention': []
   'create-empty': []
@@ -652,11 +635,6 @@ function onNextCreateApprovedClick() {
   emit('create-approved')
 }
 
-function onNextProceedClick() {
-  dropdownOpen.value = false
-  emit('next-action')
-}
-
 function onRunTestClick() {
   dropdownOpen.value = false
   emit('run-test')
@@ -670,11 +648,6 @@ function onNextMentionCopyClick() {
   emit('copy-next-mention')
 }
 
-// Group 0223: in-app invoke of the same next-step work the copy button hands out.
-function onNextInvokeAiClick() {
-  dropdownOpen.value = false
-  emit('invoke-next-ai')
-}
 
 function onOpenHeadDocClick() {
   if (!props.headDocId) return
@@ -901,10 +874,6 @@ function onWorkflowCommandClick() {
   emit('invoke-workflow-command', reworkPayload())
 }
 
-function onWorkflowAiClick() {
-  dropdownOpen.value = false
-  emit('invoke-workflow-ai', reworkPayload())
-}
 
 // R0001 (0086): open the continuous (unmanned) work dialog. Shared by the 'workflow' and
 // 'next' dropdowns; MainPanel owns the sequence dialog + warning gate + token issuance.

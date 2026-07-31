@@ -83,6 +83,7 @@
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
             :return-targets="getReturnTargets(tab.id)"
             @sequence-updated="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
+            @decide-workflow="openWorkflowDecisionForActive"
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
             @return-to="onWorkflowStepReturn(tab.id, $event)"
@@ -814,11 +815,9 @@
       @invoke-command="onReviewInvokeCommand"
       @invoke-rework-ai="onReviewReworkInvokeAi"
       @invoke-review-ai="onReviewInvokeAiEntry"
-      @invoke-next-ai="onActionBarInvokeNextAi(activeTabId)"
       @decide-workflow="openWorkflowDecisionForActive"
       @copy-workflow-mention="onWorkflowDecisionCopyMention"
       @invoke-workflow-command="onWorkflowDecisionInvokeCommand"
-      @invoke-workflow-ai="onWorkflowDecisionInvokeAi"
       @next-action="onProceedNextStep(activeTabId)"
       @copy-next-mention="onActionBarCopyNextMention(activeTabId)"
       @create-empty="onActionBarCreateEmpty(activeTabId)"
@@ -2220,16 +2219,26 @@ function onEditInvokeAi(tab: Tab) {
   })
 }
 
+// 0366 T0004 (rev3 rejection): the proceed dialog ([다음 단계 진행]) still opened the OLD
+// standalone invoke dialog here — the very AiInvokeDialog('new') entry that was deleted from the
+// action bar. Route it through the same continuous-work flow the action-bar [AI 호출] now uses
+// (ContinuousWorkDialog → consent gate → AiInvokeDialog), so both entries open the same dialog.
 function onNextActionInvokeAi(_selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
-  const docRef = nextActionModalDocRef.value || tabId
-  const project = nextActionModalProjectId.value || (exposedValue<string>(docHeaderRefs[tabId]?.docProjectId) ?? projectStore.currentProjectId)
-  const groupId = nextActionModalGroupId.value || exposedValue<string>(docHeaderRefs[tabId]?.groupId)
+  const h = docHeaderRefs[tabId]
+  const project = nextActionModalProjectId.value || (exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId)
+  const groupId = nextActionModalGroupId.value || exposedValue<string>(h?.groupId)
   if (!project || !groupId) {
     showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
     return
   }
-  openAiInvokeDialog(project, groupId as string, docRef, 'new')
+  continuousTabId.value = tabId
+  continuousDocRef.value = nextActionModalDocRef.value || nextActionDocRef(tabId)
+  continuousProjectId.value = project
+  continuousGroupId.value = groupId
+  // Populate the provider selector shown in the continuous-work dialog (RC3).
+  void aiProviderStore.ensureLoaded(project)
+  continuousDialogVisible.value = true
 }
 
 // Q list (dashboard overview)
@@ -2932,14 +2941,6 @@ async function onWorkflowDecisionInvokeCommand(payload: ReviewActionPayload) {
   commandSelectorVisible.value = true
 }
 
-function onWorkflowDecisionInvokeAi(payload: ReviewActionPayload) {
-  const project = payload.projectId || projectStore.currentProjectId
-  if (!project || !payload.groupId || !payload.docRef) {
-    showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
-    return
-  }
-  openAiInvokeDialog(project, payload.groupId, payload.docRef, 'workflow_decide')
-}
 
 async function onReviewReworkCopyMention(payload: ReviewActionPayload) {
   const project = payload.projectId || projectStore.currentProjectId
@@ -3469,21 +3470,6 @@ function onActionBarCopyNextMention(tabId: string) {
   void onNextActionCopyMention()
 }
 
-// Group 0223: in-app invoke twin of onActionBarCopyNextMention — seed the same
-// modal-scoped refs, then reuse the NextActionModal invoke path verbatim.
-function onActionBarInvokeNextAi(tabId: string) {
-  if (!guardNextActionAvailable(tabId)) return
-  const h = docHeaderRefs[tabId]
-  const groupId = exposedValue<string>(h?.groupId) ?? ''
-  nextActionModalTabId.value = tabId
-  nextActionModalDocRef.value = nextActionDocRef(tabId)
-  nextActionModalCurrentType.value = getTabTypeCode(tabId) ?? 'R'
-  nextActionModalTypeCode.value = getNextStepCode(tabId)
-  nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
-  nextActionModalGroupId.value = groupId
-  nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
-  onNextActionInvokeAi()
-}
 
 function testRunErrorMessage(e: unknown): string {
   const code = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
