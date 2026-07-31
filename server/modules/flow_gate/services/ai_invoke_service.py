@@ -2026,6 +2026,13 @@ def _finish_run_record(run: dict) -> None:
                         chain_id=run.get("chain_id"),
                         chain_docs_target=run.get("chain_docs_target"),
                         chain_docs_reached=int(run.get("chain_docs_reached") or 0),
+                        # This upsert overwrites every column, and it ALWAYS runs right
+                        # after a pause. Omitting the selections here would erase what
+                        # pause_run just stored (0365 DB0004 §5-3 invariant I3).
+                        continuation_base_provider_id=run.get("continuation_base_provider_id"),
+                        continuation_provider_overrides=run.get("continuation_provider_overrides"),
+                        continuation_default_note=run.get("continuation_default_note"),
+                        continuation_note_overrides=run.get("continuation_note_overrides"),
                     )
         except Exception:
             logger.warning(
@@ -2179,6 +2186,14 @@ def pause_run(run_id: str, user_id: str) -> dict:
                 int(run.get("chain_docs_reached") or 0)
                 + (0 if run.get("chain_docs_accounted") else docs_reached)
             ),
+            # 0365 B0001: the provider / [전달멘트] selections live only on the run object
+            # (session-scoped by design). The pause is where that memory ends, so they go
+            # into the row here — otherwise resume_chain has nothing to restore and falls
+            # back to the project default chain's first entry (NR0003 §2-2).
+            continuation_base_provider_id=run.get("continuation_base_provider_id"),
+            continuation_provider_overrides=run.get("continuation_provider_overrides"),
+            continuation_default_note=run.get("continuation_default_note"),
+            continuation_note_overrides=run.get("continuation_note_overrides"),
         )
     except Exception:
         logger.warning("ai-invoke paused-row upsert failed for %s", run_id, exc_info=True)
@@ -2369,6 +2384,30 @@ def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
     return None
 
 
+def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Optional[str]:
+    """The stored header pin, but only while it is still usable (0365 DB0004 §5-2).
+
+    start_run rejects an explicit pin that is not in the project's enabled chain with a 422.
+    A chain the user parked must stay resumable, so a pin whose provider was deleted or
+    switched off degrades to "no pin" here — the resume then follows the normal doc-type
+    배정 → default-chain order instead of the paused card becoming un-resumable.
+    """
+    if not provider_id:
+        return None
+    try:
+        chain = ai_settings_service.resolve_effective(project_id).get("providers") or []
+    except Exception:  # noqa: BLE001 — start_run re-resolves and reports the real failure
+        logger.warning("resume provider re-check failed for %s", project_id, exc_info=True)
+        return None
+    if any(p.get("id") == provider_id for p in chain):
+        return provider_id
+    logger.info(
+        "paused chain %s pinned provider %s is no longer enabled — resuming unpinned",
+        project_id, provider_id,
+    )
+    return None
+
+
 def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str = "ko") -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
@@ -2407,6 +2446,12 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     chain_id=row.get("chain_id"),
                     chain_docs_target=row.get("chain_docs_target"),
                     chain_docs_reached=int(row.get("chain_docs_reached") or 0),
+                    # Restoring the row means restoring it whole: a retry of this resume
+                    # must still find the user's selections (0365 DB0004 §5-3 case 5).
+                    continuation_base_provider_id=row.get("continuation_base_provider_id"),
+                    continuation_provider_overrides=row.get("continuation_provider_overrides"),
+                    continuation_default_note=row.get("continuation_default_note"),
+                    continuation_note_overrides=row.get("continuation_note_overrides"),
                 )
             except Exception:
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
@@ -2457,6 +2502,18 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
         parts = group_id.split(".")
         project_id = parts[0]
         module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
+        # 0365 B0001: hand the paused chain's own selections back to start_run. Passing
+        # nothing here is what made every resume fall through to the default chain's first
+        # (most expensive) provider — the same loss the per-hop re-spawn path already fixed
+        # for auto-resume in 0317 T0013 (NR0003 §2-5).
+        base_provider_id = _resumable_base_provider(
+            project_id, row.get("continuation_base_provider_id")
+        )
+        provider_overrides = db_paused.load_json_map(
+            row.get("continuation_provider_overrides")
+        )
+        note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
+        default_note = (row.get("continuation_default_note") or "").strip() or None
         try:
             return start_run(
                 project_id=project_id,
@@ -2473,6 +2530,10 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 api_base_url=api_base_url,
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,
+                provider_id=base_provider_id,
+                continuation_provider_overrides=provider_overrides,
+                continuation_default_note=default_note,
+                continuation_note_overrides=note_overrides,
                 chain_id=row.get("chain_id"),
                 chain_docs_target=row.get("chain_docs_target"),
                 chain_docs_reached=row.get("chain_docs_reached"),

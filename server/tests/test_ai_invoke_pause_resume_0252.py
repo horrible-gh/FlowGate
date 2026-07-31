@@ -56,7 +56,9 @@ class FakePausedStore:
 
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
                continuation_target_seq, docs_target, docs_reached,
-               chain_id=None, chain_docs_target=None, chain_docs_reached=0):
+               chain_id=None, chain_docs_target=None, chain_docs_reached=0,
+               continuation_base_provider_id=None, continuation_provider_overrides=None,
+               continuation_default_note=None, continuation_note_overrides=None):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
@@ -64,6 +66,14 @@ class FakePausedStore:
             "docs_target": docs_target, "docs_reached": docs_reached,
             "chain_id": chain_id, "chain_docs_target": chain_docs_target,
             "chain_docs_reached": chain_docs_reached,
+            # 0365 DB0004: stored exactly as the real columns store them — normalized
+            # text — so the resume path is exercised through the production decoders.
+            "continuation_base_provider_id": continuation_base_provider_id or None,
+            "continuation_provider_overrides": db_paused.dump_json_map(
+                continuation_provider_overrides),
+            "continuation_default_note": (continuation_default_note or "").strip() or None,
+            "continuation_note_overrides": db_paused.dump_json_map(
+                continuation_note_overrides),
         }
 
     def get_by_group(self, group_id):
@@ -279,6 +289,65 @@ class TestPauseRun:
         assert run["end_reason"] == "exited"
         assert GROUP not in fake_env["paused"].rows
 
+    def test_pause_persists_provider_and_note_selections(self, fake_env):
+        # 0365 B0001/DB0004 §5-3 case 1/4: the values chosen when the run was started
+        # must be the values written into the paused row, not lost between memory
+        # and storage.
+        fake_env["chain"]["providers"] = [
+            _provider(_slow_cmd(), pid="aip_default", name="default"),
+            _provider(_slow_cmd(), pid="aip_picked", name="picked"),
+        ]
+        res = svc.start_run(
+            project_id="flowgate", module="default", group_id=GROUP, doc_ref=DOC_REF,
+            action_scope="new", mode="continuous", continuation_target_seq=3,
+            continuation_review_mode=False, continuation_instruction_mode=None,
+            continuation_locale=None, issued_to="usr_admin",
+            api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+            mention_builder=lambda raw, scratch: "## prompt\n",
+            provider_id="aip_picked",
+            continuation_provider_overrides={"3": "aip_default"},
+            continuation_default_note="공통멘트",
+            continuation_note_overrides={"3": "개별멘트"},
+        )
+        try:
+            svc.pause_run(res["run_id"], "usr_admin")
+            row = fake_env["paused"].rows[GROUP]
+            assert row["continuation_base_provider_id"] == "aip_picked"
+            assert db_paused.load_json_map(
+                row["continuation_provider_overrides"]) == {"3": "aip_default"}
+            assert row["continuation_default_note"] == "공통멘트"
+            assert db_paused.load_json_map(
+                row["continuation_note_overrides"]) == {"3": "개별멘트"}
+        finally:
+            svc.cancel_run(res["run_id"])
+            _wait_finished(res["run_id"])
+
+    def test_boundary_stop_preserves_provider_selection_through_w2(self, fake_env):
+        # 0365 DB0004 §5-3 case 2 / invariant I3: the run-end upsert (end_reason ==
+        # "user_paused") must re-send the same values pause_run just stored, or W2
+        # wipes them the moment the boundary-stop cleanup upsert runs.
+        fake_env["chain"]["providers"] = [_provider(_slow_cmd(1), pid="aip_picked")]
+        res = svc.start_run(
+            project_id="flowgate", module="default", group_id=GROUP, doc_ref=DOC_REF,
+            action_scope="new", mode="continuous", continuation_target_seq=3,
+            continuation_review_mode=False, continuation_instruction_mode=None,
+            continuation_locale=None, issued_to="usr_admin",
+            api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+            mention_builder=lambda raw, scratch: "## prompt\n",
+            provider_id="aip_picked",
+            continuation_default_note="공통멘트",
+        )
+        svc.pause_run(res["run_id"], "usr_admin")
+        fake_env["docs"].docs.append({
+            "doc_id": f"{GROUP}.0002-P", "seq": 2, "status": "open",
+        })
+        svc.mark_user_paused(GROUP)
+        run = _wait_finished(res["run_id"])
+        assert run["end_reason"] == "user_paused"
+        row = fake_env["paused"].rows[GROUP]
+        assert row["continuation_base_provider_id"] == "aip_picked"
+        assert row["continuation_default_note"] == "공통멘트"
+
     def test_pause_upsert_db_failure_does_not_500(self, fake_env, monkeypatch):
         # If the paused-row upsert raises (e.g. schema drift from an unapplied
         # migration), the pause request must still be accepted in-memory instead
@@ -300,12 +369,17 @@ class TestPauseRun:
 
 # ── resume_chain (L0009 §2.4) ─────────────────────────────────────────────────
 
-def _seed_paused(fake_env, target=3):
+def _seed_paused(fake_env, target=3, base_provider_id=None, overrides=None,
+                 default_note=None, note_overrides=None):
     fake_env["paused"].upsert(
         group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
         paused_at="2026-07-17T00:00:00+09:00",
         continuation_target_seq=target, docs_target=3, docs_reached=1,
         chain_id="aiv_paused_chain", chain_docs_target=3, chain_docs_reached=1,
+        continuation_base_provider_id=base_provider_id,
+        continuation_provider_overrides=overrides,
+        continuation_default_note=default_note,
+        continuation_note_overrides=note_overrides,
     )
 
 
@@ -392,6 +466,83 @@ class TestResumeChain:
         assert exc.value.status_code == 409
         # The paused card must survive a failed resume so the user can retry.
         assert GROUP in fake_env["paused"].rows
+
+    def test_resume_launches_with_pinned_provider_not_default(self, fake_env, monkeypatch):
+        # 0365 B0001/DB0004 §5-3 case 3: the paused chain's pin must win over the
+        # project default chain's first (most expensive) entry — this reproduces
+        # B0001's exact symptom if it regresses.
+        _seed_paused(fake_env, base_provider_id="aip_picked")
+        _patch_advance(monkeypatch, fake_env["tmp"])
+        fake_env["chain"]["providers"] = [
+            _provider(f'"{PY}" -c "import sys; sys.stdin.read()"', pid="aip_default", name="default"),
+            _provider(f'"{PY}" -c "import sys; sys.stdin.read()"', pid="aip_picked", name="picked"),
+        ]
+        res = svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                               api_base_url="http://x/api/v1")
+        run = _wait_finished(res["run_id"])
+        assert run["provider_id"] == "aip_picked"
+
+    def test_resume_forwards_step_overrides_and_notes_to_start_run(self, fake_env, monkeypatch):
+        # 0365 DB0004 §5-3 case 4: per-step provider overrides and [전달멘트] values
+        # round-trip the same way the header pin does.
+        overrides_in = {"3": "aip_other"}
+        note_overrides_in = {"3": "개별멘트"}
+        _seed_paused(fake_env, base_provider_id="aip_picked", overrides=overrides_in,
+                     default_note="공통멘트", note_overrides=note_overrides_in)
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_picked")]
+        captured = {}
+
+        def _fake_start_run(**kw):
+            captured.update(kw)
+            return {"ok": True, "run_id": "aiv_fake"}
+        monkeypatch.setattr(svc, "start_run", _fake_start_run)
+
+        res = svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                               api_base_url="http://x/api/v1")
+        assert res == {"ok": True, "run_id": "aiv_fake"}
+        assert captured["provider_id"] == "aip_picked"
+        assert captured["continuation_provider_overrides"] == overrides_in
+        assert captured["continuation_default_note"] == "공통멘트"
+        assert captured["continuation_note_overrides"] == note_overrides_in
+
+    def test_resume_falls_back_when_pinned_provider_no_longer_enabled(self, fake_env, monkeypatch):
+        # 0365 DB0004 §5-2 last case: a pin whose provider was deleted/disabled must
+        # not 422-block the resume — it degrades to "no pin" and the resume succeeds.
+        _seed_paused(fake_env, base_provider_id="aip_removed")
+        _patch_advance(monkeypatch, fake_env["tmp"])
+        fake_env["chain"]["providers"] = [
+            _provider(f'"{PY}" -c "import sys; sys.stdin.read()"', pid="aip_default"),
+        ]
+        res = svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                               api_base_url="http://x/api/v1")
+        assert res["ok"] is True
+        run = _wait_finished(res["run_id"])
+        assert run["provider_id"] == "aip_default"
+
+    def test_failed_launch_restores_provider_and_note_selections(self, fake_env, monkeypatch):
+        # 0365 DB0004 §5-3 case 5 (W3): a retry after a failed resume must still find
+        # the user's provider/note selections on the restored row.
+        overrides_in = {"3": "aip_other"}
+        note_overrides_in = {"3": "개별멘트"}
+        _seed_paused(fake_env, base_provider_id="aip_picked", overrides=overrides_in,
+                     default_note="공통멘트", note_overrides=note_overrides_in)
+
+        def _advance_boom(**kw):
+            raise ValueError("head is not approvable")
+        monkeypatch.setattr(wds, "advance_workflow", _advance_boom)
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_picked")]
+
+        with pytest.raises(HTTPException) as exc:
+            svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                             api_base_url="http://x/api/v1")
+        assert exc.value.status_code == 409
+        row = fake_env["paused"].rows[GROUP]
+        assert row["continuation_base_provider_id"] == "aip_picked"
+        assert db_paused.load_json_map(
+            row["continuation_provider_overrides"]) == overrides_in
+        assert row["continuation_default_note"] == "공통멘트"
+        assert db_paused.load_json_map(
+            row["continuation_note_overrides"]) == note_overrides_in
 
     def test_null_target_resolves_to_sequence_end(self, fake_env, monkeypatch):
         _seed_paused(fake_env, target=None)
