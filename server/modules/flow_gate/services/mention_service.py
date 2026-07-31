@@ -157,6 +157,53 @@ def _include_remote_source_crud(project: str) -> bool:
         return True
 
 
+def _document_lookup_lines(
+    base: str,
+    raw_token: str,
+    *,
+    project: str = "",
+    doc_id: str = "",
+) -> list[str]:
+    """Advertise the bounded document reads added by group 0370.
+
+    These endpoints existed but the worker mentions still advertised only the legacy full-body
+    GET. Keep one shared block for creation/edit, workflow, review, chat and Q-answer work so a
+    worker can discover the efficient route at the point where it is about to read documents.
+    """
+    target = doc_id or "<doc_id>"
+    project_filter = f"&project={project}" if project else ""
+    return [
+        "Read only the document data you need; use the full-document GET only when necessary:",
+        f"- Metadata without body: GET {base}/document/{target}/meta",
+        f"- Outline without body: GET {base}/document/{target}/outline",
+        f"- One section from that outline: GET {base}/document/{target}/section?section_id=<section_id>",
+        f"- Relationships without body: GET {base}/document/{target}/relations",
+        (
+            f"- Search bodies with match locations/context: GET {base}/search/documents/content"
+            f"?q=<keyword>{project_filter}&include_matches=true&context_lines=2&hits_per_doc=5"
+        ),
+        "Section reads accept exactly one of section, section_id, lines, or chars.",
+        f"Authorization: Bearer {raw_token}",
+    ]
+
+
+def _document_lookup_section(
+    base: str,
+    raw_token: str,
+    *,
+    project: str = "",
+    doc_id: str = "",
+) -> str:
+    return _section(
+        "Efficient document lookup",
+        "\n".join(
+            _document_lookup_lines(
+                base, raw_token, project=project, doc_id=doc_id
+            )
+        ),
+    )
+
+
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
 # B0001 recurred because the choice-prohibition guard was body text only AND the
 # sanctioned alternative was reached through a 2-hop GET /help/question indirection.
@@ -1223,7 +1270,9 @@ def build_mention(
         f"{post_json}\n"
         f"{commit_hint}"
         f"\n"
-        f"{_DRYRUN_HINT}"
+        f"{_DRYRUN_HINT}\n\n"
+        "A successful new/edit response includes `change_summary`. Inspect it before "
+        "continuing to confirm the saved lines and sections match your intent."
     )
 
     # ── Section 6: scratch directory ──────────────────────────────────────────
@@ -1344,6 +1393,11 @@ def build_mention(
     if template_section:
         sections.append(template_section)
     sections.append(_section("Reference documents", s3_body))
+    sections.append(
+        _document_lookup_section(
+            base, raw_token, project=project, doc_id=target_doc_id
+        )
+    )
     if review_section:
         sections.append(review_section)
     if s4_section:
@@ -1590,6 +1644,7 @@ def build_workflow_decision_mention(
     sections.extend([
         _section("Workflow decision instructions", s2_body),
         _section("Reference documents", s3_body),
+        _document_lookup_section(base, raw_token, project=project, doc_id=doc_id),
     ])
 
     if group_recent_docs:
@@ -1747,6 +1802,7 @@ def build_sequence_edit_mention(
         _section("Sequence edit instructions", s2_body),
         _section("Current sequence", seq_body),
         _section("Reference documents", s3_body),
+        _document_lookup_section(base, raw_token, project=project, doc_id=doc_id),
         _section("Sequence edit submission", s5_body),
         _section("doc_type guide", f"GET {base}/help/doc_type"),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
@@ -1911,6 +1967,7 @@ def build_review_mention(
     sections.extend([
         _section("Review instructions", s2_body),
         _section("Reference documents", s3_body),
+        _document_lookup_section(base, raw_token, project=project, doc_id=canonical_id),
     ])
     if s4_section:
         sections.append(s4_section)

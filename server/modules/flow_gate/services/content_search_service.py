@@ -47,7 +47,12 @@ def _escape_like(value: str) -> str:
     as a wildcard (paired with ``ESCAPE '\\'`` in the query)."""
     return _LIKE_ESCAPE_RE.sub(r"\\\1", value)
 
-# doc_id -> (mtime, original_text, lowered_text), least-recently-used first.
+# doc_id -> (mtime, original_text, lowered_text, frontmatter_prefix), LRU first.
+#
+# 0370 L0003 §2-7: the cached body is frontmatter-stripped, but a match locator must be
+# reported in *file* coordinates (P0002 §1-2 — one coordinate system, the stored file).
+# Caching the stripped prefix is all that is needed to rebuild the file text, and it is a
+# few hundred bytes rather than a third full copy of the body.
 #
 # 0279 P3-11: this cache was an unbounded plain dict. A facet-less body search walks
 # every candidate document (see the "Limitation (honest)" note above), so one such
@@ -62,7 +67,7 @@ def _escape_like(value: str) -> str:
 # keyed on mtime — a miss re-reads the file and is correct, just slower — so
 # eviction can never produce a wrong result, only a re-read.
 _CACHE_MAX_ENTRIES = 512
-_CACHE: "OrderedDict[str, tuple[float, str, str]]" = OrderedDict()
+_CACHE: "OrderedDict[str, tuple[float, str, str, str]]" = OrderedDict()
 _LOCK = threading.Lock()
 
 _SNIPPET_BEFORE = 40
@@ -140,12 +145,15 @@ def reset_cache() -> None:
         _CACHE.clear()
 
 
-def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
-    """Return ``(original_text, lowered_text)`` for a document body, or None.
+def _get_cached_ex(doc: dict) -> Optional[tuple[str, str, str]]:
+    """Return ``(body_text, lowered_body, frontmatter_prefix)`` for a document, or None.
 
     Resolves the stored path, stats it for the mtime change-signal, and reads the
     file only when the cache is cold or stale. None when the document has no file,
     the path does not resolve inside the storage jail, or the read fails.
+
+    ``frontmatter_prefix + body_text`` is exactly the canonical file text, so a caller
+    that needs file coordinates (0370 2세트) can rebuild it without a second read.
     """
     file_path = (doc.get("file_path") or "").strip()
     if not file_path:
@@ -164,7 +172,7 @@ def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
         cached = _CACHE.get(doc_id)
         if cached is not None and cached[0] == mtime:
             _CACHE.move_to_end(doc_id)  # mark as recently used
-            return cached[1], cached[2]
+            return cached[1], cached[2], cached[3]
 
     try:
         raw = resolved.read_text(encoding="utf-8")
@@ -174,14 +182,27 @@ def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
     # so both the body-match test and the snippet operate on the content below the
     # fence — the header never reaches the detail row and a metadata-only term in the
     # frontmatter does not masquerade as a body hit (group 0123 rev6).
+    # 0370 L0003 §2-1: normalise to the same canonical text the outline/section endpoints
+    # compute on (BOM dropped, newlines folded to ``\n``). Without this the search would
+    # be able to disagree with /outline about a character offset on a BOM-carrying file.
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    raw = _outline.canonical_text(raw)
     text = _strip_frontmatter(raw)
+    frontmatter_prefix = raw[: len(raw) - len(text)]
     lowered = text.lower()
     with _LOCK:
-        _CACHE[doc_id] = (mtime, text, lowered)
+        _CACHE[doc_id] = (mtime, text, lowered, frontmatter_prefix)
         _CACHE.move_to_end(doc_id)
         while len(_CACHE) > _CACHE_MAX_ENTRIES:
             _CACHE.popitem(last=False)  # evict least recently used
-    return text, lowered
+    return text, lowered, frontmatter_prefix
+
+
+def _get_cached(doc: dict) -> Optional[tuple[str, str]]:
+    """``(body_text, lowered_body)`` — the two-value view every pre-0370 caller uses."""
+    cached = _get_cached_ex(doc)
+    return None if cached is None else (cached[0], cached[1])
 
 
 def _snippet(text: str, needle: str) -> Optional[str]:
@@ -286,6 +307,152 @@ def _is_migrated_conversation(doc: dict) -> bool:
     return turn_store.migration_state(doc.get("doc_id") or "") == "migrated"
 
 
+
+# ── 0370 2세트: 검색 결과의 위치와 앞뒤 줄 (P0002 시나리오 9~11 / L0003 §2-7·§2-8) ──
+#
+# 기존 `snippet`·`matched_in`·`match_kind` 계산은 손대지 않는다. `matches` 는 그 옆에 더할
+# 뿐이다(P0002 §3) — 지금 이 응답을 쓰는 화면은 고치지 않아도 된다.
+
+
+def _find_matches(body_text: str, query: str, scan_max: int) -> list[tuple[int, int]]:
+    """Locate every occurrence of ``query`` in ``body_text`` (case-insensitive).
+
+    Deliberately NOT ``lowered.find(needle)`` the way ``_snippet`` does. The snippet only
+    slices text around the hit so a drift never shows, but a locator publishes the number:
+    Unicode has characters whose lowercase form is *longer* (``İ`` → ``i̇``, 1 char → 2), so
+    one such character earlier in the document shifts every subsequent offset. Searching the
+    original text keeps the returned positions true to the file (L0003 §2-7).
+
+    The query is literal, not a regex — ``re.escape`` neuters the metacharacters, mirroring
+    the LIKE-escaping the SQL side already does. Overlapping hits are not counted twice
+    (``finditer`` resumes after each match), and scanning stops at ``scan_max`` so one very
+    common word in one very large document cannot make a single search walk forever.
+    """
+    if not query:
+        return []
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    out: list[tuple[int, int]] = []
+    for m in pattern.finditer(body_text):
+        out.append((m.start(), m.end()))
+        if len(out) >= scan_max:
+            break
+    return out
+
+
+def _match_entry(fdoc, doc_id: str, revision_no: int, char_start: int, char_end: int,
+                 context_lines: int) -> dict:
+    """One entry of ``matches``: where the hit is, plus the line it is on and its neighbours.
+
+    ``fdoc`` is the *file* text (frontmatter included) so the locator agrees with
+    ``/outline`` and ``/section``. Missing lines at the top/bottom of a document are simply
+    absent — they are never padded with empty strings (P0002 시나리오 9).
+    """
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    line_start = fdoc.line_containing(char_start)
+    line_end = fdoc.line_containing(max(char_start, char_end - 1))
+    enclosing = _outline.enclosing_section(fdoc.items, line_start)
+    before = fdoc.lines[max(0, line_start - 1 - context_lines): line_start - 1]
+    after = fdoc.lines[line_end: min(fdoc.document_lines, line_end + context_lines)]
+    text = fdoc.lines[line_start - 1] if 1 <= line_start <= fdoc.document_lines else ""
+    return {
+        "locator": _outline.build_locator(
+            fdoc, doc_id, revision_no, line_start, line_end, enclosing
+        ),
+        "match_char_start": char_start,
+        "match_char_end": char_end,
+        "before": [_outline.clip_line(line) for line in before],
+        "text": _outline.clip_line(text),
+        "after": [_outline.clip_line(line) for line in after],
+    }
+
+
+def _document_matches(doc: dict, needle: str, matched_in: str,
+                      context_lines: int, hits_per_doc: int) -> tuple[list[dict], int]:
+    """``(matches, match_total)`` for one document-body result row.
+
+    A hit that came from the title or the doc_id has no place in the body, so no place is
+    invented: both values come back empty. Forcing it to point at line 1 would open the
+    wrong spot when someone clicks the result (P0002 시나리오 10).
+    """
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    if matched_in != "body":
+        return [], 0
+    cached = _get_cached_ex(doc)
+    if cached is None:
+        return [], 0
+    body_text, _lowered, frontmatter_prefix = cached
+    spans = _find_matches(body_text, needle, _outline.MATCH_SCAN_MAX)
+    if not spans:
+        return [], 0
+    fdoc = _outline.DocumentText(frontmatter_prefix + body_text)
+    doc_id = doc.get("doc_id") or ""
+    revision_no = int(doc.get("revision_no", 0) or 0)
+    entries = [
+        _match_entry(
+            fdoc, doc_id, revision_no,
+            fdoc.body_char_to_file(start), fdoc.body_char_to_file(end), context_lines,
+        )
+        for start, end in spans[:hits_per_doc]
+    ]
+    return entries, len(spans)
+
+
+def _format_turn(row: dict) -> str:
+    """``(턴번호/말한이) 본문`` — one neighbouring turn, collapsed and clipped."""
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    who = (row.get("display_name") or "").strip() or (row.get("speaker") or "")
+    body = _WS.sub(" ", row.get("body") or "").strip()
+    if len(body) > _outline.TURN_CONTEXT_CHARS:
+        body = body[: _outline.TURN_CONTEXT_CHARS] + "…"
+    return f"({row.get('seq')}/{who}) {body}"
+
+
+def _turn_matches(row: dict, needle: str, context_lines: int,
+                  hits_per_doc: int) -> tuple[list[dict], int]:
+    """``(matches, match_total)`` for one conversation-turn result row (L0003 §2-8).
+
+    A turn has no lines that mean anything, so ``unit`` is ``turn`` and the context is
+    neighbouring *turns*, not neighbouring lines. Neighbours are the nearest sequence
+    numbers that actually exist rather than ``seq ± 1`` — turns are append-only, but a gap
+    would otherwise silently produce a blank line.
+    """
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    body = row.get("body") or ""
+    spans = _find_matches(body, needle, _outline.MATCH_SCAN_MAX)
+    if not spans:
+        return [], 0
+    doc_id = row.get("doc_id") or ""
+    seq = int(row.get("seq") or 0)
+    revision_no = int(row.get("doc_revision_no", 0) or 0)
+    neighbours = min(max(0, context_lines), _outline.TURN_CONTEXT_TURNS_MAX)
+    before: list[str] = []
+    after: list[str] = []
+    if neighbours:
+        try:
+            prevs = turn_store.fetch_turns_before(doc_id, seq, neighbours)
+            before = [_format_turn(t) for t in reversed(prevs)]
+            after = [_format_turn(t) for t in turn_store.fetch_turns_after(doc_id, seq, neighbours)]
+        except Exception:  # noqa: BLE001 — 앞뒤 턴을 못 읽어도 검색 결과는 살아 있어야 한다
+            before, after = [], []
+    locator = _outline.build_turn_locator(doc_id, revision_no, seq, 0, len(body))
+    entries = [
+        {
+            "locator": locator,
+            "match_char_start": start,
+            "match_char_end": end,
+            "before": before,
+            "text": _outline.clip_line(body),
+            "after": after,
+        }
+        for start, end in spans[:hits_per_doc]
+    ]
+    return entries, len(spans)
+
+
 def search_document_bodies(
     q: str,
     project: str = None,
@@ -293,6 +460,9 @@ def search_document_bodies(
     status: str = None,
     limit: int = 50,
     offset: int = 0,
+    include_matches: bool = True,
+    context_lines: int = None,
+    hits_per_doc: int = None,
 ) -> tuple[list[dict], int]:
     """Full document search (body + title + doc_id) with optional metadata facets.
 
@@ -301,6 +471,13 @@ def search_document_bodies(
     ``matched_in="body"``; otherwise the snippet is None and ``matched_in`` names the
     field that matched. Returns ``(page_items, total_matches)`` where total ignores
     limit/offset for paging. Ordering follows the DB helper (updated_at DESC).
+
+    0370 2세트: when ``include_matches`` is on, every row of the *returned page* also
+    carries ``match_total`` and ``matches`` (P0002 시나리오 9). The locators are computed
+    for the page only — the match scan re-walks each body, and doing that for every
+    candidate rather than the ~50 rows actually returned would make a facet-less search
+    pay it corpus-wide. ``include_matches=False`` omits **both keys entirely**, giving
+    byte-identical output to the pre-0370 response.
     """
     needle = (q or "").strip().lower()
     if not needle:
@@ -331,11 +508,26 @@ def search_document_bodies(
             continue
         if snippet is None and matched_in in {"title", "doc_id"}:
             snippet = body_preview
-        matches.append(_item(doc, snippet, matched_in))
+        matches.append((doc, matched_in, _item(doc, snippet, matched_in)))
 
     total = len(matches)
     page = matches[offset:offset + limit] if offset < total else []
-    return page, total
+    if not include_matches:
+        return [item for _doc, _matched_in, item in page], total
+
+    from modules.flow_gate.services import document_outline_service as _outline
+
+    ctx = _outline.CONTEXT_LINES_DEFAULT if context_lines is None else context_lines
+    ctx = max(0, min(int(ctx), _outline.CONTEXT_LINES_MAX))
+    per_doc = _outline.HITS_PER_DOC_DEFAULT if hits_per_doc is None else hits_per_doc
+    per_doc = max(1, min(int(per_doc), _outline.HITS_PER_DOC_MAX))
+    items: list[dict] = []
+    for doc, matched_in, item in page:
+        entries, match_total = _document_matches(doc, needle, matched_in, ctx, per_doc)
+        item["match_total"] = match_total
+        item["matches"] = entries
+        items.append(item)
+    return items, total
 
 
 def _turn_snippet(body: str, needle_lower: str) -> Optional[str]:
@@ -361,6 +553,9 @@ def search_conversation_turns(
     status: str = None,
     limit: int = SEARCH_TURN_LIMIT,
     per_doc: int = SEARCH_TURNS_PER_DOC,
+    include_matches: bool = True,
+    context_lines: int = None,
+    hits_per_doc: int = None,
 ) -> list[dict]:
     """Conversation-turn body search (T4, L0004 §2-15 / P0003 시나리오 16).
 
@@ -398,7 +593,7 @@ def search_conversation_turns(
         "SELECT t.doc_id AS doc_id, t.seq AS seq, t.speaker AS speaker, "
         "t.display_name AS display_name, t.body AS body, t.created_at AS created_at, "
         "d.title AS title, d.status AS status, d.project_id AS project_id, "
-        "d.group_id AS group_id "
+        "d.group_id AS group_id, d.revision_no AS doc_revision_no "
         "FROM conversation_turns t JOIN documents d ON d.doc_id = t.doc_id "
         "JOIN conversation_docs c ON c.doc_id = t.doc_id "
         f"WHERE c.migration_state = 'migrated' AND {where_sql} "
@@ -419,7 +614,7 @@ def search_conversation_turns(
         if snippet is None:
             continue
         per_doc_count[doc_id] = seen + 1
-        items.append({
+        item = {
             "doc_id": doc_id,
             "type": "CH",
             "title": row.get("title"),
@@ -433,5 +628,16 @@ def search_conversation_turns(
             "speaker": row.get("speaker"),
             "display_name": row.get("display_name"),
             "created_at": row.get("created_at"),
-        })
+        }
+        if include_matches:
+            from modules.flow_gate.services import document_outline_service as _outline
+
+            ctx = _outline.CONTEXT_LINES_DEFAULT if context_lines is None else context_lines
+            ctx = max(0, min(int(ctx), _outline.CONTEXT_LINES_MAX))
+            hits = _outline.HITS_PER_DOC_DEFAULT if hits_per_doc is None else hits_per_doc
+            hits = max(1, min(int(hits), _outline.HITS_PER_DOC_MAX))
+            entries, match_total = _turn_matches(row, needle, ctx, hits)
+            item["match_total"] = match_total
+            item["matches"] = entries
+        items.append(item)
     return items

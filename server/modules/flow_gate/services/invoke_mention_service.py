@@ -96,9 +96,11 @@ def _chat_lookup_sections(
 
     search_lines = [
         f"Search documents by title/doc id: GET {base}/search/documents?q=<keyword>&project={project}",
-        f"Search inside document bodies: GET {base}/search/documents/content?q=<keyword>&project={project}",
         f"List documents in this group: GET {base}/list/groups/{group_name}/documents?limit=5",
-        f"Authorization: Bearer {raw_token}",
+        "",
+        *mention_service._document_lookup_lines(
+            base, raw_token, project=project
+        ),
     ]
     if source_included:
         search_lines += [

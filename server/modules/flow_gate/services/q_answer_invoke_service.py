@@ -109,6 +109,22 @@ def _source_tool_block(api_base_url: str, raw_token: str, doc: dict) -> list[str
         return []
 
 
+def _document_lookup_block(api_base_url: str, raw_token: str, doc: dict) -> list[str]:
+    """Bounded document-query pointers for a Q-answer worker (0370 T0012)."""
+    from modules.flow_gate.services import mention_service
+
+    return [
+        "",
+        "[문서 조회 도구]",
+        *mention_service._document_lookup_lines(
+            api_base_url.rstrip("/"),
+            raw_token,
+            project=doc.get("project_id") or "",
+            doc_id=doc.get("doc_id") or "",
+        ),
+    ]
+
+
 def build_answer_mention(
     *,
     doc: dict,
@@ -143,6 +159,7 @@ def build_answer_mention(
     if doc.get("file_path"):
         lines.append(f"- 문서 파일: {doc.get('file_path')}")
     lines.extend(_source_tool_block(api_base_url, raw_token, doc))
+    lines.extend(_document_lookup_block(api_base_url, raw_token, doc))
 
     lines.append("")
     lines.append("[질의]")
