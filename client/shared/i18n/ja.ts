@@ -1309,6 +1309,8 @@ export default {
       toast_mark_revised_success: 'レビュー待ち状態に戻しました。',
       toast_mark_revised_failed: '修正完了処理失敗: {detail}',
       ai_arrived: 'AIレビュー完了',
+      ai_running: 'AI実行中',
+      ai_running_hint: 'このグループでAI実行が進行中です。終了するまで操作はロックされます。',
       btn_decide_workflow: 'ワークフロー決定',
       btn_manual_decision: '手動決定',
       btn_next_step: '{step}',

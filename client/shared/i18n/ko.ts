@@ -1299,6 +1299,8 @@ export default {
       btn_mark_revised: '수정 완료',
       btn_review_request: '검수요청',
       ai_arrived: 'AI 검수 도착',
+      ai_running: 'AI 실행중',
+      ai_running_hint: '이 그룹에서 AI 실행이 진행 중입니다. 끝날 때까지 동작이 잠깁니다.',
       btn_copy_mention: '멘트 복사',
       tooltip_coming_soon: '추후 구현 예정',
       approve_confirm_title: '문서 승인',

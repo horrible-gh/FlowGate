@@ -1300,6 +1300,8 @@ export default {
       btn_mark_revised: 'Revision Complete',
       btn_review_request: 'Request Review',
       ai_arrived: 'AI review ready',
+      ai_running: 'AI Running',
+      ai_running_hint: 'An AI run is in progress for this group. Actions are locked until it finishes.',
       btn_copy_mention: 'Copy Mention',
       tooltip_coming_soon: 'Coming soon',
       approve_confirm_title: 'Approve Document',

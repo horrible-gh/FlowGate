@@ -35,6 +35,11 @@
               v-if="showAiArrivedPill"
               class="sfb-status-pill ai-arrived"
             ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_arrived') }}</span>
+            <span
+              v-if="isGroupBusy"
+              class="sfb-status-pill ai-running"
+              :title="t('main.review_action_bar.ai_running_hint')"
+            ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_running') }}</span>
           </template>
           <template v-else>
             <span class="sfb-mono">{{ docRef }}</span>
@@ -58,27 +63,27 @@
                mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking it
                no longer opens a dialog; it expands the dropdown of workflow actions. -->
           <div class="ab-dd-wrap">
-            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
+            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="tree-structure" /> {{ t('main.review_action_bar.btn_decide_workflow') }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
               <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
-              <button class="ab-split-item" type="button" @click="onWorkflowMentionCopyClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
-              <button class="ab-split-item" type="button" @click="onWorkflowCommandClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowCommandClick">
                 <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
               </button>
-              <button class="ab-split-item" type="button" @click="onWorkflowAiClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowAiClick">
                 <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
-              <button class="ab-split-item" type="button" @click="onWorkflowManualClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowManualClick">
                 <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
               </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
-              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
                 <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
               </button>
             </div>
@@ -95,7 +100,7 @@
             v-if="isNextFinalApproval"
             class="btn btn-primary btn-sm"
             type="button"
-            :disabled="canNextAction === false"
+            :disabled="canNextAction === false || isGroupBusy"
             @click="$emit('next-action')"
           >
             <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.final_approval') }}
@@ -109,31 +114,31 @@
             v-else-if="isNextConversation"
             class="btn btn-primary btn-sm"
             type="button"
-            :disabled="canNextAction === false"
+            :disabled="canNextAction === false || isGroupBusy"
             @click="$emit('create-conversation')"
           >
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
           <div v-else-if="isNextTestReportPending" class="ab-split-wrap">
-            <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false" @click="onRunTestClick">
+            <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false || isGroupBusy" @click="onRunTestClick">
               <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
             </button>
-            <button class="btn btn-primary btn-sm ab-split-caret" type="button" @click.stop="toggleDropdown">
+            <button class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-up" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
               <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
-              <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextInvokeAiClick">
                 <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
-              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
+              <button class="ab-split-item" type="button" :disabled="canNextAction === false || isGroupBusy" @click="onNextProceedClick">
                 <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
               </button>
-              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
                 <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
               </button>
             </div>
@@ -144,33 +149,33 @@
                  the button opens the dropdown (no dialog). The proceed/copy/create actions
                  all live as dropdown items; order per reviewer (rev3, reversed):
                  Create approved doc → Create empty doc → Copy mention → Proceed to next step. -->
-            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" @click.stop="toggleDropdown">
+            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="arrow-right" />
               {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
-              <button v-if="canCreateApproved" class="ab-split-item" type="button" @click="onNextCreateApprovedClick">
+              <button v-if="canCreateApproved" class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateApprovedClick">
                 <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
               </button>
-              <button class="ab-split-item" type="button" @click="onNextCreateEmptyClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
                 <AppIcon name="file" /> {{ t('main.review_action_bar.btn_create_empty') }}
               </button>
               <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
                    opening the proceed dialog. -->
-              <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
+              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextInvokeAiClick">
                 <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
-              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
+              <button class="ab-split-item" type="button" :disabled="canNextAction === false || isGroupBusy" @click="onNextProceedClick">
                 <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
               </button>
               <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                    current head to a chosen step without a human re-issuing tokens each step. -->
-              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
                 <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
               </button>
             </div>
@@ -199,19 +204,19 @@
         </div>
 
         <div v-else-if="currentMode === 'rejected'" class="sfb-actions sfb-actions--rework">
-          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkMentionCopyClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onReworkMentionCopyClick">
             <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
           </button>
-          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onInvokeCommandClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onInvokeCommandClick">
             <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
           </button>
           <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-          <button class="btn btn-sm sfb-rework-tool" type="button" @click="onReworkInvokeAiClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onReworkInvokeAiClick">
             <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
           </button>
           <button
             class="btn btn-sm sfb-rework-complete"
-            :disabled="markRevising"
+            :disabled="markRevising || isGroupBusy"
             @click="onMarkRevisedClick"
           >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_mark_revised') }}
@@ -220,29 +225,29 @@
 
         <div v-else class="sfb-actions">
           <!-- Approve -->
-          <button class="btn btn-success btn-sm" :disabled="!canApprove" @click="onApproveClick">
+          <button class="btn btn-success btn-sm" :disabled="!canApprove || isGroupBusy" @click="onApproveClick">
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
 
           <!-- Reject -->
-          <button class="btn btn-danger btn-sm" :disabled="approving" @click="onRejectClick">
+          <button class="btn btn-danger btn-sm" :disabled="approving || isGroupBusy" @click="onRejectClick">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.btn_reject') }}
           </button>
 
           <!-- Review request ▼ split button (excluding R type) -->
           <div v-if="canShowReviewRequestAction" class="ab-split-wrap">
-            <button :class="reviewRequestMainClass" @click="onReviewRequestMainClick">
+            <button :class="reviewRequestMainClass" :disabled="isGroupBusy" @click="onReviewRequestMainClick">
               <AppIcon :name="reviewRequestIconClass" /> {{ reviewRequestButtonLabel }}
             </button>
-            <button :class="reviewRequestCaretClass" @click.stop="toggleDropdown">
+            <button :class="reviewRequestCaretClass" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-down" />
             </button>
             <div v-if="dropdownOpen" class="ab-split-dd">
-              <button class="ab-split-item" @click="onMentionCopyClick">
+              <button class="ab-split-item" :disabled="isGroupBusy" @click="onMentionCopyClick">
                 <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
               </button>
               <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" @click="onReviewInvokeAiClick">
+              <button class="ab-split-item" :disabled="isGroupBusy" @click="onReviewInvokeAiClick">
                 <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
               </button>
               <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
@@ -319,6 +324,7 @@ import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -385,6 +391,13 @@ const dropdownOpen = ref(false)
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
 const gitAuxOpen = ref(false)
+
+// B0001/N0002/NR0003: an AI run in progress anywhere in this doc's GROUP locks every
+// action-bar button that would start work or change state — [헤드 문서로 이동] is the
+// only exception (it just navigates). ACTIVE_PHASES ('running' | 'pause_requested') is
+// the same predicate the server enforces as its per-group 409 run_in_progress.
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+const isGroupBusy = computed(() => aiInvokeRunsStore.isGroupRunning(props.groupId))
 
 // flowgate.default.0162 §3.1 "본선": git finalize state for an AC final-approval doc.
 // Fetched from the same per-group endpoint the GitFinalizePanel uses, so the choice
@@ -967,6 +980,12 @@ onBeforeUnmount(() => {
   background: #fff7d6;
   color: #6f4e00;
   border: 1px solid #f6d98b;
+}
+
+.sfb-status-pill.ai-running {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
 }
 
 .sfb-hint {

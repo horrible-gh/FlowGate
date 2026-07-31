@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import ReviewActionBar from '@main/components/ReviewActionBar.vue'
+import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -747,5 +748,185 @@ describe('ReviewActionBar', () => {
     } finally {
       wrapper.unmount()
     }
+  })
+
+  // ── B0001/N0002/NR0003: group-wide AI-run lock ──────────────────────────────
+  describe('AI-run lock (group busy)', () => {
+    function markGroupRunning(groupId: string) {
+      const store = useAiInvokeRunsStore()
+      store.trackStarted({ run_id: 'run-1', group_id: groupId, status: 'running' })
+    }
+
+    it('L1. review mode busy: approve/reject/review-request split are all disabled and the AI Running pill shows', () => {
+      markGroupRunning('test-group')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0003-D',
+          docType: 'D',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('AI Running')
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L2. review mode not busy: no AI Running pill and buttons stay enabled', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0003-D',
+          docType: 'D',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).not.toContain('AI Running')
+      const approveBtn = wrapper.findAll('.sfb-actions button').find(b => b.text().includes('Approve'))!
+      expect(approveBtn.attributes('disabled')).toBeUndefined()
+    })
+
+    it('L3. review-request dropdown items are disabled when busy', async () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0003-D',
+          docType: 'D',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+        },
+        global: { plugins: [i18n] },
+      })
+      // Open the dropdown while NOT busy (the caret itself is disabled once busy).
+      await wrapper.find('.ab-split-caret').trigger('click')
+      markGroupRunning('test-group')
+      await wrapper.vm.$nextTick()
+      const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+      expect(items.length).toBeGreaterThan(0)
+      for (const item of items) {
+        expect(item.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L4. workflow mode busy: the decide-workflow toggle is disabled', () => {
+      markGroupRunning('test.p.0001')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0001-R',
+          projectId: 'test',
+          groupId: 'test.p.0001',
+          docRef: 'test.p.0001.0001-R',
+          docType: 'R',
+          reviewStatus: null,
+          mode: 'workflow',
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.find('.ab-dd-toggle').attributes('disabled')).toBeDefined()
+    })
+
+    it('L5. next mode (general) busy: the next-step toggle is disabled', () => {
+      markGroupRunning('test.p.0001')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0001-R',
+          groupId: 'test.p.0001',
+          docType: 'R',
+          reviewStatus: 'wf_in_progress',
+          mode: 'next',
+          canNextAction: true,
+          nextStepLabel: 'DS',
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.find('.ab-dd-toggle').attributes('disabled')).toBeDefined()
+    })
+
+    it('L6. next mode (AC final approval) busy: single button disabled', () => {
+      markGroupRunning('test.p.0001')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0005-D',
+          groupId: 'test.p.0001',
+          docType: 'D',
+          reviewStatus: 'approved',
+          mode: 'next',
+          canNextAction: true,
+          nextStepCode: 'AC',
+        },
+        global: { plugins: [i18n] },
+      })
+      const btn = wrapper.find('.sfb-actions button.btn-primary')
+      expect(btn.attributes('disabled')).toBeDefined()
+    })
+
+    it('L7. next mode (test report pending) busy: run split buttons disabled', () => {
+      markGroupRunning('test.p.0001')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0004-TS',
+          groupId: 'test.p.0001',
+          docType: 'TS',
+          reviewStatus: 'approved',
+          mode: 'next',
+          canNextAction: true,
+          nextStepCode: 'TSR',
+          testRunStatus: null,
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.find('.ab-split-main').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.ab-split-caret').attributes('disabled')).toBeDefined()
+    })
+
+    it('L8. rejected mode busy: rework tools and mark-revised are disabled', () => {
+      markGroupRunning('test-group')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0001.0003-D',
+          docType: 'D',
+          reviewStatus: 'rejected',
+          mode: 'rejected',
+        },
+        global: { plugins: [i18n] },
+      })
+      const buttons = wrapper.findAll('.sfb-actions--rework button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L9. isViewingPastDoc [go to head] button stays enabled even when the group is busy', () => {
+      markGroupRunning('test-group')
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          headDocId: 'test.test2.0001.0005-D',
+          viewedDocId: 'test.test2.0001.0004-DS',
+          mode: 'review',
+        },
+        global: { plugins: [i18n] },
+      })
+      const navBtn = wrapper.find('button.btn-primary')
+      expect(navBtn.exists()).toBe(true)
+      // The lock never touches the one button the spec explicitly exempts —
+      // it just navigates and changes no state.
+      expect(navBtn.attributes('disabled')).toBeUndefined()
+    })
   })
 })
