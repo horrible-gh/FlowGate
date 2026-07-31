@@ -210,12 +210,19 @@ def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monk
     ]
 
     monkeypatch.setattr(invoke_mention_service, "_chat_lookup_sections", lambda **_kwargs: [])
+    # 0362 T0012: the builder now sizes the recent-turn window from the head of the
+    # conversation, and this check runs without a database. A head of 0 is the short
+    # conversation that folds nothing — the plain mention this guard is here to read.
+    monkeypatch.setattr(
+        invoke_mention_service.conversation_turns, "current_head_seq", lambda doc_id: 0
+    )
     outputs.append(invoke_mention_service.build_conversation_mention(
         doc_id="sample.none.0001.0001-CH",
         project="sample",
         module="none",
         group_name="sample.none.0001",
         raw_token="token",
+        token_id="tok_20260731_000000",
         api_base_url="http://example.test/api/v1",
     ))
 

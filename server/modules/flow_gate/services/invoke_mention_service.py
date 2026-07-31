@@ -23,6 +23,7 @@ import json
 from typing import Optional
 
 from modules.flow_gate.db import conversation_turns
+from modules.flow_gate.services import chat_settings_service
 
 # Mirrors client SECTION_SEPARATOR / MESSAGES_SEPARATOR (mentionMessages.ts).
 SECTION_SEPARATOR = "\n\n"
@@ -118,6 +119,70 @@ def _chat_lookup_sections(
     return sections
 
 
+def _start_paragraph(folded: int) -> list[str]:
+    """The paragraph that explains what ``after_seq`` is (L0010 §2-4-1).
+
+    Unfolded, this is the existing wording, unchanged to the byte: it is what nearly
+    every call produces, and rewriting it would shake every check that pins it.
+
+    Folded, the original sentence is simply false — ``after_seq`` is no longer where
+    that worker stopped reading. Left alone, the worker concludes it has already read
+    the very turns it is about to be told were folded away, which is the whole reason
+    for saying anything at all.
+    """
+    if folded == 0:
+        return [
+            "The after_seq above is YOUR last read position — the server tracks it, do not compute",
+            "it yourself. `head` carries the document intro and the opening of the conversation as",
+            "background; read it first, then the turns. If `next_after_seq` is not null, call again",
+            "with that value until it is null. Reading does not consume this token.",
+        ]
+    return [
+        "The after_seq above is where the server wants you to start — your own last read position,",
+        "moved forward to the recent-conversation range this user chose. The server tracks it, do",
+        "not compute it yourself. `head` carries the document intro and the opening of the",
+        "conversation as background; read it first, then the turns. If `next_after_seq` is not null,",
+        "call again with that value until it is null. Reading does not consume this token.",
+    ]
+
+
+def _fold_notice(
+    *, api_base: str, doc_id: str, raw_token: str, folded: int, before_seq: int
+) -> list[str]:
+    """Say what was skipped and how to go and get it (L0010 §2-4-2).
+
+    ``before_seq`` is ``start + 1`` because the backward page is ``seq < before_seq``
+    (conversation_turns.fetch_turns_before). Passing ``start`` itself would drop the
+    turn sitting on the boundary without a word about it.
+
+    The singular split is not decoration: "The 1 turns … Read them" makes the notice
+    itself the broken-looking part of the mention. build_rejection_section already
+    splits item/items for the same reason.
+
+    The line breaks are fixed exactly as written and do not reflow with the size of
+    ``folded`` — that is what lets a check compare this text as a plain string.
+    """
+    if folded == 1:
+        head = [
+            "The 1 turn before that point is folded, not deleted. Read it when you need the",
+            "earlier context:",
+        ]
+    else:
+        head = [
+            f"The {folded} turns before that point are folded, not deleted. Read them when you need the",
+            "earlier context:",
+        ]
+    return head + [
+        f"GET {api_base}/conversation/{doc_id}/turns?before_seq={before_seq}",
+        f"Authorization: Bearer {raw_token}",
+        "If `prev_before_seq` is not null, call again with that value to keep going further back.",
+        # Said again here on purpose. The paragraph above carries the same rule, but the
+        # place where "am I allowed to read further back" is actually decided is this
+        # one (D0008 §3-3).
+        "Paging back does not consume this token either.",
+    ]
+
+
 def build_conversation_mention(
     *,
     doc_id: str,
@@ -129,6 +194,7 @@ def build_conversation_mention(
     api_base_url: str,
     provider: Optional[str] = None,
     provider_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -136,12 +202,33 @@ def build_conversation_mention(
     An unpinned copy/fallback mention starts at zero because the eventual participant
     is not known when the mention is issued. ``provider`` is display text only;
     identity comes exclusively from the token-bound ``provider_id``.
+
+    0362 T0012: ``user_id`` is whoever pressed the button, and the range they saved can
+    move the starting point forward from that cursor. Both call sites already hold the
+    value and neither sends it over the wire — the screen does not get to say how much
+    conversation an AI is handed, or a path that never went through the screen would
+    have no value there at all, or a made-up one (P0009 시나리오 14). Left None, the
+    settings come out as their defaults, which is also what an unreachable store gives.
     """
     del module  # Kept in the public signature for the two established call sites.
-    after_seq = (
+    last_read = (
         conversation_turns.get_last_read_seq(doc_id, f"provider:{provider_id}")
         if provider_id
         else 0
+    )
+    settings = chat_settings_service.resolve_chat_settings_safe(user_id)
+    context_mode = settings["context_mode"]
+    # [전체] adds no query. With the whole conversation on offer the head cannot change
+    # the answer, and costing exactly what it cost before is what keeps "put it back on
+    # [전체] and compare" usable as a way to diagnose anything (L0010 §2-3).
+    head_seq = (
+        conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
+    )
+    after_seq, folded = chat_settings_service.resolve_context_window(
+        last_read=last_read,
+        head_seq=head_seq,
+        mode=context_mode,
+        turns=settings["context_turns"],
     )
     api_base = api_base_url.rstrip("/")
     display_name = provider or "<your model name>"
@@ -166,10 +253,20 @@ def build_conversation_mention(
         f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1",
         f"Authorization: Bearer {raw_token}",
         "",
-        "The after_seq above is YOUR last read position — the server tracks it, do not compute",
-        "it yourself. `head` carries the document intro and the opening of the conversation as",
-        "background; read it first, then the turns. If `next_after_seq` is not null, call again",
-        "with that value until it is null. Reading does not consume this token.",
+        *_start_paragraph(folded),
+    ]
+    # Right behind the paragraph that named the starting point, and ahead of the reply
+    # instructions: said in that order the worker reads the two as one thought. Appended
+    # at the end of the document it reads the first half and moves on (P0009 시나리오 11).
+    if folded > 0:
+        lines += [""] + _fold_notice(
+            api_base=api_base,
+            doc_id=doc_id,
+            raw_token=raw_token,
+            folded=folded,
+            before_seq=after_seq + 1,
+        )
+    lines += [
         "",
         "To reply, append ONE turn. Do NOT resubmit the conversation body — the body is no",
         "longer where the conversation lives.",

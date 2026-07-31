@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
@@ -6,16 +6,22 @@ import i18n from '@shared/i18n'
 // Group 0235 (D0005 §3-2 / P0007 §0-1 / L0008): ConversationView replaces the old
 // "auto-copy" checkbox with a "send-time action" radio group (copy_mention /
 // invoke_ai / none). On a successful send it dispatches the chosen action — copy the
-// mention ({ auto: true }), run the in-app AI call, or nothing. The old boolean key
-// is migrated to the new key on first read. Never dispatches on a failed send.
-const { getRequest, postRequest, showToast } = vi.hoisted(() => ({
+// mention ({ auto: true }), run the in-app AI call, or nothing. Never dispatches on a
+// failed send.
+// Group 0362 (D0008/P0009/L0010): both [전송 시] and the new [대화 제공 범위] are now
+// server-backed per-user settings (GET/PATCH /me/chat-settings) behind a gear-button
+// dialog rather than inline radios. The legacy browser key is migrated into the
+// server setting once per chat-screen entry, then never written to again.
+const { getRequest, postRequest, patchRequest, showToast } = vi.hoisted(() => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
+  patchRequest: vi.fn(),
   showToast: vi.fn(),
 }))
 vi.mock('@shared/api', () => ({
   getRequest: (...a: unknown[]) => getRequest(...a),
   postRequest: (...a: unknown[]) => postRequest(...a),
+  patchRequest: (...a: unknown[]) => patchRequest(...a),
 }))
 vi.mock('@main/components/common/useToast', () => ({
   useToast: () => ({ showToast }),
@@ -82,12 +88,62 @@ function turnsPage(rows: unknown[] = [], over: Partial<Record<string, unknown>> 
   }
 }
 
-// getRequest serves BOTH the conversation turn pages and the provider list. Default:
-// one enabled provider present, so the "Call AI" radio/button is available.
+// Chat settings (group 0362, P0009 §0-3/§1). One preset domain shared by every test;
+// individual tests override the settings row via savedChatSettingsResponse().
+const CHAT_SETTINGS_DOMAIN = {
+  send_action: ['copy_mention', 'invoke_ai', 'none'],
+  context_mode: ['recent', 'all'],
+  context_turns_presets: [5, 10, 15, 20, 30],
+  context_turns_min: 1,
+  context_turns_max: 200,
+}
+const CHAT_SETTINGS_DEFAULTS = { send_action: 'none', context_mode: 'recent', context_turns: 20 }
+
+// P0009 시나리오 1: a user who has never saved settings — is_default: true.
+function defaultChatSettingsResponse() {
+  return {
+    data: {
+      ok: true,
+      settings: { ...CHAT_SETTINGS_DEFAULTS, updated_at: null },
+      is_default: true,
+      defaults: CHAT_SETTINGS_DEFAULTS,
+      domain: CHAT_SETTINGS_DOMAIN,
+    },
+  }
+}
+
+// P0009 시나리오 2: a user with a saved row — is_default: false.
+function savedChatSettingsResponse(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    data: {
+      ok: true,
+      settings: { ...CHAT_SETTINGS_DEFAULTS, updated_at: '2026-07-30T18:22:41+09:00', ...overrides },
+      is_default: false,
+      defaults: CHAT_SETTINGS_DEFAULTS,
+      domain: CHAT_SETTINGS_DOMAIN,
+    },
+  }
+}
+
+async function openChatSettings(wrapper: VueWrapper<any>) {
+  await wrapper.find('.conv-gear-btn').trigger('click')
+}
+
+async function saveChatSettings(wrapper: VueWrapper<any>) {
+  await wrapper.find('.conv-settings-save').trigger('click')
+  await flushPromises()
+}
+
+// getRequest serves the conversation turn pages, the provider list AND the chat
+// settings GET — every mount hits all three. Default: one enabled provider, no saved
+// chat settings row (fresh defaults).
 function withProviders(rows: unknown[] = []) {
   getRequest.mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
       return Promise.resolve(PROVIDERS_RESPONSE)
+    }
+    if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+      return Promise.resolve(defaultChatSettingsResponse())
     }
     return Promise.resolve(turnsPage(rows))
   })
@@ -97,6 +153,9 @@ function withoutProviders() {
   getRequest.mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('ai-invoke/providers')) {
       return Promise.resolve({ data: { ok: true, project: 'flowgate', providers: [], default_provider_id: null } })
+    }
+    if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+      return Promise.resolve(defaultChatSettingsResponse())
     }
     return Promise.resolve(turnsPage())
   })
@@ -117,6 +176,16 @@ beforeEach(() => {
   withProviders()
   postRequest.mockReset().mockResolvedValue({
     data: { ok: true, doc_id: DOC_ID, replayed: false, head_seq: 1, turn: turn(1), me: null },
+  })
+  // Default PATCH behaviour: echo back a saved row built from whatever fields the
+  // caller sent, merged over the defaults — mirrors the real server's "return the
+  // re-read, re-normalized value" contract (P0009 시나리오 5) closely enough for tests
+  // that only care about the save round trip, not a specific server-side correction.
+  patchRequest.mockReset().mockImplementation((path: unknown, body: unknown) => {
+    if (typeof path === 'string' && path.includes('/me/chat-settings')) {
+      return Promise.resolve(savedChatSettingsResponse((body ?? {}) as Record<string, unknown>))
+    }
+    return Promise.resolve({ data: { ok: true } })
   })
   showToast.mockReset()
 })
@@ -164,10 +233,18 @@ describe('ConversationView inline provider selector', () => {
 })
 
 describe('ConversationView send-time action', () => {
-  it('renders the send-time action radios instead of a checkbox', async () => {
+  it('hides the send-time-action radios behind a gear button until opened', async () => {
     const wrapper = mountView()
     await flushPromises()
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="radio"][value="copy_mention"]').exists()).toBe(false)
+    expect(wrapper.find('.conv-gear-btn').exists()).toBe(true)
+  })
+
+  it('renders the send-time action radios once the settings dialog is opened', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
     expect(wrapper.find('input[type="radio"][value="copy_mention"]').exists()).toBe(true)
     expect(wrapper.find('input[type="radio"][value="invoke_ai"]').exists()).toBe(true)
     expect(wrapper.find('input[type="radio"][value="none"]').exists()).toBe(true)
@@ -176,7 +253,14 @@ describe('ConversationView send-time action', () => {
   it('emits copy-mention with { auto: true } after a successful send when set to copy_mention', async () => {
     const wrapper = mountView()
     await flushPromises()
+    await openChatSettings(wrapper)
     await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
+    await saveChatSettings(wrapper)
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/me/chat-settings', {
+      send_action: 'copy_mention',
+      context_mode: 'recent',
+      context_turns: 20,
+    })
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -187,7 +271,9 @@ describe('ConversationView send-time action', () => {
   it('runs the in-app AI call after a successful send when set to invoke_ai', async () => {
     const wrapper = mountView()
     await flushPromises()
+    await openChatSettings(wrapper)
     await wrapper.find('input[type="radio"][value="invoke_ai"]').setValue()
+    await saveChatSettings(wrapper)
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -293,7 +379,9 @@ describe('ConversationView send-time action', () => {
     postRequest.mockReset().mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountView()
     await flushPromises()
+    await openChatSettings(wrapper)
     await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
+    await saveChatSettings(wrapper)
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -303,29 +391,106 @@ describe('ConversationView send-time action', () => {
   it('still emits copy-mention (no payload) from the manual button', async () => {
     const wrapper = mountView()
     await flushPromises()
+    // The gear button is its own class (.conv-gear-btn), so the first .conv-assist-btn
+    // is still [Copy mention].
     await wrapper.find('.conv-assist-btn').trigger('click')
     expect(wrapper.emitted('copy-mention')).toEqual([[]])
   })
 
-  it('migrates the legacy auto-copy key to the new send-action key on first read', async () => {
-    localStorage.setItem(LEGACY_AUTOCOPY_KEY, '1')
+  // D0008 §3-1 / P0009 §1: the dialog never re-queries the server when opened — it
+  // redraws the last GET/PATCH result already in hand.
+  it('does not re-fetch settings when the dialog is opened', async () => {
     const wrapper = mountView()
     await flushPromises()
-    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('copy_mention')
+    getRequest.mockClear()
+    await openChatSettings(wrapper)
+    expect(getRequest).not.toHaveBeenCalled()
+  })
+
+  // D0008 §3-1 / P0009 시나리오 7: a failed save keeps the dialog open and shows the
+  // server's message instead of silently reverting.
+  it('keeps the dialog open and shows the server message when saving fails', async () => {
+    patchRequest.mockReset().mockRejectedValueOnce({
+      response: { data: { ok: false, error: { code: 'invalid_request', field: 'context_turns', message: 'context_turns must be between 1 and 200.' } } },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await saveChatSettings(wrapper)
+    expect(wrapper.find('.conv-settings').exists()).toBe(true)
+    expect(wrapper.text()).toContain('context_turns must be between 1 and 200.')
+  })
+
+  it('migrates the legacy auto-copy key to the server send_action setting on first entry', async () => {
+    localStorage.setItem(LEGACY_AUTOCOPY_KEY, '1')
+    patchRequest.mockReset().mockResolvedValueOnce(savedChatSettingsResponse({ send_action: 'copy_mention' }))
+    const wrapper = mountView()
+    await flushPromises()
+    // readSendAction() folded the legacy key into SEND_ACTION_KEY as 'copy_mention',
+    // which is a real (non-default, non-'none') choice, so it PATCHes once.
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/me/chat-settings', { send_action: 'copy_mention' })
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBeNull() // cleared only after PATCH ok (P0009 시나리오 3)
     expect(localStorage.getItem(LEGACY_AUTOCOPY_KEY)).toBeNull()
+    await openChatSettings(wrapper)
     expect(
       (wrapper.find('input[type="radio"][value="copy_mention"]').element as HTMLInputElement).checked,
     ).toBe(true)
   })
 
-  it('persists the selection and restores it on remount', async () => {
+  // L0010 §2-6 item 2: a browser-local 'none' is already the server default, so
+  // migrating it would flip is_default to false and permanently block a REAL choice
+  // left in another browser from ever migrating. The key is just cleared, no PATCH.
+  it('clears a browser-local "none" without calling the server', async () => {
+    localStorage.setItem(SEND_ACTION_KEY, 'none')
     const wrapper = mountView()
     await flushPromises()
-    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
-    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('copy_mention')
+    expect(patchRequest).not.toHaveBeenCalled()
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBeNull()
+  })
 
+  // L0010 §2-6 item 1: is_default: false means the server already holds a real
+  // choice — a value left in this browser must never overwrite it.
+  it('does not migrate when the server already has a saved (non-default) row', async () => {
+    localStorage.setItem(SEND_ACTION_KEY, 'copy_mention')
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ send_action: 'invoke_ai' }))
+      }
+      return Promise.resolve(turnsPage())
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(patchRequest).not.toHaveBeenCalled()
+    // The server's own value wins, not the browser's stale one.
+    await openChatSettings(wrapper)
+    expect(
+      (wrapper.find('input[type="radio"][value="invoke_ai"]').element as HTMLInputElement).checked,
+    ).toBe(true)
+  })
+
+  it('persists the selection via the server and restores it on remount', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
+    await saveChatSettings(wrapper)
+    expect(patchRequest).toHaveBeenCalledWith(
+      '/api/v1/me/chat-settings',
+      expect.objectContaining({ send_action: 'copy_mention' }),
+    )
+
+    // Re-entering the chat screen: the server now returns the saved row.
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ send_action: 'copy_mention' }))
+      }
+      return Promise.resolve(turnsPage())
+    })
     const wrapper2 = mountView()
     await flushPromises()
+    await openChatSettings(wrapper2)
     expect(
       (wrapper2.find('input[type="radio"][value="copy_mention"]').element as HTMLInputElement).checked,
     ).toBe(true)
@@ -335,22 +500,136 @@ describe('ConversationView send-time action', () => {
     withoutProviders()
     const wrapper = mountView()
     await flushPromises()
+    // Only the [Copy mention] button remains in the assist row (the gear button has
+    // its own class, so it is not counted here; the dialog is still closed).
+    expect(wrapper.findAll('.conv-assist-btn').length).toBe(1)
+    await openChatSettings(wrapper)
     expect(
       (wrapper.find('input[type="radio"][value="invoke_ai"]').element as HTMLInputElement).disabled,
     ).toBe(true)
-    // Only the [Copy mention] button remains in the assist row.
-    expect(wrapper.findAll('.conv-assist-btn').length).toBe(1)
   })
 
-  it('reverts a stale invoke_ai selection to none once the empty provider list resolves', async () => {
+  it('migrates then reverts a stale invoke_ai selection to none once the empty provider list resolves', async () => {
     localStorage.setItem(SEND_ACTION_KEY, 'invoke_ai')
     withoutProviders()
+    patchRequest.mockReset().mockResolvedValueOnce(savedChatSettingsResponse({ send_action: 'invoke_ai' }))
     const wrapper = mountView()
     await flushPromises()
-    expect(localStorage.getItem(SEND_ACTION_KEY)).toBe('none')
+    // Migrated once, then the local-storage watcher that used to persist every
+    // change is gone (L0010 §2-7-1) — the provider-empty revert below is screen-only
+    // and must NOT resurrect the key (L0010 §2-7-2).
+    expect(localStorage.getItem(SEND_ACTION_KEY)).toBeNull()
+    await openChatSettings(wrapper)
     expect(
       (wrapper.find('input[type="radio"][value="none"]').element as HTMLInputElement).checked,
     ).toBe(true)
+  })
+})
+
+// Group 0362 (D0008 §6-2, P0009 §1, L0010 §2-7) — the new [대화 제공 범위] half of the
+// same settings dialog.
+describe('ConversationView context range', () => {
+  it('shows the default range as "20 turns" for a user who never saved settings', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    expect((wrapper.find('.conv-settings-select').element as HTMLSelectElement).value).toBe('20')
+    expect(wrapper.find('.conv-settings-number').exists()).toBe(false)
+  })
+
+  it('shows "custom" with the number field pre-filled for a non-preset saved value', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ context_turns: 45 }))
+      }
+      return Promise.resolve(turnsPage())
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    expect((wrapper.find('.conv-settings-select').element as HTMLSelectElement).value).toBe('custom')
+    expect((wrapper.find('.conv-settings-number').element as HTMLInputElement).value).toBe('45')
+  })
+
+  it('saves a preset pick as context_mode recent + the preset turns', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('10')
+    await saveChatSettings(wrapper)
+    expect(patchRequest).toHaveBeenCalledWith(
+      '/api/v1/me/chat-settings',
+      expect.objectContaining({ context_mode: 'recent', context_turns: 10 }),
+    )
+  })
+
+  it('saves a custom number typed into the number field', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('custom')
+    await wrapper.find('.conv-settings-number').setValue(45)
+    await saveChatSettings(wrapper)
+    expect(patchRequest).toHaveBeenCalledWith(
+      '/api/v1/me/chat-settings',
+      expect.objectContaining({ context_mode: 'recent', context_turns: 45 }),
+    )
+  })
+
+  // L0010 §2-7-4 / P0009 §0-2: saving [전체] must NOT send context_turns, so the
+  // number the user was using survives the round trip untouched.
+  it('omits context_turns when saving with the range set to "all"', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('all')
+    await saveChatSettings(wrapper)
+    const call = patchRequest.mock.calls.find((c) => c[0] === '/api/v1/me/chat-settings')
+    expect(call?.[1]).toEqual(expect.objectContaining({ context_mode: 'all' }))
+    expect(call?.[1]).not.toHaveProperty('context_turns')
+  })
+
+  it('shows the server validation message and does not close on an out-of-range save', async () => {
+    patchRequest.mockReset().mockRejectedValueOnce({
+      response: {
+        data: { ok: false, error: { code: 'invalid_request', field: 'context_turns', message: 'context_turns must be between 1 and 200.' } },
+      },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('custom')
+    await wrapper.find('.conv-settings-number').setValue(0)
+    await saveChatSettings(wrapper)
+    expect(wrapper.find('.conv-settings').exists()).toBe(true)
+    expect(wrapper.find('.conv-settings-error').text()).toBe('context_turns must be between 1 and 200.')
+  })
+
+  it('redraws from the saved response, not the value that was sent, after a successful save', async () => {
+    // The server corrected the value it wrote (e.g. clamped to a new max) — the
+    // dialog must show what the server actually stored (P0009 시나리오 5).
+    patchRequest.mockReset().mockResolvedValueOnce(savedChatSettingsResponse({ context_turns: 150 }))
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('custom')
+    await wrapper.find('.conv-settings-number').setValue(999)
+    await saveChatSettings(wrapper)
+    // Saving closes the dialog; reopening must show the server's corrected value.
+    await openChatSettings(wrapper)
+    expect((wrapper.find('.conv-settings-number').element as HTMLInputElement).value).toBe('150')
+  })
+
+  it('cancel discards edits without calling the server', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('input[type="radio"][value="copy_mention"]').setValue()
+    await wrapper.find('.conv-settings-select').setValue('10')
+    await wrapper.find('.conv-settings-ft .conv-assist-btn').trigger('click') // [Cancel] — first button in the footer
+    expect(patchRequest).not.toHaveBeenCalled()
+    expect(wrapper.find('.conv-settings').exists()).toBe(false)
   })
 })
 
@@ -368,11 +647,12 @@ describe('ConversationView chat AI invoke', () => {
     })
     await flushPromises()
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/providers', { project: 'flowgate' })
+    // Both [Copy mention] and [Call AI] are present.
+    expect(wrapper.findAll('.conv-assist-btn').length).toBe(2)
+    await openChatSettings(wrapper)
     expect(
       (wrapper.find('input[type="radio"][value="invoke_ai"]').element as HTMLInputElement).disabled,
     ).toBe(false)
-    // Both [Copy mention] and [Call AI] are present.
-    expect(wrapper.findAll('.conv-assist-btn').length).toBe(2)
   })
 
   it('absorbs a 409 run_in_progress from start without surfacing an error toast', async () => {

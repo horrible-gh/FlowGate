@@ -182,6 +182,9 @@ def issue_token(
             raw_token=result["raw_token"],
             token_id=result["token_id"],
             api_base_url=_build_api_base(request),
+            # 0362 T0012: the range is this user's own setting and the server reads it
+            # from their authentication. The request body still carries nothing about it.
+            user_id=user_id,
         )
     else:
         mention = _build_mention_for_token(

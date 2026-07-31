@@ -41,6 +41,18 @@ class TestScopeMap:
 class TestConversationMention:
     TOKEN_ID = "tok_20260729_000071"
 
+    @pytest.fixture(autouse=True)
+    def _short_conversation(self, monkeypatch):
+        """0362 T0012: the builder now reads the head to size the recent-turn window.
+
+        These cases pin text shapes and run without a database. A head of 0 is the
+        short conversation of P0009 시나리오 12 — nothing folds, and the mention is the
+        one this file already describes. The two cases with a provider cursor set their
+        own head, because a cursor beyond the end of the conversation is not a state
+        the mention should be asked to render.
+        """
+        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda doc_id: 0)
+
     @staticmethod
     def _build(**overrides):
         args = {
@@ -109,6 +121,9 @@ class TestConversationMention:
             "get_last_read_seq",
             lambda doc_id, participant_key: calls.append((doc_id, participant_key)) or 13,
         )
+        # A provider caught up with a 13-turn conversation: the default range cannot
+        # move it, so the cursor is still what the mention advertises.
+        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda doc_id: 13)
         text = self._build(provider="Claude Opus", provider_id="cx_claude_opus")
         assert "?after_seq=13&include_head=1" in text
         assert calls == [("p.default.0001.0008-CH", "provider:cx_claude_opus")]
@@ -147,6 +162,8 @@ class TestConversationMentionLookupBlock:
         monkeypatch.setattr(
             mention_service, "_include_remote_source_crud", lambda project: remote_mode
         )
+        # 0362 T0012: no database here either — see TestConversationMention._short_conversation.
+        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda doc_id: 0)
         return ims.build_conversation_mention(
             doc_id="p.default.0001.0008-CH",
             project="p",
@@ -161,7 +178,10 @@ class TestConversationMentionLookupBlock:
         # 0349 TR-2: the tools are named and their usage is one help call away, instead of
         # one request-format block per tool inlined here.
         text = self._mention(monkeypatch)
-        assert "도구: read, grep, glob" in text
+        # The chat mention pins this section to English (_chat_lookup_sections), so the
+        # Korean label this line used to expect has not been produced for a while. The
+        # wording here is the one P0009 시나리오 11 records for the same section.
+        assert "Tools: read, grep, glob" in text
         assert "GET http://h:1/api/v1/help/tools" in text
         assert "http://h:1/api/v1/help/tools/{name}" in text
 

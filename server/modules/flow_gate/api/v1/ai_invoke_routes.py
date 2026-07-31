@@ -268,6 +268,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                     body.project, body.provider_id,
                 ),
                 provider_id=body.provider_id,
+                # 0362 T0012: whoever pressed [AI 호출]. Their saved range decides how
+                # far back the worker is told to start reading.
+                user_id=user_id,
             )
         if body.action_scope == "rework":
             doc = db_docs.get_by_id(body.doc_ref) or {}

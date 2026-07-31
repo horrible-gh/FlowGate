@@ -141,33 +141,112 @@
           @focus="selectManualCopy"
         ></textarea>
       </div>
-      <div class="conv-assist">
-        <!-- Send-time action (D0005 §3-2). Replaces the old "auto-copy" checkbox.
-             "Call AI" is disabled when no provider is available (single source of
-             truth: aiProvider store). -->
-        <div
-          class="conv-sendaction"
-          role="radiogroup"
-          :aria-label="t('main.conversation_view.send_action_label')"
-        >
-          <span class="conv-sendaction-label">{{ t('main.conversation_view.send_action_label') }}</span>
-          <label class="conv-radio">
-            <input type="radio" value="copy_mention" v-model="sendAction" />
-            {{ t('main.conversation_view.send_action_copy') }}
-          </label>
-          <label
-            class="conv-radio"
-            :class="{ 'is-disabled': !invokeSelectable }"
-            :title="!invokeSelectable ? t('main.conversation_view.send_action_invoke_disabled_hint') : ''"
-          >
-            <input type="radio" value="invoke_ai" v-model="sendAction" :disabled="!invokeSelectable" />
-            {{ t('main.conversation_view.send_action_invoke') }}
-          </label>
-          <label class="conv-radio">
-            <input type="radio" value="none" v-model="sendAction" />
-            {{ t('main.conversation_view.send_action_none') }}
-          </label>
+      <!-- Chat settings panel (D0008 §6-2/§6-3, P0009 §1, L0010 §2-7, group 0362).
+           Inline in the composer's flow like .conv-manualcopy below — never a
+           full-screen overlay, so the conversation stays visible behind it and a
+           close control is always on screen. -->
+      <div v-if="showChatSettings" class="conv-settings">
+        <div class="conv-settings-hd">
+          <span class="conv-settings-title">
+            <AppIcon name="gear" />
+            {{ t('main.conversation_view.chat_settings_title') }}
+          </span>
+          <button type="button" class="conv-assist-btn" @click="closeChatSettings">
+            <AppIcon name="x" />
+            {{ t('common.close') }}
+          </button>
         </div>
+        <div class="conv-settings-bd">
+          <div class="conv-settings-group">
+            <span class="conv-settings-group-label">{{ t('main.conversation_view.send_action_label') }}</span>
+            <div
+              class="conv-settings-radios"
+              role="radiogroup"
+              :aria-label="t('main.conversation_view.send_action_label')"
+            >
+              <label class="conv-radio">
+                <input type="radio" value="copy_mention" v-model="draftSendAction" />
+                {{ t('main.conversation_view.send_action_copy') }}
+              </label>
+              <label
+                class="conv-radio"
+                :class="{ 'is-disabled': !invokeSelectable }"
+                :title="!invokeSelectable ? t('main.conversation_view.send_action_invoke_disabled_hint') : ''"
+              >
+                <input type="radio" value="invoke_ai" v-model="draftSendAction" :disabled="!invokeSelectable" />
+                {{ t('main.conversation_view.send_action_invoke') }}
+              </label>
+              <label class="conv-radio">
+                <input type="radio" value="none" v-model="draftSendAction" />
+                {{ t('main.conversation_view.send_action_none') }}
+              </label>
+            </div>
+          </div>
+
+          <div class="conv-settings-group">
+            <span class="conv-settings-group-label">{{ t('main.conversation_view.context_range_label') }}</span>
+            <div class="conv-settings-range-row">
+              <select v-model="draftRangeChoice" class="form-ctrl conv-settings-select">
+                <option
+                  v-for="preset in chatSettingsDomain.context_turns_presets"
+                  :key="preset"
+                  :value="String(preset)"
+                >
+                  {{ t('main.conversation_view.context_range_turns', { n: preset }) }}
+                </option>
+                <option value="all">{{ t('main.conversation_view.context_range_all') }}</option>
+                <option value="custom">{{ t('main.conversation_view.context_range_custom') }}</option>
+              </select>
+              <input
+                v-if="draftRangeChoice === 'custom'"
+                v-model.number="draftContextTurnsCustom"
+                type="number"
+                class="form-ctrl conv-settings-number"
+                :min="chatSettingsDomain.context_turns_min"
+                :max="chatSettingsDomain.context_turns_max"
+              />
+            </div>
+            <p class="conv-settings-hint">{{ t('main.conversation_view.context_range_hint') }}</p>
+            <p v-if="chatSettingsErrorField === 'context_turns'" class="conv-settings-error">
+              {{ chatSettingsErrorMessage }}
+            </p>
+          </div>
+
+          <p v-if="chatSettingsErrorMessage && chatSettingsErrorField !== 'context_turns'" class="conv-settings-error">
+            {{ chatSettingsErrorMessage }}
+          </p>
+        </div>
+        <div class="conv-settings-ft">
+          <button type="button" class="conv-assist-btn" @click="closeChatSettings">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="conv-assist-btn conv-settings-save"
+            :disabled="savingChatSettings"
+            @click="saveChatSettings"
+          >
+            <AppIcon :name="savingChatSettings ? 'spinner' : 'check'" :spin="savingChatSettings" />
+            {{ t('common.save') }}
+          </button>
+        </div>
+      </div>
+      <div class="conv-assist">
+        <!-- Chat settings gear (D0008 §6-1/§6-2, group 0362). Replaces the inline
+             [전송 시] radios that used to sit here — those now live in the dialog
+             this button opens. "Call AI" inside that dialog is disabled when no
+             provider is available (single source of truth: aiProvider store). -->
+        <button
+          type="button"
+          class="conv-gear-btn"
+          :class="{ 'is-active': showChatSettings }"
+          :title="t('main.conversation_view.chat_settings_title')"
+          :aria-label="t('main.conversation_view.chat_settings_title')"
+          :aria-expanded="showChatSettings"
+          @click="toggleChatSettings"
+        >
+          <AppIcon name="gear" />
+        </button>
         <div class="conv-assist-btns">
           <!-- Manual delivery fallback — copy a chat-only mention and paste it to the
                AI worker. Always available (D0005 §3-3: [Copy mention] never hidden). -->
@@ -243,7 +322,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { getRequest, patchRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
@@ -377,15 +456,45 @@ function persistDraft(docId: string, value: string): void {
   }
 }
 
-// ── Send-time action (D0005 §3-2, P0007 §0-1, L0008 §2-1) ────────────────────
-// One global user preference: what to do automatically on a successful send.
-// Stored under a new key; the old boolean "auto-copy" key is migrated once on read
-// ('1' → copy_mention, else → none) then removed so it never re-migrates.
+// ── Chat settings (D0008/P0009/L0010, group 0362) ─────────────────────────────
+// [전송 시] used to be a lone browser-local preference (D0005 §3-2 / P0007 §0-1 /
+// L0008 §2-1). It is now one of two fields the server stores per user, alongside
+// the new [대화 제공 범위] (context_mode / context_turns) that controls where an AI
+// call starts reading a long conversation. Both live behind one settings dialog
+// opened from the gear button; both round-trip through GET/PATCH /me/chat-settings.
 const SEND_ACTION_KEY = 'flowgate.chat.sendAction'
 const LEGACY_AUTOCOPY_KEY = 'flowgate.chat.autoCopyMention'
 const SEND_ACTIONS = ['copy_mention', 'invoke_ai', 'none'] as const
 type SendAction = (typeof SEND_ACTIONS)[number]
+const CONTEXT_MODES = ['recent', 'all'] as const
+type ContextMode = (typeof CONTEXT_MODES)[number]
 
+interface ChatSettingsValue {
+  send_action: SendAction
+  context_mode: ContextMode
+  context_turns: number
+  updated_at: string | null
+}
+interface ChatSettingsDomain {
+  send_action: SendAction[]
+  context_mode: ContextMode[]
+  context_turns_presets: number[]
+  context_turns_min: number
+  context_turns_max: number
+}
+interface ChatSettingsResponse {
+  ok: boolean
+  settings: ChatSettingsValue
+  is_default: boolean
+  defaults: { send_action: SendAction; context_mode: ContextMode; context_turns: number }
+  domain: ChatSettingsDomain
+}
+
+// Reads (and, on first read, migrates) the legacy boolean "auto-copy" key into the
+// newer SEND_ACTION_KEY. Kept only for that migration path (L0010 §2-6 item 5) —
+// no longer used to seed `sendAction` directly, since the server is now the source
+// of truth and the local-storage watcher that used to write SEND_ACTION_KEY on
+// every change is gone (L0010 §2-7-1: the dialog's [저장] is the only write path).
 function readSendAction(): SendAction {
   try {
     const v = localStorage.getItem(SEND_ACTION_KEY)
@@ -402,14 +511,164 @@ function readSendAction(): SendAction {
   }
 }
 
-const sendAction = ref<SendAction>(readSendAction())
-watch(sendAction, (v) => {
-  try {
-    localStorage.setItem(SEND_ACTION_KEY, v)
-  } catch {
-    /* ignore — best-effort persistence */
-  }
+const sendAction = ref<SendAction>('none')
+const contextMode = ref<ContextMode>('recent')
+const contextTurns = ref(20)
+const chatSettingsIsDefault = ref(true)
+const chatSettingsDomain = ref<ChatSettingsDomain>({
+  send_action: [...SEND_ACTIONS],
+  context_mode: [...CONTEXT_MODES],
+  context_turns_presets: [5, 10, 15, 20, 30],
+  context_turns_min: 1,
+  context_turns_max: 200,
 })
+
+function applyChatSettings(data: ChatSettingsResponse): void {
+  sendAction.value = data.settings.send_action
+  contextMode.value = data.settings.context_mode
+  contextTurns.value = data.settings.context_turns
+  chatSettingsIsDefault.value = data.is_default
+  chatSettingsDomain.value = data.domain
+}
+
+// One migration attempt per chat-screen entry (L0010 §2-6, MIGRATION_ATTEMPTS_PER_ENTRY=1).
+let sendActionMigrationAttempted = false
+
+async function migrateSendActionOnce(getResult: ChatSettingsResponse | null): Promise<void> {
+  if (sendActionMigrationAttempted) return
+  if (!getResult) return // a failed GET is not evidence either way — do not decide yet
+  if (!getResult.is_default) {
+    sendActionMigrationAttempted = true // the server already holds a real choice
+    return
+  }
+
+  readSendAction() // folds the legacy boolean key into SEND_ACTION_KEY, if present
+  let raw: string | null
+  try {
+    raw = localStorage.getItem(SEND_ACTION_KEY)
+  } catch {
+    raw = null
+  }
+
+  if (raw === null) {
+    sendActionMigrationAttempted = true // nothing in this browser to carry over
+    return
+  }
+  if (!(SEND_ACTIONS as readonly string[]).includes(raw) || raw === 'none') {
+    // Migrating would not change the outcome — clear the key without calling the
+    // server, so a real choice left in another browser can still migrate later.
+    try {
+      localStorage.removeItem(SEND_ACTION_KEY)
+    } catch {
+      /* best-effort */
+    }
+    sendActionMigrationAttempted = true
+    return
+  }
+
+  sendActionMigrationAttempted = true
+  try {
+    const res = await patchRequest<ChatSettingsResponse>('/api/v1/me/chat-settings', {
+      send_action: raw,
+    })
+    // Clear the browser key only after the server confirms the write (P0009 시나리오 3).
+    try {
+      localStorage.removeItem(SEND_ACTION_KEY)
+    } catch {
+      /* best-effort */
+    }
+    applyChatSettings(res.data)
+  } catch {
+    // Leave the key in place; the next chat-screen entry re-evaluates from scratch.
+  }
+}
+
+async function loadChatSettings(): Promise<void> {
+  let result: ChatSettingsResponse | null = null
+  try {
+    const res = await getRequest<ChatSettingsResponse>('/api/v1/me/chat-settings')
+    if (disposed) return
+    result = res.data
+    applyChatSettings(result)
+  } catch {
+    if (disposed) return
+    result = null // D0008 §3-4 / P0009 시나리오 10: keep chatting on defaults, do not block
+  }
+  await migrateSendActionOnce(result)
+}
+
+// ── Chat settings dialog (D0008 §6-2, P0009 §1, L0010 §2-7) ──────────────────
+const showChatSettings = ref(false)
+const savingChatSettings = ref(false)
+const chatSettingsErrorField = ref<string | null>(null)
+const chatSettingsErrorMessage = ref<string | null>(null)
+const draftSendAction = ref<SendAction>('none')
+// A preset turn count (as a string), 'all', or 'custom' — draftContextTurnsCustom
+// holds the number for the 'custom' case. Both a list pick and typed-in number are
+// the same context_turns field on the wire; the split only exists for the UI
+// (L0010 §2-7-3).
+const draftRangeChoice = ref<string>('20')
+const draftContextTurnsCustom = ref(20)
+
+function draftRangeChoiceFor(mode: ContextMode, turns: number): string {
+  if (mode === 'all') return 'all'
+  if (chatSettingsDomain.value.context_turns_presets.includes(turns)) return String(turns)
+  return 'custom'
+}
+
+// [시나리오 4] opening the dialog never re-queries the server — it redraws the
+// last GET/PATCH result, already in hand.
+function openChatSettings(): void {
+  draftSendAction.value = sendAction.value
+  draftRangeChoice.value = draftRangeChoiceFor(contextMode.value, contextTurns.value)
+  draftContextTurnsCustom.value = contextTurns.value
+  chatSettingsErrorField.value = null
+  chatSettingsErrorMessage.value = null
+  showChatSettings.value = true
+}
+
+function closeChatSettings(): void {
+  showChatSettings.value = false
+}
+
+function toggleChatSettings(): void {
+  if (showChatSettings.value) closeChatSettings()
+  else openChatSettings()
+}
+
+async function saveChatSettings(): Promise<void> {
+  if (savingChatSettings.value) return
+  const mode: ContextMode = draftRangeChoice.value === 'all' ? 'all' : 'recent'
+  const patch: Record<string, unknown> = { send_action: draftSendAction.value, context_mode: mode }
+  // §2-7-4: never send context_turns alongside context_mode: 'all' — the number the
+  // user was using must survive an [전체] round trip untouched (server only writes
+  // fields present in the request body).
+  if (mode === 'recent') {
+    const turnsValue =
+      draftRangeChoice.value === 'custom' ? draftContextTurnsCustom.value : Number(draftRangeChoice.value)
+    if (!Number.isInteger(turnsValue)) {
+      chatSettingsErrorField.value = 'context_turns'
+      chatSettingsErrorMessage.value = t('main.conversation_view.context_range_invalid')
+      return
+    }
+    patch.context_turns = turnsValue
+  }
+
+  savingChatSettings.value = true
+  chatSettingsErrorField.value = null
+  chatSettingsErrorMessage.value = null
+  try {
+    const res = await patchRequest<ChatSettingsResponse>('/api/v1/me/chat-settings', patch)
+    applyChatSettings(res.data)
+    showChatSettings.value = false
+  } catch (e: any) {
+    const data = e?.response?.data
+    chatSettingsErrorField.value = data?.error?.field ?? null
+    chatSettingsErrorMessage.value = data?.error?.message ?? t('main.conversation_view.chat_settings_save_failed')
+  } finally {
+    savingChatSettings.value = false
+  }
+}
 
 // ── Provider availability (D0005 §3-3, L0008 §2-4) — single source of truth ──
 // The gating project is the tab's projectId when the parent supplies one, but CH
@@ -428,10 +687,17 @@ const hasProviders = computed(
 // "Call AI" (radio + manual button) is selectable only when a provider exists.
 const invokeSelectable = computed(() => hasProviders.value)
 
-// Fallback (L0008 §4-3): once the provider list has resolved to EMPTY, a stale
-// "invoke_ai" selection reverts to "none". Never fires while still resolving, so a
-// transient empty list during load can't wipe a valid selection.
-watch([providersResolving, hasProviders], () => {
+// Fallback (L0008 §4-3, kept screen-only by L0010 §2-7-2): once the provider list
+// has resolved to EMPTY, a stale "invoke_ai" selection reverts to "none" on screen.
+// Never fires while still resolving, so a transient empty list during load can't
+// wipe a valid selection. This reset is NOT written back to the server — opening a
+// project with no providers once must not silently erase a user's [AI 호출] choice
+// for every other project.
+// `sendAction` is also watched: the chat-settings GET/PATCH (including the L0010
+// §2-6 migration) resolves independently of the provider list, so a value that
+// arrives AFTER providers have already settled to empty must still be caught —
+// watching only [providersResolving, hasProviders] would miss that ordering.
+watch([providersResolving, hasProviders, sendAction], () => {
   if (!providersResolving.value && !hasProviders.value && sendAction.value === 'invoke_ai') {
     sendAction.value = 'none'
   }
@@ -1188,6 +1454,9 @@ onMounted(() => {
   void nextTick(autoGrow)
   if (projectCode.value) void providerStore.ensureLoaded(projectCode.value)
   void adoptActiveRun()
+  // Chat settings are per-user, not per-document, so this loads once per mount —
+  // not on every props.docId change (group 0362).
+  void loadChatSettings()
   window.addEventListener('fg:conversation_turn', onSseTurn)
   window.addEventListener('fg:sse_reconnected', onSseReconnected)
   window.addEventListener('fg:document_content_changed', onContentChanged)
@@ -1568,18 +1837,129 @@ defineExpose({ load, scrollToBottom, jumpToSeq })
   white-space: pre;
 }
 
-/* Send-time action radio group (D0005 §3-2). */
-.conv-sendaction {
+/* Chat settings gear (D0008 §6-1/§6-2, group 0362) — replaces the old inline
+   send-time-action radio group; the radios now live inside .conv-settings below.
+   Deliberately its own class rather than .conv-assist-btn: it toggles a dialog
+   rather than firing an action, and several tests count `.conv-assist-btn`
+   elements to assert which manual buttons (copy/invoke) are present. */
+.conv-gear-btn {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  font-size: .8rem;
+  color: var(--text-m);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.conv-gear-btn:hover {
+  background: var(--bg, #f1f5f9);
+  color: var(--primary);
+}
+
+.conv-gear-btn.is-active {
+  background: var(--bg, #f1f5f9);
+  color: var(--primary);
+}
+
+/* Chat settings panel (D0008 §6-2/§6-3, P0009 §1, L0010 §2-7, group 0362) — inline
+   in the composer's flow like .conv-manualcopy above: no position:fixed, no
+   inset:0, no backdrop. The conversation stays visible above it and Cancel/[x]
+   are always on screen (D0008 §6-3). */
+.conv-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card, #fff);
+}
+
+.conv-settings-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-settings-title {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .75rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.conv-settings-bd {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conv-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conv-settings-group-label {
+  font-size: .7rem;
+  font-weight: 700;
+  color: var(--text-m);
+  opacity: 0.85;
+}
+
+.conv-settings-radios {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   font-size: .7rem;
   color: var(--text-m);
 }
 
-.conv-sendaction-label {
-  font-weight: 700;
-  opacity: 0.85;
+.conv-settings-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conv-settings-select {
+  max-width: 220px;
+}
+
+.conv-settings-number {
+  max-width: 100px;
+}
+
+.conv-settings-hint {
+  margin: 0;
+  font-size: .68rem;
+  line-height: 1.5;
+  color: var(--text-m);
+}
+
+.conv-settings-error {
+  margin: 0;
+  font-size: .7rem;
+  color: var(--danger);
+}
+
+.conv-settings-ft {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.conv-settings-save {
+  color: var(--primary);
+  font-weight: 600;
 }
 
 .conv-radio {
