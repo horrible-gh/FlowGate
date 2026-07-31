@@ -50,6 +50,8 @@ async def test_sse_idle_heartbeat_is_observable_ping_event():
 
     with patch("modules.flow_gate.api.v1.events.sse_routes.decode_token", return_value=decoded), \
          patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False), \
+         patch("modules.flow_gate.api.v1.events.sse_routes._load_user",
+               return_value={"user_id": "usr_test_hb", "is_active": True}), \
          patch("modules.flow_gate.api.v1.events.sse_routes.subscribe", new=AsyncMock(return_value=empty_queue)), \
          patch("modules.flow_gate.api.v1.events.sse_routes.unsubscribe", new=AsyncMock()), \
          patch("modules.flow_gate.api.v1.events.sse_routes._SSE_HEARTBEAT_TIMEOUT", 0.05):

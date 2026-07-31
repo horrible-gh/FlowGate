@@ -16,7 +16,7 @@ set -eu
 # ── Defaults for required config (overridable via -e / compose environment) ──
 : "${FLOWGATE_STORAGE_DIR:=/data}"
 : "${CONTEXT:=/flowgate}"
-: "${ALLOWED_ORIGIN:=*}"
+: "${ALLOWED_ORIGIN:=}"  # blank fails closed (0371 NR0007 §2); same-origin client unaffected
 : "${DB_TYPE:=sqlite3}"
 export FLOWGATE_STORAGE_DIR CONTEXT ALLOWED_ORIGIN DB_TYPE
 
@@ -80,6 +80,18 @@ if [ -z "${FLOWGATE_TOTP_ENCRYPT_KEY:-}" ]; then
     export FLOWGATE_TOTP_ENCRYPT_KEY
     persist FLOWGATE_TOTP_ENCRYPT_KEY "$FLOWGATE_TOTP_ENCRYPT_KEY"
     echo "[entrypoint] generated a new TOTP encryption key (persisted to the data volume)"
+fi
+
+# AI provider API key encryption (0371 NR0007 §3) — base64 32-byte AES key read by
+# modules/flow_gate/utils/api_key_crypto.py. ai_providers.api_key used to be stored
+# in plaintext; it is now ciphertext, and this key is what reads it back. Persist it
+# once and back it up with the DB — losing it means every provider key has to be
+# re-entered.
+if [ -z "${FLOWGATE_AI_ENCRYPT_KEY:-}" ]; then
+    FLOWGATE_AI_ENCRYPT_KEY="$(python -c 'import os,base64; print(base64.b64encode(os.urandom(32)).decode())')"
+    export FLOWGATE_AI_ENCRYPT_KEY
+    persist FLOWGATE_AI_ENCRYPT_KEY "$FLOWGATE_AI_ENCRYPT_KEY"
+    echo "[entrypoint] generated a new AI provider key-encryption key (persisted to the data volume)"
 fi
 [ -f "$SECRETS_FILE" ] && chmod 600 "$SECRETS_FILE" 2>/dev/null || true
 

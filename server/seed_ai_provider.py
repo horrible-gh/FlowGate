@@ -22,6 +22,7 @@ Usage:
     python seed_ai_provider.py --list
     python seed_ai_provider.py --kind claude         # take the catalog command as-is
     python seed_ai_provider.py --kind codex --command "codex ... -"
+    python seed_ai_provider.py --kind claude --skip-permissions   # opt in, see below
     python seed_ai_provider.py --exec-type api --kind openai --api-model gpt-5.6-sol \
                                --api-key sk-...
     python seed_ai_provider.py --no-probe
@@ -35,6 +36,16 @@ Environment fallbacks (for unattended installs; CLI flags win):
     FLOWGATE_AI_API_BASE_URL api base url  (default: the per-kind default)
     FLOWGATE_AI_API_KEY      api key       (stored in ai_providers.api_key only)
     FLOWGATE_AI_PROBE        0 to skip the post-insert connection probe
+    FLOWGATE_AI_SKIP_PERMISSIONS  1 to register the command with permission confirmation
+                             switched off (same as --skip-permissions; default: off)
+
+Permission confirmation is ON by default (0371 NR0007 §5). The catalog commands used to
+carry each CLI's permission-skip flag, so every seeded provider silently ran without one —
+a choice no operator ever made. It is still available, it just has to be asked for, here or
+in the AI settings screen. Be aware of the trade in both directions: with it off, an
+unattended run can stop at a prompt nobody can answer; with it on, the CLI reads, writes and
+executes on this host without asking. The flags themselves live in ai_settings_service, so
+this script never names one.
 
 Re-runnable on its own: run it during install, or any time afterwards to add another
 provider. A provider that is already registered is skipped, exactly as
@@ -131,6 +142,31 @@ def default_cli_command(svc, kind: str) -> str:
     return svc._CLI_COMMAND_EXAMPLES.get(kind, {}).get(tcs.current_os(), "")
 
 
+def skip_permissions_requested(args) -> bool:
+    """Did someone explicitly ask to switch permission confirmation off?
+
+    Explicit means explicit: a flag or an env var set for this install. There is no
+    "smart" fallback that turns it on because a host looks unattended — that is exactly
+    how it ended up on for everyone (0371 NR0007 §5).
+    """
+    if getattr(args, "skip_permissions", False):
+        return True
+    value = os.environ.get("FLOWGATE_AI_SKIP_PERMISSIONS", "").strip().lower()
+    return value in ("1", "true", "yes", "y", "on")
+
+
+def announce_permission_mode(svc, kind: str, command: str) -> None:
+    """Say, in the install log, which way this provider was registered."""
+    if svc.permission_skip_rule(kind) is None:
+        return
+    if svc.has_permission_skip(kind, command):
+        print("   [!] Permission confirmation is OFF for this command: it will read, write")
+        print("       and run things on this host without asking.")
+    else:
+        print("   Permission confirmation is ON (the default). If a run stops waiting for")
+        print("       an approval nobody can give, re-run with --skip-permissions.")
+
+
 def default_name(svc, exec_type: str, kind: str, taken: set[str]) -> str:
     """A unique display name — names are unique per scope (L0004 §2.1 duplicate_name)."""
     base = f"{_KIND_LABELS.get(kind, kind)} ({exec_type.upper()})"
@@ -205,7 +241,26 @@ def prompt_for_provider(svc) -> "dict | None":
     if not command:
         print("[!] A CLI provider needs a command — nothing registered.")
         return None
+    command = _prompt_permission_skip(svc, kind, command)
     return {"exec_type": "cli", "kind": kind, "cli_command": command, "enabled": True}
+
+
+def _prompt_permission_skip(svc, kind: str, command: str) -> str:
+    """Offer the permission-skip opt-in for a kind that has one. Default is no.
+
+    Asked here rather than assumed, because both answers cost something and only the
+    operator knows which cost this host can pay (0371 NR0007 §5).
+    """
+    if svc.permission_skip_rule(kind) is None or svc.has_permission_skip(kind, command):
+        return command
+    print("\n  This command asks before it reads, writes or runs anything. FlowGate runs it")
+    print("  unattended, so a run can stop at a prompt with nobody there to answer it.")
+    print("  Answering yes lets this CLI act on this host without asking.")
+    if _ask("  Skip permission confirmation? [y/N]: ", "n").lower() not in ("y", "yes"):
+        return command
+    command = svc.set_permission_skip(kind, command, True)
+    print(f"  Permission confirmation OFF: {command}")
+    return command
 
 
 def _prompt_api(svc) -> "dict | None":
@@ -265,6 +320,11 @@ def provider_from_options(svc, args) -> "dict | None":
         if not command.strip():
             print(f"[!] No catalog command for kind '{kind}' — pass --command explicitly.")
             return None
+        # Applied to --command too, not just the catalog default: the flag means "this
+        # install wants unattended tool use", which is just as true for a hand-written
+        # command. A command that already carries the skip is returned unchanged.
+        if skip_permissions_requested(args):
+            command = svc.set_permission_skip(kind, command, True)
         return {"exec_type": "cli", "kind": kind, "cli_command": command, "enabled": True}
 
     if not kind:
@@ -376,6 +436,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--api-model", help="model id (api providers)")
     p.add_argument("--api-base-url", help="base url (api providers; default: per-kind)")
     p.add_argument("--api-key", help="api key — prefer FLOWGATE_AI_API_KEY so it stays out of the shell history")
+    p.add_argument("--skip-permissions", action="store_true",
+                   help="register the command with permission confirmation OFF "
+                        "(default: on — the CLI asks before it reads or writes)")
     p.add_argument("--no-probe", action="store_true", help="Skip the post-insert connection test")
     return p
 
@@ -414,6 +477,7 @@ def main() -> None:
     print(f"\n✅ Registered: {saved['name']} ({saved['exec_type']}/{saved['kind']})")
     if saved["exec_type"] == "cli":
         print(f"   command: {saved['cli_command']}")
+        announce_permission_mode(svc, saved.get("kind"), saved.get("cli_command") or "")
     else:
         print(f"   model  : {saved['api_model']}  @ {saved.get('api_base_url')}")
         # The key lives in ai_providers.api_key and is never echoed back (L0004 §2.3).

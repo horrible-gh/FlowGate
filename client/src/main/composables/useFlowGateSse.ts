@@ -174,11 +174,13 @@ export function useFlowGateSse(refreshAll: () => void) {
   }
 
   function onAccessTokenRefreshed() {
-    // The Axios layer rotated the access token. The SSE server validates the token only at
-    // CONNECT time (sse_routes._authenticate), so an already-open stream stays authenticated
-    // for its whole lifetime and need not be rebuilt. With proactive refresh now rotating the
-    // token roughly once per (short) token lifetime, tearing down a healthy stream on every
-    // rotation would cause a needless reconnect + full resync storm. So only rebuild when the
+    // The Axios layer rotated the access token. The SSE server decodes the token only at
+    // CONNECT time (sse_routes._authenticate) — since 0371 T0012 it re-checks *revocation*
+    // (session/user) while the stream is open, but deliberately not expiry — so an open
+    // stream stays authenticated for its whole lifetime and need not be rebuilt. With
+    // proactive refresh rotating the token roughly once per (short) token lifetime, tearing
+    // down a healthy stream on every rotation would cause a needless reconnect + full resync
+    // storm. So only rebuild when the
     // stream is actually down, in which case the NEXT connect picks up the fresh token.
     // (group 0028 T0004 req 4; preserves NR0003 item 1 recovery for the dead-stream case.)
     if (es === null) {
@@ -345,6 +347,25 @@ export function useFlowGateSse(refreshAll: () => void) {
     // liveness watchdog can distinguish "quiet but healthy" from "silently dead".
     source.addEventListener('ping', () => {
       markAlive()
+    })
+
+    // The server ended the stream because this login is no longer valid: the session was
+    // revoked (logout elsewhere / revoke-all) or the account was deactivated, and it now
+    // re-checks that on every event and heartbeat instead of only at connect
+    // (0371 T0012 / NR0007 §4). Reconnecting cannot succeed — every attempt would 401 on
+    // the same revoked session — so the normal `error` backoff below would turn into an
+    // endless poll. Stop deliberately and say why; the user has to sign in again.
+    source.addEventListener('auth_revoked', (e: Event) => {
+      let reason = ''
+      try { reason = JSON.parse((e as MessageEvent).data)?.reason ?? '' } catch { /* ignore */ }
+      log('server ended the stream: authentication revoked', { reason })
+      closedByUs = true
+      clearReconnectTimer()
+      if (es === source) {
+        try { source.close() } catch { /* ignore */ }
+        es = null
+      }
+      showToast(t('main.notifications.session_revoked'), 'error')
     })
 
     source.addEventListener('error', () => {

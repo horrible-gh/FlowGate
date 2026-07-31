@@ -61,6 +61,12 @@ async def test_sse_auth_flow(app):
         "jti": "jti-1",
         "totp_pending": False,
     }), patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False), patch(
+        # Connect now also reads the users row (0371 T0012): this light test app
+        # has no DB behind it, so the lookup is mocked exactly like the blacklist
+        # check above.
+        "modules.flow_gate.api.v1.events.sse_routes._load_user",
+        return_value={"user_id": "usr_test_001", "is_active": True},
+    ), patch(
         "modules.flow_gate.api.v1.events.sse_routes.subscribe", new=AsyncMock(return_value=flow_queue)
     ), patch("modules.flow_gate.api.v1.events.sse_routes.unsubscribe", new=AsyncMock()):
         transport = httpx.ASGITransport(app=app)
@@ -97,6 +103,8 @@ async def test_sse_reconnect_no_replay(app):
 
     with patch("modules.flow_gate.api.v1.events.sse_routes.decode_token", return_value=decoded), \
          patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False), \
+         patch("modules.flow_gate.api.v1.events.sse_routes._load_user",
+               return_value={"user_id": "usr_test_002", "is_active": True}), \
          patch("modules.flow_gate.api.v1.events.sse_routes.subscribe", new=AsyncMock(return_value=flow_queue)), \
          patch("modules.flow_gate.api.v1.events.sse_routes.unsubscribe", new=AsyncMock()):
 

@@ -30,7 +30,7 @@ services:
       - "${FLOWGATE_PORT:-8089}:8089"
     environment:
       CONTEXT: ${CONTEXT:-/flowgate}
-      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-*}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-}
       FLOWGATE_STORAGE_DIR: /data
       # DB selection — default sqlite3 (no external server). For a bundled DB,
       # set DB_TYPE=postgres or mysql and start with the matching --profile.
@@ -48,10 +48,11 @@ services:
       FLOWGATE_ADMIN_EMAIL: ${FLOWGATE_ADMIN_EMAIL:-}
       # Encryption keys. Leave unset and the entrypoint generates them once and
       # persists them to the data volume; supply your own to control rotation.
-      # Changing either makes the data it protects unreadable (stored git
-      # credentials / enrolled 2FA secrets respectively).
+      # Changing any of them makes the data it protects unreadable (stored git
+      # credentials / enrolled 2FA secrets / stored AI provider API keys).
       FLOWGATE_GIT_ENCRYPT_KEY: ${FLOWGATE_GIT_ENCRYPT_KEY:-}
       FLOWGATE_TOTP_ENCRYPT_KEY: ${FLOWGATE_TOTP_ENCRYPT_KEY:-}
+      FLOWGATE_AI_ENCRYPT_KEY: ${FLOWGATE_AI_ENCRYPT_KEY:-}
     volumes:
       - flowgate-data:/data
 

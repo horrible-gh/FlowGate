@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     FLOWGATE_TOTP_ENCRYPT_KEY: str | None = None
     FLOWGATE_TOTP_ENCRYPT_KEY_PREV: str | None = None
 
+    # AI provider API-key encryption (0371 NR0007 §3) — base64-encoded 32-byte
+    # AES key for ai_providers.api_key, read by
+    # modules/flow_gate/utils/api_key_crypto.py. Its own key, not the git/TOTP
+    # one, so the three secret stores rotate independently. Blank is safe: a key
+    # file is generated once under the storage root, exactly like the git key.
+    # _PREV enables rotation-time decryption.
+    FLOWGATE_AI_ENCRYPT_KEY: str | None = None
+    FLOWGATE_AI_ENCRYPT_KEY_PREV: str | None = None
+
     # Listen address (0273 NR0003 P1-2). stg.py — the entry point the systemd
     # unit runs — had port 8089 hardcoded, so a Linux install could not move off
     # a busy port without editing the source. Declared here for the same
@@ -203,6 +212,8 @@ for _env_key in (
     "FLOWGATE_TOTP_ENCRYPT_KEY_PREV",
     "FLOWGATE_GIT_ENCRYPT_KEY",
     "FLOWGATE_GIT_ENCRYPT_KEY_PREV",
+    "FLOWGATE_AI_ENCRYPT_KEY",
+    "FLOWGATE_AI_ENCRYPT_KEY_PREV",
 ):
     _env_val = getattr(settings, _env_key, None)
     if _env_val and not os.environ.get(_env_key):

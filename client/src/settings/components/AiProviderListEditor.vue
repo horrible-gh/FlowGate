@@ -36,6 +36,13 @@
             <span v-if="p.exec_type === 'api'" class="text-xs text-s" style="display:block;">
               {{ keyStateLabel(p) }}
             </span>
+            <span
+              v-if="skipsPermissions(p)"
+              class="ai-skip-flag"
+              :title="t('settings.ai.skip_permissions_warn')"
+            >
+              {{ t('settings.ai.skip_permissions_badge') }}
+            </span>
           </td>
           <td>
             <span class="badge" :class="p.enabled ? 'badge-green' : 'badge-gray'">
@@ -129,6 +136,21 @@
             </div>
           </template>
 
+          <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
+            <label class="form-label">
+              <input
+                type="checkbox"
+                v-model="form.skip_permissions"
+                @change="onPermissionSkipToggle"
+              />
+              {{ t('settings.ai.label_skip_permissions') }}
+            </label>
+            <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
+            <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
+              {{ t('settings.ai.skip_permissions_warn') }}
+            </p>
+          </div>
+
           <div class="form-group">
             <label class="form-label">
               <input type="checkbox" v-model="form.enabled" /> {{ t('settings.ai.label_enabled') }}
@@ -154,6 +176,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppIcon from '@shared/AppIcon.vue';
+import { hasPermissionSkip, permissionSkipRule, setPermissionSkip } from './aiPermissionSkip';
 import {
   NAME_MAX,
   CLI_COMMAND_MAX,
@@ -189,9 +212,12 @@ const form = reactive({
   api_model: '',
   keyInput: '',
   keyClear: false,
+  // 0371 NR0007 §5: mirrors what the command string says, never a stored field of its own.
+  skip_permissions: false,
 });
 
 const kindOptions = computed(() => props.catalog.kinds?.[form.exec_type] || []);
+const permissionRule = computed(() => permissionSkipRule(props.catalog, form.kind));
 const editingRow = computed(() => (editIndex.value === null ? null : props.providers[editIndex.value]));
 const editingHasKey = computed(() => !!editingRow.value?.api_key_set && editingRow.value?.api_key !== '');
 const editingKeyHint = computed(() => editingRow.value?.api_key_hint || '');
@@ -200,6 +226,23 @@ watch(() => form.exec_type, (execType) => {
   const kinds = props.catalog.kinds?.[execType] || [];
   if (!kinds.includes(form.kind)) form.kind = kinds[0] || '';
 });
+
+// The command string is the truth: typing the flag by hand ticks the box, and switching to
+// a kind whose flag is spelled differently re-reads it. The checkbox handler below edits the
+// command, this puts the box back in step with the result.
+watch(() => [form.kind, form.cli_command], () => {
+  form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
+});
+
+function onPermissionSkipToggle() {
+  form.cli_command = setPermissionSkip(
+    props.catalog, form.kind, form.cli_command, form.skip_permissions,
+  );
+}
+
+function skipsPermissions(p) {
+  return p.exec_type === 'cli' && hasPermissionSkip(props.catalog, p.kind, p.cli_command);
+}
 
 function execTypeLabel(execType) {
   const key = `settings.ai.exec_type.${execType}`;
@@ -220,6 +263,9 @@ function connectionSummary(p) {
 function keyStateLabel(p) {
   if (p.api_key === '') return t('settings.ai.key_cleared');
   if (p.api_key) return t('settings.ai.key_set_hint', { hint: p.api_key.slice(-4) });
+  // 0371: a key IS stored but the server cannot decrypt it (master key changed), so
+  // there is no hint to show — saying "registered (…)" would look like an ordinary row.
+  if (p.api_key_unreadable) return t('settings.ai.key_unreadable');
   if (p.api_key_set) return t('settings.ai.key_set_hint', { hint: p.api_key_hint || '' });
   return t('settings.ai.key_none');
 }
@@ -256,6 +302,8 @@ function openAdd() {
   form.api_model = '';
   form.keyInput = '';
   form.keyClear = false;
+  // A new provider always starts with permission confirmation ON (0371 NR0007 §5).
+  form.skip_permissions = false;
   formError.value = '';
   formOpen.value = true;
 }
@@ -272,6 +320,9 @@ function openEdit(index) {
   form.api_model = p.api_model || '';
   form.keyInput = '';
   form.keyClear = false;
+  // Read from the stored command, not assumed: an existing row is never rewritten, so the
+  // box has to show what that row actually does.
+  form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
   formError.value = '';
   formOpen.value = true;
 }
@@ -347,6 +398,7 @@ function confirmForm() {
     api_model: form.exec_type === 'api' ? form.api_model.trim() : null,
     api_key_set: base?.api_key_set ?? false,
     api_key_hint: base?.api_key_hint ?? null,
+    api_key_unreadable: base?.api_key_unreadable ?? false,
   };
   // Key intent: keep (no property), replace (value), delete ('').
   if (base && base.api_key !== undefined) row.api_key = base.api_key; // carry unsaved intent
@@ -373,5 +425,14 @@ function confirmForm() {
   font-size: .8rem;
   color: var(--text-m);
   word-break: break-all;
+}
+.ai-skip-warn {
+  color: var(--danger, #d64545);
+}
+.ai-skip-flag {
+  display: block;
+  margin-top: 2px;
+  font-size: .75rem;
+  color: var(--danger, #d64545);
 }
 </style>

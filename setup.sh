@@ -27,7 +27,7 @@
 # Other settings this script honours from the environment:
 #   FLOWGATE_PORT          listen port          (default 8089)
 #   FLOWGATE_BIND_HOST     listen address       (default 0.0.0.0)
-#   ALLOWED_ORIGIN         CORS origin          (default '*', with a warning)
+#   ALLOWED_ORIGIN         CORS origin          (default '' — blocks all cross-origin)
 #   FLOWGATE_ADMIN_EMAIL   first admin's email  (default <username>@flowgate.local)
 #   FLOWGATE_AI_KIND       first AI provider    (claude|copilot|codex — setting any
 #                          FLOWGATE_AI_* seeds it without the y/n prompt; the full
@@ -163,26 +163,33 @@ fi
 if env_unset FLOWGATE_GIT_ENCRYPT_KEY; then
     set_env FLOWGATE_GIT_ENCRYPT_KEY "$(gen_b64_key)"
 fi
+# AI provider API key encryption (0371 NR0007 §3). ai_providers.api_key is now
+# stored encrypted; this is the key that reads it back. Generate once — rotating
+# it orphans every stored provider key, so back it up together with the DB.
+if env_unset FLOWGATE_AI_ENCRYPT_KEY; then
+    set_env FLOWGATE_AI_ENCRYPT_KEY "$(gen_b64_key)"
+fi
 
 # Listen address — read by server/stg.py, which the systemd unit runs.
 set_env FLOWGATE_PORT "$FLOWGATE_PORT"
 set_env FLOWGATE_BIND_HOST "$FLOWGATE_BIND_HOST"
 
-# CORS (0273 NR0003 P2-1). .env.sample ships ALLOWED_ORIGIN=* and neither setup
-# script overwrote it, so every host install finished permanently allowing every
-# origin. Ask for the real service URL; keep '*' only as a deliberate, warned choice.
+# CORS (0273 NR0003 P2-1, hardened 0371 NR0007 §2). A blank ALLOWED_ORIGIN now
+# fails closed — no cross-origin browser request is allowed until an operator
+# opts in. Ask for the real service URL; '*' stays available as an explicit choice.
 if [[ -z "${ALLOWED_ORIGIN:-}" && $INTERACTIVE -eq 1 ]]; then
     echo
     echo "Service URL browsers will load FlowGate from (used as the CORS origin)."
-    echo "Example: https://flowgate.example.com   — leave blank to allow any origin."
+    echo "Example: https://flowgate.example.com   — leave blank to block all cross-origin requests."
     read -rp "Service URL []: " ALLOWED_ORIGIN
 fi
 if [[ -n "${ALLOWED_ORIGIN:-}" ]]; then
     set_env ALLOWED_ORIGIN "$ALLOWED_ORIGIN"
 else
-    set_env ALLOWED_ORIGIN '*'
-    echo "[!] ALLOWED_ORIGIN=* — every origin may call this API."
-    echo "    Set ALLOWED_ORIGIN in $ENV_FILE to your service URL before exposing it."
+    set_env ALLOWED_ORIGIN ''
+    echo "[i] ALLOWED_ORIGIN is unset — cross-origin browser requests are blocked."
+    echo "    The installed client is same-origin and unaffected. Set ALLOWED_ORIGIN in $ENV_FILE"
+NaN
 fi
 
 echo "==> Client: build → dist"

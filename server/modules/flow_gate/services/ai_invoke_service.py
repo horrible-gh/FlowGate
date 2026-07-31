@@ -47,6 +47,7 @@ from modules.flow_gate.services import git_service, invoke_mention_service, proc
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
+from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 
 logger = logging.getLogger(__name__)
 
@@ -2164,7 +2165,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     run.setdefault("tool_call_misses", 0)
     run.setdefault("turn_limit_exhausted", False)
     secret_scope = run["project_id"] if run.get("chain_source") == "project" else None
-    key = ai_settings_service.get_provider_secret(secret_scope, provider.get("id"))
+    try:
+        key = ai_settings_service.get_provider_secret(secret_scope, provider.get("id"))
+    except ApiKeyCryptoError:
+        # 0371: a key IS stored, the master key just cannot read it. Reporting it as
+        # "not set" would send the operator hunting for a key nobody removed.
+        return "spawn_failed", "api_key_unreadable"
     if not key:
         return "spawn_failed", "api_key_not_set"
     logger.info(

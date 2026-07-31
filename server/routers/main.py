@@ -42,6 +42,7 @@ from modules.flow_gate.api.v1.conversation_routes import router as _conversation
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.utils.cors_settings import parse_allowed_origins, resolve_allow_credentials
 from config import settings
 from startup import run_all as _bootstrap
 from modules.flow_gate import db as _flowgate_db
@@ -51,7 +52,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import LogAssist.log as logger
 
-ALLOWED_ORIGIN = settings.ALLOWED_ORIGIN.split(",")
+ALLOWED_ORIGIN = parse_allowed_origins(settings.ALLOWED_ORIGIN)
 CONTEXT = settings.CONTEXT
 
 limiter = Limiter(
@@ -161,7 +162,7 @@ app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGIN,
-    allow_credentials=True,
+    allow_credentials=resolve_allow_credentials(ALLOWED_ORIGIN),
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],

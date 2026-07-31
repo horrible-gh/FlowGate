@@ -222,25 +222,32 @@ if (-not (Test-EnvSet 'FLOWGATE_TOTP_ENCRYPT_KEY')) {
 if (-not (Test-EnvSet 'FLOWGATE_GIT_ENCRYPT_KEY')) {
     Set-EnvVar 'FLOWGATE_GIT_ENCRYPT_KEY' (New-B64Key)
 }
+# AI provider API key encryption (0371 NR0007 3) -- ai_providers.api_key is now
+# stored encrypted and this key reads it back. Generate once: rotating it orphans
+# every stored provider key, so back it up together with the DB.
+if (-not (Test-EnvSet 'FLOWGATE_AI_ENCRYPT_KEY')) {
+    Set-EnvVar 'FLOWGATE_AI_ENCRYPT_KEY' (New-B64Key)
+}
 
 # Listen address — recorded in .env so server\stg.py and run.bat agree (P1-2).
 Set-EnvVar 'FLOWGATE_PORT' "$Port"
 Set-EnvVar 'FLOWGATE_BIND_HOST' $BindHost
 
-# CORS (P2-1). The sample ships ALLOWED_ORIGIN=* and neither installer used to
-# overwrite it, so every install finished permanently allowing every origin.
+# CORS (P2-1, hardened 0371 NR0007 §2). A blank ALLOWED_ORIGIN now fails closed --
+# no cross-origin browser request is allowed until an operator opts in.
 if (-not $AllowedOrigin -and $Interactive) {
     Write-Host ''
     Write-Host 'Service URL browsers will load FlowGate from (used as the CORS origin).'
-    Write-Host 'Example: https://flowgate.example.com   - leave blank to allow any origin.'
+    Write-Host 'Example: https://flowgate.example.com   - leave blank to block all cross-origin requests.'
     $AllowedOrigin = Read-Host 'Service URL'
 }
 if ($AllowedOrigin) {
     Set-EnvVar 'ALLOWED_ORIGIN' $AllowedOrigin
 } else {
-    Set-EnvVar 'ALLOWED_ORIGIN' '*'
-    Write-Host '[!] ALLOWED_ORIGIN=* - every origin may call this API.'
-    Write-Host "    Set ALLOWED_ORIGIN in $EnvFile to your service URL before exposing it."
+    Set-EnvVar 'ALLOWED_ORIGIN' ''
+    Write-Host '[i] ALLOWED_ORIGIN is unset - cross-origin browser requests are blocked.'
+    Write-Host "    The installed client is same-origin and unaffected. Set ALLOWED_ORIGIN in $EnvFile"
+    Write-Host "    to your service URL to allow a separately-hosted client, or to '*' to allow any origin."
 }
 
 # ── client: build -> dist ────────────────────────────────────────────────────

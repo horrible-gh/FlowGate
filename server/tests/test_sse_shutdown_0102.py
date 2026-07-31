@@ -49,6 +49,10 @@ def _patches(queue):
     return (
         patch("modules.flow_gate.api.v1.events.sse_routes.decode_token", return_value=_DECODED),
         patch("modules.flow_gate.api.v1.events.sse_routes.is_blacklisted", return_value=False),
+        # Connect and every re-check read the users row since 0371 T0012; there is
+        # no DB behind this test app, so the lookup is mocked like the two above.
+        patch("modules.flow_gate.api.v1.events.sse_routes._load_user",
+              return_value={"user_id": _DECODED["sub"], "is_active": True}),
         patch("modules.flow_gate.api.v1.events.sse_routes.subscribe", new=AsyncMock(return_value=queue)),
         patch("modules.flow_gate.api.v1.events.sse_routes.unsubscribe", new=AsyncMock()),
     )
@@ -69,8 +73,8 @@ async def test_sse_stops_immediately_when_shutdown_already_set():
     shutdown_event.set()
     request = _request(shutdown_event)
 
-    p1, p2, p3, p4 = _patches(empty_queue)
-    with p1, p2, p3, p4:
+    p1, p2, p3, p4, p5 = _patches(empty_queue)
+    with p1, p2, p3, p4, p5:
         resp = await sse_routes.sse_stream(request, token="good-jwt")
         gen = resp.body_iterator
         with pytest.raises(StopAsyncIteration):
@@ -87,10 +91,10 @@ async def test_sse_stops_when_shutdown_fires_while_blocked():
     shutdown_event = asyncio.Event()
     request = _request(shutdown_event)
 
-    p1, p2, p3, p4 = _patches(empty_queue)
+    p1, p2, p3, p4, p5 = _patches(empty_queue)
     # Keep the heartbeat cadence long so the stop is attributable to shutdown,
     # not to an idle ping firing first.
-    with p1, p2, p3, p4, \
+    with p1, p2, p3, p4, p5, \
          patch("modules.flow_gate.api.v1.events.sse_routes._SSE_HEARTBEAT_TIMEOUT", 30.0):
         resp = await sse_routes.sse_stream(request, token="good-jwt")
         gen = resp.body_iterator
@@ -114,8 +118,8 @@ async def test_sse_delivers_pending_event_before_shutdown_check():
     shutdown_event = asyncio.Event()  # unset for the first read
     request = _request(shutdown_event)
 
-    p1, p2, p3, p4 = _patches(queue)
-    with p1, p2, p3, p4:
+    p1, p2, p3, p4, p5 = _patches(queue)
+    with p1, p2, p3, p4, p5:
         resp = await sse_routes.sse_stream(request, token="good-jwt")
         gen = resp.body_iterator
         first = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
