@@ -458,10 +458,20 @@ def search_documents_content(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    context_lines: Optional[int] = None,
+    hits_per_doc: Optional[int] = None,
+    include_matches: bool = True,
 ):
     """Full document search incl. body text (Phase 2). Same auth/validation/paging
     as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
     (body|title|doc_id), and ``match_kind`` (``document_body``|``conversation_turn``).
+
+    0370 2세트 (P0002 시나리오 9~11): each item additionally carries ``match_total`` and
+    ``matches`` — where in the document each hit is (a locator identical in shape to the
+    one ``/outline`` and ``/section`` return) plus the matched line and its neighbours. The
+    pre-existing keys keep their meaning *and their values*, so a screen reading this
+    response today needs no change; ``include_matches=false`` drops the two new keys
+    entirely for callers that want the old payload byte for byte.
 
     Reads document bodies from the filesystem via a self-healing mtime cache — no
     schema/migration, multi-dialect safe. A migrated CH conversation's turns (T4,
@@ -487,18 +497,34 @@ def search_documents_content(
 
     from modules.flow_gate.services import content_search_service
 
+    from modules.flow_gate.services import document_outline_service as outline_svc
+
+    # 범위 밖 값은 422 로 멈춰 세우지 않고 자른다 — 검색은 무인 작업의 이동 수단이라
+    # 오타 하나로 왕복이 끊기는 편이 손해다. 응답에는 **실제로 적용된 값**을 메아리친다.
+    # 요청값을 그대로 되울리면 서버가 지키지도 않은 숫자를 알려 주는 셈이 된다.
+    ctx = outline_svc.CONTEXT_LINES_DEFAULT if context_lines is None else context_lines
+    ctx = max(0, min(int(ctx), outline_svc.CONTEXT_LINES_MAX))
+    per_doc_hits = (
+        outline_svc.HITS_PER_DOC_DEFAULT if hits_per_doc is None else hits_per_doc
+    )
+    per_doc_hits = max(1, min(int(per_doc_hits), outline_svc.HITS_PER_DOC_MAX))
+
     items, total = content_search_service.search_document_bodies(
         q=query, project=project, doc_type=type, status=status,
         limit=limit, offset=offset,
+        include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
     )
     turn_items: list = []
     if not type or "CH".startswith(type.strip().upper()):
         turn_items = content_search_service.search_conversation_turns(
             q=query, project=project, status=status,
+            include_matches=include_matches, context_lines=ctx, hits_per_doc=per_doc_hits,
         )
     return JSONResponse(content={
         "ok": True, "query": query, "scope": "content", "total": total,
-        "offset": offset, "limit": limit, "items": items + turn_items,
+        "offset": offset, "limit": limit,
+        "context_lines": ctx, "hits_per_doc": per_doc_hits,
+        "items": items + turn_items,
         "turn_total": len(turn_items),
     })
 

@@ -2363,6 +2363,25 @@ def _continuation_self_chain(
     return envelope
 
 
+def _build_change_summary(**kwargs) -> dict:
+    """저장 응답에 붙는 변경 요약 (0370 4세트, P0002 시나리오 14~16).
+
+    **여기서 실패를 오류로 올리면 안 된다.** 이 함수가 불리는 시점에 저장은 이미 끝났고,
+    요약은 곁다리다. 실패를 500 으로 되돌리면 작업자는 저장이 실패한 줄 알고 같은 문서를
+    또 올린다 — 무인 연속 작업에서 실제로 벌어지는 일이다. 그래서 어떤 예외가 나든
+    ``{"changed": null, "error": "summary unavailable"}`` 한 가지로 수렴한다.
+    """
+    try:
+        from modules.flow_gate.services import change_summary_service
+
+        return change_summary_service.build(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+
+        logger.warning(f"[inbox] change summary failed (ignored): {exc}")
+        return {"changed": None, "error": "summary unavailable"}
+
+
 def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: new (D020 §3-3-2)."""
 
@@ -2867,6 +2886,16 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "stored_path": str(stored_path),
         "message": f"{canonical_doc_id} registered. You may end the session.",
     }
+    # 0370 4세트 (P0002 시나리오 15): 방금 만들어진 파일을 세어 변경 요약을 붙인다. 견줄
+    # 옛 판이 없으므로 before 는 null 이고 전부 추가로 잡힌다. 요약은 어디에도 저장하지
+    # 않고 응답으로만 나가므로 새 표도 새 컬럼도 필요 없다. 줄 번호는 **저장된 파일**
+    # 기준이라 보낸 본문이 아니라 stored_path 를 다시 읽어 센다 — 그래야 목차 조회와
+    # 저장 요약이 같은 줄 번호를 말한다.
+    resp_content["change_summary"] = _build_change_summary(
+        doc_id=canonical_doc_id,
+        after_path=stored_path,
+        after_revision_no=0,
+    )
     # Continuous work self-chain (group 0051 / NR0003 B안): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
@@ -3435,6 +3464,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "revision_no": new_revision_no,
         "message": f"{doc_id} registered. You may end the session.",
     }
+    # 0370 4세트 (P0002 시나리오 14·16): 견줄 "저장 전"은 Step 6a 가 이미 떠 둔 백업
+    # 파일이다. 그래서 요약을 위해 새로 저장할 것이 하나도 없다. 백업이 없으면(복사 실패
+    # 등) 요약만 포기하고 저장은 성공으로 둔다.
+    resp_body["change_summary"] = _build_change_summary(
+        doc_id=doc_id,
+        after_path=stored_path,
+        after_revision_no=new_revision_no,
+        before_path=backup_path_str,
+        before_revision_no=current_revision_no,
+    )
     return JSONResponse(content=resp_body)
 
 
