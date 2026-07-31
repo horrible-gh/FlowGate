@@ -55,12 +55,17 @@ class FakePausedStore:
         self.rows: dict[str, dict] = {}
 
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
-               continuation_target_seq, docs_target, docs_reached):
+               continuation_target_seq, docs_target, docs_reached,
+               stop_kind="user", stop_code=None, stop_run_id=None,
+               stop_last_message_excerpt=None):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
             "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
+            # group 0359 DB0008 Q7 / L0007 §2.8: who parked this chain and why.
+            "stop_kind": stop_kind, "stop_code": stop_code, "stop_run_id": stop_run_id,
+            "stop_last_message_excerpt": stop_last_message_excerpt,
         }
 
     def get_by_group(self, group_id):
@@ -257,13 +262,39 @@ class TestPauseRun:
         # The paused row is the resume coordinate — the boundary stop must keep it.
         assert GROUP in fake_env["paused"].rows
 
-    def test_non_paused_finish_cleans_row(self, fake_env):
-        # Pause accepted but the chain ended before any boundary (worker exit):
-        # termination cleanup drops the row so no ghost paused card survives.
+    def test_no_output_finish_parks_a_system_row(self, fake_env):
+        # 0359 L0007 §2.8 (was: "anything but user_paused deletes the row"). A hop that ends
+        # having produced nothing is resumable, so the miniplayer must keep a card for it —
+        # deleting it is precisely why NR0003 §6's 24 dead chains could not be resumed at all.
+        res = _start(fake_env)
+        run = _wait_finished(res["run_id"])
+        assert (run["end_reason"], run["stop_code"]) == ("exited", "no_output_exhausted")
+        assert run["resumable"] is True
+        row = fake_env["paused"].rows[GROUP]
+        assert row["stop_kind"] == "system"
+        assert row["stop_code"] == "no_output_exhausted"
+        assert row["stop_run_id"] == res["run_id"]
+        # Whose chain it is, not who stopped it — otherwise it shows up on nobody's list.
+        assert row["paused_by"] == "usr_admin"
+
+    def test_user_row_outranks_the_system_row(self, fake_env):
+        # Pause accepted, then the chain died before reaching any boundary. The row a HUMAN
+        # put there is the one that survives; the system never overwrites it (L0007 §5).
         res = _start(fake_env, cmd=_slow_cmd(1))
         svc.pause_run(res["run_id"], "usr_admin")
         run = _wait_finished(res["run_id"])
         assert run["end_reason"] == "exited"
+        assert fake_env["paused"].rows[GROUP]["stop_kind"] == "user"
+
+    def test_cancelled_finish_still_cleans_row(self, fake_env):
+        # A stop that is NOT resumable still drops the row: no ghost card for a chain a
+        # person deliberately ended (L0007 §4.5, default branch — unchanged behaviour).
+        res = _start(fake_env, cmd=_slow_cmd(20))
+        svc.pause_run(res["run_id"], "usr_admin")
+        svc.cancel_run(res["run_id"])
+        run = _wait_finished(res["run_id"])
+        assert run["stop_code"] == "cancelled"
+        assert run["resumable"] is False
         assert GROUP not in fake_env["paused"].rows
 
 

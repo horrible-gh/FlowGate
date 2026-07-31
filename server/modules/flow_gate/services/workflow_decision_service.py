@@ -355,6 +355,9 @@ def advance_workflow(
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
+    # 0359 L0007 §2.9: the AI run this hop belongs to, stamped onto the issued token. Default
+    # None keeps every existing caller (managed advance, tests) working unchanged.
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
@@ -522,6 +525,10 @@ def advance_workflow(
         # honors it on every hop (group 0099 B0001). Ordinary tokens leave it NULL.
         continuation_locale=locale if continuous else None,
         continuation_instruction_mode=instruction_mode if continuous else None,
+        # 0359 L0007 §2.9 / NR0003 §4: without this the token cannot name the run that used
+        # it, and 1,346 continuous tokens proved that a chain which dies here leaves no bridge
+        # back to its own execution record.
+        ai_run_id=ai_run_id,
     )
     raw_token: str = issue_result["raw_token"]
     scratch_dir: str = issue_result["scratch_dir"]
@@ -865,6 +872,26 @@ def continuation_kickoff_after_decide(
         "continuation_instruction_mode": instruction_mode,
     }
 
+    def _stop(stop_code: str, *, detail: Optional[str] = None) -> dict:
+        """0359 L0007 §2.11/§2.12: the decide→first-step handoff is a step boundary too, so a
+        stop here has to be named, tagged and (when a human must act) announced exactly like
+        one in the inbox self-chain. Same stamper, so both paths cannot drift apart."""
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+        doc = {}
+        try:
+            doc = db_documents.get_by_id(doc_id) or {}
+        except Exception:  # pragma: no cover - defensive, the stop matters more than the anchor
+            _log.warning("kickoff stop anchor lookup failed (ignored)", exc_info=True)
+        return _ai_invoke.stamp_chain_stop(
+            envelope,
+            stop_code,
+            project_id=doc.get("project_id") or "",
+            group_id=doc.get("group_id"),
+            actor_user_id=issued_to,
+            anchor_doc_id=doc_id,
+            detail=detail,
+        )
+
     # Resolve the TO_END sentinel against the now-decided sequence.
     target_seq = continuation_target_seq
     try:
@@ -872,18 +899,18 @@ def continuation_kickoff_after_decide(
         if seq is None:
             envelope["continuation_paused"] = True
             envelope["continuation_reason"] = "sequence not decided after decide"
-            return envelope
+            return _stop("advance_blocked", detail="sequence not decided after decide")
         if target_seq == CONTINUATION_TO_END:
             items = db_wfseq.get_sequence_items(seq["id"])
             if not items:
                 envelope["continuation_paused"] = True
                 envelope["continuation_reason"] = "decided sequence is empty"
-                return envelope
+                return _stop("advance_blocked", detail="decided sequence is empty")
             target_seq = max(it["item_seq"] for it in items)
     except Exception as exc:  # pragma: no cover - defensive
         envelope["continuation_paused"] = True
         envelope["continuation_reason"] = f"target resolution failed: {exc}"
-        return envelope
+        return _stop("advance_blocked", detail=f"target resolution failed: {exc}")
 
     envelope["continuation_target_seq"] = target_seq
 
@@ -901,7 +928,7 @@ def continuation_kickoff_after_decide(
             envelope["continuation_reason"] = (
                 "paused by user at the step boundary; resume from the miniplayer to continue."
             )
-            return envelope
+            return _stop("user_paused")
     except Exception:  # pragma: no cover - defensive, fail-open like the inbox probe
         _log.warning("kickoff boundary pause probe failed (ignored)", exc_info=True)
 
@@ -919,7 +946,7 @@ def continuation_kickoff_after_decide(
     except Exception as exc:
         envelope["continuation_paused"] = True
         envelope["continuation_reason"] = f"advance blocked: {exc}"
-        return envelope
+        return _stop("advance_blocked", detail=str(exc))
 
     envelope.update(
         {

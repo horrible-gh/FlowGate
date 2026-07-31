@@ -471,6 +471,9 @@ def _workflow_api_run(mode: str, *, target_to_end: bool = False) -> dict:
         "doc_ref": "flowgate.default.0187.0001-R",
         "cancel_event": threading.Event(), "started_mono": time.monotonic(),
         "timeout_sec": 30, "target_to_end": target_to_end, "baseline_seq": 4,
+        # start_run always sets this; the to-end branch of the API loop reads it by key, so a
+        # fixture without it fails on a KeyError that no production run can reach.
+        "continuation_instruction_mode": None,
     }
 
 
