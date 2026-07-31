@@ -220,6 +220,8 @@ function fallbackReason(reason: string): string {
   if (reason === 'spawn_failed') return t('main.ai_invoke_dialog.reason_spawn_failed')
   if (reason === 'fast_fail') return t('main.ai_invoke_dialog.reason_fast_fail')
   if (reason === 'api_error') return t('main.ai_invoke_dialog.reason_api_error')
+  // 0359: the switch that happens AFTER a provider ran cleanly and produced nothing.
+  if (reason === 'no_output') return t('main.ai_invoke_dialog.reason_no_output')
   return reason
 }
 

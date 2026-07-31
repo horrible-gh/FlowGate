@@ -28,7 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -61,6 +61,34 @@ API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 API_MAX_TOOL_NUDGES = 2          # retry when the model claims completion without using the tool
 ORACLE_SETTLE_SEC = 3            # wait before judging (late-commit slack)
 CONCURRENT_RUNS_PER_GROUP = 1
+
+# ── 0359 L0007 §1: no-output retry, hop budget, stop codes ───────────────────
+# NR0003 §3: the hop loop only ever moved FORWARD ("a document was registered"); a hop that
+# ran, produced nothing and exited 0 fell straight out of the loop with no retry, no record
+# and no signal. These parameters bound the retry branch that closes that hole.
+HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled by slots left
+NO_OUTPUT_MAX_ATTEMPTS = 3       # per hop: the first attempt + 2 no-output retries
+RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open another attempt
+LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
+RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
+RUN_LIST_LIMIT_MAX = 100         # GET /ai-invoke/runs clamp ceiling
+
+# L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops
+# (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
+RESUMABLE_STOP_CODES = frozenset({
+    "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
+})
+# L0007 §2.11 — every stop code that must reach a human. The set is SPLIT by speaker: the
+# engine fires the three below (the inbox never sees them — no request arrives), the inbox
+# self-chain fires the rest (they also happen on a copy-mention chain with no engine run).
+# Disjoint by construction ⇒ a double notification is impossible.
+ENGINE_NOTIFY_STOP_CODES = frozenset({
+    "no_output_exhausted", "providers_exhausted", "timeout",
+})
+INBOX_NOTIFY_STOP_CODES = frozenset({
+    "head_slot_mismatch", "approve_denied", "approve_failed", "advance_blocked",
+})
+NOTIFY_STOP_CODES = ENGINE_NOTIFY_STOP_CODES | INBOX_NOTIFY_STOP_CODES
 
 ANTHROPIC_VERSION = "2023-06-01"
 API_CALL_MAX_TIMEOUT_SEC = 600   # single model-call ceiling inside the run deadline
@@ -273,6 +301,206 @@ def _active_run_for_group(group_id: str) -> Optional[dict]:
 def get_run_record(run_id: str) -> Optional[dict]:
     with _runs_lock:
         return _runs.get(run_id)
+
+
+# ── 0359 L0007 §2.10.2~3: run lookup that survives a restart (bundle 4) ──────────
+# Live runs never leave `_runs` (a process only forgets them on restart), so the
+# DB fallback below is only ever consulted for a run that finished in an EARLIER
+# process. Memory wins whenever both would answer — the moment right after
+# finalize persists the row is the only overlap, and it is the freshest source.
+
+def get_run_detail(run_id: str) -> dict:
+    """Detail lookup for GET /ai-invoke/{run_id} (L0007 §2.10.2).
+
+    A live or same-process-finished run answers exactly as :func:`get_status`
+    always has — only ``persisted`` is added, so no existing caller's response
+    shape moves. A run this process never saw falls back to the `ai_invoke_runs`
+    row DB0008 kept for it.
+    """
+    if get_run_record(run_id) is not None:
+        payload = get_status(run_id)
+        payload["persisted"] = False
+        return payload
+
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    row = db_runs.get(run_id)
+    if row is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    payload = _run_detail_from_row(row)
+    payload["persisted"] = True
+    return payload
+
+
+def _run_detail_from_row(row: dict) -> dict:
+    """Shape a persisted `ai_invoke_runs` row like the live `finished_payload` (same
+    field names) so a client renders both through one path."""
+    return {
+        "ok": True,
+        "run_id": row["run_id"],
+        "status": "finished",
+        "mode": row["mode"],
+        "group_id": row["group_id"],
+        "doc_ref": row.get("doc_ref"),
+        "outcome": row.get("outcome"),
+        "docs_reached": row.get("docs_reached"),
+        "docs_target": row.get("docs_target"),
+        "reached_doc_ids": row.get("reached_doc_ids"),
+        "end_reason": row.get("end_reason"),
+        "exit_code": row.get("exit_code"),
+        "last_message_received": row.get("last_message") is not None,
+        "last_message": row.get("last_message"),
+        "last_message_excerpt": row.get("last_message_excerpt"),
+        "provider_id": row.get("provider_id"),
+        "provider_name": row.get("provider_name"),
+        "attempt_no": row.get("attempt_no"),
+        "fallback_history": row.get("fallback_history"),
+        "register_errors": row.get("register_errors"),
+        "tool_call_misses": row.get("tool_call_misses"),
+        "turn_limit_exhausted": bool(row.get("turn_limit_exhausted")),
+        "oracle_mismatch": bool(row.get("oracle_mismatch")),
+        "source_dirty": row.get("source_dirty"),
+        "scratch_retained": row.get("scratch_retained"),
+        "duration_ms": row.get("duration_ms"),
+        "stop_code": row.get("stop_code"),
+        "stop_reason": row.get("stop_reason"),
+        "resumable": bool(row.get("resumable")),
+        "hop_item_seq": row.get("hop_item_seq"),
+        "token_id": row.get("token_id"),
+        "issued_to": row.get("issued_to"),
+        "attempts_used": row.get("attempts_used"),
+        "attempts_max": row.get("attempts_max"),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+        "timeout_sec": row.get("timeout_sec"),
+        "deadline_at": row.get("deadline_at"),
+    }
+
+
+def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
+    """In-memory runs still going, scoped to exactly one of group/project (caller's
+    choice) — the "live" half of GET /ai-invoke/runs (L0007 §2.10.3)."""
+    with _runs_lock:
+        snapshot = list(_runs.values())
+    items = []
+    for run in snapshot:
+        if run["status"] == "finished":
+            continue
+        if group_id is not None and run["group_id"] != group_id:
+            continue
+        if project_id is not None and run["project_id"] != project_id:
+            continue
+        items.append(_run_list_item_live(run))
+    return items
+
+
+def _run_list_item_live(run: dict) -> dict:
+    status = run["status"]
+    if status == "running" and run.get("pause_requested"):
+        status = "pause_requested"
+    provider = run.get("provider") or {}
+    return {
+        "run_id": run["run_id"],
+        "group_id": run["group_id"],
+        "project_id": run["project_id"],
+        "doc_ref": run["doc_ref"],
+        "mode": run["mode"],
+        "status": status,
+        "provider_id": provider.get("id") or run.get("provider_id"),
+        "provider_name": provider.get("name"),
+        "docs_target": run.get("docs_target"),
+        "attempts_used": int(run.get("attempts_used") or 0),
+        "hop_item_seq": run.get("hop_item_seq"),
+        "started_at": run.get("started_at"),
+        # L0007 §2.10.3: the finish-only columns stay null on a live row — present, not
+        # omitted, so a client can render every item through the same column set.
+        "outcome": None,
+        "docs_reached": None,
+        "end_reason": None,
+        "stop_code": None,
+        "resumable": None,
+        "finished_at": None,
+        "duration_ms": None,
+        "last_message_excerpt": None,
+    }
+
+
+def _run_list_item_stored(row: dict) -> dict:
+    return {
+        "run_id": row["run_id"],
+        "group_id": row["group_id"],
+        "project_id": row.get("project_id"),
+        "doc_ref": row.get("doc_ref"),
+        "mode": row["mode"],
+        "status": "finished",
+        "provider_id": row.get("provider_id"),
+        "provider_name": row.get("provider_name"),
+        "docs_target": row.get("docs_target"),
+        "attempts_used": row.get("attempts_used"),
+        "hop_item_seq": row.get("hop_item_seq"),
+        "started_at": row.get("started_at"),
+        "outcome": row.get("outcome"),
+        "docs_reached": row.get("docs_reached"),
+        "end_reason": row.get("end_reason"),
+        "stop_code": row.get("stop_code"),
+        "resumable": bool(row.get("resumable")),
+        "finished_at": row.get("finished_at"),
+        "duration_ms": row.get("duration_ms"),
+        "last_message_excerpt": row.get("last_message_excerpt"),
+    }
+
+
+def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
+               limit: Optional[int] = None) -> dict:
+    """GET /ai-invoke/runs (L0007 §2.10.3): live runs (memory) merged with finished
+    runs (DB0008's `ai_invoke_runs`), newest first. Exactly one of group_id/project
+    scopes the query — the route layer validates format and permission; this
+    function still enforces the XOR and existence checks so a direct caller gets
+    the same contract.
+    """
+    if (group_id is None) == (project is None):
+        raise HTTPException(status_code=422, detail={
+            "code": "validation_failed",
+            "errors": [{"loc": "group_id",
+                        "msg": "exactly one of group_id or project is required"}],
+        })
+    limit_value = limit if limit else RUN_LIST_LIMIT_DEFAULT
+    limit_value = max(1, min(limit_value, RUN_LIST_LIMIT_MAX))
+    project_id = project if project is not None else group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project_id) is None:
+        raise _http_error(404, "project_not_found", f"Project not found: {project_id}")
+
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    if group_id is not None:
+        live_items = list_live_runs(group_id=group_id)
+        fetch_limit = limit_value + len(live_items)
+        stored_rows = db_runs.list_by_group(group_id, fetch_limit)
+        total = db_runs.count_by_group(group_id)
+    else:
+        live_items = list_live_runs(project_id=project_id)
+        fetch_limit = limit_value + len(live_items)
+        stored_rows = db_runs.list_by_project(project_id, fetch_limit)
+        total = db_runs.count_by_project(project_id)
+
+    live_ids = {item["run_id"] for item in live_items}
+    stored_ids = {row["run_id"] for row in stored_rows}
+    stored_items = [_run_list_item_stored(row) for row in stored_rows if row["run_id"] not in live_ids]
+    merged = live_items + stored_items
+    merged.sort(key=lambda item: (item.get("started_at") or "", item["run_id"]), reverse=True)
+    # A live run has no stored row yet (it has not finished) — it inflates `total`
+    # by exactly one over what the table can currently count.
+    unstored_live = sum(1 for item in live_items if item["run_id"] not in stored_ids)
+    total = total + unstored_live
+    items = merged[:limit_value]
+    has_more = total > len(items)
+
+    result = {"ok": True, "limit": limit_value, "total": total, "has_more": has_more, "items": items}
+    if group_id is not None:
+        result["group_id"] = group_id
+    else:
+        result["project"] = project_id
+    return result
 
 
 def get_active_status(group_id: str) -> dict:
@@ -648,8 +876,14 @@ def start_run(
                 422, "provider_unavailable",
                 "The selected AI provider is not enabled for this project.",
             )
-        # An explicit UI selection pins the run. Fallback order only applies when no provider was specified.
-        chain = [selected]
+        # An explicit UI selection pins a SINGLE run: the human said "run it on this one",
+        # so fallback order does not apply. 0359 L0007 §2.1.1: a CONTINUOUS hop's provider_id
+        # is a different thing wearing the same name — it is the header DEFAULT that
+        # _spawn_auto_resume carries hop to hop (0317 T0013 결함 ③), not a per-hop pin.
+        # Collapsing the chain on it left that hop with no fallback tail at all, so the
+        # no-output retry below had zero candidates to switch to: the 11 providers that sat
+        # untouched while the chain died (NR0003 §3-가). Re-order for continuous, pin for single.
+        chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
     elif mode == "continuous":
         # 0317 D0004: no explicit pin on a continuous hop — consult the per-document-type
         # 배정 규칙. The assigned provider (if any, and if enabled) leads the chain; the rest
@@ -740,7 +974,12 @@ def start_run(
     run_id = _next_run_id()
 
     if issue_builder is not None:
-        issue = issue_builder()
+        # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
+        # ai_run_id. NR0003 §4 measured 1,346 continuous tokens with an EMPTY ai_run_id — every
+        # one of them was issued through this branch, which never passed it, so there was no
+        # bridge from a dead hop's token back to the run that died. Builders that do not accept
+        # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
+        issue = _call_issue_builder(issue_builder, run_id)
         mention = issue.get("mention")
     else:
         issue = token_service.issue(
@@ -774,25 +1013,15 @@ def start_run(
     # override, an individual note does NOT replace the common one: D0004 §3-3 treats them as
     # stackable ("무엇을 위한 것인가" + "너는 무엇을 맡는가"), so both are adopted when present.
     # A resolution failure must not stall the hop (same contract as the provider override).
-    if mode == "continuous" and (continuation_note_overrides or continuation_default_note):
-        try:
-            notes: list[str] = []
-            if continuation_default_note and continuation_default_note.strip():
-                notes.append(continuation_default_note.strip())
-            if continuation_note_overrides:
-                hop_note = _resolve_continuation_hop_note(
-                    doc_ref,
-                    continuation_note_overrides,
-                    continuation_instruction_mode=continuation_instruction_mode,
-                )
-                if hop_note:
-                    notes.append(hop_note)
-            if notes:
-                mention = invoke_mention_service.prepend_messages_section(
-                    mention, notes, continuation_locale,
-                )
-        except Exception:  # noqa: BLE001 — a note failure must not stall the hop
-            logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
+    if mode == "continuous":
+        mention = _inject_hop_notes(
+            mention,
+            doc_ref,
+            default_note=continuation_default_note,
+            note_overrides=continuation_note_overrides,
+            instruction_mode=continuation_instruction_mode,
+            locale=continuation_locale,
+        )
 
     if scope_oracle_run:
         # After issue() (the judge target comes from the token) but before the worker is
@@ -800,7 +1029,8 @@ def start_run(
         completion_oracle = _scope_oracle(action_scope, issue.get("token_id"), doc_ref)
 
     _cleanup_retained_scratches(project_id)
-    run_id = _next_run_id()
+    # 0357 T0004: the chain identity/counters this hop inherits. `run_id` is allocated
+    # once, above, and stays the hop's own id — the CHAIN id is what travels hop to hop.
     if mode == "continuous":
         chain_id = chain_id or run_id
         if chain_docs_target is None:
@@ -822,6 +1052,8 @@ def start_run(
         project_id, doc.get("branch") or "main", group_id=group_id
     )
 
+    started_at = now_iso()
+    timeout_sec = _resolve_timeout_sec(mode, docs_target, target_to_end)
     run = {
         "run_id": run_id,
         "status": "running",
@@ -831,12 +1063,19 @@ def start_run(
         "group_id": group_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
+        # 0357 T0004: chain-lifetime progress, carried across the per-hop runs an
+        # unmanned continuous chain is made of (docs_* stay per-hop judging values).
         "chain_id": chain_id,
         "chain_docs_target": int(chain_docs_target or 0),
         "chain_docs_reached": int(chain_docs_reached or 0),
         "chain_docs_accounted": False,
         "baseline_seq": baseline_seq,
-        "timeout_sec": RUN_TIMEOUT_CAP_SEC if target_to_end else min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC),
+        "timeout_sec": timeout_sec,
+        # 0359 P0006 [홉 예산]: the wall-clock the budget actually lands on. Until now the
+        # limit appeared in NO response at all, so "did it die on the clock?" could only be
+        # answered by re-deriving the formula from logs — which is exactly the work NR0003 had
+        # to do (and got wrong on its first pass).
+        "deadline_at": _deadline_iso(started_at, timeout_sec),
         "provider": None,
         "provider_id": None,
         "attempt_no": 0,
@@ -845,8 +1084,9 @@ def start_run(
         "tool_call_misses": 0,
         "turn_limit_exhausted": False,
         "oracle_mismatch": False,
-        "started_at": now_iso(),
+        "started_at": started_at,
         "started_mono": time.monotonic(),
+        "attempt_started_mono": time.monotonic(),
         "cancel_event": threading.Event(),
         "proc": None,
         "timed_out": False,
@@ -872,6 +1112,9 @@ def start_run(
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
         ),
+        # 0359 L0007 §2.5: the retry rebuilds this hop's prompt from scratch when the token
+        # has to be reissued, and a prompt is only correct in the locale the chain chose.
+        "continuation_locale": (continuation_locale if mode == "continuous" else None),
         # 0317 TR0011 (Q153 opt-1): the per-step override map rides on the run so each
         # re-spawned hop can re-apply it (it never touches a token; it is session-scoped).
         "continuation_provider_overrides": (
@@ -904,6 +1147,27 @@ def start_run(
         "raw_token": issue["raw_token"],
         "merge_id": merge_id,
         "completion_oracle": completion_oracle,
+        # ── 0359 L0007 §2.9 / §2.6: what the no-output retry loop needs to open attempt 2 ──
+        # The token ID (was: only the raw token, so the retry could not ask whether the token
+        # was still usable), the mention it was handed, and the builder that can mint a fresh
+        # one for the SAME head when the old token is spent.
+        "token_id": issue.get("token_id"),
+        "mention": mention,
+        "issue_builder": issue_builder,
+        # Which workflow slot this hop is filling — rides the run into the record, the
+        # notification and the stop row so "where did the chain die?" has an answer.
+        "hop_item_seq": _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None,
+        "attempts_used": 0,
+        "attempts_max": NO_OUTPUT_MAX_ATTEMPTS if mode == "continuous" else 1,
+        "retry_block_reason": None,
+        "last_message_seen": None,
+        "stop_code": None,
+        "stop_reason": None,
+        "resumable": False,
+        # Tagged by the inbox self-chain (mark_chain_stop) when IT is the one that stopped
+        # the chain; the engine's own classification still wins for cancel/timeout/pause.
+        "inbox_stop_code": None,
+        "failure_signal_sent": False,
     }
     with _runs_lock:
         _runs[run_id] = run
@@ -933,6 +1197,10 @@ def start_run(
         "provider": _provider_brief(chain[0]),
         "attempt_no": 1,
         "started_at": run["started_at"],
+        # 0359 P0006 [홉 예산]: the budget and its wall-clock deadline travel with every
+        # start / status / finish payload, so nobody has to reconstruct them from logs again.
+        "timeout_sec": run["timeout_sec"],
+        "deadline_at": run["deadline_at"],
     }
 
 
@@ -945,6 +1213,124 @@ def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
         "exec_type": provider.get("exec_type"),
         "kind": provider.get("kind"),
     }
+
+
+# ── 0359 L0007: hop budget, run identity, prompt reuse ───────────────────────
+
+def _resolve_timeout_sec(mode: str, docs_target: int, target_to_end: bool) -> int:
+    """The run's time budget (L0007 §2.13 / P0006 [홉 예산]).
+
+    A continuous run IS one hop (0317 TR0011 re-spawns a worker per step), so scaling its
+    budget by how many slots are still ahead — the old min(3600 × 남은 슬롯, 14400) — handed
+    the LAST hop the SMALLEST budget, which is backwards. NR0003 §7 cleared this of causing
+    the reported incident (that hop had 2h and used 2m25s) but kept it as a live hazard: TR
+    hops of 74 minutes were measured. Fixed per hop now; the single-run formula is untouched.
+    """
+    if mode == "continuous":
+        return HOP_TIMEOUT_SEC
+    if target_to_end:
+        return RUN_TIMEOUT_CAP_SEC
+    return min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC)
+
+
+def _deadline_iso(started_at: str, timeout_sec: int) -> Optional[str]:
+    """started_at + timeout_sec, in the same ISO/timezone shape now_iso() produces."""
+    try:
+        return (
+            datetime.fromisoformat(started_at) + timedelta(seconds=int(timeout_sec))
+        ).isoformat(timespec="seconds")
+    except Exception:
+        return None
+
+
+def _call_issue_builder(issue_builder: Callable, run_id: str) -> dict:
+    """Call a token issuer, handing it the run identity when it can take one (L0007 §2.9).
+
+    The contract gained `ai_run_id`, but four of the five builders in the codebase mint a
+    single-shot token that has no run worth pointing at, and existing tests call them bare.
+    So inspect rather than force: a builder that declares the keyword gets it, the rest are
+    called exactly as before.
+    """
+    try:
+        import inspect
+
+        params = inspect.signature(issue_builder).parameters
+        accepts = "ai_run_id" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+    except (TypeError, ValueError):
+        accepts = False
+    return issue_builder(ai_run_id=run_id) if accepts else issue_builder()
+
+
+def _hop_item_seq_or_none(doc_ref: str) -> Optional[int]:
+    """Which workflow slot this hop is filling — best effort (L0007 §2.9 / §5).
+
+    None when the sequence is not decided yet (a workflow_decide run). The null rides through
+    to the record, the event and the notification rather than suppressing any of them."""
+    try:
+        return _next_incomplete_item_seq(doc_ref)
+    except Exception:
+        logger.warning("ai-invoke hop item_seq lookup failed for %s", doc_ref, exc_info=True)
+        return None
+
+
+def _inject_hop_notes(
+    mention: Optional[str],
+    doc_ref: str,
+    *,
+    default_note: Optional[str],
+    note_overrides: Optional[dict],
+    instruction_mode: Optional[str],
+    locale: Optional[str],
+) -> Optional[str]:
+    """0346 T0005 §2-5 / D0004 §3-3: prepend the [전달멘트] tab's common note and/or this
+    hop's individual note at the single point every builder's prompt has converged into one
+    string. An individual note does NOT replace the common one (D0004 §3-3 treats them as
+    stackable), and a resolution failure must never stall the hop.
+
+    0359: lifted out of start_run so a no-output RETRY can rebuild the same prompt. A
+    reissued token comes back as a bare mention, and without this the second attempt would
+    silently lose the notes the first one had — the exact first-hop-only regression shape
+    0346 exists to prevent.
+    """
+    if not mention or not (note_overrides or default_note):
+        return mention
+    try:
+        notes: list[str] = []
+        if default_note and default_note.strip():
+            notes.append(default_note.strip())
+        if note_overrides:
+            hop_note = _resolve_continuation_hop_note(
+                doc_ref, note_overrides, continuation_instruction_mode=instruction_mode,
+            )
+            if hop_note:
+                notes.append(hop_note)
+        if notes:
+            mention = invoke_mention_service.prepend_messages_section(mention, notes, locale)
+    except Exception:  # noqa: BLE001 — a note failure must not stall the hop
+        logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
+    return mention
+
+
+def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) -> Optional[str]:
+    """One-line, byte-bounded digest of a worker's message (L0007 §2.10.4).
+
+    Strips list markers / backticks and collapses whitespace so a markdown report reads as a
+    sentence in a notification row, then cuts on a UTF-8 CHARACTER boundary — Korean is three
+    bytes per character, so a naive byte slice would emit a broken one.
+    """
+    if not text or not text.strip():
+        return None
+    cleaned = re.sub(r"(?m)^[\s>]*(?:[-*+]\s+|#{1,6}\s*)", "", text)
+    cleaned = cleaned.replace("`", "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    encoded = cleaned.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return cleaned
+    return encoded[: max(0, max_bytes - 3)].decode("utf-8", errors="ignore") + "…"
 
 
 def _resolve_continuation_hop_provider(
@@ -1120,10 +1506,23 @@ def _prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
 # ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
 
 def _worker(run: dict, chain: list[dict], prompt: str) -> None:
+    """One hop — one or more attempts (0359 L0007 §2.1).
+
+    Before 0359 this ran `제공자 순회 → 종료사유 분류 → 판정+마감` with judgment welded onto
+    finalize, so there was no seam where "the hop ran and produced NOTHING" could be turned
+    back into another attempt. NR0003 §3 is the consequence: the loop had one forward edge
+    ("a document was registered") and no other edge at all, so a single wasted lap ended the
+    whole chain — silently, with 11 untried providers still on the bench. Judgment and finalize
+    are separated here, and the no-output retry lives in the seam between them.
+    """
     try:
-        run["provider"] = _provider_brief(chain[0])
-        run["provider_id"] = chain[0].get("id")
+        current_chain = chain
+        current_prompt = prompt
+        run["provider"] = _provider_brief(current_chain[0])
+        run["provider_id"] = current_chain[0].get("id")
         run["attempt_no"] = 1
+        # Exactly once per run, however many attempts follow (P0006 부록 D: no new event
+        # types — a retry is reported as a provider switch, which the UI already draws).
         _broadcast(run, "ai_invoke_started", {
             "run_id": run["run_id"],
             "group_id": run["group_id"],
@@ -1133,71 +1532,58 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "chain_id": run["chain_id"],
             "chain_docs_target": run["chain_docs_target"],
             "chain_docs_reached": run["chain_docs_reached"],
-            "provider_id": chain[0].get("id"),
-            "provider_name": chain[0].get("name"),
+            "provider_id": current_chain[0].get("id"),
+            "provider_name": current_chain[0].get("name"),
             "attempt_no": 1,
         })
 
-        started_ok = False
-        last_reason = None
-        for index, provider in enumerate(chain):
-            if run["cancel_event"].is_set():
-                break
-            attempt_no = index + 1
-            if index > 0:
-                prev = chain[index - 1]
-                run["provider"] = _provider_brief(provider)
-                run["provider_id"] = provider.get("id")
-                run["attempt_no"] = attempt_no
-                _broadcast(run, "ai_invoke_provider_switched", {
-                    "run_id": run["run_id"],
-                    "group_id": run["group_id"],
-                    "from_provider_id": prev.get("id"),
-                    "from_provider_name": prev.get("name"),
-                    "to_provider_id": provider.get("id"),
-                    "to_provider_name": provider.get("name"),
-                    "reason": last_reason,
-                    "attempt_no": attempt_no,
-                })
+        while True:
+            started_ok = _execute_provider_chain(run, current_chain, current_prompt)
+            _classify_end_reason(run, started_ok)
+            _judge_hop(run)
+            run["attempts_used"] = int(run.get("attempts_used") or 0) + 1
 
-            if provider.get("exec_type") == "api":
-                classification, detail = _api_execute(provider, prompt, run)
-            else:
-                classification, detail = _cli_execute(provider, prompt, run)
-
-            if classification == "started_ok":
-                started_ok = True
+            if not _retry_eligible(run):
                 break
-            last_reason = classification
-            run["fallback_history"].append({
-                "provider_id": provider.get("id"),
-                "provider_name": provider.get("name"),
-                "reason": classification,
-                "detail": detail,
+            if not _recheck_no_output(run):
+                break
+            next_chain = _retry_provider_chain(run)
+            if not next_chain:
+                run["retry_block_reason"] = "providers_exhausted_for_retry"
+                break
+            prepared = _prepare_retry_token(run)
+            if prepared is None:
+                run["retry_block_reason"] = "token_unavailable"
+                break
+
+            previous = run.get("provider") or {}
+            _archive_attempt(run, "no_output", prepared["token_id_before"])
+            _reset_attempt_state(run)
+            current_chain = next_chain
+            current_prompt = prepared["mention"]
+            run["provider"] = _provider_brief(current_chain[0])
+            run["provider_id"] = current_chain[0].get("id")
+            run["attempt_no"] = len(run["fallback_history"]) + 1
+            _broadcast(run, "ai_invoke_provider_switched", {
+                "run_id": run["run_id"],
+                "group_id": run["group_id"],
+                "from_provider_id": previous.get("id"),
+                "from_provider_name": previous.get("name"),
+                "to_provider_id": current_chain[0].get("id"),
+                "to_provider_name": current_chain[0].get("name"),
+                # 0359 P0006 [핵심] 3: the fourth switch reason. The existing three all mean
+                # "it never started"; this one means "it started, finished politely and left
+                # nothing" — the shape this incident actually had, and the more common one.
+                "reason": "no_output",
+                "detail": run["fallback_history"][-1].get("detail"),
+                "attempt_no": run["attempt_no"],
+                "retry_kind": "no_output",
+                "hop_item_seq": run.get("hop_item_seq"),
+                "token_id": prepared["token_id"],
+                "token_reissued": prepared["reissued"],
             })
-            if run["cancel_event"].is_set():
-                break
 
-        if not started_ok:
-            run["provider_id"] = None
-            run["provider"] = None
-
-        # end_reason classification (L0006 §4.1) — default "exited".
-        # "user_paused" (0252 P0008 S4): the inbox self-chain hit the user's pause flag
-        # at a step boundary and withheld the next token; the worker then exits normally,
-        # so the flag — not the exit itself — is what distinguishes a boundary stop.
-        if not started_ok and not run["cancel_event"].is_set():
-            run["end_reason"] = "all_providers_failed"
-        elif run["cancel_event"].is_set():
-            run["end_reason"] = "cancelled"
-        elif run["timed_out"]:
-            run["end_reason"] = "timeout"
-        elif run.get("user_paused"):
-            run["end_reason"] = "user_paused"
-        else:
-            run["end_reason"] = "exited"
-
-        _settle_and_judge(run)
+        _finalize_run(run)
         # 0317 TR0011 (Q153 opt-1): the run is now finished, so start_run's active-run guard
         # is clear — re-spawn the next hop's worker if the self-chain flagged a boundary.
         _maybe_auto_resume_hop(run)
@@ -1205,13 +1591,312 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         logger.exception("ai-invoke worker crashed for %s", run["run_id"])
         run["end_reason"] = run.get("end_reason") or "exited"
         try:
-            _settle_and_judge(run)
+            # A crashed attempt is never retried (L0007 §2.1): judge what it left, close out.
+            _judge_hop(run)
+            _finalize_run(run)
         except Exception:
             logger.exception("ai-invoke settle failed for %s", run["run_id"])
             run["status"] = "finished"
         # A crashed hop is a real stop, not a boundary: drop any pending re-spawn so the
         # chain does not silently continue past a failure.
         clear_auto_resume(run.get("group_id"))
+
+
+def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
+    """One attempt: walk the provider chain until one actually STARTS (L0006 §2.2).
+
+    Unchanged in substance — startup/transport failures (spawn_failed / fast_fail / api_error)
+    fall through to the next provider, and the first provider that runs at all ends the walk.
+    Whether its work was any good is the judge's question, never this loop's.
+    """
+    started_ok = False
+    last_reason = None
+    for index, provider in enumerate(chain):
+        if run["cancel_event"].is_set():
+            break
+        if index > 0:
+            prev = chain[index - 1]
+            run["provider"] = _provider_brief(provider)
+            run["provider_id"] = provider.get("id")
+            run["attempt_no"] = len(run["fallback_history"]) + 1
+            _broadcast(run, "ai_invoke_provider_switched", {
+                "run_id": run["run_id"],
+                "group_id": run["group_id"],
+                "from_provider_id": prev.get("id"),
+                "from_provider_name": prev.get("name"),
+                "to_provider_id": provider.get("id"),
+                "to_provider_name": provider.get("name"),
+                "reason": last_reason,
+                "attempt_no": run["attempt_no"],
+                # 0359: name the KIND of switch, now that there is more than one kind.
+                "retry_kind": "spawn_failure",
+                "hop_item_seq": run.get("hop_item_seq"),
+            })
+
+        if provider.get("exec_type") == "api":
+            classification, detail = _api_execute(provider, prompt, run)
+        else:
+            classification, detail = _cli_execute(provider, prompt, run)
+
+        if classification == "started_ok":
+            started_ok = True
+            break
+        last_reason = classification
+        run["fallback_history"].append({
+            "provider_id": provider.get("id"),
+            "provider_name": provider.get("name"),
+            "reason": classification,
+            "detail": detail,
+            "attempt_no": run.get("attempt_no"),
+            "token_id": run.get("token_id"),
+        })
+        if run["cancel_event"].is_set():
+            break
+
+    if not started_ok:
+        run["provider_id"] = None
+        run["provider"] = None
+    return started_ok
+
+
+def _classify_end_reason(run: dict, started_ok: bool) -> None:
+    """end_reason classification (L0006 §4.1 / L0007 §2.1.2) — order unchanged, default "exited".
+
+    "user_paused" (0252 P0008 S4): the inbox self-chain hit the user's pause flag at a step
+    boundary and withheld the next token; the worker then exits normally, so the flag — not the
+    exit itself — is what distinguishes a boundary stop.
+
+    Producing nothing is deliberately NOT an end_reason. It is a JUDGMENT (outcome == "none"),
+    and it is the combination of a clean "exited" with that judgment that opens a retry.
+    """
+    if not started_ok and not run["cancel_event"].is_set():
+        run["end_reason"] = "all_providers_failed"
+    elif run["cancel_event"].is_set():
+        run["end_reason"] = "cancelled"
+    elif run["timed_out"]:
+        run["end_reason"] = "timeout"
+    elif run.get("user_paused"):
+        run["end_reason"] = "user_paused"
+    else:
+        run["end_reason"] = "exited"
+
+
+# ── No-output retry (0359 L0007 §2.3 ~ §2.6) ─────────────────────────────────
+
+def _attempt_elapsed_sec(run: dict) -> int:
+    started = run.get("attempt_started_mono") or run.get("started_mono") or time.monotonic()
+    return max(0, int(time.monotonic() - started))
+
+
+def _retry_eligible(run: dict) -> bool:
+    """May this hop open ANOTHER attempt? (L0007 §2.4 — this exact order.)
+
+    Condition 3 is the axis the whole fix turns on. The existing provider-switch test is
+    "exit code != 0 within 15 seconds", which the incident's worker passed cleanly: it ran for
+    145 seconds, reported that it could not work, and exited 0. That is not a startup failure —
+    it is a completed attempt with nothing to show, and it needs an edge of its own.
+    """
+    if run.get("mode") != "continuous":
+        return False
+    cancel_event = run.get("cancel_event")
+    if cancel_event is not None and cancel_event.is_set():
+        return False
+    if run.get("end_reason") != "exited":
+        # cancelled / timeout / user_paused are human or clock decisions — reviving them would
+        # override the person who made them. all_providers_failed is already the provider
+        # walk's own verdict, reached inside the attempt.
+        return False
+    if run.get("pause_requested"):
+        return False
+    if run.get("completion_oracle") is not None:
+        return False
+    if run.get("action_scope") in ("workflow_decide", "resolve_conflict"):
+        return False
+    if int(run.get("docs_target") or 0) < 1:
+        return False
+    if peek_auto_resume(run.get("group_id")) is not None:
+        return False        # this hop DID hand off; the next hop is already queued
+    if int(run.get("docs_reached") or 0) >= 1:
+        return False        # partial output is still output — a rerun would double-write
+    if int(run.get("attempts_used") or 0) >= NO_OUTPUT_MAX_ATTEMPTS:
+        return False
+    if _remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
+        return False
+    # register_errors / tool_call_misses / turn_limit_exhausted deliberately do NOT block:
+    # "tried to register and failed" is still zero documents, and another AI may get through.
+    return True
+
+
+def _recheck_no_output(run: dict) -> bool:
+    """Last gate before a retry: is the hop STILL empty? (L0007 §5 — 이중 문서 방지의 마지막 관문.)
+
+    The judge already waited out the settle window, but a registration can land between that
+    judgment and the moment a second worker would start. Two documents from one hop is worse
+    than one wasted hop, so ask again and cancel the retry if anything appeared.
+    """
+    try:
+        new_docs = _oracle_new_docs(run)
+    except Exception:
+        logger.warning("ai-invoke retry recheck failed for %s", run["run_id"], exc_info=True)
+        return True
+    if not new_docs:
+        return True
+    hop_target = run.get("docs_target") or 1
+    if run.get("mode") == "continuous" and peek_auto_resume(run.get("group_id")) is not None:
+        hop_target = 1
+    run["docs_reached"] = len(new_docs)
+    run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
+    run["outcome"] = "complete" if len(new_docs) >= hop_target else "partial"
+    run["oracle_mismatch"] = False
+    return False
+
+
+def _retry_provider_chain(run: dict) -> list[dict]:
+    """Providers this hop has not tried yet, in the project's configured order (L0007 §2.3).
+
+    A provider that already failed to start is excluded as well: the same host state that
+    refused it a minute ago will refuse it again. Head = the next attempt's provider,
+    tail = that attempt's own startup fallback.
+    """
+    try:
+        effective = ai_settings_service.resolve_effective(run["project_id"])
+        chain = effective.get("providers") or []
+    except Exception:
+        logger.warning("ai-invoke retry chain lookup failed for %s", run["run_id"], exc_info=True)
+        return []
+    attempted = {entry.get("provider_id") for entry in run.get("fallback_history") or []}
+    attempted.add(run.get("provider_id"))
+    return [provider for provider in chain if provider.get("id") not in attempted]
+
+
+def _token_reusable(row: dict) -> bool:
+    """Can the dead attempt's work token simply be handed to the next provider?
+
+    Not merely "is it alive": a token with two minutes left would expire mid-attempt, and
+    handing a worker a token that dies under it is worse than minting a fresh one (L0007 §2.5).
+    """
+    if row.get("consumed_at") or row.get("revoked_at"):
+        return False
+    expires_at = row.get("expires_at")
+    if not expires_at:
+        return False
+    try:
+        remaining = (
+            datetime.fromisoformat(str(expires_at)) - datetime.now(timezone.utc)
+        ).total_seconds()
+    except Exception:
+        return False
+    return remaining >= RETRY_MIN_REMAINING_SEC
+
+
+def _prepare_retry_token(run: dict) -> Optional[dict]:
+    """A usable work token + prompt for the next attempt (L0007 §2.5).
+
+    Reuse first. A dead hop's token is normally neither consumed nor revoked — NR0003 §6 found
+    24 of them sitting in the tokens table, one being this incident's own tok_20260730_000032 —
+    so the next provider can just be handed the same one. Reissue only when it is spent, revoked
+    or about to expire: advance_workflow re-opens the SAME head (this hop registered nothing, so
+    the effective head has not moved) and revokes the stale token itself, which is why this can
+    neither double-issue nor skip a slot. No reissue path at all means no retry.
+    """
+    token_id = run.get("token_id")
+    row = None
+    if token_id:
+        try:
+            row = db_tokens.get_by_id(token_id)
+        except Exception:
+            logger.warning("ai-invoke retry token lookup failed for %s",
+                           run["run_id"], exc_info=True)
+            row = None
+    if row is not None and _token_reusable(row):
+        return {"mention": run.get("mention"), "token_id": token_id,
+                "token_id_before": token_id, "reissued": False}
+
+    issue_builder = run.get("issue_builder")
+    if issue_builder is None:
+        return None
+    try:
+        issue = _call_issue_builder(issue_builder, run["run_id"])
+    except Exception:
+        logger.warning("ai-invoke retry token reissue failed for %s",
+                       run["run_id"], exc_info=True)
+        return None
+    mention = issue.get("mention")
+    if not mention:
+        return None
+    mention = _inject_hop_notes(
+        mention,
+        run["doc_ref"],
+        default_note=run.get("continuation_default_note"),
+        note_overrides=run.get("continuation_note_overrides"),
+        instruction_mode=run.get("continuation_instruction_mode"),
+        locale=run.get("continuation_locale"),
+    )
+    before = token_id
+    run["token_id"] = issue.get("token_id")
+    run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
+    run["mention"] = mention
+    return {"mention": mention, "token_id": issue.get("token_id"),
+            "token_id_before": before, "reissued": True}
+
+
+def _no_output_detail(run: dict) -> Optional[str]:
+    """The sentence that finally reaches a human (L0007 §2.6).
+
+    In the incident this text existed, was precise, and even named its own fix — and lived only
+    in a scratch file the server deletes after seven days.
+    """
+    head = (
+        f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
+        "without registering a document"
+    )
+    message = excerpt(run.get("last_message"))
+    return head if not message else f"{head}; last message: {message}"
+
+
+def _archive_attempt(run: dict, reason: str, token_id: Optional[str]) -> None:
+    """Fold the attempt that just ended into the history (L0007 §2.6)."""
+    run["fallback_history"].append({
+        "provider_id": run.get("provider_id"),
+        "provider_name": (run.get("provider") or {}).get("name"),
+        "reason": reason,
+        "detail": _no_output_detail(run),
+        "token_id": token_id,
+        "attempt_no": run.get("attempt_no"),
+        "exit_code": run.get("exit_code"),
+        "duration_sec": _attempt_elapsed_sec(run),
+    })
+    # Keep the most recent NON-EMPTY message: a later attempt may say nothing at all, and the
+    # sentence that explains the failure is usually the one an earlier attempt left behind.
+    if run.get("last_message"):
+        run["last_message_seen"] = run["last_message"]
+
+
+def _reset_attempt_state(run: dict) -> None:
+    """Clear the per-ATTEMPT observations, keep the per-HOP identity (L0007 §2.6).
+
+    run_id / started_mono / timeout_sec / deadline_at / baseline_seq all survive: one hop gets
+    one budget and one baseline no matter how many attempts it spends inside them.
+    """
+    run["exit_code"] = None
+    run["timed_out"] = False
+    run["last_message"] = None
+    run["last_message_received"] = False
+    run["stdout_tail"] = None
+    run["stderr_tail"] = None
+    run["register_errors"] = []
+    run["tool_call_misses"] = 0
+    run["turn_limit_exhausted"] = False
+    run["attempt_started_mono"] = time.monotonic()
+    # codex writes its final message to a file in the run scratch. Leaving the previous
+    # attempt's file behind would let the next attempt inherit words it never said.
+    try:
+        stale = Path(run["scratch_dir"]) / "last_message.txt"
+        if stale.is_file():
+            stale.unlink()
+    except Exception:
+        logger.warning("ai-invoke stale last-message cleanup failed for %s",
+                       run["run_id"], exc_info=True)
 
 
 def _remaining_sec(run: dict) -> float:
@@ -1854,13 +2539,29 @@ def _oracle_new_docs(run: dict) -> list[dict]:
 
 
 def _settle_and_judge(run: dict) -> None:
+    """Judge, then finalize — the pre-0359 shape, kept for every caller that wants both.
+
+    0359 L0007 §2.1 split these two apart so the no-output retry has somewhere to stand:
+    _worker now calls _judge_hop once per ATTEMPT and _finalize_run once per HOP.
+    """
+    _judge_hop(run)
+    _finalize_run(run)
+
+
+def _judge_hop(run: dict) -> None:
+    """Decide what this attempt produced (L0007 §2.2). Exactly once per attempt — never twice
+    for one attempt, and never by merging two attempts' verdicts. docs_reached is always
+    measured from the hop's baseline_seq, so a later attempt's document is simply the answer.
+
+    Judgment content is unchanged from the pre-0359 _settle_and_judge; only the finalize call
+    that used to be welded to each branch has been lifted out.
+    """
     time.sleep(ORACLE_SETTLE_SEC)
     if run.get("action_scope") == "resolve_conflict":
         resolved = _conflict_resolved(run)
         run["docs_reached"] = 0
         run["reached_doc_ids"] = []
         run["outcome"] = "complete" if resolved else "none"
-        _finish_run_record(run)
         return
 
     oracle = run.get("completion_oracle")
@@ -1886,7 +2587,6 @@ def _settle_and_judge(run: dict) -> None:
             and not run.get("tool_call_misses")
             and not run.get("turn_limit_exhausted")
         )
-        _finish_run_record(run)
         return
 
     new_docs: list[dict] = []
@@ -1921,9 +2621,6 @@ def _settle_and_judge(run: dict) -> None:
     docs_reached = len(new_docs)
     run["docs_reached"] = docs_reached
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
-    if not run.get("chain_docs_accounted"):
-        run["chain_docs_reached"] = int(run.get("chain_docs_reached") or 0) + docs_reached
-        run["chain_docs_accounted"] = True
     # 0317 TR0011 (Q153 opt-1): under per-hop re-spawn each continuous hop delivers ONE
     # document and then hands the chain off (the self-chain withheld next_token and queued
     # the next hop). Judge such a hop against 1, not the whole remaining chain target, so an
@@ -1951,8 +2648,6 @@ def _settle_and_judge(run: dict) -> None:
         and not run.get("turn_limit_exhausted")
     )
 
-    _finish_run_record(run)
-
 
 def _conflict_resolved(run: dict) -> bool:
     merge_id = run.get("merge_id")
@@ -1971,7 +2666,38 @@ def _conflict_resolved(run: dict) -> bool:
     return sum(int(f.get("conflict_count") or 0) for f in files) == 0
 
 
-def _finish_run_record(run: dict) -> None:
+def _finalize_run(run: dict) -> None:
+    """Close the hop out — once, whatever it took to get here (L0007 §2.7).
+
+    Three ordering rules, and all three are about what a human sees:
+      1. the stop row is written BEFORE the broadcast — the browser re-reads active-all the
+         moment it sees the finish event, so a late row means a late card;
+      2. the record is persisted BEFORE the broadcast — a detail lookup triggered by that
+         same event must not answer 404;
+      3. neither of them may block the broadcast. Both swallow their own failures: a record
+         is an aid, not the run.
+    """
+    # Final last_message (L0007 §2.6): the last attempt may have said nothing at all, while an
+    # earlier one left the sentence that actually explains the failure. Keep the explanation.
+    if not run.get("last_message") and run.get("last_message_seen"):
+        run["last_message"] = run["last_message_seen"]
+        run["last_message_received"] = True
+
+    # 0357 T0004: fold this HOP's documents into the CHAIN counter — here, at finalize,
+    # not in the judge. A hop may be judged several times now (once per no-output attempt,
+    # L0007 §2.2), and crediting the chain on the first of those would freeze the count at
+    # attempt 1's zero and lose the document a later attempt went on to produce.
+    if not run.get("chain_docs_accounted"):
+        run["chain_docs_reached"] = (
+            int(run.get("chain_docs_reached") or 0) + int(run.get("docs_reached") or 0)
+        )
+        run["chain_docs_accounted"] = True
+
+    respawn_pending = peek_auto_resume(run.get("group_id")) is not None
+    run["stop_code"] = _resolve_stop_code(run, respawn_pending)
+    run["resumable"] = is_resumable(run["stop_code"])
+    run["stop_reason"] = _stop_reason_text(run["stop_code"], run)
+
     # Scratch lifecycle (§2.7): success cleans up, everything else retains.
     scratch = Path(run["scratch_dir"])
     if run["outcome"] == "complete":
@@ -1996,47 +2722,425 @@ def _finish_run_record(run: dict) -> None:
         run["source_dirty"] = bool(spilled)
         run["source_dirty_files"] = spilled[:20]
 
+    # The whole hop, every attempt inside it — not just the last one.
     run["duration_ms"] = int((time.monotonic() - run["started_mono"]) * 1000)
     run["finished_at"] = now_iso()
     run["status"] = "finished"
 
-    # Chain-termination cleanup (0252 L0009 §3 / §5): a continuous run that ends for any
-    # reason OTHER than the boundary pause (natural finish, cancel, worker failure before
-    # the boundary) must not leave the paused row behind, or the bootstrap would revive a
-    # ghost "paused" card for a chain that is actually over.
-    if run["mode"] == "continuous":
-        try:
-            from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-            if run.get("end_reason") != "user_paused":
-                db_paused.delete_by_group(run["group_id"])
-            else:
-                # pause_run snapshots at request time, before the in-flight hop reaches
-                # its boundary. Refresh it after settlement so resume/bootstrap includes
-                # the document that completed while the pause was pending.
-                row = db_paused.get_by_group(run["group_id"])
-                if row is not None:
-                    db_paused.upsert(
-                        group_id=row["group_id"],
-                        doc_ref=row["doc_ref"],
-                        paused_by=row["paused_by"],
-                        paused_at=row["paused_at"],
-                        continuation_target_seq=row.get("continuation_target_seq"),
-                        docs_target=run.get("docs_target"),
-                        docs_reached=int(run.get("docs_reached") or 0),
-                        chain_id=run.get("chain_id"),
-                        chain_docs_target=run.get("chain_docs_target"),
-                        chain_docs_reached=int(run.get("chain_docs_reached") or 0),
-                    )
-        except Exception:
-            logger.warning(
-                "ai-invoke paused-row finalization failed for %s", run["run_id"], exc_info=True
-            )
+    _apply_stop_row(run, respawn_pending)
+    _persist_run_record(run)
+    _notify_chain_failure_if_needed(run)
 
     _broadcast(run, "ai_invoke_finished", finished_payload(run))
     _broadcast(run, "group_view_refresh", {
         "group_id": run["group_id"],
         "reason": "ai_invoke_finished",
     })
+
+
+# ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
+
+def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
+    """Why did the chain stop here? (L0007 §4.1 — evaluated in this exact order.)
+
+    1-4 outrank whatever the inbox tagged: a human cancel or a blown deadline is the truth no
+    matter what the self-chain thought it was doing when the request arrived. A single-mode or
+    non-document run has no stop code at all — nothing about it can stop a chain.
+    """
+    cancel_event = run.get("cancel_event")
+    if (cancel_event is not None and cancel_event.is_set()) or run.get("end_reason") == "cancelled":
+        return "cancelled"
+    if run.get("end_reason") == "timeout":
+        return "timeout"
+    if run.get("end_reason") == "user_paused":
+        return "user_paused"
+    if run.get("end_reason") == "all_providers_failed":
+        return "providers_exhausted"
+    if run.get("inbox_stop_code"):
+        return run["inbox_stop_code"]
+    if respawn_pending:
+        return "hop_handoff"
+    if (
+        run.get("mode") == "continuous"
+        and int(run.get("docs_target") or 0) >= 1
+        and int(run.get("docs_reached") or 0) == 0
+        and run.get("outcome") == "none"
+    ):
+        # The shape of this incident: the hop ran, the hop finished, the hop made nothing —
+        # and until now the system had no name for that, so it treated it as an ordinary end.
+        return "no_output_exhausted"
+    return None
+
+
+def is_resumable(stop_code: Optional[str]) -> bool:
+    """L0007 §4.2 — one criterion: would re-running this hop have a chance?
+
+    Stops a human has to clean up (head mismatch, approval, blocked advance) and stops a human
+    meant (cancel) are deliberately excluded. Resuming those would undo a person's decision.
+    """
+    return stop_code in RESUMABLE_STOP_CODES
+
+
+def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
+    """L0007 §4.3 — English, because the same sentence is read by the worker, stored on the
+    record and shown on the card; one wording for all three."""
+    if stop_code is None:
+        return None
+    if stop_code == "chain_completed":
+        return (f"Target step {run.get('continuation_target_seq')} reached; "
+                "the chain is complete.")
+    if stop_code == "hop_handoff":
+        return "This hop produced its document; the next hop starts in a new worker."
+    if stop_code == "no_output_exhausted":
+        return (f"{int(run.get('attempts_used') or 0)} attempts on this hop ended without "
+                "producing a document. The chain stopped and can be resumed.")
+    if stop_code == "providers_exhausted":
+        return ("No AI provider could be started for this hop. "
+                "The chain stopped and can be resumed.")
+    if stop_code == "timeout":
+        return (f"The hop exceeded its {run.get('timeout_sec')}s budget. "
+                "The chain stopped and can be resumed.")
+    if stop_code == "cancelled":
+        return f"Cancelled by the user during attempt {run.get('attempt_no')}."
+    if stop_code == "user_paused":
+        return "Paused by the user at the step boundary."
+    if stop_code == "head_slot_mismatch":
+        return ("The submitted document did not fill the current workflow head slot; "
+                "a human must triage.")
+    if stop_code == "approve_denied":
+        return ("The token issuer lacks document.approve; a human must approve before "
+                "continuing.")
+    if stop_code == "approve_failed":
+        return f"Auto-approval failed: {run.get('inbox_stop_detail') or 'unknown error'}"
+    if stop_code == "advance_blocked":
+        return (f"Could not advance to the next step: "
+                f"{run.get('inbox_stop_detail') or 'unknown error'}")
+    if stop_code == "review_hold":
+        return "Review mode: waiting for the human go."
+    return None
+
+
+def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = None,
+                     detail: Optional[str] = None) -> Optional[str]:
+    """The §4.3 sentence for a caller that has no run dict — i.e. the inbox self-chain.
+
+    The inbox decides a stop on the request thread, and often there is no engine run alive to
+    ask (a copy-mention chain has none at all). Routing it back through the same table keeps
+    ONE sentence per stop code: the worker reading the response, the stored record and the
+    miniplayer card all say the same thing.
+    """
+    return _stop_reason_text(stop_code, {
+        "continuation_target_seq": target_seq,
+        "inbox_stop_detail": detail,
+    })
+
+
+def mark_chain_stop(group_id: Optional[str], stop_code: str,
+                    detail: Optional[str] = None) -> bool:
+    """Let the inbox self-chain tag the live run with ITS stop reason (L0007 §4.1-5).
+
+    Returns False when there is no engine run to tag — a copy-mention (semi-manned) chain,
+    where the inbox is the only party that can tell a human anything at all.
+    """
+    if not group_id or not stop_code:
+        return False
+    run = _active_run_for_group(group_id)
+    if run is None:
+        return False
+    run["inbox_stop_code"] = stop_code
+    run["inbox_stop_detail"] = detail
+    return True
+
+
+def stamp_chain_stop(
+    envelope: dict,
+    stop_code: str,
+    *,
+    project_id: str,
+    group_id: Optional[str],
+    actor_user_id: Optional[str],
+    anchor_doc_id: Optional[str],
+    token_id: Optional[str] = None,
+    item_seq: Optional[int] = None,
+    detail: Optional[str] = None,
+) -> dict:
+    """One continuation stop, told to everyone who needs it (L0007 §2.11 / §2.12).
+
+    Called by the self-chaining paths (the inbox `new` handler and the decide kickoff), which
+    stop a chain while its worker is still holding the HTTP response open. Until now such a
+    stop said WHY in that response body alone — and the only reader of that body is a worker
+    about to exit, which is how NR0003 §4's chains died with the explanation still in them.
+
+    Three things happen here:
+
+      1. the envelope gets a machine-readable code, the §4.3 sentence and the resumable flag,
+      2. the live engine run is tagged so its record and its miniplayer card end up saying the
+         same thing the worker was just told (a no-op on a copy-mention chain, which has no
+         engine run at all), and
+      3. the four stops a human has to clean up leave a notification behind.
+
+    2 and 3 are best-effort: the submitted document is already saved, and nothing here may turn
+    that into a failure. The engine and the inbox hold disjoint notify sets, so a stop is
+    announced exactly once regardless of which side saw it.
+    """
+    reason = stop_reason_text(
+        stop_code,
+        target_seq=envelope.get("continuation_target_seq"),
+        detail=detail,
+    )
+    envelope["continuation_stop_code"] = stop_code
+    envelope["continuation_stop_reason"] = reason
+    envelope["continuation_resumable"] = is_resumable(stop_code)
+
+    try:
+        mark_chain_stop(group_id, stop_code, detail)
+    except Exception:
+        logger.warning("chain stop tagging failed for %s (ignored)", group_id, exc_info=True)
+
+    if stop_code not in INBOX_NOTIFY_STOP_CODES:
+        return envelope
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        # The notification lands on the document that was just submitted: for all four codes
+        # that IS the thing needing triage — the stray document, the one waiting on approval,
+        # or the last one that did land before the advance failed.
+        anchor = (db_docs.get_by_id(anchor_doc_id) or {}) if anchor_doc_id else {}
+        # Carry the run this stop belongs to, exactly as the engine's own signal does — NR0003
+        # §4 found 1,346 continuous tokens with no bridge back to their execution, and a
+        # notification that cannot name its run repeats the same dead end.
+        stopped = _active_run_for_group(group_id) if group_id else None
+        event_logger.log_continuous_work_failed(
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+            document_id=anchor.get("id"),
+            doc_id=anchor_doc_id,
+            group_id=anchor.get("group_id") or group_id,
+            run_id=(stopped or {}).get("run_id"),
+            error=reason,
+            target_seq=envelope.get("continuation_target_seq"),
+            extra={"stop_code": stop_code, "token_id": token_id, "item_seq": item_seq},
+        )
+    except Exception:
+        # Same best-effort contract as continuous_work_ended (L0007 §5).
+        logger.warning("chain stop signal failed for %s (ignored)", group_id, exc_info=True)
+    return envelope
+
+
+# ── Stop row / record / human signal (0359 L0007 §2.8, §2.10.1, §2.11) ───────
+
+def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
+    """Maintain the miniplayer's [이어서 진행] card (L0007 §2.8 / §4.5).
+
+    Before 0359 this deleted the row for EVERY end_reason other than "user_paused", which is
+    exactly why NR0003 §6's 24 dead chains could not be resumed: the system destroyed the only
+    coordinate the resume path takes. A resumable stop now parks a *system* row instead, and
+    resume_chain consumes it through the identical path a user pause uses.
+    """
+    if run.get("mode") != "continuous":
+        return
+    if respawn_pending:
+        return                                       # the next hop is already queued
+    if run.get("end_reason") == "user_paused":
+        # The user's own row stays (0252 L0009 §3) — but it is REFRESHED, not left as it
+        # was: pause_run snapshots at request time, before the in-flight hop reaches its
+        # boundary, so the document that completed while the pause was pending would
+        # otherwise be missing from what resume/bootstrap reads back (0357 T0004).
+        try:
+            from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+            row = db_paused.get_by_group(run["group_id"])
+            if row is not None:
+                db_paused.upsert(
+                    group_id=row["group_id"],
+                    doc_ref=row["doc_ref"],
+                    paused_by=row["paused_by"],
+                    paused_at=row["paused_at"],
+                    continuation_target_seq=row.get("continuation_target_seq"),
+                    docs_target=run.get("docs_target"),
+                    docs_reached=int(run.get("docs_reached") or 0),
+                    chain_id=run.get("chain_id"),
+                    chain_docs_target=run.get("chain_docs_target"),
+                    chain_docs_reached=int(run.get("chain_docs_reached") or 0),
+                )
+        except Exception:
+            logger.warning(
+                "ai-invoke paused-row finalization failed for %s", run["run_id"], exc_info=True
+            )
+        return
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        if not run.get("resumable"):
+            # Cancelled / human-triage stops: no card, exactly as before — a ghost "paused"
+            # card for a chain that is really over is worse than none.
+            db_paused.delete_by_group(run["group_id"])
+            return
+        existing = db_paused.get_by_group(run["group_id"])
+        if existing is not None and (existing.get("stop_kind") or "user") != "system":
+            # A row a HUMAN put there outranks one the system would write (§5 정지행 경합).
+            return
+        db_paused.upsert(
+            group_id=run["group_id"],
+            doc_ref=run["doc_ref"],
+            paused_by=run.get("issued_to"),
+            paused_at=run.get("finished_at") or now_iso(),
+            continuation_target_seq=run.get("continuation_target_seq"),
+            docs_target=run.get("docs_target"),
+            docs_reached=int(run.get("docs_reached") or 0),
+            # A SYSTEM row deliberately carries no chain counters (0357 T0004): the run
+            # record this stop points at (stop_run_id) has none either, and resume_chain
+            # re-derives the target from the sequence when the row leaves them NULL. The
+            # user-pause refresh above does carry them — that row is a snapshot taken
+            # mid-chain and would otherwise go stale.
+            stop_kind="system",
+            stop_code=run.get("stop_code"),
+            stop_run_id=run.get("run_id"),
+            stop_last_message_excerpt=excerpt(run.get("last_message")),
+        )
+    except Exception:
+        logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
+
+
+def _persist_run_record(run: dict) -> None:
+    """Write the one durable row for this hop (L0007 §2.10.1).
+
+    Exactly once, at finalize — while a run is alive, memory is the truth. NR0003 §4: before
+    this, a run that ended while the browser happened to be looking at another project left
+    nothing behind at all; the only copy of the worker's explanation was a scratch file the
+    server deletes after seven days.
+    """
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        stamp = now_iso()
+        db_runs.upsert({
+            "run_id": run["run_id"],
+            "group_id": run["group_id"],
+            "project_id": run["project_id"],
+            "doc_ref": run["doc_ref"],
+            "mode": run["mode"],
+            "outcome": run.get("outcome"),
+            "docs_reached": int(run.get("docs_reached") or 0),
+            "docs_target": run.get("docs_target"),
+            "reached_doc_ids": list(run.get("reached_doc_ids") or []),
+            "end_reason": run.get("end_reason"),
+            "stop_code": run.get("stop_code"),
+            "stop_reason": run.get("stop_reason"),
+            "resumable": bool(run.get("resumable")),
+            "exit_code": run.get("exit_code"),
+            "last_message": run.get("last_message"),
+            "last_message_excerpt": excerpt(run.get("last_message")),
+            "provider_id": run.get("provider_id"),
+            "provider_name": (run.get("provider") or {}).get("name"),
+            "attempt_no": int(run.get("attempt_no") or 0),
+            "attempts_used": int(run.get("attempts_used") or 0),
+            "attempts_max": run.get("attempts_max"),
+            "fallback_history": list(run.get("fallback_history") or []),
+            "register_errors": list(run.get("register_errors") or []),
+            "tool_call_misses": int(run.get("tool_call_misses") or 0),
+            "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
+            "oracle_mismatch": bool(run.get("oracle_mismatch")),
+            "source_dirty": run.get("source_dirty"),
+            "scratch_retained": run.get("scratch_retained"),
+            "hop_item_seq": run.get("hop_item_seq"),
+            "token_id": run.get("token_id"),
+            "issued_to": run.get("issued_to"),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+            "duration_ms": run.get("duration_ms"),
+            "timeout_sec": run.get("timeout_sec"),
+            "deadline_at": run.get("deadline_at"),
+            "created_at": stamp,
+            "updated_at": stamp,
+        })
+        db_runs.maybe_purge()
+    except Exception:
+        # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
+        logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
+
+
+def _notify_chain_failure_if_needed(run: dict) -> None:
+    """Put the stop somewhere a human will still find it tomorrow (L0007 §2.11).
+
+    NR0003 §4: the worker's explanation existed and was even delivered — over SSE, to a browser
+    that was looking at a different project in that second, with no way to look back. This
+    writes the same fact to the notification feed, which survives not watching.
+    """
+    if run.get("mode") != "continuous":
+        return
+    if run.get("stop_code") not in ENGINE_NOTIFY_STOP_CODES:
+        return
+    if run.get("failure_signal_sent"):
+        return
+    run["failure_signal_sent"] = True
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        document_pk, document_doc_id = _anchor_document(run)
+        event_logger.log_continuous_work_failed(
+            project_id=run["project_id"],
+            actor_user_id=run.get("issued_to"),
+            document_id=document_pk,
+            doc_id=document_doc_id,
+            group_id=run["group_id"],
+            run_id=run["run_id"],
+            target_seq=run.get("continuation_target_seq"),
+            error=_failure_error_text(run),
+            extra={
+                "stop_code": run.get("stop_code"),
+                "token_id": run.get("token_id"),
+                "item_seq": run.get("hop_item_seq"),
+                "provider_id": run.get("provider_id"),
+                "attempts_used": int(run.get("attempts_used") or 0),
+            },
+        )
+    except Exception:
+        # Same best-effort contract as continuous_work_ended (L0007 §5).
+        logger.warning("ai-invoke failure signal failed for %s", run["run_id"], exc_info=True)
+
+
+def _failure_error_text(run: dict) -> str:
+    return (f"{int(run.get('attempts_used') or 0)} attempts produced no document; "
+            f"last worker message: {excerpt(run.get('last_message')) or '(none)'}")
+
+
+def _anchor_document(run: dict) -> tuple[Optional[int], Optional[str]]:
+    """Where the notification lands when a human clicks it (L0007 §2.11).
+
+    A dead hop has no document of its own to point at, so it points at the last place the chain
+    actually reached — "여기까지는 됐다" — and falls back to the chain's spine document. An
+    anchorless notification still beats a notification nobody gets (L0007 §5).
+    """
+    candidates: list[str] = []
+    reached = run.get("reached_doc_ids") or []
+    if reached:
+        candidates.append(reached[-1])
+    hop_seq = run.get("hop_item_seq")
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(run["doc_ref"])
+        items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+        previous = [
+            item for item in items or []
+            if item.get("result_doc_id")
+            and item.get("result_doc_review_status") == "approved"
+            and (hop_seq is None or (item.get("item_seq") or 0) < int(hop_seq))
+        ]
+        if previous:
+            candidates.append(
+                max(previous, key=lambda item: item.get("item_seq") or 0)["result_doc_id"]
+            )
+    except Exception:
+        logger.warning("ai-invoke anchor lookup failed for %s", run["run_id"], exc_info=True)
+    candidates.append(run["doc_ref"])
+    for doc_id in candidates:
+        try:
+            doc = db_docs.get_by_id(doc_id) or {}
+        except Exception:
+            continue
+        if doc.get("id") is not None:
+            return int(doc["id"]), doc_id
+    return None, None
 
 
 def finished_payload(run: dict) -> dict:
@@ -2063,6 +3167,17 @@ def finished_payload(run: dict) -> dict:
         "oracle_mismatch": bool(run.get("oracle_mismatch")),
         "source_dirty": run["source_dirty"],
         "duration_ms": run["duration_ms"],
+        # 0359 P0006 [정지 확정]: why it stopped, whether it can be picked up again, how many
+        # attempts it cost and against what budget. All additive — no existing field moved.
+        "stop_code": run.get("stop_code"),
+        "stop_reason": run.get("stop_reason"),
+        "resumable": bool(run.get("resumable")),
+        "hop_item_seq": run.get("hop_item_seq"),
+        "token_id": run.get("token_id"),
+        "attempts_used": int(run.get("attempts_used") or 0),
+        "attempts_max": run.get("attempts_max"),
+        "timeout_sec": run.get("timeout_sec"),
+        "deadline_at": run.get("deadline_at"),
     }
     if run["source_dirty"]:
         payload["source_dirty_files"] = run["source_dirty_files"]
@@ -2114,6 +3229,12 @@ def get_status(run_id: str) -> dict:
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
         "elapsed_ms": int((time.monotonic() - run["started_mono"]) * 1000),
+        # 0359 P0006 [홉 예산]: a live card can now say how much of the budget is gone
+        # without anyone re-deriving the formula from the server log.
+        "timeout_sec": run.get("timeout_sec"),
+        "deadline_at": run.get("deadline_at"),
+        "attempts_used": int(run.get("attempts_used") or 0),
+        "attempts_max": run.get("attempts_max"),
     }
 
 
@@ -2268,6 +3389,8 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # 지켜야 할 제약 4).
         "note_overrides": run.get("continuation_note_overrides"),
         "default_note": run.get("continuation_default_note"),
+        # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
+        # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
         "chain_id": run.get("chain_id"),
         "chain_docs_target": run.get("chain_docs_target"),
         "chain_docs_reached": run.get("chain_docs_reached"),
@@ -2307,7 +3430,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     project_id = parts[0]
     module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
 
-    def _issue_next() -> dict:
+    def _issue_next(ai_run_id: Optional[str] = None) -> dict:
         adv = workflow_decision_service.advance_workflow(
             doc_id=doc_ref,
             issued_to=issued_to,
@@ -2317,6 +3440,10 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
             continuation_target_seq=target_seq,
             continuation_review_mode=review_mode,
             continuation_instruction_mode=instruction_mode,
+            # 0359 L0007 §2.9: stamp the hop's run onto its token. Every continuous token ever
+            # issued through this path had an empty ai_run_id (NR0003 §4), so a dead hop's
+            # token led nowhere — the incident had to be reconstructed from a scratch file.
+            ai_run_id=ai_run_id,
         )
         return {
             "raw_token": adv["token"],
@@ -2431,7 +3558,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             raise _http_error(409, "nothing_to_resume",
                               "No remaining workflow step to resume.", group_id=group_id)
 
-        def _issue_resume() -> dict:
+        def _issue_resume(ai_run_id: Optional[str] = None) -> dict:
             # Same advance_workflow path as the continuous first hop / every inbox
             # self-chain hop, so instruction heads (N/T) keep their server-side
             # auto-creation instead of being handed to the AI to write (0226 B0001 ④).
@@ -2443,6 +3570,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 continuous=True,
                 continuation_target_seq=target_seq,
                 continuation_review_mode=False,
+                ai_run_id=ai_run_id,      # 0359 L0007 §2.9
             )
             return {
                 "raw_token": adv["token"],
@@ -2534,10 +3662,20 @@ def active_all(user_id: str) -> dict:
             "continuation_target_seq": row.get("continuation_target_seq"),
             "docs_target": row.get("docs_target"),
             "docs_reached": int(row.get("docs_reached") or 0),
+            # 0357 T0004: chain-lifetime progress, so a resumed card shows how far the
+            # CHAIN got — not how far its last hop got.
             "chain_id": row.get("chain_id"),
             "chain_docs_target": row.get("chain_docs_target"),
             "chain_docs_reached": int(row.get("chain_docs_reached") or 0),
             "pending_q_doc_ids": _open_q_doc_ids(row["group_id"]),
+            # 0359 P0006 [이어받기]: a chain the SYSTEM parked looks like one a person parked,
+            # so the existing card and its [이어서 진행] button work unchanged — these four
+            # fields only say which it was and why. A legacy row has no stop_kind: it predates
+            # system stops, so it can only have been a person (DB0008 §2.3).
+            "stop_kind": row.get("stop_kind") or "user",
+            "stop_code": row.get("stop_code"),
+            "stop_run_id": row.get("stop_run_id"),
+            "stop_last_message_excerpt": row.get("stop_last_message_excerpt"),
         })
     return {"ok": True, "runs": runs, "paused": paused}
 

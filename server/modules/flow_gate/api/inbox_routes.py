@@ -1972,6 +1972,66 @@ def _normalize_continuation_target(
         return target_seq
 
 
+# ── Continuous-chain stop signalling (0359 L0007 §2.11 / §2.12) ────────────────────────
+#
+# Every stop below used to say WHY in one place only: the HTTP response body, whose only reader
+# is a worker about to exit — which is how NR0003 §4's chains died with the explanation still
+# inside them. The code, the tag on the live run and the human's notification are now stamped
+# by ai_invoke_service.stamp_chain_stop; what stays here is the sentence the worker reads.
+#
+# L0007 §2.12 — the fixed English sentences A~D. These OVERRIDE the mention:
+# the mention still says "do not stop, continue with the enclosed token", and that instruction
+# is only valid when a token was in fact enclosed. When the response says the chain ends here,
+# the response wins — which is the contradiction these sentences exist to settle.
+_CHAIN_END_TRIAGE_MESSAGE = (
+    "{doc_id} registered, but the continuous chain STOPPED here. A human must triage. "
+    "Do NOT continue and do NOT retry — end this session now."
+)
+_CHAIN_END_MESSAGES = {
+    "hop_handoff": (
+        "{doc_id} registered. Your chain step ends here: FlowGate starts the next step with a "
+        "fresh worker. Do NOT wait for a next token and do NOT write the next document "
+        "yourself — end this session now."
+    ),
+    "chain_completed": (
+        "{doc_id} registered. The continuous run reached its target step and is COMPLETE. "
+        "No further token will be issued — do NOT continue, do NOT write another document. "
+        "End this session now."
+    ),
+    "head_slot_mismatch": _CHAIN_END_TRIAGE_MESSAGE,
+    "approve_denied": _CHAIN_END_TRIAGE_MESSAGE,
+    "approve_failed": _CHAIN_END_TRIAGE_MESSAGE,
+    "advance_blocked": _CHAIN_END_TRIAGE_MESSAGE,
+    "review_hold": (
+        "{doc_id} registered. Review mode: the run waits for the human go before advancing. "
+        "Do NOT continue — end this session now."
+    ),
+    # Not in §2.12's table, which lists only the branches that stop on their own account. A
+    # user pause stops the worker just as hard, and leaving it on the default "You may end the
+    # session." would leave the mention's "keep going" standing unopposed.
+    "user_paused": (
+        "{doc_id} registered. The continuous run is PAUSED by the user at this step boundary. "
+        "No token is issued — do NOT continue and do NOT write another document. End this "
+        "session now; a human resumes the chain from the miniplayer."
+    ),
+}
+
+
+def _chain_message(chain: dict, doc_id: str) -> Optional[str]:
+    """Which sentence the worker gets, in L0007 §2.12's exact order.
+
+    A token in hand outranks everything — a semi-manned chain really does have to keep going.
+    Otherwise, if the chain stopped, say so: the default "You may end the session." is far too
+    mild to stand against a mention that spends four bullet points saying "do NOT stop".
+    Returns None when neither applies, leaving that default in place.
+    """
+    if chain.get("next_token"):
+        return (f"{doc_id} registered. Continuous run: proceed to the next "
+                "step with next_token/next_mention.")
+    sentence = _CHAIN_END_MESSAGES.get(chain.get("continuation_stop_code"))
+    return sentence.format(doc_id=doc_id) if sentence else None
+
+
 def _continuation_self_chain(
     request: Request,
     token_rec: dict,
@@ -2009,6 +2069,7 @@ def _continuation_self_chain(
     instruction_mode = token_rec.get("continuation_instruction_mode")
     spine_doc_ref = token_rec.get("doc_ref")
     actor_user_id = token_rec["issued_to"]
+    chain_group = token_rec.get("group_id")
 
     envelope: dict = {
         "continuation": True,
@@ -2016,6 +2077,22 @@ def _continuation_self_chain(
         "continuation_target_seq": target_seq,
         "continuation_instruction_mode": instruction_mode or "auto_approved",
     }
+
+    def _stop(stop_code: str, *, detail: Optional[str] = None,
+              item_seq: Optional[int] = None) -> dict:
+        """Every branch below that does not hand out a token ends through here (§2.12)."""
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+        return _ai_invoke.stamp_chain_stop(
+            envelope,
+            stop_code,
+            project_id=project,
+            group_id=chain_group,
+            actor_user_id=actor_user_id,
+            anchor_doc_id=canonical_doc_id,
+            token_id=token_rec.get("token_id"),
+            item_seq=item_seq,
+            detail=detail,
+        )
 
     # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (group 0086 TR0004 rework
     # rev4: "검토모드=아직 go가 아니라 사전 질의등록 시간"). It must NOT auto-approve or advance:
@@ -2029,7 +2106,7 @@ def _continuation_self_chain(
             "review mode (pre-flight Q phase): register clarifying questions; the run advances "
             "only after the human gives the go."
         )
-        return envelope
+        return _stop("review_hold")
 
     from modules.flow_gate.db import workflow_sequences as _wfseq
     completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
@@ -2055,7 +2132,7 @@ def _continuation_self_chain(
             "slot; progress toward the target cannot be verified, so the chain pauses "
             "instead of advancing."
         )
-        return envelope
+        return _stop("head_slot_mismatch")
 
     # Auto-approve the just-submitted document so the head can advance — and do it BEFORE the
     # target-reached check so the LAST step is left approved too (group 0086 TR0004 rework
@@ -2085,7 +2162,7 @@ def _continuation_self_chain(
             envelope["continuation_reason"] = (
                 "issuer lacks document.approve; awaiting human approval before continuing."
             )
-            return envelope
+            return _stop("approve_denied")
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
         try:
             transition_document_review(
@@ -2097,7 +2174,7 @@ def _continuation_self_chain(
         except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
             envelope["continuation_paused"] = True
             envelope["continuation_reason"] = f"auto-approve failed: {exc}"
-            return envelope
+            return _stop("approve_failed", detail=str(exc))
 
     # Target reached → stop the chain. Reached only AFTER the just-submitted document was
     # auto-approved above, so the last step ends approved (point 2), not left submitted.
@@ -2109,9 +2186,8 @@ def _continuation_self_chain(
         # "paused" card on the next miniplayer bootstrap. Best-effort, like the signal.
         try:
             from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
-            _chain_group = token_rec.get("group_id")
-            if _chain_group:
-                _db_paused.delete_by_group(_chain_group)
+            if chain_group:
+                _db_paused.delete_by_group(chain_group)
         except Exception:
             import LogAssist.log as logger
             logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
@@ -2137,7 +2213,7 @@ def _continuation_self_chain(
             logger.warning(
                 f"[inbox] continuous_work_ended signal failed (ignored): {_sig_exc}"
             )
-        return envelope
+        return _stop("chain_completed", item_seq=completed_seq)
 
     # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
     # token would be minted, and BEFORE the advance-blocked pause below so a user pause is
@@ -2147,8 +2223,7 @@ def _continuation_self_chain(
     # lookup error: a pause probe must never stall a healthy unmanned chain with a 500.
     try:
         from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
-        _chain_group = token_rec.get("group_id")
-        _user_paused = bool(_chain_group and _db_paused.get_by_group(_chain_group))
+        _user_paused = bool(chain_group and _db_paused.get_by_group(chain_group))
     except Exception:
         import LogAssist.log as logger
         logger.warning("[inbox] boundary pause probe failed (ignored)")
@@ -2156,7 +2231,7 @@ def _continuation_self_chain(
     if _user_paused:
         try:
             from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-            _ai_invoke.mark_user_paused(_chain_group)
+            _ai_invoke.mark_user_paused(chain_group)
         except Exception:
             import LogAssist.log as logger
             logger.warning("[inbox] user-paused run tagging failed (ignored)")
@@ -2165,7 +2240,7 @@ def _continuation_self_chain(
             "paused by user at the step boundary; resume from the miniplayer "
             "(or the answer/ment-copy path) to continue."
         )
-        return envelope
+        return _stop("user_paused", item_seq=completed_seq)
 
     # 0317 TR0011 (Q153 opt-1): HOW the chain continues depends on who drives it.
     #  • Engine-driven unmanned run (a live start_run worker exists for this group): do NOT
@@ -2177,14 +2252,13 @@ def _continuation_self_chain(
     #  • Copy-mention semi-manned run (no engine worker to re-spawn): keep minting next_token so
     #    the human's external AI self-continues exactly as before.
     from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-    _continuation_group = token_rec.get("group_id")
-    if _ai_invoke.has_active_run(_continuation_group):
+    if _ai_invoke.has_active_run(chain_group):
         # Snapshot the current hop before queueing the next one. The worker will emit its
         # ordinary ai_invoke_finished event before the replacement worker can start, so the
         # browser needs this explicit handoff marker to keep the chain-level monitor live
         # across that intentional run-id boundary (0345 B0001).
-        _handoff_status = _ai_invoke.get_active_status(_continuation_group)
-        _ai_invoke.request_auto_resume(_continuation_group, {
+        _handoff_status = _ai_invoke.get_active_status(chain_group)
+        _ai_invoke.request_auto_resume(chain_group, {
             "doc_ref": spine_doc_ref,
             "target_seq": target_seq,
             "review_mode": review_mode,
@@ -2202,6 +2276,11 @@ def _continuation_self_chain(
         # already auto-approved above, so advance_workflow at re-spawn finds the next head.
         envelope["continuation_pending"] = True
         envelope["continuation_respawn"] = True
+        # L0007 §2.12: the next hop is BY DEFINITION the slot after the one just filled, so
+        # this is stated rather than re-queried — and the worker can read where the chain went
+        # from the response alone instead of inferring it from the mention.
+        envelope["continuation_completed_item_seq"] = completed_seq
+        envelope["continuation_next_item_seq"] = completed_seq + 1
         # Reuse the existing lifecycle channel so deployed clients that do not know the
         # marker simply refresh the same running run, while MainPanel can distinguish this
         # from a real start through continuation_pending. Best-effort: the queue above is the
@@ -2219,7 +2298,7 @@ def _continuation_self_chain(
                     event_type=EventType.AI_INVOKE_STARTED,
                     payload={
                         "run_id": _handoff_run_id,
-                        "group_id": _continuation_group,
+                        "group_id": chain_group,
                         "doc_ref": _handoff_status.get("doc_ref") or spine_doc_ref,
                         "mode": "continuous",
                         "status": "running",
@@ -2239,7 +2318,7 @@ def _continuation_self_chain(
                     },
                     audience="*",
                     project=project,
-                    group_id=_continuation_group,
+                    group_id=chain_group,
                     doc_id=spine_doc_ref,
                 ))
         except Exception as _handoff_exc:  # noqa: BLE001 — presentation signal only
@@ -2247,7 +2326,7 @@ def _continuation_self_chain(
             logger.warning(
                 f"[inbox] continuation handoff signal failed (ignored): {_handoff_exc}"
             )
-        return envelope
+        return _stop("hop_handoff", item_seq=completed_seq)
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
     # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).
@@ -2272,7 +2351,7 @@ def _continuation_self_chain(
     except (LookupError, ValueError) as exc:
         envelope["continuation_paused"] = True
         envelope["continuation_reason"] = f"advance blocked: {exc}"
-        return envelope
+        return _stop("advance_blocked", detail=str(exc), item_seq=completed_seq)
 
     envelope.update({
         "next_token": adv["token"],
@@ -2798,11 +2877,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         )
         if chain:
             resp_content.update(chain)
-            if chain.get("next_token"):
-                resp_content["message"] = (
-                    f"{canonical_doc_id} registered. Continuous run: proceed to the next "
-                    "step with next_token/next_mention."
-                )
+            _chain_msg = _chain_message(chain, canonical_doc_id)
+            if _chain_msg:
+                resp_content["message"] = _chain_msg
     except Exception as _chain_exc:  # noqa: BLE001
         import LogAssist.log as logger
         logger.warning(f"[inbox new] continuation self-chain failed (ignored): {_chain_exc}")

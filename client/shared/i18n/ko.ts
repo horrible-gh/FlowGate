@@ -822,6 +822,9 @@ export default {
       activity_action_question_answered: '질의에 답변이 등록되었습니다.',
       activity_action_group_approved: '그룹이 승인되었습니다.',
       activity_action_continuous_work_completed: '연속작업(무인)이 완료되었습니다.',
+      // flowgate.default.0359 (B0001 -> NR0003 -> P0006 -> L0007 -> T0010 bundle 1): the failure-path
+      // counterpart. Was missing entirely, so a failed continuous chain rendered its raw i18n key in the feed.
+      activity_action_continuous_work_failed: '연속작업(무인)이 실패로 중단되었습니다.',
       activity_action_test_run_repair: '테스트 실행 자동 회수로 재실행되었습니다.',
       activity_action_test_run_repair_exhausted: '테스트 실행 자동 회수가 상한에 도달했습니다 — 확인이 필요합니다.',
       activity_document_created: '{actor}님이 {target}을(를) 생성했습니다.',
@@ -1065,6 +1068,7 @@ export default {
       reason_spawn_failed: '기동 실패',
       reason_fast_fail: '즉시 종료',
       reason_api_error: 'API 오류',
+      reason_no_output: '결과물 없음',
       end_cancelled: '사용자가 실행을 취소했습니다.',
       end_timeout: '제한 시간을 초과해 강제 종료되었습니다.',
       end_all_failed: '설정된 모든 프로바이더의 기동에 실패했습니다.',

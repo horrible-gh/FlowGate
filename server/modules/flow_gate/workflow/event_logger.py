@@ -237,6 +237,10 @@ def log_continuous_work_failed(
     case_failed: int | None = None,
     error: str | None = None,
     target_seq: int | None = None,
+    # 0359 L0007 §2.11: additional metadata keys from the AI-engine caller (stop_code,
+    # token_id, item_seq, provider_id, attempts_used). Kept as an open bag rather than five
+    # more parameters — the test-run caller has no use for any of them.
+    extra: dict[str, Any] | None = None,
 ) -> dict:
     """Record an explicit "continuous-work failed/paused" signal (R0001 group 0154, NR0004 Gap A).
 
@@ -259,6 +263,9 @@ def log_continuous_work_failed(
         meta["error"] = error
     if target_seq is not None:
         meta["target_seq"] = target_seq
+    for key, value in (extra or {}).items():
+        if value is not None:
+            meta[key] = value
     return log_event(
         event_type=EVT_CONTINUOUS_WORK_FAILED,
         project_id=project_id,

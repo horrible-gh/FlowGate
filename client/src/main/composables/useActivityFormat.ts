@@ -19,6 +19,10 @@ const ACTIVITY_COLORS: Record<string, string> = {
   // hit — the one case the user must intervene, so it reads as urgent as a failure).
   test_run_repair: '#d97706',
   test_run_repair_exhausted: '#dc2626',
+  // flowgate.default.0359 (P0006 Appendix C): the failure counterpart of continuous_work_completed
+  // fell back to the default slate dot (no entry here) alongside its missing i18n label. Red pairs
+  // it with the emerald completion dot the same way test_run_repair_exhausted pairs with its amber retry.
+  continuous_work_failed: '#dc2626',
 }
 
 // R0001 group 0135 / N0008 (시안 3): map an AI review verdict to a trust tone so a completed feed row

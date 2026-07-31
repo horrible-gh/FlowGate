@@ -822,6 +822,9 @@ export default {
       activity_action_question_answered: '質問への回答が登録されました。',
       activity_action_group_approved: 'グループが承認されました。',
       activity_action_continuous_work_completed: '連続作業（無人）が完了しました。',
+      // flowgate.default.0359 (B0001 -> NR0003 -> P0006 -> L0007 -> T0010 bundle 1): the failure-path
+      // counterpart. Was missing entirely, so a failed continuous chain rendered its raw i18n key in the feed.
+      activity_action_continuous_work_failed: '連続作業（無人）が失敗で中断されました。',
       activity_action_test_run_repair: 'テスト実行の自動リカバリで再実行されました。',
       activity_action_test_run_repair_exhausted: 'テスト実行の自動リカバリが上限に達しました — 確認が必要です。',
       activity_document_created: '{actor}が{target}を作成しました。',
@@ -1065,6 +1068,7 @@ export default {
       reason_spawn_failed: '起動失敗',
       reason_fast_fail: '即時終了',
       reason_api_error: 'APIエラー',
+      reason_no_output: '成果物なし',
       end_cancelled: 'ユーザーにより実行が取り消されました。',
       end_timeout: '制限時間を超過したため強制終了しました。',
       end_all_failed: '設定された全プロバイダーの起動に失敗しました。',

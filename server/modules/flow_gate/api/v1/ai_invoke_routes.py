@@ -396,7 +396,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # Route the first hop through advance_workflow, exactly like every later inbox
         # self-chain hop. Review mode stays on the direct-issue path above: the
         # pre-flight Q phase must not create documents.
-        def _issue_first_hop():
+        def _issue_first_hop(ai_run_id: Optional[str] = None):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=body.doc_ref,
                 issued_to=user_id,
@@ -411,6 +411,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # whole chain — so [지시서 작성 후 진행](ai_direct) died on every hop, not just
                 # the first, and N/T instruction steps were silently auto-approved away.
                 continuation_instruction_mode=body.continuation_instruction_mode,
+                # 0359 L0007 §2.9: the first hop's token carries its run id too, so the
+                # tokens table can answer "which execution held this?" from hop 1 onward.
+                ai_run_id=ai_run_id,
             )
             return {
                 "raw_token": adv["token"],
@@ -541,15 +544,65 @@ def resume_ai_invoke(body: dict, request: Request):
     return JSONResponse(status_code=200, content=result)
 
 
+@router.get("/runs")
+def list_ai_invoke_runs(
+    request: Request,
+    group_id: Optional[str] = None,
+    project: Optional[str] = None,
+    limit: Optional[int] = None,
+):
+    """Browse past runs by number (L0007 §2.10.3) — until now a run was only
+    reachable by its id, so a dead chain with no card left could not be found at
+    all. Declared ahead of GET /{run_id} so "runs" is never read as a run id."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if (group_id is None) == (project is None):
+        return _validation_failed([{"loc": "group_id",
+                                    "msg": "exactly one of group_id or project is required"}])
+    if group_id is not None:
+        try:
+            validate_group_id(group_id)
+        except ValueError as exc:
+            return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    if project is not None:
+        try:
+            validate_project_id(project)
+        except ValueError as exc:
+            return _validation_failed([{"loc": "project", "msg": str(exc)}])
+    project_id = project if project is not None else group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project_id) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project_id}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    try:
+        result = ai_invoke_service.list_runs(group_id=group_id, project=project, limit=limit)
+    except HTTPException as exc:
+        return _err(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
 @router.get("/{run_id}")
 def get_ai_invoke_status(run_id: str, request: Request):
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):
         return auth
     try:
-        return JSONResponse(status_code=200, content=ai_invoke_service.get_status(run_id))
+        payload = ai_invoke_service.get_run_detail(run_id)
     except HTTPException as exc:
         return _err(exc)
+    # 0359 L0007 §2.10.2: a persisted run outlives its worktree session, so a run id
+    # alone could otherwise open another project's run — checked after the lookup,
+    # so an unknown id is still a 404 regardless of the caller's permissions.
+    project_id = str(payload.get("group_id") or "").split(".", 1)[0]
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    return JSONResponse(status_code=200, content=payload)
 
 
 @router.post("/{run_id}/pause")

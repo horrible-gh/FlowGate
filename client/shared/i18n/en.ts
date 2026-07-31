@@ -822,6 +822,9 @@ export default {
       activity_action_question_answered: 'An answer was added to the question.',
       activity_action_group_approved: 'Group approved.',
       activity_action_continuous_work_completed: 'Continuous (unmanned) run finished.',
+      // flowgate.default.0359 (B0001 -> NR0003 -> P0006 -> L0007 -> T0010 bundle 1): the failure-path
+      // counterpart. Was missing entirely, so a failed continuous chain rendered its raw i18n key in the feed.
+      activity_action_continuous_work_failed: 'Continuous (unmanned) run stopped on failure.',
       activity_action_test_run_repair: 'Test run auto-recovery re-fired the run.',
       activity_action_test_run_repair_exhausted: 'Test run auto-recovery gave up — needs your attention.',
       activity_document_created: '{actor} created {target}.',
@@ -1066,6 +1069,7 @@ export default {
       reason_spawn_failed: 'startup failed',
       reason_fast_fail: 'exited immediately',
       reason_api_error: 'API error',
+      reason_no_output: 'No output',
       end_cancelled: 'The run was cancelled by the user.',
       end_timeout: 'The run exceeded its time limit and was terminated.',
       end_all_failed: 'Every configured provider failed to start.',
