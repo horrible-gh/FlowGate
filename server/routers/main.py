@@ -39,6 +39,7 @@ from modules.flow_gate.api.v1.ai_invoke_routes import router as _ai_invoke_route
 from modules.flow_gate.api.v1.engine_recipe_routes import router as _engine_recipe_router
 from modules.flow_gate.api.v1.git_routes import router as _git_router
 from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
+from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from config import settings
@@ -155,6 +156,7 @@ app.include_router(_ai_invoke_router, prefix=f"{CONTEXT}", tags=["AiInvoke"])
 app.include_router(_engine_recipe_router, prefix=f"{CONTEXT}", tags=["EngineRecipes"])
 app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
+app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 app.add_middleware(
     CORSMiddleware,
