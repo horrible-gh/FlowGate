@@ -279,6 +279,24 @@ class TestPauseRun:
         assert run["end_reason"] == "exited"
         assert GROUP not in fake_env["paused"].rows
 
+    def test_pause_upsert_db_failure_does_not_500(self, fake_env, monkeypatch):
+        # If the paused-row upsert raises (e.g. schema drift from an unapplied
+        # migration), the pause request must still be accepted in-memory instead
+        # of surfacing as a 500 — persistence failure downgrades to a logged
+        # warning, matching _finish_run_record and resume_chain._restore_row.
+        res = _start(fake_env, cmd=_slow_cmd())
+        try:
+            def _boom(**kw):
+                raise RuntimeError("simulated db failure")
+            monkeypatch.setattr(db_paused, "upsert", _boom)
+
+            out = svc.pause_run(res["run_id"], "usr_admin")
+            assert out["status"] == "pause_requested"
+            assert GROUP not in fake_env["paused"].rows
+        finally:
+            svc.cancel_run(res["run_id"])
+            _wait_finished(res["run_id"])
+
 
 # ── resume_chain (L0009 §2.4) ─────────────────────────────────────────────────
 
