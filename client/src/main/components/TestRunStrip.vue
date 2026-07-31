@@ -304,4 +304,23 @@ async function onInvokeAi() {
 .run-strip--running .run-strip-ic {
   color: var(--primary, #2563eb);
 }
+
+@media (max-width: 1279px) {
+  .run-strip {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .run-strip-actions {
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+    margin-top: 2px;
+    padding-top: 8px;
+    gap: 8px;
+    border-top: 1px solid rgba(37, 99, 235, 0.18);
+  }
+  .run-strip-btn {
+    padding: 5px 12px;
+  }
+}
 </style>

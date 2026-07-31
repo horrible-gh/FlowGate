@@ -399,4 +399,28 @@ async function onRerun() {
   font-size: 0.76rem;
   color: var(--text-m, #94a3b8);
 }
+
+@media (max-width: 1279px) {
+  .fail-strip-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .fail-strip-actions {
+    order: 2;
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+    margin-top: 2px;
+    padding-top: 8px;
+    gap: 8px;
+    border-top: 1px solid rgba(220, 38, 38, 0.18);
+  }
+  .fail-strip-btn {
+    padding: 5px 12px;
+  }
+  .fail-strip-caret {
+    order: 1;
+    margin-left: auto;
+  }
+}
 </style>
