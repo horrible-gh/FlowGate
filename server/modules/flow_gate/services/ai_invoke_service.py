@@ -2164,24 +2164,21 @@ def pause_run(run_id: str, user_id: str) -> dict:
         docs_reached = len(_oracle_new_docs(run))
     except Exception:
         logger.warning("ai-invoke pause oracle query failed for %s", run_id, exc_info=True)
-    try:
-        db_paused.upsert(
-            group_id=run["group_id"],
-            doc_ref=run["doc_ref"],
-            paused_by=user_id,
-            paused_at=now_iso(),
-            continuation_target_seq=run.get("continuation_target_seq"),
-            docs_target=run.get("docs_target"),
-            docs_reached=docs_reached,
-            chain_id=run.get("chain_id"),
-            chain_docs_target=run.get("chain_docs_target"),
-            chain_docs_reached=(
-                int(run.get("chain_docs_reached") or 0)
-                + (0 if run.get("chain_docs_accounted") else docs_reached)
-            ),
-        )
-    except Exception:
-        logger.warning("ai-invoke paused-row upsert failed for %s", run_id, exc_info=True)
+    db_paused.upsert(
+        group_id=run["group_id"],
+        doc_ref=run["doc_ref"],
+        paused_by=user_id,
+        paused_at=now_iso(),
+        continuation_target_seq=run.get("continuation_target_seq"),
+        docs_target=run.get("docs_target"),
+        docs_reached=docs_reached,
+        chain_id=run.get("chain_id"),
+        chain_docs_target=run.get("chain_docs_target"),
+        chain_docs_reached=(
+            int(run.get("chain_docs_reached") or 0)
+            + (0 if run.get("chain_docs_accounted") else docs_reached)
+        ),
+    )
     return {
         "ok": True,
         "run_id": run_id,
