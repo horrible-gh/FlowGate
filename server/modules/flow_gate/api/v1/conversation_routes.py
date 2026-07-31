@@ -24,6 +24,7 @@ class WorkerConversationTurnAppend(BaseModel):
     idempotency_key: str
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
+    dry_run: bool = False
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -100,6 +101,21 @@ def _append_authenticated(
         return _fail(422, "idempotency_key must equal the token id.")
 
     actor = {"kind": "worker", "token": token}
+    if body.dry_run:
+        # T0004: validate-only path, checked before the single-use/replay branch so a
+        # dry-run never depends on (or inspects) whether the token was already consumed.
+        try:
+            result = conversation_turn_service.dry_run_append(
+                doc_id=doc_id,
+                actor=actor,
+                body_raw=body.body,
+                idempotency_key=body.idempotency_key,
+                token_rec=token,
+            )
+        except conversation_turn_service.ConversationTurnError as exc:
+            return _fail(exc.status_code, exc.message)
+        return JSONResponse(status_code=200, content=result)
+
     try:
         if token.get("consumed_at"):
             replay = conversation_turn_service.replay_turn(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -430,3 +431,61 @@ def append_turn(
                 break
             time.sleep(SEQ_RETRY_BACKOFF_MS[attempt] / 1000.0)
     raise ConversationTurnError(409, "Could not allocate a turn number; retry.") from last_exc
+
+
+_DRY_RUN_MAX_DEFAULT = 5
+
+
+def _dry_run_limit() -> int:
+    """Per-token dry-run attempt limit, shared with inbox (NR0003 4-6: no new chat-only env var)."""
+    try:
+        return int(os.environ.get("FLOWGATE_INBOX_DRYRUN_MAX", _DRY_RUN_MAX_DEFAULT))
+    except (ValueError, TypeError):
+        return _DRY_RUN_MAX_DEFAULT
+
+
+def dry_run_append(
+    *,
+    doc_id: str,
+    actor: dict[str, Any],
+    body_raw: str,
+    idempotency_key: str,
+    token_rec: dict,
+) -> dict:
+    """Validate-only counterpart to append_turn (T0004 / NR0003 3-3).
+
+    Runs the same side-effect-free validation steps append_turn does -- input shape and
+    document eligibility -- but never inserts a turn, consumes the token, or broadcasts.
+    Mirrors inbox_routes._maybe_dry_run: the only side effect allowed is the per-token
+    dry-run counter.
+    """
+    del actor
+    body, _key, _body_hash, _idempotency_hash = _validate_input(body_raw, idempotency_key)
+    _validate_document_for_append(doc_id)
+
+    limit = _dry_run_limit()
+    cnt = int(token_rec.get("dry_run_count") or 0)
+    if cnt >= limit:
+        raise ConversationTurnError(
+            429, f"Dry-run limit ({limit}) reached. Submit for real or request a new token."
+        )
+
+    from modules.flow_gate.services import token_service
+    from modules.flow_gate.services import workflow_decision_service
+
+    token_service.increment_dry_run(token_rec["token_id"])
+    corrupted = workflow_decision_service._label_is_corrupted(body)
+    message = (
+        "본문이 깨진 것으로 보입니다(치환 문자 비율 과반). "
+        "쉘 명령줄 인자 대신 다른 방식으로 다시 보내기 전에 인코딩을 확인하세요."
+        if corrupted
+        else "Dry-run OK. Submitting this payload will register it; nothing was registered by this check."
+    )
+    return {
+        "ok": True,
+        "dry_run": True,
+        "corrupted": corrupted,
+        "dry_run_count": cnt + 1,
+        "dry_run_remaining": limit - (cnt + 1),
+        "message": message,
+    }
