@@ -75,14 +75,14 @@ describe('T866-S2 — D030 §4 #2: R 결정 + head=pending → [다음단계진�
 
 // ── T866-S3 ── D030 section 4 #3: decided R + in-progress head -> disabled [Next step] ──
 // Entry condition: docType=R, mode=next, canNextAction=false.
-// Expected action: the proceed action is visible but disabled; the guard disables rather
-// than removes it. [feedback_actionbar_d030_guard]: unmet guard conditions must disable,
-// never hide, the proceed action.
-// R0001 ③-a relocates that guard: the main button now opens the dropdown (always
-// enabled) and the "Proceed to Next Step" dropdown item carries the disabled state.
+// [feedback_actionbar_d030_guard]'s original concern (unmet guard conditions must disable,
+// never hide, the proceed action) is now moot for this dropdown: 0366 T0007 removed the
+// [다음 단계 진행] item from the action bar entirely, so there is no in-bar proceed control
+// left to disable. The canNextAction guard now lives solely on the workflow strip's
+// current-step cell (DocWorkflow.vue), which already gates its own clickability.
 
-describe('T866-S3 — D030 §4 #3: R 결정 + head=in_progress → [다음단계] 진행 비활성', () => {
-  it('R + mode=next + canNextAction=false → 메인버튼 표시(드롭다운 오픈), 진행 항목 disabled, Approve/Reject 없음', async () => {
+describe('T866-S3 — D030 §4 #3: R 결정 + head=in_progress → 액션바에 진행 항목 없음(0366 T0007)', () => {
+  it('R + mode=next + canNextAction=false → 메인버튼 표시(드롭다운 오픈), 진행 항목 없음, Approve/Reject 없음', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: {
         ...BASE_PROPS,
@@ -100,11 +100,8 @@ describe('T866-S3 — D030 §4 #3: R 결정 + head=in_progress → [다음단계
     expect(btn.attributes('disabled')).toBeUndefined()
     expect(btn.text()).toContain('D')
     await wrapper.find('.ab-dd-toggle').trigger('click')
-    const proceedItem = wrapper
-      .findAll('.ab-split-dd .ab-split-item')
-      .find(i => i.text().includes('Proceed to Next Step'))
-    expect(proceedItem).toBeTruthy()
-    expect(proceedItem!.attributes('disabled')).toBeDefined()
+    const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+    expect(items.some(i => i.text().includes('Proceed to Next Step'))).toBe(false)
     expect(wrapper.text()).not.toContain('Approve')
     expect(wrapper.text()).not.toContain('Reject')
   })

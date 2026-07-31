@@ -16,6 +16,15 @@
         {{ t('main.doc_workflow.edit_btn') }}
       </button>
       <button
+        v-if="isWorkflowRoot && workflowDecided === false"
+        type="button"
+        class="wf-edit-btn"
+        @click="emit('decide-workflow')"
+      >
+        <AppIcon name="sliders-horizontal" />
+        {{ t('main.review_action_bar.btn_manual_decision') }}
+      </button>
+      <button
         type="button"
         class="wf-collapse-btn"
         :aria-expanded="!sequenceCollapsed"
@@ -121,6 +130,7 @@ const decidedEmpty = computed(() =>
 
 const emit = defineEmits<{
   'sequence-updated': []
+  'decide-workflow': []
   'next-action': []
   // 0018 R0001 — workflow-strip time-machine: a completed ('done') step cell was clicked.
   // Emits the strip index + step type code so the parent can resolve the slot's realised

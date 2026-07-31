@@ -157,7 +157,7 @@ describe('T863 — ReviewActionBar: component renders ≥1 actionable element fo
     expect(wrapper.find('.sfb-actions button.btn-primary').attributes('disabled')).toBeUndefined()
   })
 
-  it('T863-S2 component — R wf_in_progress head=in_progress: [Next step] present; proceed item disabled (R0001 ③-a moved the guard into the dropdown)', async () => {
+  it('T863-S2 component — R wf_in_progress head=in_progress: [Next step] present; dropdown carries no proceed item (0366 T0007 removed it from the action bar)', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: { ...BASE_PROPS, docId: 'proj.grp.0001.0001-R', docType: 'R',
                reviewStatus: 'wf_in_progress', mode: 'next', canNextAction: false,
@@ -169,13 +169,11 @@ describe('T863 — ReviewActionBar: component renders ≥1 actionable element fo
     const btn = wrapper.find('.sfb-actions button.btn-primary')
     expect(btn.exists()).toBe(true)
     expect(btn.attributes('disabled')).toBeUndefined()
-    // The canNextAction guard now disables the "Proceed to Next Step" dropdown item.
+    // 0366 T0007: [다음 단계 진행] is no longer offered here at all — the canNextAction
+    // guard now only gates the workflow strip's current-step cell (DocWorkflow.vue).
     await wrapper.find('.ab-dd-toggle').trigger('click')
-    const proceedItem = wrapper
-      .findAll('.ab-split-dd .ab-split-item')
-      .find(i => i.text().includes('Proceed to Next Step'))
-    expect(proceedItem).toBeTruthy()
-    expect(proceedItem!.attributes('disabled')).toBeDefined()
+    const items = wrapper.findAll('.ab-split-dd .ab-split-item')
+    expect(items.some(i => i.text().includes('Proceed to Next Step'))).toBe(false)
   })
 
   it('T863-S3 component — D pending_review: Approve + Reject buttons rendered', () => {
