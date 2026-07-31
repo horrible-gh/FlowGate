@@ -81,9 +81,14 @@ class TestNormalizeCliCommand:
         examples = ai_settings_service.get_catalog()["cli_examples"]
         for host_os in ("posix", "nt"):
             assert _SKIP_GIT in examples["codex"][host_os]
-            # A permission prompt nobody can answer is indistinguishable from a slow run.
-            assert "--dangerously-skip-permissions" in examples["claude"][host_os]
             assert "--model" in examples["claude"][host_os]
+            # 0371 NR0007 §5 reversed the other half of this assertion. It used to require
+            # `--dangerously-skip-permissions` here, on the grounds that a permission prompt
+            # nobody can answer is indistinguishable from a slow run — true, but it made
+            # "the CLI may act without asking" the default for every provider seeded or
+            # suggested, which nobody had chosen. The flag is now an explicit opt-in;
+            # test_ai_permission_default_0371.py owns that contract.
+            assert "--dangerously-skip-permissions" not in examples["claude"][host_os]
 
     def test_catalog_examples_are_already_normalized(self):
         # Otherwise a freshly pasted example would still be rewritten at spawn time.

@@ -21,6 +21,11 @@ on stdin as UTF-8 bytes (the invoke path's contract — args are forbidden, cp93
                        fail immediately — the most a short probe can confirm for an
                        interactive CLI.
 
+Every result also carries `permission_skip`: whether the command that was tested runs with
+permission confirmation switched off (0371 NR0007 §5). A CLI parked on an approval prompt
+and a CLI thinking hard about the prompt are the same observation from out here, so the
+probe states the mode rather than letting `launched` be read as "unattended runs work".
+
 Nothing is persisted. Requires the same permission as saving the provider, so it grants no
 new ability — saving already lets that principal register an arbitrary shell command.
 """
@@ -68,6 +73,7 @@ def probe_provider(form: dict) -> dict:
         "shell": host_shell,
         "launched": False,
         "timed_out": False,
+        "permission_skip": False,
         "exit_code": None,
         "duration_ms": None,
         "stdout_tail": "",
@@ -90,6 +96,8 @@ def probe_provider(form: dict) -> dict:
     # the mkdtemp() cwd below is never a git repo, so `codex exec` exits 1 before reading
     # stdin and every codex provider, however correct, comes back `command_failed`.
     cli_command = _ai_settings.normalize_cli_command(kind, cli_command)
+    permission_rule = _ai_settings.permission_skip_rule(kind)
+    permission_skip = _ai_settings.has_permission_skip(kind, cli_command)
 
     prompt = form.get("prompt") or ""
 
@@ -124,6 +132,7 @@ def probe_provider(form: dict) -> dict:
         **base,
         "duration_ms": duration_ms,
         "timed_out": timed_out,
+        "permission_skip": permission_skip,
         "exit_code": exit_code,
         "stdout_tail": (stdout or "")[-OUTPUT_TAIL_CHARS:],
         "stderr_tail": (stderr or "")[-OUTPUT_TAIL_CHARS:],
@@ -131,11 +140,18 @@ def probe_provider(form: dict) -> dict:
 
     if timed_out:
         # Still running when we pulled the plug: the binary resolved and did not fail fast.
-        # For an interactive CLI waiting on a model, this is the healthy signal.
+        # For an interactive CLI waiting on a model, this is the healthy signal — and it is
+        # also what a CLI stopped at an approval prompt looks like, which is why the mode is
+        # spelled out for a kind that has one (0371 NR0007 §5).
+        waiting = "" if (permission_rule is None or permission_skip) else (
+            " Note: this command still asks before it reads, writes or runs anything, and a"
+            " FlowGate run has nobody to answer that prompt. Switch the permission-skip"
+            " option on if this host needs unattended tool use."
+        )
         return {**result, "launched": True, "status": "launched",
                 "message": (
                     f"Command launched and was still running after {PROBE_TIMEOUT_SEC}s "
-                    f"(then stopped). It did not fail immediately."
+                    f"(then stopped). It did not fail immediately.{waiting}"
                 )}
     if exit_code == 0:
         return {**result, "launched": True, "status": "ok",

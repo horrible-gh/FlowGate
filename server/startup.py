@@ -33,8 +33,26 @@ def recover_git_sessions():
         logger.warning(f"[startup] git session recovery failed: {exc}")
 
 
+def encrypt_ai_provider_keys():
+    """0371 NR0007 §3: move legacy plaintext ai_providers.api_key rows to AES-256-GCM.
+
+    The column existed as plaintext for a long time, so shipping encryption alone would
+    leave every already-registered provider key readable in the DB. Idempotent: a run
+    with nothing left to do costs one SELECT.
+    """
+    try:
+        from modules.flow_gate.db import ai_providers as ai_providers_db
+
+        migrated = ai_providers_db.encrypt_plaintext_api_keys()
+        if migrated:
+            logger.info(f"[startup] encrypted {migrated} plaintext AI provider api_key row(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] AI provider api_key encryption failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
     preload_singletons()
     recover_git_sessions()
+    encrypt_ai_provider_keys()

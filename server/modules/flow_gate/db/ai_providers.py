@@ -8,17 +8,37 @@ project_settings.ai_default_provider_id for a project scope (DB0005 §2.2/§2.3)
 
 Whole-list replace runs in ONE transaction (delete-missing → update/insert → persist
 default/mode) so a failed save never leaves a partial list (L0004 §5, no partial save).
-api_key holds the raw secret; it must never reach an HTTP response (L0004 §2.3) — the
-service layer strips it during serialization.
+api_key is stored ENCRYPTED at rest (0371 NR0007 §3): every write goes through
+utils.api_key_crypto (AES-256-GCM, "enc:v1:" prefix) immediately before the column and
+every read decrypts here, so the service layer above keeps working in plaintext and the
+value still never reaches an HTTP response (L0004 §2.3). A row whose ciphertext does not
+decrypt is flagged api_key_unreadable instead of being read back as a plaintext key.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+from ..utils import api_key_crypto as _crypto
 from . import system_settings as _system_settings
 from .connection import get_store, now_iso
 
 SYSTEM_DEFAULT_KEY = "ai_default_provider_id"
+
+
+class _KeepStoredSecret:
+    """Sentinel a caller puts in a row's api_key to mean "leave the stored ciphertext
+    alone". The service layer merges keep/replace/delete on PLAINTEXT, and a row that
+    cannot be decrypted has no plaintext to merge — without this, "keep" would erase a
+    key the operator never asked to delete."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover — debugging aid only
+        return "<KEEP_STORED_SECRET>"
+
+
+KEEP_STORED_SECRET = _KeepStoredSecret()
+
 
 _COLUMNS = (
     "provider_id, project_id, name, exec_type, kind, enabled, cli_command, "
@@ -32,8 +52,28 @@ def _scope_where(project_id: Optional[str]) -> tuple[str, list]:
     return "project_id = ?", [project_id]
 
 
-def list_scope(project_id: Optional[str]) -> list[dict]:
-    """All rows of one scope in chain order (enabled or not — callers filter)."""
+def _decrypt_row(row: Optional[dict]) -> Optional[dict]:
+    """Ciphertext → plaintext for one row.
+
+    A row that does not decrypt keeps api_key=None and gains api_key_unreadable=True:
+    the settings screen still renders (and can take a replacement key) instead of the
+    whole list failing on one row whose master key was lost.
+    """
+    if row is None:
+        return None
+    stored = row.get("api_key")
+    if stored is None:
+        return row
+    try:
+        row["api_key"] = _crypto.decrypt_api_key(stored)
+    except _crypto.ApiKeyCryptoError:
+        row["api_key"] = None
+        row["api_key_unreadable"] = True
+    return row
+
+
+def _list_scope_stored(project_id: Optional[str]) -> list[dict]:
+    """One scope's rows exactly as stored — api_key still ciphertext."""
     where, params = _scope_where(project_id)
     return get_store()._fetch_all(
         f"SELECT {_COLUMNS} FROM ai_providers WHERE {where} ORDER BY sort_order, provider_id",
@@ -41,7 +81,12 @@ def list_scope(project_id: Optional[str]) -> list[dict]:
     )
 
 
-def get_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
+def list_scope(project_id: Optional[str]) -> list[dict]:
+    """All rows of one scope in chain order (enabled or not — callers filter)."""
+    return [_decrypt_row(r) for r in _list_scope_stored(project_id)]
+
+
+def _get_row_stored(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     where, params = _scope_where(project_id)
     return get_store()._fetch_one(
         f"SELECT {_COLUMNS} FROM ai_providers WHERE {where} AND provider_id = ?",
@@ -49,11 +94,29 @@ def get_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     )
 
 
+def get_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
+    return _decrypt_row(_get_row_stored(project_id, provider_id))
+
+
 def get_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     """Raw api_key for the follow-up execution module (internal use only — never
-    call from an HTTP serialization path; L0004 §2.3)."""
-    row = get_row(project_id, provider_id)
-    return row.get("api_key") if row else None
+    call from an HTTP serialization path; L0004 §2.3).
+
+    Unlike the list/view path this does NOT swallow a decryption failure: a run that
+    cannot read its own key must fail loudly (ApiKeyCryptoError) rather than start as
+    if no key had ever been configured.
+    """
+    row = _get_row_stored(project_id, provider_id)
+    return _crypto.decrypt_api_key(row.get("api_key")) if row else None
+
+
+def _key_for_storage(row: dict, stored_keys: dict) -> Optional[str]:
+    """The value that actually goes into the column: ciphertext, the untouched stored
+    ciphertext (KEEP_STORED_SECRET), or None."""
+    value = row.get("api_key")
+    if value is KEEP_STORED_SECRET:
+        return stored_keys.get(row["provider_id"])
+    return _crypto.encrypt_api_key(value)
 
 
 def replace_scope(
@@ -67,13 +130,19 @@ def replace_scope(
     """Replace one scope's provider list atomically (L0004 §2.2 full-replace merge).
 
     `rows` carry final provider_id values (service issues ids for new items) with
-    api_key already merged. Rows absent from `rows` are deleted. The scope default —
+    api_key already merged and in PLAINTEXT — encryption happens here, immediately
+    before the value reaches the column (0371 NR0007 §3 권고 3); KEEP_STORED_SECRET
+    means "this row's stored ciphertext is unreadable, leave it as it is". Rows absent
+    from `rows` are deleted. The scope default —
     and for a project scope the tri-state `mode` — is persisted in the same
     transaction (DB0005 §4).
     """
     store = get_store()
     now = now_iso()
     where, params = _scope_where(project_id)
+    stored_keys = {
+        r["provider_id"]: r.get("api_key") for r in _list_scope_stored(project_id)
+    }
     with store.transaction() as s:
         keep = [r["provider_id"] for r in rows]
         if keep:
@@ -93,7 +162,8 @@ def replace_scope(
                     "sort_order = ?, updated_at = ? WHERE provider_id = ?",
                     [
                         r["name"], r["exec_type"], r["kind"], r["enabled"],
-                        r["cli_command"], r["api_base_url"], r["api_model"], r["api_key"],
+                        r["cli_command"], r["api_base_url"], r["api_model"],
+                        _key_for_storage(r, stored_keys),
                         r["sort_order"], now, r["provider_id"],
                     ],
                 )
@@ -105,7 +175,7 @@ def replace_scope(
                     [
                         r["provider_id"], project_id, r["name"], r["exec_type"], r["kind"],
                         r["enabled"], r["cli_command"], r["api_base_url"], r["api_model"],
-                        r["api_key"], r["sort_order"], now, now,
+                        _key_for_storage(r, stored_keys), r["sort_order"], now, now,
                     ],
                 )
 
@@ -121,6 +191,31 @@ def replace_scope(
             )
         else:
             upsert_project_ai_state(project_id, mode, default_provider_id)
+
+
+def encrypt_plaintext_api_keys() -> int:
+    """Move legacy plaintext rows to ciphertext; returns how many were rewritten.
+
+    Idempotent and resumable (NR0007 §3 권고 4): rows that already carry the enc:v1:
+    prefix are skipped, so a half-finished pass — or a second boot — simply continues.
+    Runs at startup for every dialect, because "UPDATE ... SET api_key = encrypt(...)"
+    is not something SQL alone can do safely.
+    """
+    store = get_store()
+    rows = store._fetch_all(
+        "SELECT provider_id, api_key FROM ai_providers WHERE api_key IS NOT NULL", [],
+    )
+    migrated = 0
+    for row in rows:
+        stored = row.get("api_key")
+        if not stored or _crypto.is_encrypted(stored):
+            continue
+        store._execute(
+            "UPDATE ai_providers SET api_key = ? WHERE provider_id = ?",
+            [_crypto.encrypt_api_key(stored), row["provider_id"]],
+        )
+        migrated += 1
+    return migrated
 
 
 def get_system_default_provider_id() -> Optional[str]:

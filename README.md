@@ -2,18 +2,18 @@
 
 # FlowGate
 
-### `rm -rf` isn't a human-only mistake anymore.
-
-**"oops… I deleted it. sorry"** — coming soon, from your AI agent.
+### Ditch your editor right now.
+**Your agent can write the code. FlowGate makes it prove the work.**
 
 </div>
 
 > **You handed the task to an autonomous agent, said *"it'll figure it out,"* and walked away.**
-> Did it, though?
+> It says it's done. Is it?
 
 ### FlowGate is the gate between *"the agent says it's done"* and *"it's actually done."*
 
-A typed document pipeline that makes AI agents **prove** their work before it counts. *Requirement → Task → Task Report — every handoff passes through a gate a human (or another agent) must approve.*
+A typed document pipeline where completion isn't a claim — it's evidence.
+*Requirement → Task → Task Report → Approval — every handoff passes a gate a human (or another agent) signs off on.*
 
 <div align="center">
 
@@ -21,7 +21,7 @@ A typed document pipeline that makes AI agents **prove** their work before it co
 
 ![FlowGate dashboard](assets/images/flowgate-dashboard-v0.1.png)
 
-*Register a requirement → kick off a continuous run → watch documents advance → approve at the gate.*
+*Register a requirement → start a continuous run → inspect the evidence → approve.*
 
 ![FlowGate demo](assets/images/flowgate-demo.gif)
 
@@ -78,11 +78,15 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 | Area | What's in the box |
 |------|-------------------|
 | **Backend** | Python · FastAPI · v1 route modules for documents, workflow, RBAC, tokens, remote tools, SSE, dashboard, inbox, Q&A, and more |
-| **Database** | SQLite / MySQL / PostgreSQL — **50 ordered migrations** generated per backend (one SQL set each) plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
+| **Database** | SQLite / MySQL / PostgreSQL — **86 ordered migrations per backend** (258 SQL files total; one matching set in each of `sqlite`, `mysql`, and `postgres`) plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
 | **Auth & security** | JWT + bcrypt + **TOTP 2FA** (with backup codes) + refresh/blacklist · per-token action scopes · `slowapi` rate limiting |
 | **Frontend** | Vue 3 · Pinia · vue-i18n (ko / ja / en) · vue-router · Vite |
 | **Testing** | Focused backend and frontend regression tests around workflow, auth, documents, SSE, dashboard, Q&A, and review flows |
 | **Ops** | **Docker / docker-compose** (one-command, SQLite or bundled Postgres/MySQL) · `systemd` unit (`deploy/flowgate.service`) · one-shot `setup.sh` (Linux) / `setup.ps1` (Windows) · selectable DB backend · Redis-ready |
+
+### Security posture and trust boundary
+
+AI CLI integrations (such as Claude and Codex) and configured test runners are deliberately arbitrary-command execution surfaces: executing repository commands is the feature, not a capability FlowGate can safely remove. Treat anyone who can configure or launch them as having command-execution authority inside the FlowGate service account and its filesystem/container boundary, and isolate that boundary and grant it only the credentials and paths it needs. Newly registered providers keep **Skip permission confirmation** off by default; an operator must explicitly enable the warning-marked option. Leaving it off can pause unmanned work at an approval prompt, while enabling it allows the CLI to act without per-command confirmation.
 
 ---
 
@@ -128,11 +132,19 @@ DB_TYPE=postgres docker compose --profile postgres up -d --build   # + Postgres 
 DB_TYPE=mysql    docker compose --profile mysql    up -d --build   # + MariaDB 11
 ```
 
+### Required security settings and secret backups
+
+`ALLOWED_ORIGIN` now defaults to an empty value, which blocks all cross-origin browser requests while leaving the bundled same-origin client unaffected. Set it explicitly to the permitted origin or origins before a separately hosted frontend or another external web origin calls the API.
+
+Stored AI provider API keys are encrypted with `FLOWGATE_AI_ENCRYPT_KEY`; `FLOWGATE_AI_ENCRYPT_KEY_PREV` is available temporarily when rotating that key. Docker, `setup.sh`, and `setup.ps1` generate the active key automatically, so a normal installation does not require an operator to invent one.
+
+Back up the secret material together with the database and storage volume. For Docker, include `$FLOWGATE_STORAGE_DIR/.flowgate-secrets.env` from the `flowgate-data` volume. For local or setup-script installations, include `server/.env` entries for `SECRET_KEY`, the `FLOWGATE_TOKEN_PEPPER_*` values, `FLOWGATE_GIT_ENCRYPT_KEY`, `FLOWGATE_TOTP_ENCRYPT_KEY`, and `FLOWGATE_AI_ENCRYPT_KEY` (plus any `_PREV` key present during rotation). Losing or replacing these values can make stored Git credentials, AI provider API keys, and enrolled TOTP secrets unreadable; a database-only backup is therefore incomplete.
+
 ### Talking to it as an agent
 
 ```bash
 # Submit an artifact (use dry_run:true first to validate without consuming the token)
-curl -X POST http://<host>:8088/flowgate/api/v1/inbox \
+curl -X POST http://<host>:8089/flowgate/api/v1/inbox \
   -H "Authorization: Bearer <scoped-token>" \
   -H "Content-Type: application/json" \
   -d '{ "action":"new", "project":"flowgate", "module":"default",
@@ -157,7 +169,7 @@ FlowGate/
 │   │   ├── workflow/  numbering/
 │   │   ├── documents/  conversation.py  process_service.py
 │   │   └── db/                # multi-backend data access
-│   ├── sql/migrations/        # 50 ordered migrations × {sqlite, mysql, postgres}
+│   ├── sql/migrations/        # 86 ordered migrations in each of {sqlite, mysql, postgres}
 │   └── tests/                 # backend regression tests
 ├── client/                    # Vue 3 + Pinia + Vite SPA
 ├── Dockerfile                 # multi-stage: build client → Python runtime
@@ -175,12 +187,12 @@ FlowGate/
 
 FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development. The backend, auth, workflow engine, multi-database support, and remote API are the solid, well-tested core; the frontend's conversation and review-UI polish is the area under active iteration.
 
-Recently landed: full **multi-database** migration sets (MySQL / PostgreSQL alongside SQLite) plus a runtime dialect-translation layer · **continuous (unmanned) work** chains · a notification feed · conversation documents · and a cleaned-up router layout (stray test files moved out of `routers/`).
+Current highlights: full **multi-database** migration sets (MySQL / PostgreSQL alongside SQLite) plus a runtime dialect-translation layer · **continuous (unmanned) work** chains · Git-backed group branches, worktrees, diffs, and finalize actions · configurable Claude, Copilot, Codex, custom CLI, and API-based AI invocation · a notification feed · and conversation documents.
 
 **Roadmap:**
 
-- **Git integration** — tie the document pipeline to the actual repository. Link artifacts to commits / branches / PRs so an approved Task Report maps to a verifiable code state, and let gate transitions require or trigger Git actions (branch, commit, open PR). The gate stops being a claim *about* the code and becomes anchored *to* it.
-- **Command-based AI integration** — drive the whole pipeline natively from CLI agents (e.g. Claude Code) instead of hand-assembled HTTP calls. An agent submits, advances, clarifies, and reviews work through first-class commands, so the gate becomes part of the agent's normal command loop.
+- **Deeper Git automation** — build on the existing repository, branch/worktree, diff, merge, and finalize support with pull-request hosting integrations and configurable transition policies.
+- **Richer agent integrations** — expand the current CLI/API invocation flow with more provider-aware commands and tighter submit, advance, clarify, and review ergonomics.
 - **GUI transition** — evolve the current browser SPA toward a full graphical client for authoring, reviewing, and conversing across pipelines — a desktop-grade workspace rather than a set of web pages.
 
 ---

@@ -10,9 +10,14 @@ Secret handling (L0004 §2.3): api_key is write-only. Requests may carry it
 (absent/null = keep, "" = delete, value = replace); serialized responses only ever carry
 api_key_set + api_key_hint. The raw value is reachable solely via get_provider_secret(),
 which must never be called from an HTTP serialization path.
+
+This layer works in PLAINTEXT throughout: at-rest encryption (0371 NR0007 §3) is the db
+layer's job, which encrypts on write and decrypts on read, so the keep/replace/delete
+merge and the last-4 hint keep operating on the real value.
 """
 from __future__ import annotations
 
+import re
 import secrets
 from typing import Optional
 
@@ -66,24 +71,29 @@ _DEFAULT_BASE_URLS = {
 # it is the escape hatch for arbitrary commands.
 #
 # 0295 NR0003 §5-1: the claude row was the old i18n placeholder promoted verbatim, so it
-# carried neither a model nor `--dangerously-skip-permissions` — without the latter the CLI
-# stops on a permission prompt nobody can answer (the invoke contract forbids args and only
-# feeds stdin), which reads as "the AI is slow" until the run times out. The codex row was
-# missing `--skip-git-repo-check`, which `codex exec` requires whenever cwd is not a git
-# repo; see CODEX_SKIP_GIT_FLAG below.
+# carried no model, and the codex row was missing `--skip-git-repo-check`, which
+# `codex exec` requires whenever cwd is not a git repo; see CODEX_SKIP_GIT_FLAG below.
+#
+# 0371 NR0007 §5: that same fix also parked `--dangerously-skip-permissions` (claude) and
+# `--ask-for-approval never` (codex) in here, and this dict is what the installer seeds and
+# what the settings screen offers — so every provider created the easy way ran with
+# permission confirmation switched OFF, a decision nobody consciously made because it was
+# spelled as a word inside a free-text command box. These examples now carry the SAFE form.
+# The permissive form still exists and is one checkbox (editor) or one flag (seed) away —
+# see _PERMISSION_SKIP_RULES / set_permission_skip below — it just has to be asked for.
 _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
     "claude": {
-        "posix": "claude --model claude-opus-4-8 --dangerously-skip-permissions -p -",
-        "nt": "claude --model claude-opus-4-8 --dangerously-skip-permissions -p -",
+        "posix": "claude --model claude-opus-4-8 -p -",
+        "nt": "claude --model claude-opus-4-8 -p -",
     },
     "codex": {
         "posix": (
-            "codex --ask-for-approval never --sandbox workspace-write exec "
+            "codex --ask-for-approval on-request --sandbox workspace-write exec "
             "--skip-git-repo-check "
             "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
         ),
         "nt": (
-            "codex --ask-for-approval never --sandbox workspace-write exec "
+            "codex --ask-for-approval on-request --sandbox workspace-write exec "
             "--skip-git-repo-check "
             "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
         ),
@@ -97,6 +107,142 @@ _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
         "nt": "",
     },
 }
+
+
+# ── Permission confirmation (0371 NR0007 §5) ───────────────────────────────────
+#
+# Neither CLI is configured through a FlowGate setting here: "ask before you act" is a flag
+# inside the free-text cli_command. "Default off" therefore has to mean two concrete things
+# — every string this module hands out carries the safe form, and switching the skip back
+# on is a deliberate act (the editor checkbox, the seed's --skip-permissions) instead of a
+# side effect of accepting a suggestion.
+#
+#   skip     the canonical permissive token this module writes.
+#   safe     what takes its place when the skip is switched off. Empty means "just drop it";
+#            codex keeps asking only if some policy is named, so its safe form spells out
+#            the CLI's own default rather than leaving the flag out.
+#   markers  every spelling that means "permission checks are off" — detection only, so a
+#            hand-written or legacy command is still reported for what it is.
+#
+# Rows already in ai_providers.cli_command are deliberately NOT rewritten: that string is
+# operator configuration, and editing it behind their back would be its own surprise (and
+# would break the one host that needs the skip). Existing installs keep running exactly as
+# before; what changes is where NEW providers start.
+_PERMISSION_SKIP_RULES: dict[str, dict] = {
+    "claude": {
+        "skip": "--dangerously-skip-permissions",
+        "safe": "",
+        "markers": ("--dangerously-skip-permissions",),
+    },
+    "codex": {
+        "skip": "--ask-for-approval never",
+        "safe": "--ask-for-approval on-request",
+        "markers": (
+            "--ask-for-approval never",
+            "--ask-for-approval=never",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--yolo",
+        ),
+    },
+}
+
+
+def _token_re(token: str) -> "re.Pattern":
+    """Match *token* as whole shell words, tolerating any run of whitespace inside it.
+
+    The boundaries are shell boundaries, not \\b: `--yolo` must not match inside
+    `--yolo-mode`, and `--ask-for-approval never` must not match `--ask-for-approval
+    never-mind`.
+    """
+    body = r"\s+".join(re.escape(word) for word in token.split())
+    return re.compile(r"(?<![^\s])" + body + r"(?![^\s])")
+
+
+def _drop_token(cmd: str, token: str) -> str:
+    """Remove *token* together with the whitespace that separated it from what came before."""
+    return re.sub(r"\s*" + _token_re(token).pattern, "", cmd).strip()
+
+
+def _insert_after_program(cmd: str, token: str) -> str:
+    """Put *token* directly after the executable name.
+
+    Both CLIs take these as global options that precede the subcommand (`codex ... exec`),
+    and a working command usually ends in a bare `-` meaning "prompt on stdin" — appending
+    there would hand the flag to the wrong parsing stage.
+    """
+    parts = cmd.split(None, 1)
+    if len(parts) == 1:
+        return f"{parts[0]} {token}"
+    return f"{parts[0]} {token} {parts[1]}"
+
+
+def permission_skip_rule(kind: Optional[str]) -> Optional[dict]:
+    """The rule for *kind*, or None for a kind with no known flag (copilot, custom).
+
+    None means "this screen has nothing to offer here" — not "this CLI always asks".
+    """
+    return _PERMISSION_SKIP_RULES.get(kind or "")
+
+
+def has_permission_skip(kind: Optional[str], cli_command: Optional[str]) -> bool:
+    """True when *cli_command* tells this CLI not to ask before it reads, writes or runs."""
+    rule = permission_skip_rule(kind)
+    cmd = (cli_command or "").strip()
+    if rule is None or not cmd:
+        return False
+    return any(_token_re(marker).search(cmd) for marker in rule["markers"])
+
+
+def set_permission_skip(
+    kind: Optional[str], cli_command: Optional[str], enabled: bool,
+) -> str:
+    """Return *cli_command* with permission confirmation off (*enabled*) or back on.
+
+    Rewrites in place wherever it can — an `--ask-for-approval never` becomes
+    `--ask-for-approval on-request` right where it stands — so toggling twice hands the
+    original string back. A kind with no known flag, or an empty command, is returned as is:
+    inventing a flag for a CLI we have not verified would be worse than leaving it alone.
+    """
+    cmd = (cli_command or "").strip()
+    rule = permission_skip_rule(kind)
+    if rule is None or not cmd:
+        return cmd
+
+    if enabled:
+        if has_permission_skip(kind, cmd):
+            return cmd
+        safe = rule["safe"]
+        if safe and _token_re(safe).search(cmd):
+            return _token_re(safe).sub(lambda _m: rule["skip"], cmd, count=1)
+        return _insert_after_program(cmd, rule["skip"])
+
+    if not has_permission_skip(kind, cmd):
+        return cmd
+    for marker in rule["markers"]:
+        cmd = _drop_token(cmd, marker)
+    # Dropping codex's flag would leave the policy unnamed, which is not the same promise as
+    # "it asks" — so the safe policy is spelled out, but only on a command that really did
+    # carry a skip. Switching an already-safe command "off" must be a no-op.
+    safe = rule["safe"]
+    if safe and safe.split()[0] not in cmd:
+        cmd = _insert_after_program(cmd, safe)
+    return cmd.strip()
+
+
+def _unattended_cli_examples() -> dict[str, dict[str, str]]:
+    """The examples above with permission confirmation switched off.
+
+    Derived, never a second copy: a fix to a command string reaches both forms, and the
+    editor's checkbox and this catalog can never disagree about what "off" looks like.
+    """
+    return {
+        kind: {
+            host_os: set_permission_skip(kind, command, True)
+            for host_os, command in per_os.items()
+        }
+        for kind, per_os in _CLI_COMMAND_EXAMPLES.items()
+        if kind in _PERMISSION_SKIP_RULES
+    }
 
 
 # Fixing the example above only helps providers registered AFTER the fix — rows already in
@@ -148,6 +294,11 @@ def get_catalog() -> dict:
     static `claude -p` placeholder. `host_os`/`host_shell` describe the machine that will
     actually run cli_command via shell=True — the same values the connection test injects as
     FLOWGATE_OS / FLOWGATE_SHELL.
+
+    `cli_permission_skip` (0371 NR0007 §5) is how the editor renders the permission-skip
+    opt-in without owning a second copy of the flags: `default_enabled` is the answer to
+    "what does a new provider start as" (false), `rules` drives detect/apply on the command
+    string, and `examples` is `cli_examples` with the skip already applied.
     """
     return {
         "exec_types": list(EXEC_TYPES),
@@ -155,6 +306,18 @@ def get_catalog() -> dict:
         "host_os": _tcs.current_os(),
         "host_shell": _tcs.current_shell(),
         "cli_examples": {k: dict(v) for k, v in _CLI_COMMAND_EXAMPLES.items()},
+        "cli_permission_skip": {
+            "default_enabled": False,
+            "rules": {
+                kind: {
+                    "skip": rule["skip"],
+                    "safe": rule["safe"],
+                    "markers": list(rule["markers"]),
+                }
+                for kind, rule in _PERMISSION_SKIP_RULES.items()
+            },
+            "examples": _unattended_cli_examples(),
+        },
     }
 
 
@@ -255,10 +418,19 @@ def _resolve_base_url(p: dict) -> Optional[str]:
     return _DEFAULT_BASE_URLS.get(p.get("kind"))
 
 
-def _merge_api_key(old_value: Optional[str], incoming: Optional[str]) -> Optional[str]:
-    """absent/null = keep, "" = delete, value = replace (L0004 §2.3)."""
+def _merge_api_key(old_row: Optional[dict], incoming: Optional[str]):
+    """absent/null = keep, "" = delete, value = replace (L0004 §2.3).
+
+    "Keep" on a row whose stored key no longer decrypts (0371) has no plaintext to
+    carry over, so it returns the db layer's keep-stored sentinel instead of None —
+    a request that never mentioned api_key must not delete one.
+    """
     if incoming is None:
-        return old_value
+        if old_row is None:
+            return None
+        if old_row.get("api_key_unreadable"):
+            return _ai_db.KEEP_STORED_SECRET
+        return old_row.get("api_key")
     if incoming == "":
         return None
     return incoming
@@ -266,7 +438,12 @@ def _merge_api_key(old_value: Optional[str], incoming: Optional[str]) -> Optiona
 
 def _to_view(row: dict) -> dict:
     api_key = row.get("api_key")
-    return {
+    # 0371: rows arrive decrypted, so the hint is still the real last 4 characters.
+    # `unreadable` is the one case where a key IS stored but its plaintext is gone
+    # (master key changed/lost) — reporting api_key_set=False there would read as
+    # "no key configured" and hide the loss behind an ordinary-looking screen.
+    unreadable = bool(row.get("api_key_unreadable"))
+    view = {
         "id": row["provider_id"],
         "name": row["name"],
         "exec_type": row["exec_type"],
@@ -275,9 +452,12 @@ def _to_view(row: dict) -> dict:
         "cli_command": row.get("cli_command"),
         "api_base_url": row.get("api_base_url"),
         "api_model": row.get("api_model"),
-        "api_key_set": api_key is not None,
+        "api_key_set": api_key is not None or unreadable,
         "api_key_hint": api_key[-HINT_LEN:] if api_key else None,
     }
+    if unreadable:
+        view["api_key_unreadable"] = True
+    return view
 
 
 def _resolve_default(
@@ -345,7 +525,7 @@ def _save_scope(
             "cli_command": p.get("cli_command") if exec_type == "cli" else None,
             "api_model": p.get("api_model") if exec_type == "api" else None,
             "api_base_url": _resolve_base_url(p),
-            "api_key": _merge_api_key(old.get("api_key") if old else None, p.get("api_key")),
+            "api_key": _merge_api_key(old, p.get("api_key")),
             "sort_order": index,
         })
 
@@ -504,7 +684,11 @@ def resolve_effective(project_id: str) -> dict:
 
 def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     """Raw api_key for internal execution use. NEVER route this into an HTTP response,
-    and never log the value (length-only logging allowed; L0004 §2.3)."""
+    and never log the value (length-only logging allowed; L0004 §2.3).
+
+    Raises api_key_crypto.ApiKeyCryptoError when the stored value is encrypted but the
+    master key cannot read it — fail-closed, never "no key configured" (0371 NR0007 §3).
+    """
     return _ai_db.get_secret(project_id, provider_id)
 
 
