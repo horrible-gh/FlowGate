@@ -4,6 +4,7 @@ import { getRequest, postRequest } from '@shared/api'
 import {
   FINISHED_CARD_TTL_MS,
   MAX_FINISHED_CARDS,
+  isFinishedCard,
   openTargetDocId,
   type AiInvokeRunEntry,
   useAiInvokeRunsStore,
@@ -345,6 +346,165 @@ describe('aiInvokeRuns store', () => {
     store.trackQuestionAnswered(qDocId)
     expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([])
     expect(store.awaitingQCount).toBe(0)
+  })
+  it.each(['complete', 'none'] as const)(
+    'keeps an exited hop_handoff live regardless of %s outcome',
+    (outcome) => {
+      const groupId = `flowgate.default.handoff.${outcome}`
+      store.trackStarted({
+        run_id: 'run-old', group_id: groupId, mode: 'continuous',
+        docs_target: 1, chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 6,
+      })
+
+      store.trackFinished({
+        run_id: 'run-old', group_id: groupId, mode: 'continuous',
+        end_reason: 'exited', stop_code: 'hop_handoff', outcome,
+        docs_reached: 1, docs_target: 1,
+        chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+      })
+
+      const run = store.runsByGroup[groupId]
+      expect(run.phase).toBe('running')
+      expect(run.handoffPending).toBe(true)
+      expect(run.chainDocsReached).toBe(7)
+      expect(isFinishedCard(run)).toBe(false)
+    },
+  )
+
+  it('keeps a pending handoff in active-all polling and adopts a new run id', async () => {
+    const groupId = 'flowgate.default.handoff.adopt'
+    store.trackStarted({
+      run_id: 'run-old', group_id: groupId, mode: 'continuous',
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 6,
+    })
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, end_reason: 'exited',
+      stop_code: 'hop_handoff', outcome: 'complete',
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+    })
+    vi.mocked(getRequest).mockResolvedValueOnce({ data: { runs: [], paused: [] } } as any)
+
+    await store.refreshAllRunning()
+
+    expect(vi.mocked(getRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+
+    store.trackStarted({
+      run_id: 'run-new', group_id: groupId, mode: 'continuous',
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+    })
+    expect(store.runsByGroup[groupId].runId).toBe('run-new')
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
+    expect(store.runsByGroup[groupId].chainDocsReached).toBe(7)
+  })
+
+  it('uses chain progress to infer a handoff when the run target is the 1/1 boundary', () => {
+    const groupId = 'flowgate.default.handoff.chain-counter'
+    store.trackStarted({
+      run_id: 'run-old', group_id: groupId, mode: 'continuous',
+      docs_target: 1, chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 6,
+    })
+
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, end_reason: 'exited', outcome: 'complete',
+      docs_reached: 1, docs_target: 1,
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+    })
+
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+  })
+
+  it.each(['cancelled', 'timeout', 'user_paused'])(
+    'does not treat non-exited %s as a handoff even with hop_handoff stop_code',
+    (endReason) => {
+      const groupId = `flowgate.default.handoff.${endReason}`
+      store.trackStarted({ run_id: 'run-old', group_id: groupId, mode: 'continuous' })
+      store.trackFinished({
+        run_id: 'run-old', group_id: groupId, end_reason: endReason,
+        stop_code: 'hop_handoff', outcome: 'none',
+      })
+
+      const run = store.runsByGroup[groupId]
+      expect(run.handoffPending).toBe(false)
+      expect(run.phase).toBe(endReason === 'user_paused' ? 'paused' : 'finished')
+    },
+  )
+
+  it('ignores a delayed started frame from the settled old hop', () => {
+    const groupId = 'flowgate.default.handoff.late-start'
+    store.trackStarted({ run_id: 'run-old', group_id: groupId, mode: 'continuous' })
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, end_reason: 'exited',
+      stop_code: 'hop_handoff', outcome: 'complete',
+    })
+
+    store.trackStarted({ run_id: 'run-old', group_id: groupId, mode: 'continuous' })
+
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+    expect(store.runsByGroup[groupId].finishedPayload).toBeNull()
+  })
+
+  it('keeps a real final hop terminal when no handoff signal or remaining progress exists', () => {
+    const groupId = 'flowgate.default.handoff.final'
+    store.trackStarted({
+      run_id: 'run-final', group_id: groupId, mode: 'continuous',
+      docs_target: 1, chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 9,
+    })
+    store.trackFinished({
+      run_id: 'run-final', group_id: groupId, end_reason: 'exited', outcome: 'complete',
+      docs_reached: 1, docs_target: 1,
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 10,
+    })
+
+    expect(store.runsByGroup[groupId].phase).toBe('finished')
+    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
+    expect(isFinishedCard(store.runsByGroup[groupId])).toBe(true)
+  })
+
+})
+
+describe('aiInvokeRuns store — bounded handoff adoption', () => {
+  let store: ReturnType<typeof useAiInvokeRunsStore>
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-01T12:00:00Z'))
+    sessionStorage.clear()
+    setActivePinia(createPinia())
+    store = useAiInvokeRunsStore()
+    vi.clearAllMocks()
+    vi.mocked(getRequest).mockResolvedValue({ data: { runs: [], paused: [] } } as any)
+  })
+
+  afterEach(() => {
+    store.$dispose()
+    vi.useRealTimers()
+  })
+
+  it('waits through scheduled retries and two later successful polling misses before finishing', async () => {
+    const groupId = 'flowgate.default.handoff.bounded'
+    store.trackStarted({ run_id: 'run-old', group_id: groupId, mode: 'continuous' })
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, end_reason: 'exited',
+      stop_code: 'hop_handoff', outcome: 'none',
+    })
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+
+    await store.refreshAllRunning()
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+
+    await store.refreshAllRunning()
+    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
+    expect(store.runsByGroup[groupId].phase).toBe('finished')
+    expect(isFinishedCard(store.runsByGroup[groupId])).toBe(true)
+
+    const activeAllCalls = vi.mocked(getRequest).mock.calls
+      .filter(([path]) => path === '/api/v1/ai-invoke/active-all')
+    expect(activeAllCalls.length).toBeGreaterThanOrEqual(6)
   })
 })
 

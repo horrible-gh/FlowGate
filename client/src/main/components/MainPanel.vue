@@ -1706,124 +1706,6 @@ const aiInvokeDefaultMessage = ref('')
 const aiInvokeMessageOverrides = ref<Record<number, string>>({})
 const aiInvokeAutoStart = ref(false)
 const aiInvokeRunsStore = useAiInvokeRunsStore()
-type AiInvokeLifecycleDetail = {
-  kind?: 'started' | 'switched' | 'finished'
-  payload?: Record<string, any>
-}
-const continuationHandoffs = new Set<string>()
-const continuationReconcileTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
-
-function continuationHandoffKey(groupId: string, runId: string): string {
-  return `${groupId}\n${runId}`
-}
-
-function clearContinuationReconcile(groupId: string): void {
-  for (const timer of continuationReconcileTimers.get(groupId) ?? []) clearTimeout(timer)
-  continuationReconcileTimers.delete(groupId)
-}
-
-function clearContinuationHandoffs(groupId: string): void {
-  const prefix = `${groupId}\n`
-  for (const key of continuationHandoffs) {
-    if (key.startsWith(prefix)) continuationHandoffs.delete(key)
-  }
-}
-
-function scheduleContinuationReconcile(groupId: string, finishedRunId: string): void {
-  clearContinuationReconcile(groupId)
-  const timers = [0, 250, 1_000, 3_000].map(delay => setTimeout(() => {
-    // active-all is deliberately used here instead of refreshing the finished hop:
-    // the replacement worker owns a new run_id, so only a group-wide reconciliation
-    // can adopt it when its ai_invoke_started SSE frame was delayed or dropped.
-    void aiInvokeRunsStore.bootstrap()
-  }, delay))
-  timers.push(setTimeout(() => {
-    const current = aiInvokeRunsStore.runsByGroup[groupId]
-    if (
-      current?.runId === finishedRunId
-      && (current.phase === 'running' || current.phase === 'pause_requested')
-    ) {
-      // A queued handoff can still fail during workflow advance/provider admission.
-      // Do not leave a synthetic running card behind forever: after the bounded adoption
-      // window, read the old hop once and let its real terminal state win.
-      void aiInvokeRunsStore.refresh(groupId)
-    }
-    clearContinuationReconcile(groupId)
-    clearContinuationHandoffs(groupId)
-  }, 5_000))
-  continuationReconcileTimers.set(groupId, timers)
-}
-
-function onAiInvokeLifecycle(event: Event): void {
-  const detail = (event as CustomEvent<AiInvokeLifecycleDetail>).detail
-  const payload = detail?.payload ?? {}
-  const groupId = String(payload.group_id ?? '')
-  const runId = String(payload.run_id ?? '')
-  if (!groupId || !runId) return
-
-  if (detail?.kind === 'started') {
-    if (payload.continuation_pending === true) {
-      continuationHandoffs.add(continuationHandoffKey(groupId, runId))
-    } else {
-      // A real started event means the replacement hop is now authoritative.
-      clearContinuationReconcile(groupId)
-      clearContinuationHandoffs(groupId)
-    }
-    return
-  }
-  if (detail?.kind !== 'finished') return
-
-  const entry = aiInvokeRunsStore.runsByGroup[groupId]
-  // The registry already rejects a late finish from an older run_id. Mirror that guard
-  // here or this presentation repair could accidentally replace the new live hop with
-  // the stale one when SSE delivery and active-all reconciliation cross in flight.
-  if (entry?.runId !== runId) {
-    continuationHandoffs.delete(continuationHandoffKey(groupId, runId))
-    return
-  }
-  const explicitHandoff = continuationHandoffs.delete(
-    continuationHandoffKey(groupId, runId),
-  )
-  // Compatibility fallback for a handoff marker lost in transit. Per-hop settlement is
-  // the only clean continuous finish that reaches fewer documents than its run target;
-  // terminal failures are partial/none and the final hop reaches its target.
-  const inferredHandoff = entry?.runId === runId
-    && entry.mode === 'continuous'
-    && payload.end_reason === 'exited'
-    && payload.outcome === 'complete'
-    && Number(payload.docs_reached ?? 0) < Number(payload.docs_target ?? entry.docsTarget)
-  if (
-    (!explicitHandoff && !inferredHandoff)
-    || payload.end_reason !== 'exited'
-    || payload.outcome !== 'complete'
-  ) {
-    clearContinuationHandoffs(groupId)
-    return
-  }
-
-  // The registry listener runs earlier in the same browser event and has just classified
-  // this hop as finished. Restore the same run to a live handoff state synchronously;
-  // Vue batches both mutations, so the header never renders the false completed card.
-  aiInvokeRunsStore.trackStarted({
-    run_id: runId,
-    group_id: groupId,
-    doc_ref: entry?.docRef,
-    mode: 'continuous',
-    status: 'running',
-    docs_target: payload.docs_target ?? entry?.docsTarget,
-    docs_reached_so_far: Math.max(
-      Number(entry?.docsReachedSoFar ?? 0),
-      Number(payload.docs_reached ?? 0),
-    ),
-    provider: entry?.provider,
-    attempt_no: entry?.attemptNo,
-    started_at: entry?.startedAt,
-    elapsed_ms: payload.duration_ms ?? entry?.elapsedMs,
-    continuation_pending: true,
-  })
-  scheduleContinuationReconcile(groupId, runId)
-}
-
 // 0351 T4: a conversation-turn search result (GroupExplorer) opens this CH tab and
 // asks the mounted ConversationView to scroll to one turn. GroupExplorer does not
 // hold a reference to that instance — this component does (convViewRefs) — so the
@@ -1848,16 +1730,10 @@ function onConversationJumpSeq(event: Event) {
 }
 
 onMounted(() => {
-  window.addEventListener('fg:ai_invoke', onAiInvokeLifecycle)
   window.addEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('fg:ai_invoke', onAiInvokeLifecycle)
   window.removeEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
-  for (const groupId of continuationReconcileTimers.keys()) {
-    clearContinuationReconcile(groupId)
-  }
-  continuationHandoffs.clear()
 })
 const activeAiInvokeGroupId = computed(() => {
   if (!activeTabId.value) return ''
@@ -4319,26 +4195,9 @@ watch(() => projectStore.currentProjectId, (projectId) => {
 
 watch(() => props.overviewRefreshToken, () => {
   if (projectStore.currentProjectId) void fetchQList()
-  // A coalesced screen refresh is also the recovery boundary after SSE reconnects.
-  // Reconcile terminal-looking cards against active-all so a missed replacement
-  // ai_invoke_started event cannot pin the header at "complete" for its 30-minute TTL.
-  if (
-    continuationHandoffs.size > 0
-    || Object.values(aiInvokeRunsStore.runsByGroup).some(run =>
-      run.mode === 'continuous'
-      && (
-        run.phase === 'lost'
-        || (
-          run.phase === 'finished'
-          && run.endReason === 'exited'
-          && run.outcome === 'complete'
-          && run.docsReached < run.docsTarget
-        )
-      ),
-    )
-  ) {
-    void aiInvokeRunsStore.bootstrap()
-  }
+  // A coalesced screen refresh is also an SSE recovery boundary. The store keeps
+  // handoff-pending cards pollable and chooses between adoption and bounded completion.
+  void aiInvokeRunsStore.refreshAllRunning()
 })
 
 watch(showQuickOpen, async (val) => {

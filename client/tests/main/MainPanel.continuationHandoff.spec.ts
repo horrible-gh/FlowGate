@@ -161,4 +161,60 @@ describe('MainPanel continuous invoke handoff', () => {
 
     wrapper.unmount()
   })
+
+  it('honors hop_handoff with a non-complete outcome', () => {
+    const groupId = 'flowgate.default.0375.outcome'
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({ run_id: 'hop-1', group_id: groupId, mode: 'continuous' })
+    const wrapper = mountPanel()
+
+    lifecycle('finished', {
+      run_id: 'hop-1', group_id: groupId, mode: 'continuous',
+      end_reason: 'exited', stop_code: 'hop_handoff', outcome: 'none',
+    })
+
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+    expect(store.runsByGroup[groupId].handoffPending).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('infers handoff from chain counters at a 1/1 run boundary', () => {
+    const groupId = 'flowgate.default.0375.chain'
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'hop-1', group_id: groupId, mode: 'continuous',
+      docs_target: 1, chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 6,
+    })
+    const wrapper = mountPanel()
+
+    lifecycle('finished', {
+      run_id: 'hop-1', group_id: groupId, mode: 'continuous',
+      end_reason: 'exited', outcome: 'complete', docs_target: 1, docs_reached: 1,
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+    })
+
+    expect(store.runsByGroup[groupId].phase).toBe('running')
+    expect(store.runsByGroup[groupId].chainDocsReached).toBe(7)
+    wrapper.unmount()
+  })
+
+  it('keeps a true final hop terminal', () => {
+    const groupId = 'flowgate.default.0375.final'
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'hop-final', group_id: groupId, mode: 'continuous',
+      docs_target: 1, chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 9,
+    })
+    const wrapper = mountPanel()
+
+    lifecycle('finished', {
+      run_id: 'hop-final', group_id: groupId, mode: 'continuous',
+      end_reason: 'exited', outcome: 'complete', docs_target: 1, docs_reached: 1,
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 10,
+    })
+
+    expect(store.runsByGroup[groupId].phase).toBe('finished')
+    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
+    wrapper.unmount()
+  })
 })

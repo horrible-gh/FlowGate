@@ -44,6 +44,8 @@ export interface AiInvokeRunEntry {
   startedAt: string | null
   elapsedMs: number
   providerSwitches: AiInvokeProviderSwitch[]
+  // The completed hop is waiting for the next run_id; this is live chain state, not terminal.
+  handoffPending: boolean
   finishedPayload: Record<string, unknown> | null
   outcome: 'complete' | 'partial' | 'none' | null
   docsReached: number
@@ -71,6 +73,9 @@ type InvokeSseDetail = {
 
 const POLL_INTERVAL_MS = 5_000
 const CLOCK_INTERVAL_MS = 1_000
+const HANDOFF_ADOPTION_DELAYS_MS = [0, 250, 1_000, 3_000] as const
+// Scheduled adoption is best-effort. Only two later, successful 5s polls may close the card.
+const HANDOFF_FINALIZE_AFTER_POLLS = 2
 // L0009 §1: finished/cancelled/lost cards leave the list on their own; paused cards never do.
 // 0290 NR0003 §5.1: 10s was effectively "gone before it was read" — the header monitor is
 // the channel this user actually watches for completions, so a finished card now survives
@@ -171,6 +176,7 @@ function startedEntry(
     startedAt: nullableString(payload.started_at) ?? (sameRun ? previous?.startedAt ?? null : null),
     elapsedMs: Number(payload.elapsed_ms ?? (sameRun ? previous?.elapsedMs : 0) ?? 0),
     providerSwitches: sameRun ? previous?.providerSwitches ?? [] : [],
+    handoffPending: sameRun ? previous?.handoffPending ?? false : false,
     finishedPayload: null,
     outcome: null,
     docsReached: 0,
@@ -217,6 +223,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     startedAt: null,
     elapsedMs: previous?.elapsedMs ?? 0,
     providerSwitches: [],
+    handoffPending: false,
     finishedPayload: null,
     outcome: null,
     docsReached: Number(payload.docs_reached ?? 0),
@@ -258,6 +265,26 @@ export function openTargetDocId(entry: AiInvokeRunEntry): string | undefined {
 
 const ACTIVE_PHASES: AiInvokePhase[] = ['running', 'pause_requested']
 
+export function isContinuationHandoff(
+  payload: Record<string, any>,
+  entry?: AiInvokeRunEntry,
+  explicitHandoff = false,
+): boolean {
+  if (payload.end_reason !== 'exited') return false
+  if (payload.stop_code === 'hop_handoff' || explicitHandoff) return true
+  if (entry?.mode !== 'continuous' || payload.outcome !== 'complete') return false
+
+  const docsTarget = Number(payload.docs_target ?? entry.docsTarget)
+  const docsReached = Number(payload.docs_reached ?? entry.docsReachedSoFar)
+  const chainTarget = Number(payload.chain_docs_target ?? entry.chainDocsTarget)
+  const chainReached = Number(payload.chain_docs_reached ?? entry.chainDocsReached)
+  // A one-document run target is ambiguous at a hop boundary; only chain coordinates may
+  // infer continuation there. The server's explicit stop_code always wins above.
+  const runHasMore = docsTarget > 1 && docsReached < docsTarget
+  const chainHasMore = chainTarget > 0 && chainReached < chainTarget
+  return runHasMore || chainHasMore
+}
+
 // The one predicate for "a result the user has not dealt with yet". 0294 B0001: every
 // surface that summarizes the registry — including the CLOSED header chip — has to count
 // these for exactly as long as the card lives, or the completion is the single state that
@@ -265,6 +292,7 @@ const ACTIVE_PHASES: AiInvokePhase[] = ['running', 'pause_requested']
 export function isFinishedCard(entry: AiInvokeRunEntry): boolean {
   // A user_paused finish is a PAUSED card (P0008 S4) — never a decay/persist candidate.
   return (entry.phase === 'finished' || entry.phase === 'lost')
+    && entry.handoffPending !== true
     && entry.endReason !== 'user_paused'
     && entry.finishedAtMs != null
 }
@@ -338,6 +366,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const now = ref(Date.now())
   const discoveryInFlight = new Set<string>()
   const refreshingRunIds = new Set<string>()
+  const continuationHandoffs = new Set<string>()
+  const handoffPollMisses = new Map<string, number>()
+  const handoffPollEligibleAt = new Map<string, number>()
+  const handoffFinishedPayloads = new Map<string, Record<string, unknown>>()
+  const handoffAdoptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
   let lastPollAt = 0
   let bootstrapInFlight = false
   let persistDirty = false
@@ -354,11 +387,61 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     persistFinished(runsByGroup)
   }
 
+  function handoffKey(groupId: string, runId: string): string {
+    return `${groupId}\n${runId}`
+  }
+
+  function clearHandoffTracking(groupId: string): void {
+    for (const timer of handoffAdoptionTimers.get(groupId) ?? []) clearTimeout(timer)
+    handoffAdoptionTimers.delete(groupId)
+    handoffPollMisses.delete(groupId)
+    handoffPollEligibleAt.delete(groupId)
+    handoffFinishedPayloads.delete(groupId)
+    const prefix = `${groupId}\n`
+    for (const key of continuationHandoffs) {
+      if (key.startsWith(prefix)) continuationHandoffs.delete(key)
+    }
+  }
+
+  function scheduleHandoffAdoption(groupId: string): void {
+    if (handoffAdoptionTimers.has(groupId)) return
+    const timers = HANDOFF_ADOPTION_DELAYS_MS.map((delay, index) => setTimeout(() => {
+      void bootstrap()
+      if (index === HANDOFF_ADOPTION_DELAYS_MS.length - 1) {
+        handoffAdoptionTimers.delete(groupId)
+      }
+    }, delay))
+    handoffAdoptionTimers.set(groupId, timers)
+  }
+
+  function finalizeHandoff(groupId: string, runId: string): void {
+    const run = runsByGroup[groupId]
+    if (!run || run.runId !== runId || !run.handoffPending) return
+    run.phase = 'finished'
+    run.handoffPending = false
+    run.finishedPayload = handoffFinishedPayloads.get(groupId) ?? run.finishedPayload
+    run.finishedAtMs = Date.now()
+    clearHandoffTracking(groupId)
+    schedulePersist()
+  }
+
   function trackStarted(payload: Record<string, any>): void {
     if (!payload?.run_id || !payload?.group_id) return
     const groupId = String(payload.group_id)
-    const replacedFinished = runsByGroup[groupId] != null && isFinishedCard(runsByGroup[groupId])
-    runsByGroup[groupId] = startedEntry(payload, runsByGroup[groupId])
+    const runId = String(payload.run_id)
+    const continuationMarker = payload.continuation_pending === true
+    const previous = runsByGroup[groupId]
+    // A delayed frame for the completed hop must not erase its adoption timers. Only a
+    // different run_id can authoritatively replace a settled handoff.
+    if (!continuationMarker && previous?.handoffPending && previous.runId === runId) return
+    if (continuationMarker) {
+      continuationHandoffs.add(handoffKey(groupId, runId))
+    } else {
+      // A real start (including a replacement run_id) is authoritative adoption.
+      clearHandoffTracking(groupId)
+    }
+    const replacedFinished = previous != null && isFinishedCard(previous)
+    runsByGroup[groupId] = startedEntry(payload, previous)
     if (replacedFinished) schedulePersist()
   }
 
@@ -392,6 +475,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (existing && existing.runId !== runId && existing.runId !== '') return
 
     const base = existing ?? startedEntry(payload)
+    // The store owns hop-vs-chain completion. The server's stop_code is authoritative;
+    // the marker and counters only preserve compatibility with older/lost SSE frames.
+    const explicitHandoff = continuationHandoffs.delete(handoffKey(groupId, runId))
+    const handoffPending = isContinuationHandoff(payload, base, explicitHandoff)
+    const firstSettledHandoff = handoffPending && !handoffFinishedPayloads.has(groupId)
     // Boundary stop (P0008 S4): a user-paused finish is a PAUSED card with a resume
     // button, never a finished card — and never a TTL-sweep candidate.
     const userPaused = payload.end_reason === 'user_paused'
@@ -401,7 +489,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       runId,
       groupId,
       docRef: String(payload.doc_ref ?? base.docRef),
-      phase: userPaused ? 'paused' : 'finished',
+      phase: userPaused ? 'paused' : (handoffPending ? 'running' : 'finished'),
       cancelling: false,
       provider: normalizeProvider(payload, base.provider),
       attemptNo: Number(payload.attempt_no ?? base.attemptNo),
@@ -417,7 +505,8 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       ),
       elapsedMs: Number(payload.duration_ms ?? payload.elapsed_ms ?? base.elapsedMs),
       providerSwitches: finishedSwitches.length > 0 ? finishedSwitches : base.providerSwitches,
-      finishedPayload: { ...payload },
+      handoffPending,
+      finishedPayload: handoffPending ? null : { ...payload },
       outcome: ['complete', 'partial', 'none'].includes(payload.outcome)
         ? payload.outcome
         : null,
@@ -433,7 +522,20 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       turnLimitExhausted: Boolean(payload.turn_limit_exhausted),
       oracleMismatch: Boolean(payload.oracle_mismatch),
       pausedAt: userPaused ? new Date().toISOString() : base.pausedAt,
-      finishedAtMs: userPaused ? null : Date.now(),
+      finishedAtMs: userPaused || handoffPending ? null : Date.now(),
+    }
+    if (handoffPending) {
+      handoffFinishedPayloads.set(groupId, { ...payload })
+      if (firstSettledHandoff) {
+        handoffPollMisses.set(groupId, 0)
+        handoffPollEligibleAt.set(
+          groupId,
+          Date.now() + HANDOFF_ADOPTION_DELAYS_MS[HANDOFF_ADOPTION_DELAYS_MS.length - 1],
+        )
+        scheduleHandoffAdoption(groupId)
+      }
+    } else {
+      clearHandoffTracking(groupId)
     }
     schedulePersist()
   }
@@ -458,6 +560,12 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   async function refresh(groupId: string): Promise<void> {
     const run = runsByGroup[groupId]
     if (!run || !ACTIVE_PHASES.includes(run.phase) || refreshingRunIds.has(run.runId)) return
+    if (run.handoffPending) {
+      // The old run endpoint can only repeat its finished payload. Group discovery is the
+      // recovery path that can see and adopt the replacement run_id.
+      await discover(groupId)
+      return
+    }
     const runId = run.runId
     refreshingRunIds.add(runId)
     try {
@@ -481,15 +589,34 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   async function refreshAllRunning(): Promise<void> {
+    const activeEntries = Object.entries(runsByGroup)
+      .filter(([, run]) => ACTIVE_PHASES.includes(run.phase))
+    const handoffs = activeEntries
+      .filter(([, run]) => run.handoffPending)
+      .map(([groupId, run]) => [groupId, run.runId] as const)
+
     await Promise.all(
-      Object.entries(runsByGroup)
-        .filter(([, run]) => ACTIVE_PHASES.includes(run.phase))
+      activeEntries
+        .filter(([, run]) => !run.handoffPending)
         .map(([groupId]) => refresh(groupId)),
     )
+    if (handoffs.length === 0 || !(await bootstrap())) return
+
+    // Scheduled 0/250/1000/3000ms checks never close a handoff. Only successful later
+    // polling responses count, and two consecutive misses are required.
+    for (const [groupId, runId] of handoffs) {
+      const current = runsByGroup[groupId]
+      if (!current?.handoffPending || current.runId !== runId) continue
+      if (Date.now() < (handoffPollEligibleAt.get(groupId) ?? 0)) continue
+      const misses = (handoffPollMisses.get(groupId) ?? 0) + 1
+      handoffPollMisses.set(groupId, misses)
+      if (misses >= HANDOFF_FINALIZE_AFTER_POLLS) finalizeHandoff(groupId, runId)
+    }
   }
 
   async function discover(groupId: string): Promise<void> {
-    if (!groupId || runsByGroup[groupId] || discoveryInFlight.has(groupId)) return
+    const existing = runsByGroup[groupId]
+    if (!groupId || (existing && !existing.handoffPending) || discoveryInFlight.has(groupId)) return
     discoveryInFlight.add(groupId)
     try {
       const response = await getRequest<any>('/api/v1/ai-invoke/active', { group_id: groupId })
@@ -506,11 +633,12 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
-  async function bootstrap(): Promise<void> {
+  async function bootstrap(): Promise<boolean> {
     // P0008 S1: one shot on app mount / reload — running cards come back from the
     // in-memory registry, paused cards from the DB (they survive a server restart).
-    if (bootstrapInFlight) return
+    if (bootstrapInFlight) return false
     bootstrapInFlight = true
+    let reconciled = false
     // Snapshot BEFORE the request: only paused cards that predate this bootstrap are
     // stale-sweep candidates — a pause that lands while the response is in flight
     // must not be wiped by an answer that predates it.
@@ -547,16 +675,18 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
           delete runsByGroup[groupId]
         }
       }
+      reconciled = true
     } catch {
       // Best effort: SSE + per-group discovery still populate the list.
     } finally {
       bootstrapInFlight = false
     }
+    return reconciled
   }
 
   async function cancel(groupId: string): Promise<void> {
     const run = runsByGroup[groupId]
-    if (!run || !ACTIVE_PHASES.includes(run.phase) || run.cancelling) return
+    if (!run || !ACTIVE_PHASES.includes(run.phase) || run.handoffPending || run.cancelling) return
     const response = await postRequest<any>(
       `/api/v1/ai-invoke/${encodeURIComponent(run.runId)}/cancel`,
       {},
@@ -580,7 +710,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // Boundary pause (P0008 S4) — continuous runs only; the UI never renders the
     // button for single runs (the server 422s as defense in depth).
     const run = runsByGroup[groupId]
-    if (!run || run.phase !== 'running' || run.mode !== 'continuous' || run.cancelling) return
+    if (!run || run.phase !== 'running' || run.handoffPending || run.mode !== 'continuous' || run.cancelling) return
     const response = await postRequest<any>(
       `/api/v1/ai-invoke/${encodeURIComponent(run.runId)}/pause`,
       {},
@@ -758,6 +888,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
     if (clockTimer) clearInterval(clockTimer)
+    for (const groupId of handoffAdoptionTimers.keys()) clearHandoffTracking(groupId)
     flushPersist()
   })
 
