@@ -354,6 +354,7 @@ const hasGroup = computed(() => !!doc.value?.group_id)
 
 const mentionText = ref('')
 const workflowSteps = ref<string[] | null>(null)
+const workflowOrphan = ref(false)
 const qAnswerStatus = ref<string | null>(null)
 
 const editingTitle = ref(false)
@@ -479,12 +480,25 @@ function invalidatePendingDocFetches(): void {
 // the next-step doc via the inbox API) refreshes workflow_head_* — and thus the
 // action bar's navigate-vs-create state — with no loading flicker. The default path
 // (tab open / switch) still resets state up front.
+async function fetchWorkflowOrphan(id: string, generation: number): Promise<void> {
+  try {
+    const res = await getRequest<any>('/api/v1/document/' + encodeURIComponent(id) + '/relations')
+    if (generation !== docFetchGeneration || props.tab.id !== id) return
+    workflowOrphan.value = res.data?.workflow?.orphan === true
+  } catch {
+    if (generation !== docFetchGeneration || props.tab.id !== id) return
+    workflowOrphan.value = false
+  }
+  emit('doc-updated', { docId: id })
+}
+
 async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolean> {
   const fetchGeneration = ++docFetchGeneration
   const silent = opts?.silent === true
   if (!silent) {
     doc.value = null
     workflowSteps.value = null
+    workflowOrphan.value = false
     ownerName.value = null
     groupLabel.value = null
     groupTitle.value = ''
@@ -532,6 +546,7 @@ async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolea
     doc.value = incoming
   }
   workflowSteps.value = doc.value?.workflow_steps ?? null
+  void fetchWorkflowOrphan(id, fetchGeneration)
   if (doc.value?.owner_id) fetchOwner(doc.value.owner_id)
   if (doc.value?.project_id && doc.value?.group_id) {
     fetchGroup(doc.value.project_id, doc.value.group_id)
@@ -1197,6 +1212,7 @@ defineExpose({
   showWorkflowDecisionModal,
   deciding,
   workflowSteps,
+  workflowOrphan,
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,

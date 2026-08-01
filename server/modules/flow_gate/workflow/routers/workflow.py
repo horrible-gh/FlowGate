@@ -26,6 +26,9 @@ from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_events as db_events
+from modules.flow_gate.db import workflow_sequences as db_wfseq
+from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services.git_service import GitServiceError
@@ -152,6 +155,10 @@ class DocumentBodyRequest(BaseModel):
 class RejectionReasonBodyRequest(BaseModel):
     doc_id: str
     reason: str
+
+
+class OrphanRecoveryRequest(BaseModel):
+    item_seq: Optional[int] = None
 
 
 class RegisterResultBodyRequest(BaseModel):
@@ -520,6 +527,115 @@ def document_transition_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"document": result}
+
+
+@router.post("/documents/{doc_id}/workflow/recover")
+def recover_orphaned_workflow_document_endpoint(
+    doc_id: str,
+    body: OrphanRecoveryRequest = OrphanRecoveryRequest(),
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Attach an orphaned document to a compatible empty workflow slot.
+
+    item_seq defaults to the group's effective head. Reattachment changes
+    workflow progression, so it deliberately reuses document.approve.
+    """
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+    _guard_group_not_disposed(doc, doc_id)
+    if "document.approve" not in _get_user_permissions(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="document.approve permission required to recover an orphaned document.",
+        )
+
+    if not db_wfseq.is_orphaned_workflow_member(doc_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Document {doc_id} is not an orphaned workflow member.",
+        )
+
+    group_id = doc.get("group_id")
+    project_id = doc.get("project_id")
+    if not group_id or not project_id:
+        raise HTTPException(
+            status_code=409,
+            detail="The orphaned document has no group or project and cannot be recovered.",
+        )
+
+    target = None
+    if body.item_seq is None:
+        target = db_wfseq.get_pending_head_by_group(group_id, project_id)
+    else:
+        roots = [
+            row for row in (db_docs.get_documents_by_group_id(group_id) or [])
+            if str(row.get("type_code") or "").upper() in {"R", "B"}
+        ]
+        sequence = next(
+            (
+                seq for root in roots
+                if root.get("doc_id")
+                for seq in [db_wfseq.get_sequence_by_doc_id(root["doc_id"])]
+                if seq is not None
+            ),
+            None,
+        )
+        if sequence is not None:
+            target = next(
+                (
+                    item for item in (db_wfseq.get_sequence_items(sequence["id"]) or [])
+                    if item.get("item_seq") == body.item_seq
+                ),
+                None,
+            )
+
+    if target is None:
+        requested = "the current workflow head" if body.item_seq is None else f"item_seq={body.item_seq}"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot recover {doc_id}: {requested} does not identify an available slot.",
+        )
+    if target.get("result_doc_id"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot recover {doc_id}: workflow slot item_seq={target.get('item_seq')} "
+                f"is already filled by {target.get('result_doc_id')}."
+            ),
+        )
+
+    expected_type = str(target.get("type") or "").upper()
+    actual_type = str(doc.get("type_code") or "").upper()
+    if expected_type != actual_type:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot recover {doc_id}: workflow slot item_seq={target.get('item_seq')} "
+                f"expects type {expected_type}, but the document type is {actual_type}."
+            ),
+        )
+
+    file_path = doc.get("file_path")
+    if not file_path:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot recover {doc_id}: the document has no registered file path.",
+        )
+
+    registered = register_workflow_result(
+        item_id=target["id"],
+        registered_path=storage_paths.to_storage_relative(file_path, project_id),
+        registered_doc_id=doc_id,
+        registered_at=now_iso(),
+        actor_user_id=current_user["user_id"],
+    )
+    return {
+        "document": registered,
+        "item_seq": target.get("item_seq"),
+        "recovered": True,
+    }
 
 
 @router.post("/documents/{doc_id}/review_transitions/{action}")

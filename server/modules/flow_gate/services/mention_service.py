@@ -45,6 +45,7 @@ from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
+# AUTO_REPORT_MAP is imported lazily at its use site to avoid a service import cycle.
 
 logger = logging.getLogger(__name__)
 
@@ -617,6 +618,23 @@ def _authoring_guide_pointer_section(header: str, type_code: str, locale: str, b
     return _section(header, _AUTHORING_GUIDE_POINTER_TEXT[loc].format(url=url))
 
 
+_PREDECESSOR_IDENTITY_WARNING_TEXT: dict[str, str] = {
+    "ko": (
+        "이 정보는 앞 문서(참고용)이며 지금 작성할 문서의 신원이 아닙니다. "
+        "실제로 제출할 문서 타입은 아래 next_type을 따르십시오."
+    ),
+    "ja": (
+        "この情報は前の文書（参照用）のものであり、現在作成する文書の識別情報ではありません。"
+        "実際に提出する文書タイプは、下の next_type に従ってください。"
+    ),
+    "en": (
+        "This information identifies the preceding document for reference; it is not the "
+        "identity of the document you are writing now. Follow next_type below for the "
+        "document type to submit."
+    ),
+}
+
+
 _SUBMIT_POINTER_TEXT: dict[str, str] = {
     "ko": "요청 서식과 예시, dry-run 사용법은 도움말 항목에 있습니다: GET {url}",
     "ja": "リクエストの書式と例、dry-runの使い方はヘルプ項目にあります: GET {url}",
@@ -1097,6 +1115,13 @@ def build_mention(
         f"doc_number: {s1_doc_number}\n"
         f"title: {s1_title}"
     )
+    # workflow_decision_service imports mention_service, so importing its constant at
+    # module load time creates a cycle before AUTO_REPORT_MAP has been defined.
+    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+
+    if head_doc_type and not is_edit and s1_type.upper() in AUTO_REPORT_MAP.values():
+        loc = template_provision.normalize_locale(locale)
+        s1_body += f"\n{_PREDECESSOR_IDENTITY_WARNING_TEXT[loc]}"
 
     # ── Section 2: creation or in-place revision instructions ────────────────
     if is_edit:

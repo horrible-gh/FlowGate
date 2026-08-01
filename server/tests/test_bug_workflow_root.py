@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+ 
 from unittest.mock import MagicMock
 
 
@@ -203,7 +203,7 @@ def test_request_workflow_decision_accepts_bug_root(monkeypatch):
     )
 
     assert result["doc_ref"] == doc_id
-    assert f'"doc_id": "{doc_id}"' in result["mention"]
+    assert doc_id in result["mention"]
 
 
 def test_parse_child_document_uses_bug_root_sequence(monkeypatch):
@@ -297,10 +297,10 @@ def test_final_approval_marks_bug_root_done(monkeypatch):
         },
     )
 
-    result = asyncio.run(routes.finalize_workflow_endpoint(
+    result = routes.finalize_workflow_endpoint(
         routes.DocumentBodyRequest(doc_id=bug_id),
         {"user_id": "user-1"},
-    ))
+    )
 
     assert updated == {"doc_id": bug_id, "doc_review_status": "wf_done"}
     assert result["document"]["doc_review_status"] == "wf_done"

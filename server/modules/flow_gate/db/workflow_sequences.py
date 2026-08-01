@@ -163,6 +163,46 @@ def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
     return get_sequence_by_id(item["sequence_id"])
 
 
+def is_orphaned_workflow_member(doc_id: str) -> bool:
+    """Return whether a workflow-planned group document is not attached to any slot.
+
+    A group without a decided R/B sequence is not orphaned yet. Sequence roots,
+    auto-completed M/CH documents, and Q/A conversation documents intentionally do
+    not occupy result slots and are therefore excluded.
+    """
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+
+    doc = db_documents.get_by_id(doc_id)
+    if doc is None:
+        return False
+
+    type_code = str(doc.get("type_code") or "").upper()
+    if type_code in AUTO_COMPLETE_TYPES or type_code in {"Q", "A"}:
+        return False
+
+    group_id = doc.get("group_id")
+    if not group_id:
+        return False
+
+    roots = [
+        row for row in (db_documents.get_documents_by_group_id(group_id) or [])
+        if str(row.get("type_code") or "").upper() in {"R", "B"}
+    ]
+    if any(root.get("doc_id") == doc_id for root in roots):
+        return False
+
+    has_decided_sequence = any(
+        get_sequence_by_doc_id(root.get("doc_id")) is not None
+        for root in roots
+        if root.get("doc_id")
+    )
+    if not has_decided_sequence:
+        return False
+
+    return get_sequence_for_member_doc(doc_id) is None
+
+
 def set_item_result_doc_id(item_id: int, result_doc_id: Optional[str]) -> None:
     """Set result_doc_id on the sequence item (register / clear a result document)."""
     store = get_store()

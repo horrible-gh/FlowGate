@@ -29,6 +29,7 @@ from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import document_service, document_types, template_service
+from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import conversation_markdown_service, conversation_query_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -42,7 +43,7 @@ _log = _logging.getLogger(__name__)
 # does not reset them, and head derivation never selects an existing one.
 # CH (conversation/chat) joins M here per L0044.0008 §2/§3: a chat doc is a
 # non-gate, auto-approved note whose body accumulates dialogue turns.
-AUTO_COMPLETE_TYPES = {"M", "CH"}
+# Defined in documents.constants so review guards and creation paths share one source.
 # Conversation (chat) types — auto-complete like M, plus two extra behaviours:
 # owner-targeted SSE on edit (L0044.0008 §8) and turn carry-over at the content
 # cap (§7). Kept separate from AUTO_COMPLETE_TYPES so memo (M) behaviour is

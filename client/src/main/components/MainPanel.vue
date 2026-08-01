@@ -369,6 +369,7 @@
             :tr-scope="exposedValue(docHeaderRefs[tab.id]?.trScope) ?? null"
             :q-status="qStatuses[tab.id] ?? null"
             :workflow-steps="exposedValue(docHeaderRefs[tab.id]?.workflowSteps) ?? null"
+            :orphan="exposedValue(docHeaderRefs[tab.id]?.workflowOrphan) === true"
             :self-index="exposedValue(docHeaderRefs[tab.id]?.workflowSelfIndex) ?? null"
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :next-step-index="getWorkflowViewState(tab.id).nextStepIndex"
@@ -376,6 +377,7 @@
             @toggle="docInfoCollapsed = !docInfoCollapsed"
             @next-action="onProceedNextStep(tab.id)"
             @open-review-history="openReviewHistory(tab.id)"
+            @orphan-recovered="onOrphanRecovered(tab.id)"
           />
           </div><!-- doc-with-panel -->
         </div>
@@ -2847,6 +2849,10 @@ async function doWorkflowStepReturn() {
   } finally {
     returnPointRestoring.value = false
   }
+}
+
+async function onOrphanRecovered(tabId: string) {
+  await docHeaderRefs[tabId]?.fetchDoc?.(tabId, { silent: true })
 }
 
 async function onRejectDialogSaveReason(reason: string) {

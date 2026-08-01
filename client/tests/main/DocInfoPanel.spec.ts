@@ -104,6 +104,41 @@ describe('DocInfoPanel status fallback', () => {
   })
 })
 
+describe('DocInfoPanel orphan recovery (flowgate.default.0374)', () => {
+  function mountOrphan(orphan: boolean) {
+    return mount(DocInfoPanel, {
+      props: {
+        docId: 'flowgate.default.0374.9999-TR',
+        typeCode: 'TR',
+        reviewStatus: 'pending_review',
+        rejectReason: null,
+        orphan,
+        stepStates: [] as StepState[],
+        nextStepIndex: null,
+        collapsed: false,
+      },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  it('shows the orphan warning only for an unattached document', () => {
+    expect(mountOrphan(true).find('.dip-orphan-warning').exists()).toBe(true)
+    expect(mountOrphan(false).find('.dip-orphan-warning').exists()).toBe(false)
+  })
+
+  it('reattaches to the current head and emits a refresh signal', async () => {
+    const wrapper = mountOrphan(true)
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0374.9999-TR/workflow/recover',
+      {},
+    )
+    expect(wrapper.emitted('orphan-recovered')).toHaveLength(1)
+  })
+})
+
 describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
   const baseProps = {
     docId: 'p.none.0001.0001-D',

@@ -26,6 +26,7 @@ from modules.flow_gate import template_provision
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import workflow_events as db_events
+from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import document_revisions as db_revisions
@@ -2532,6 +2533,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if disposed is not None:
         return disposed
 
+
     if doc_path is not None:
         scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(
             token_rec["project"], token_rec["token_id"]
@@ -2669,11 +2671,38 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 pass
             return _fail(422, tr_scope_result.get("notice") or "TR 작업범위 검증 반려")
 
+    # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
+    # Compare before the shared dry-run branch and before numbering/storage so a
+    # mismatched preview and real submission fail identically without an orphan doc.
+    # Standalone auto-complete types (M/CH) intentionally bypass this workflow-slot
+    # constraint, matching their existing Step 7.5 behavior.
+    workflow_head: Optional[dict] = None
+    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
+    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+        try:
+            workflow_head = db_wfseq.get_pending_head_by_group(group["group_id"], project)
+        except Exception:
+            # Step 7.5 is best-effort too; stores without workflow support retain the
+            # legacy non-workflow creation path rather than failing unrelated submissions.
+            workflow_head = None
+        if workflow_head is not None:
+            expected_head_type = str(workflow_head.get("type") or "").upper()
+            submitted_type = doc_type.upper()
+            if expected_head_type and expected_head_type != submitted_type:
+                return _fail(
+                    409,
+                    f"이 그룹의 다음 단계는 {expected_head_type}입니다. "
+                    f"받은 타입 {submitted_type}은 받을 수 없습니다. 문서는 등록되지 "
+                    f"않았습니다. doc_type을 {expected_head_type}로 바꿔 다시 제출하세요.",
+                )
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
     # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
     # content_size is NOT a check here: _handle_new has no body-size validation (L0007 §1.1).
     new_checks = ["auth", "context_binding", "permission", "doc_type", "referential_integrity"]
+    if workflow_head is not None:
+        new_checks.append("workflow_head")
     if doc_path is not None:
         new_checks.append("doc_path")
     if body_for_guards is not None:
