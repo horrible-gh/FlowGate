@@ -1501,12 +1501,14 @@ def _tr_scope_meta(result: dict) -> dict:
 
     Keeps the verdict, stage, codes and assignment, plus a bounded slice of each path
     list with its true count so the UI can render "n건" honestly while the stored blob
-    stays small. `notice` is never persisted — it only exists for a rejection, and a
-    rejection has no document to persist onto.
+    stays small. ``reported`` is also an input to later TR evaluations, so it keeps the
+    parser's full supported maximum instead of the display-only 50-path limit. `notice`
+    is never persisted — it only exists for a rejection, and a rejection has no document
+    to persist onto.
     """
-    def _slice(key: str) -> dict:
+    def _slice(key: str, limit: int = _TR_SCOPE_META_MAX_PATHS) -> dict:
         values = list(result.get(key) or [])
-        return {"count": len(values), "items": values[:_TR_SCOPE_META_MAX_PATHS]}
+        return {"count": len(values), "items": values[:limit]}
 
     return {
         "verdict": result.get("verdict"),
@@ -1514,13 +1516,33 @@ def _tr_scope_meta(result: dict) -> dict:
         "codes": result.get("codes") or [],
         "branch": result.get("branch"),
         "scope_reason": result.get("scope_reason"),
-        "reported": _slice("reported"),
+        "reported": _slice("reported", tr_scope_service.MAX_ITEMS),
         "detected": _slice("detected"),
         "unconfirmed": _slice("unconfirmed"),
         "unreported": _slice("unreported"),
         "out_of_scope": _slice("out_of_scope"),
         "format_errors": _slice("format_errors"),
     }
+
+
+def _prior_tr_declared(group_id: str, exclude_doc_id: Optional[str] = None) -> list[str]:
+    """Return the union of paths already reported by earlier TRs in this group."""
+    declared: set[str] = set()
+    for document in db_docs.get_documents_by_group_id(group_id):
+        if str(document.get("type_code") or "").upper() != "TR":
+            continue
+        if exclude_doc_id and document.get("doc_id") == exclude_doc_id:
+            continue
+        verdict = tr_scope_service.verdict_from_meta(document.get("meta"))
+        if not verdict:
+            continue
+        reported = verdict.get("reported")
+        if not isinstance(reported, dict):
+            continue
+        for path in reported.get("items") or []:
+            if isinstance(path, str) and path:
+                declared.add(path)
+    return sorted(declared)
 
 
 def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONResponse]:
@@ -2458,6 +2480,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             tr_scope_result = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
                 locale=scope_locale,
+                prior_declared=_prior_tr_declared(group["group_id"]),
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 TR 접수를 막아선 안 된다
             tr_scope_result = None
@@ -2998,6 +3021,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             edit_tr_scope = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
                 locale=scope_locale,
+                prior_declared=_prior_tr_declared(group["group_id"], exclude_doc_id=doc_id),
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 재제출을 막아선 안 된다
             edit_tr_scope = None
