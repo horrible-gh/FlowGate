@@ -1121,6 +1121,12 @@ def start_run(
         "continuation_provider_overrides": (
             continuation_provider_overrides if mode == "continuous" else None
         ),
+        # 0373 T0004: preserve the override resolved for THIS hop. The no-output retry
+        # schedule is individual -> individual -> common, so the raw map alone is not
+        # enough once the workflow head moves or is unavailable during a later lookup.
+        "continuation_step_provider_id": (
+            step_override_provider if mode == "continuous" else None
+        ),
         # 0346 T0005: the [전달멘트] tab's note bundle rides the run forward the same way the
         # provider override map does, so a re-spawned hop (_maybe_auto_resume_hop ->
         # _spawn_auto_resume) can re-apply it. Session-scoped — never persisted on a token.
@@ -1753,11 +1759,12 @@ def _recheck_no_output(run: dict) -> bool:
 
 
 def _retry_provider_chain(run: dict) -> list[dict]:
-    """Providers this hop has not tried yet, in the project's configured order (L0007 §2.3).
+    """Choose the next no-output attempt's provider.
 
-    A provider that already failed to start is excluded as well: the same host state that
-    refused it a minute ago will refuse it again. Head = the next attempt's provider,
-    tail = that attempt's own startup fallback.
+    0373 T0004: an individual hop override is a strict three-attempt schedule:
+    individual, the same individual once more, then the user-selected common provider.
+    After the third attempt `_retry_eligible` closes the run as no_output_exhausted.
+    Runs without an individual override retain the configured-order fallback contract.
     """
     try:
         effective = ai_settings_service.resolve_effective(run["project_id"])
@@ -1765,6 +1772,22 @@ def _retry_provider_chain(run: dict) -> list[dict]:
     except Exception:
         logger.warning("ai-invoke retry chain lookup failed for %s", run["run_id"], exc_info=True)
         return []
+
+    step_provider_id = run.get("continuation_step_provider_id")
+    if step_provider_id:
+        attempts_used = int(run.get("attempts_used") or 0)
+        if attempts_used == 1:
+            retry_provider_id = step_provider_id
+        elif attempts_used == 2:
+            retry_provider_id = run.get("continuation_base_provider_id")
+        else:
+            return []
+        selected = next(
+            (provider for provider in chain if provider.get("id") == retry_provider_id),
+            None,
+        )
+        return [selected] if selected else []
+
     attempted = {entry.get("provider_id") for entry in run.get("fallback_history") or []}
     attempted.add(run.get("provider_id"))
     return [provider for provider in chain if provider.get("id") not in attempted]
