@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Optional
+from typing import Iterable, Optional
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import git_service
@@ -258,12 +258,20 @@ def resolve_stage(project_id: str) -> Optional[str]:
 
 # ── 대조 판정 (D0004 §3.4 / §3.7) ────────────────────────────────────────────
 
-def evaluate(project_id: str, group_id: str, body: str, locale: str = "ko") -> dict:
+def evaluate(
+    project_id: str,
+    group_id: str,
+    body: str,
+    locale: str = "ko",
+    prior_declared: Optional[Iterable[str]] = None,
+) -> dict:
     """TR 본문을 판정한다. 부작용 없음 — dry-run 과 실등록이 같은 함수를 호출한다.
 
     반환 dict 는 그대로 dry-run 응답, 문서 meta, 이벤트 metadata 에 실린다.
     ``locale`` 은 거부됐을 때 붙는 안내문(``notice``)의 언어만 정한다(T2/TR2) — 판정
-    자체는 언어와 무관하다.
+    자체는 언어와 무관하다. ``prior_declared`` 는 같은 그룹의 이전 TR들이 이미 신고한
+    경로이며 신고 누락 판정에만 합친다. 이번 본문의 신고분 미확인 판정에는 영향을 주지
+    않는다.
     """
     stage = resolve_stage(project_id)
     if stage is None:
@@ -302,10 +310,15 @@ def evaluate(project_id: str, group_id: str, body: str, locale: str = "ko") -> d
     else:
         detected_set = set(detected)
         declared_set = set(declared)
+        prior_declared_set = {
+            path for path in (prior_declared or [])
+            if isinstance(path, str) and not is_excluded_path(path)
+        }
         # 5) 신고분 미확인 — 여기가 "다른 위치에서 작업함"이 실제로 잡히는 자리다.
+        #    이전 TR의 신고 경로는 이번 본문의 정직성을 판단하는 근거가 아니다.
         unconfirmed = sorted(declared_set - detected_set)
-        # 6) 신고 누락
-        unreported = sorted(detected_set - declared_set)
+        # 6) 신고 누락 — 실제 변경은 그룹 누적이므로 신고도 이전 TR까지 누적해 대조한다.
+        unreported = sorted(detected_set - (declared_set | prior_declared_set))
         if unconfirmed:
             codes.append(TRV_UNCONFIRMED)
         if unreported:

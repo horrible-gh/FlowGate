@@ -410,6 +410,50 @@ def test_evaluate_passes_on_an_exact_match(monkeypatch):
     assert result["verdict"] == trs.VERDICT_PASS
 
 
+def test_evaluate_prior_declared_suppresses_only_old_reported_paths(monkeypatch):
+    _stub_scope(
+        monkeypatch,
+        trs.STAGE_ENFORCE,
+        ["server/prior.py", "server/current.py", "server/new_unreported.py"],
+    )
+    result = trs.evaluate(
+        "p",
+        "g",
+        "## 변경 파일\n\n- server/current.py\n",
+        prior_declared=["server/prior.py"],
+    )
+
+    assert result["unconfirmed"] == []
+    assert result["unreported"] == ["server/new_unreported.py"]
+    assert result["codes"] == [trs.TRV_UNREPORTED]
+
+
+def test_evaluate_prior_declared_never_masks_current_unconfirmed(monkeypatch):
+    _stub_scope(monkeypatch, trs.STAGE_ENFORCE, ["server/prior.py"])
+    result = trs.evaluate(
+        "p",
+        "g",
+        "## 변경 파일\n\n- server/ghost.py\n",
+        prior_declared=["server/prior.py", "server/ghost.py"],
+    )
+
+    assert result["unconfirmed"] == ["server/ghost.py"]
+    assert result["unreported"] == []
+    assert result["codes"] == [trs.TRV_UNCONFIRMED]
+
+
+def test_evaluate_without_prior_declared_keeps_the_original_behavior(monkeypatch):
+    _stub_scope(monkeypatch, trs.STAGE_ENFORCE, ["server/prior.py", "server/current.py"])
+    body = "## 변경 파일\n\n- server/current.py\n"
+
+    omitted = trs.evaluate("p", "g", body)
+    empty = trs.evaluate("p", "g", body, prior_declared=[])
+
+    assert omitted == empty
+    assert omitted["unreported"] == ["server/prior.py"]
+    assert omitted["codes"] == [trs.TRV_UNREPORTED]
+
+
 def test_evaluate_accepts_none_when_nothing_changed(monkeypatch):
     _stub_scope(monkeypatch, trs.STAGE_ENFORCE, [])
     result = trs.evaluate("p", "g", "## 변경 파일\n\n없음\n")
@@ -457,6 +501,67 @@ def test_meta_slice_keeps_the_true_count_after_trimming():
     assert meta["reported"] == {"count": 0, "items": []}
     # notice 는 거부일 때만 존재하고 거부에는 문서가 없다 — meta 에 실릴 일이 없다.
     assert "notice" not in meta
+
+
+def test_reported_meta_keeps_more_than_display_limit_and_round_trips():
+    import json as _json
+
+    from modules.flow_gate.api.inbox_routes import (
+        _TR_SCOPE_META_MAX_PATHS,
+        _tr_scope_meta,
+    )
+
+    reported = [f"server/reported_{i}.py" for i in range(_TR_SCOPE_META_MAX_PATHS + 30)]
+    meta = _tr_scope_meta({
+        "verdict": trs.VERDICT_PASS,
+        "stage": trs.STAGE_ENFORCE,
+        "codes": [],
+        "reported": reported,
+        "detected": reported,
+    })
+    restored = trs.verdict_from_meta(_json.dumps({"tr_scope": meta}))
+
+    assert restored["reported"]["count"] == len(reported)
+    assert restored["reported"]["items"] == reported
+    assert len(restored["detected"]["items"]) == _TR_SCOPE_META_MAX_PATHS
+
+
+def test_prior_tr_declared_unions_group_meta_and_excludes_current_document(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+
+    documents = [
+        {
+            "doc_id": "g.0001-TR",
+            "type_code": "TR",
+            "meta": {"tr_scope": {"reported": {"count": 2, "items": ["a.py", "b.py"]}}},
+        },
+        {
+            "doc_id": "g.0002-TR",
+            "type_code": "TR",
+            "meta": '{"tr_scope":{"reported":{"count":2,"items":["b.py","c.py"]}}}',
+        },
+        {
+            "doc_id": "g.0003-TR",
+            "type_code": "TR",
+            "meta": {"tr_scope": {"reported": {"count": 1, "items": ["self.py"]}}},
+        },
+        {
+            "doc_id": "g.0004-NR",
+            "type_code": "NR",
+            "meta": {"tr_scope": {"reported": {"count": 1, "items": ["ignore.py"]}}},
+        },
+    ]
+    monkeypatch.setattr(
+        inbox_routes.db_docs,
+        "get_documents_by_group_id",
+        lambda group_id: documents,
+    )
+
+    assert inbox_routes._prior_tr_declared("g", exclude_doc_id="g.0003-TR") == [
+        "a.py",
+        "b.py",
+        "c.py",
+    ]
 
 
 def test_meta_round_trips_through_verdict_from_meta():
