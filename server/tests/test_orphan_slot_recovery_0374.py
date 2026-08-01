@@ -63,7 +63,7 @@ def test_orphan_detection_is_false_before_workflow_decision(monkeypatch):
     assert db_wfseq.is_orphaned_workflow_member(DOC_ID) is False
 
 
-@pytest.mark.parametrize("type_code", ["M", "CH", "Q", "A"])
+@pytest.mark.parametrize("type_code", ["M", "CH", "Q", "A", "AC"])
 def test_orphan_detection_excludes_non_slot_types(monkeypatch, type_code):
     _install_orphan_queries(monkeypatch, doc=_doc(type_code=type_code))
     assert db_wfseq.is_orphaned_workflow_member(DOC_ID) is False
@@ -82,6 +82,15 @@ def test_relations_exposes_orphan_signal(monkeypatch):
 
     assert result["decided"] is False
     assert result["orphan"] is True
+
+
+def test_relations_reports_ac_as_not_orphaned(monkeypatch):
+    _install_orphan_queries(monkeypatch, doc=_doc(type_code="AC"))
+
+    result = document_routes._relations_workflow(DOC_ID)
+
+    assert result["decided"] is False
+    assert result["orphan"] is False
 
 
 def _install_recovery(monkeypatch, target: dict, *, orphan=True):
@@ -120,6 +129,24 @@ def test_recovery_attaches_to_compatible_empty_head(monkeypatch):
     register.assert_called_once()
     assert register.call_args.kwargs["item_id"] == 77
     assert register.call_args.kwargs["registered_doc_id"] == DOC_ID
+
+
+def test_recovery_rejects_ac_as_non_slot_type(monkeypatch):
+    ac = _doc(type_code="AC")
+    ac["file_path"] = None
+    monkeypatch.setattr(workflow.db_docs, "get_by_id", lambda _doc_id: ac)
+    monkeypatch.setattr(workflow.process_service, "is_group_disposed", lambda _group_id: False)
+    orphan_check = MagicMock(return_value=True)
+    monkeypatch.setattr(workflow.db_wfseq, "is_orphaned_workflow_member", orphan_check)
+
+    with pytest.raises(HTTPException) as exc:
+        workflow.recover_orphaned_workflow_document_endpoint(
+            DOC_ID, workflow.OrphanRecoveryRequest(), _admin()
+        )
+
+    assert exc.value.status_code == 409
+    assert "not a recoverable workflow slot type" in exc.value.detail
+    orphan_check.assert_not_called()
 
 
 def test_recovery_rejects_filled_slot(monkeypatch):

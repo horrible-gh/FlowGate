@@ -167,18 +167,18 @@ def is_orphaned_workflow_member(doc_id: str) -> bool:
     """Return whether a workflow-planned group document is not attached to any slot.
 
     A group without a decided R/B sequence is not orphaned yet. Sequence roots,
-    auto-completed M/CH documents, and Q/A conversation documents intentionally do
-    not occupy result slots and are therefore excluded.
+    auto-completed M/CH documents, Q/A conversations, and the synthetic AC final
+    approval gate intentionally do not occupy result slots and are therefore excluded.
     """
     from modules.flow_gate.db import documents as db_documents
-    from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+    from modules.flow_gate.documents.constants import NON_SLOT_WORKFLOW_TYPES
 
     doc = db_documents.get_by_id(doc_id)
     if doc is None:
         return False
 
     type_code = str(doc.get("type_code") or "").upper()
-    if type_code in AUTO_COMPLETE_TYPES or type_code in {"Q", "A"}:
+    if type_code in NON_SLOT_WORKFLOW_TYPES:
         return False
 
     group_id = doc.get("group_id")

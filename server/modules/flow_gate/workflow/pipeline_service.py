@@ -18,8 +18,12 @@ from typing import Any
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_item_results as db_wir
+from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
-from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+from modules.flow_gate.documents.constants import (
+    AUTO_COMPLETE_TYPES,
+    FILELESS_APPROVABLE_TYPES,
+)
 from modules.flow_gate.services.content_search_service import _strip_frontmatter
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -419,11 +423,75 @@ def _check_group_completion(
 _EMPTY_BODY_APPROVAL_MESSAGE = (
     "본문이 비어 있어 승인할 수 없습니다. 문서 내용을 채운 뒤 다시 승인하십시오."
 )
+_FILELESS_APPROVAL_STRUCTURE_MESSAGE = (
+    "최종 승인이 현재 워크플로 헤드가 아니어서 승인할 수 없습니다."
+)
+_APPROVED_REVIEW_STATUSES = {"approved", "wf_done"}
+_WORKFLOW_ROOT_TYPES = {"R", "B"}
+
+
+def _require_fileless_approval_structure(doc: dict) -> None:
+    """Require a file-less AC to be the structurally valid current group head."""
+    type_code = str(doc.get("type_code") or "").upper()
+    project_id = doc.get("project_id")
+    group_id = doc.get("group_id")
+    target_id = doc.get("target_id")
+    if type_code != "AC" or not project_id or not group_id or not target_id:
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+
+    try:
+        group_docs = db_docs.list_documents(
+            project_id=project_id, group_id=group_id, limit=200
+        ) or []
+        root = next(
+            (
+                item
+                for item in group_docs
+                if item.get("doc_id") == target_id
+                and str(item.get("type_code") or "").upper() in _WORKFLOW_ROOT_TYPES
+            ),
+            None,
+        )
+        sequence = db_wfseq.get_sequence_by_doc_id(target_id) if root else None
+        effective_head = (
+            db_wfseq.get_effective_head(sequence["id"])
+            if sequence and sequence.get("id") is not None
+            else None
+        )
+    except Exception as exc:
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE) from exc
+
+    if root is None or sequence is None or effective_head is not None:
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+    if root.get("doc_review_status") == "wf_done":
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+    if any(
+        item.get("doc_id") != doc.get("doc_id")
+        and str(item.get("type_code") or "").upper() == "AC"
+        and item.get("doc_review_status") in _APPROVED_REVIEW_STATUSES
+        for item in group_docs
+    ):
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+
+    non_head_types = _WORKFLOW_ROOT_TYPES | {"Q"} | AUTO_COMPLETE_TYPES
+    current_heads = [
+        item
+        for item in group_docs
+        if str(item.get("type_code") or "").upper() not in non_head_types
+        and item.get("doc_review_status") not in _APPROVED_REVIEW_STATUSES
+    ]
+    current_heads.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
+    if not current_heads or current_heads[0].get("doc_id") != doc.get("doc_id"):
+        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
 
 
 def _require_document_body_for_approval(doc: dict) -> None:
     """Reject approval when a reviewable document has no readable, non-blank body."""
-    if (doc.get("type_code") or "").upper() in AUTO_COMPLETE_TYPES:
+    type_code = str(doc.get("type_code") or "").upper()
+    if type_code in FILELESS_APPROVABLE_TYPES:
+        _require_fileless_approval_structure(doc)
+        return
+    if type_code in AUTO_COMPLETE_TYPES:
         return
 
     stored_path = (doc.get("file_path") or "").strip()

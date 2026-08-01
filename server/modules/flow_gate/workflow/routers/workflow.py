@@ -28,6 +28,7 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.documents.constants import NON_SLOT_WORKFLOW_TYPES
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
@@ -549,6 +550,13 @@ def recover_orphaned_workflow_document_endpoint(
         raise HTTPException(
             status_code=403,
             detail="document.approve permission required to recover an orphaned document.",
+        )
+
+    type_code = str(doc.get("type_code") or "").upper()
+    if type_code in NON_SLOT_WORKFLOW_TYPES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Document type {type_code} is not a recoverable workflow slot type.",
         )
 
     if not db_wfseq.is_orphaned_workflow_member(doc_id):
