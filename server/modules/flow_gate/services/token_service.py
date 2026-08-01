@@ -120,7 +120,7 @@ def _scratch_dir(project_id: str, token_id: str) -> Path:
     project = db_projects.get_by_id(project_id)
     project_name = project["project_name"] if project else project_id
     safe_name = _sanitize_project_name(project_name)
-    return get_storage_root() / "work" / safe_name / token_id
+    return (get_storage_root() / "work" / safe_name / token_id).resolve()
 
 
 def scratch_dir_path(project_id: str, token_id: str) -> str:

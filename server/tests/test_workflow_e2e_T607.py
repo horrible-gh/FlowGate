@@ -283,6 +283,8 @@ def _patch_pipeline_d1(monkeypatch, doc: dict):
 
     mock_docs.update = MagicMock(side_effect=_update)
     monkeypatch.setattr(ps, "db_docs", mock_docs)
+    # These tests isolate slot/head and single-writer effects from body validation.
+    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc: None)
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})
     monkeypatch.setattr(el, "db_events", mock_events)
@@ -740,6 +742,8 @@ def test_transition_document_review_is_single_writer_for_doc_review_status(monke
 
     import modules.flow_gate.workflow.event_logger as el
     monkeypatch.setattr(ps, "db_docs", mock_docs)
+    # These tests isolate slot/head and single-writer effects from body validation.
+    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc: None)
     monkeypatch.setattr(el, "db_events", MagicMock())
     monkeypatch.setattr(el.db_events, "create", MagicMock(return_value={"id": 1}))
 

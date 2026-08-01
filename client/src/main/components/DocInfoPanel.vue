@@ -26,6 +26,13 @@
             {{ statusLabel }}
           </div>
           <p class="dip-status-desc">{{ statusDesc }}</p>
+          <div v-if="orphan" class="dip-orphan-warning">
+            <AppIcon name="warning" />
+            <p>{{ t('main.doc_info_panel.orphan_desc') }}</p>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="recovering" @click="recoverOrphan">
+              {{ t(recovering ? 'main.doc_info_panel.orphan_recovering' : 'main.doc_info_panel.orphan_recover') }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -424,7 +431,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
 import GroupChangesDialog from './GroupChangesDialog.vue'
@@ -458,6 +465,7 @@ const props = defineProps<{
   trScope?: TrScopeVerdict | null
   qStatus?: string | null
   workflowSteps?: string[] | null
+  orphan?: boolean
   selfIndex?: number | null
   stepStates: StepState[]
   nextStepIndex: number | null
@@ -468,6 +476,7 @@ const emit = defineEmits<{
   toggle: []
   'next-action': []
   'open-review-history': []
+  'orphan-recovered': []
 }>()
 
 // ── R0001 (group 0126 / C안): section-level accordion ──────────────────────────
@@ -836,6 +845,22 @@ watch(qaProjectId, (projectId) => {
 }, { immediate: true })
 
 const { showToast } = useToast()
+const recovering = ref(false)
+
+async function recoverOrphan() {
+  if (!props.orphan || recovering.value) return
+  recovering.value = true
+  try {
+    await postRequest('/api/v1/documents/' + encodeURIComponent(props.docId) + '/workflow/recover', {})
+    showToast(t('main.doc_info_panel.orphan_recovered'), 'success')
+    emit('orphan-recovered')
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(t('main.doc_info_panel.orphan_recover_failed', { detail }), 'danger')
+  } finally {
+    recovering.value = false
+  }
+}
 const { recordMentionCopy } = useMentionCopy()
 
 // [멘트 복사] for one query item (0248 B0001 rework). The mention is fetched INSIDE the
@@ -924,6 +949,20 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
 </script>
 
 <style scoped>
+.dip-orphan-warning {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+}
+.dip-orphan-warning p { margin: 0; font-size: .72rem; line-height: 1.45; }
+.dip-orphan-warning .btn { grid-column: 1 / -1; justify-self: stretch; }
 .dip-badge-clickable {
   cursor: pointer;
 }

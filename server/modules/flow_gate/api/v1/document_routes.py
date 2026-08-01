@@ -573,6 +573,7 @@ def _workflow_item_brief(item: Optional[dict]) -> Optional[dict]:
 _WORKFLOW_UNDECIDED = {
     "root_doc_id": None, "doc_class": None, "decided": False, "item_seq": None,
     "type": None, "label": None, "status": None, "prev_item": None, "next_item": None,
+    "orphan": False,
 }
 
 
@@ -584,8 +585,14 @@ def _relations_workflow(doc_id: str) -> dict:
         sequence = db_wfseq.get_sequence_for_member_doc(doc_id)
     except Exception:  # noqa: BLE001 — 관계 조회가 워크플로 때문에 죽으면 안 된다
         sequence = None
+    try:
+        orphan = db_wfseq.is_orphaned_workflow_member(doc_id)
+    except Exception:  # noqa: BLE001
+        orphan = False
     if not sequence:
-        return dict(_WORKFLOW_UNDECIDED)
+        undecided = dict(_WORKFLOW_UNDECIDED)
+        undecided["orphan"] = orphan
+        return undecided
     try:
         items = db_wfseq.get_sequence_items(sequence["id"]) or []
     except Exception:  # noqa: BLE001
@@ -604,7 +611,7 @@ def _relations_workflow(doc_id: str) -> dict:
             "doc_class": items[0].get("doc_class") if items else None,
             "decided": True,
             "item_seq": None, "type": None, "label": None, "status": None,
-            "prev_item": None, "next_item": None,
+            "prev_item": None, "next_item": None, "orphan": False,
         }
     mine = items[mine_idx]
     return {
@@ -619,6 +626,7 @@ def _relations_workflow(doc_id: str) -> dict:
         "next_item": _workflow_item_brief(
             items[mine_idx + 1] if mine_idx + 1 < len(items) else None
         ),
+        "orphan": False,
     }
 
 

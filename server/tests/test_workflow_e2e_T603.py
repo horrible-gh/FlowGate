@@ -63,6 +63,8 @@ def _patch_ps(monkeypatch, doc: dict):
 
     mock_docs.update = MagicMock(side_effect=_update)
     monkeypatch.setattr(ps, "db_docs", mock_docs)
+    # Approval-body validation is covered by test_empty_body_approval_guard_0374.py.
+    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc: None)
 
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})

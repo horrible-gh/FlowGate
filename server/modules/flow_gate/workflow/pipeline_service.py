@@ -19,6 +19,9 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_item_results as db_wir
 from modules.flow_gate.db.connection import get_store, now_iso
+from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+from modules.flow_gate.services.content_search_service import _strip_frontmatter
+from modules.flow_gate.storage import paths as storage_paths
 
 from .event_logger import (
     EVT_GROUP_APPROVED,
@@ -413,6 +416,38 @@ def _check_group_completion(
 
 # ── Document review-state transition service ─────────────────────────────────
 
+_EMPTY_BODY_APPROVAL_MESSAGE = (
+    "본문이 비어 있어 승인할 수 없습니다. 문서 내용을 채운 뒤 다시 승인하십시오."
+)
+
+
+def _require_document_body_for_approval(doc: dict) -> None:
+    """Reject approval when a reviewable document has no readable, non-blank body."""
+    if (doc.get("type_code") or "").upper() in AUTO_COMPLETE_TYPES:
+        return
+
+    stored_path = (doc.get("file_path") or "").strip()
+    if not stored_path:
+        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+
+    branch = (doc.get("branch") or "main").strip() or "main"
+    resolved = storage_paths.resolve_storage_path(
+        stored_path,
+        doc.get("project_id"),
+        branch=branch,
+    )
+    if resolved is None or not resolved.is_file():
+        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+
+    try:
+        content = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE) from exc
+
+    if not _strip_frontmatter(content).strip():
+        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+
+
 def transition_document_review(
     *,
     doc_id: str,
@@ -450,6 +485,9 @@ def transition_document_review(
     # comment is required for reject
     if action == "reject" and not comment:
         raise ValueError("Comment required when rejecting (reason for rejection).")
+
+    if action == "approve":
+        _require_document_body_for_approval(doc)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,
