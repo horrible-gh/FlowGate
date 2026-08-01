@@ -8,7 +8,6 @@ both halves: the prohibition survives verbatim, and the prescription names `opti
 """
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
@@ -49,16 +48,24 @@ def test_prohibition_block_is_unchanged(locale):
 
 
 @pytest.mark.parametrize("locale", _LOCALES)
-def test_embedded_post_advertises_the_optional_options_field(locale):
-    """즉시 사용 가능한 POST 예시가 새 필드를 안내한다 (§2.6 부수 갱신)."""
+def test_options_example_moved_behind_the_question_help_item(locale):
+    """group 0372 set 3 (D-0003 §3-2 "질의 등록 예시는 도움말로"): the guide no longer
+    embeds the placeholder POST JSON — it keeps the address + credential and points at
+    the `question` help item, whose example now carries the §2.6 duty of demonstrating
+    the optional `options` field."""
+    from modules.flow_gate.services import help_catalog
+
     body = _clarify(locale)
-    # raw_decode stops at the payload's closing brace — the warn/positive prose follows it.
-    payload, _ = json.JSONDecoder().raw_decode(body[body.index("{"):])
-    question = payload["questions"][0]
-    assert set(question) == {"title", "body", "options"}
-    assert len(question["options"]) == 2
+    assert f"POST {_API_BASE}/q/{_ANCHOR}/questions" in body
+    assert '"asker_kind"' not in body
+    assert "help/items/question" in body
+
+    example = help_catalog.build_question_content(locale)["example"]["body"]
+    with_options = [q for q in example["questions"] if q.get("options")]
+    assert with_options, "the question example must demonstrate the options array"
+    assert len(with_options[0]["options"]) == 2
     # 선택 필드임이 예시 자체에 드러난다
-    assert any(word in question["options"][0] for word in ("선택", "任意", "optional"))
+    assert any(word in with_options[0]["options"][0] for word in ("선택", "任意", "optional"))
 
 
 @pytest.mark.parametrize("locale", _LOCALES)

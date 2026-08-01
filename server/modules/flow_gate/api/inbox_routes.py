@@ -22,6 +22,7 @@ from pydantic import BaseModel, model_validator
 
 from modules.flow_gate import linter as _linter
 from modules.flow_gate import process_service
+from modules.flow_gate import template_provision
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import workflow_events as db_events
@@ -1493,6 +1494,69 @@ def _fail(status: int, message: str, help_url: str | None = None) -> JSONRespons
     )
 
 
+_DESIGN_TEMPLATE_SUBMISSION_COPY = {
+    "ko": {
+        "mismatch": "설계 문서가 활성 {type_code} 템플릿의 문서 구조와 맞지 않습니다. {details} 작성 전에 {help_path}에서 템플릿을 받고 그 절 이름과 순서를 따르세요.",
+        "unavailable": "활성 {type_code} 템플릿을 확인할 수 없어 설계 문서를 안전하게 검증하지 못했습니다. 잠시 후 {help_path} 조회부터 다시 시도하세요.",
+        "missing": "누락된 절: {items}.",
+        "order": "순서가 어긋난 절: {items}.",
+    },
+    "en": {
+        "mismatch": "The design document does not match the active {type_code} template structure. {details} Fetch the template from {help_path} before writing and follow its section names and order.",
+        "unavailable": "The active {type_code} template could not be checked, so the design document cannot be validated safely. Retry by fetching {help_path}.",
+        "missing": "Missing sections: {items}.",
+        "order": "Sections out of order: {items}.",
+    },
+    "ja": {
+        "mismatch": "設計文書が有効な {type_code} テンプレートの文書構造と一致しません。{details} 作成前に {help_path} からテンプレートを取得し、節名と順序に従ってください。",
+        "unavailable": "有効な {type_code} テンプレートを確認できず、設計文書を安全に検証できません。{help_path} の取得から再試行してください。",
+        "missing": "不足している節: {items}。",
+        "order": "順序が異なる節: {items}。",
+    },
+}
+
+
+def _design_template_submission_error(
+    *, project: str, doc_type: str, locale: str, content: str
+) -> Optional[JSONResponse]:
+    """Reject a design body that does not follow the active help template outline."""
+    normalized_locale = template_provision.normalize_locale(locale)
+    help_path = f"/help/items/design_template/{doc_type}"
+    copy = _DESIGN_TEMPLATE_SUBMISSION_COPY[normalized_locale]
+    try:
+        if not template_provision.is_design_type(doc_type):
+            return None
+        result = template_provision.validate_design_document_structure(
+            project, doc_type, normalized_locale, content
+        )
+    except Exception:
+        import LogAssist.log as logger
+        logger.warning(
+            f"[inbox] design template validation unavailable for {project}/{doc_type}"
+        )
+        return _fail(
+            503,
+            copy["unavailable"].format(type_code=doc_type, help_path=help_path),
+            help_url=help_path,
+        )
+    if result.get("valid"):
+        return None
+    details: list[str] = []
+    missing = list(result.get("missing") or [])
+    out_of_order = list(result.get("out_of_order") or [])
+    if missing:
+        details.append(copy["missing"].format(items=", ".join(missing[:8])))
+    if out_of_order:
+        details.append(copy["order"].format(items=", ".join(out_of_order[:8])))
+    return _fail(
+        422,
+        copy["mismatch"].format(
+            type_code=doc_type, details=" ".join(details), help_path=help_path
+        ),
+        help_url=help_path,
+    )
+
+
 _TR_SCOPE_META_MAX_PATHS = 50
 
 
@@ -2499,6 +2563,18 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
         body_for_guards = None
 
+    # Design documents must follow the active template now served by the help item.
+    # This is a Step 5 validation, so dry-run and real submission make the same
+    # decision before numbering, storage, token consumption, or any other side effect.
+    design_error = _design_template_submission_error(
+        project=project,
+        doc_type=doc_type.upper(),
+        locale=token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko",
+        content=body_for_guards or "",
+    )
+    if design_error is not None:
+        return design_error
+
     # Refuse a substantial body that is byte-identical to an existing document in a
     # *different* group — the submission-layer contamination signature (correct title,
     # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
@@ -3052,6 +3128,18 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
     except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
         edit_body_for_guards = None
+
+    # Rejected design-document edits are the same authoring operation and must not
+    # bypass the template structure check that applies to new submissions.
+    edit_doc_type = str(existing_doc.get("type_code") or existing_doc.get("type") or "").upper()
+    design_error = _design_template_submission_error(
+        project=project,
+        doc_type=edit_doc_type,
+        locale=token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko",
+        content=edit_body_for_guards or "",
+    )
+    if design_error is not None:
+        return design_error
 
     # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
     # defended `new`, so the same contamination (correct title, stale/reused body from

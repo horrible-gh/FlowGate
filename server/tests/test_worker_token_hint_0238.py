@@ -54,9 +54,9 @@ class TestHelpPayload:
     """GET /help advertises a reachable base and warns about the plural UI API."""
 
     def _payload(self) -> dict:
-        from modules.flow_gate.api.v1.help_routes import get_help
+        from modules.flow_gate.api.v1.help_routes import endpoint_catalog
 
-        return json.loads(get_help().body.decode())
+        return endpoint_catalog()
 
     def test_base_url_and_error_format_are_reachable(self):
         from modules.flow_gate.utils.help_url import help_url, outbound_api_base

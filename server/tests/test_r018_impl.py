@@ -864,7 +864,9 @@ class TestMentionSections:
 
     def test_section_order(self):
 
-        """All 7 sections must exist in the order defined by D027 §6."""
+        """Section order per D027 §6, as amended by group 0372 set 3 (D-0003 §3-2 /
+        L-0005 §2-10): the central help block sits right below the guide block, and
+        the standalone doc_type guide section is absorbed into the help index."""
 
         mention = self._build_mention()
 
@@ -874,13 +876,13 @@ class TestMentionSections:
 
             "## Clarification guide",
 
+            "## 도움말",
+
             "## Instruction to include next document header",
 
             "## Reference documents",
 
             "## Artifact registration",
-
-            "## doc_type guide",
 
             "## Reminder",
 
@@ -904,7 +906,7 @@ class TestMentionSections:
 
     def test_section_4_absent_when_no_docs(self):
 
-        """Omit section 4 when there are 0 recent documents in the group."""
+        """Recent documents in group — REMOVED (D-0003 §3-2 "뺌"): absent with no docs."""
 
         mention = self._build_mention(group_recent_docs=[])
 
@@ -912,9 +914,11 @@ class TestMentionSections:
 
 
 
-    def test_section_4_present_when_docs_exist(self):
+    def test_section_4_absent_even_when_docs_exist(self):
 
-        """Include section 4 when the group has recent documents."""
+        """group 0372 set 3: the section stays removed even when recent docs are
+        supplied. The always-visible `group_documents` help item covers this now, and
+        group_recent_docs is accepted only for caller compatibility (D-0003 §3-2)."""
 
         docs = [
 
@@ -926,60 +930,32 @@ class TestMentionSections:
 
         mention = self._build_mention(group_recent_docs=docs)
 
-        assert "## Recent documents in group" in mention
+        assert "## Recent documents in group" not in mention
 
-        assert "R0001" in mention
-
-        assert "[R]" in mention
-
-        assert "req one" in mention
-
-        assert "(open)" in mention
-
-
-
-    def test_section_4_max_5_docs(self):
-
-        """Display all 5 recent documents in the group."""
-
-        docs = [
-
-            {"doc_id": f"testprj-__ALL__-0001-R{i:04d}", "doc_type": "R", "seq": i,
-
-             "title": f"doc {i}", "status": "draft"}
-
-            for i in range(5, 0, -1)
-
-        ]
-
-        mention = self._build_mention(group_recent_docs=docs)
-
-        for i in range(1, 6):
-
-            assert f"R{i:04d}" in mention
+        assert "To browse earlier documents" not in mention
 
 
 
     def test_section_5_post_prefill(self):
-        """The output registration section includes a complete POST example."""
+        """group 0372 set 3 (D-0003 §3-2/§3-5): the `new` registration section keeps
+        only the address, the credential, and a pointer to the `submit` help item — the
+        full POST body/example moved behind that help item."""
         mention = self._build_mention()
         assert "## Artifact registration" in mention
 
         assert "Authorization: Bearer test-raw-token-xyz" in mention
 
-        # Verify the JSON block
+        assert "help/items/submit" in mention
 
-        assert '"action": "new"' in mention
-        assert '"project": "testprj"' in mention
-        assert '"module": "__ALL__"' in mention
-        assert '"group_name": "testprj-__ALL__-0001"' in mention
-        assert '"prev_doc_id": "testprj.__ALL__.0001.0001-R"' in mention
-        assert '"doc_type": "DS"' in mention
-        assert '"title": "<Fill this in>"' in mention
-        assert '"content": "<Fill this in>"' in mention
+        # The full POST JSON body no longer lives in the mention.
+        reg_section = mention[mention.find("## Artifact registration"):]
+        assert '"action": "new"' not in reg_section
 
     def test_section_5_token_context_uses_canonical_ids(self):
-        """A token_rec-based mention uses the canonical id required by the inbox API."""
+        """group 0372 set 3: canonical-id resolution for the POST body now lives
+        entirely behind the `submit` help item (help_catalog._prev_doc_id) — the mention
+        itself no longer carries doc-id fields to get wrong. This just confirms the
+        section still builds cleanly from a token_rec-based call."""
         from modules.flow_gate.services.mention_service import build_mention_from_token_rec
 
         mention = build_mention_from_token_rec(
@@ -1003,8 +979,8 @@ class TestMentionSections:
         )
 
         reg_section = mention[mention.find("## Artifact registration"):]
-        assert '"group_name": "testprj.test.0001"' in reg_section
-        assert '"prev_doc_id": "testprj.test.0001.0001-R"' in reg_section
+        assert "help/items/submit" in reg_section
+        assert '"group_name"' not in reg_section
         assert '"target_id"' not in reg_section
 
     def test_section1_reflects_predecessor_when_head_context_doc_given(self):
@@ -1046,7 +1022,10 @@ class TestMentionSections:
         assert "next_type: NR" in mention
         # Threading fields stay on the spine R.
         assert "target_id: R0001" in mention
-        assert '"prev_doc_id": "flowgate.default.0008.0001-R"' in mention
+        # group 0372 set 3: prev_doc_id no longer appears inline — the submission
+        # section now points at the `submit` help item instead of a POST example.
+        assert "help/items/submit" in mention
+        assert '"prev_doc_id"' not in mention
 
     def test_section1_falls_back_to_spine_when_no_predecessor(self):
         """First step (head_context_doc is the spine itself): Section 1 keeps showing the
@@ -1220,36 +1199,6 @@ class TestMentionSections:
         assert "Authorization: Bearer test-raw-token-xyz header" in section
 
         assert "<YOUR_TOKEN>" not in mention
-
-
-
-    def test_section_4_navigation_url(self):
-
-        """Section 4 includes a navigation URL."""
-
-        docs = [
-
-            {"doc_id": "testprj-__ALL__-0001-R0003", "doc_type": "R", "seq": 3,
-
-             "title": "doc 3", "status": "open"},
-
-            {"doc_id": "testprj-__ALL__-0001-R0002", "doc_type": "R", "seq": 2,
-
-             "title": "doc 2", "status": "open"},
-
-            {"doc_id": "testprj-__ALL__-0001-R0001", "doc_type": "R", "seq": 1,
-
-             "title": "doc 1", "status": "draft"},
-
-        ]
-
-        mention = self._build_mention(group_recent_docs=docs)
-
-        assert "To browse earlier documents" in mention
-
-        assert "testprj-__ALL__-0001" in mention
-
-        assert "before=" in mention
 
 
 
@@ -1428,15 +1377,20 @@ class TestMentionSections:
 
     def test_section_7_doc_type(self):
 
-        """Section 7: the doc_type guidance section exists and includes the GET /help/doc_type URL."""
+        """group 0372 set 3 (D-0003 §3-2 "뺌"): the standalone doc_type guide section is
+        gone — the always-visible `doc_type` entry of the help index (taught by the
+        central Help block) absorbs it."""
 
         mention = self._build_mention()
 
-        assert "## doc_type guide" in mention
+        assert "## doc_type guide" not in mention
 
-        assert "GET" in mention
+        assert "/help/doc_type" not in mention
 
-        assert "/help/doc_type" in mention
+        # The central help block replaces it as the discovery path (L-0005 §2-10).
+        assert "## 도움말" in mention
+        assert "/help/items/{name}" in mention
+        assert "?detail=true" in mention
 
 
 
@@ -1474,12 +1428,16 @@ class TestMentionSections:
 
         assert "force-terminated" in mention
 
-        # B0001/NR0003: the sanctioned alternative is an embedded, copy-paste query
-        # POST aligned with the live mechanism — not a "Q document" / GET indirection.
+        # B0001/NR0003: the sanctioned alternative is the query POST address aligned
+        # with the live mechanism — not a "Q document". group 0372 set 3 (D-0003 §3-2
+        # "질의 등록 예시는 도움말로"): the placeholder JSON body moved behind the
+        # `question` help item; the address + credential stay inline.
 
         assert "/q/" in mention and "/questions" in mention
 
-        assert '"asker_kind": "ai"' in mention
+        assert '"asker_kind"' not in mention
+
+        assert "help/items/question" in mention
 
         assert "NOT a Q document" in mention
 

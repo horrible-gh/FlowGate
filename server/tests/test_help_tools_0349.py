@@ -114,7 +114,12 @@ def test_help_top_level_lists_tools_routes_after_help_question():
     paths = [endpoint["path"] for endpoint in body["endpoints"]]
     question = paths.index("/help/question")
     assert paths[question + 1:question + 3] == ["/help/tools", "/help/tools/{name}"]
-    assert paths[question + 3] == "/events/stream"
+    # 0372 lists the /help/items routes right after them; /events/stream still closes.
+    assert paths[question + 3:question + 5] == [
+        "/help/items/{name}",
+        "/help/items/{name}/{child}",
+    ]
+    assert paths[question + 5] == "/events/stream"
 
 
 def test_authenticated_200_403_404_are_logged_best_effort(monkeypatch):
