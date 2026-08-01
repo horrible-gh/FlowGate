@@ -52,17 +52,17 @@ def _nt_mention(head_type: str, locale: str = "ko") -> str:
 def test_mention_for_ai_direct_T_head_includes_authoring_guide():
     mention = _nt_mention("T")
     assert "## Instruction authoring (T)" in mention
-    # T-specific guidance: it directs the work + names completion criteria for the TR.
-    assert "작업지시" in mention
-    assert "완료 기준" in mention
+    # group 0372 set 3 (D-0003 §3-2): the mention now carries a pointer, not the full
+    # T-specific grammar (that content moved behind the authoring_guide help item and
+    # is covered separately by mention_service._nt_authoring_section, still exercised
+    # by test_nt_authoring_guide_follows_locale below and by test_help_items_0372.py).
+    assert "help/items/authoring_guide/T" in mention
 
 
 def test_mention_for_ai_direct_N_head_includes_authoring_guide():
     mention = _nt_mention("N")
     assert "## Instruction authoring (N)" in mention
-    # N-specific guidance: it directs the investigation, does not perform it.
-    assert "조사지시" in mention
-    assert "조사 범위" in mention
+    assert "help/items/authoring_guide/N" in mention
 
 
 def test_mention_report_head_has_no_authoring_guide():
@@ -78,36 +78,60 @@ def test_nt_and_ts_authoring_are_mutually_exclusive_by_head():
     t_mention = _nt_mention("T")
     assert "Instruction authoring (T)" in t_mention
     assert "Test scenario authoring (TS)" not in t_mention
+    assert "help/items/authoring_guide/T" in t_mention
+    assert "help/items/authoring_guide/TS" not in t_mention
     ts_mention = _nt_mention("TS")
     assert "Test scenario authoring (TS)" in ts_mention
     assert "Instruction authoring" not in ts_mention
+    assert "help/items/authoring_guide/TS" in ts_mention
 
 
-# ── N/T + TS authoring guides now follow the worker's requested locale (this was one of
-# three sections in mention_service.py that stayed English-fixed regardless of locale) ──
+# ── N/T + TS authoring guides now follow the worker's requested locale. group 0372 set 3
+# reduced the mention's own copy of this to a one-line pointer (D-0003 §3-2), so the
+# locale check here is against that pointer sentence; the full grammar's own locale
+# fidelity is unchanged and still covered directly against mention_service._ts_authoring_section /
+# _nt_authoring_section by test_continuation_instruction_mode_0230's sibling suite
+# test_server_korean_leak_0355.py and by test_help_items_0372.py (the authoring_guide
+# help item literally reuses those same functions). ──
 
 def test_nt_authoring_guide_follows_locale():
     ko = _nt_mention("T", locale="ko")
-    assert "작업지시" in ko and "완료 기준" in ko
+    assert "도움말 항목에 있습니다" in ko
 
     en = _nt_mention("T", locale="en")
-    assert "work-instruction" in en and "Completion criteria" in en
-    assert "완료 기준" not in en
+    assert "is in the help item" in en
+    assert "도움말" not in en
 
     ja = _nt_mention("N", locale="ja")
-    assert "調査範囲" in ja
-    assert "조사 범위" not in ja
+    assert "ヘルプ項目にあります" in ja
+    assert "도움말" not in ja
 
 
 def test_ts_authoring_guide_follows_locale():
     ko = _nt_mention("TS", locale="ko")
-    assert "## 테스트 준비" in ko and "## 테스트 케이스" in ko
+    assert "도움말 항목에 있습니다" in ko
 
     en = _nt_mention("TS", locale="en")
+    assert "is in the help item" in en
+
+    ja = _nt_mention("TS", locale="ja")
+    assert "ヘルプ項目にあります" in ja
+
+
+def test_ts_authoring_full_grammar_still_locale_correct():
+    """The FULL TS grammar (fetched via the authoring_guide help item) is unchanged by
+    the set-3 mention reduction — pin its locale fidelity directly against the function
+    the help item calls, since the mention itself no longer carries this text."""
+    from modules.flow_gate.services import mention_service
+
+    ko = mention_service._ts_authoring_section("ko")
+    assert "## 테스트 준비" in ko and "## 테스트 케이스" in ko
+
+    en = mention_service._ts_authoring_section("en")
     assert "## Setup" in en and "## Test Cases" in en
     assert "Write this TS as an executable spec" in en
 
-    ja = _nt_mention("TS", locale="ja")
+    ja = mention_service._ts_authoring_section("ja")
     assert "## Setup" in ja and "## Test Cases" in ja
     assert "実行可能なスペック" in ja
 

@@ -45,10 +45,16 @@ def test_review_mention_is_review_genre_not_create_next():
 
 def test_review_mention_submission_payload_is_action_review():
     m = _build()
-    # The embedded POST body must be action:review with a concrete doc_id + verdict enum.
-    assert '"action": "review"' in m
-    assert '"doc_id": "test.none.0002.0003-DS"' in m
-    assert "pass | issues | hold" in m
+    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): the submission section
+    # keeps the address + credential and points at the `submit` help item for the
+    # action:review body; the verdict semantics stay inline in the Verdict guide.
+    assert "Submit your review: POST http://127.0.0.1:8088/flowgate/api/v1/inbox" in m
+    assert "help/items/submit" in m
+    assert '"action": "review"' not in m
+    # Verdict guide still names the enum inline (L-0006 keeps this purpose slot).
+    assert "verdict values:" in m
+    for value in ("- pass", "- issues", "- hold"):
+        assert value in m
     assert "findings" in m
     # No <Sequence undecided> placeholder — review needs no sequence resolution.
     assert "<Sequence undecided>" not in m

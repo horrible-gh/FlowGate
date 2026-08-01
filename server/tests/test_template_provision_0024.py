@@ -398,13 +398,10 @@ class TestHttpRoutes:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Worker-mention embed (group 0024 rework — TR0016 rev1)
+# Worker-facing template pointer (group 0372 set 2)
 #
-# The rejection: a remote worker authoring a design doc (D) reported the standard
-# template was never referenced. Root cause — the writer-facing mention
-# (mention_service.build_mention) embedded no template body, and the G1 query API
-# is session/RBAC-scoped (401 for worker bearer tokens). Fix: push the resolved
-# template BODY into the mention itself (auth-independent delivery).
+# The complete template body is fetched from the authenticated help item. Mentions
+# and AC/RJ self-contained sections keep only one actionable pointer line.
 # ─────────────────────────────────────────────────────────────────────────────
 from modules.flow_gate.services.mention_service import build_mention  # noqa: E402
 from modules.flow_gate import process_service as _ps                  # noqa: E402
@@ -424,24 +421,19 @@ def _mention_new(head_type, project="flowgate"):
 
 class TestWorkerMentionEmbed:
     def test_is_design_type_reexport(self, store):
-        # Regression: process_service.py referenced template_provision.is_design_type
-        # which did not exist (AttributeError on any design Next-Step). Now it does.
         assert tp.is_design_type("D") is True
         assert tp.is_design_type("DB") is True
         assert tp.is_design_type("ZZ") is False
 
-    def test_new_handoff_embeds_type_default_skeleton(self, store):
-        # No template registered → worker still receives the type-default skeleton.
+    def test_new_handoff_points_to_help_without_inline_skeleton(self, store):
         m = _mention_new("D")
         assert "## Document template" in m
-        assert "## 다음 문서 템플릿 (D / 기본)" in m
-        assert "타입 기본 골격" in m            # type-default badge
-        assert "## 1. 배경" in m                # skeleton section
-        # AC-1: never a file path
+        assert "GET http://localhost:8000/flowgate/api/v1/help/items/design_template/D" in m
+        assert "## 다음 문서 템플릿" not in m
+        assert "## 1. 배경" not in m
         assert "Template:" not in m
-        assert "C:\\" not in m and "_rule/templates" not in m
 
-    def test_new_handoff_embeds_registered_global_body(self, store):
+    def test_registered_body_is_not_duplicated_in_the_mention(self, store):
         store._execute(
             "INSERT INTO document_type_templates(project_id,type_code,template_path,"
             "is_active,uploaded_by,uploaded_at) VALUES(NULL,'D',NULL,1,'u1',datetime('now'))",
@@ -451,10 +443,11 @@ class TestWorkerMentionEmbed:
         )["id"]
         tdb.upsert_content(gid, "ko", "# 전역 기본설계 본문", "u1")
         m = _mention_new("D")
-        assert "# 전역 기본설계 본문" in m
-        assert "출처: 전역 표준 템플릿" in m
+        assert "design_template/D" in m
+        assert "# 전역 기본설계 본문" not in m
+        assert "출처: 전역 표준 템플릿" not in m
 
-    def test_edit_mention_embeds_template_for_design_parent(self, store):
+    def test_edit_mention_points_to_the_design_parent_type(self, store):
         m = build_mention(
             project="flowgate", module="default", group="0024",
             parent_type="D", parent_doc_number="D0004", parent_title="design",
@@ -465,20 +458,18 @@ class TestWorkerMentionEmbed:
             action_scope="edit",
         )
         assert "## Document template" in m
-        assert "## 다음 문서 템플릿 (D" in m
-
-    def test_no_template_section_for_non_design(self, store):
-        # The TR0016 case itself: a TR worker mention must not carry a design template.
-        m = _mention_new("TR")
-        assert "## Document template" not in m
+        assert "/help/items/design_template/D" in m
         assert "## 다음 문서 템플릿" not in m
 
-    def test_render_block_matches_self_contained_path(self, store):
-        # Single source of truth: process_service delegates to render_provision_block,
-        # so the mention embed and the AC/RJ self-contained section are byte-identical.
-        r = tp.resolve_active_template("flowgate", "D", "ko")
-        block = tp.render_provision_block("D", "ko", r)
-        assert _ps._render_design_template_section("D", "ko", r) == ["", block]
+    def test_no_template_section_for_non_design(self, store):
+        m = _mention_new("TR")
+        assert "## Document template" not in m
+        assert "design_template/TR" not in m
+
+    def test_self_contained_path_uses_the_same_help_pointer(self, store):
+        pointer = tp.render_help_pointer("D", "ko")
+        assert _ps._render_design_template_section("D", "ko") == ["", pointer]
+        assert pointer.endswith("/help/items/design_template/D로 받으세요.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -502,13 +493,34 @@ class TestSeededGlobalTemplates:
             assert "미등록" not in r["content"], tc          # not the skeleton badge
             assert not tp.contains_path(r["content"]), tc    # AC-1
 
-    def test_seeded_mention_carries_real_body_not_skeleton(self, seeded_store):
+    def test_seeded_mention_still_keeps_the_body_behind_help(self, seeded_store):
         m = _mention_new("D", project="anyproject")
-        assert "## 다음 문서 템플릿 (D / ko)" in m
-        assert "출처: 전역 표준 템플릿" in m
-        assert "표준 템플릿 미등록" not in m                  # skeleton badge gone
-        assert "전역 표준 기본설계 템플릿" in m               # seeded body marker
-        assert "Template:" not in m and "C:\\" not in m       # AC-1
+        assert "/help/items/design_template/D" in m
+        assert "## 다음 문서 템플릿" not in m
+        assert "출처: 전역 표준 템플릿" not in m
+        assert "전역 표준 기본설계 템플릿" not in m
+        assert "Template:" not in m and "C:\\" not in m
+
+    def test_seeded_outlines_are_machine_validatable_in_every_locale(self, seeded_store):
+        for tc in ("D", "P", "L", "DB"):
+            for loc in ("ko", "ja", "en"):
+                resolved = tp.resolve_active_template("anyproject", tc, loc)
+                headings = tp.required_document_headings(resolved["content"])
+                assert len(headings) >= 3, (tc, loc, headings)
+                authored_headings = [
+                    "[normal1] Example"
+                    if any(marker in heading.casefold() for marker in ("scenario", "시나리오", "シナリオ"))
+                    else heading
+                    for heading in headings
+                ]
+                document = "# authored\n\n" + "\n\n".join(
+                    f"## {heading}\nfilled" for heading in authored_headings
+                )
+                result = tp.validate_design_document_structure(
+                    "anyproject", tc, loc, document
+                )
+                assert result["valid"] is True, (tc, loc, result)
+                assert result["locale"] == loc, (tc, loc, result)
 
     def test_every_supported_locale_resolves_directly(self, seeded_store):
         # R0001 i18n: ko/ja/en are each seeded, so a ja/en request resolves to that

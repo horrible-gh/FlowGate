@@ -1,7 +1,13 @@
-"""API help endpoints (D021 §4-1).
+"""API help endpoints (D021 §4-1, group 0372 P-0004).
 
 GET /api/v1/help
-No authentication required
+No authentication required. Without a bearer token this is the endpoint catalog;
+with a worker token it is that token's personalized help index. ?items=a,b returns
+several items in one round trip and ?detail=true expands everything visible.
+
+GET /api/v1/help/items/{name}
+GET /api/v1/help/items/{name}/{child}
+Authentication required (Bearer token)
 
 GET /api/v1/help/doc_type
 Authentication required (Bearer token)
@@ -20,7 +26,12 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import events as db_events
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate import template_provision
-from modules.flow_gate.services import auth_outbound, remote_tool_service, tool_registry
+from modules.flow_gate.services import (
+    auth_outbound,
+    help_catalog,
+    remote_tool_service,
+    tool_registry,
+)
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.help_url import help_url, outbound_api_base
 
@@ -53,32 +64,9 @@ def get_help_doc_type(request: Request):
     return JSONResponse(content=result)
 
 
-_QUESTION_HELP_COPY = {
-    "ko": {
-        "note": "질의는 Q 문서가 아니라 해당 문서의 질의 데이터로 등록합니다. 콘솔 선택지를 강요하지 마세요.",
-        "titles": ("기능 범위", "질의 우선순위"),
-        "bodies": (
-            "R0001 본문이 한 줄이라 DS 설계 대상이 불명확합니다. 구체적 기능 범위와 인수 기준은 무엇입니까?",
-            "멘트의 next_type 은 DS 인데 질의가 필요합니다. 질의를 먼저 등록할까요, 모호함을 가정하고 DS 를 작성할까요?",
-        ),
-    },
-    "en": {
-        "note": "Register a query as query data on the relevant document, not as a Q document. Do not force console choices.",
-        "titles": ("Feature scope", "Query priority"),
-        "bodies": (
-            "The R0001 body has only one line, so the DS design scope is unclear. What are the specific feature scope and acceptance criteria?",
-            "The mention says next_type is DS, but clarification is needed. Should the query be registered first, or should DS be drafted with explicit assumptions?",
-        ),
-    },
-    "ja": {
-        "note": "質問はQ文書ではなく、対象文書の質問データとして登録します。コンソールで選択肢を強制しないでください。",
-        "titles": ("機能範囲", "質問の優先順位"),
-        "bodies": (
-            "R0001の本文が1行だけなので、DS設計の対象が不明確です。具体的な機能範囲と受入基準は何ですか。",
-            "メンションのnext_typeはDSですが、確認が必要です。先に質問を登録するべきですか、それとも前提を明記してDSを作成するべきですか。",
-        ),
-    },
-}
+# The copy moved to help_catalog so this alias route and the `question` help item
+# are served by one supplier (0372 L-0005 §2-8). Kept as a name for existing callers.
+_QUESTION_HELP_COPY = help_catalog.QUESTION_HELP_COPY
 
 
 @router.get("/help/question")
@@ -89,27 +77,7 @@ def get_help_question(request: Request):
         return auth
 
     locale = template_provision.normalize_locale(auth.get("continuation_locale"))
-    copy = _QUESTION_HELP_COPY[locale]
-    titles = copy["titles"]
-    bodies = copy["bodies"]
-    return JSONResponse(content={
-        "note": copy["note"],
-        "example": {
-            "method": "POST",
-            "url": "/flowgate/api/v1/q/{doc_id}/questions",
-            "headers": {
-                "Authorization": "Bearer <YOUR_TOKEN>",
-                "Content-Type": "application/json",
-            },
-            "body": {
-                "asker_kind": "ai",
-                "questions": [
-                    {"title": titles[0], "body": bodies[0]},
-                    {"title": titles[1], "body": bodies[1]},
-                ],
-            },
-        },
-    })
+    return JSONResponse(content=help_catalog.build_question_content(locale))
 
 
 _logger = logging.getLogger(__name__)
@@ -242,13 +210,16 @@ def get_help_tool(request: Request, name: str, locale: Optional[str] = None):
     return response
 
 
-@router.get("/help")
-def get_help():
-    """Single entry point for API usage. Unauthenticated access allowed."""
-    return JSONResponse(content={
+def endpoint_catalog() -> dict:
+    """The catalog an unauthenticated caller receives (P-0004 [엣지3]).
+
+    A human in a browser lands here; ``form`` tells the two /help answers apart.
+    """
+    return {
         "ok": True,
         "version": "v1",
         "base_url": outbound_api_base(),
+        "form": "endpoints",
         "endpoints": [
             {"method": "POST", "path": "/token/issue", "summary": "Issue a work token (screen action trigger)", "auth": "session_cookie"},
             {"method": "POST", "path": "/inbox", "summary": "Register/update an artifact (action: new | edit)", "auth": "bearer_token"},
@@ -281,12 +252,16 @@ def get_help():
             {"method": "GET", "path": "/help/question", "summary": "Query registration guide (register as document-bound query data, not a Q document)", "auth": "bearer_token"},
             {"method": "GET", "path": "/help/tools", "summary": "Remote source tools available to this token (name + one-line summary)", "auth": "bearer_token"},
             {"method": "GET", "path": "/help/tools/{name}", "summary": "Usage detail for one remote source tool (request format + example)", "auth": "bearer_token", "example": "/help/tools/read"},
+            {"method": "GET", "path": "/help/items/{name}", "summary": "One help item for this token (index at GET /help)", "auth": "bearer_token", "example": "/help/items/submit"},
+            {"method": "GET", "path": "/help/items/{name}/{child}", "summary": "One child of a help item", "auth": "bearer_token", "example": "/help/items/design_template/P"},
             {"method": "GET", "path": "/events/stream", "summary": "SSE screen push stream (screen only)", "auth": "session_cookie"},
         ],
         "notes": [
             "Every path above is relative to base_url.",
             "A worker token may call any endpoint listed here with auth=bearer_token; there is no "
             "per-path scope allowlist. Read a document body with GET /document/{id} — singular.",
+            "Call GET /help with a worker bearer token to receive the personalized help index "
+            "instead of this endpoint catalog.",
             "The console UI is served by a separate, unlisted API under the same base_url whose "
             "paths are PLURAL (/documents/…). It accepts only a signed-in user session and answers "
             "a worker token with 401 'Invalid authentication credentials'. That 401 means the wrong "
@@ -298,4 +273,256 @@ def get_help():
             "error_message": "<string>",
             "help_url": help_url(),
         },
+    }
+
+
+# ── Help index / items (0372 D-0003 §3-4, P-0004, L-0005) ────────────────────
+# Everything the mention used to carry inline is a named item here. The index and
+# every direct call share one visibility judgment
+# (``help_catalog.decide_visibility``), so an item listed in the index can never
+# answer a direct call with 403 — and an item hidden from the index can never be
+# reached by guessing its name.
+
+
+def _record_help_event(
+    token_rec: dict,
+    ctx: dict,
+    *,
+    view: str,
+    name: Optional[str] = None,
+    child: Optional[str] = None,
+    names: Optional[list] = None,
+    count: int = 0,
+    http_status: int = 200,
+) -> None:
+    """Best-effort audit of one authenticated help view (P-0004 [엣지2]).
+
+    One event per request whatever the item count, and a failed insert never turns
+    a good help answer into an error — same contract as ``help_tools_viewed``.
+    """
+    doc_ref = token_rec.get("doc_ref")
+    if not doc_ref:
+        _logger.warning("Skipping help_viewed event: authenticated token has no doc_ref")
+        return
+    try:
+        if db_documents.get_by_id(doc_ref) is None:
+            _logger.warning("Skipping help_viewed event: document %s does not exist", doc_ref)
+            return
+        note = json.dumps(
+            {
+                "view": view,
+                "name": name,
+                "child": child,
+                "names": names,
+                "count": count,
+                "locale": ctx["locale"],
+                "doc_type": ctx["doc_type"],
+                "action_scope": ctx["action_scope"],
+                "tool_kind": ctx["tool_kind"],
+                "source_mode": ctx["source_mode"],
+                "http_status": http_status,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        db_events.insert_event(doc_id=doc_ref, event_type="help_viewed", note=note)
+    except Exception:
+        _logger.warning("Failed to record help_viewed event for %s", doc_ref, exc_info=True)
+
+
+def _help_locale(request: Request, auth: dict, locale: Optional[str]) -> str:
+    """query ``locale`` → ``x-locale`` header → the token's carried locale → ko.
+
+    The first candidate that is present wins even when it names an unsupported
+    locale: ``?locale=zh`` folds to ko rather than falling through to the header,
+    which is what ``/help/tools`` already does (P-0004 [엣지1]).
+    """
+    for candidate in (locale, request.headers.get("x-locale"), auth.get("continuation_locale")):
+        if candidate is not None and str(candidate).strip():
+            return help_catalog.normalize_locale(str(candidate))
+    return help_catalog.FALLBACK_LOCALE
+
+
+def _help_context(request: Request, locale: Optional[str]):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth, None
+    normalized_locale = _help_locale(request, auth, locale)
+    return auth, help_catalog.resolve_context(auth, normalized_locale, outbound_api_base())
+
+
+def _help_envelope(ctx: dict) -> dict:
+    return {
+        "ok": True,
+        "version": help_catalog.VERSION,
+        "base_url": ctx["base_url"],
+        "locale": ctx["locale"],
+    }
+
+
+def _help_error(status: int, message: str, extra: Optional[dict] = None) -> JSONResponse:
+    content = {
+        "ok": False,
+        "http_status": status,
+        "error_message": message,
+        "help_url": help_url(),
+    }
+    if extra:
+        content.update(extra)
+    return JSONResponse(status_code=status, content=content)
+
+
+def _help_index_response(auth: dict, ctx: dict) -> JSONResponse:
+    base = ctx["base_url"]
+    assembled = help_catalog.build_index(ctx)
+    payload = _help_envelope(ctx)
+    payload.update({
+        "form": "index",
+        "item_url": f"{base}/help/items/{{name}}",
+        "child_url": f"{base}/help/items/{{name}}/{{child}}",
+        "bulk_url": f"{base}/help?items={{name1}},{{name2}}",
+        "detail_url": f"{base}/help?detail=true",
+        "context": help_catalog.context_envelope(ctx),
+        "items": assembled["items"],
+        "hidden": assembled["hidden"],
     })
+    _record_help_event(auth, ctx, view="index", count=len(assembled["items"]))
+    return JSONResponse(content=payload)
+
+
+def _help_bulk_response(auth: dict, ctx: dict, names: list) -> JSONResponse:
+    items, unavailable = help_catalog.build_bulk(names, ctx)
+    if not items:
+        # Nothing was built. 404 when every requested name is simply unknown; 403 as
+        # soon as one of them exists but is not this token's to see — the worker has
+        # to be able to tell a typo from a permission it does not hold.
+        all_unknown = all(entry["http_status"] == 404 for entry in unavailable)
+        status = 404 if all_unknown else 403
+        message = (
+            "None of the requested help items exist"
+            if all_unknown
+            else "None of the requested help items are available for this token"
+        )
+        _record_help_event(auth, ctx, view="bulk", names=names, count=0, http_status=status)
+        return _help_error(status, message, {"unavailable": unavailable})
+
+    payload = _help_envelope(ctx)
+    payload.update({
+        "form": "bulk",
+        "requested": names,
+        "returned": len(items),
+        "items": items,
+        "unavailable": unavailable,
+    })
+    _record_help_event(auth, ctx, view="bulk", names=names, count=len(items))
+    return JSONResponse(content=payload)
+
+
+@router.get("/help/items/{name}")
+def get_help_item(request: Request, name: str, locale: Optional[str] = None):
+    """One help item, or the child list of an item that has children."""
+    auth, ctx = _help_context(request, locale)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    # Unknown before forbidden: a name that does not exist is a typo the worker can
+    # fix from the index, and calling it a permission failure sends it looking for
+    # a permission that was never the problem (P-0004 [실패3]).
+    if name not in help_catalog.CATALOG_ORDER:
+        return _help_error(404, f"Unknown help item: {name}")
+
+    decision = help_catalog.decide_visibility(name, ctx)
+    if not decision.visible:
+        _record_help_event(auth, ctx, view="item", name=name, count=0, http_status=403)
+        return _help_error(403, f"Help item '{name}' is not available for this token")
+
+    try:
+        body = help_catalog.build_item(name, ctx)
+    except help_catalog.HelpSupplierError:
+        # A storage failure stays a storage failure. Dressing it up as 403 would send
+        # the worker hunting for a permission it already holds (L-0005 §2-7).
+        _logger.exception("help item supplier failed: %s", name)
+        return _help_error(500, f"Failed to build help item '{name}'")
+
+    payload = _help_envelope(ctx)
+    payload.update(body)
+    _record_help_event(auth, ctx, view="item", name=name, count=1)
+    return JSONResponse(content=payload)
+
+
+@router.get("/help/items/{name}/{child}")
+def get_help_item_child(
+    request: Request, name: str, child: str, locale: Optional[str] = None
+):
+    """One child of a help item — a source tool, a design template, a guide."""
+    auth, ctx = _help_context(request, locale)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    if name not in help_catalog.CATALOG_ORDER:
+        return _help_error(404, f"Unknown help item: {name}")
+
+    decision = help_catalog.decide_visibility(name, ctx)
+    if not decision.visible:
+        _record_help_event(
+            auth, ctx, view="child", name=name, child=child, count=0, http_status=403
+        )
+        return _help_error(403, f"Help item '{name}' is not available for this token")
+
+    # The child list is derived from the same context, so a tool this token may not
+    # call is not merely hidden from the list — it is not a known child at all.
+    known = {entry["name"] for entry in help_catalog.enumerate_children(name, ctx)}
+    if child not in known:
+        _record_help_event(
+            auth, ctx, view="child", name=name, child=child, count=0, http_status=404
+        )
+        return _help_error(404, f"Unknown child '{child}' of help item '{name}'")
+
+    try:
+        body = help_catalog.build_child(name, child, ctx)
+    except help_catalog.HelpSupplierError:
+        _logger.exception("help child supplier failed: %s/%s", name, child)
+        return _help_error(500, f"Failed to build help item '{name}/{child}'")
+
+    payload = _help_envelope(ctx)
+    payload.update(body)
+    _record_help_event(auth, ctx, view="child", name=name, child=child, count=1)
+    return JSONResponse(content=payload)
+
+
+@router.get("/help")
+def get_help(
+    request: Request,
+    items: Optional[str] = None,
+    detail: Optional[str] = None,
+    locale: Optional[str] = None,
+):
+    """Single entry point for API usage.
+
+    No bearer token → the endpoint catalog, unauthenticated, as before. With a
+    worker token → that token's help index, or the items it asked for.
+    """
+    has_bearer = request.headers.get("Authorization", "").startswith("Bearer ")
+    if not has_bearer:
+        # A bare index is public; asking for actual item bodies is not.
+        if items is not None or detail is not None:
+            return _help_error(401, "Authorization header is required")
+        return JSONResponse(content=endpoint_catalog())
+
+    auth, ctx = _help_context(request, locale)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    # `items` wins over `detail`, and `detail` is true only for the exact string
+    # "true" — anything else folds to false instead of being rejected (P-0004 §0-3).
+    if items is not None:
+        try:
+            names = help_catalog.parse_bulk_names(items)
+        except help_catalog.BulkRequestError as exc:
+            return _help_error(422, str(exc))
+        return _help_bulk_response(auth, ctx, names)
+
+    if detail == "true":
+        return _help_bulk_response(auth, ctx, help_catalog.visible_names(ctx))
+
+    return _help_index_response(auth, ctx)

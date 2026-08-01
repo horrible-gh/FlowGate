@@ -132,11 +132,9 @@ class TestHelpEndpointExamples:
 
     def test_help_route_returns_examples(self):
         """Verify that the help_routes.get_help() response includes the example field."""
-        from modules.flow_gate.api.v1.help_routes import get_help
+        from modules.flow_gate.api.v1.help_routes import endpoint_catalog
 
-        response = get_help()
-        response_data = response.body.decode()
-        data = json.loads(response_data)
+        data = endpoint_catalog()
 
         assert data["ok"] is True
         assert "endpoints" in data
@@ -147,11 +145,9 @@ class TestHelpEndpointExamples:
 
     def test_help_response_example_fields(self):
         """Verify the example field for endpoints with path params."""
-        from modules.flow_gate.api.v1.help_routes import get_help
+        from modules.flow_gate.api.v1.help_routes import endpoint_catalog
 
-        response = get_help()
-        response_data = response.body.decode()
-        data = json.loads(response_data)
+        data = endpoint_catalog()
 
         # Check the example field for endpoints with path params
         parameterized_endpoints = {
@@ -172,11 +168,9 @@ class TestHelpEndpointExamples:
 
     def test_help_response_preserves_existing_fields(self):
         """Verify existing fields (method, path, summary, auth) remain unchanged."""
-        from modules.flow_gate.api.v1.help_routes import get_help
+        from modules.flow_gate.api.v1.help_routes import endpoint_catalog
 
-        response = get_help()
-        response_data = response.body.decode()
-        data = json.loads(response_data)
+        data = endpoint_catalog()
 
         for endpoint_dict in data["endpoints"]:
             assert "method" in endpoint_dict
@@ -281,11 +275,9 @@ class TestRegressionT269:
 
     def test_help_endpoint_structure_not_broken(self):
         """Preserve the existing /help response structure (endpoints array structure, etc.)."""
-        from modules.flow_gate.api.v1.help_routes import get_help
+        from modules.flow_gate.api.v1.help_routes import endpoint_catalog
 
-        response = get_help()
-        response_data = response.body.decode()
-        data = json.loads(response_data)
+        data = endpoint_catalog()
 
         # Check existing top-level fields
         assert "ok" in data

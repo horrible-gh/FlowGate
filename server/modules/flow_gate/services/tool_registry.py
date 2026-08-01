@@ -65,6 +65,7 @@ NOTES = {
         "read_only": "이 단계는 조사 전용입니다. write / patch / remove 를 호출하지 마세요.",
         "report_changes": "write/patch/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요.",
         "see_detail": "사용법 상세는 GET /flowgate/api/v1/help/tools/{name} 으로 도구별로 확인하세요.",
+        "see_detail_items": "사용법 상세는 GET /flowgate/api/v1/help/items/source_tools/{name} 으로 도구별로 확인하세요.",
         "none_scope": "이 작업 단계에는 원격 소스 도구가 배정되지 않았습니다. 소스 트리에 접근하지 말고 배정된 문서 작업만 수행하세요.",
         "none_local": "이 프로젝트는 원격 소스 접근을 사용하지 않습니다. 소스는 작업 환경에서 직접 다루고, 이 도구는 호출하지 마세요.",
         "none_user": "이 인증 주체에는 원격 소스 도구가 배정되지 않았습니다. 도구는 작업 토큰에만 배정됩니다.",
@@ -76,6 +77,7 @@ NOTES = {
         "read_only": "この段階は調査専用です。write / patch / remove を呼ばないでください。",
         "report_changes": "write / patch / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。",
         "see_detail": "使い方の詳細は GET /flowgate/api/v1/help/tools/{name} でツールごとに確認してください。",
+        "see_detail_items": "使い方の詳細は GET /flowgate/api/v1/help/items/source_tools/{name} でツールごとに確認してください。",
         "none_scope": "この作業段階にはリモートソースツールが割り当てられていません。ソースツリーに触れず、割り当てられた文書作業のみ行ってください。",
         "none_local": "このプロジェクトはリモートソースアクセスを使用しません。ソースは作業環境で直接扱い、このツールは呼び出さないでください。",
         "none_user": "この認証主体にはリモートソースツールが割り当てられていません。ツールは作業トークンにのみ割り当てられます。",
@@ -87,6 +89,7 @@ NOTES = {
         "read_only": "This step is investigation-only for source access. Do not call write, patch, or remove.",
         "report_changes": "After write, patch, or remove succeeds, summarize the changed source files in the task report.",
         "see_detail": "For usage detail, call GET /flowgate/api/v1/help/tools/{name} per tool.",
+        "see_detail_items": "For usage detail, call GET /flowgate/api/v1/help/items/source_tools/{name} per tool.",
         "none_scope": "No remote source tool is assigned to this step. Do not touch the project source tree; carry out only the document work you were given.",
         "none_local": "This project does not use remote source access. Work with the source in your own environment and do not call these tools.",
         "none_user": "No remote source tool is assigned to this identity. Tools are assigned to work tokens only.",
@@ -346,6 +349,19 @@ def resolve_registry(token_rec: dict, project: Optional[str], locale: str) -> di
         "tools": tools,
         "notes": _list_notes(kind, locale, reason, user_jwt),
     }
+
+
+def items_view_notes(registry: dict, locale: str) -> list[str]:
+    """``resolve_registry`` notes, re-pointed at the /help/items address.
+
+    The 0372 help catalog serves the same tool list under a second path. Only the
+    "where the per-tool detail lives" line differs, so it is swapped here rather
+    than the note list being written out a second time — two copies would drift
+    the moment one of the other notes changes.
+    """
+    notes = NOTES[locale]
+    return [notes["see_detail_items"] if note == notes["see_detail"] else note
+            for note in registry.get("notes", [])]
 
 
 def _request_fields(name: str, locale: str) -> list[dict]:

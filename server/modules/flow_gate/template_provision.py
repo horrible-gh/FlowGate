@@ -350,6 +350,168 @@ def render_provision_block(type_code: str, req_locale: str, resolved: Resolved) 
     return "\n".join(lines)
 
 
+_HELP_POINTER_COPY = {
+    "ko": "이 문서의 표준 템플릿은 도움말 항목 design_template/{type_code}에 있습니다. 작성 전에 GET {url}로 받으세요.",
+    "en": "The standard template for this document is in the design_template/{type_code} help item. Fetch it with GET {url} before writing.",
+    "ja": "この文書の標準テンプレートはヘルプ項目 design_template/{type_code} にあります。作成前に GET {url} で取得してください。",
+}
+
+
+def render_help_pointer(
+    type_code: str, req_locale: str, api_base_url: Optional[str] = None
+) -> str:
+    """Return the one-line pointer that replaces inline template delivery (0372 set 2)."""
+    locale = normalize_locale(req_locale)
+    base = str(api_base_url or "").rstrip("/")
+    path = f"/help/items/design_template/{type_code}"
+    url = f"{base}{path}" if base else path
+    return _HELP_POINTER_COPY[locale].format(type_code=type_code, url=url)
+
+
+_FENCED_BLOCK_RE = re.compile(
+    r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL
+)
+_H2_RE = re.compile(r"^[ \t]{0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$")
+_OPTIONAL_HEADING_MARKERS = (
+    "있는 경우", "필요한 경우", "선택", "if applicable", "optional",
+    "必要な場合", "該当する場合", "任意",
+)
+
+
+def _outline_headings(markdown: str, *, ignore_fences: bool) -> list[str]:
+    """Return level-2 headings, optionally excluding headings copied inside code fences."""
+    headings: list[str] = []
+    in_fence = False
+    for line in str(markdown or "").splitlines():
+        if line.lstrip().startswith("```"):
+            if ignore_fences:
+                in_fence = not in_fence
+            continue
+        if ignore_fences and in_fence:
+            continue
+        match = _H2_RE.match(line)
+        if match:
+            headings.append(match.group(1).strip())
+    return headings
+
+
+def _heading_key(heading: str) -> str:
+    """Compare headings across harmless markdown punctuation/spacing differences."""
+    return re.sub(r"[\W_]+", "", str(heading or "").casefold(), flags=re.UNICODE)
+
+
+def _is_optional_heading(heading: str) -> bool:
+    folded = str(heading or "").casefold()
+    return any(marker in folded for marker in _OPTIONAL_HEADING_MARKERS)
+
+
+def required_document_headings(template_content: str) -> list[str]:
+    """Extract the authored-document outline from a design-template body.
+
+    Standard templates carry their target outline in a fenced Document Structure
+    block. Project templates without such a block fall back to their own top-level
+    section headings. Instructional headings are therefore never confused with the
+    structure when the standard block is present.
+    """
+    candidates: list[list[str]] = []
+    for block in _FENCED_BLOCK_RE.findall(str(template_content or "")):
+        headings = _outline_headings(block, ignore_fences=False)
+        if headings:
+            candidates.append(headings)
+    headings = max(candidates, key=len) if candidates else _outline_headings(
+        template_content, ignore_fences=True
+    )
+    result: list[str] = []
+    seen: set[str] = set()
+    for heading in headings:
+        if _is_optional_heading(heading):
+            continue
+        key = _heading_key(heading)
+        if key and key not in seen:
+            result.append(heading)
+            seen.add(key)
+    return result
+
+
+def _heading_matches(required: str, submitted: str) -> bool:
+    # The P template uses a localized [scenario name] placeholder. It means one
+    # or more concrete bracketed scenario headings such as [normal1] Login. The
+    # literal placeholder and fixed [DEFERRED] heading must not satisfy it.
+    folded = str(required or "").casefold().strip()
+    scenario_markers = ("scenario", "시나리오", "シナリオ")
+    if folded.startswith("[") and "]" in folded and any(
+        marker in folded for marker in scenario_markers
+    ):
+        submitted_key = _heading_key(submitted)
+        if submitted_key in {_heading_key(required), "deferred"}:
+            return False
+        return re.match(r"^\[[^\]]+\](?:\s+.*)?$", str(submitted or "").strip()) is not None
+    return _heading_key(required) == _heading_key(submitted)
+
+
+def _structure_match(required: list[str], document_content: str) -> dict:
+    submitted = _outline_headings(document_content, ignore_fences=True)
+    cursor = 0
+    missing: list[str] = []
+    out_of_order: list[str] = []
+    for heading in required:
+        index = next(
+            (i for i in range(cursor, len(submitted)) if _heading_matches(heading, submitted[i])),
+            None,
+        )
+        if index is None:
+            if any(_heading_matches(heading, actual) for actual in submitted):
+                out_of_order.append(heading)
+            else:
+                missing.append(heading)
+        else:
+            cursor = index + 1
+    return {
+        "valid": not missing and not out_of_order,
+        "required": required,
+        "submitted": submitted,
+        "missing": missing,
+        "out_of_order": out_of_order,
+    }
+
+
+def validate_design_document_structure(
+    project_id: str, type_code: str, preferred_locale: str, document_content: str
+) -> dict:
+    """Validate a submitted design document against an active template outline.
+
+    The preferred locale is tried first, followed by the other supported locales so
+    an explicit help locale choice remains valid. A copied template outline inside a
+    code fence does not count as authored document sections.
+    """
+    if not is_design_type(type_code):
+        return {"valid": True, "type_code": type_code, "locale": None}
+    preferred = normalize_locale(preferred_locale)
+    locales = [preferred] + [loc for loc in SUPPORTED_LOCALES if loc != preferred]
+    first_mismatch: Optional[dict] = None
+    for locale in locales:
+        resolved = resolve_active_template(project_id, type_code, locale)
+        required = required_document_headings(resolved["content"])
+        if not required:
+            raise TemplateValidationError(
+                f"Active template for {type_code}/{locale} has no document outline."
+            )
+        result = _structure_match(required, document_content)
+        result.update({
+            "type_code": type_code,
+            "locale": locale,
+            "resolution": resolved["resolution"],
+        })
+        if result["valid"]:
+            return result
+        if first_mismatch is None:
+            first_mismatch = result
+    return first_mismatch or {
+        "valid": False, "type_code": type_code, "locale": preferred,
+        "missing": [], "out_of_order": [],
+    }
+
+
 # ── write-side validation (P0011 §5 — E4/E5) ─────────────────────────────────
 def validate_locale(locale: str) -> None:
     if locale not in SUPPORTED_LOCALES:

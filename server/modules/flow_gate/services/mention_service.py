@@ -11,14 +11,22 @@ ready-to-send POST so there is a zero-friction alternative to offering choices.
 The guard is also repeated once at the very bottom (recency) so a long prompt
 does not bury it:
   1. Document information
-  2. Clarification guide      (embedded query-registration POST + no-choices guard)
-  3. Instruction to include the next document header
-  4. Reference documents      (one line each for head + selected: {slash-path}: GET {url})
-  5. Recent documents in the group  (omit the section when there are 0)
-  6. Artifact registration    (includes a complete POST example)
-  7. Scratch directory        (token-owned path for doc_path files)
-  8. doc_type guide           (GET /api/v1/help/doc_type)
-  9. Reminder                 (the no-choices guard repeated for recency)
+  2. Clarification guide      (query-registration POST address + no-choices guard; the
+                               ready-to-send body example moved to the `question` help
+                               item — group 0372 D-0003 §3-2 "남김(축약)")
+  3. Help                     (central help-index block, L-0005 §2-10 — once per worker
+                               mention, right below the identity + guide blocks)
+  4. Instruction to include the next document header
+  5. Reference documents      (one line each for head + selected: {slash-path}: GET {url})
+  6. Recent documents in the group  — REMOVED (group 0372 D-0003 §3-2 "뺌"); the
+                                       `group_documents` help item covers it
+  7. Artifact registration    (edit: complete POST example, unchanged; new: address +
+                                a pointer to the `submit` help item — D-0003 §3-2/§3-5)
+  8. Scratch directory        (token-owned path for doc_path files)
+  9. doc_type guide           — REMOVED (D-0003 §3-2 "뺌"); it was already a one-line
+                               help URL and is absorbed into the always-visible
+                               `doc_type` entry of the help index
+ 10. Reminder                 (the no-choices guard repeated for recency)
 
 Insert a placeholder into next_type based on the head state:
   - no head            → <Sequence undecided>
@@ -35,7 +43,6 @@ from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
-from modules.flow_gate.services import engine_recipe_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
 
@@ -157,6 +164,46 @@ def _include_remote_source_crud(project: str) -> bool:
         return True
 
 
+# ── Central help-index block (group 0372 set 3 — L-0005 §2-10) ────────────────
+# Every worker mention carries this block exactly once, right below the identity
+# header and the unmanned/no-choices guide block. It replaces the per-section
+# bodies that moved behind help items: what the worker loses inline, it regains
+# through the index this block teaches. Wording is pinned by L-0005 §2-10; the
+# section header is the one worker-facing header that localizes (도움말/Help/ヘルプ)
+# because L-0005 fixed it per locale. `{name}` is a literal placeholder shown to
+# the worker, never str.format-expanded.
+_HELP_INDEX_HEADER: dict[str, str] = {"ko": "도움말", "ja": "ヘルプ", "en": "Help"}
+
+_HELP_INDEX_TEXT: dict[str, str] = {
+    "ko": (
+        "첫 행동으로 GET {base}/help 를 호출해 도움말 목차를 받으세요.\n"
+        "목차의 항목 중 필요한 것을 GET {base}/help/items/{{name}} 으로 골라 받습니다.\n"
+        "한 번에 모두 받으려면 GET {base}/help?detail=true 를 쓰세요.\n"
+        "Authorization: Bearer {token}"
+    ),
+    "ja": (
+        "最初の行動として GET {base}/help を呼び出し、ヘルプ目次を取得してください。\n"
+        "目次から必要な項目を GET {base}/help/items/{{name}} で選んで取得します。\n"
+        "表示可能な全項目を一度に取得するには GET {base}/help?detail=true を使ってください。\n"
+        "Authorization: Bearer {token}"
+    ),
+    "en": (
+        "As your first action, call GET {base}/help to receive the help index.\n"
+        "Choose what you need from the index with GET {base}/help/items/{{name}}.\n"
+        "To receive all visible items at once, use GET {base}/help?detail=true.\n"
+        "Authorization: Bearer {token}"
+    ),
+}
+
+
+def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
+    loc = template_provision.normalize_locale(locale)
+    return _section(
+        _HELP_INDEX_HEADER[loc],
+        _HELP_INDEX_TEXT[loc].format(base=base, token=raw_token),
+    )
+
+
 # ── Clarification / no-choices guide (B0001 group 0063; NR0003) ───────────────
 # B0001 recurred because the choice-prohibition guard was body text only AND the
 # sanctioned alternative was reached through a 2-hop GET /help/question indirection.
@@ -180,32 +227,15 @@ def _include_remote_source_crud(project: str) -> bool:
 # force-terminated / register a Q / definite answer / next action) are kept in EVERY
 # locale so the guard reads and asserts identically regardless of language.
 
-# Placeholder question (title/body/options) the worker copies into the embedded POST.
-# `options` is optional — a Q without it is exactly the pre-extension Q (L0008 §2.6). It is
-# shown here so the copy-paste POST itself advertises the field the prescription tells the
-# worker to use, instead of only naming it in prose.
-_Q_PLACEHOLDER = {
-    "ko": {
-        "title": "<짧은 제목 / short title>",
-        "body": (
-            "<무엇이 모호한지 + 진행하려면 무엇이 필요한지 / "
-            "what is ambiguous and what you need in order to proceed>"
-        ),
-        "options": ["<옵션1 / option 1 — 선택 · 없으면 생략>", "<옵션2 / option 2>"],
-    },
-    "ja": {
-        "title": "<短いタイトル / short title>",
-        "body": (
-            "<何が曖昧か + 進めるために何が必要か / "
-            "what is ambiguous and what you need in order to proceed>"
-        ),
-        "options": ["<選択肢1 / option 1 — 任意 · 不要なら省略>", "<選択肢2 / option 2>"],
-    },
-    "en": {
-        "title": "<short title>",
-        "body": "<what is ambiguous and what you need in order to proceed>",
-        "options": ["<option 1 — optional, omit if not needed>", "<option 2>"],
-    },
+# group 0372 set 3 (D-0003 §3-2 "남김(축약)"): the placeholder question JSON the guide
+# used to embed (title/body/options) moved behind the `question` help item — the guide
+# keeps the token-specific POST address + credential and points at the item for the
+# body format. The help item's example (help_catalog.build_question_content) now also
+# demonstrates the `options` array the prescription below tells the worker to use.
+_QUESTION_FORMAT_POINTER: dict[str, str] = {
+    "ko": "질문 본문 서식과 예시는 도움말 항목에 있습니다: GET {url}",
+    "ja": "質問本文の形式と例はヘルプ項目にあります: GET {url}",
+    "en": "The question body format and an example are in the help item: GET {url}",
 }
 
 # Lead-in (3 lines) / no-choices warning / positive "write a Q" redirect, per locale.
@@ -214,7 +244,7 @@ _CLARIFY_TEXT = {
         "lead": (
             "불명확한 점이 있으면 추측하거나 가정으로 진행하지 마십시오.\n"
             "질문은 해당 문서에 바인딩된 질의 데이터로 등록하십시오 (this is NOT a Q document):\n"
-            "질문을 채워 아래의 즉시 사용 가능한 POST를 그대로 전송하십시오."
+            "질문을 채워 아래의 POST로 전송하십시오."
         ),
         "warn": (
             "⚠️ 사용자에게 선택지나 옵션을 제시하지 마십시오 — Do NOT present choices "
@@ -235,7 +265,7 @@ _CLARIFY_TEXT = {
         "lead": (
             "不明な点があれば推測せず、仮定で進めないでください。\n"
             "質問は当該文書に紐づくクエリデータとして登録してください (this is NOT a Q document):\n"
-            "質問を記入し、下記のそのまま使えるPOSTを送信してください。"
+            "質問を記入し、下記のPOSTで送信してください。"
         ),
         "warn": (
             "⚠️ ユーザーに選択肢やオプションを提示しないでください — Do NOT present choices "
@@ -256,7 +286,7 @@ _CLARIFY_TEXT = {
         "lead": (
             "If anything is unclear, do NOT guess and do NOT proceed on assumptions.\n"
             "Register your question as document-bound query data (this is NOT a Q document):\n"
-            "fill in the question(s) and send the ready-to-use POST below as-is."
+            "fill in the question(s) and send them with the POST below."
         ),
         "warn": (
             "⚠️ Do NOT present choices or options to the user (no multiple-choice lists,\n"
@@ -462,26 +492,21 @@ _CONTINUOUS_REVIEW_REMINDER = {
 def _continuous_review_guide_body(
     base: str, anchor_doc_id: str, raw_token: str, locale: str = "ko"
 ) -> str:
-    """Pre-flight review block + a ready-to-send Q POST (group 0086 TR0004 rework rev4).
+    """Pre-flight review block + the Q-registration POST address (group 0086 rev4).
 
     Review mode replaces the action:new "Artifact registration" guidance with Q registration.
-    The embedded POST is anchored at the worker's bound document and uses the worker token,
-    so the worker can register either a real clarifying Q or the no-blockers acknowledgement Q.
+    The POST address is anchored at the worker's bound document and carries the worker
+    token; the body format/example lives behind the `question` help item (group 0372
+    set 3 — D-0003 §3-2 "질의 등록 예시는 도움말로").
     """
     loc = template_provision.normalize_locale(locale)
-    ph = _Q_PLACEHOLDER[loc]
-    q_post_body = {
-        "asker_kind": "ai",
-        "questions": [{"title": ph["title"], "body": ph["body"], "options": ph["options"]}],
-    }
-    q_json = json.dumps(q_post_body, ensure_ascii=False, indent=2)
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
     return (
         f"{_CONTINUOUS_REVIEW_TEXT[loc]}\n"
         "\n"
         f"POST {base}/q/{anchor_doc_id}/questions\n"
         f"Authorization: Bearer {raw_token}\n"
-        "\n"
-        f"{q_json}"
+        f"{pointer}"
     )
 
 
@@ -495,20 +520,14 @@ def _clarification_guide_body(
     base: str, anchor_doc_id: str, raw_token: str, locale: str = "ko"
 ) -> str:
     loc = template_provision.normalize_locale(locale)
-    ph = _Q_PLACEHOLDER[loc]
     txt = _CLARIFY_TEXT[loc]
-    q_post_body = {
-        "asker_kind": "ai",
-        "questions": [{"title": ph["title"], "body": ph["body"], "options": ph["options"]}],
-    }
-    q_json = json.dumps(q_post_body, ensure_ascii=False, indent=2)
+    pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
     return (
         f"{txt['lead']}\n"
         "\n"
         f"POST {base}/q/{anchor_doc_id}/questions\n"
         f"Authorization: Bearer {raw_token}\n"
-        "\n"
-        f"{q_json}\n"
+        f"{pointer}\n"
         "\n"
         f"{txt['warn']}\n"
         "\n"
@@ -538,6 +557,49 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
     "ja": "<却下理由への対応内容: 各却下理由をどのように反映したか記述>",
     "en": "<response to each rejection reason: describe how each one was addressed>",
 }
+
+
+# ── Authoring guide / submission pointers (group 0372 set 3 — D-0003 §3-2) ───────────
+# The full "how to write it" content (TS/N/T grammar, the POST body format+example, the
+# changed-files section format) now lives behind help items. The mention keeps only what
+# D-0003 §3-1 says must stay: values unique to this token, and facts that break the run
+# if unread. _ts_authoring_section / _nt_authoring_section below still build the FULL
+# body, unchanged — they remain the sole content the `authoring_guide` help item serves
+# (help_catalog._authoring_guide_body imports them); only the mention stops inlining it.
+_AUTHORING_GUIDE_POINTER_TEXT: dict[str, str] = {
+    "ko": "이 문서 타입을 작성하는 방법은 도움말 항목에 있습니다: GET {url}",
+    "ja": "この文書タイプの作成方法はヘルプ項目にあります: GET {url}",
+    "en": "How to write this document type is in the help item: GET {url}",
+}
+
+
+def _authoring_guide_pointer_section(header: str, type_code: str, locale: str, base: str) -> str:
+    """One-line pointer replacing the full TS/N/T authoring body (D-0003 §3-2 "뺌")."""
+    loc = template_provision.normalize_locale(locale)
+    url = f"{base}/help/items/authoring_guide/{type_code}"
+    return _section(header, _AUTHORING_GUIDE_POINTER_TEXT[loc].format(url=url))
+
+
+_SUBMIT_POINTER_TEXT: dict[str, str] = {
+    "ko": "요청 서식과 예시, dry-run 사용법은 도움말 항목에 있습니다: GET {url}",
+    "ja": "リクエストの書式と例、dry-runの使い方はヘルプ項目にあります: GET {url}",
+    "en": "The request format, an example, and how to dry-run are in the help item: GET {url}",
+}
+
+# Same pointer for the two submissions that have no dry-run (workflow decide /
+# sequence edit) — naming dry-run there would promise a switch those routes reject.
+_SUBMIT_BODY_POINTER_TEXT: dict[str, str] = {
+    "ko": "요청 본문 서식과 예시는 도움말 항목에 있습니다: GET {url}",
+    "ja": "リクエスト本文の形式と例はヘルプ項目にあります: GET {url}",
+    "en": "The request body format and an example are in the help item: GET {url}",
+}
+
+_CHANGED_FILES_REQUIRED_TEXT: dict[str, str] = {
+    "ko": "제출 본문에는 변경 파일 절이 반드시 있어야 합니다 — 서식은 GET {url} 에 있습니다.",
+    "ja": "提出本文には変更ファイル節が必須です — 書式は GET {url} にあります。",
+    "en": "The submitted content must include a changed-files section — its format is at GET {url}.",
+}
+
 
 # TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
 # it remotely from the project source root. Without this block the worker receives a
@@ -1055,18 +1117,24 @@ def build_mention(
         )
 
     # ── TS authoring guidance ────────────────────────────────────────────────
-    # A worker whose head/target is a TS must be told the 3-section case-block grammar
-    # and {PORT}/{SCRATCH} conventions, else the TS it writes cannot be parsed/run.
+    # A worker whose head/target is a TS must be told to fetch the 3-section case-block
+    # grammar before writing one. Group 0372 set 3 (D-0003 §3-2): the mention now carries
+    # only the pointer — the full grammar lives behind the authoring_guide help item.
     ts_authoring_section = ""
     if scope_type in _TS_AUTHORING_TYPES:
-        ts_authoring_section = _ts_authoring_section(locale)
+        ts_authoring_section = _authoring_guide_pointer_section(
+            "Test scenario authoring (TS)", "TS", locale, base
+        )
 
     # ── N/T instruction authoring guidance (group 0230 R0001 / T0005 WI-7) ────
     # Only reached when the run chose ai_direct: in auto_approved mode N/T are
     # auto-completed server-side and never arrive here as a worker mention.
+    # Group 0372 set 3 (D-0003 §3-2): pointer only, same reduction as TS above.
     nt_authoring_section = ""
     if scope_type in _NT_AUTHORING_TYPES:
-        nt_authoring_section = _nt_authoring_section(scope_type, locale)
+        nt_authoring_section = _authoring_guide_pointer_section(
+            f"Instruction authoring ({scope_type})", scope_type, locale, base
+        )
 
     # ── Section 3: reference documents ───────────────────────────────────────
     # Format: {dot-dash-path}: GET {url}  (use only the new format)
@@ -1112,33 +1180,13 @@ def build_mention(
             ])
         review_section = _section("Review feedback", "\n".join(review_lines))
 
-    # ── Section 4: recent documents in the group (omit when there are 0) ─────
-    s4_section = ""
-    if group_recent_docs:
-        count = len(group_recent_docs)
-        lines_doc = [f"Recent documents in group (relative to {parent_doc_id}, {count} items):"]
-        oldest_canonical_id = ""
-        for item in group_recent_docs:
-            seq = item.get("seq")
-            short_id = (
-                f"{item['doc_type']}{seq:04d}" if seq else item.get("doc_id", "")
-            )
-            doc_type = item.get("doc_type", "")
-            title = item.get("title", "")
-            status = item.get("status", "")
-            type_label = get_type_name(doc_type, locale) if doc_type else ""
-            lines_doc.append(f"- {short_id}  [{doc_type}] {type_label}  {title} ({status})")
-            oldest_canonical_id = item.get("doc_id", short_id)
+    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2 "뺌") ─────
+    # The list is now the `group_documents` help item, always visible in the index — a
+    # worker never needs a pointer line for it (D-0003 §3-2: "도움말 목차 한 줄로
+    # 합쳐진다"). group_recent_docs stays accepted for caller compatibility but is no
+    # longer rendered.
 
-        nav_gid = group_id or f"{project}-{module}-{group}"
-        lines_doc.append("")
-        lines_doc.append("To browse earlier documents:")
-        lines_doc.append(
-            f"GET {base}/list/groups/{nav_gid}/documents?before={oldest_canonical_id}&limit=5"
-        )
-        s4_section = "\n" + _section("Recent documents in group", "\n".join(lines_doc))
-
-    # ── Section 5: artifact registration (complete POST example) ─────────────
+    # ── Section 5: artifact registration ──────────────────────────────────────
     group_name_value = group_id or f"{project}.{module}.{group}"
     prev_doc_id_value = parent_canonical_doc_id or parent_doc_id
     if is_edit:
@@ -1157,74 +1205,56 @@ def build_mention(
         # → record_rejection_response) then attaches it to the latest rejection item
         # for read-only display. Without this field the response is never collected,
         # so the reviewer sees no "response content" and cannot tell what changed.
+        # D-0003 §3-1 question 2 ("읽지 않으면 시작 자체가 틀리는가") keeps this whole
+        # example inline for the edit path — unlike `new` below, it is not boilerplate.
         if edit_reason == "rejected":
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
                 template_provision.normalize_locale(locale)
             ]
-    else:
-        doc_type_value = head_type if head_type else "<Sequence undecided>"
-        post_body = {
-            "action": "new",
-            "project": project,
-            "module": module,
-            "group_name": group_name_value,
-            "doc_type": doc_type_value,
-        }
-        if prev_doc_id_value:
-            post_body["prev_doc_id"] = prev_doc_id_value
-        post_body["title"] = "<Fill this in>"
-        # TR 작업범위 검증 (0299 D0004 §3.9): TR 은 content 자리에 빈 `## 변경 파일`
-        # 섹션을 미리 넣어 둔다. 칸이 있으면 채우고, 없으면 안내를 읽어도 빠뜨린다 —
-        # 이 placeholder 가 T1 의 "TR 서식에 빈 섹션 추가"에 해당한다.
-        if str(doc_type_value).upper() == "TR":
-            post_body["content"] = (
-                "<Fill this in>\n\n"
-                + tr_scope_service.tr_section_placeholder(template_provision.normalize_locale(locale))
-            )
-        else:
-            post_body["content"] = "<Fill this in>"
-        # TR commit-message draft (flowgate.default.0173 D0002 §2 / P0003 §1): the TR
-        # worker understands the work in English, so it supplies the commit subject at
-        # report time. Optional and TR-only; the server ignores it for other types.
-        if str(doc_type_value).upper() == "TR":
-            post_body["commit_message"] = (
-                "<Optional. English one-line commit subject summarizing this group's "
-                "work, e.g. fix(git): preserve finalized commit subject>"
-            )
-
-    post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
-    commit_hint = ""
-    # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
-    # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
-    if is_edit and str(parent_type or "").upper() == "TR":
-        commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
-    if not is_edit and str(head_type or "").upper() == "TR":
-        commit_hint = (
-            "\nThe optional `commit_message` is an English one-line commit subject "
-            "(<=200 chars) that becomes the finalize commit for this group. Write it "
-            "in the Conventional Commits form and in English; omit it if unsure.\n"
-            # 0299 D0004 §3.9: 작업 지시가 검증의 전제다. 형식 안내가 먼저 나가야
-            # 대조할 대상이 생기고, 반려당한 뒤에 처음 형식을 배우는 일이 없다.
-            f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
+        post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
+        commit_hint = ""
+        # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
+        # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
+        if str(parent_type or "").upper() == "TR":
+            commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
+        content_source_hint = (
+            "Choose exactly one document source (XOR):\n"
+            "- `content`: send the complete document inline, as shown in the POST example below.\n"
+            "- `doc_path`: replace `content` with the absolute path of a UTF-8 file located "
+            f"inside this token's scratch_dir: `{scratch_dir}`.\n"
+            "Do not send both `content` and `doc_path`."
         )
-    content_source_hint = (
-        "Choose exactly one document source (XOR):\n"
-        "- `content`: send the complete document inline, as shown in the POST example below.\n"
-        "- `doc_path`: replace `content` with the absolute path of a UTF-8 file located "
-        f"inside this token's scratch_dir: `{scratch_dir}`.\n"
-        "Do not send both `content` and `doc_path`."
-    )
-    s5_body = (
-        f"Artifact registration: POST {base}/inbox\n"
-        f"Authorization: Bearer {raw_token}\n"
-        f"\n"
-        f"{content_source_hint}\n"
-        f"\n"
-        f"{post_json}\n"
-        f"{commit_hint}"
-        f"\n"
-        f"{_DRYRUN_HINT}"
-    )
+        s5_body = (
+            f"Artifact registration: POST {base}/inbox\n"
+            f"Authorization: Bearer {raw_token}\n"
+            f"\n"
+            f"{content_source_hint}\n"
+            f"\n"
+            f"{post_json}\n"
+            f"{commit_hint}"
+            f"\n"
+            f"{_DRYRUN_HINT}"
+        )
+    else:
+        # group 0372 set 3 (D-0003 §3-2 / §3-5): the request format, the field-by-field
+        # example and the dry-run guide now live behind the `submit` help item, which
+        # already builds this exact body (including the TR content/commit_message
+        # placeholders) for every action_scope. The mention keeps only what D-0003 §3-1
+        # says cannot move: the address, the credential, and — §3-5's named exception —
+        # the FACT (not the format) that a TR submission must carry a changed-files
+        # section.
+        doc_type_value = head_type if head_type else "<Sequence undecided>"
+        loc = template_provision.normalize_locale(locale)
+        s5_body = (
+            f"Artifact registration: POST {base}/inbox\n"
+            f"Authorization: Bearer {raw_token}\n"
+            f"\n"
+            f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        )
+        if str(doc_type_value).upper() == "TR":
+            s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
+                url=f"{base}/help/items/changed_files_format"
+            )
 
     # ── Section 6: scratch directory ──────────────────────────────────────────
     # Workers and FlowGate run against the same group-worktree filesystem. Expose
@@ -1235,8 +1265,9 @@ def build_mention(
         "Create the file inside it and send that file's absolute path as `doc_path`."
     )
 
-    # ── Section 7: doc_type guide ────────────────────────────────────────────
-    s7_body = f"GET {base}/help/doc_type"
+    # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "뺌") ──
+    # It was already a bare one-line help URL; the always-visible `doc_type` entry of
+    # the help index (taught by the central Help block below) absorbs it.
 
     # ── Clarification guide (embedded query POST + no-choices guard; hoisted to top in assembly) ──
     # Anchor the embedded POST at the document the worker's token is bound to (the
@@ -1261,31 +1292,21 @@ def build_mention(
         s8_header = "Clarification guide"
         s8_body = _clarification_guide_body(base, prev_doc_id_value, raw_token, locale)
 
-    # ── Document template (group 0024): push the DB-held design template BODY ──
-    # The remote worker authors design docs (D/P/L/DB) from a standard template.
-    # The G1 query API is session/RBAC-scoped (admin/UI) so a worker bearer token
-    # cannot pull it (401); delivery for the worker is therefore push-via-mention.
-    # For a new hand-off the template is for the document being created (head_type);
-    # for an in-place edit it is for the document being revised (parent_type).
-    # Non-design types embed nothing (their file-path pointers are out of scope).
-    # Resolution touches the DB and must never abort mention generation — any
-    # failure degrades silently to no section (writing still proceeds from skeleton).
+    # ── Document template (group 0372 set 2): one help pointer, never the body ──
+    # The full D/P/L/DB template now lives behind the worker-authenticated help item.
+    # New hand-offs point at head_type; edits point at the design document being revised.
     template_section = ""
     tmpl_type = parent_type if is_edit else head_type
     if tmpl_type:
         try:
             if template_provision.is_design_type(tmpl_type):
-                req_locale = template_provision.normalize_locale(locale)
-                resolved = template_provision.resolve_active_template(
-                    project, tmpl_type, req_locale
-                )
                 template_section = _section(
                     "Document template",
-                    template_provision.render_provision_block(tmpl_type, req_locale, resolved),
+                    template_provision.render_help_pointer(tmpl_type, locale, base),
                 )
-        except Exception:  # never let template provision break the mention
+        except Exception:  # a help pointer must never abort mention generation
             logger.warning(
-                "template provision failed for type=%s; mention degrades without it",
+                "design-template help pointer failed for type=%s",
                 tmpl_type, exc_info=True,
             )
             template_section = ""
@@ -1304,6 +1325,10 @@ def build_mention(
         # inside s8_body so workers stop offering options the remote run can't answer.
         # In continuous mode the header/body swap to the unmanned work block (s8_header).
         _section(s8_header, s8_body),
+        # group 0372 set 3 (L-0005 §2-10): the central help-index block sits once per
+        # mention, directly below the identity + guide blocks and above everything the
+        # index can answer in depth.
+        _help_index_section(base, raw_token, locale),
     ]
     # 0349 D0004 D-5: the tool section moves up to the highest slot it is allowed to take —
     # under the identity header and the continuous/clarification block (which tell the worker
@@ -1319,42 +1344,30 @@ def build_mention(
         sections.append(nt_authoring_section)
     if ts_authoring_section:
         sections.append(ts_authoring_section)
-        # flowgate.default.0152: right after the TS authoring guide, list this project's
-        # verified test commands so the worker prefers known-good commands over guessing.
-        # Omitted when the project has none (build_* returns ""); never breaks mention build.
-        try:
-            verified_commands_body = test_command_service.build_verified_commands_block(project)
-        except Exception:
-            logger.warning("verified test-command block failed", exc_info=True)
-            verified_commands_body = ""
-        if verified_commands_body:
-            sections.append(
-                _section(f"Verified test commands (project: {project})", verified_commands_body)
-            )
-        # flowgate.default.0157: the engine-recipe help pointer, right after the verified commands.
-        # Always emitted when the TS authoring guide is present — even with zero recipes — so the first
-        # help call teaches the registry (L §2-7). No per-language rules (0156.0002-CH). Never breaks build.
-        try:
-            engine_recipes_body = engine_recipe_service.build_engine_recipes_block(base)
-        except Exception:
-            logger.warning("engine recipes block failed", exc_info=True)
-            engine_recipes_body = ""
-        if engine_recipes_body:
-            sections.append(_section("Engine recipes (environment setup)", engine_recipes_body))
+        # flowgate.default.0152 / group 0372 set 3: the verified-commands list used to be
+        # inlined here (D-0003 §3-2 "검증된 테스트 명령: 뺌") — it is now the `test_commands`
+        # help item, auto-visible in the index whenever a TS is being authored, so no pointer
+        # line is needed here either (same "absorbed into the index" rule as recent_documents).
+        # flowgate.default.0157's engine-recipe block ("실행 환경 준비" — same D-0003 row)
+        # rides along: help_catalog._content_test_commands now carries it as
+        # `engine_recipes`, so the registry is still taught on the first help call
+        # (L §2-7) without this mention inlining it.
     if template_section:
         sections.append(template_section)
     sections.append(_section("Reference documents", s3_body))
+    # MERGE NOTE (branch base 241f00d predates group 0370 on main): main inserts an
+    # inline "Efficient document lookup" section right here. Group 0372 absorbed that
+    # guidance into the `document_access` help item (D-0003 §3-2 "참조 문서: 조회 방법
+    # 설명은 뺀다" + M0009), so the inline section must NOT come back when this branch
+    # merges — resolve any conflict here by keeping NO inline lookup section.
     if review_section:
         sections.append(review_section)
-    if s4_section:
-        # s4_section already includes a leading "\n" + section
-        sections.append(s4_section.lstrip("\n"))
     # Review phase suppresses the action:new artifact POST (the "new안내"): the worker must
     # register Qs, not create the next document. The Q POST is embedded in s8_body instead.
     if not review_continuous:
         sections.append(_section("Artifact registration", s5_body))
     sections.append(_section("Scratch directory", s6_body))
-    sections.append(_section("doc_type guide", s7_body))
+    # doc_type guide section — REMOVED (see the Section 7 comment above).
     # NR0003 recency: repeat the no-choices guard at the very bottom so a long
     # prompt does not bury it; recency weighting keeps it in the worker's view.
     # Continuous mode repeats the unmanned directive instead (no Q-registration guard);
@@ -1522,7 +1535,7 @@ def build_workflow_decision_mention(
         "decision through the workflow decision API below. Do not edit the root document and\n"
         "do not create a report document. Report steps (NR/TR/TSR) are attached\n"
         "automatically to each N/T/TS step, so submit only the instruction and design\n"
-        "steps. Use the document type guide for valid type codes."
+        f"steps. Valid type codes: GET {base}/help/items/doc_type"
     )
     if continuous and not continuous_review_mode:
         # The decision is the first step of an unmanned chain: after it is saved the
@@ -1577,6 +1590,9 @@ def build_workflow_decision_mention(
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", clarification_body),
+        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # build_mention — once, right below the identity + guide blocks.
+        _help_index_section(base, raw_token, locale),
     ]
     # 0349 D0004 D-3: a workflow_decide token already resolves to ["read", "grep"] server
     # side, but this mention never said so — the worker deciding a sequence could not read
@@ -1590,48 +1606,26 @@ def build_workflow_decision_mention(
     sections.extend([
         _section("Workflow decision instructions", s2_body),
         _section("Reference documents", s3_body),
+        # MERGE NOTE (branch base predates group 0370 on main): main inserts an inline
+        # "Efficient document lookup" section here — absorbed into the `document_access`
+        # help item (D-0003 §3-2); keep NO inline lookup section on merge.
     ])
 
-    if group_recent_docs:
-        lines = [
-            f"Recent documents in group (relative to {short_id}, {len(group_recent_docs)} items):"
-        ]
-        oldest_id = doc_id
-        for item in group_recent_docs:
-            item_seq = item.get("seq")
-            item_type = item.get("doc_type", "")
-            item_short = (
-                f"{item_type}{item_seq:04d}" if item_seq else item.get("doc_id", "")
-            )
-            item_label = get_type_name(item_type, locale) if item_type else ""
-            lines.append(
-                f"- {item_short}  [{item_type}] {item_label}  "
-                f"{item.get('title', '')} ({item.get('status', '')})"
-            )
-            oldest_id = item.get("doc_id", item_short)
-        lines.extend([
-            "",
-            "To browse earlier documents:",
-            f"GET {base}/list/groups/{group_id}/documents?before={oldest_id}&limit=5",
-        ])
-        sections.append(_section("Recent documents in group", "\n".join(lines)))
+    # Recent documents in group — REMOVED (D-0003 §3-2 "뺌"), see build_mention's
+    # Section 4 comment. group_recent_docs stays accepted for caller compatibility.
 
-    decision_body = {
-        "doc_id": doc_id,
-        "doc_class": "R",
-        "sequence": [
-            {"id": 1, "type": "<TYPE_CODE>", "label": "<STEP_LABEL>"},
-        ],
-    }
+    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only;
+    # the request body format/example lives behind the `submit` help item, which the
+    # help catalog builds per action_scope (workflow_decide included).
+    loc = template_provision.normalize_locale(locale)
     s5_body = (
         f"Submit the workflow decision: POST {base}/workflow/decide\n"
-        f"Authorization: Bearer {raw_token}\n\n"
-        f"{json.dumps(decision_body, ensure_ascii=False, indent=2)}"
+        f"Authorization: Bearer {raw_token}\n"
+        f"\n"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
     )
-    sections.extend([
-        _section("Workflow decision submission", s5_body),
-        _section("doc_type guide", f"GET {base}/help/doc_type"),
-    ])
+    sections.append(_section("Workflow decision submission", s5_body))
+    # doc_type guide section — REMOVED (D-0003 §3-2 "뺌"): absorbed into the help index.
     if continuous:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=continuous_review_mode)))
     else:
@@ -1718,8 +1712,9 @@ def build_sequence_edit_mention(
         "needs. Locked steps (done / in progress) are immutable and preserved automatically.\n"
         "Submit the FULL replacement pending list (not a diff) through the PATCH below. Report\n"
         "steps (NR/TR/TSR) are attached automatically to each N/T/TS step, so submit only the\n"
-        "instruction and design steps. Do NOT edit the root document. Use the document type\n"
-        "guide for valid type codes. You may not empty a decided workflow that has no locked\n"
+        "instruction and design steps. Do NOT edit the root document. Valid type codes:\n"
+        f"GET {base}/help/items/doc_type\n"
+        "You may not empty a decided workflow that has no locked\n"
         "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
     )
 
@@ -1729,26 +1724,29 @@ def build_sequence_edit_mention(
         f"Current sequence: GET {base}/workflow/sequence?doc_id={doc_id}"
     )
 
-    edit_body = {
-        "doc_id": doc_id,
-        "items": [
-            {"type": "<TYPE_CODE>", "label": "<STEP_LABEL>"},
-        ],
-    }
+    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only;
+    # the PATCH body format lives behind the `submit` help item (workflow_sequence_edit).
+    loc = template_provision.normalize_locale(locale)
     s5_body = (
         f"Submit the sequence edit: PATCH {base}/workflow/sequence\n"
-        f"Authorization: Bearer {raw_token}\n\n"
-        f"{json.dumps(edit_body, ensure_ascii=False, indent=2)}"
+        f"Authorization: Bearer {raw_token}\n"
+        f"\n"
+        f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
     )
 
     sections = [
         _section("Document information", s1_body),
         _section("Clarification guide", _clarification_guide_body(base, doc_id, raw_token, locale)),
+        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # build_mention. doc_type guide section — REMOVED (absorbed into the index).
+        _help_index_section(base, raw_token, locale),
         _section("Sequence edit instructions", s2_body),
         _section("Current sequence", seq_body),
         _section("Reference documents", s3_body),
+        # MERGE NOTE (branch base predates group 0370 on main): keep NO inline
+        # "Efficient document lookup" section here on merge — absorbed into the
+        # `document_access` help item (D-0003 §3-2).
         _section("Sequence edit submission", s5_body),
-        _section("doc_type guide", f"GET {base}/help/doc_type"),
         _section("Reminder", _no_choices_reminder(base, doc_id, locale)),
     ]
     return "\n\n".join(sections)
@@ -1828,45 +1826,22 @@ def build_review_mention(
         + "\n".join(s3_lines)
     )
 
-    # ── Section 4: recent documents in the group (omit when there are 0) ─────
-    s4_section = ""
-    if group_recent_docs:
-        count = len(group_recent_docs)
-        lines_doc = [f"Recent documents in group (relative to {short_id}, {count} items):"]
-        oldest_canonical_id = ""
-        for item in group_recent_docs:
-            iseq = item.get("seq")
-            isid = f"{item['doc_type']}{iseq:04d}" if iseq else item.get("doc_id", "")
-            ilabel = get_type_name(item.get("doc_type", ""), locale) if item.get("doc_type") else ""
-            lines_doc.append(
-                f"- {isid}  [{item.get('doc_type', '')}] {ilabel}  {item.get('title', '')} ({item.get('status', '')})"
-            )
-            oldest_canonical_id = item.get("doc_id", isid)
-        nav_gid = group_id_full or f"{project}-{module}-{group}"
-        lines_doc.append("")
-        lines_doc.append("To browse earlier documents:")
-        lines_doc.append(
-            f"GET {base}/list/groups/{nav_gid}/documents?before={oldest_canonical_id}&limit=5"
-        )
-        s4_section = _section("Recent documents in group", "\n".join(lines_doc))
+    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2 "뺌") ─────
+    # See build_mention's Section 4 comment; group_recent_docs stays accepted for
+    # caller compatibility but is no longer rendered.
 
     # ── Section 5: review submission (inbox action:review) ────────────────────
-    post_body = {
-        "action": "review",
-        "project": project,
-        "doc_id": canonical_id,
-        "verdict": "pass | issues | hold",
-        "findings": [{"locus": "<where in the doc>", "note": "<what is wrong / to improve>"}],
-        "comment": "<optional overall comment>",
-    }
-    post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
+    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only.
+    # The action:review body format/example (verdict enum, findings shape) lives behind
+    # the `submit` help item, which builds the review contract for review tokens; the
+    # Verdict guide section below keeps the verdict semantics inline (L-0006 §2-5 keeps
+    # that purpose-specific slot, DEFERRED to unify).
+    loc = template_provision.normalize_locale(locale)
     s5_body = (
         f"Submit your review: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
         "\n"
-        f"{post_json}\n"
-        "\n"
-        f"{_DRYRUN_HINT}"
+        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
     )
 
     # ── Section 6: scratch directory ─────────────────────────────────────────
@@ -1898,6 +1873,9 @@ def build_review_mention(
         # R0001/T0004: hoist the clarification guide (with the no-choices guard)
         # directly under the document-identity header so it is actually read.
         _section("Clarification guide", s8_body),
+        # group 0372 set 3 (L-0005 §2-10): central help-index block, same slot as
+        # build_mention.
+        _help_index_section(base, raw_token, locale),
     ]
     # 0349 D0004 D-3: a review token resolves to ["read", "grep"] server side. Reviewing a
     # TR against the source it claims to have changed needs exactly that, and the mention
@@ -1911,9 +1889,10 @@ def build_review_mention(
     sections.extend([
         _section("Review instructions", s2_body),
         _section("Reference documents", s3_body),
+        # MERGE NOTE (branch base predates group 0370 on main): keep NO inline
+        # "Efficient document lookup" section here on merge — absorbed into the
+        # `document_access` help item (D-0003 §3-2).
     ])
-    if s4_section:
-        sections.append(s4_section)
     sections.append(_section("Review submission", s5_body))
     sections.append(_section("Scratch directory", s6_body))
     sections.append(_section("Verdict guide", s7_body))

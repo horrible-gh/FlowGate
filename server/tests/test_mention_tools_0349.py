@@ -189,10 +189,14 @@ def test_answer_mention_degrades_to_no_block_when_judgement_fails(monkeypatch):
 # ── D-5: position ────────────────────────────────────────────────────────────
 
 def test_section_sits_below_identity_and_above_the_instruction_sections():
+    # group 0372 set 3 (L-0005 §2-10): the central help block ("## 도움말") takes the
+    # slot right below the identity + guide blocks, so the tool section now sits
+    # fourth — still above every instruction section.
     headers = _headers(_build(continuous=True))
-    assert headers[:3] == [
+    assert headers[:4] == [
         "## Document information",
         "## Continuous work",
+        "## 도움말",
         _HEADER,
     ]
     assert headers.index(_HEADER) < headers.index("## Instruction to include next document header")

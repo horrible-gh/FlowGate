@@ -2716,16 +2716,10 @@ def _get_next_ac_sequence(project: str, module: str) -> int:
 
 
 def _render_design_template_section(
-    next_type: str, req_locale: str, r: dict[str, Any]
+    next_type: str, req_locale: str
 ) -> list[str]:
-    """Render the design-template body section (group 0024 / L0013 §2-4).
-
-    Embeds the resolved body — NEVER a file path (AC-1). Badges (global source /
-    ko fallback) accumulate independently (L0013 §2-4 review #3). Delegates to
-    template_provision.render_provision_block so the worker mention and this
-    self-contained path share one renderer (single source of truth).
-    """
-    return ["", template_provision.render_provision_block(next_type, req_locale, r)]
+    """Render the help pointer that replaces an inline design-template body (0372 set 2)."""
+    return ["", template_provision.render_help_pointer(next_type, req_locale)]
 
 
 def _build_self_contained_sections(
@@ -2760,10 +2754,9 @@ def _build_self_contained_sections(
         lines.append(f"| {doc_doc_id} | {doc_type} | {doc_title} | {doc_status} | {file_path} |")
 
     # 2. Next-step writing guide
-    #    Design types (D/P/L/DB) embed the DB-held template BODY in the writer's
-    #    locale (group 0024 — replaces the As-Is `Template: <abs path>` line, AC-1).
-    #    Non-design mapped types (N/NR/T/TR) keep the legacy file-path pointer
-    #    (out of this feature's scope — D0010 §3-1 / L0013 DEFERRED).
+    #    Design types (D/P/L/DB) carry only the authenticated help pointer; the full
+    #    template body is fetched on demand (group 0372 set 2). Non-design mapped
+    #    types (N/NR/T/TR) keep the legacy file-path pointer.
     is_design_next = bool(next_type) and template_provision.is_design_type(next_type)
     is_legacy_mapped = bool(next_type) and next_type in NEXT_TYPE_TEMPLATE_MAP
     if is_design_next or is_legacy_mapped:
@@ -2772,8 +2765,7 @@ def _build_self_contained_sections(
 
         if is_design_next:
             req_locale = template_provision.normalize_locale(locale)
-            r = template_provision.resolve_active_template(project, next_type, req_locale)  # type: ignore[arg-type]
-            lines.extend(_render_design_template_section(next_type, req_locale, r))  # type: ignore[arg-type]
+            lines.extend(_render_design_template_section(next_type, req_locale))  # type: ignore[arg-type]
         else:
             template_name = NEXT_TYPE_TEMPLATE_MAP[next_type]  # type: ignore[index]
             template_path = ""
