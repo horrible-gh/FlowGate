@@ -1,5 +1,5 @@
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { config, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import ReviewActionBar from '@main/components/ReviewActionBar.vue'
@@ -20,7 +20,12 @@ vi.mock('@main/components/common/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }))
 
+// These tests exercise dropdown actions, not DOM ownership. Render teleports in place so
+// their existing wrapper-scoped selectors remain focused on the behavioral contract.
+const originalGlobalStubs = { ...config.global.stubs }
+
 beforeEach(() => {
+  config.global.stubs = { ...originalGlobalStubs, teleport: true }
   setActivePinia(createPinia())
   i18n.global.locale.value = 'en'
   getRequest.mockReset()
@@ -29,6 +34,10 @@ beforeEach(() => {
     data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } },
   })
   postRequest.mockResolvedValue({ data: { document: { doc_review_status: 'approved' } } })
+})
+
+afterEach(() => {
+  config.global.stubs = { ...originalGlobalStubs }
 })
 
 describe('ReviewActionBar', () => {

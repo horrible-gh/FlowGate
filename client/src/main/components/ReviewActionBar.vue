@@ -63,27 +63,35 @@
                mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking it
                no longer opens a dialog; it expands the dropdown of workflow actions. -->
           <div class="ab-dd-wrap">
-            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="tree-structure" /> {{ t('main.review_action_bar.btn_decide_workflow') }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
-            <div v-if="dropdownOpen" class="ab-split-dd">
-              <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowMentionCopyClick">
-                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
-              </button>
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowCommandClick">
-                <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
-              </button>
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowManualClick">
-                <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
-              </button>
-              <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
-                   current head to a chosen step without a human re-issuing tokens each step. -->
-              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-            </div>
+            <Teleport to="body">
+              <div
+                v-if="dropdownOpen"
+                ref="dropdownMenuRef"
+                class="ab-split-dd"
+                :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+                @click.stop
+              >
+                <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowCommandClick">
+                  <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
+                </button>
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowManualClick">
+                  <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
+                </button>
+                <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
+                     current head to a chosen step without a human re-issuing tokens each step. -->
+                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                  <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+                </button>
+              </div>
+            </Teleport>
           </div>
         </div>
 
@@ -120,18 +128,26 @@
             <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false || isGroupBusy" @click="onRunTestClick">
               <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
             </button>
-            <button class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-up" />
             </button>
-            <div v-if="dropdownOpen" class="ab-split-dd">
-              <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
-                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
-              </button>
-              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-            </div>
+            <Teleport to="body">
+              <div
+                v-if="dropdownOpen"
+                ref="dropdownMenuRef"
+                class="ab-split-dd"
+                :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+                @click.stop
+              >
+                <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                  <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+                </button>
+              </div>
+            </Teleport>
           </div>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
@@ -141,29 +157,37 @@
                  Create approved doc → Create empty doc → Copy mention.
                  T0007: [다음 단계 진행] (proceed) is no longer an item here — the current-step
                  cell in the workflow strip (DocWorkflow.vue) is the sole entry to NextActionModal. -->
-            <button class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="arrow-right" />
               {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
-            <div v-if="dropdownOpen" class="ab-split-dd">
-              <button v-if="canCreateApproved" class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateApprovedClick">
-                <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
-              </button>
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
-                <AppIcon name="file" /> {{ t('main.review_action_bar.btn_create_empty') }}
-              </button>
-              <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
-                   opening the proceed dialog. -->
-              <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
-                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
-              </button>
-              <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
-                   current head to a chosen step without a human re-issuing tokens each step. -->
-              <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-            </div>
+            <Teleport to="body">
+              <div
+                v-if="dropdownOpen"
+                ref="dropdownMenuRef"
+                class="ab-split-dd"
+                :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+                @click.stop
+              >
+                <button v-if="canCreateApproved" class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateApprovedClick">
+                  <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
+                </button>
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
+                  <AppIcon name="file" /> {{ t('main.review_action_bar.btn_create_empty') }}
+                </button>
+                <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
+                     opening the proceed dialog. -->
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
+                     current head to a chosen step without a human re-issuing tokens each step. -->
+                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                  <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+                </button>
+              </div>
+            </Teleport>
           </div>
         </div>
 
@@ -224,21 +248,29 @@
             <button :class="reviewRequestMainClass" :disabled="isGroupBusy" @click="onReviewRequestMainClick">
               <AppIcon :name="reviewRequestIconClass" /> {{ reviewRequestButtonLabel }}
             </button>
-            <button :class="reviewRequestCaretClass" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" :class="reviewRequestCaretClass" :disabled="isGroupBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-down" />
             </button>
-            <div v-if="dropdownOpen" class="ab-split-dd">
-              <button class="ab-split-item" :disabled="isGroupBusy" @click="onMentionCopyClick">
-                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
-              </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" :disabled="isGroupBusy" @click="onReviewInvokeAiClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
-              </button>
-              <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
-                <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
-              </button>
-            </div>
+            <Teleport to="body">
+              <div
+                v-if="dropdownOpen"
+                ref="dropdownMenuRef"
+                class="ab-split-dd"
+                :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+                @click.stop
+              >
+                <button class="ab-split-item" :disabled="isGroupBusy" @click="onMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+                <button class="ab-split-item" :disabled="isGroupBusy" @click="onReviewInvokeAiClick">
+                  <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+                </button>
+                <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
+                  <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
+                </button>
+              </div>
+            </Teleport>
           </div>
         </div>
       </template>
@@ -334,7 +366,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import ConfirmModal from './ConfirmModal.vue'
@@ -405,6 +437,11 @@ const showApproveConfirm = ref(false)
 const markRevising = ref(false)
 const showMarkRevisedConfirm = ref(false)
 const dropdownOpen = ref(false)
+const dropdownTriggerRef = ref<HTMLElement | null>(null)
+const dropdownMenuRef = ref<HTMLElement | null>(null)
+const dropdownPos = ref({ top: 8, left: 8 })
+const DROPDOWN_VIEWPORT_MARGIN = 8
+const DROPDOWN_TRIGGER_GAP = 6
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
 const gitAuxOpen = ref(false)
@@ -868,8 +905,32 @@ function onReworkInvokeAiClick() {
   emit('invoke-rework-ai', reworkPayload())
 }
 
-function toggleDropdown() {
-  dropdownOpen.value = !dropdownOpen.value
+function positionDropdown() {
+  const trigger = dropdownTriggerRef.value
+  const menu = dropdownMenuRef.value
+  if (!dropdownOpen.value || !trigger || !menu) return
+
+  const triggerRect = trigger.getBoundingClientRect()
+  const menuRect = menu.getBoundingClientRect()
+  const maxLeft = window.innerWidth - DROPDOWN_VIEWPORT_MARGIN - menuRect.width
+  const preferredLeft = triggerRect.right - menuRect.width
+
+  dropdownPos.value = {
+    top: Math.max(DROPDOWN_VIEWPORT_MARGIN, triggerRect.top - DROPDOWN_TRIGGER_GAP - menuRect.height),
+    // Keep the 8px lower bound even when the viewport is narrower than the menu.
+    left: Math.max(DROPDOWN_VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)),
+  }
+}
+
+async function toggleDropdown() {
+  if (dropdownOpen.value) {
+    dropdownOpen.value = false
+    return
+  }
+
+  dropdownOpen.value = true
+  await nextTick()
+  positionDropdown()
 }
 
 function onWorkflowManualClick() {
@@ -920,7 +981,15 @@ function onMentionCopyClick() {
   })
 }
 
-function onOutsideClick() {
+function onOutsideClick(event: MouseEvent) {
+  const target = event.target
+  if (target instanceof Node && dropdownMenuRef.value?.contains(target)) return
+  if (dropdownOpen.value) dropdownOpen.value = false
+}
+
+function onViewportChange() {
+  // The trigger can move between the mobile and desktop action-bar layouts. Closing
+  // guarantees that a menu never remains stranded at stale fixed coordinates.
   if (dropdownOpen.value) dropdownOpen.value = false
 }
 
@@ -929,6 +998,8 @@ function onOutsideClick() {
 // NR0011), so nothing floats over this bar and the measuring is gone.
 onMounted(() => {
   window.addEventListener('click', onOutsideClick)
+  window.addEventListener('resize', onViewportChange)
+  window.addEventListener('orientationchange', onViewportChange)
   window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.addEventListener('fg:git_status_open', onGitStatusChanged)
@@ -936,6 +1007,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('click', onOutsideClick)
+  window.removeEventListener('resize', onViewportChange)
+  window.removeEventListener('orientationchange', onViewportChange)
   window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
   window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
   window.removeEventListener('fg:git_status_open', onGitStatusChanged)
@@ -1107,19 +1180,13 @@ onBeforeUnmount(() => {
 }
 
 .ab-split-dd {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  top: auto;
-  /* R0001 (0087): right-anchor so a narrow toggle (short label e.g. "로직")
-     opens the menu leftward and never overflows the viewport's right edge. */
-  right: 0;
-  left: auto;
+  position: fixed;
   min-width: 140px;
   background: var(--bg-card, #fff);
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  z-index: 200;
+  z-index: 1000;
   overflow: hidden;
 }
 

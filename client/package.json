@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",
     "test": "vitest run",
+    "test:geometry": "node tests/browser/review-action-bar-dropup.geometry.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
