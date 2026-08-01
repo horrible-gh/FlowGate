@@ -131,6 +131,9 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda s: {
+        "item_seq": 1, "type": "N",
+    })
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda s: [
         {"item_seq": 1, "type": "N", "result_doc_id": "d-N",
          "result_doc_review_status": "approved"},
@@ -172,7 +175,7 @@ def env(monkeypatch, tmp_path):
             "signals": signals, "events": events, "tmp": tmp_path}
 
 
-def _start(env, *, target=2, provider_id=None):
+def _start(env, *, target=2, provider_id=None, provider_overrides=None):
     return svc.start_run(
         project_id="flowgate",
         module="default",
@@ -188,6 +191,7 @@ def _start(env, *, target=2, provider_id=None):
         api_base_url="http://127.0.0.1:1/flowgate/api/v1",
         mention_builder=lambda raw, scratch: "## prompt\n",
         provider_id=provider_id,
+        continuation_provider_overrides=provider_overrides,
     )
 
 
@@ -257,6 +261,24 @@ class TestNoOutputRetry:
         assert history[0]["exit_code"] == 0
         # A rescued hop is not a failure: nobody is woken up for it.
         assert env["signals"] == []
+
+    def test_individual_override_retries_same_then_uses_common_provider(self, env, monkeypatch):
+        launches = _scripted_worker(env, monkeypatch, [
+            ("개별 프로바이더 첫 시도 결과 없음", False),
+            ("개별 프로바이더 두 번째 시도 결과 없음", False),
+            ("공통 프로바이더 세 번째 시도 결과 없음", False),
+        ])
+        res = _start(
+            env,
+            provider_id="aip_3",
+            provider_overrides={"2": "aip_2"},
+        )
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2", "aip_2", "aip_3"]
+        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 3
+        assert run["stop_code"] == "no_output_exhausted"
+
 
     def test_all_attempts_empty_stops_records_notifies_and_parks(self, env, monkeypatch):
         launches = _scripted_worker(env, monkeypatch, [
