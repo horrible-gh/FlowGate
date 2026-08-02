@@ -858,8 +858,8 @@ def start_run(
     chain_source = effective.get("source")
     # 0317 T0010 rev4: a per-step override takes priority over everything else below —
     # including an explicit UI pin — because it names this EXACT hop, not just "no explicit
-    # choice was made". Only re-orders the chain (like the doc-type resolver below), so a
-    # startup failure still degrades to the existing fallback tail.
+    # choice was made". 0379 T0004 narrows startup fallback for that override to the strict
+    # individual -> individual -> common schedule instead of the remaining provider tail.
     step_override_provider = None
     if mode == "continuous" and continuation_provider_overrides:
         step_override_provider = _resolve_continuation_hop_override(
@@ -869,7 +869,18 @@ def start_run(
             continuation_instruction_mode=continuation_instruction_mode,
         )
     if step_override_provider:
-        chain = _prioritize_chain(chain, step_override_provider)
+        # 0379 T0004: startup failures follow the same strict schedule as the
+        # no-output path: individual -> the same individual -> common. Build the
+        # three slots from the enabled source chain and leave no fallback tail.
+        providers_by_id = {provider.get("id"): provider for provider in chain}
+        startup_chain = []
+        individual = providers_by_id.get(step_override_provider)
+        common = providers_by_id.get(provider_id)
+        if individual:
+            startup_chain.extend([individual, individual])
+        if common:
+            startup_chain.append(common)
+        chain = startup_chain or _prioritize_chain(chain, step_override_provider)
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
