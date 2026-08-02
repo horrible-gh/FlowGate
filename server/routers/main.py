@@ -42,6 +42,12 @@ from modules.flow_gate.api.v1.conversation_routes import router as _conversation
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.services.mutation_policy import (
+    GroupMutationPolicyMiddleware,
+    MutationPolicyError,
+    annotate_mutation_routes,
+    mutation_error_response,
+)
 from modules.flow_gate.utils.cors_settings import parse_allowed_origins, resolve_allow_credentials
 from config import settings
 from startup import run_all as _bootstrap
@@ -112,12 +118,20 @@ async def git_service_exception_handler(request: Request, exc: GitServiceError):
         content={"ok": False, "error": error},
     )
 
+
+@app.exception_handler(MutationPolicyError)
+async def mutation_policy_exception_handler(request: Request, exc: MutationPolicyError):
+    return mutation_error_response(exc)
+
+
 app.add_middleware(SlowAPIMiddleware)
 # 0291 P3-1 / 4-8: 요청 하나 = DB 읽기 캐시 하나 + 쿼리 계측 하나.
 # add_middleware 는 스택을 바깥쪽으로 쌓으므로 **나중에 추가된 것이 먼저 실행된다.**
 # 이 줄이 SlowAPIMiddleware 뒤에 오는 덕에 스코프가 바깥에 서고, 레이트리밋에 걸려
 # 거절되는 요청까지 계측에 잡힌다. 스코프가 안쪽에 있으면 그 요청은 통계에서 사라진다.
 app.add_middleware(RequestScopeMiddleware)
+# 0378: the durable group lease is the authoritative write boundary for every route.
+app.add_middleware(GroupMutationPolicyMiddleware)
 
 # Legacy login/register endpoints removed — replaced by /flowgate/auth/login (B001 fix)
 # app.include_router(login.router, prefix=f"{CONTEXT}/login", tags=["Login"])
@@ -159,6 +173,9 @@ app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
+# Every mutation route must carry an inventory classification. Group routes also name
+# the standard resolver used by GroupMutationPolicyMiddleware.
+annotate_mutation_routes(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGIN,

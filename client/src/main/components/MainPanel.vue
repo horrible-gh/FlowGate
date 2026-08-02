@@ -5,7 +5,7 @@
     <div
       class="content-wrap"
       :class="{
-        'has-sticky-footer': activeTabId != null && getActionBarMode(activeTabId) != null,
+        'has-sticky-footer': !aiRunDocumentLocked && activeTabId != null && getActionBarMode(activeTabId) != null,
         'content-wrap--text-preview': activeTab?.type === 'text',
         'content-wrap--conversation': activeTab?.typeCode === 'CH',
       }"
@@ -26,15 +26,17 @@
             :class="['doc-with-panel', { 'panel-collapsed': canShowDocInfoPanel(tab.id) && docInfoCollapsed }]"
           >
           <div class="doc-main">
-          <!-- CH chat runs keep progress on the send button, but a group run that targets
-               another document is a next-document transition and must still cover the
-               current chat. Keep the component mounted so it can discover active runs;
-               AiInvokeInline suppresses only the run whose docRef is this CH document. -->
+          <!-- Fail closed until active-run bootstrap completes. The run branch and the
+               document branch are mutually exclusive: removing this card cannot reveal DOM
+               that was never mounted. CH uses the same rule; there is no suppress exception. -->
+          <div v-if="aiRunBootstrapPending" class="ai-run-bootstrap-pending">
+            {{ t('common.loading') }}
+          </div>
           <AiInvokeInline
-            v-if="activeAiInvokeGroupId"
+            v-else-if="activeGroupRunActive"
             :group-id="activeAiInvokeGroupId"
-            :suppress-doc-ref="tab.typeCode === 'CH' ? tab.id : undefined"
           />
+          <template v-else>
           <!-- 0155: test-failure strip (confirmed design B) — self-hides unless the
                viewed doc's latest test run failed. Sits above DocHeader as the first
                child of .doc-main, per the confirmed layout. A failed run assembles no
@@ -355,9 +357,10 @@
             <span>⚠️ {{ t('main.main_panel.text_22') }}</span>
             <button @click="tabsStore.closeTab(tab.id)">{{ t('common.close') }}</button>
           </div>
+          </template>
           </div><!-- doc-main -->
           <DocInfoPanel
-            v-if="canShowDocInfoPanel(tab.id)"
+            v-if="!aiRunDocumentLocked && canShowDocInfoPanel(tab.id)"
             :doc-id="tab.id"
             :type-code="getTabTypeCode(tab.id)"
             :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? null"
@@ -788,7 +791,7 @@
          Falls back to the view state value for the decision-override bridge.
          See flowgate.default.0310.0003-NR. -->
     <ReviewActionBar
-      v-if="activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
+      v-if="!aiRunDocumentLocked && activeTabId != null && activeTab && getActionBarMode(activeTabId) != null"
       :key="`${activeTabId}:${reviewActionBarGitEpoch}`"
       :mode="getActionBarMode(activeTabId)!"
       :doc-id="activeTabId"
@@ -1248,7 +1251,7 @@ import { isFileTab, useTabsStore, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
-import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { groupIdFromDocId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1731,13 +1734,43 @@ function onConversationJumpSeq(event: Event) {
 
 onMounted(() => {
   window.addEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
+  void aiInvokeRunsStore.bootstrap()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('fg:conversation_jump_seq', onConversationJumpSeq)
 })
 const activeAiInvokeGroupId = computed(() => {
-  if (!activeTabId.value) return ''
-  return exposedValue<string>(docHeaderRefs[activeTabId.value]?.groupId) ?? ''
+  const tab = activeTab.value
+  if (!tab) return ''
+  return tab.gitGroupId
+    ?? groupIdFromDocId(tab.id)
+    ?? exposedValue<string>(docHeaderRefs[tab.id]?.groupId)
+    ?? ''
+})
+const aiRunBootstrapPending = computed(() => aiInvokeRunsStore.bootstrapPending)
+const activeGroupRunActive = computed(() =>
+  aiInvokeRunsStore.isGroupRunning(activeAiInvokeGroupId.value),
+)
+const aiRunDocumentLocked = computed(() =>
+  aiRunBootstrapPending.value || activeGroupRunActive.value,
+)
+
+watch(activeGroupRunActive, (running, wasRunning) => {
+  if (running) {
+    // Unmounting the document branch drops its component-local drafts. Close the mutation
+    // surfaces owned here as well so no teleported modal survives the branch switch.
+    headerEditModeVisible.value = false
+    editDropdownTabId.value = null
+    rejectDialogVisible.value = false
+    fullViewVisible.value = false
+    aiInvokeVisible.value = false
+    return
+  }
+  if (wasRunning) {
+    // The v-else branch remounts fresh instances. Explicitly ask the new header to refetch
+    // after the next paint so document/workflow/git state never comes from the pre-run cache.
+    void nextTick(() => docHeaderRefs[activeTabId.value ?? '']?.fetchDoc?.(activeTabId.value))
+  }
 })
 const aiInvokeSelectedDocs = ref<string[] | null>(null)
 const aiInvokeMessages = ref<string[] | null>(null)

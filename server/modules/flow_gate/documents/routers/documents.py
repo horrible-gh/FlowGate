@@ -74,6 +74,17 @@ def _reject_if_group_disposed(doc: dict) -> None:
         )
 
 
+def _reject_if_group_ai_running(doc: dict) -> None:
+    """Compatibility entry point backed by the authoritative DB mutation policy."""
+    from modules.flow_gate.services.mutation_policy import (
+        assert_group_mutation_allowed,
+        human_principal,
+    )
+
+    assert_group_mutation_allowed(
+        doc.get("group_id"), human_principal(), "document mutation"
+    )
+
 def _get_project_branch(project_id: str) -> str:
     """Dynamically look up project_settings.branch. Falls back to 'main' on failure."""
     try:
@@ -788,6 +799,7 @@ def create_document(
     """Create a document."""
     import logging as _logging
     data = body.model_dump()
+    _reject_if_group_ai_running(data)
     if not data.get("owner_id"):
         data["owner_id"] = current_user["user_id"]
 
@@ -963,6 +975,8 @@ def create_related_document(
     if not body.target_id:
         raise HTTPException(status_code=422, detail="target_id is required.")
 
+    _reject_if_group_ai_running({"group_id": body.group_id})
+
     # Assign a number using D009 id_counter (numbering)
     try:
         doc_code = numbering_service.reserve_document(
@@ -1076,6 +1090,7 @@ def create_next_empty_document(
         raise HTTPException(status_code=422, detail="project_id does not match the previous document.")
     if prev_doc.get("group_id") != body.group_id:
         raise HTTPException(status_code=422, detail="group_id does not match the previous document.")
+    _reject_if_group_ai_running(prev_doc)
 
     # prev_doc may be the sequence root OR a produced child (the just-approved doc the
     # FE navigated to). Resolve the owning sequence either way (0048 TR0009 — creating
@@ -1518,6 +1533,18 @@ def create_next_approved_document(
 
     locale = request.headers.get("x-locale") or "ko"
     approver_perms = _resolve_user_permissions(current_user)
+    requested_type = (body.type_code or "").strip().upper()
+    if requested_type not in {"N", "T"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Auto-approved document not allowed for type: {requested_type}",
+        )
+    prev_doc = document_service.get_document(body.prev_doc_id)
+    if prev_doc is None:
+        raise HTTPException(status_code=404, detail=f"Previous document not found: {body.prev_doc_id}")
+    if prev_doc.get("group_id") != body.group_id:
+        raise HTTPException(status_code=422, detail="group_id does not match the previous document.")
+    _reject_if_group_ai_running(prev_doc)
     try:
         return create_next_approved_core(
             project_id=body.project_id,
@@ -1738,6 +1765,8 @@ def open_final_approval(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     module = doc.get("module") or "none"
@@ -1813,6 +1842,8 @@ def reopen_workflow(
     doc = _db_docs.get_by_id(body.doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     if not project_id or not group_id:
@@ -1934,6 +1965,8 @@ def restore_workflow(
     project_id = doc.get("project_id")
     if not project_id or not group_id:
         raise HTTPException(status_code=400, detail="Document has no project/group")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
 
     with get_store().transaction():
         rp = _db_rp.get_by_group(group_id)
@@ -2468,6 +2501,7 @@ def update_document_content(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     final_approved = document_service.is_final_approved(doc)
     if not document_service.is_document_editable(doc, final_approved=final_approved):
         if final_approved:
@@ -2512,6 +2546,7 @@ def regenerate_document_file(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
 
     target = _regenerate_target_path(doc)
     if target.is_file():
@@ -2582,6 +2617,7 @@ def convert_root_type(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     return {
         "data": document_service.convert_root_document_type(
             doc_id, body.new_type, actor_user_id=current_user["user_id"]
@@ -2602,6 +2638,7 @@ def update_document_workflow(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES:
         raise HTTPException(status_code=400, detail="Only R/B workflow roots can have workflows configured.")
 
@@ -2626,6 +2663,7 @@ def update_document(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=422, detail="No fields to update.")
@@ -2639,6 +2677,11 @@ def delete_document(
     current_user: dict = Depends(get_current_user),
 ) -> None:
     """Delete a document."""
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     document_service.delete_document(doc_id, actor_user_id=current_user["user_id"])
 
 
@@ -2654,6 +2697,7 @@ def transition_document(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
     return document_service.transition_state(
         doc_id=doc_id,
         to_state=body.to_state,
@@ -2710,6 +2754,8 @@ async def upload_attachment(
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
 
     project_id = doc.get("project_id") or doc.get("data", {}).get("project_id")
     if not project_id:

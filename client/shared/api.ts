@@ -4,6 +4,7 @@ import axios, {
   type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from 'axios'
+import i18n from './i18n'
 
 interface RefreshResponse {
   access_token: string
@@ -388,9 +389,28 @@ export const ensureValidAccessToken = async (): Promise<boolean> => {
   return true
 }
 
+export const localizeApiError = (error: AxiosError): AxiosError => {
+  const data = error.response?.data
+  const record = data && typeof data === 'object' ? data as Record<string, any> : null
+  const code = record?.error?.code ?? record?.code ?? record?.detail?.error?.code
+  if (error.response?.status !== 423 && code !== 'GROUP_AI_RUN_LOCKED') return error
+
+  const detail = String(i18n.global.t('main.review_action_bar.ai_running_hint'))
+  if (record) {
+    // Preserve the structured server contract for programmatic callers while keeping the
+    // legacy detail field consumed by existing UI error surfaces during the transition.
+    record.detail = detail
+    if (record.error && typeof record.error === 'object') record.error.message = detail
+  } else if (error.response) {
+    error.response.data = { detail, error: { code: 'GROUP_AI_RUN_LOCKED', message: detail } }
+  }
+  return error
+}
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
+    localizeApiError(error)
     const originalRequest = error.config as RetryableRequestConfig | undefined
 
     if (error.response?.status !== 401 || !originalRequest || originalRequest._retry) {

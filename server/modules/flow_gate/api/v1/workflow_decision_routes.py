@@ -62,6 +62,25 @@ def _disposed_group_response(doc_id: str, doc: Optional[dict]):
     return None
 
 
+def _active_ai_run_response_for_user(doc: Optional[dict], auth: dict):
+    """Return the central policy response for human mutations; owner workers pass."""
+    from modules.flow_gate.services.mutation_policy import (
+        MutationPolicyError,
+        assert_group_mutation_allowed,
+        human_principal,
+        mutation_error_response,
+        worker_principal,
+    )
+
+    principal = human_principal(auth) if auth.get("_is_user_jwt") else worker_principal(auth)
+    try:
+        assert_group_mutation_allowed(
+            (doc or {}).get("group_id"), principal, "workflow decision mutation"
+        )
+    except MutationPolicyError as exc:
+        return mutation_error_response(exc)
+    return None
+
 # ── Request schemas ───────────────────────────────────────────────────────────
 
 class SequenceItem(BaseModel):
@@ -700,6 +719,9 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     _disposed = _disposed_group_response(body.doc_id, _pre_doc)
     if _disposed is not None:
         return _disposed
+    _active_run = _active_ai_run_response_for_user(_pre_doc, auth)
+    if _active_run is not None:
+        return _active_run
 
     try:
         result = edit_workflow_pending(

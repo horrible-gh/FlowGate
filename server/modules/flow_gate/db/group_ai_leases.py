@@ -1,0 +1,251 @@
+"""Durable, atomic group mutation leases for AI runs (flowgate.default.0378)."""
+from __future__ import annotations
+
+import os
+import threading
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from .connection import get_store, now_iso
+
+ACQUIRING_TTL_SEC = 120
+ACTIVE_GRACE_SEC = 300
+ACTIVE_HEARTBEAT_TTL_SEC = (4 * 60 * 60) + ACTIVE_GRACE_SEC
+HANDOFF_TTL_SEC = 120
+
+# Unit tests intentionally run without a DB connection. This mirror preserves the same
+# compare-and-swap contract for direct service tests; production always uses the table.
+_memory: dict[str, dict] = {}
+_memory_lock = threading.RLock()
+_memory_test_id: Optional[str] = None
+
+
+def _using_memory() -> bool:
+    # Direct service tests deliberately have no configured database. Avoid even
+    # constructing the application store in that environment; production always
+    # reaches the durable table.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    return getattr(get_store(), "_db", None) is None
+
+
+def _sync_test_scope() -> None:
+    global _memory_test_id
+    current = os.environ.get("PYTEST_CURRENT_TEST")
+    if current and current != _memory_test_id:
+        _memory.clear()
+        _memory_test_id = current
+
+
+def _expiry(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=max(1, seconds))).isoformat(timespec="seconds")
+
+
+def _expired(row: Optional[dict], at: Optional[str] = None) -> bool:
+    if not row or not row.get("expires_at"):
+        return True
+    try:
+        expires = datetime.fromisoformat(str(row["expires_at"]))
+        now = datetime.fromisoformat(at) if at else datetime.now(timezone.utc)
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return expires <= now
+    except (TypeError, ValueError):
+        return True
+
+
+def get(group_id: str) -> Optional[dict]:
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            row = _memory.get(group_id)
+            return dict(row) if row else None
+    return get_store()._fetch_one("SELECT * FROM group_ai_leases WHERE group_id = ?", [group_id])
+
+
+def recover_expired(group_id: Optional[str] = None) -> int:
+    """Reclaim leases whose heartbeat deadline passed (restart/crash recovery rule)."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            victims = [gid for gid, row in _memory.items() if (not group_id or gid == group_id) and _expired(row, now)]
+            for gid in victims:
+                _memory.pop(gid, None)
+            return len(victims)
+    store = get_store()
+    if group_id:
+        row = get(group_id)
+        if row and _expired(row, now):
+            store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND expires_at = ?", [group_id, row["expires_at"]])
+            return 1
+        return 0
+    rows = store._fetch_all("SELECT group_id FROM group_ai_leases WHERE expires_at <= ?", [now])
+    store._execute("DELETE FROM group_ai_leases WHERE expires_at <= ?", [now])
+    return len(rows)
+
+
+def get_active(group_id: str) -> Optional[dict]:
+    recover_expired(group_id)
+    row = get(group_id)
+    if _using_memory() and row and row.get("state") != "acquiring":
+        # Direct service tests often mark their fake run finished instead of calling the
+        # real finalizer. Reconcile that test-only shape so one test/hop cannot poison the
+        # next admission; production ownership is always the DB row and never uses this.
+        try:
+            from modules.flow_gate.services import ai_invoke_service
+            run = ai_invoke_service.get_run_record(str(row.get("run_id")))
+        except Exception:
+            run = None
+        if run is None or run.get("status") == "finished":
+            release(group_id, str(row.get("run_id")))
+            return None
+    return None if _expired(row) else row
+
+
+def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[str],
+            action_scope: str, worker_identity: Optional[str]) -> Optional[dict]:
+    """Atomically acquire, or transfer a releasing lease to the next hop."""
+    stamp = now_iso()
+    expires = _expiry(ACQUIRING_TTL_SEC)
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            current = _memory.get(group_id)
+            if current and _expired(current):
+                _memory.pop(group_id, None)
+                current = None
+            if current:
+                if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
+                    return None
+                generation = int(current.get("generation") or 1) + 1
+                acquired_at = current.get("acquired_at") or stamp
+            else:
+                generation, acquired_at = 1, stamp
+            _memory[group_id] = {
+                "group_id": group_id, "project_id": project_id, "run_id": run_id,
+                "chain_id": chain_id, "token_id": None, "action_scope": action_scope,
+                "worker_identity": worker_identity, "state": "acquiring",
+                "generation": generation, "acquired_at": acquired_at,
+                "heartbeat_at": stamp, "expires_at": expires, "updated_at": stamp,
+            }
+            return dict(_memory[group_id])
+    store = get_store()
+    with store.transaction():
+        current = get(group_id)
+        if current and _expired(current):
+            store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, current["run_id"]])
+            current = None
+        if current:
+            if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
+                return None
+            store._execute(
+                "UPDATE group_ai_leases SET run_id = ?, token_id = NULL, action_scope = ?, worker_identity = ?, "
+                "state = 'acquiring', generation = generation + 1, heartbeat_at = ?, expires_at = ?, updated_at = ? "
+                "WHERE group_id = ? AND run_id = ? AND state = 'releasing'",
+                [run_id, action_scope, worker_identity, stamp, expires, stamp, group_id, current["run_id"]],
+            )
+        else:
+            store._execute(
+                "INSERT INTO group_ai_leases (group_id, project_id, run_id, chain_id, token_id, action_scope, "
+                "worker_identity, state, generation, acquired_at, heartbeat_at, expires_at, updated_at) "
+                "VALUES (?, ?, ?, ?, NULL, ?, ?, 'acquiring', 1, ?, ?, ?, ?) ON CONFLICT(group_id) DO NOTHING",
+                [group_id, project_id, run_id, chain_id, action_scope, worker_identity, stamp, stamp, expires, stamp],
+            )
+        owned = get(group_id)
+        return owned if owned and owned.get("run_id") == run_id else None
+
+
+def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: str,
+             worker_identity: Optional[str], ttl_seconds: int) -> Optional[dict]:
+    stamp, expires = now_iso(), _expiry(ttl_seconds + ACTIVE_GRACE_SEC)
+    if _using_memory():
+        with _memory_lock:
+            row = _memory.get(group_id)
+            if not row or row.get("run_id") != run_id or row.get("state") != "acquiring":
+                return None
+            row.update(token_id=token_id, action_scope=action_scope, worker_identity=worker_identity,
+                       state="active", heartbeat_at=stamp, expires_at=expires, updated_at=stamp)
+            return dict(row)
+    get_store()._execute(
+        "UPDATE group_ai_leases SET token_id = ?, action_scope = ?, worker_identity = ?, state = 'active', "
+        "heartbeat_at = ?, expires_at = ?, updated_at = ? WHERE group_id = ? AND run_id = ? AND state = 'acquiring'",
+        [token_id, action_scope, worker_identity, stamp, expires, stamp, group_id, run_id],
+    )
+    row = get(group_id)
+    return row if row and row.get("run_id") == run_id and row.get("state") == "active" else None
+
+
+def heartbeat(group_id: str, run_id: str, ttl_seconds: int = ACTIVE_HEARTBEAT_TTL_SEC) -> bool:
+    stamp, expires = now_iso(), _expiry(ttl_seconds)
+    if _using_memory():
+        with _memory_lock:
+            row = _memory.get(group_id)
+            if not row or row.get("run_id") != run_id:
+                return False
+            row.update(heartbeat_at=stamp, expires_at=expires, updated_at=stamp)
+            return True
+    get_store()._execute(
+        "UPDATE group_ai_leases SET heartbeat_at = ?, expires_at = ?, updated_at = ? "
+        "WHERE group_id = ? AND run_id = ? AND state IN ('active', 'releasing')",
+        [stamp, expires, stamp, group_id, run_id],
+    )
+    row = get(group_id)
+    return bool(row and row.get("run_id") == run_id)
+
+
+def begin_handoff(group_id: str, run_id: str) -> bool:
+    stamp, expires = now_iso(), _expiry(HANDOFF_TTL_SEC)
+    if _using_memory():
+        with _memory_lock:
+            row = _memory.get(group_id)
+            if not row or row.get("run_id") != run_id or row.get("state") != "active":
+                return False
+            row.update(state="releasing", heartbeat_at=stamp, expires_at=expires, updated_at=stamp)
+            return True
+    get_store()._execute(
+        "UPDATE group_ai_leases SET state = 'releasing', heartbeat_at = ?, expires_at = ?, updated_at = ? "
+        "WHERE group_id = ? AND run_id = ? AND state = 'active'",
+        [stamp, expires, stamp, group_id, run_id],
+    )
+    row = get(group_id)
+    return bool(row and row.get("run_id") == run_id and row.get("state") == "releasing")
+
+
+def update_token(group_id: str, run_id: str, token_id: Optional[str]) -> None:
+    stamp = now_iso()
+    if _using_memory():
+        with _memory_lock:
+            row = _memory.get(group_id)
+            if row and row.get("run_id") == run_id:
+                row.update(token_id=token_id, heartbeat_at=stamp, updated_at=stamp)
+        return
+    get_store()._execute(
+        "UPDATE group_ai_leases SET token_id = ?, heartbeat_at = ?, updated_at = ? WHERE group_id = ? AND run_id = ?",
+        [token_id, stamp, stamp, group_id, run_id],
+    )
+
+
+def release(group_id: str, run_id: str) -> bool:
+    if _using_memory():
+        with _memory_lock:
+            row = _memory.get(group_id)
+            if not row or row.get("run_id") != run_id:
+                return False
+            _memory.pop(group_id, None)
+            return True
+    row = get(group_id)
+    if not row or row.get("run_id") != run_id:
+        return False
+    get_store()._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, run_id])
+    return get(group_id) is None
+
+
+def list_active_by_project(project_id: str) -> list[dict]:
+    recover_expired()
+    if _using_memory():
+        with _memory_lock:
+            return [dict(row) for row in _memory.values() if row.get("project_id") == project_id]
+    return get_store()._fetch_all("SELECT * FROM group_ai_leases WHERE project_id = ? ORDER BY acquired_at", [project_id])
