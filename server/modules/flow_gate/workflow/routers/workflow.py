@@ -116,6 +116,17 @@ def _guard_group_not_disposed(doc: Optional[dict], doc_id: str) -> None:
         )
 
 
+def _guard_group_not_ai_running(doc: Optional[dict], doc_id: str) -> None:
+    """Compatibility entry point backed by the authoritative DB mutation policy."""
+    from modules.flow_gate.services.mutation_policy import (
+        assert_group_mutation_allowed,
+        human_principal,
+    )
+
+    assert_group_mutation_allowed(
+        (doc or {}).get("group_id"), human_principal(), f"workflow mutation: {doc_id}"
+    )
+
 # ── Request/response schemas ──────────────────────────────────────────────────
 
 class GroupCreateRequest(BaseModel):
@@ -360,6 +371,12 @@ async def document_review_transition_rpc(
     # rejects WITHOUT approving (L §2.1 step 1 / §4.2). The git finalize runs
     # AFTER the approval commits and NEVER turns a git failure into an approval
     # failure (D §3.1) — git failures surface as {git: {ok: false}} at HTTP 200.
+    guarded_doc = db_docs.get_by_id(body.doc_id)
+    if guarded_doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
+    _guard_group_not_disposed(guarded_doc, body.doc_id)
+    _guard_group_not_ai_running(guarded_doc, body.doc_id)
+
     git_action = body.git_action
     group_id: Optional[str] = None
     if git_action is not None:
@@ -426,6 +443,7 @@ def finalize_workflow_endpoint(
         raise HTTPException(status_code=400, detail="Document has no project/group")
 
     _guard_group_not_disposed(doc, body.doc_id)
+    _guard_group_not_ai_running(doc, body.doc_id)
 
     # Resolve the group's workflow-root document.
     if doc.get("type_code") in {"R", "B"}:
@@ -546,6 +564,7 @@ def recover_orphaned_workflow_document_endpoint(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
     _guard_group_not_disposed(doc, doc_id)
+    _guard_group_not_ai_running(doc, doc_id)
     if "document.approve" not in _get_user_permissions(current_user):
         raise HTTPException(
             status_code=403,
@@ -671,6 +690,7 @@ async def document_review_transition_endpoint(
         prev_review_status = prev_doc.get("doc_review_status") if prev_doc else None
 
         _guard_group_not_disposed(prev_doc, doc_id)
+        _guard_group_not_ai_running(prev_doc, doc_id)
 
         try:
             result = transition_document_review(
@@ -762,6 +782,7 @@ def update_rejection_reason_endpoint(
     # writes. A disposed (DC) group must not accept new rejection records — same class
     # as the other write surfaces. _guard_group_not_disposed fails open for live groups.
     _guard_group_not_disposed(doc, doc_id)
+    _guard_group_not_ai_running(doc, doc_id)
 
     from modules.flow_gate.db.connection import now_iso as _now_iso
     existing_history = _parse_rejection_history(doc.get("rejection_history"))
@@ -820,6 +841,7 @@ async def register_document_result_endpoint(
         # endpoint lives in workflow.py, so documents.py's _reject_if_group_disposed
         # never covered it — the exact gap the review flagged. Fails open for live groups.
         _guard_group_not_disposed(doc, doc_id)
+        _guard_group_not_ai_running(doc, doc_id)
 
         # Look up the workflow sequence and head item (item_id required)
         seq = _db_wseq.get_sequence_by_doc_id(doc_id)

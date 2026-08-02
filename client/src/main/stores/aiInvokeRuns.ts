@@ -373,6 +373,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const handoffAdoptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
   let lastPollAt = 0
   let bootstrapInFlight = false
+  const bootstrapPending = ref(true)
   let persistDirty = false
 
   // Batched through the 1s clock: the finished set changes in bursts (a sweep can drop
@@ -680,6 +681,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       // Best effort: SSE + per-group discovery still populate the list.
     } finally {
       bootstrapInFlight = false
+      bootstrapPending.value = false
     }
     return reconciled
   }
@@ -894,6 +896,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   return {
     runsByGroup,
+    bootstrapPending,
     // 1s clock, exposed so a surface can age its own view of an entry (the inline banner
     // uses it for INLINE_RESULT_WINDOW_MS) without running a second timer.
     now,

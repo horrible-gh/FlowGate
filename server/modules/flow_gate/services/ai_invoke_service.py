@@ -37,7 +37,8 @@ from fastapi import HTTPException
 from modules.flow_gate.db import conversation_turns as db_conversation_turns
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.db import documents as db_docs
-from modules.flow_gate.db import git_integration as db_git
+from modules.flow_gate.db import git_integration as db_git
+from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
@@ -928,11 +929,17 @@ def start_run(
             "No enabled AI provider for this project. Configure providers in AI settings.",
         )
 
-    active = _active_run_for_group(group_id)
-    if active is not None:
+    # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
+    active = db_group_ai_leases.get_active(group_id)
+    handoff_allowed = bool(
+        active
+        and active.get("state") == "releasing"
+        and chain_id
+        and active.get("chain_id") == chain_id
+    )
+    if active is not None and not handoff_allowed:
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active["run_id"])
-
     # 0299 R0001: refuse before minting a token / creating scratch — a run that would
     # execute in the base tree must not start at all, and failing here keeps the
     # rollback trivial (nothing has been created yet). The doc's branch is only the
@@ -981,9 +988,22 @@ def start_run(
                                    f"{target}"}],
             })
 
-    # Allocate the run identity before token issuance so a chat turn can retain
-    # its server-owned source_run_id and provider identity in the token.
+    # Allocate and lease before token issuance/worker spawn. The DB primary key makes two
+    # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
     run_id = _next_run_id()
+    lease_chain_id = chain_id or run_id
+    lease = db_group_ai_leases.acquire(
+        group_id=group_id,
+        project_id=project_id,
+        run_id=run_id,
+        chain_id=lease_chain_id,
+        action_scope=action_scope,
+        worker_identity=issued_to,
+    )
+    if lease is None:
+        active = db_group_ai_leases.get_active(group_id) or {}
+        raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
+                          run_id=active.get("run_id"))
 
     if issue_builder is not None:
         # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
@@ -1010,14 +1030,24 @@ def start_run(
         )
         mention = mention_builder(issue["raw_token"], issue["scratch_dir"])
     if not mention:
-        # No prompt ⇒ nothing to launch. Discard the just-minted token.
+        # No prompt ⇒ nothing to launch. Discard the token and its acquiring lease.
         try:
             token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
         except Exception:
             logger.warning("token revoke failed after mention_unavailable", exc_info=True)
+        db_group_ai_leases.release(group_id, run_id)
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
 
+    lease = db_group_ai_leases.activate(
+        group_id, run_id, issue.get("token_id"), action_scope, issued_to, RUN_TIMEOUT_CAP_SEC
+    )
+    if lease is None:
+        try:
+            token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
+        except Exception:
+            logger.warning("token revoke failed after lease loss", exc_info=True)
+        raise _http_error(409, "run_lease_lost", "The AI run lease could not be activated.")
     # 0346 T0005 §2-5 / D0004 §3-3: the [전달멘트] tab's common note and/or this hop's
     # individual note are prepended here, at the single point every hop's prompt (built by
     # whichever of the three builders ran above) has already converged into one string — see
@@ -1869,6 +1899,8 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     )
     before = token_id
     run["token_id"] = issue.get("token_id")
+    if run.get("group_id"):
+        db_group_ai_leases.update_token(run["group_id"], run["run_id"], run["token_id"])
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
     run["mention"] = mention
     return {"mention": mention, "token_id": issue.get("token_id"),
@@ -2734,6 +2766,9 @@ def _finalize_run(run: dict) -> None:
         run["chain_docs_accounted"] = True
 
     respawn_pending = peek_auto_resume(run.get("group_id")) is not None
+    # Keep ownership across a hop boundary; the successor atomically transfers generation.
+    if respawn_pending:
+        db_group_ai_leases.begin_handoff(run["group_id"], run["run_id"])
     run["stop_code"] = _resolve_stop_code(run, respawn_pending)
     run["resumable"] = is_resumable(run["stop_code"])
     run["stop_reason"] = _stop_reason_text(run["stop_code"], run)
@@ -2776,7 +2811,8 @@ def _finalize_run(run: dict) -> None:
         "group_id": run["group_id"],
         "reason": "ai_invoke_finished",
     })
-
+    if not respawn_pending:
+        db_group_ai_leases.release(run["group_id"], run["run_id"])
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
 
