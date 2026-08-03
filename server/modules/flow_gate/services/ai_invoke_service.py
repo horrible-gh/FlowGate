@@ -3038,6 +3038,10 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     chain_id=run.get("chain_id"),
                     chain_docs_target=run.get("chain_docs_target"),
                     chain_docs_reached=int(run.get("chain_docs_reached") or 0),
+                    stop_kind=row.get("stop_kind") or "user",
+                    stop_code=row.get("stop_code"),
+                    stop_run_id=row.get("stop_run_id"),
+                    stop_last_message_excerpt=row.get("stop_last_message_excerpt"),
                     # This upsert overwrites every column, and it ALWAYS runs right after
                     # a pause. Omitting the selections here would erase what pause_run
                     # just stored (0365 DB0004 §5-3 invariant I3).
@@ -3388,6 +3392,10 @@ def pause_run(run_id: str, user_id: str) -> dict:
                 int(run.get("chain_docs_reached") or 0)
                 + (0 if run.get("chain_docs_accounted") else docs_reached)
             ),
+            # A user pause belongs to one concrete continuous run. Persisting that identity
+            # prevents a stale group-level row from tagging an unrelated single run.
+            stop_kind="user",
+            stop_run_id=run_id,
             # 0365 B0001: the provider / [전달멘트] selections live only on the run object
             # (session-scoped by design). The pause is where that memory ends, so they go
             # into the row here — otherwise resume_chain has nothing to restore and falls
@@ -3408,12 +3416,39 @@ def pause_run(run_id: str, user_id: str) -> dict:
     }
 
 
-def mark_user_paused(group_id: str) -> None:
-    """Called by the inbox self-chain when the boundary check withheld the next token:
-    tag the live run so its end_reason classifies as "user_paused" (P0008 S4)."""
+def mark_user_paused(group_id: str, run_id: Optional[str]) -> bool:
+    """Tag only the continuous run that owns the persisted user-pause row.
+
+    Group identity alone is not enough: a stale system stop can coexist with a later
+    single review in the same group. Returning the decision lets boundary callers avoid
+    withholding a token unless the row and live run identities agree.
+    """
+    if not run_id:
+        return False
     run = _active_run_for_group(group_id)
-    if run is not None:
-        run["user_paused"] = True
+    if (
+        run is None
+        or run.get("run_id") != run_id
+        or run.get("mode") != "continuous"
+        or run.get("status") == "finished"
+        or not run.get("pause_requested")
+    ):
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        row = db_paused.get_by_group(group_id)
+    except Exception:
+        logger.warning("user-pause identity lookup failed for %s", group_id, exc_info=True)
+        return False
+    if (
+        row is None
+        or (row.get("stop_kind") or "user") != "user"
+        or row.get("stop_run_id") != run_id
+    ):
+        return False
+    run["user_paused"] = True
+    return True
 
 
 # ── Per-hop re-spawn for unmanned continuous chains (0317 TR0011 / Q153 opt-1) ────────
@@ -3592,6 +3627,32 @@ def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
     return None
 
 
+def _system_pause_row_is_stale(row: dict) -> bool:
+    """Whether a system stop no longer points at the workflow head it stopped on.
+
+    Finished run records retain ``hop_item_seq``. A workflow reopen changes the next
+    incomplete slot while the old group-level pause row otherwise survives forever.
+    Missing legacy evidence is treated conservatively as not stale.
+    """
+    if (row.get("stop_kind") or "user") != "system" or not row.get("stop_run_id"):
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        stopped = db_runs.get(row["stop_run_id"])
+        stopped_seq = (stopped or {}).get("hop_item_seq")
+        if stopped_seq is None:
+            return False
+        current_seq = _next_incomplete_item_seq(row["doc_ref"])
+    except Exception:
+        logger.warning(
+            "system paused-row staleness lookup failed for %s",
+            row.get("group_id"), exc_info=True,
+        )
+        return False
+    return current_seq is None or int(current_seq) != int(stopped_seq)
+
+
 def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Optional[str]:
     """The stored header pin, but only while it is still usable (0365 DB0004 §5-2).
 
@@ -3654,6 +3715,10 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     chain_id=row.get("chain_id"),
                     chain_docs_target=row.get("chain_docs_target"),
                     chain_docs_reached=int(row.get("chain_docs_reached") or 0),
+                    stop_kind=row.get("stop_kind") or "user",
+                    stop_code=row.get("stop_code"),
+                    stop_run_id=row.get("stop_run_id"),
+                    stop_last_message_excerpt=row.get("stop_last_message_excerpt"),
                     # Restoring the row means restoring it whole: a retry of this resume
                     # must still find the user's selections (0365 DB0004 §5-3 case 5).
                     continuation_base_provider_id=row.get("continuation_base_provider_id"),
@@ -3747,15 +3812,29 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 chain_docs_target=row.get("chain_docs_target"),
                 chain_docs_reached=row.get("chain_docs_reached"),
             )
-        except HTTPException:
+        except HTTPException as exc:
             _restore_row()
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            if exc.status_code == 409:
+                raise _http_error(
+                    409, "resume_launch_failed",
+                    str(detail.get("message") or exc.detail or "Resume launch failed."),
+                    group_id=group_id, restored=True, resume_stage="advance_or_start",
+                    cause_code=detail.get("code"),
+                )
             raise
         except LookupError as exc:
             _restore_row()
-            raise _http_error(404, "resume_advance_unavailable", str(exc))
+            raise _http_error(
+                404, "resume_advance_unavailable", str(exc),
+                group_id=group_id, restored=True, resume_stage="advance",
+            )
         except ValueError as exc:
             _restore_row()
-            raise _http_error(409, "resume_advance_blocked", str(exc))
+            raise _http_error(
+                409, "resume_advance_blocked", str(exc),
+                group_id=group_id, restored=True, resume_stage="advance",
+            )
 
 
 def _open_q_doc_ids(group_id: str) -> list[str]:
@@ -3798,6 +3877,17 @@ def active_all(user_id: str) -> dict:
         logger.warning("paused-chain list failed for %s", user_id, exc_info=True)
         rows = []
     for row in rows:
+        if _system_pause_row_is_stale(row):
+            # Delete only the exact system-stop snapshot inspected above. A concurrent
+            # user pause or a newer stop for the group must survive this cleanup.
+            try:
+                db_paused.delete_system_stop(row["group_id"], row.get("stop_run_id"))
+            except Exception:
+                logger.warning(
+                    "stale system paused-row cleanup failed for %s",
+                    row.get("group_id"), exc_info=True,
+                )
+            continue
         paused.append({
             "group_id": row["group_id"],
             "doc_ref": row["doc_ref"],

@@ -182,6 +182,18 @@ def delete_by_group(group_id: str) -> None:
     )
 
 
+def delete_system_stop(group_id: str, stop_run_id: Optional[str]) -> None:
+    """Delete the inspected stale system row without racing a newer group pause."""
+    if not stop_run_id:
+        return
+    get_store()._execute(
+        "DELETE FROM ai_invoke_paused_chains "
+        "WHERE group_id = ? AND COALESCE(stop_kind, 'user') = 'system' "
+        "AND stop_run_id = ?",
+        [group_id, stop_run_id],
+    )
+
+
 def list_by_user(user_id: str) -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM ai_invoke_paused_chains WHERE paused_by = ? ORDER BY paused_at DESC",

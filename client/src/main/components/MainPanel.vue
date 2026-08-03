@@ -1749,7 +1749,7 @@ const activeAiInvokeGroupId = computed(() => {
 })
 const aiRunBootstrapPending = computed(() => aiInvokeRunsStore.bootstrapPending)
 const activeGroupRunActive = computed(() =>
-  aiInvokeRunsStore.isGroupRunning(activeAiInvokeGroupId.value),
+  aiInvokeRunsStore.isGroupInlineVisible(activeAiInvokeGroupId.value),
 )
 const aiRunDocumentLocked = computed(() =>
   aiRunBootstrapPending.value || activeGroupRunActive.value,

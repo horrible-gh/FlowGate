@@ -63,6 +63,10 @@ export interface AiInvokeRunEntry {
   // built from pendingQDocIds — never a phase value (D0007 decision 3).
   pendingQDocIds: string[]
   pausedAt: string | null
+  stopKind: 'user' | 'system' | null
+  stopCode: string | null
+  stopRunId: string | null
+  stopLastMessageExcerpt: string | null
   finishedAtMs: number | null
 }
 
@@ -194,6 +198,10 @@ function startedEntry(
       ? stringArray(payload.pending_q_doc_ids)
       : (sameRun ? previous?.pendingQDocIds ?? [] : []),
     pausedAt: sameRun ? previous?.pausedAt ?? null : null,
+    stopKind: sameRun ? previous?.stopKind ?? null : null,
+    stopCode: sameRun ? previous?.stopCode ?? null : null,
+    stopRunId: sameRun ? previous?.stopRunId ?? null : null,
+    stopLastMessageExcerpt: sameRun ? previous?.stopLastMessageExcerpt ?? null : null,
     finishedAtMs: null,
   }
 }
@@ -203,7 +211,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
   const docsTarget = Number(payload.docs_target ?? previous?.docsTarget ?? 0)
   const docsReached = Number(payload.docs_reached ?? previous?.docsReachedSoFar ?? 0)
   return {
-    runId: previous?.runId ?? '',
+    runId: nullableString(payload.stop_run_id) ?? previous?.runId ?? '',
     groupId: String(payload.group_id ?? previous?.groupId ?? ''),
     docRef: String(payload.doc_ref ?? previous?.docRef ?? ''),
     phase: 'paused',
@@ -228,9 +236,11 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     outcome: null,
     docsReached: Number(payload.docs_reached ?? 0),
     reachedDocIds: [],
-    endReason: 'user_paused',
+    endReason: (payload.stop_kind ?? 'user') === 'user'
+      ? 'user_paused'
+      : nullableString(payload.stop_code),
     lastMessageReceived: false,
-    lastMessage: null,
+    lastMessage: nullableString(payload.stop_last_message_excerpt),
     sourceDirty: null,
     sourceDirtyFiles: [],
     registerErrors: [],
@@ -239,6 +249,10 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     oracleMismatch: false,
     pendingQDocIds: stringArray(payload.pending_q_doc_ids),
     pausedAt: nullableString(payload.paused_at),
+    stopKind: payload.stop_kind === 'system' ? 'system' : 'user',
+    stopCode: nullableString(payload.stop_code),
+    stopRunId: nullableString(payload.stop_run_id),
+    stopLastMessageExcerpt: nullableString(payload.stop_last_message_excerpt),
     finishedAtMs: null,
   }
 }
@@ -523,6 +537,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       turnLimitExhausted: Boolean(payload.turn_limit_exhausted),
       oracleMismatch: Boolean(payload.oracle_mismatch),
       pausedAt: userPaused ? new Date().toISOString() : base.pausedAt,
+      stopKind: userPaused ? 'user' : base.stopKind,
+      stopCode: nullableString(payload.stop_code) ?? base.stopCode,
+      stopRunId: userPaused ? runId : base.stopRunId,
+      stopLastMessageExcerpt: base.stopLastMessageExcerpt,
       finishedAtMs: userPaused || handoffPending ? null : Date.now(),
     }
     if (handoffPending) {
@@ -745,9 +763,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         void refresh(groupId)
         return
       }
-      if (status === 409) {
-        // resume_conflict / nothing_to_resume (P0008 실패 2): another path already
-        // resumed or finished the chain — drop the card and re-sync from the server.
+      if (status === 409 && (code === 'resume_conflict' || code === 'nothing_to_resume')) {
+        // These two codes mean the stored pause no longer exists or has no work left.
+        // A launch/advance failure is different: the server restored the row and the UI
+        // must surface the rejection instead of deleting and immediately recreating it.
         delete runsByGroup[groupId]
         void bootstrap()
         return
@@ -781,6 +800,13 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!groupId) return false
     const phase = runsByGroup[groupId]?.phase
     return phase != null && ACTIVE_PHASES.includes(phase)
+  }
+
+  function isGroupInlineVisible(groupId: string | null | undefined): boolean {
+    if (!groupId) return false
+    const phase = runsByGroup[groupId]?.phase
+    // MainPanel and AiInvokeInline share this explicit surface contract.
+    return phase === 'running' || phase === 'pause_requested'
   }
 
   function elapsedMsFor(groupId: string): number {
@@ -926,6 +952,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     dismissAllFinished,
     sweepFinishedCards,
     isGroupRunning,
+    isGroupInlineVisible,
     elapsedMsFor,
   }
 })

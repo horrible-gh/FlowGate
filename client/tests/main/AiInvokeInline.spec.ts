@@ -86,6 +86,63 @@ describe('AiInvokeInline', () => {
     wrapper.unmount()
   })
 
+  it('renders pause_requested without failure wording and closes only the inline surface', async () => {
+    const groupId = 'flowgate.default.0384'
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-pause', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous', status: 'running',
+    })
+    postRequest.mockResolvedValueOnce({
+      data: { ok: true, run_id: 'run-pause', status: 'pause_requested' },
+    })
+    await store.pause(groupId)
+    await nextTick()
+
+    expect(wrapper.find('[data-test="ai-inline-pause-state"]').text()).toBe(
+      i18n.global.t('main.ai_miniplayer.pause_scheduled'),
+    )
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none'))
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none_scoped'))
+
+    await wrapper.find('[data-test="ai-inline-close"]').trigger('click')
+    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(store.runsByGroup[groupId]?.phase).toBe('pause_requested')
+    wrapper.unmount()
+  })
+
+  it('renders paused without failure wording and preserves the resumable card on close', async () => {
+    const groupId = 'flowgate.default.0385'
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-paused', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: 'run-paused', group_id: groupId, end_reason: 'user_paused',
+    })
+    await nextTick()
+
+    expect(wrapper.find('[data-test="ai-inline-pause-state"]').text()).toBe(
+      i18n.global.t('main.ai_miniplayer.state_paused'),
+    )
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none'))
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none_scoped'))
+
+    await wrapper.find('[data-test="ai-inline-close"]').trigger('click')
+    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    wrapper.unmount()
+  })
+
   // 0290 NR0003 §5.3: the header monitor keeps a finished card for 30 minutes, but this
   // banner sits on the document — it gets its own, much shorter, view of the same entry.
   // The registry keeps the card either way; only this surface stops showing it.

@@ -353,6 +353,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                     continuation_target_seq=auth.get("continuation_target_seq"),
                     continuation_review_mode=bool(auth.get("continuation_review_mode")),
                     continuation_instruction_mode=auth.get("continuation_instruction_mode"),
+                    ai_run_id=auth.get("ai_run_id"),
                 )
                 if chain:
                     result = {**result, **chain}

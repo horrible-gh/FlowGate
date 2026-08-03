@@ -113,6 +113,19 @@
           <div v-if="entry.phase === 'pause_requested'" class="aiv-mini__meta">
             {{ t('main.ai_miniplayer.pause_scheduled') }}
           </div>
+          <div
+            v-if="entry.phase === 'paused'"
+            class="aiv-mini__meta aiv-mini__stop-details"
+            data-test="ai-miniplayer-stop-details"
+          >
+            <span>{{ t(entry.stopKind === 'system'
+              ? 'main.ai_miniplayer.stop_origin_system'
+              : 'main.ai_miniplayer.stop_origin_user') }}</span>
+            <code v-if="entry.stopCode">{{ entry.stopCode }}</code>
+            <code v-if="entry.stopRunId">{{ entry.stopRunId }}</code>
+            <span v-if="entry.pausedAt">{{ entry.pausedAt }}</span>
+            <span v-if="entry.stopLastMessageExcerpt">{{ entry.stopLastMessageExcerpt }}</span>
+          </div>
 
           <div class="aiv-mini__actions">
             <button
