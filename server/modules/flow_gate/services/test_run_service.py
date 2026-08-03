@@ -692,15 +692,9 @@ def _execute_run_inner(run: dict) -> None:
         )
         finished_run = db_test_runs.get_run(run["run_id"]) or run
         _emit_finished(doc, finished_run, None)
-        # flowgate.default.0157: a setup failure is the canonical INFRA case — try the auto-recovery loop
-        # first. If it re-fires (or escalates at the cap) it owns the signal, so suppress the generic
-        # "chain failed" alarm; otherwise fall through to it. Best-effort; never affects the verdict.
-        recovery = engine_recipe_service.handle_run_failure(
+        _handle_setup_stage_failure(
             doc, finished_run, db_test_runs.list_cases(run["run_id"])
         )
-        if recovery not in ("repair", "escalated"):
-            # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
-            _maybe_notify_chain_failure(doc, finished_run)
         return
 
     passed = sum(1 for case in final_cases if case.get("result") == "pass")
@@ -752,17 +746,99 @@ def _execute_run_inner(run: dict) -> None:
         # produce the missing report. Surface it once and stop.
         _maybe_notify_chain_failure(doc, finished_run)
     elif status == "failed":
-        # flowgate.default.0157: route the failure through the auto-recovery loop first. An INFRA
-        # failure (env/tooling) is re-fired or escalated and owns its own signal; a real RED (CODE)
-        # returns "code" and falls through to the chain-failed alarm + existing rework chain.
-        recovery = engine_recipe_service.handle_run_failure(
+        _handle_terminal_case_failure(
             doc, finished_run, db_test_runs.list_cases(run["run_id"])
         )
-        if recovery not in ("repair", "escalated"):
-            # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
-            # hand on — surface it once so the unmanned chain no longer goes silent (was: only an
-            # ephemeral SSE broadcast). Best-effort; never affects the verdict.
-            _maybe_notify_chain_failure(doc, finished_run)
+
+
+def _handle_terminal_case_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
+    """Route one case-level terminal failure through repair or CODE rework."""
+    failure_kind = engine_recipe_service.classify_failure(run, items)
+    recovery = engine_recipe_service.handle_run_failure(doc, run, items)
+    auto_reopen = None
+    if failure_kind == engine_recipe_service.CODE:
+        auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_code_failure")
+    if recovery not in ("repair", "escalated"):
+        _maybe_notify_chain_failure(doc, run, auto_reopen=auto_reopen)
+    return auto_reopen
+
+
+def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
+    """Route a 준비(setup) stage abort — the run never reached a single test case.
+
+    flowgate.default.0157 treats this as the canonical INFRA case, and for an unmanned chain
+    that is still right: the recovery loop re-fires it up to the cap and owns the signal, so
+    nothing is rewound while it is working (T0004 완료기준 3).
+
+    What that left uncovered is every manual run, and it is the only failure the reporter ever
+    reproduced: 15 consecutive runs of test.test.0042.0006-TS on the preview server ended with
+    error='setup_failed', case_passed=0, case_failed=0. handle_run_failure returns "skip" for a
+    manual run, so nothing at all happened — the 테스트시나리오지시 stayed 승인 완료, the strip
+    stayed parked on the empty 테스트레포트 slot and the action bar stayed empty. But the setup
+    commands are authored in the TS document itself (그 문서의 준비 절), so a setup step that
+    exits non-zero is a defect in the 테스트시나리오 — exactly the document the user has to edit
+    and re-approve. It gets the same rewind as a RED. T0004 §2.3 had put this branch out of
+    scope; that exclusion is what made the feature invisible in practice.
+    """
+    recovery = engine_recipe_service.handle_run_failure(doc, run, items)
+    if recovery in ("repair", "escalated"):
+        return None                                # unmanned repair loop owns this failure
+    auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_setup_failure")
+    # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
+    _maybe_notify_chain_failure(doc, run, auto_reopen=auto_reopen)
+    return auto_reopen
+
+
+def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
+    """Send one failed 테스트시나리오지시 back to 승인 이전 through the shared Time Machine."""
+    try:
+        from modules.flow_gate.services import workflow_rework_service
+        from modules.flow_gate.services.mutation_policy import system_principal
+
+        auto_reopen = workflow_rework_service.auto_reopen_failed_ts(
+            ts_doc_id=doc["doc_id"],
+            target_seq=doc.get("seq"),
+            actor_user_id=run.get("runner_id") or doc.get("owner_id"),
+            reason=reason,
+            run_id=run["run_id"],
+            mutation_context=system_principal(
+                user_id=run.get("runner_id") or "system",
+                group_id=doc.get("group_id"),
+                run_id=run["run_id"],
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "automatic TS reopen failed for run %s (ignored)",
+            run.get("run_id"),
+            exc_info=True,
+        )
+        auto_reopen = {
+            "auto_reopened": False,
+            "target_doc_id": doc.get("doc_id"),
+            "target_seq": doc.get("seq"),
+            "run_id": run.get("run_id"),
+            "auto_reopen_skipped": "auto_reopen_error",
+        }
+    if not auto_reopen.get("auto_reopened"):
+        # A skip is the one outcome that looks exactly like "the feature is not there":
+        # the TS stays approved and nothing is emitted. A manual run carries no
+        # continuation token, so the reason never reaches the failure feed either —
+        # record it here so a silent no-op is always diagnosable from the server log.
+        logger.warning(
+            "automatic TS reopen skipped for run %s on %s: %s",
+            run.get("run_id"),
+            doc.get("doc_id"),
+            auto_reopen.get("auto_reopen_skipped"),
+        )
+    else:
+        # _emit_finished already broadcast this run's paired group_view_refresh BEFORE the
+        # rewind ran, so every open browser has re-read the pre-rewind state: the TS still
+        # renders as approved even though the row is now pending_review. That stale screen
+        # is the whole visible feature, so the post-commit refresh belongs on BOTH paths —
+        # the unmanned chain is watched too, and it never reloads by hand.
+        _emit_auto_reopen_refresh(doc, run, auto_reopen)
+    return auto_reopen
 
 
 def _record_source_root(doc: dict, run: dict, root: Path) -> None:
@@ -1524,32 +1600,59 @@ def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
 
 
 
-def _maybe_notify_chain_failure(doc: dict, run: dict) -> None:
-    """Emit the one terminal "연속작업 실패" signal for an unmanned-chain test_run that went RED.
-
-    R0001 group 0154 / NR0004 Gap A: a failed chain run assembles no TSR (tsr_doc_id stays null) and the
-    chain stops with nothing to hand on — but until now that stop produced no persistent, discoverable
-    signal at all (only a transient SSE `test_run_finished` broadcast), so the unmanned chain went
-    silent and nobody knew until the run record was opened by hand (NR0004 §2.4). This records a single
-    workflow_event that the dashboard promotes to the 🔔 feed as the failure counterpart of
-    continuous_work_ended.
-
-    Gated exactly like _maybe_chain_auto_approve_tsr: only the continuation-carrying token minted by
-    advance_workflow's TSR-head wiring counts as an unmanned chain (a manned test-run-request token
-    leaves continuation_target_seq NULL — that human is already watching, so no feed row is added).
-    Best-effort: any failure here is swallowed and must never affect the run verdict.
-    """
+def _continuation_token_for_doc(doc: dict, run: Optional[dict] = None) -> Optional[dict]:
+    """Return the consumed unmanned-chain token, never an ordinary/manual token."""
+    if run is not None and run.get("triggered_via") == "ui":
+        return None
     try:
         from modules.flow_gate.db import tokens as db_tokens
-        from modules.flow_gate.workflow import event_logger
 
         token_rec = db_tokens.get_latest_consumed_by_scope_doc_ref(
             "test_run", doc["doc_id"]
         )
-        if token_rec is None or token_rec.get("continuation_target_seq") is None:
-            return  # manned delegation (or UI) run — human keeps watch, no unmanned-chain alarm
+        if token_rec is not None and token_rec.get("continuation_target_seq") is not None:
+            return token_rec
+    except Exception:
+        logger.warning("test-run continuation lookup failed", exc_info=True)
+    return None
+
+
+def _maybe_notify_chain_failure(
+    doc: dict, run: dict, *, auto_reopen: Optional[dict] = None
+) -> None:
+    """Emit one persistent failure signal for an unmanned-chain terminal run."""
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        token_rec = _continuation_token_for_doc(doc, run)
+        if token_rec is None:
+            return
         actor_user_id = token_rec.get("issued_to") or "system"
         doc_row = db_docs.get_by_id(doc["doc_id"]) or {}
+        # Worker completion may be delivered twice. Keep the persistent failure feed
+        # once-per-run even when the state-transition hook correctly no-ops the duplicate.
+        try:
+            from modules.flow_gate.db.connection import get_store
+
+            event_run_id = run.get("run_id")
+            existing = get_store()._fetch_one(
+                "SELECT id FROM workflow_events WHERE event_type = ? AND metadata LIKE ? "
+                "ORDER BY id DESC LIMIT 1",
+                ["continuous_work_failed", f'%"run_id": "{event_run_id}"%'],
+            )
+            if existing is not None:
+                return
+        except Exception:
+            pass
+        extra = None
+        target_seq = token_rec.get("continuation_target_seq")
+        if auto_reopen is not None:
+            target_seq = auto_reopen.get("target_seq")
+            extra = {
+                "auto_reopened": bool(auto_reopen.get("auto_reopened")),
+                "target_doc_id": auto_reopen.get("target_doc_id") or doc.get("doc_id"),
+                "auto_reopen_skipped": auto_reopen.get("auto_reopen_skipped"),
+            }
         event_logger.log_continuous_work_failed(
             project_id=doc.get("project_id"),
             actor_user_id=actor_user_id,
@@ -1560,13 +1663,35 @@ def _maybe_notify_chain_failure(doc: dict, run: dict) -> None:
             case_passed=run.get("case_passed"),
             case_failed=run.get("case_failed"),
             error=run.get("error"),
-            target_seq=token_rec.get("continuation_target_seq"),
+            target_seq=target_seq,
+            extra=extra,
         )
     except Exception:
         logger.warning(
             "continuous_work_failed signal failed for run %s (ignored)",
             run.get("run_id"), exc_info=True,
         )
+
+
+def _emit_auto_reopen_refresh(doc: dict, run: dict, result: dict) -> None:
+    """Refresh every watching browser only after the rework transaction committed.
+
+    Carries the reason code (not a rendered sentence) so the client localizes the
+    "returned to the pre-approval step" notice from its own locale bundle.
+    """
+    _broadcast(
+        "group_view_refresh",
+        doc,
+        {
+            "group_id": doc.get("group_id"),
+            "reason": "test_run_code_failure_auto_reopen",
+            "doc_id": result.get("target_doc_id") or doc.get("doc_id"),
+            "target_seq": result.get("target_seq"),
+            "run_id": run.get("run_id"),
+        },
+    )
+
+
 
 
 def _emit_started(doc: dict, run: dict) -> None:

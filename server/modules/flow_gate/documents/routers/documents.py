@@ -561,6 +561,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
     in_progress = [
         c for c in candidates
         if c.get("type_code") not in NON_HEAD_TYPES
+        and c.get("status") != "archived"
         and (c.get("doc_review_status") is None
              or c.get("doc_review_status") not in APPROVED_STATUSES)
     ]
@@ -707,6 +708,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
                 #  and removing the final-approval action — the regression in group 0104.)
                 ac_done = any(
                     c.get("type_code") == "AC"
+                    and c.get("status") != "archived"
                     and c.get("doc_review_status") in APPROVED_STATUSES
                     for c in candidates
                 )
@@ -1777,7 +1779,9 @@ def open_final_approval(
     group_docs = _db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
     existing = [
         c for c in group_docs
-        if c.get("type_code") == "AC" and c.get("doc_review_status") not in APPROVED
+        if c.get("type_code") == "AC"
+        and c.get("status") != "archived"
+        and c.get("doc_review_status") not in APPROVED
     ]
     if existing:
         return {"data": existing[0], "doc_id": existing[0]["doc_id"]}
@@ -1849,84 +1853,15 @@ def reopen_workflow(
     if not project_id or not group_id:
         raise HTTPException(status_code=400, detail="Document has no project/group")
 
-    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services.mutation_policy import human_principal
+    from modules.flow_gate.services.workflow_rework_service import reopen_to_target
 
-    with get_store().transaction():
-        group_docs = _db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
-        # Only documents wired into the workflow sequence are rewindable steps. Phantom docs
-        # (superseded/abandoned revisions sharing the group's seq space) must NOT be swept in
-        # by the raw seq threshold — 0142 rework. Falls back to type+seq when no sequence.
-        root_doc = _group_workflow_root_doc(doc)
-        step_ids = _workflow_step_doc_ids(root_doc)
-
-        def _is_rewindable_step(c: dict) -> bool:
-            if c.get("type_code") in _RETURN_POINT_NON_RESTORE_TYPES:
-                return False
-            if step_ids is not None and c["doc_id"] not in step_ids:
-                return False
-            return (c.get("seq") or 0) >= body.target_seq
-
-        # Capture the root's pre-rewind status BEFORE any rollback so a later restore-to-front can
-        # honestly re-declare it (wf_done stays wf_done; a mid-flight wf_in_progress is restored as
-        # wf_in_progress, never falsely finalized). root_doc is read here, pre-mutation.
-        root_prev_status = (root_doc or {}).get("doc_review_status") or "wf_in_progress"
-        root_was_done = root_prev_status == "wf_done"
-        snapshot_docs = [c for c in group_docs if _is_rewindable_step(c)]
-        _record_return_point(group_id, snapshot_docs, root_prev_status=root_prev_status)
-
-        reopened: list = []
-        for c in group_docs:
-            tc = c.get("type_code")
-            if tc == "AC":
-                _db_docs.delete(c["doc_id"])   # ephemeral final-approval doc
-                continue
-            # R/Q are structural; auto-complete types (memos) are notes with no review
-            # action — resetting them to pending_review would strand them as an
-            # un-clearable head, so they are never rolled back (A).
-            if tc in WORKFLOW_ROOT_TYPES or tc == "Q" or tc in AUTO_COMPLETE_TYPES:
-                continue
-            if _is_rewindable_step(c):
-                _db_docs.update(c["doc_id"], {"doc_review_status": "pending_review"})
-                reopened.append(c["doc_id"])
-
-        if root_was_done and root_doc is not None:
-            _db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_in_progress"})
-
-        # Audit trail: the rewind side previously logged nothing, so a return point could appear
-        # (and its restore fire) with no record of what created it — a gap when reconstructing a
-        # tangled workflow. Mirror the restore event so both directions leave a trace (0142 T0013).
-        from modules.flow_gate.workflow import event_logger as _event_logger
-        try:
-            _event_logger.log_event(
-                event_type="workflow_reopen",
-                project_id=project_id,
-                actor_user_id=current_user["user_id"],
-                group_id=group_id,
-                document_id=(root_doc or doc).get("id"),
-                metadata={
-                    "reopened": reopened,
-                    "target_seq": body.target_seq,
-                    "return_point": _return_point_payload(group_id),
-                },
-            )
-        except Exception as exc:  # pragma: no cover - best-effort event trail
-            _log.warning("[workflow reopen] event logging failed: %s", exc, exc_info=True)
-
-        result = {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
-
-    # B0001 (flowgate.default.0211): the time machine is git-aware here. A rewind that
-    # rolls the workflow back below its final approval must not leave the group's git
-    # ledger terminal (merged/pushed) — that desync makes the next finalize impossible
-    # (precheck 422 "not git-active" / finalize 409 "already finalized"). Re-arm the git
-    # slot to a clean, re-finalizable state. Post-commit and best-effort: a git hiccup
-    # must never break the document rewind that already stood.
-    try:
-        from modules.flow_gate.services import git_service as _git_service
-        _git_service.reopen_group_git(project_id, group_id)
-    except Exception as exc:  # pragma: no cover - best-effort git re-arm
-        _log.warning("[workflow reopen] git re-arm failed for %s: %s", group_id, exc, exc_info=True)
-
-    return result
+    return reopen_to_target(
+        doc_id=body.doc_id,
+        target_seq=body.target_seq,
+        actor=current_user,
+        mutation_context=human_principal(current_user),
+    )
 
 
 @router.get("/workflow/{doc_id}/return-point")

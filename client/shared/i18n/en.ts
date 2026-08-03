@@ -1009,6 +1009,7 @@ export default {
       document_content_refresh_failed: 'Failed to load the latest content of the updated document.',
       test_run_failed: 'Test failed: {doc} ({failed}/{total} cases)',
       test_run_failed_nocount: 'Test failed: {doc}',
+      test_run_auto_reopened: 'Test failure returned {doc} to the pre-approval step.',
       session_revoked: 'Your sign-in is no longer valid, so live updates have stopped. Please sign in again.',
     },
     notif_center: {

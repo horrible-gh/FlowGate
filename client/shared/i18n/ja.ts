@@ -1009,6 +1009,7 @@ export default {
       document_content_refresh_failed: '更新された文書の最新内容の読み込みに失敗しました。',
       test_run_failed: 'テスト失敗: {doc} ({failed}/{total} ケース)',
       test_run_failed_nocount: 'テスト失敗: {doc}',
+      test_run_auto_reopened: 'テスト失敗により {doc} を承認前の段階に戻しました。',
       session_revoked: 'ログインが無効になったため、リアルタイム更新を停止しました。再度ログインしてください。',
     },
     notif_center: {

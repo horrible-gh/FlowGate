@@ -1009,6 +1009,7 @@ export default {
       document_content_refresh_failed: '수정된 문서의 최신 내용을 불러오지 못했습니다.',
       test_run_failed: '테스트 실패: {doc} ({failed}/{total} 케이스)',
       test_run_failed_nocount: '테스트 실패: {doc}',
+      test_run_auto_reopened: '테스트 실패로 {doc} 문서를 승인이전 단계로 되돌렸습니다.',
       session_revoked: '로그인이 만료되어 실시간 갱신이 중단되었습니다. 다시 로그인해 주세요.',
     },
     notif_center: {
