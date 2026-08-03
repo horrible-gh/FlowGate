@@ -96,6 +96,12 @@ class FakePausedStore:
     def delete_by_group(self, group_id):
         self.rows.pop(group_id, None)
 
+    def delete_system_stop(self, group_id, stop_run_id):
+        row = self.rows.get(group_id)
+        if (row and row.get("stop_kind") == "system"
+                and row.get("stop_run_id") == stop_run_id):
+            self.rows.pop(group_id, None)
+
     def list_by_user(self, user_id):
         return [dict(r) for r in self.rows.values() if r["paused_by"] == user_id]
 
@@ -173,7 +179,7 @@ def fake_env(monkeypatch, tmp_path):
 
     # Route every paused-store touch (service AND inbox hook) at the dict fake.
     for name in ("upsert", "get_by_group", "exists", "delete_and_return",
-                 "delete_by_group", "list_by_user"):
+                 "delete_by_group", "delete_system_stop", "list_by_user"):
         monkeypatch.setattr(db_paused, name, getattr(paused, name))
 
     events: list[tuple[str, dict]] = []
@@ -278,7 +284,7 @@ class TestPauseRun:
         })
         # The inbox boundary hook fires while the run is still alive (the worker is
         # blocked on the inbox response at the boundary) — simulate that ordering.
-        svc.mark_user_paused(GROUP)
+        assert svc.mark_user_paused(GROUP, res["run_id"]) is True
         run = _wait_finished(res["run_id"])
         assert run["end_reason"] == "user_paused"
         # The paused row is the resume coordinate — the boundary stop must keep it.
@@ -373,7 +379,7 @@ class TestPauseRun:
         fake_env["docs"].docs.append({
             "doc_id": f"{GROUP}.0002-P", "seq": 2, "status": "open",
         })
-        svc.mark_user_paused(GROUP)
+        assert svc.mark_user_paused(GROUP, res["run_id"]) is True
         run = _wait_finished(res["run_id"])
         assert run["end_reason"] == "user_paused"
         row = fake_env["paused"].rows[GROUP]
@@ -595,9 +601,73 @@ class TestResumeChain:
         _wait_finished(res["run_id"])
 
 
+class TestPauseIdentityAndRestoreRegression:
+    def test_failed_resume_restores_all_system_stop_metadata(self, fake_env, monkeypatch):
+        _seed_paused(fake_env)
+        original = {
+            "stop_kind": "system",
+            "stop_code": "no_output_exhausted",
+            "stop_run_id": "aiv_old_chain",
+            "stop_last_message_excerpt": "old chain produced no output",
+        }
+        fake_env["paused"].rows[GROUP].update(original)
+        monkeypatch.setattr(
+            wds, "advance_workflow",
+            lambda **_kw: (_ for _ in ()).throw(ValueError("head is not approvable")),
+        )
+        fake_env["chain"]["providers"] = [_provider('"true"')]
+
+        with pytest.raises(HTTPException) as exc:
+            svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                             api_base_url="http://x/api/v1")
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "resume_advance_blocked"
+        assert exc.value.detail["restored"] is True
+        assert {key: fake_env["paused"].rows[GROUP][key] for key in original} == original
+
+    def test_stale_system_row_cannot_tag_a_single_run(self, fake_env):
+        res = _start(fake_env, mode="single", cmd=_slow_cmd())
+        fake_env["paused"].upsert(
+            group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
+            paused_at="2026-08-03T13:56:40+09:00",
+            continuation_target_seq=3, docs_target=1, docs_reached=0,
+            stop_kind="system", stop_code="no_output_exhausted",
+            stop_run_id="aiv_old_chain",
+        )
+        try:
+            assert svc.mark_user_paused(GROUP, res["run_id"]) is False
+            assert svc.get_run_record(res["run_id"])["user_paused"] is False
+        finally:
+            svc.cancel_run(res["run_id"])
+            _wait_finished(res["run_id"])
+
+
 # ── active_all (L0009 §2.8 / P0008 S1) ────────────────────────────────────────
 
-class TestActiveAll:
+class TestActiveAll:
+    def test_reload_discards_reopened_workflow_system_stop_after_single_success(
+            self, fake_env, monkeypatch):
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        single = _start(fake_env, mode="single")
+        _wait_finished(single["run_id"])
+        fake_env["paused"].upsert(
+            group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
+            paused_at="2026-08-03T13:56:40+09:00",
+            continuation_target_seq=3, docs_target=1, docs_reached=0,
+            stop_kind="system", stop_code="no_output_exhausted",
+            stop_run_id="aiv_old_chain",
+        )
+        # The old chain stopped on item 3. Reopen moved the current head back to item 2.
+        monkeypatch.setattr(db_runs, "get", lambda _run_id: {"hop_item_seq": 3})
+
+        mine = svc.active_all("usr_admin")
+
+        assert mine["paused"] == []
+        assert GROUP not in fake_env["paused"].rows
+
+
     def test_scopes_runs_by_issuer_and_derives_pending_q(self, fake_env):
         res = _start(fake_env, cmd=_slow_cmd())
         try:
@@ -638,7 +708,7 @@ class TestActiveAll:
 
 class TestInboxBoundaryHook:
     @staticmethod
-    def _call_chain(monkeypatch, fake_env, target_seq, completed_seq):
+    def _call_chain(monkeypatch, fake_env, target_seq, completed_seq, ai_run_id=None):
         from modules.flow_gate.api import inbox_routes
 
         monkeypatch.setattr(
@@ -654,7 +724,8 @@ class TestInboxBoundaryHook:
             "continuation_locale": "ko",
             "doc_ref": DOC_REF,
             "issued_to": "usr_admin",
-            "group_id": GROUP,
+            "group_id": GROUP,
+            "ai_run_id": ai_run_id,
         }
         # doc_type "M" is in AUTO_COMPLETE_TYPES → the auto-approve leg is skipped and
         # the test pins exactly the boundary decision, not the approval machinery.
@@ -664,10 +735,13 @@ class TestInboxBoundaryHook:
         )
 
     def test_pause_row_withholds_next_token(self, fake_env, monkeypatch):
-        _seed_paused(fake_env)
         res = _start(fake_env, cmd=_slow_cmd())
+        svc.pause_run(res["run_id"], "usr_admin")
         try:
-            envelope = self._call_chain(monkeypatch, fake_env, target_seq=6, completed_seq=4)
+            envelope = self._call_chain(
+                monkeypatch, fake_env, target_seq=6, completed_seq=4,
+                ai_run_id=res["run_id"],
+            )
             assert envelope["continuation_paused"] is True
             assert "paused by user" in envelope["continuation_reason"]
             assert "next_token" not in envelope

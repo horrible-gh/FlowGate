@@ -1107,6 +1107,8 @@ export default {
       progress: 'Reached {reached}/{target}',
       provider: 'Provider: {name}',
       state_paused: 'Paused — ready to resume.',
+      stop_origin_system: 'System stop from an earlier continuous chain',
+      stop_origin_user: 'Pause requested by the user',
       pause_scheduled: 'Pause scheduled',
       awaiting_q_badge: 'Awaiting answer {count}',
       awaiting_q_line: 'Q&A: waiting for your answer',

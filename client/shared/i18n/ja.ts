@@ -1106,6 +1106,8 @@ export default {
       progress: '到達 {reached}/{target}',
       provider: '実行: {name}',
       state_paused: '停止中 — 再開できます。',
+      stop_origin_system: '以前の連続チェーンによるシステム停止',
+      stop_origin_user: 'ユーザーが要求した停止',
       pause_scheduled: '停止予約済み',
       awaiting_q_badge: '質疑待ち {count}',
       awaiting_q_line: '質疑応答: 回答を待っています',

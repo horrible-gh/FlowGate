@@ -304,7 +304,7 @@ def test_decide_route_kicks_off_continuation_for_continuation_token(monkeypatch)
             "issued_to": "pm-1", "project": "flowgate", "token_id": "tok",
             "action_scope": "workflow_decide", "doc_ref": "flowgate.default.0086.0001-R",
             "continuation_target_seq": wds.CONTINUATION_TO_END, "continuation_review_mode": False,
-            "is_admin": False,
+            "ai_run_id": "aiv_decide_1", "is_admin": False,
         },
     )
     monkeypatch.setattr(wdr, "decide_workflow", lambda **k: {"status": "decided"})
@@ -330,6 +330,7 @@ def test_decide_route_kicks_off_continuation_for_continuation_token(monkeypatch)
     # The decide endpoint forwarded the token's continuation metadata to the kickoff…
     assert kickoff_kw["continuation_target_seq"] == wds.CONTINUATION_TO_END
     assert kickoff_kw["doc_id"] == "flowgate.default.0086.0001-R"
+    assert kickoff_kw["ai_run_id"] == "aiv_decide_1"
     # …and merged the resulting envelope into the 201 body so the worker proceeds.
     import json as _json
     payload = _json.loads(resp.body)

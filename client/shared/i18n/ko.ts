@@ -1106,6 +1106,8 @@ export default {
       progress: '도달 {reached}/{target}',
       provider: '실행: {name}',
       state_paused: '정지됨 — 재개할 수 있습니다.',
+      stop_origin_system: '이전 연속 체인의 시스템 정지',
+      stop_origin_user: '사용자가 요청한 정지',
       pause_scheduled: '정지 예약됨',
       awaiting_q_badge: '질의 대기 {count}',
       awaiting_q_line: '질의 응답: 답변을 기다리는 중',

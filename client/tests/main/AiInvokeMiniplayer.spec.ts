@@ -9,6 +9,7 @@ import AiInvokeMiniplayer from '@main/components/AiInvokeMiniplayer.vue'
 import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 import { useProjectStore } from '@main/stores/project'
 import { useExplorerStore } from '@main/stores/explorer'
+import { useToast } from '@main/components/common/useToast'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest }))
@@ -34,6 +35,7 @@ describe('AiInvokeMiniplayer', () => {
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
+    useToast().toasts.value = []
     // bootstrap (active-all) + title/detail lookups
     getRequest.mockImplementation(async (url: string) => {
       if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
@@ -204,6 +206,75 @@ describe('AiInvokeMiniplayer', () => {
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.btn_resume'))
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.state_paused'))
     expect(wrapper.text()).not.toContain(t('common.close'))
+    wrapper.unmount()
+  })
+
+  it('reports a restored resume failure instead of silently recreating the card', async () => {
+    const groupId = 'flowgate.default.0383'
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-resume', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: 'run-resume', group_id: groupId, end_reason: 'user_paused',
+    })
+    postRequest.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { code: 'resume_launch_failed', restored: true, resume_stage: 'advance_or_start' },
+      },
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const resume = wrapper.findAll('button').find(
+      button => button.text().includes(t('main.ai_miniplayer.btn_resume')),
+    )
+    await resume!.trigger('click')
+    await flushPromises()
+
+    expect(useToast().toasts.value.at(-1)).toMatchObject({
+      message: t('main.ai_miniplayer.error_resume_failed'),
+      type: 'danger',
+    })
+    expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    wrapper.unmount()
+  })
+
+  it('shows the origin, code, run and timestamp of a system stop', async () => {
+    const groupId = 'flowgate.default.0384'
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('active-all')) {
+        return {
+          data: {
+            ok: true,
+            runs: [],
+            paused: [{
+              group_id: groupId,
+              doc_ref: `${groupId}.0001-B`,
+              paused_at: '2026-08-03T13:56:40+09:00',
+              stop_kind: 'system',
+              stop_code: 'no_output_exhausted',
+              stop_run_id: 'aiv_old_chain',
+            }],
+          },
+        }
+      }
+      return { data: {} }
+    })
+    const wrapper = mountPlayer()
+    await useAiInvokeRunsStore().bootstrap()
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const details = wrapper.find('[data-test="ai-miniplayer-stop-details"]').text()
+    expect(details).toContain(t('main.ai_miniplayer.stop_origin_system'))
+    expect(details).toContain('no_output_exhausted')
+    expect(details).toContain('aiv_old_chain')
+    expect(details).toContain('2026-08-03T13:56:40+09:00')
+    expect(wrapper.text()).toContain(`${groupId}.0001-B`)
     wrapper.unmount()
   })
 

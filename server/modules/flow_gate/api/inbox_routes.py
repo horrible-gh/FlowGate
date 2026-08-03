@@ -2309,19 +2309,16 @@ def _continuation_self_chain(
     # row is NOT deleted here; the resume path consumes it (L0009 §2.4). Fail-open on a
     # lookup error: a pause probe must never stall a healthy unmanned chain with a 500.
     try:
-        from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
-        _user_paused = bool(chain_group and _db_paused.get_by_group(chain_group))
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+        _user_paused = bool(
+            chain_group
+            and _ai_invoke.mark_user_paused(chain_group, token_rec.get("ai_run_id"))
+        )
     except Exception:
         import LogAssist.log as logger
-        logger.warning("[inbox] boundary pause probe failed (ignored)")
+        logger.warning("[inbox] boundary pause identity probe failed (ignored)")
         _user_paused = False
     if _user_paused:
-        try:
-            from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-            _ai_invoke.mark_user_paused(chain_group)
-        except Exception:
-            import LogAssist.log as logger
-            logger.warning("[inbox] user-paused run tagging failed (ignored)")
         envelope["continuation_paused"] = True
         envelope["continuation_reason"] = (
             "paused by user at the step boundary; resume from the miniplayer "

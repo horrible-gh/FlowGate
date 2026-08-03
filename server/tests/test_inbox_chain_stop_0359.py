@@ -42,6 +42,7 @@ GROUP = "flowgate.default.0359"
 SPINE = "flowgate.default.0359.0001-B"
 SUBMITTED = "flowgate.default.0359.0013-TR"
 TARGET_SEQ = 14
+RUN_ID = "aiv_0359_1"
 
 
 class _FakeRequest:
@@ -56,6 +57,7 @@ def _token_rec(**over) -> dict:
         "issued_to": "pm",
         "group_id": GROUP,
         "token_id": "tok_20260731_000017",
+        "ai_run_id": RUN_ID,
         "continuation_target_seq": TARGET_SEQ,
         "continuation_review_mode": 0,
         "continuation_instruction_mode": "auto_approved",
@@ -126,7 +128,16 @@ def env(monkeypatch):
         return rig.live_run
 
     monkeypatch.setattr(svc, "mark_chain_stop", _mark)
-    monkeypatch.setattr(svc, "mark_user_paused", lambda _g: None)
+    def _mark_user_paused(group_id, run_id):
+        row = rig.user_paused_row or {}
+        return bool(
+            group_id == GROUP
+            and run_id == RUN_ID
+            and (row.get("stop_kind") or "user") == "user"
+            and row.get("stop_run_id") == RUN_ID
+        )
+
+    monkeypatch.setattr(svc, "mark_user_paused", _mark_user_paused)
     monkeypatch.setattr(svc, "has_active_run", lambda _g: False)
     monkeypatch.setattr(svc, "get_active_status", lambda _g: {"run_id": "aiv_1"})
     monkeypatch.setattr(svc, "request_auto_resume", lambda *a, **kw: None)
@@ -210,7 +221,7 @@ class TestStopCodeOnEveryBranch:
         assert e["continuation_stop_reason"] == "Review mode: waiting for the human go."
 
     def test_user_paused_is_the_one_stop_a_worker_may_hand_back(self, env):
-        env.user_paused_row = {"group_id": GROUP, "stop_kind": "user"}
+        env.user_paused_row = {"group_id": GROUP, "stop_kind": "user", "stop_run_id": RUN_ID}
         e = _chain()
         assert e["continuation_stop_code"] == "user_paused"
         assert e["continuation_resumable"] is True
@@ -304,7 +315,9 @@ class TestEndSentence:
         _chain()
         env.completed_seq = TARGET_SEQ - 1
         _chain(continuation_review_mode=1)
-        env.user_paused_row = {"group_id": GROUP}
+        env.user_paused_row = {
+            "group_id": GROUP, "stop_kind": "user", "stop_run_id": RUN_ID,
+        }
         _chain()
         env.user_paused_row = None
         env.advance.side_effect = ValueError("x")
@@ -452,7 +465,7 @@ class TestDecideKickoff:
     def _kickoff(self, **kw):
         return wds.continuation_kickoff_after_decide(
             doc_id=SPINE, issued_to="pm", api_base_url="http://h",
-            continuation_target_seq=TARGET_SEQ, **kw,
+            continuation_target_seq=TARGET_SEQ, ai_run_id=RUN_ID, **kw,
         )
 
     @pytest.fixture(autouse=True)
@@ -481,8 +494,9 @@ class TestDecideKickoff:
         assert "sequence not decided" in e["continuation_stop_reason"]
 
     def test_boundary_pause_stops_quietly(self, monkeypatch):
-        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-        monkeypatch.setattr(db_paused, "get_by_group", lambda _g: {"group_id": GROUP})
+        self.env.user_paused_row = {
+            "group_id": GROUP, "stop_kind": "user", "stop_run_id": RUN_ID,
+        }
         e = self._kickoff()
         assert e["continuation_stop_code"] == "user_paused"
         assert e["continuation_resumable"] is True

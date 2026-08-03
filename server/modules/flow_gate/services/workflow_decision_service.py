@@ -847,6 +847,7 @@ def continuation_kickoff_after_decide(
     continuation_target_seq: Optional[int] = None,
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
+    ai_run_id: Optional[str] = None,
 ) -> Optional[dict]:
     """Mint the first real step after an unmanned-chain workflow decision is saved.
 
@@ -918,19 +919,18 @@ def continuation_kickoff_after_decide(
     # step boundary too — a pause accepted during the decision hop must withhold the
     # first real token here, exactly like the inbox self-chain does between steps.
     try:
-        from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
         _doc = db_documents.get_by_id(doc_id) or {}
         _chain_group = _doc.get("group_id")
-        if _chain_group and _db_paused.get_by_group(_chain_group):
+        if _chain_group:
             from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-            _ai_invoke.mark_user_paused(_chain_group)
-            envelope["continuation_paused"] = True
-            envelope["continuation_reason"] = (
-                "paused by user at the step boundary; resume from the miniplayer to continue."
-            )
-            return _stop("user_paused")
+            if _ai_invoke.mark_user_paused(_chain_group, ai_run_id):
+                envelope["continuation_paused"] = True
+                envelope["continuation_reason"] = (
+                    "paused by user at the step boundary; resume from the miniplayer to continue."
+                )
+                return _stop("user_paused")
     except Exception:  # pragma: no cover - defensive, fail-open like the inbox probe
-        _log.warning("kickoff boundary pause probe failed (ignored)", exc_info=True)
+        _log.warning("kickoff boundary pause identity probe failed (ignored)", exc_info=True)
 
     try:
         adv = advance_workflow(

@@ -32,7 +32,8 @@
             v-else
             type="button"
             class="btn btn-ghost btn-sm"
-            @click="store.dismiss(groupId)"
+            data-test="ai-inline-close"
+            @click="closeSurface"
           >
             <AppIcon name="x" />
             {{ t('common.close') }}
@@ -58,6 +59,14 @@
           {{ t('main.ai_invoke_dialog.cancelling') }}
         </p>
       </template>
+
+      <p
+        v-else-if="run.phase === 'paused' || run.phase === 'pause_requested'"
+        class="aiv-inline__notice"
+        data-test="ai-inline-pause-state"
+      >
+        {{ titleText }}
+      </p>
 
       <p v-else-if="run.phase === 'lost'" class="aiv-inline__notice aiv-inline__notice--warning">
         {{ t('main.ai_invoke_dialog.error_run_lost') }}
@@ -152,9 +161,14 @@ const groupId = computed(() => props.groupId)
 // view of a finished run expires early (NR0003 §5.3). Removing it here is not a dismiss:
 // the card is still in the header monitor until read or swept.
 const storeRun = computed(() => store.runsByGroup[groupId.value] ?? null)
+const hiddenEntryKey = ref('')
+function entryKey(entry: NonNullable<typeof storeRun.value>): string {
+  return entry.runId || `paused:${entry.pausedAt ?? entry.docRef}`
+}
 const run = computed(() => {
   const entry = storeRun.value
-  if (!entry || !isFinishedCard(entry)) return entry
+  if (!entry || hiddenEntryKey.value === entryKey(entry)) return null
+  if (!isFinishedCard(entry)) return entry
   return store.now - (entry.finishedAtMs as number) < INLINE_RESULT_WINDOW_MS ? entry : null
 })
 
@@ -170,10 +184,16 @@ const titleText = computed(() => {
       ? t('main.ai_invoke_dialog.cancelling')
       : t('main.ai_invoke_dialog.inline_running')
   }
+  if (run.value.phase === 'pause_requested') return t('main.ai_miniplayer.pause_scheduled')
+  if (run.value.phase === 'paused') return t('main.ai_miniplayer.state_paused')
   if (run.value.phase === 'lost') return t('main.ai_invoke_dialog.error_run_lost')
-  if (run.value.outcome === 'complete') return t('main.ai_invoke_dialog.outcome_complete')
-  if (run.value.outcome === 'partial') return t('main.ai_invoke_dialog.outcome_partial')
-  return t(scoped.value ? 'main.ai_invoke_dialog.outcome_none_scoped' : 'main.ai_invoke_dialog.outcome_none')
+  if (run.value.phase === 'finished') {
+    if (run.value.outcome === 'complete') return t('main.ai_invoke_dialog.outcome_complete')
+    if (run.value.outcome === 'partial') return t('main.ai_invoke_dialog.outcome_partial')
+    // outcome_none* is terminal-only: null/non-terminal phases never reach this branch.
+    return t(scoped.value ? 'main.ai_invoke_dialog.outcome_none_scoped' : 'main.ai_invoke_dialog.outcome_none')
+  }
+  return ''
 })
 
 const elapsedText = computed(() => {
@@ -223,6 +243,17 @@ function fallbackReason(reason: string): string {
   // 0359: the switch that happens AFTER a provider ran cleanly and produced nothing.
   if (reason === 'no_output') return t('main.ai_invoke_dialog.reason_no_output')
   return reason
+}
+
+function closeSurface(): void {
+  const current = run.value
+  if (!current) return
+  // Surface visibility is local. Pausing remains durable in the registry/server and can
+  // still be resumed from the miniplayer after this document overlay is closed.
+  hiddenEntryKey.value = entryKey(current)
+  if (current.phase === 'finished' || current.phase === 'lost') {
+    store.dismiss(groupId.value)
+  }
 }
 
 async function cancel(): Promise<void> {

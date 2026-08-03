@@ -329,6 +329,59 @@ describe('aiInvokeRuns store', () => {
     expect(vi.mocked(getRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
   })
 
+  it('keeps a restored pause card and rejects a resume launch 409', async () => {
+    const groupId = 'flowgate.default.0384'
+    store.trackFinished({
+      run_id: 'run-old', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
+    })
+    const rejection = {
+      response: {
+        status: 409,
+        data: {
+          code: 'resume_advance_blocked',
+          restored: true,
+          resume_stage: 'advance',
+        },
+      },
+    }
+    vi.mocked(postRequest).mockRejectedValueOnce(rejection)
+
+    await expect(store.resume(groupId)).rejects.toBe(rejection)
+
+    expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+  })
+
+  it('retains system-stop identity from active-all bootstrap', async () => {
+    const groupId = 'flowgate.default.0385'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [],
+        paused: [{
+          group_id: groupId,
+          doc_ref: `${groupId}.0001-B`,
+          paused_at: '2026-08-03T13:56:40+09:00',
+          stop_kind: 'system',
+          stop_code: 'no_output_exhausted',
+          stop_run_id: 'aiv_old_chain',
+          stop_last_message_excerpt: 'no output',
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      phase: 'paused',
+      stopKind: 'system',
+      stopCode: 'no_output_exhausted',
+      stopRunId: 'aiv_old_chain',
+      stopLastMessageExcerpt: 'no output',
+      pausedAt: '2026-08-03T13:56:40+09:00',
+    })
+  })
+
   it('correlates registered and answered questions to the group card', () => {
     const groupId = 'flowgate.default.2010'
     const qDocId = `${groupId}.0005-Q`
