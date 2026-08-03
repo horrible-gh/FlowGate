@@ -1983,7 +1983,8 @@ def _group_ac_doc_id(group_id: str) -> Optional[str]:
     try:
         row = get_store()._fetch_one(
             "SELECT doc_id FROM documents "
-            "WHERE group_id = ? AND type_code = 'AC' ORDER BY doc_id DESC",
+            "WHERE group_id = ? AND type_code = 'AC' AND status != 'archived' "
+            "ORDER BY doc_id DESC",
             [group_id],
         )
         return row["doc_id"] if row else None
@@ -2004,7 +2005,7 @@ def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
         rows = get_store()._fetch_all(
             "SELECT group_id, MAX(doc_id) AS doc_id FROM documents "
             f"WHERE group_id IN ({placeholders}) AND type_code = 'AC' "
-            "GROUP BY group_id",
+            "AND status != 'archived' GROUP BY group_id",
             list(group_ids),
         )
         return {r["group_id"]: r["doc_id"] for r in rows if r.get("doc_id")}

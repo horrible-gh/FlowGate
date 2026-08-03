@@ -273,8 +273,15 @@ def classify_failure(run: dict, items: list[dict]) -> str:
     error = (run or {}).get("error")
     if error in _INFRA_ERROR_CODES:
         return INFRA
-    all_logs = "\n".join((it.get("output_tail") or "") for it in (items or []))
-    if any(p in all_logs for p in _INFRA_PATTERNS):
+    # R0001 group 0381: these patterns mean "the harness could not run the test", so they only
+    # carry that meaning from a stage that builds the environment. A test case that RAN and
+    # printed "No module named 'x'" is the product's own missing import — a real RED. Scanning
+    # case logs for them mislabelled 3 of the 27 genuine REDs in production history as INFRA,
+    # which silently skipped the automatic rewind. Same stage scoping as "Permission denied".
+    stage_logs = "\n".join(
+        (it.get("output_tail") or "") for it in (items or []) if (it.get("kind") or "case") != "case"
+    )
+    if any(p in stage_logs for p in _INFRA_PATTERNS):
         return INFRA
     # exit 127 (command not found) on any case
     if any((it.get("exit_code") == 127) for it in (items or [])):

@@ -58,6 +58,16 @@ def worker_principal(token: dict) -> MutationPrincipal:
     )
 
 
+def system_principal(
+    *, user_id: Optional[str] = "system", group_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> MutationPrincipal:
+    """Trusted internal mutation context for server-owned completion hooks."""
+    return MutationPrincipal(
+        kind="system", user_id=user_id, group_id=group_id, run_id=run_id
+    )
+
+
 def principal_from_request(request: Request) -> MutationPrincipal:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):

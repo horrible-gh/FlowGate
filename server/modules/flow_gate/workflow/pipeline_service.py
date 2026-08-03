@@ -468,6 +468,7 @@ def _require_fileless_approval_structure(doc: dict) -> None:
     if any(
         item.get("doc_id") != doc.get("doc_id")
         and str(item.get("type_code") or "").upper() == "AC"
+        and item.get("status") != "archived"
         and item.get("doc_review_status") in _APPROVED_REVIEW_STATUSES
         for item in group_docs
     ):
@@ -478,6 +479,7 @@ def _require_fileless_approval_structure(doc: dict) -> None:
         item
         for item in group_docs
         if str(item.get("type_code") or "").upper() not in non_head_types
+        and item.get("status") != "archived"
         and item.get("doc_review_status") not in _APPROVED_REVIEW_STATUSES
     ]
     current_heads.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))

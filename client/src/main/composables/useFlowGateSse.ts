@@ -462,6 +462,19 @@ export function useFlowGateSse(refreshAll: () => void) {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         invalidateAndRefresh(data.project)
+        // R0001 group 0381: a CODE RED sends the failing TS back through the time machine to
+        // the pre-approval step. The refresh above re-renders the (now pending) status badge,
+        // but a silent badge flip reads as "nothing happened" right after a failure toast —
+        // so name the state change once, from the locale bundle.
+        const p = data.payload ?? {}
+        if (p.reason === 'test_run_code_failure_auto_reopen') {
+          showToast(
+            t('main.notifications.test_run_auto_reopened', {
+              doc: p.doc_id ?? data.doc_id ?? '',
+            }),
+            'info',
+          )
+        }
       } catch { /* ignore parse errors */ }
     })
 
