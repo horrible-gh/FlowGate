@@ -45,6 +45,25 @@
         </div>
 
         <div class="modal-bd gcd-modal-body">
+          <!-- 0382 NR0003 제안 3: 흔적은 목록에서 빼되 **없는 셈 치지 않는다**. 261개가
+               어느 화면에도 안 뜬 채 승인·병합된 것이 그 사고의 본체였다. 변경이 하나도
+               없을 때도 보이도록 목록 분기 바깥에 둔다. -->
+          <section v-if="artifactPaths.length" class="gcd-artifacts">
+            <button
+              type="button"
+              class="gcd-artifacts-toggle"
+              :aria-expanded="artifactsOpen"
+              @click="artifactsOpen = !artifactsOpen"
+            >
+              <AppIcon :name="artifactsOpen ? 'caret-down' : 'caret-right'" />
+              {{ t('main.group_changes.tool_artifacts', { n: artifactPaths.length }) }}
+            </button>
+            <span class="gcd-artifacts-note">{{ t('main.group_changes.tool_artifacts_note') }}</span>
+            <ul v-if="artifactsOpen" class="gcd-artifacts-list">
+              <li v-for="path in artifactPaths" :key="path" class="gcd-mono">{{ path }}</li>
+            </ul>
+          </section>
+
           <div v-if="!changes.length" class="gcd-blank">
             <AppIcon name="check-circle" />
             <span>{{ t('main.doc_info_panel.changes_empty') }}</span>
@@ -231,9 +250,14 @@ const props = defineProps<{
   // The already-loaded /changes list from the sidebar summary: opening the viewer must
   // not re-ask for what the caller just fetched, and both must agree on the file set.
   changes: GroupChangeData[]
+  // 0382 제안 3: 변경 목록에서 걸러낸 "도구가 남긴 흔적". 채널이 없는 서버에서는 비어 온다.
+  toolArtifacts?: string[]
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const artifactsOpen = ref(false)
+const artifactPaths = computed(() => props.toolArtifacts ?? [])
 
 type FilterKey = 'all' | 'M' | 'A' | 'D'
 const filter = ref<FilterKey>('all')
@@ -697,4 +721,36 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
 .gcd-line-changed, .gcd-text.gcd-line-changed { background: #fff7ed; }
 .gcd-line-blank { background: #f8fafc; }
+
+/* 0382 제안 3 — 흔적 줄. 눈에 띄되 변경 목록을 밀어내지 않는 무채색 한 줄. */
+.gcd-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  background: #f8fafc;
+  font-size: 0.78rem;
+}
+.gcd-artifacts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-d, #334155);
+  cursor: pointer;
+}
+.gcd-artifacts-note { color: var(--text-m, #64748b); }
+.gcd-artifacts-list {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+  color: var(--text-m, #64748b);
+  font-size: 0.74rem;
+}
 </style>

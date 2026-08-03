@@ -86,6 +86,11 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+# 0382 B0001: tests used to default their scratch to `server/.test-tmp-<n>/`,
+# and the finalize commit swallowed all 261 files into main. The defaults moved
+# out of the repository; this line is the cheap second layer for anything that
+# still lands here (an older checkout, an explicit FLOWGATE_TEST_SCRATCH).
+.test-tmp-*/
 htmlcov/
 .tox/
 .nox/

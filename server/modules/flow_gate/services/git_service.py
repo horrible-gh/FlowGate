@@ -43,6 +43,7 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import system_settings as db_settings
 from modules.flow_gate.db.connection import get_store, now_iso
+from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
 _log = logging.getLogger(__name__)
@@ -2336,14 +2337,23 @@ def _build_tree_nodes(files: list[str], dirs: Sequence[str] = ()) -> list[dict]:
 
 
 def _is_hidden_source_path(path: str) -> bool:
-    """Group-explorer exposure rule (shared by tree/changes/blob): hide dotfiles and
-    ``*.db``, matching the committed-tree filter so the untracked channel never
-    surfaces a path the committed view would have hidden."""
-    segments = path.split("/")
-    return (
-        any(seg.startswith(".") for seg in segments)
-        or segments[-1].lower().endswith(".db")
-    )
+    """Group-explorer exposure rule (shared by tree/changes/blob).
+
+    0382 NR0003 제안 3: this used to be a *second*, hand-rolled rule that disagreed
+    with the submission check — it hid ``server/.test-tmp-0313/...`` while
+    ``tr_scope_service`` demanded those same 261 paths be reported. The shared rule
+    in ``path_exclusion_rules`` is now the base, so a path the explorer hides as
+    "tool debris" is one the submission check also drops.
+
+    The one addition on top of the shared rule is a nested dotfile
+    (``server/.env.local``): the shared rule deliberately keeps those reportable so a
+    genuinely edited ``client/src/.eslintrc.json`` is still cross-checked, but the
+    explorer must not serve a secret-shaped file through the blob/write endpoints.
+    That direction is safe — it never hides debris the check would then demand.
+    """
+    if path_exclusion_rules.is_excluded_path(path):
+        return True
+    return path.split("/")[-1].startswith(".")
 
 
 def _group_worktree_path(project_id: str, group_id: str, branch: str) -> Optional[Path]:
@@ -2597,12 +2607,17 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
 
     fields = (diff_proc.stdout or "").split("\0")
     changes: list[dict] = []
+    # 0382 NR0003 제안 3: 흔적을 감추되 **없는 셈 치지는 않는다**. 261개가 아무 화면에도
+    # 안 뜬 채 승인·병합된 것이 이 사고의 본체였으므로, 걸러낸 것은 별도 채널로 세어
+    # 내보내고 화면이 "도구가 남긴 흔적 N개" 한 줄로 항상 보여준다.
+    tool_artifacts: list[str] = []
     for index in range(0, len(fields) - 1, 2):
         status, path = fields[index], fields[index + 1]
         if not status or not path:
             continue
-        segments = path.split("/")
-        if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
+        if _is_hidden_source_path(path):
+            if path_exclusion_rules.is_excluded_path(path):
+                tool_artifacts.append(path)
             continue
         insertions, deletions = line_stats.get(path, (None, None))
         changes.append({
@@ -2613,6 +2628,12 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
     # absent from the changes list entirely — the exact "수정은 보이는데 신규만 안 보이는"
     # asymmetry B0001 reports. Surface each with "?" (git porcelain's untracked marker).
     existing = {change["path"] for change in changes}
+    # Untracked debris never reaches _group_untracked_safe (it filters by the same
+    # exposure rule), so the artifact channel reads the raw list once more.
+    tool_artifacts.extend(
+        path for path in _worktree_untracked_paths(wt_path)
+        if path_exclusion_rules.is_excluded_path(path)
+    )
     for path in _group_untracked_safe(project_id, group_id, branch):
         if path not in existing:
             # A never-added file deletes nothing, so 0 here is a fact, not a guess.
@@ -2625,6 +2646,8 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
         # the base branch is a project setting the client had no other way to read.
         "base_branch": base_branch, "changes": changes,
+        # 0382 제안 3: 목록은 접어 두더라도 개수는 늘 보이게 — 없는 셈 치지 않는다.
+        "tool_artifacts": sorted(set(tool_artifacts)),
     }}
 
 
@@ -3134,6 +3157,95 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
     return files
 
 
+# 마무리 커밋이 한 번에 stage 하는 새 파일 수의 상한이 아니라, 명령 한 줄에 싣는
+# 경로 수다. 0382 의 사고에서는 261개가 한꺼번에 들어왔고, 윈도우 명령줄 길이 제한에
+# 걸리면 마무리 자체가 실패한다. 나눠서 여러 번 부른다.
+_ADD_PATHSPEC_CHUNK = 50
+
+# 마무리 커밋에서 제외한 흔적을 결과·이벤트에 싣는 상한. 목록 자체는 화면이 "N개"로
+# 먼저 알려주므로, 전체 개수(count)는 항상 정확하고 목록만 잘린다.
+FINALIZE_ARTIFACT_LIST_MAX = 200
+
+
+def _worktree_untracked_paths(wt_path: Path) -> list[str]:
+    """Untracked, non-gitignored paths in a worktree ('/'-separated, sorted)."""
+    proc = _run_git(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        return []
+    return sorted(p for p in (proc.stdout or "").split("\0") if p)
+
+
+def _absorb_worker_edits(
+    wt_path: Path, subject: str, author_env: Optional[dict]
+) -> list[str]:
+    """Commit the worker's leftover edits — WITHOUT swallowing tool debris.
+
+    0382 B0001 (NR0003 §2-4 / 제안 1). This used to be a bare ``git add -A``. It has
+    no filter, so whatever sat in the worktree went in: commit ``0f502ce`` carries 5
+    real files and 261 ``server/.test-tmp-*`` leftovers, and nobody could have caught
+    it because the explorer hides exactly those paths (§2-3). One unfiltered line
+    turned a local mess into permanent repository state on 11 branches.
+
+    The gate is deliberately narrow — it only refuses to *add new untracked debris*:
+
+    * ``git add -u`` stages every tracked change, **including deletions**. That
+      matters: the follow-up cleanup of the already-committed 261 files has to be
+      committable through this same path, and a filter that also dropped deletions
+      would make those files unremovable.
+    * new files are added by explicit pathspec, so a rule-matching one is never
+      staged in the first place (no ``reset`` dance, nothing half-staged on failure).
+
+    Excluded paths are RETURNED, never silently dropped — the caller puts them in the
+    finalize result and the SSE event so the screen can say "커밋에서 제외한 임시
+    산출물 N개". Silently correct is how this bug survived; visible is the fix.
+
+    Returns the excluded paths (sorted). Raises GitServiceError on a git failure.
+    """
+    kept, artifacts = path_exclusion_rules.partition_paths(
+        _worktree_untracked_paths(wt_path)
+    )
+    if artifacts:
+        _log.info(
+            "finalize: excluding %d tool artifact(s) from the absorb commit in %s",
+            len(artifacts), wt_path,
+        )
+
+    proc = _run_git(["add", "-u"], cwd=wt_path)
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+    for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
+        chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
+        proc = _run_git(["add", "--", *chunk], cwd=wt_path)
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+
+    # A worktree dirty ONLY because of debris now has an empty index, and
+    # `git commit` on an empty index exits non-zero ("nothing to commit"). That is
+    # not a failure — it is the gate doing its job — so skip the commit instead of
+    # turning a clean finalize into a 500.
+    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
+    if staged.returncode == 0:
+        return artifacts
+
+    proc = _run_git(
+        [*_GIT_IDENT, "commit", "-m", subject], cwd=wt_path, author_env=author_env
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+    return artifacts
+
+
+def _artifact_payload(artifacts: Sequence[str]) -> dict:
+    """The finalize result/event shape for excluded tool debris (0382 제안 1)."""
+    return {
+        "excluded_artifact_count": len(artifacts),
+        "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
+    }
+
+
 # Cap on the untracked list carried in advisory payloads (status / worktree-ready
 # event). A base checkout that accumulated a build tree can hold thousands of
 # untracked paths; the operator only needs to see that they exist and act on the
@@ -3309,6 +3421,9 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         secret = _load_secret_for(cfg) or ""
         author_env = _author_env_from_cfg(cfg)   # 0237 — configured commit author
         resolved_subject: Optional[str] = None
+        # 0382 제안 1: paths the absorb commit refused to swallow. Reported on every
+        # exit path below — a silently-dropped list is what let 261 files through.
+        excluded_artifacts: list[str] = []
 
         def finalize_subject() -> str:
             nonlocal resolved_subject
@@ -3352,15 +3467,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     details={"files": _dirty_files(wt_path)},
                 )
         elif _dirty(wt_path):
-            absorb_subject = finalize_subject()
-            proc = _run_git(["add", "-A"], cwd=wt_path)
-            if proc.returncode == 0:
-                proc = _run_git(
-                    [*_GIT_IDENT, "commit", "-m", absorb_subject],
-                    cwd=wt_path, author_env=author_env,
-                )
-            if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+            # 0382 B0001: NOT `git add -A`. See _absorb_worker_edits — the unfiltered
+            # form is how 261 test-scratch files reached main inside an unrelated
+            # commit, invisible to every screen that could have caught them.
+            excluded_artifacts = _absorb_worker_edits(
+                wt_path, finalize_subject(), author_env
+            )
 
         # 0199 B0001: no-change short-circuit. After absorbing any worker edits,
         # if the work branch still holds NO commit beyond base there is nothing to
@@ -3378,10 +3490,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id,
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
+                **_artifact_payload(excluded_artifacts),
             })
             return {"ok": True, "result": {
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
                 "pushed": False, "merge_id": None, "conflict_files": [],
+                **_artifact_payload(excluded_artifacts),
             }}
 
         # Publish the work branch to origin ONLY for a bare push. A merge lands
@@ -3403,14 +3517,20 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             # 0182 NR0003 §5: drop the slot leftovers right away (origin keeps
             # the pushed branch; only the local worktree/ref/ledger go).
             _cleanup_group_slot(project_id, group_id)
-            return _finalize_result(group_id, project_id, action, "pushed", pushed=True)
+            return _finalize_result(
+                group_id, project_id, action, "pushed",
+                pushed=True, artifacts=excluded_artifacts,
+            )
 
         if action == "commit_only":
             # NR §3: a local-only commit cannot be followed by terminal cleanup
             # (nothing has left the worktree) — leave the group `waiting` so
             # merge/push/archive can still be chosen for it later.
             _set_status(group_id, "waiting")
-            return _finalize_result(group_id, project_id, "commit_only", "waiting")
+            return _finalize_result(
+                group_id, project_id, "commit_only", "waiting",
+                artifacts=excluded_artifacts,
+            )
 
         # action == "merge" / "merge_only"
         if _dirty(base_root, include_untracked=False):
@@ -3468,12 +3588,14 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                 "project": project_id, "group_id": group_id,
                 "action": action, "status": "merged", "merge_commit": merge_commit,
                 "pushed": wants_push,
+                **_artifact_payload(excluded_artifacts),
             })
             return {
                 "ok": True,
                 "result": {
                     "action": action, "status": "merged", "merge_commit": merge_commit,
                     "pushed": wants_push, "merge_id": None, "conflict_files": [],
+                    **_artifact_payload(excluded_artifacts),
                 },
             }
 
@@ -3517,6 +3639,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             "result": {
                 "action": action, "status": "conflict", "merge_commit": None,
                 "pushed": False, "merge_id": merge_id, "conflict_files": files,
+                **_artifact_payload(excluded_artifacts),
             },
         }
     finally:
@@ -3524,18 +3647,21 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
 
 
 def _finalize_result(
-    group_id: str, project_id: str, action: str, status: str, *, pushed: bool = False
+    group_id: str, project_id: str, action: str, status: str, *,
+    pushed: bool = False, artifacts: Sequence[str] = (),
 ) -> dict:
     if status in ("pushed", "merged"):
         _emit("git_finalize_done", project_id, group_id, {
             "project": project_id, "group_id": group_id,
             "action": action, "status": status, "merge_commit": None,
+            **_artifact_payload(artifacts),
         })
     return {
         "ok": True,
         "result": {
             "action": action, "status": status, "merge_commit": None,
             "pushed": pushed, "merge_id": None, "conflict_files": [],
+            **_artifact_payload(artifacts),
         },
     }
 

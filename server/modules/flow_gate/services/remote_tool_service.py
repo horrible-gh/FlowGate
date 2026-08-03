@@ -30,6 +30,9 @@ import codecs
 import logging
 import os
 import re
+import shutil
+import stat
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -38,6 +41,8 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import remote_tool_grants as db_grants
 from modules.flow_gate.db import remote_tool_op_log as db_oplog
 from modules.flow_gate.db import projects as db_projects
+# 0382 제안 5-c: 흔적 청소만 재귀 삭제를 허용하기 위해 화면·검사와 같은 규칙을 쓴다.
+from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
@@ -424,6 +429,8 @@ def _validate_required(op: str, body: dict) -> None:
         _validate_encoding(body)
     elif op == "remove":
         _require_str(body, "path")
+        if body.get("recursive") is not None and not isinstance(body["recursive"], bool):
+            raise _OpError(422)
     elif op == "grep":
         _require_str(body, "pattern")
         _validate_max_int(body, "max_results")
@@ -1024,13 +1031,79 @@ def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     )
 
 
+def _clear_readonly_and_retry(func, path, _exc_info) -> None:
+    """``shutil.rmtree`` / 단일 삭제의 재시도 훅 — 읽기 전용 비트를 벗기고 한 번 더.
+
+    0382 §3-2: git 이 새로 만든 개체 파일은 읽기 전용이라 ``os.remove`` 가
+    PermissionError 를 낸다. 파이썬의 표준 관용구는 권한을 주고 다시 부르는 것이고,
+    그것만으로 이번 사고에서 "영원히 안 지워지던" 21개가 지워진다.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _delete_file(target: Path) -> None:
+    """읽기 전용이어도 지운다. 그래도 막히면 '재시도해도 소용없음'으로 답한다."""
+    try:
+        os.remove(target)
+    except PermissionError:
+        try:
+            _clear_readonly_and_retry(os.remove, str(target), None)
+        except OSError:
+            raise _OpError(409, details={"reason": "path_locked"})
+
+
+def _delete_tree(target: Path) -> int:
+    """디렉터리를 통째로 지우고 지운 파일 수를 돌려준다."""
+    count = sum(1 for path in target.rglob("*") if path.is_file())
+    failures: list[str] = []
+
+    def _on_error(func, path, exc_info):
+        try:
+            _clear_readonly_and_retry(func, path, exc_info)
+        except OSError:
+            failures.append(str(path))
+
+    # 파이썬 3.12+ 는 onerror 폐기 → onexc. 핸들러는 세 번째 인자를 안 쓴다.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(str(target), onexc=_on_error)
+    else:
+        shutil.rmtree(str(target), onerror=_on_error)
+    if failures:
+        raise _OpError(409, details={"reason": "path_locked"})
+    return count
+
+
 def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     target = resolve_in_root(root, body["path"])
     if target is None:
         raise _OpError(422)
+    # _validate_required 가 HTTP 입력 타입을 막지만, 실행 함수 자체도 문자열 "false"를
+    # 참으로 승격시키지 않는다. 삭제 함수는 테스트·내부 호출에서도 안전해야 한다.
+    recursive = body.get("recursive", False) is True
+    if target.is_dir():
+        # 0382 NR0003 제안 5-c (흔적 청소). 폴더를 통째로 지울 수단이 없어서, 261개를
+        # 지우려면 remove 를 261번 불러야 했다. 재귀 삭제를 열되 **도구가 남긴 흔적으로
+        # 판정되는 경로에만** 연다 — 화면·제출 검사와 같은 규칙이라, 오삭제 위험이
+        # "무엇이 흔적인가"라는 하나의 질문으로 좁혀진다.
+        if not recursive:
+            raise _OpError(404)  # 기존 계약 유지: 재귀를 요청하지 않은 디렉터리는 404
+        normalized = path_exclusion_rules.normalize_repo_path(body["path"])
+        # 빈 정규화 결과는 소스 루트 자신이고, 루트 .git 은 복구 정보다. 둘은 흔적
+        # 규칙과 무관하게 재귀 삭제를 절대 허용하지 않는다.
+        if not normalized or normalized == ".git" or normalized.startswith(".git/"):
+            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
+        if not path_exclusion_rules.is_excluded_path(normalized):
+            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
+        removed = _delete_tree(target)
+        return (
+            {"path": body["path"], "removed": True, "recursive": True,
+             "removed_file_count": removed},
+            None,
+        )
     if not target.is_file():
         raise _OpError(404)  # missing, or not a regular file (single-file removal, P0005 §4.4)
-    os.remove(target)
+    _delete_file(target)
     return ({"path": body["path"], "removed": True}, None)
 
 
@@ -1187,6 +1260,19 @@ _ERROR_MESSAGES = {
 
 
 _CUSTOM_ERROR_MESSAGES = {
+    # 0382 §3-3: 권한/잠금 실패가 503 "서버가 일시적으로 요청을 처리할 수 없습니다"로
+    # 나갔다. AI 는 "일시적"이라는 말을 믿고 3번 더 두드렸고, 영원히 안 될 일이었다.
+    # 재시도하면 될 일과 재시도해도 안 될 일은 다른 답을 내야 한다.
+    "path_locked": {
+        "ko": "읽기 전용이거나 다른 프로세스가 잡고 있어 지울 수 없습니다. 재시도해도 같은 결과입니다 — 잠금을 푼 뒤 다시 요청하세요.",
+        "en": "The path is read-only or held by another process and cannot be deleted. Retrying will not help — release the lock first.",
+        "ja": "読み取り専用か他のプロセスが掴んでいるため削除できません。再試行しても同じ結果です — ロックを解除してから再度要求してください。",
+    },
+    "not_tool_artifact": {
+        "ko": "재귀 삭제는 도구가 남긴 흔적에만 허용됩니다. '{path}' 는 작업 산출물로 판정되므로 파일 단위로 지우세요.",
+        "en": "Recursive delete is allowed only for tool-generated artifacts. '{path}' is judged real work — delete it file by file.",
+        "ja": "再帰削除はツールが残した痕跡にのみ許可されます。'{path}' は作業成果物と判定されるため、ファイル単位で削除してください。",
+    },
     "no_op_edit": {
         "ko": "old_string과 new_string이 동일합니다.",
         "en": "old_string and new_string must be different.",

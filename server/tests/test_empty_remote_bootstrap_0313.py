@@ -23,11 +23,14 @@ from pathlib import Path
 
 import pytest
 
+from scratch_support import remove_tree, session_scratch
+
 _SERVER_DIR = Path(__file__).resolve().parents[1]
-_TEST_SCRATCH = Path(
-    os.environ.get("FLOWGATE_TEST_SCRATCH", _SERVER_DIR / ".test-tmp-0313")
-)
-_TEST_SCRATCH.mkdir(parents=True, exist_ok=True)
+# 0382 B0001: 기본값이 `_SERVER_DIR / ".test-tmp-0313"` 이었다. FLOWGATE_TEST_SCRATCH 는
+# FlowGate 가 직접 돌릴 때만 채워지므로, 사람이나 AI 가 손으로 pytest 를 돌리면 저장소
+# **안에** 폴더가 생겼고(수집만 해도 생긴다 — 이 줄은 모듈 최상단이다) 마무리 커밋의
+# `git add -A` 가 그걸 통째로 삼켰다. 기본값은 이제 저장소 밖이다.
+_TEST_SCRATCH = session_scratch("0313")
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -44,17 +47,20 @@ needs_git = pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 
 @pytest.fixture
 def scratch_path():
-    """Use FlowGate's per-run scratch instead of pytest's mode-0700 tmp_path.
+    """Per-case directory under this spec's scratch root — never inside the repo.
 
     Python 3.14 applies POSIX-style mode 0700 to Windows directories. On the
-    FlowGate host's managed workspace that can produce an unreadable ACL, so the
-    executable spec keeps every case under the already-authorized run scratch.
+    FlowGate host's managed workspace that can produce an unreadable ACL, so this
+    stays a plain directory instead of pytest's tmp_path.
+
+    0382 제안 7: the case directory used to be kept on purpose — "윈도우에서 읽기
+    전용 git 개체 때문에 정리가 실패한다". That is exactly what remove_tree's
+    permission-restoring retry fixes, so there is no reason to hoard them.
     """
     path = _TEST_SCRATCH / f"case-{uuid.uuid4().hex}"
     path.mkdir(parents=True)
-    # FlowGate owns and removes FLOWGATE_TEST_SCRATCH after the run. Keeping the
-    # case directory avoids Windows cleanup failures on read-only git objects.
-    return path
+    yield path
+    remove_tree(path)
 
 
 def _git(args, cwd=None):
