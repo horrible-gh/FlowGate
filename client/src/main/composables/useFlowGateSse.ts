@@ -560,7 +560,25 @@ export function useFlowGateSse(refreshAll: () => void) {
         invalidateAndRefresh(project)
       } catch { /* ignore parse errors */ }
     }
-    source.addEventListener('git_finalize_done', onGitSlotLifecycle)
+    // 0382 review: 무인/다른 화면에서 끝난 마무리도 제외 목록을 잃지 않는다. SSE
+    // payload를 그룹별 패널이 소비할 수 있는 브라우저 이벤트로 먼저 남긴 뒤 갱신한다.
+    const onGitFinalizeDone = (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const payload = data.payload ?? {}
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('fg:git_finalize_done', {
+            detail: {
+              ...payload,
+              project: payload.project ?? data.project ?? null,
+              group_id: payload.group_id ?? data.group_id ?? null,
+            },
+          }))
+        }
+        invalidateAndRefresh(payload.project ?? data.project ?? null)
+      } catch { /* ignore parse errors */ }
+    }
+    source.addEventListener('git_finalize_done', onGitFinalizeDone)
     source.addEventListener('git_worktree_ready', onGitSlotLifecycle)
     source.addEventListener('git_merge_conflict', onGitSlotLifecycle)
     // 0205 P scenarios 4·6·7: a conflict auto-aborted by the sweep/boot recovery

@@ -52,6 +52,10 @@ export interface GroupChangesData {
   commit: string | null
   base_branch?: string | null
   changes: GroupChangeData[]
+  // 0382 NR0003 제안 3 — 화면이 감추는 "도구가 남긴 흔적". 목록에서 빼되 없는 셈 치지는
+  // 않는다: 261개가 어느 화면에도 안 뜬 채 승인·병합된 것이 그 사고의 본체였다.
+  // 이 채널이 없는(구) 서버에서는 undefined 로 온다.
+  tool_artifacts?: string[]
 }
 
 // flowgate.default.0329 NR0003 — GET /projects/{pid}/git/groups/{gid}/diff

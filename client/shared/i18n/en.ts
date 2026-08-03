@@ -2050,8 +2050,14 @@ export default {
       no_diff: 'This file has no changes against the base branch.',
       added_note: 'This is a newly added file, so its full content is shown as added.',
       truncated: 'The content is too large: only the first {n} lines are shown.',
+      // 0382 NR0003 제안 3 — 변경 목록에서 감추되 없는 셈 치지 않는다.
+      tool_artifacts: '{n} tool artifact(s)',
+      tool_artifacts_note: 'Temporary files left by tests and builds, kept out of the change list. They are not committed either.',
     },
     git_finalize: {
+      // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
+      excluded_artifacts: '{n} temporary artifact(s) kept out of the commit',
+      excluded_artifacts_note: 'Files left behind by tests and builds were not added to this commit. They are still in the work folder.',
       archive: {
         zone_title: 'Put away without applying',
         reversible: 'Reversible',

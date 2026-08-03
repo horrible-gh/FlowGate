@@ -423,6 +423,7 @@
       :branch="changesBranch"
       :base-branch="changesBaseBranch"
       :changes="changes"
+      :tool-artifacts="changesToolArtifacts"
       @close="changesDialogOpen = false"
     />
   </aside>
@@ -735,6 +736,8 @@ const behindCount = ref<number | null>(null)
 // the same /changes response the summary already reads.
 const changesBranch = ref<string | null>(null)
 const changesBaseBranch = ref<string | null>(null)
+// 0382 제안 3: 변경 목록에서 뺀 "도구가 남긴 흔적". 접힌 한 줄로 늘 보여 준다.
+const changesToolArtifacts = ref<string[]>([])
 const changesDialogOpen = ref(false)
 
 const canShowChangesSection = computed(() => isAcDoc.value && !!props.groupId)
@@ -788,10 +791,12 @@ async function loadChangeSummary() {
     changes.value = changeSet.changes
     changesBranch.value = changeSet.branch ?? null
     changesBaseBranch.value = changeSet.base_branch ?? null
+    changesToolArtifacts.value = changeSet.tool_artifacts ?? []
   } catch {
     changes.value = []
     changesBranch.value = null
     changesBaseBranch.value = null
+    changesToolArtifacts.value = []
     changesError.value = true
   } finally {
     changesLoading.value = false

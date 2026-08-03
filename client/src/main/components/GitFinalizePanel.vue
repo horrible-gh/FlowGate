@@ -179,6 +179,29 @@
           </button>
         </div>
       </template>
+
+    </div>
+  </div>
+
+  <!-- 0382 B0001 / review: 마무리 커밋이 삼키지 않은 임시 산출물. 상태 재조회에서
+       worktree가 사라져도 이 카드는 남으므로, 무인·다른 화면의 완료도 조용히 지나가지 않는다. -->
+  <div v-if="excludedArtifactCount" class="card git-fin-card git-fin-artifact-card">
+    <div class="card-bd pad">
+      <section class="git-fin-artifacts">
+        <button
+          type="button"
+          class="git-fin-artifacts-toggle"
+          :aria-expanded="artifactsOpen"
+          @click="artifactsOpen = !artifactsOpen"
+        >
+          <AppIcon :name="artifactsOpen ? 'caret-down' : 'caret-right'" />
+          {{ t('main.git_finalize.excluded_artifacts', { n: excludedArtifactCount }) }}
+        </button>
+        <p class="git-fin-artifacts-note">{{ t('main.git_finalize.excluded_artifacts_note') }}</p>
+        <ul v-if="artifactsOpen" class="git-fin-artifacts-list">
+          <li v-for="path in excludedArtifacts" :key="path">{{ path }}</li>
+        </ul>
+      </section>
     </div>
   </div>
 
@@ -284,6 +307,10 @@ interface GitFinState {
 }
 
 const state = ref<GitFinState | null>(null)
+// 0382 제안 1: 마무리가 커밋에서 뺀 흔적. 서버가 결과에 실어 보내고, 여기서 화면에 남는다.
+const excludedArtifacts = ref<string[]>([])
+const excludedArtifactCount = ref(0)
+const artifactsOpen = ref(false)
 const chosen = ref<string>('')
 const busy = ref(false)
 const commitMessage = ref('')
@@ -550,6 +577,7 @@ async function postFinalize(
     } else {
       const r = data.result
       mergeCommit.value = r?.merge_commit || null
+      applyExcludedArtifacts(r)
       if (r?.status === 'conflict') {
         showToast(t('main.git_finalize.conflict_toast', { n: (r.conflict_files || []).length }), 'warning')
       } else if (r?.status === 'merged') {
@@ -664,6 +692,22 @@ function matchesGroup(e: Event): boolean {
   return !eventGroup || eventGroup === props.groupId
 }
 
+function applyExcludedArtifacts(result: any) {
+  const artifacts = Array.isArray(result?.excluded_artifacts)
+    ? result.excluded_artifacts.filter((path: unknown): path is string => typeof path === 'string')
+    : []
+  const reported = Number(result?.excluded_artifact_count ?? artifacts.length)
+  excludedArtifacts.value = artifacts
+  excludedArtifactCount.value = Number.isFinite(reported)
+    ? Math.max(reported, artifacts.length)
+    : artifacts.length
+}
+
+function onGitFinalizeDone(e: Event) {
+  if (!matchesGroup(e)) return
+  applyExcludedArtifacts((e as CustomEvent).detail || {})
+}
+
 function onGitStatusChanged(e: Event) {
   if (matchesGroup(e)) fetchState()
 }
@@ -673,6 +717,7 @@ onMounted(() => {
     window.addEventListener('fg:git_pending_changed', onGitStatusChanged)
     window.addEventListener('fg:git_status_refresh', onGitStatusChanged)
     window.addEventListener('fg:git_status_open', onGitStatusChanged)
+    window.addEventListener('fg:git_finalize_done', onGitFinalizeDone)
   }
 })
 onUnmounted(() => {
@@ -680,6 +725,7 @@ onUnmounted(() => {
     window.removeEventListener('fg:git_pending_changed', onGitStatusChanged)
     window.removeEventListener('fg:git_status_refresh', onGitStatusChanged)
     window.removeEventListener('fg:git_status_open', onGitStatusChanged)
+    window.removeEventListener('fg:git_finalize_done', onGitFinalizeDone)
   }
 })
 
@@ -1006,6 +1052,40 @@ defineExpose({ fetchState })
 }
 .btn-keep:hover:not(:disabled) {
   background: #b45309;
+}
+
+/* 0382 제안 1 — 커밋에서 제외한 흔적 줄. */
+.git-fin-artifacts {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #f8fafc;
+  font-size: 0.8rem;
+}
+.git-fin-artifacts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-d, #334155);
+  cursor: pointer;
+}
+.git-fin-artifacts-note {
+  margin: 4px 0 0;
+  color: var(--text-m, #64748b);
+  font-size: 0.75rem;
+}
+.git-fin-artifacts-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+  color: var(--text-m, #64748b);
+  font-size: 0.74rem;
+  word-break: break-all;
 }
 </style>
 

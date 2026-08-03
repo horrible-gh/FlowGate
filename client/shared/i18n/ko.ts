@@ -2049,8 +2049,14 @@ export default {
       no_diff: '이 파일에는 본 브랜치 대비 변경이 없습니다.',
       added_note: '새로 추가된 파일이라 전체 내용이 추가로 표시됩니다.',
       truncated: '내용이 너무 커서 앞부분 {n}줄만 표시합니다.',
+      // 0382 NR0003 제안 3 — 변경 목록에서 감추되 없는 셈 치지 않는다.
+      tool_artifacts: '도구가 남긴 흔적 {n}개',
+      tool_artifacts_note: '테스트·빌드가 만든 임시 파일이라 변경 목록에서 빼 두었습니다. 커밋에도 들어가지 않습니다.',
     },
     git_finalize: {
+      // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
+      excluded_artifacts: '커밋에서 제외한 임시 산출물 {n}개',
+      excluded_artifacts_note: '테스트·빌드가 남긴 파일이라 이번 커밋에 넣지 않았습니다. 파일은 작업 폴더에 그대로 있습니다.',
       archive: {
         zone_title: '반영하지 않고 치우기',
         reversible: '되돌릴 수 있음',

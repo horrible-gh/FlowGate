@@ -37,6 +37,12 @@ from typing import Iterable, Optional
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import git_service
+# 0382 NR0003 제안 3: 제외 규칙의 판정 코드는 path_exclusion_rules 한 곳에 있다.
+# 이 모듈이 정본이라는 결론은 이름으로 유지된다 — 아래 두 이름은 재수출이다.
+from modules.flow_gate.services.path_exclusion_rules import (  # noqa: F401
+    exclusion_reason,
+    is_excluded_path,
+)
 
 # ── 사유 코드 (D0004 §3.5) ────────────────────────────────────────────────────
 TRV_MISSING_SECTION = "TRV-001"   # 섹션 누락
@@ -101,40 +107,12 @@ NONE_MARKER = "없음"
 MAX_ITEMS = 200
 _MAX_LISTED = 40  # 반려 안내문에 실제로 나열하는 최대 줄 수 (D0004 §3.8-3)
 
-# ── 제외 규칙 (D0004 §3.3, N0005 Q2 미답변 → 여기서 확정) ────────────────────
+# ── 제외 규칙 (D0004 §3.3 → 0382 NR0003 제안 3 에서 화면 규칙과 통합) ────────
 #
-# 기존 read_group_changes 는 "경로의 어느 구간이든 점으로 시작" + "*.db" 를 제외하지만
-# 그건 트리 노출용 규칙이다. 여기서는 D0004 §3.3 의 세 부류를 그대로 구현한다.
-#
-#   1) 최상위에서 점(.)으로 시작하는 항목 — `.git/`, `.venv/`, `.env` 등. 최상위로
-#      한정하는 이유는 하위의 점 디렉터리까지 싸잡으면 실제 작업 산출물(예:
-#      `client/src/.../.eslintrc` 를 정말 고친 경우)까지 조용히 사라지기 때문이다.
-#   2) 로컬 데이터베이스 파일 — 실행하면 생기는 것이지 작업의 산출물이 아니다.
-#   3) 워크트리 안의 임시·빌드 산출물 경로.
-#
-# 프로젝트별 설정은 두지 않는다. 이 목록은 "도구가 남기는 흔적"의 목록이고, 이걸
-# 프로젝트마다 다르게 만들면 검증의 기준선 자체가 프로젝트마다 달라져 판정을 서로
-# 비교할 수 없게 된다. 늘려야 할 것이 생기면 여기에 추가한다.
-_EXCLUDED_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".pyc", ".pyo", ".log")
-_EXCLUDED_DIR_SEGMENTS = frozenset({
-    "node_modules", "__pycache__", "dist", "build", ".venv", "venv",
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", "htmlcov", ".tox", "site-packages",
-})
-_EXCLUDED_DIR_PREFIXES = ("pytest-cache-files-",)
-
-
-def is_excluded_path(path: str) -> bool:
-    """작업의 산출물이 아니라 도구·환경이 남긴 흔적인가 (D0004 §3.3)."""
-    if not path:
-        return True
-    segments = path.split("/")
-    if segments[0].startswith("."):
-        return True
-    if any(seg in _EXCLUDED_DIR_SEGMENTS for seg in segments):
-        return True
-    if any(seg.startswith(_EXCLUDED_DIR_PREFIXES) for seg in segments):
-        return True
-    return segments[-1].lower().endswith(_EXCLUDED_SUFFIXES)
+# 규칙 본문은 path_exclusion_rules 로 옮겼다. 0382 B0001 의 사고가 정확히 "같은
+# 파일을 화면은 감추고 검사는 잡는" 두 벌 규칙에서 나왔기 때문이다 — 작업자는
+# 보이지도 않는 파일 때문에 제출이 막혔다. 여기서 `is_excluded_path` 는 그 공유
+# 모듈의 재수출이고(위 import 참조), git_service 의 화면 필터도 같은 함수를 부른다.
 
 
 # ── 신고목록 파서 (D0004 §3.2) ────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+
+from scratch_support import remove_tree, session_scratch
 
 from app import app
 from modules.flow_gate.api.inbox_routes import (
@@ -17,11 +18,15 @@ from modules.flow_gate.storage import paths as storage_paths
 
 
 TEST_PROJECT_ID = "proj-t509"
-TEST_ROOT = Path(__file__).resolve().parent / "_scratch_t509_src"
+# 0382 B0001: this was `Path(__file__).resolve().parent / "_scratch_t509_src"` — a
+# scratch tree *inside* server/tests. `rmtree(ignore_errors=True)` hid every failed
+# cleanup, so anything Windows refused to delete stayed in the repository waiting for
+# the next finalize to commit it. The root now lives outside the repository.
+TEST_ROOT = session_scratch("t509") / "src"
 
 
 def _prepare_root() -> Path:
-    shutil.rmtree(TEST_ROOT, ignore_errors=True)
+    remove_tree(TEST_ROOT)
     TEST_ROOT.mkdir(parents=True, exist_ok=True)
     return TEST_ROOT
 
@@ -35,7 +40,7 @@ def _client(monkeypatch) -> TestClient:
 
 
 def teardown_module(_module) -> None:
-    shutil.rmtree(TEST_ROOT, ignore_errors=True)
+    remove_tree(TEST_ROOT)
 
 
 def test_src_content_get_and_head_support_empty_file(monkeypatch):

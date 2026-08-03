@@ -24,11 +24,12 @@ base-git status probe is stubbed so no real git runs.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+from scratch_support import remove_tree, session_scratch
 
 from app import app
 from modules.flow_gate.db import projects as db_projects
@@ -37,7 +38,11 @@ from modules.flow_gate.services import git_service
 from modules.flow_gate.api.v1 import tree_routes as tr
 
 PID = "proj-del-tr0005"
-ROOT = Path(__file__).resolve().parent / "_scratch_tr0005_delete_src"
+# 0382 B0001: this was `Path(__file__).resolve().parent / "_scratch_tr0005_delete_src"`
+# — a scratch tree inside server/tests, and `ROOT.parent` below put two more siblings
+# next to it. All three now live outside the repository, so a failed Windows cleanup
+# can no longer leave anything for the next finalize commit to swallow.
+ROOT = session_scratch("tr0005") / "src"
 BASE_GIT_SENTINEL = {"dirty": True, "files": ["docs/gone.md"]}
 
 
@@ -46,7 +51,7 @@ def _url() -> str:
 
 
 def _client(monkeypatch, *, is_user_jwt=True, can_delete=True) -> TestClient:
-    shutil.rmtree(ROOT, ignore_errors=True)
+    remove_tree(ROOT)
     ROOT.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
         db_projects, "get_by_id",
@@ -64,7 +69,7 @@ def _client(monkeypatch, *, is_user_jwt=True, can_delete=True) -> TestClient:
 
 
 def teardown_module(_module) -> None:
-    shutil.rmtree(ROOT, ignore_errors=True)
+    remove_tree(ROOT)
 
 
 # ── success paths ────────────────────────────────────────────────────────────
@@ -143,7 +148,7 @@ def test_delete_rejects_unsafe_paths(monkeypatch, bad_path):
 def test_delete_rejects_symlink_component(monkeypatch):
     client = _client(monkeypatch)
     outside = ROOT.parent / "_scratch_tr0005_outside"
-    shutil.rmtree(outside, ignore_errors=True)
+    remove_tree(outside)
     (outside / "sub").mkdir(parents=True, exist_ok=True)
     (outside / "sub" / "victim.md").write_text("v", encoding="utf-8")
     link = ROOT / "linkdir"
@@ -158,7 +163,7 @@ def test_delete_rejects_symlink_component(monkeypatch):
         # the real file behind the symlink must remain untouched
         assert (outside / "sub" / "victim.md").exists()
     finally:
-        shutil.rmtree(outside, ignore_errors=True)
+        remove_tree(outside)
 
 
 # ── authorization ────────────────────────────────────────────────────────────
@@ -211,7 +216,7 @@ def test_delete_on_group_resolves_group_worktree(monkeypatch):
     never involved — the reason the old 403 blanket rule existed)."""
     client = _client(monkeypatch)
     wt = ROOT.parent / "_scratch_tr0005_group_wt"
-    shutil.rmtree(wt, ignore_errors=True)
+    remove_tree(wt)
     (wt / "docs").mkdir(parents=True, exist_ok=True)
     (wt / "docs" / "gone.md").write_text("group copy", encoding="utf-8")
     (ROOT / "docs").mkdir(parents=True, exist_ok=True)
@@ -227,7 +232,7 @@ def test_delete_on_group_resolves_group_worktree(monkeypatch):
         assert not (wt / "docs" / "gone.md").exists()
         assert (ROOT / "docs" / "gone.md").read_text(encoding="utf-8") == "base copy"
     finally:
-        shutil.rmtree(wt, ignore_errors=True)
+        remove_tree(wt)
 
 
 def test_delete_on_group_without_worktree_is_409_and_spares_base(monkeypatch):
