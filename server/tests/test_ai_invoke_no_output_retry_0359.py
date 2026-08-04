@@ -130,6 +130,9 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", docs.get_documents_by_group_id)
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
+    # No question ever pending by default (NR0003 후속 조치 제안 1) — individual tests
+    # override this to exercise the pending-question guard.
+    monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda s: {
         "item_seq": 1, "type": "N",
@@ -175,7 +178,7 @@ def env(monkeypatch, tmp_path):
             "signals": signals, "events": events, "tmp": tmp_path}
 
 
-def _start(env, *, target=2, provider_id=None, provider_overrides=None):
+def _start(env, *, target=2, provider_id=None, provider_overrides=None, review_mode=False):
     return svc.start_run(
         project_id="flowgate",
         module="default",
@@ -184,7 +187,7 @@ def _start(env, *, target=2, provider_id=None, provider_overrides=None):
         action_scope="new",
         mode="continuous",
         continuation_target_seq=target,
-        continuation_review_mode=False,
+        continuation_review_mode=review_mode,
         continuation_instruction_mode=None,
         continuation_locale=None,
         issued_to="usr_admin",
@@ -488,7 +491,8 @@ class TestStopCode:
 
     @pytest.mark.parametrize("code, resumable", [
         ("no_output_exhausted", True), ("providers_exhausted", True), ("timeout", True),
-        ("user_paused", True), ("cancelled", False), ("head_slot_mismatch", False),
+        ("user_paused", True), ("question_pending", True), ("cancelled", False),
+        ("head_slot_mismatch", False),
         ("approve_denied", False), ("approve_failed", False), ("advance_blocked", False),
         ("chain_completed", False), ("hop_handoff", False), ("review_hold", False),
         (None, False),
@@ -558,6 +562,115 @@ class TestHopBudget:
         res = _start(env)
         assert res["timeout_sec"] == 3600
         assert res["deadline_at"] > res["started_at"]
+
+
+# -- NR0003 후속 조치 제안 1~3: a Q registered mid-hop is not a silent failure ----
+
+class TestReviewModeDocsTarget:
+    def test_review_mode_hop_targets_zero_documents(self, env, monkeypatch):
+        monkeypatch.setattr(svc, "_worker", lambda run, chain, prompt: (
+            run.__setitem__("status", "finished")))
+        res = _start(env, review_mode=True)
+        assert res["docs_target"] == 0
+        assert res["chain_docs_target"] == 0
+
+    def test_review_mode_question_only_hop_completes_without_retry(self, env, monkeypatch):
+        # mention_service._CONTINUOUS_REVIEW_TEXT tells the worker to register a Q (even a
+        # "no blockers" ack Q) and create nothing else — this is that hop's whole shape.
+        launches = _scripted_worker(env, monkeypatch, [
+            ("검토 완료 — 막는 의문 없음 — 이대로 진행해도 되는지 확인 요청 Q를 등록했습니다.", False),
+        ])
+        res = _start(env, review_mode=True)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]           # no fallback burned on a hop that behaved
+        assert run["attempts_used"] == 1
+        assert (run["outcome"], run["docs_reached"]) == ("complete", 0)
+        assert run["stop_code"] is None
+        assert env["signals"] == []
+
+
+def _judged_run_with_doc_ref(**over):
+    return _judged_run(doc_ref=DOC_REF, **over)
+
+
+class TestPendingQuestionGuard:
+    def test_blocked_while_a_question_is_still_open(self, monkeypatch):
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                             lambda doc_id: {"status": "pending"})
+        run = _judged_run_with_doc_ref()
+        assert svc._retry_eligible(run) is False
+        assert run["retry_block_reason"] == "question_pending"
+
+    def test_not_blocked_once_the_question_is_answered(self, monkeypatch):
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                             lambda doc_id: {"status": "done"})
+        assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
+
+    def test_not_blocked_when_no_question_was_ever_registered(self, monkeypatch):
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
+        assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
+
+    def test_probe_failure_does_not_block_the_retry(self, monkeypatch):
+        def _boom(doc_id):
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc", _boom)
+        assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
+
+    def test_partial_output_still_wins_over_a_stale_open_question(self, monkeypatch):
+        # docs_reached >= 1 must block the retry on its own account — an unrelated open
+        # question must not relabel a hop that already produced its document.
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                             lambda doc_id: {"status": "pending"})
+        run = _judged_run_with_doc_ref(docs_reached=1)
+        assert svc._retry_eligible(run) is False
+        assert run.get("retry_block_reason") != "question_pending"
+
+
+class TestQuestionPendingStopCode:
+    def test_question_pending_is_named(self):
+        run = _judged_run(retry_block_reason="question_pending")
+        assert svc._resolve_stop_code(run, respawn_pending=False) == "question_pending"
+
+    def test_question_pending_outranks_no_output_exhausted(self):
+        # Same docs_target/docs_reached/outcome shape as the no_output_exhausted branch —
+        # only retry_block_reason tells them apart, and it must win.
+        run = _judged_run(retry_block_reason="question_pending")
+        assert svc._resolve_stop_code(run, respawn_pending=False) != "no_output_exhausted"
+
+    def test_question_pending_is_resumable(self):
+        assert svc.is_resumable("question_pending") is True
+
+    def test_question_pending_never_raises_the_failure_notification(self):
+        assert "question_pending" not in svc.ENGINE_NOTIFY_STOP_CODES
+
+    def test_question_pending_has_a_stop_reason_sentence(self):
+        run = _judged_run(retry_block_reason="question_pending")
+        text = svc._stop_reason_text("question_pending", run)
+        assert text and "waiting" in text.lower()
+
+
+class TestPendingQuestionEndToEnd:
+    def test_question_only_hop_stops_without_burning_retries_or_alerting(self, env, monkeypatch):
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                             lambda doc_id: {"status": "pending"})
+        launches = _scripted_worker(env, monkeypatch, [
+            ("작업 전 확인이 필요해 Q를 등록했습니다.", False),
+        ])
+        res = _start(env)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]            # never fell back to aip_2/aip_3
+        assert run["attempts_used"] == 1
+        assert run["outcome"] == "none"
+        assert run["stop_code"] == "question_pending"
+        assert run["resumable"] is True
+        # The whole point: a hop waiting on a human answer must not read as a failure.
+        assert env["signals"] == []
+
+        row = env["paused"].rows[GROUP]
+        assert (row["stop_kind"], row["stop_code"]) == ("system", "question_pending")
 
 
 class TestExcerpt:
