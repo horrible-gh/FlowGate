@@ -199,7 +199,15 @@ function autoHandledIdx(idx: number): boolean {
 /** Last step the user may stop at — the natural "run the whole remaining sequence" default. */
 function lastSelectableIdx(): number {
   for (let i = items.value.length - 1; i >= headIdx.value; i -= 1) {
-    if (selectableIdxSet.value.has(i)) return i
+    if (!selectableIdxSet.value.has(i)) continue
+    // 0388 NR0003: a sequence ending in TSR would otherwise default the target all the way to
+    // the report itself. TS/TSR are a paired unit (AUTO_REPORT_MAP) — stop the auto-selection
+    // at TS instead, one step short of the report. The user can still click TSR to extend the
+    // target; it stays in selectableIdxSet, only the DEFAULT pulls back.
+    if (items.value[i].type === 'TSR' && i > headIdx.value && items.value[i - 1].type === 'TS') {
+      return i - 1
+    }
+    return i
   }
   return -1
 }
