@@ -40,6 +40,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -79,6 +80,7 @@ RUN_LIST_LIMIT_MAX = 100         # GET /ai-invoke/runs clamp ceiling
 # (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
 RESUMABLE_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
+    "question_pending",
 })
 # L0007 §2.11 — every stop code that must reach a human. The set is SPLIT by speaker: the
 # engine fires the three below (the inbox never sees them — no request arrives), the inbox
@@ -87,6 +89,9 @@ RESUMABLE_STOP_CODES = frozenset({
 ENGINE_NOTIFY_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout",
 })
+# "question_pending" (NR0003 후속 조치 제안 1/3) is deliberately NOT in this set: it means
+# the hop stopped because it is waiting on a human answer, not because it failed, so it
+# must not raise the "연속 작업 실패" notification the three codes above do.
 INBOX_NOTIFY_STOP_CODES = frozenset({
     "head_slot_mismatch", "approve_denied", "approve_failed", "advance_blocked",
 })
@@ -957,6 +962,16 @@ def start_run(
         docs_target = 0
     elif action_scope in ("workflow_decide", "resolve_conflict"):
         docs_target = 0
+    elif mode == "continuous" and continuation_review_mode:
+        # NR0003 후속 조치 제안 2: review mode is the pre-flight Q-registration phase —
+        # mention_service._CONTINUOUS_REVIEW_TEXT tells the worker NOT to create the next
+        # document, so a review-mode hop that only registers a Q (or the "no blockers" ack
+        # Q) always reaches this doc_ref with docs_reached=0. Targeting >=1 document made
+        # that hop indistinguishable from "the hop ran and left nothing" (0359's no-output
+        # retry), which reopened wasted attempts and a false "연속 작업 실패" notification for
+        # every review-mode hop. Forcing the target to 0, like the other non-document
+        # scopes above, judges it "complete" on 0 reached and never opens a retry.
+        docs_target = 0
     elif scope_oracle_run:
         # 0259 B0001: this scope's token cannot register a document, so targeting one made
         # success unreachable. Its default scope oracle is built below (it needs the token).
@@ -1736,6 +1751,26 @@ def _attempt_elapsed_sec(run: dict) -> int:
     return max(0, int(time.monotonic() - started))
 
 
+def _has_pending_question(doc_ref: Optional[str]) -> bool:
+    """NR0003 후속 조치 제안 1: does doc_ref carry a query still waiting on the human?
+
+    q_service.add_questions/register_answer keep the container's status 'pending' for as
+    long as any item has answer_count=0, and flip it to 'done' only once every item is
+    answered — so 'pending' here means exactly "a Q was just registered and nobody has
+    answered it yet", never a stale done container. An AI that registers a Q and exits
+    (mention_service._REMINDER_TEXT explicitly tells it to) produced nothing on purpose;
+    treating that hop the same as one that silently failed is the defect this guards.
+    """
+    if not doc_ref:
+        return False
+    try:
+        container = db_questions.get_container_by_doc(doc_ref)
+    except Exception:
+        logger.warning("ai-invoke pending-question probe failed for %s", doc_ref, exc_info=True)
+        return False
+    return bool(container) and container.get("status") == "pending"
+
+
 def _retry_eligible(run: dict) -> bool:
     """May this hop open ANOTHER attempt? (L0007 §2.4 — this exact order.)
 
@@ -1766,6 +1801,14 @@ def _retry_eligible(run: dict) -> bool:
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
+    if _has_pending_question(run.get("doc_ref")):
+        # NR0003 후속 조치 제안 1: this hop stopped to wait for a human answer, not because
+        # it failed — spending another attempt (and another provider) on a question the
+        # human has not even seen yet would waste both without ever getting a different
+        # outcome. _resolve_stop_code below reads this back into "question_pending" instead
+        # of "no_output_exhausted" so the false-failure notification never fires.
+        run["retry_block_reason"] = "question_pending"
+        return False
     if int(run.get("attempts_used") or 0) >= NO_OUTPUT_MAX_ATTEMPTS:
         return False
     if _remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
@@ -2836,6 +2879,13 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         return run["inbox_stop_code"]
     if respawn_pending:
         return "hop_handoff"
+    if run.get("retry_block_reason") == "question_pending":
+        # NR0003 후속 조치 제안 1/3: this hop's own docs_target/docs_reached shape is
+        # identical to no_output_exhausted's (target ≥1, reached 0) — the only thing that
+        # tells them apart is WHY nothing landed. _has_pending_question already told
+        # _retry_eligible this hop is waiting on a human answer, not silently dead; name it
+        # separately so it never reaches _notify_chain_failure_if_needed as a failure.
+        return "question_pending"
     if (
         run.get("mode") == "continuous"
         and int(run.get("docs_target") or 0) >= 1
@@ -2870,6 +2920,9 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == "no_output_exhausted":
         return (f"{int(run.get('attempts_used') or 0)} attempts on this hop ended without "
                 "producing a document. The chain stopped and can be resumed.")
+    if stop_code == "question_pending":
+        return ("This hop registered a query and is waiting for a human answer. "
+                "The chain stopped and can be resumed once it is answered.")
     if stop_code == "providers_exhausted":
         return ("No AI provider could be started for this hop. "
                 "The chain stopped and can be resumed.")
