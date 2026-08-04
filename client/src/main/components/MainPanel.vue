@@ -28,7 +28,10 @@
           <div class="doc-main">
           <!-- Fail closed until active-run bootstrap completes. The run branch and the
                document branch are mutually exclusive: removing this card cannot reveal DOM
-               that was never mounted. CH uses the same rule; there is no suppress exception. -->
+               that was never mounted. The one carve-out is the chat's own run: a CH document
+               reached by its own send is not covered (0251 B0001 / 0258 B0001, restored by
+               0386 B0001) — see activeChatOwnRun, which is folded into activeGroupRunActive
+               so this branch stays a single flag. -->
           <div v-if="aiRunBootstrapPending" class="ai-run-bootstrap-pending">
             {{ t('common.loading') }}
           </div>
@@ -1748,8 +1751,24 @@ const activeAiInvokeGroupId = computed(() => {
     ?? ''
 })
 const aiRunBootstrapPending = computed(() => aiInvokeRunsStore.bootstrapPending)
+// 0251 B0001: a chat's own AI call is a group-scoped run like any other, so the run surface
+// (inset:0 over .doc-main) used to bury the whole conversation the moment a message was sent —
+// chat progress belongs on the send button instead. 0258 B0001 then drew the other half of the
+// line: a run aimed at ANOTHER document is a next-document transition and must still cover the
+// chat, exactly like every other doc type. 0378 rebuilt this area for the durable mutation
+// leases and dropped the branch entirely (suppress-doc-ref removed, "CH uses the same rule"),
+// which put the chat back under its own run's cover — the regression reported in 0386 B0001.
+// Restore the branch here rather than through a prop, so the run/document branches stay the
+// mutually exclusive pair 0378 requires and the lease's document-side lockout (action bar,
+// info panel, sticky footer) keeps deriving from one flag.
+const activeChatOwnRun = computed(() => {
+  const tab = activeTab.value
+  if (!tab || tab.typeCode !== 'CH') return false
+  return aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]?.docRef === tab.id
+})
 const activeGroupRunActive = computed(() =>
-  aiInvokeRunsStore.isGroupInlineVisible(activeAiInvokeGroupId.value),
+  !activeChatOwnRun.value
+  && aiInvokeRunsStore.isGroupInlineVisible(activeAiInvokeGroupId.value),
 )
 const aiRunDocumentLocked = computed(() =>
   aiRunBootstrapPending.value || activeGroupRunActive.value,
