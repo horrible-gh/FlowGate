@@ -208,6 +208,7 @@ def issue_answer_token(
     item: dict,
     issued_to: str,
     api_base_url: str,
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Mint the item-bound edit token and render the worker mention for it.
 
@@ -216,6 +217,13 @@ def issue_answer_token(
     own worker. One builder is what keeps the two prompts byte-identical — the property
     ai_invoke_service.start_run's contract asks for, and the reason a copied mention and an
     in-app run cannot drift apart.
+
+    `ai_run_id` is the run this token works for, and it is not bookkeeping: group 0378 made
+    every group mutation pass mutation_policy.assert_group_mutation_allowed, which admits a
+    worker only when its token matches the active lease on ALL of group / token_id / run_id /
+    action_scope. start_run leases under the run id, so a token minted without one can never
+    match — and the answer POST is this run's only product (0389 R0001). None on the
+    [멘트 복사] path, which starts no run and so faces no lease of its own.
     """
     issued = token_service.issue(
         project=doc.get("project_id") or "",
@@ -226,6 +234,7 @@ def issue_answer_token(
         action_scope="edit",
         doc_ref=doc.get("doc_id") or "",
         issued_to=issued_to,
+        ai_run_id=ai_run_id,
     )
     return {
         "raw_token": issued["raw_token"],
@@ -264,9 +273,13 @@ def dispatch_answer_run(
     # Baseline BEFORE the worker starts, so the oracle only credits this run's answer.
     baseline = _ai_answer_count(item_id)
 
-    def _issue() -> dict:
+    # Declaring ai_run_id is what makes ai_invoke_service._call_issue_builder hand the run
+    # identity over (it inspects the signature); a bare def would silently keep minting the
+    # lease-orphan token that made every answer POST 403 GROUP_AI_RUN_OWNER_MISMATCH.
+    def _issue(ai_run_id: Optional[str] = None) -> dict:
         return issue_answer_token(
             doc=doc, item=item, issued_to=issued_to, api_base_url=api_base_url,
+            ai_run_id=ai_run_id,
         )
 
     return ai_invoke_service.start_run(

@@ -131,7 +131,10 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
     # No question ever pending by default (NR0003 후속 조치 제안 1) — individual tests
-    # override this to exercise the pending-question guard.
+    # override this to exercise the pending-question guard. The anchor mock defaults to
+    # identity; the guard tests below supply their own anchor + container fakes to prove
+    # the reanchored lookup is what actually gets queried, not the raw spine doc_ref.
+    monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: doc_id)
     monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: {"id": 1})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda s: {
@@ -594,35 +597,71 @@ def _judged_run_with_doc_ref(**over):
     return _judged_run(doc_ref=DOC_REF, **over)
 
 
+# The reanchored work-context document (the TR/NR draft a user is actually looking at) —
+# deliberately different from DOC_REF (the run's spine) so these tests fail if the guard
+# regresses to querying the spine directly instead of going through resolve_question_anchor,
+# exactly the bug NR0003 found (group 0389).
+ANCHOR = "flowgate.default.0359.0003-TR"
+
+
+def _container_lookup(mapping):
+    return lambda doc_id: mapping.get(doc_id)
+
+
 class TestPendingQuestionGuard:
     def test_blocked_while_a_question_is_still_open(self, monkeypatch):
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
         monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             lambda doc_id: {"status": "pending"})
+                             _container_lookup({ANCHOR: {"status": "pending"}}))
+        run = _judged_run_with_doc_ref()
+        assert svc._retry_eligible(run) is False
+        assert run["retry_block_reason"] == "question_pending"
+
+    def test_querying_the_spine_directly_would_miss_it(self, monkeypatch):
+        # NR0003's actual bug: the container the router wrote lives under the reanchored
+        # doc, never under the spine. The mapping below has no DOC_REF key, so a guard that
+        # regressed to querying run["doc_ref"] as-is would see nothing and wrongly retry.
+        assert DOC_REF != ANCHOR
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                             _container_lookup({ANCHOR: {"status": "pending"}}))
         run = _judged_run_with_doc_ref()
         assert svc._retry_eligible(run) is False
         assert run["retry_block_reason"] == "question_pending"
 
     def test_not_blocked_once_the_question_is_answered(self, monkeypatch):
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
         monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             lambda doc_id: {"status": "done"})
+                             _container_lookup({ANCHOR: {"status": "done"}}))
         assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
 
     def test_not_blocked_when_no_question_was_ever_registered(self, monkeypatch):
-        monkeypatch.setattr(svc.db_questions, "get_container_by_doc", lambda doc_id: None)
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc", _container_lookup({}))
         assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
 
     def test_probe_failure_does_not_block_the_retry(self, monkeypatch):
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+
         def _boom(doc_id):
             raise RuntimeError("db unavailable")
 
         monkeypatch.setattr(svc.db_questions, "get_container_by_doc", _boom)
         assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
 
+    def test_anchor_resolution_failure_does_not_block_the_retry(self, monkeypatch):
+        def _boom(doc_id):
+            raise RuntimeError("sequence lookup unavailable")
+
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", _boom)
+        assert svc._retry_eligible(_judged_run_with_doc_ref()) is True
+
     def test_partial_output_still_wins_over_a_stale_open_question(self, monkeypatch):
         # docs_reached >= 1 must block the retry on its own account — an unrelated open
         # question must not relabel a hop that already produced its document.
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
         monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             lambda doc_id: {"status": "pending"})
+                             _container_lookup({ANCHOR: {"status": "pending"}}))
         run = _judged_run_with_doc_ref(docs_reached=1)
         assert svc._retry_eligible(run) is False
         assert run.get("retry_block_reason") != "question_pending"
@@ -653,8 +692,9 @@ class TestQuestionPendingStopCode:
 
 class TestPendingQuestionEndToEnd:
     def test_question_only_hop_stops_without_burning_retries_or_alerting(self, env, monkeypatch):
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
         monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
-                             lambda doc_id: {"status": "pending"})
+                             _container_lookup({ANCHOR: {"status": "pending"}}))
         launches = _scripted_worker(env, monkeypatch, [
             ("작업 전 확인이 필요해 Q를 등록했습니다.", False),
         ])
