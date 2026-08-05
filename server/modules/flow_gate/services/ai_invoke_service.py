@@ -45,7 +45,7 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
-from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, token_service
+from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, q_service, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -1760,11 +1760,17 @@ def _has_pending_question(doc_ref: Optional[str]) -> bool:
     answered it yet", never a stale done container. An AI that registers a Q and exits
     (mention_service._REMINDER_TEXT explicitly tells it to) produced nothing on purpose;
     treating that hop the same as one that silently failed is the defect this guards.
+
+    The registration router does not query doc_ref directly either — past the first hop
+    it reanchors the container through q_service.resolve_question_anchor before touching
+    it (q_tapi_routes.py). Querying doc_ref (the run's spine) here would silently miss
+    every container the router actually wrote once that reanchoring moved off the spine.
     """
     if not doc_ref:
         return False
     try:
-        container = db_questions.get_container_by_doc(doc_ref)
+        anchor = q_service.resolve_question_anchor(doc_ref)
+        container = db_questions.get_container_by_doc(anchor)
     except Exception:
         logger.warning("ai-invoke pending-question probe failed for %s", doc_ref, exc_info=True)
         return False
