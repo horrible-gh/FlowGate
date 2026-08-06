@@ -105,6 +105,90 @@ def _label_is_corrupted(label: Optional[str]) -> bool:
     return marks / visible >= _CORRUPT_RATIO
 
 
+def _text_is_corrupted(text: Optional[str]) -> bool:
+    """True when any line of ``text`` looks like ascii-replace mojibake.
+
+    0391 B0001/NR0004: `_label_is_corrupted` was tuned for short step labels — the
+    ASCII + '?' ratio drowns in a long body that mixes frontmatter, code blocks and
+    English identifiers with the corrupted Hangul (measured 0.404 on the reporting
+    document's own body, below the 0.5 threshold). Applying the same rule per line
+    instead catches it: a single corrupted line trips regardless of how long the
+    surrounding clean text is. Reuses `_label_is_corrupted` line-by-line so the
+    threshold constants stay defined exactly once (NR0004 §8 / this group's
+    test_conversation_dry_run_0360.py:196-204 constraint).
+    """
+    if not text:
+        return False
+    return any(_label_is_corrupted(line) for line in text.splitlines())
+
+
+# 0391 T0005 §5-6: one escape hatch shared by all five real-registration paths — a
+# non-trivial reason (>=10 non-whitespace characters) lets a genuinely-flagged payload
+# through. A mere flag would be checked off reflexively; writing a sentence is not.
+_FORCE_ENCODING_MIN_CHARS = 10
+
+
+def force_encoding_reason_accepted(reason: Optional[str]) -> bool:
+    return len("".join((reason or "").split())) >= _FORCE_ENCODING_MIN_CHARS
+
+
+def corrupted_label_message(label: Optional[str]) -> str:
+    """Why the label was rejected AND how to get it through (T0005 §5-6)."""
+    return (
+        f"단계 이름이 깨진 글자(예: ??????)로 보입니다: {label!r}. "
+        "단계 이름을 UTF-8로 다시 만들어 보내세요. 정말 이대로 저장해야 하면 "
+        "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+    )
+
+
+def _reject_corrupted_labels(items: list[dict], force_encoding_reason: Optional[str]) -> None:
+    """Raise on the first corrupted step label unless the escape hatch is filled in.
+
+    0391 T0005 §5-5: replaces the old silent `_safe_label` swap on the WRITE paths. The
+    swap told the sender nothing and threw away what they meant to write, which is the
+    opposite of 제안3's "reject on the spot". The READ paths keep the swap — rows that
+    are already corrupted in the DB must stay readable.
+    """
+    if force_encoding_reason_accepted(force_encoding_reason):
+        return
+    for item in items:
+        if _label_is_corrupted(item.get("label")):
+            raise ValueError("corrupted_label:" + corrupted_label_message(item.get("label")))
+
+
+def _log_force_encoding_reason(doc_id: str, doc: Optional[dict], reason: str) -> None:
+    """Best-effort audit trail for a bypass (T0005 §5-6).
+
+    The workflow sequence tables have no meta column, so — like the chat path — the
+    reason goes to db_events. Never blocks the write it guards.
+    """
+    try:
+        import json as _json
+
+        from modules.flow_gate.db import workflow_events as _db_events
+
+        _db_events.create({
+            "event_type": "action_taken",
+            "project_id": (doc or {}).get("project_id"),
+            "group_id": (doc or {}).get("group_id"),
+            "document_id": None,
+            "actor_user_id": "unknown",
+            "from_state": None,
+            "to_state": None,
+            "metadata": _json.dumps(
+                {
+                    "action_code": "force_encoding_reason_used",
+                    "path": "workflow_sequence",
+                    "doc_id": doc_id,
+                    "reason": reason,
+                },
+                ensure_ascii=False,
+            ),
+        })
+    except Exception:  # noqa: BLE001 — audit trail must never block the write
+        pass
+
+
 def _safe_label(label: Optional[str], type_: Optional[str], locale: str = "ko") -> str:
     """Return ``label`` unless it is corrupted, in which case the type display name."""
     if _label_is_corrupted(label):
@@ -139,7 +223,12 @@ def _expand_auto_reports(sequence: list[dict], locale: str = "ko") -> list[dict]
 
 # ── Workflow decision save ────────────────────────────────────────────────────────
 
-def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
+def decide_workflow(
+    doc_id: str,
+    doc_class: str,
+    sequence: list[dict],
+    force_encoding_reason: Optional[str] = None,
+) -> dict:
     """Save the workflow decision (one-time initial call).
 
     Parameters
@@ -174,6 +263,14 @@ def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
     # Attach report steps (NR/TR/TSR) so the AI decision path matches the client modal.
     sequence = _expand_auto_reports(sequence)
 
+    # 0391 T0005 §5-5: reject a corrupted step label outright instead of the previous
+    # silent _safe_label swap, which discarded what the sender meant to write without
+    # telling them (against 제안3's "그 자리에서 거절" intent). Runs before
+    # insert_sequence below — a rejection here leaves no partial sequence behind.
+    _reject_corrupted_labels(sequence, force_encoding_reason)
+    if force_encoding_reason_accepted(force_encoding_reason):
+        _log_force_encoding_reason(doc_id, doc, force_encoding_reason)
+
     store = get_store()
     with store.transaction():
         db_wfseq.insert_sequence(doc_id)
@@ -184,9 +281,9 @@ def decide_workflow(doc_id: str, doc_class: str, sequence: list[dict]) -> dict:
                 sequence_id=seq_id,
                 item_seq=item["id"],
                 type_=item["type"],
-                # NR0003 §7-2: sanitize a corrupted submission label before it is persisted,
-                # so the recurring "?????" rows (06-11 → 06-19 → 06-22) stop accumulating.
-                label=_safe_label(item["label"], item["type"]),
+                # 0391 T0005 §5-5: already validated above — not corrupted, so no
+                # fallback swap is needed (label=_safe_label removed, NR0003 §7-2 mode).
+                label=item["label"] or "",
                 doc_class=doc_class,
                 sort_order=idx,
             )
@@ -1027,7 +1124,11 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
 # ── Edit workflow PENDING items ────────────────────────────────────────────────
 
-def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
+def edit_workflow_pending(
+    doc_id: str,
+    new_items: list[dict],
+    force_encoding_reason: Optional[str] = None,
+) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
     Implementation decision (T485):
@@ -1081,6 +1182,12 @@ def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
     # so an AI edit can never drop them and desync the sequence.
     new_items = _expand_auto_reports(new_items)
 
+    # 0391 T0005 §5-5: same reject-not-swap treatment as decide_workflow, before any
+    # pending item is deleted/replaced below.
+    _reject_corrupted_labels(new_items, force_encoding_reason)
+    if force_encoding_reason_accepted(force_encoding_reason):
+        _log_force_encoding_reason(doc_id, db_documents.get_by_id(doc_id), force_encoding_reason)
+
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"
 
@@ -1095,7 +1202,7 @@ def edit_workflow_pending(doc_id: str, new_items: list[dict]) -> dict:
                 sequence_id=seq["id"],
                 item_seq=max_seq + idx + 1,
                 type_=item["type"],
-                label=_safe_label(item["label"], item["type"]),  # NR0003 §7-2 (edit path)
+                label=item["label"] or "",  # NR0003 §7-2 / 0391 T0005 §5-5 (edit path)
                 doc_class=doc_class,
                 sort_order=locked_count + idx,
             )

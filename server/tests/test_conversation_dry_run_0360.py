@@ -194,6 +194,12 @@ def test_dry_run_field_omitted_is_unchanged():
 # ── the corruption threshold is defined in exactly one place ───────────────────────
 
 def test_corruption_threshold_is_defined_once_and_reused_by_chat():
+    """0391 T0005 §5-4: chat now goes through _text_is_corrupted (line-based — a long
+    AI turn can dilute the whole-body '?' ratio below threshold exactly like the long
+    document bodies NR0004 measured), not _label_is_corrupted directly. _text_is_corrupted
+    itself still reuses _label_is_corrupted line-by-line inside workflow_decision_service,
+    so the threshold constants stay defined exactly once — this assertion just points at
+    the new call name."""
     decision_source = inspect.getsource(workflow_decision_service)
     assert decision_source.count("_CORRUPT_MIN_MARKS = 2") == 1
     assert decision_source.count("_CORRUPT_RATIO = 0.5") == 1
@@ -201,4 +207,4 @@ def test_corruption_threshold_is_defined_once_and_reused_by_chat():
     conversation_source = inspect.getsource(service)
     assert "_CORRUPT_MIN_MARKS" not in conversation_source
     assert "_CORRUPT_RATIO" not in conversation_source
-    assert "workflow_decision_service._label_is_corrupted" in conversation_source
+    assert "workflow_decision_service._text_is_corrupted" in conversation_source

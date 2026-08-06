@@ -92,6 +92,9 @@ class SequenceItem(BaseModel):
 class DecideRequest(BaseModel):
     doc_class: str
     sequence: list[SequenceItem]
+    # 0391 T0005 §5-6: same escape hatch name as the inbox/chat paths — a corrupted
+    # step label is rejected unless a real reason (>=10 non-whitespace chars) is given.
+    force_encoding_reason: Optional[str] = None
 
 
 class AdvanceRequest(BaseModel):
@@ -113,6 +116,7 @@ class DecideBodyRequest(BaseModel):
     doc_id: str
     doc_class: str
     sequence: list[SequenceItem]
+    force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
 
 
 class AdvanceBodyRequest(BaseModel):
@@ -152,6 +156,7 @@ class EditSequenceItem(BaseModel):
 class EditSequenceBodyRequest(BaseModel):
     doc_id: str
     items: list[EditSequenceItem]
+    force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
 
 
 class SequenceEditRequestBody(BaseModel):
@@ -163,7 +168,11 @@ class SequenceEditRequestBody(BaseModel):
 def post_workflow_decide_rpc(body: DecideBodyRequest, request: Request):
     return post_workflow_decide(
         body.doc_id,
-        DecideRequest(doc_class=body.doc_class, sequence=body.sequence),
+        DecideRequest(
+            doc_class=body.doc_class,
+            sequence=body.sequence,
+            force_encoding_reason=body.force_encoding_reason,
+        ),
         request,
     )
 
@@ -231,6 +240,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             doc_id=doc_id,
             doc_class=body.doc_class,
             sequence=[item.model_dump() for item in body.sequence],
+            force_encoding_reason=body.force_encoding_reason,
         )
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
@@ -247,6 +257,14 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             return JSONResponse(
                 status_code=409,
                 content={"error": "already_decided", "doc_id": doc_id_val},
+            )
+        # 0391 T0005 §5-5/§5-6: a corrupted step label is now REJECTED (was: silently
+        # swapped for the type name). The service raises the full explanation — why it
+        # was refused and how to get it through — so pass it straight to the sender.
+        if msg.startswith("corrupted_label:"):
+            return JSONResponse(
+                status_code=422,
+                content={"error": "corrupted_label", "detail": msg.split(":", 1)[1]},
             )
         return JSONResponse(
             status_code=400,
@@ -728,6 +746,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
         result = edit_workflow_pending(
             doc_id=body.doc_id,
             new_items=[item.model_dump() for item in body.items],
+            force_encoding_reason=body.force_encoding_reason,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -736,6 +755,14 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             return JSONResponse(
                 status_code=400,
                 content={"error": "sequence_not_decided", "doc_id": doc_id_val},
+            )
+        # 0391 T0005 §5-5/§5-6: a corrupted step label is now REJECTED (was: silently
+        # swapped for the type name). The service raises the full explanation — why it
+        # was refused and how to get it through — so pass it straight to the sender.
+        if msg.startswith("corrupted_label:"):
+            return JSONResponse(
+                status_code=422,
+                content={"error": "corrupted_label", "detail": msg.split(":", 1)[1]},
             )
         # 0119 B0001 (NR0003 §6-A): emptying a decided-but-unstarted workflow would
         # create the unrecoverable zombie sequence — reject like the decide path does.

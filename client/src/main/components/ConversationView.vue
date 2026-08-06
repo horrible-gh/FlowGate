@@ -384,6 +384,11 @@ const TURN_PAGE_SIZE = 50
 const PREPEND_PAGE_SIZE = 30
 const CATCHUP_MAX_ROUNDS = 20
 const SEND_RETRY_MAX = 2
+// 0391 T0005 §7-6: a send failure is an ACTIONABLE rejection — the server's 422 for a
+// corrupted body is ~150 characters of instructions. Measured on the real component,
+// the default 3s toast life removed it before it could be read. Declared here rather
+// than imported from useToast so specs that mock that module partially keep working.
+const SEND_FAILED_TOAST_MS = 15000
 const VIEWED_DEBOUNCE_MS = 1000
 const PREPEND_TRIGGER_PX = 60
 
@@ -1307,7 +1312,11 @@ async function postTurn(temp: ConvTurn): Promise<boolean> {
       const status = e?.response?.status
       if ([400, 404, 409, 422].includes(status) || attempt === SEND_RETRY_MAX) {
         const detail = describeErrorDetail(e?.response?.data?.detail ?? e?.response?.data ?? e)
-        showToast(t('main.conversation_view.send_failed', { detail }), 'danger')
+        // 0391 T0005 §7-6: the server's 422 for a corrupted body is ~150 characters of
+        // instructions (write a UTF-8 file first, or fill in force_encoding_reason).
+        // Measured on the real component: at the default 3s the sentence was gone
+        // before it could be read. Actionable rejections get the long life instead.
+        showToast(t('main.conversation_view.send_failed', { detail }), 'danger', SEND_FAILED_TOAST_MS)
         return false
       }
     }

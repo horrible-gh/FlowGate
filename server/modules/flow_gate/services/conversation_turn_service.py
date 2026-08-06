@@ -67,6 +67,87 @@ def _validate_input(body_raw: str, idempotency_key: str) -> tuple[str, str, str,
     return body, key, _sha256(body), _sha256(key)
 
 
+# ── Corrupted-body guard + body-fingerprint match (0391 B0001 제안3+4, T0005 §5-4/§6) ──
+# Shared by append_turn (raises) and dry_run_append (reports) so both give the exact
+# same verdict for the same input — the T0005 §5-4 common rule ("드라이런과 실등록의
+# 판정 결과는 반드시 같아야 한다"). Fingerprints are checked against body_raw, i.e.
+# BEFORE normalize_body() — normalize_body's NFC/newline/trailing-space changes are not
+# something the sender can reliably reproduce client-side, so pinning the contract to
+# the original text is the only version of it that holds (T0005 §6-3).
+def _encoding_violation(
+    *,
+    body_raw: str,
+    body_sha256: Optional[str],
+    body_chars: Optional[int],
+    force_encoding_reason: Optional[str],
+) -> Optional[str]:
+    reason = (force_encoding_reason or "").strip()
+    if len(reason.replace(" ", "")) >= 10:
+        return None
+
+    if body_sha256 or body_chars is not None:
+        actual_sha256 = _sha256(body_raw)
+        actual_chars = len(body_raw)
+        mismatches = []
+        if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
+            mismatches.append(f"sha256 기대={body_sha256} 실제={actual_sha256}")
+        if body_chars is not None:
+            try:
+                if int(body_chars) != actual_chars:
+                    mismatches.append(f"글자수 기대={body_chars} 실제={actual_chars}")
+            except (TypeError, ValueError):
+                mismatches.append(f"body_chars 형식 오류: {body_chars!r}")
+        if mismatches:
+            return (
+                "본문 지문이 어긋납니다: " + "; ".join(mismatches) + ". 본문을 UTF-8 파일로 "
+                "먼저 쓰고 그 파일에서 글자 수와 해시를 구해 다시 보내거나, "
+                "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+            )
+        return None  # fingerprint matched — trust it, skip the question-mark heuristic
+
+    from modules.flow_gate.services import workflow_decision_service
+
+    if workflow_decision_service._text_is_corrupted(body_raw):
+        return (
+            "본문이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 먼저 쓰고, 그 "
+            "파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 다음 다시 보내세요. "
+            "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 이상)를 "
+            "적어 다시 보내세요."
+        )
+    return None
+
+
+def _log_force_encoding_reason(doc_id: str, actor: dict[str, Any], reason: str) -> None:
+    """Best-effort audit trail (T0005 §5-6): conversation_turns has no meta column, so
+    the bypass reason goes to db_events instead — never blocks the append it guards."""
+    try:
+        import json as _json
+
+        from modules.flow_gate.db import workflow_events as _db_events
+
+        doc = document_service.get_document(doc_id)
+        actor_id = (
+            actor.get("user_id")
+            or (actor.get("token") or {}).get("issued_to")
+            or "unknown"
+        )
+        _db_events.create({
+            "event_type": "action_taken",
+            "project_id": (doc or {}).get("project_id"),
+            "group_id": (doc or {}).get("group_id"),
+            "document_id": None,
+            "actor_user_id": str(actor_id),
+            "from_state": None,
+            "to_state": None,
+            "metadata": _json.dumps(
+                {"action_code": "force_encoding_reason_used", "doc_id": doc_id, "reason": reason},
+                ensure_ascii=False,
+            ),
+        })
+    except Exception:
+        _log.warning("force_encoding_reason event log failed (ignored)", exc_info=True)
+
+
 def _provider_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     row = ai_providers.get_row(project_id, provider_id) if project_id else None
     return row or ai_providers.get_row(None, provider_id)
@@ -334,9 +415,24 @@ def append_turn(
     based_on_seq: Optional[int] = None,
     display_name_hint: Optional[str] = None,
     after_commit: Optional[Callable[[dict], None]] = None,
+    body_sha256: Optional[str] = None,
+    body_chars: Optional[int] = None,
+    force_encoding_reason: Optional[str] = None,
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     body, key, body_hash, idempotency_hash = _validate_input(body_raw, idempotency_key)
+    # 0391 T0005 §5-4: reject a corrupted/fingerprint-mismatched body here — before any
+    # side effect, including _validate_document_for_append's possible migration write.
+    _violation = _encoding_violation(
+        body_raw=body_raw,
+        body_sha256=body_sha256,
+        body_chars=body_chars,
+        force_encoding_reason=force_encoding_reason,
+    )
+    if _violation is not None:
+        raise ConversationTurnError(422, _violation)
+    if (force_encoding_reason or "").strip():
+        _log_force_encoding_reason(doc_id, actor, force_encoding_reason)
     doc = _validate_document_for_append(doc_id)
     resolved = resolve_actor(actor, display_name_hint)
 
@@ -451,13 +547,18 @@ def dry_run_append(
     body_raw: str,
     idempotency_key: str,
     token_rec: dict,
+    body_sha256: Optional[str] = None,
+    body_chars: Optional[int] = None,
+    force_encoding_reason: Optional[str] = None,
 ) -> dict:
     """Validate-only counterpart to append_turn (T0004 / NR0003 3-3).
 
     Runs the same side-effect-free validation steps append_turn does -- input shape and
     document eligibility -- but never inserts a turn, consumes the token, or broadcasts.
     Mirrors inbox_routes._maybe_dry_run: the only side effect allowed is the per-token
-    dry-run counter.
+    dry-run counter. 0391 T0005 §5-4: the encoding/fingerprint verdict is computed with
+    the exact same _encoding_violation() append_turn uses, so a dry-run preview and the
+    real submission never disagree.
     """
     del actor
     body, _key, _body_hash, _idempotency_hash = _validate_input(body_raw, idempotency_key)
@@ -471,15 +572,17 @@ def dry_run_append(
         )
 
     from modules.flow_gate.services import token_service
-    from modules.flow_gate.services import workflow_decision_service
 
     token_service.increment_dry_run(token_rec["token_id"])
-    corrupted = workflow_decision_service._label_is_corrupted(body)
-    message = (
-        "본문이 깨진 것으로 보입니다(치환 문자 비율 과반). "
-        "쉘 명령줄 인자 대신 다른 방식으로 다시 보내기 전에 인코딩을 확인하세요."
-        if corrupted
-        else "Dry-run OK. Submitting this payload will register it; nothing was registered by this check."
+    _violation = _encoding_violation(
+        body_raw=body_raw,
+        body_sha256=body_sha256,
+        body_chars=body_chars,
+        force_encoding_reason=force_encoding_reason,
+    )
+    corrupted = _violation is not None
+    message = _violation or (
+        "Dry-run OK. Submitting this payload will register it; nothing was registered by this check."
     )
     return {
         "ok": True,

@@ -4,14 +4,18 @@ NR0003 root cause: N/T/TS instruction-step labels are submitted verbatim and can
 already mangled by a lossy environment (Hangul → single ASCII '?' per glyph, the
 encode('ascii', errors='replace') signature). The server/DB stored them faithfully, so the
 ContinuousWorkDialog displayed "?????". This guard (a) detects that signature and (b) falls
-back to the document type display name on both the write path (decide/edit — stop new
-corruption persisting) and the read path (sequence GET — heal the 12 rows already stored).
+back to the document type display name on the read path (sequence GET — heal the 12 rows
+already stored). 0391 T0005 §5-5: the write path (decide/edit) no longer falls back — it
+rejects a corrupted label outright before the sequence is persisted, so the sender is told
+instead of having their intended text silently discarded.
 """
 from __future__ import annotations
 
 import os
 from contextlib import contextmanager
 from unittest.mock import MagicMock
+
+import pytest
 
 os.environ.setdefault("TESTING", "1")
 
@@ -55,9 +59,12 @@ def test_safe_label_passes_clean_label_through():
     assert svc._safe_label("0082 직접수정", "T") == "0082 직접수정"
 
 
-# ── write path: decide_workflow sanitizes before INSERT ─────────────────────────
+# ── write path: decide_workflow rejects before INSERT (0391 T0005 §5-5) ─────────
+# Supersedes the old "sanitize on write" contract this test locked in: the swap gave
+# the sender no signal and discarded their intended text. decide_workflow now raises
+# instead, and nothing is inserted — verified below via the empty `inserted` list.
 
-def test_decide_workflow_sanitizes_corrupted_label(monkeypatch):
+def test_decide_workflow_rejects_corrupted_label(monkeypatch):
     inserted: list[dict] = []
 
     @contextmanager
@@ -86,15 +93,14 @@ def test_decide_workflow_sanitizes_corrupted_label(monkeypatch):
     monkeypatch.setattr(svc, "get_store", lambda: fake_store)
     monkeypatch.setattr(svc, "get_type_name", lambda t, locale="ko": {"N": "조사지시", "NR": "조사레포트"}.get(t, t))
 
-    svc.decide_workflow(
-        "flowgate.default.0114.0001-R",
-        "R",
-        [{"id": 1, "type": "N", "label": "???? ?? ? ?? ???? ?? locus? ?? ??"}],
-    )
+    with pytest.raises(ValueError, match="corrupted_label"):
+        svc.decide_workflow(
+            "flowgate.default.0114.0001-R",
+            "R",
+            [{"id": 1, "type": "N", "label": "???? ?? ? ?? ???? ?? locus? ?? ??"}],
+        )
 
-    labels = {row["type_"]: row["label"] for row in inserted}
-    assert labels["N"] == "조사지시"          # corrupted instruction healed to type name
-    assert "?" not in labels["NR"]            # auto-report unaffected
+    assert inserted == []  # rejected before any INSERT — no partial sequence
 
 
 # ── read path: get_workflow_sequence heals already-stored rows ──────────────────

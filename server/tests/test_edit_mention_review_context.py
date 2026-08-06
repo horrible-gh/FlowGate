@@ -58,6 +58,10 @@ def test_edit_mention_includes_target_review_and_valid_payload():
         "doc_id": "test.none.0002.0004-D",
         "edit_reason": "user_comment",
         "content": "<Complete revised document content>",
+        # 0391 T0005 §7-2: optional body fingerprint (proposal 4) + bypass door.
+        "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
+        "body_chars": "<optional: character count of content>",
+        "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
     }
 
 

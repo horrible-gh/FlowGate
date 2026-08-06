@@ -36,6 +36,11 @@ class ConversationTurnAppend(BaseModel):
     # Accepted only for backward wire compatibility.  The session boundary always
     # resolves the actor to a user and never forwards this claim to the service.
     speaker: Literal["user", "ai"] = "user"
+    # 0391 T0005 §7-5: escape hatch for a human whose message is falsely flagged by
+    # the corrupted-body guard (§5-4). Fingerprints are not exposed here — a browser
+    # cannot reliably compute a UTF-8 byte hash of its own textarea the way a file-based
+    # worker submission can (§6-4), so only the bypass, not the fingerprint fields.
+    force_encoding_reason: Optional[str] = None
 
 
 class ConversationReadMark(BaseModel):
@@ -173,6 +178,7 @@ def append_conversation_turn(
             idempotency_key=body.idempotency_key,
             based_on_seq=body.based_on_seq,
             display_name_hint=body.display_name,
+            force_encoding_reason=body.force_encoding_reason,
         )
     except conversation_turn_service.ConversationTurnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

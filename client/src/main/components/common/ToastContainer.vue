@@ -1,11 +1,14 @@
 <template>
   <teleport to="body">
     <div class="toast-container">
+      <!-- Click anywhere on a toast to dismiss it. A long-lived actionable toast
+           (0391 T0005 §7-6) would otherwise sit in the corner with no way out. -->
       <div
         v-for="toast in toasts"
         :key="toast.id"
         class="toast"
         :class="`toast-${toast.type}`"
+        @click="dismissToast(toast.id)"
       >
         {{ toast.message }}
       </div>
@@ -16,7 +19,7 @@
 <script setup lang="ts">
 import { useToast } from './useToast'
 
-const { toasts } = useToast()
+const { toasts, dismissToast } = useToast()
 </script>
 
 <style scoped>
@@ -33,6 +36,11 @@ const { toasts } = useToast()
 .toast {
   position: relative;
   overflow: hidden;
+  cursor: pointer;
+  /* A rejection sentence is a paragraph, not a word — let it wrap and break rather
+     than clip inside the 320px pill (0391 T0005 §7-6). */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   padding: 10px 16px;
   border-radius: 8px;
   font-size: .8125rem;

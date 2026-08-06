@@ -247,7 +247,10 @@ def build_conversation_mention(
         '  "body": "<your reply>",',
         f'  "idempotency_key": {json.dumps(token_id, ensure_ascii=False)},',
         '  "based_on_seq": <the head_seq you got from your last read>,',
-        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)}',
+        f'  "display_name": {json.dumps(display_name, ensure_ascii=False)},',
+        '  "body_sha256": "<optional: sha256 hex of body, UTF-8 bytes>",',
+        '  "body_chars": "<optional: character count of body>",',
+        '  "force_encoding_reason": "<optional: only if a genuinely-flagged body must go through anyway>"',
         "}",
     ]
     lines = [
@@ -289,6 +292,17 @@ def build_conversation_mention(
         "based_on_seq records what you had actually read when you wrote this. Send the head_seq",
         "from your last read — not a guess. If someone speaks while you are writing, your turn is",
         "still kept in order and marked as written without having seen theirs.",
+        "",
+        "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the",
+        "body to a UTF-8 file first, compute its character count (body_chars) and sha256",
+        "(body_sha256) from that file, then build the request above. A matching fingerprint is",
+        "trusted over the question-mark heuristic; if neither field is sent, the heuristic runs",
+        "instead. If the fingerprint mismatches, or you must send the body as-is, put a reason",
+        "(10+ non-whitespace characters) in force_encoding_reason.",
+        "",
+        f'To preview without registering, POST the same body to {api_base}/conversation/{doc_id}/turn',
+        'with "dry_run": true added. Nothing is registered and the token is not consumed — only',
+        "the corruption/fingerprint verdict comes back.",
     ]
     if provider:
         lines += [
