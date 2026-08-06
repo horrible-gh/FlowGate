@@ -1496,6 +1496,71 @@ def _fail(status: int, message: str, help_url: str | None = None) -> JSONRespons
     )
 
 
+# ── Corrupted-body guard + body-fingerprint match (0391 B0001 제안3+4, T0005) ──────
+# Runs at the real-registration sites (new/edit/review — always *before* the shared
+# dry-run short-circuit, same L0007 rule the other Step-5 guards already follow) so a
+# rejection never reserves a doc number, consumes a token, or writes to disk.
+#
+# Two layers over the same text, either can reject:
+#   1. fingerprint (제안4): if the sender attached body_sha256/body_chars for the
+#      fingerprint_field, a mismatch rejects immediately — the question-mark heuristic
+#      is skipped for that field once the fingerprint itself is being trusted/checked.
+#   2. line-based corruption (제안3): every other text field (and the fingerprint field
+#      when no fingerprint was sent) goes through
+#      workflow_decision_service._text_is_corrupted() — kept in that module only, per
+#      test_conversation_dry_run_0360.py:196-204's single-definition constraint.
+#
+# force_encoding_reason is the one escape hatch shared by every path: any non-trivial
+# reason (>=10 non-whitespace chars) bypasses both layers unconditionally.
+def _encoding_guard(
+    *,
+    fields: dict[str, Optional[str]],
+    fingerprint_field: Optional[str],
+    body_sha256: Optional[str],
+    body_chars,
+    force_encoding_reason: Optional[str],
+) -> Optional[JSONResponse]:
+    reason = (force_encoding_reason or "").strip()
+    if len(reason.replace(" ", "")) >= 10:
+        return None
+
+    from modules.flow_gate.services import workflow_decision_service as _wf_decision
+
+    check_fields = dict(fields)
+    if fingerprint_field and (body_sha256 or body_chars is not None):
+        text = check_fields.pop(fingerprint_field, None) or ""
+        actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        actual_chars = len(text)
+        mismatches = []
+        if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
+            mismatches.append(f"sha256 기대={body_sha256} 실제={actual_sha256}")
+        if body_chars is not None:
+            try:
+                if int(body_chars) != actual_chars:
+                    mismatches.append(f"글자수 기대={body_chars} 실제={actual_chars}")
+            except (TypeError, ValueError):
+                mismatches.append(f"body_chars 형식 오류: {body_chars!r}")
+        if mismatches:
+            return _fail(
+                422,
+                "본문 지문이 어긋납니다: " + "; ".join(mismatches) + ". 본문을 UTF-8 "
+                "파일로 먼저 쓰고 그 파일에서 글자 수와 해시를 구해 다시 보내세요. "
+                "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 "
+                "이상)를 적어 다시 보내세요.",
+            )
+
+    for name, value in check_fields.items():
+        if _wf_decision._text_is_corrupted(value):
+            return _fail(
+                422,
+                f"{name} 항목이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 "
+                "먼저 쓰고, 그 파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 "
+                "다음 다시 보내세요. 정말 이대로 보내야 하면 force_encoding_reason에 "
+                "사유(공백 제외 10자 이상)를 적어 다시 보내세요.",
+            )
+    return None
+
+
 _DESIGN_TEMPLATE_SUBMISSION_COPY = {
     "ko": {
         "mismatch": "설계 문서가 활성 {type_code} 템플릿의 문서 구조와 맞지 않습니다. {details} 작성 전에 {help_path}에서 템플릿을 받고 그 절 이름과 순서를 따르세요.",
@@ -1923,6 +1988,26 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     disposed = _disposed_group_fail(doc.get("group_id"), "Review")
     if disposed is not None:
         return disposed
+
+    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-3/§6) ──
+    _review_encoding_fields: dict[str, Optional[str]] = {}
+    if isinstance(comment, str) and comment:
+        _review_encoding_fields["comment"] = comment
+    for _fi, _finding in enumerate(findings):
+        if isinstance(_finding, dict):
+            if _finding.get("note"):
+                _review_encoding_fields[f"findings[{_fi}].note"] = _finding.get("note")
+            if _finding.get("locus"):
+                _review_encoding_fields[f"findings[{_fi}].locus"] = _finding.get("locus")
+    _review_encoding_fail = _encoding_guard(
+        fields=_review_encoding_fields,
+        fingerprint_field="comment",
+        body_sha256=body.get("body_sha256"),
+        body_chars=body.get("body_chars"),
+        force_encoding_reason=body.get("force_encoding_reason"),
+    )
+    if _review_encoding_fail is not None:
+        return _review_encoding_fail
 
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.3) ──
     # All validation has passed; bail out before any side effect (insert_review/consume/SSE).
@@ -2725,6 +2810,31 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     f"않았습니다. doc_type을 {expected_head_type}로 바꿔 다시 제출하세요.",
                 )
 
+    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-1/§6) ──
+    # 부작용(문서 번호 예약) 이전, dry-run 분기보다 앞이라 거부돼도 흔적이 안 남는다.
+    _encoding_fields: dict[str, Optional[str]] = {"본문": body_for_guards}
+    if title_override:
+        _encoding_fields["title"] = title_override
+    elif body_for_guards:
+        _title_line = _extract_title_from_content(body_for_guards)
+        if _title_line:
+            _encoding_fields["title: 줄"] = _title_line
+    for _qi, _q in enumerate(body.get("questions") or []):
+        if isinstance(_q, dict):
+            if _q.get("title"):
+                _encoding_fields[f"questions[{_qi}].title"] = _q.get("title")
+            if _q.get("body"):
+                _encoding_fields[f"questions[{_qi}].body"] = _q.get("body")
+    _encoding_fail = _encoding_guard(
+        fields=_encoding_fields,
+        fingerprint_field="본문",
+        body_sha256=body.get("body_sha256"),
+        body_chars=body.get("body_chars"),
+        force_encoding_reason=body.get("force_encoding_reason"),
+    )
+    if _encoding_fail is not None:
+        return _encoding_fail
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.1) ──
     # All validation has passed; bail out before the first side effect (reserve_document).
     # new is not numbered yet, so doc_id is null and only group_name is echoed (P0006 §3.1).
@@ -2812,6 +2922,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 큰 그룹에서 meta 한 칸이 수십 KB가 되고, 화면은 어차피 접어서 보여준다.
     if tr_scope_result is not None:
         meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
+    # 0391 T0005 §5-6: 깨짐/지문 우회문을 감사 목적으로 남긴다(신규 컬럼/마이그레이션 없음).
+    _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
+    if _force_encoding_reason:
+        meta_payload["force_encoding_reason"] = _force_encoding_reason
     meta_value = json.dumps(meta_payload) if meta_payload else None
     try:
         db_docs.create({
@@ -3284,6 +3398,22 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 pass
             return _fail(422, edit_tr_scope.get("notice") or "TR 작업범위 검증 반려")
 
+    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-2/§6) ──
+    _edit_encoding_fields: dict[str, Optional[str]] = {"본문": edit_body_for_guards}
+    if edit_reason:
+        _edit_encoding_fields["edit_reason"] = edit_reason
+    if rejection_response:
+        _edit_encoding_fields["rejection_response"] = rejection_response
+    _edit_encoding_fail = _encoding_guard(
+        fields=_edit_encoding_fields,
+        fingerprint_field="본문",
+        body_sha256=body.get("body_sha256"),
+        body_chars=body.get("body_chars"),
+        force_encoding_reason=body.get("force_encoding_reason"),
+    )
+    if _edit_encoding_fail is not None:
+        return _edit_encoding_fail
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.2) ──
     # All validation has passed; bail out before the first side effect (backup/CAS/consume/SSE).
     # checks_passed reflects checks actually run on this path (L0007 §1.1/§4 principle):
@@ -3417,6 +3547,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             _meta_obj["tr_scope"] = _tr_scope_meta(edit_tr_scope)
         else:
             _meta_obj.pop("tr_scope", None)
+        # 0391 T0005 §5-6: 깨짐/지문 우회문을 감사 목적으로 남긴다.
+        _edit_force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
+        if _edit_force_encoding_reason:
+            _meta_obj["force_encoding_reason"] = _edit_force_encoding_reason
         db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
     except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
         import LogAssist.log as logger

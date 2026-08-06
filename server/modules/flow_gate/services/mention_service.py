@@ -1260,6 +1260,10 @@ def build_mention(
             "doc_id": prev_doc_id_value,
             "edit_reason": edit_reason,
             "content": "<Complete revised document content>",
+            # 0391 T0005 §7-2: optional body fingerprint (proposal 4) + bypass door.
+            "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
+            "body_chars": "<optional: character count of content>",
+            "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
         # Rejection rework: the resubmission must carry the worker's response to the
         # rejection. Surfacing `rejection_response` here in the copy mention is the

@@ -359,9 +359,13 @@ describe('ConversationView send-time action', () => {
     await wrapper.find('textarea').setValue('hello worker')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
+    // 0391 T0005 §7-6: send failures now also carry an explicit toast duration — the
+    // server's corrupted-body 422 is a paragraph of instructions and the shared 3s
+    // default removed it before it could be read.
     expect(showToast).toHaveBeenCalledWith(
       'Failed to send message: body.body: Field required (missing); body.idempotency_key: Field required',
       'danger',
+      15000,
     )
   })
 

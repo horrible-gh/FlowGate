@@ -25,6 +25,11 @@ class WorkerConversationTurnAppend(BaseModel):
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
     dry_run: bool = False
+    # 0391 T0005 §7-4: optional body fingerprint (제안4) + bypass door (제안3 §5-6),
+    # same field names as the inbox submit paths.
+    body_sha256: Optional[str] = None
+    body_chars: Optional[int] = None
+    force_encoding_reason: Optional[str] = None
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -111,6 +116,9 @@ def _append_authenticated(
                 body_raw=body.body,
                 idempotency_key=body.idempotency_key,
                 token_rec=token,
+                body_sha256=body.body_sha256,
+                body_chars=body.body_chars,
+                force_encoding_reason=body.force_encoding_reason,
             )
         except conversation_turn_service.ConversationTurnError as exc:
             return _fail(exc.status_code, exc.message)
@@ -137,6 +145,9 @@ def _append_authenticated(
             idempotency_key=body.idempotency_key,
             based_on_seq=body.based_on_seq,
             display_name_hint=body.display_name,
+            body_sha256=body.body_sha256,
+            body_chars=body.body_chars,
+            force_encoding_reason=body.force_encoding_reason,
         )
         result["message"] = (
             f"Turn {result['turn']['seq']} already recorded. You may end the session."

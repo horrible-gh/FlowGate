@@ -297,6 +297,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "test_commands_empty": "이 프로젝트에는 아직 검증된 테스트 명령이 없습니다. 새 명령을 직접 작성해도 되며, 원격 테스트 실행이 그것을 검증합니다.",
         "changed_files": "섹션 제목에 번호를 붙이면(예: '## 5. 변경 파일') 보고가 비어 있는 것으로 파싱됩니다.",
         "submit_dry_run": "본문에 \"dry_run\": true 를 넣으면 등록 없이 검증만 합니다. 토큰은 소비되지 않습니다.",
+        "submit_encoding_guard": "본문이 깨진 글자(????)로 보이면 등록이 거절됩니다. 계산 순서: 먼저 본문을 UTF-8 파일로 쓰고, 그 파일에서 글자 수(body_chars)와 sha256(body_sha256)을 구한 다음 요청을 만드세요. 지문이 맞으면 그것으로 판정하고, 안 보내면 물음표 비율로 판정합니다. 지문이 어긋나거나 정말로 이대로 보내야 하면 force_encoding_reason 에 사유(공백 제외 10자 이상)를 적으세요.",
     },
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
@@ -307,6 +308,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "test_commands_empty": "This project has no verified test command yet. You may author a new one; the remote test run will verify it.",
         "changed_files": "Numbering the heading (e.g. '## 5. Changed Files') makes the report parse as empty.",
         "submit_dry_run": "Adding \"dry_run\": true to the body validates the submission without registering anything. The token is not consumed.",
+        "submit_encoding_guard": "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the body to a UTF-8 file first, compute its character count (body_chars) and sha256 (body_sha256) from that file, then build the request. A matching fingerprint is trusted over the question-mark heuristic; if none is sent, the heuristic runs instead. If the fingerprint mismatches, or you must send it as-is, put a reason (>=10 non-whitespace chars) in force_encoding_reason.",
     },
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
@@ -317,6 +319,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "test_commands_empty": "このプロジェクトにはまだ検証済みのテストコマンドがありません。新しいコマンドを作成しても構いません。リモートテスト実行が検証します。",
         "changed_files": "見出しに番号を付ける(例: '## 5. 変更ファイル')と、報告が空としてパースされます。",
         "submit_dry_run": "本文に \"dry_run\": true を入れると、登録せず検証のみ行います。トークンは消費されません。",
+        "submit_encoding_guard": "本文が文字化け(????)に見える場合、登録は拒否されます。計算順序: まず本文をUTF-8ファイルとして書き出し、そのファイルから文字数(body_chars)とsha256(body_sha256)を求めてからリクエストを作成してください。フィンガープリントが一致すればそれを優先し、送らなければ疑問符比率で判定します。フィンガープリントが一致しない場合、またはどうしてもそのまま送る必要がある場合は、force_encoding_reason に理由(空白を除き10文字以上)を記入してください。",
     },
 }
 
@@ -835,6 +838,8 @@ def _content_submit(ctx: dict) -> dict:
     headers = {"Authorization": "Bearer <YOUR_TOKEN>", "Content-Type": "application/json"}
     dry_run = _copy(_ITEM_NOTES, ctx["locale"], "submit_dry_run")
 
+    encoding_guard = _copy(_ITEM_NOTES, ctx["locale"], "submit_encoding_guard")
+
     if scope == "review":
         return {
             "action_scope": scope,
@@ -848,6 +853,9 @@ def _content_submit(ctx: dict) -> dict:
                 "verdict": "pass | issues | hold",
                 "findings": [{"locus": "<where in the doc>", "note": "<what is wrong / to improve>"}],
                 "comment": "<optional overall comment>",
+                "body_sha256": "<optional: sha256 hex of comment, UTF-8 bytes>",
+                "body_chars": "<optional: character count of comment>",
+                "force_encoding_reason": "<optional: only if a genuinely-flagged comment must go through anyway>",
             },
             "verdict_guide": {
                 "pass": "meets requirements, no blocking issues",
@@ -855,6 +863,7 @@ def _content_submit(ctx: dict) -> dict:
                 "hold": "cannot decide yet (missing context / blocked)",
             },
             "dry_run": dry_run,
+            "encoding_guard": encoding_guard,
         }
 
     if scope == "workflow_decide":
@@ -867,7 +876,12 @@ def _content_submit(ctx: dict) -> dict:
                 "doc_id": doc_id,
                 "doc_class": "R",
                 "sequence": [{"id": 1, "type": "<TYPE_CODE>", "label": "<STEP_LABEL>"}],
+                # 0391 T0005 §5-5: a corrupted step label is rejected here now (it used
+                # to be silently replaced by the type name), so this path needs the same
+                # escape hatch as the others.
+                "force_encoding_reason": "<optional: only if a genuinely-flagged label must go through anyway>",
             },
+            "encoding_guard": encoding_guard,
         }
 
     if scope == "workflow_sequence_edit":
@@ -876,7 +890,12 @@ def _content_submit(ctx: dict) -> dict:
             "method": "PATCH",
             "url": f"{base}/workflow/sequence",
             "headers": headers,
-            "body": {"doc_id": doc_id, "items": [{"type": "<TYPE_CODE>", "label": "<STEP_LABEL>"}]},
+            "body": {
+                "doc_id": doc_id,
+                "items": [{"type": "<TYPE_CODE>", "label": "<STEP_LABEL>"}],
+                "force_encoding_reason": "<optional: only if a genuinely-flagged label must go through anyway>",
+            },
+            "encoding_guard": encoding_guard,
         }
 
     module, group_name = _module_and_group(ctx)
@@ -888,6 +907,9 @@ def _content_submit(ctx: dict) -> dict:
             "doc_id": doc_id,
             "edit_reason": "rejected | user_comment",
             "content": "<Complete revised document content>",
+            "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
+            "body_chars": "<optional: character count of content>",
+            "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
     else:
         body = {
@@ -899,6 +921,9 @@ def _content_submit(ctx: dict) -> dict:
             "prev_doc_id": _prev_doc_id(ctx),
             "title": "<Fill this in>",
             "content": "<Fill this in>",
+            "body_sha256": "<optional: sha256 hex of content, UTF-8 bytes>",
+            "body_chars": "<optional: character count of content>",
+            "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
         if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES:
             body["content"] = "<Fill this in>\n\n" + tr_scope_service.tr_section_placeholder(ctx["locale"])
@@ -920,6 +945,7 @@ def _content_submit(ctx: dict) -> dict:
             + (f": {ctx['scratch_dir']}" if ctx.get("scratch_dir") else ".")
         ),
         "dry_run": dry_run,
+        "encoding_guard": encoding_guard,
     }
     if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES and scope != "edit":
         payload["changed_files_required"] = True
