@@ -278,6 +278,14 @@
           <p v-if="trScope.branch" class="dip-trs-assign">
             {{ t('main.doc_info_panel.tr_scope_branch') }}: <code>{{ trScope.branch }}</code>
           </p>
+          <!-- 제출 시점에 검증이 돌지 않아 대조 결과가 없는 문서. 영역을 감추는 대신
+               왜 판정이 없는지 밝히고 본문에 신고된 목록만 보여준다. rev3: 본문에
+               변경 파일 절이 아예 없는 문서(검증 대상이 되기 전에 제출된 TS 는 그
+               절을 쓰라는 안내를 받지 못했으므로 없는 것이 정상)도 감추지 않고,
+               "절이 없다"는 사실을 그대로 밝힌다. -->
+          <p v-if="trScopeUnevaluated" class="dip-trs-unevaluated">
+            {{ t(`main.doc_info_panel.${trScopeUnevaluatedKey}`) }}
+          </p>
 
           <ul v-if="trScope.codes?.length" class="dip-trs-codes">
             <li v-for="code in trScope.codes" :key="code">
@@ -301,7 +309,7 @@
             </template>
           </div>
 
-          <div v-for="key in trScopeAllKeys" :key="key">
+          <div v-for="key in visibleTrScopeAllKeys" :key="key">
             <p class="dip-trs-list-label">
               {{ t(`main.doc_info_panel.tr_scope_${key}`) }} ({{ trScopeSlice(key).count }})
             </p>
@@ -504,6 +512,22 @@ const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_er
 // 인라인 배열 리터럴로 두면 키가 string 으로 추론돼 인덱싱이 막히므로, 위 어긋남
 // 목록과 똑같이 as const 로 리터럴 유니온을 유지한다.
 const trScopeAllKeys = ['reported', 'detected'] as const
+
+// 0390 TR0005 rev2 — 제출 시점에 검증이 돌지 않은 문서는 감지 목록이 존재하지
+// 않는다. 그때 "감지 0건"을 그리면 "변경이 없었다"는 거짓말이 되므로 신고 목록만
+// 남기고, 대신 왜 대조 결과가 없는지 한 줄 안내를 붙인다.
+const trScopeUnevaluated = computed(() => props.trScope?.evaluated === false)
+// 0390 TR0005 rev3 — 미검증에는 두 가지 사유가 있고 안내문이 달라야 한다. 본문에
+// 변경 파일 절이 아예 없으면 "신고된 파일" 목록을 가리키는 문장은 거짓이 되므로,
+// 절이 없다는 사실을 밝히는 별도 문장을 쓴다.
+const trScopeUnevaluatedKey = computed(() =>
+  props.trScope?.scope_reason === 'not_evaluated_no_section'
+    ? 'tr_scope_unevaluated_no_section'
+    : 'tr_scope_unevaluated',
+)
+const visibleTrScopeAllKeys = computed(() =>
+  trScopeUnevaluated.value ? (['reported'] as const) : trScopeAllKeys,
+)
 
 // 없는 슬라이스는 빈 것으로 채워 돌려준다. 템플릿이 옵셔널 체이닝과 v-if/v-else-if
 // 좁히기에 기대지 않아도 되고, "0건" 표시도 그대로 성립한다.
@@ -1369,6 +1393,8 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
 .dip-trs-skipped { background: var(--muted-bg, #f1f5f9); color: var(--muted, #64748b); }
 .dip-trs-stage { font-size: .7rem; color: var(--muted, #64748b); }
 .dip-trs-assign { margin: 6px 0 0; font-size: .72rem; color: var(--muted, #64748b); }
+/* 미검증 안내 (0390 TR0005 rev2). 판정 뱃지 바로 아래 한 줄로, 목록보다 먼저 읽히게. */
+.dip-trs-unevaluated { margin: 6px 0 0; font-size: .72rem; line-height: 1.5; color: var(--muted, #64748b); }
 .dip-trs-codes { margin: 6px 0 0; padding-left: 16px; font-size: .72rem; line-height: 1.5; }
 .dip-trs-list-label { margin: 8px 0 2px; font-size: .72rem; font-weight: 600; }
 .dip-trs-list {

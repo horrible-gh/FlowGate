@@ -1940,6 +1940,8 @@ export default {
       tr_scope_stage_observe: '관측 단계',
       tr_scope_stage_warn: '경고 단계',
       tr_scope_stage_enforce: '강제 단계',
+      tr_scope_unevaluated: '이 문서는 제출 시점에 작업범위 검증을 받지 않아 대조 결과가 없습니다. 아래는 본문에 신고된 변경 파일입니다.',
+      tr_scope_unevaluated_no_section: '이 문서는 제출 시점에 작업범위 검증을 받지 않아 대조 결과가 없고, 본문에 변경 파일 절도 없습니다. 다음 제출부터 검증 결과가 여기에 표시됩니다.',
       tr_scope_branch: '배정 브랜치',
       tr_scope_reported: '신고한 파일',
       tr_scope_detected: '감지된 파일',

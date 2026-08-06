@@ -564,6 +564,41 @@ def test_prior_tr_declared_unions_group_meta_and_excludes_current_document(monke
     ]
 
 
+def test_prior_tr_declared_includes_other_mutating_types_like_ts(monkeypatch):
+    """0390 TR0005 rev1: a TS document's declared changed-files must also feed the
+    prior-declared pool -- before this fix the function hard-compared type_code ==
+    "TR", so a sibling TS's report was invisible and could make a later TR/TS
+    submission touching the same path come back flagged "unconfirmed" even though a
+    TS in the same group had already reported it. NR (non-mutating) must stay excluded.
+    """
+    from modules.flow_gate.api import inbox_routes
+
+    documents = [
+        {
+            "doc_id": "g.0001-TR",
+            "type_code": "TR",
+            "meta": {"tr_scope": {"reported": {"count": 1, "items": ["a.py"]}}},
+        },
+        {
+            "doc_id": "g.0002-TS",
+            "type_code": "TS",
+            "meta": {"tr_scope": {"reported": {"count": 1, "items": ["b.py"]}}},
+        },
+        {
+            "doc_id": "g.0003-NR",
+            "type_code": "NR",
+            "meta": {"tr_scope": {"reported": {"count": 1, "items": ["ignore.py"]}}},
+        },
+    ]
+    monkeypatch.setattr(
+        inbox_routes.db_docs,
+        "get_documents_by_group_id",
+        lambda group_id: documents,
+    )
+
+    assert inbox_routes._prior_tr_declared("g") == ["a.py", "b.py"]
+
+
 def test_meta_round_trips_through_verdict_from_meta():
     import json as _json
 
@@ -580,3 +615,177 @@ def test_verdict_from_meta_accepts_both_text_and_dict():
     assert trs.verdict_from_meta('{"content_sha256": "x"}') is None
     assert trs.verdict_from_meta(None) is None
     assert trs.verdict_from_meta("not json") is None
+
+
+# ── 저장된 판정이 없는 문서의 사이드바 (0390 TR0005 rev2) ────────────────────
+#
+# meta['tr_scope'] 는 제출 그 순간에 한 번 계산돼 박히므로, 검증 대상이 되기 전에
+# 제출된 문서에는 키가 아예 없다. 그때 문서 상세가 tr_scope 를 통째로 빼면 화면의
+# [작업범위 검증] 영역이 사라져, 사용자는 "검증을 안 받은 문서"와 "검증 대상이
+# 아닌 문서"를 구분할 수 없다. 아래 테스트들이 그 구멍을 막는다.
+
+_TS_BODY_WITH_SECTION = (
+    "## Summary\n\n회귀 스위트.\n\n## 변경 파일\n\n- server/tests/test_inbox.py\n"
+)
+
+# rev3 — 반려자가 8080 미리보기에서 실제로 열어 본 TS 문서(test.test.0002.0002-TS)의
+# 본문 모양이다. 검증 대상이 되기 전에 제출됐으므로 '## 변경 파일' 절이 아예 없다.
+# rev2 는 바로 이 입력에서 판정을 만들지 않아 카드가 사라졌다.
+_TS_BODY_NO_SECTION = (
+    "---\n"
+    "next_type: TS\n"
+    "title: Write Feature Test Scenarios\n"
+    "---\n"
+    "\n"
+    "## 테스트 준비\n"
+    "\n"
+    "- cmd: cd test && python -m pytest --version\n"
+    "\n"
+    "## 테스트 케이스\n"
+    "\n"
+    "### TC-1: Write feature produces expected message/mention\n"
+    "- cmd: cd test && python -c \"print('ok')\"\n"
+    "- 기대: Write feature returns success message\n"
+)
+
+
+def test_unevaluated_verdict_reads_the_reported_section_for_a_ts_document():
+    verdict = trs.unevaluated_verdict("TS", _TS_BODY_WITH_SECTION)
+
+    assert verdict is not None
+    assert verdict["evaluated"] is False
+    assert verdict["verdict"] == trs.VERDICT_SKIPPED
+    assert verdict["scope_reason"] == "not_evaluated"
+    assert verdict["reported"] == {"count": 1, "items": ["server/tests/test_inbox.py"]}
+    # 대조를 한 적이 없으므로 감지 목록은 "0건"으로도 실어 보내지 않는다.
+    assert "detected" not in verdict
+
+
+def test_unevaluated_verdict_is_only_for_mutating_types():
+    # 비대상 타입은 예전처럼 영역을 감춘다 — 검증을 받을 일이 없는 종류다.
+    assert trs.unevaluated_verdict("NR", _TS_BODY_WITH_SECTION) is None
+    assert trs.unevaluated_verdict("R", _TS_BODY_WITH_SECTION) is None
+    # '없음' 한 줄은 신고 절이 있는 것이므로 0건짜리 판정이 나온다.
+    none_verdict = trs.unevaluated_verdict("TR", "## 변경 파일\n\n없음\n")
+    assert none_verdict is not None and none_verdict["reported"]["count"] == 0
+    assert none_verdict["scope_reason"] == "not_evaluated"
+
+
+def test_unevaluated_verdict_still_shows_a_card_when_the_body_has_no_section():
+    """rev3 — 절이 없어도 카드를 띄운다.
+
+    rev2 는 여기서 None 을 돌려 카드를 감췄고, 그래서 같은 사유로 또 반려됐다.
+    검증 대상이 되기 전에 제출된 TS 문서는 '## 변경 파일' 을 쓰라는 안내를 아예 받지
+    못했으므로 절이 **없는 것이 정상**이다 — 그 정상 상태에서 영역이 사라지면
+    R0001 이 요구한 "사이드바에 작업범위 검증도 함께 제공"이 지켜지지 않는다.
+    """
+    for type_code, body in (
+        ("TS", _TS_BODY_NO_SECTION),          # 반려자가 실제로 열어 본 TS 문서의 본문 모양
+        ("T", "작업지시 가 승인되었습니다."),   # 한 줄짜리 T 승인 문서
+        ("TS", None),                          # 본문 파일을 읽을 수 없을 때
+        ("TSR", ""),
+    ):
+        verdict = trs.unevaluated_verdict(type_code, body)
+        assert verdict is not None, f"{type_code} 카드가 감춰졌다: {body!r}"
+        assert verdict["evaluated"] is False
+        assert verdict["verdict"] == trs.VERDICT_SKIPPED
+        # 안내 문구가 갈리는 지점이다 — "신고 목록을 보라"고 하면 거짓이 된다.
+        assert verdict["scope_reason"] == "not_evaluated_no_section"
+        assert verdict["reported"] == {"count": 0, "items": []}
+
+
+def test_unevaluated_verdict_drops_excluded_paths_like_evaluate_does():
+    verdict = trs.unevaluated_verdict(
+        "TS", "## 변경 파일\n\n- server/app.py\n- .git/config\n"
+    )
+
+    assert verdict is not None
+    assert verdict["reported"]["items"] == ["server/app.py"]
+
+
+def _call_get_document(documents_router, doc_id: str) -> dict:
+    """라우트 핸들러를 그대로 부른다.
+
+    RBAC 데코레이터는 이 저장소에서 rbac.decorators 를 못 찾으면 함수를 그대로
+    돌려주는 no-op 이라(documents.py 상단 stub), 두 경우 모두에서 실제 핸들러를
+    집어내려면 __wrapped__ 를 있으면 쓰고 없으면 함수 자신을 쓴다.
+    """
+    handler = getattr(documents_router.get_document, "__wrapped__", documents_router.get_document)
+    return handler(doc_id, current_user={"user_id": "u"})
+
+
+def _stub_document_detail(monkeypatch, documents_router, row: dict, body: str, tmp_path):
+    """문서 상세가 실제로 지나가는 길만 남기고 주변을 막는다.
+
+    본문은 documents 행이 아니라 파일에 있다 — `doc['content']` 같은 컬럼은 없다.
+    그래서 파일 경로 해석까지 진짜 코드를 태우고 파일만 tmp_path 에 만들어 둔다.
+    (rev2 초안이 행에서 본문을 읽으려다 조용히 아무것도 안 하던 자리다.)
+    """
+    doc_file = tmp_path / "doc.md"
+    doc_file.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(
+        documents_router.document_service, "get_document", lambda doc_id: dict(row)
+    )
+    monkeypatch.setattr(documents_router, "_document_file_path", lambda doc: doc_file)
+    monkeypatch.setattr(documents_router, "_load_ai_reviews", lambda doc_id: (None, []))
+    monkeypatch.setattr(documents_router, "_load_test_runs", lambda doc_id: (None, []))
+
+def test_document_detail_serves_the_unevaluated_verdict_when_meta_has_none(monkeypatch, tmp_path):
+    """문서 상세 GET 이 실제로 사이드바에 실어 보내는지 — 라우트까지 확인한다."""
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    row = {
+        "doc_id": "flowgate.default.0390.0006-TS",
+        "type_code": "TS",
+        "meta": {"content_sha256": "x"},   # tr_scope 없음 — 검증 대상이 되기 전 제출
+        "workflow_steps": None,
+    }
+    _stub_document_detail(monkeypatch, documents_router, row, _TS_BODY_WITH_SECTION, tmp_path)
+
+    out = _call_get_document(documents_router, row["doc_id"])
+
+    assert out["tr_scope"]["evaluated"] is False
+    assert out["tr_scope"]["reported"]["items"] == ["server/tests/test_inbox.py"]
+
+
+def test_document_detail_serves_a_card_for_a_ts_document_with_no_section(monkeypatch, tmp_path):
+    """rev3 회귀 — 반려자가 열어 본 그 문서 모양에서 라우트가 tr_scope 를 실어 보낸다.
+
+    rev2 에서는 이 입력에 대해 `out` 에 tr_scope 키가 아예 없었고, 화면의
+    `v-if="trScope"` 가 [작업범위 검증] 영역을 통째로 감췄다 — 반려 사유 그 자체다.
+    """
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    row = {
+        "doc_id": "test.test.0002.0002-TS",
+        "type_code": "TS",
+        "meta": {"content_sha256": "x"},   # tr_scope 없음
+        "workflow_steps": None,
+    }
+    _stub_document_detail(monkeypatch, documents_router, row, _TS_BODY_NO_SECTION, tmp_path)
+
+    out = _call_get_document(documents_router, row["doc_id"])
+
+    assert "tr_scope" in out, "사이드바가 카드를 그릴 수 있는 값이 응답에 없다"
+    assert out["tr_scope"]["evaluated"] is False
+    assert out["tr_scope"]["scope_reason"] == "not_evaluated_no_section"
+    assert out["tr_scope"]["reported"] == {"count": 0, "items": []}
+
+
+def test_document_detail_still_prefers_the_stored_verdict(monkeypatch, tmp_path):
+    """제출 시점에 계산된 판정이 있으면 그것이 이깁니다 — 본문 파싱으로 덮지 않는다."""
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    stored = {"verdict": "pass", "stage": "observe", "reported": {"count": 0, "items": []}}
+    row = {
+        "doc_id": "flowgate.default.0390.0005-TR",
+        "type_code": "TR",
+        "meta": {"tr_scope": stored},
+        "workflow_steps": None,
+    }
+    _stub_document_detail(monkeypatch, documents_router, row, _TS_BODY_WITH_SECTION, tmp_path)
+
+    out = _call_get_document(documents_router, row["doc_id"])
+
+    assert out["tr_scope"] == stored
+    assert "evaluated" not in out["tr_scope"]

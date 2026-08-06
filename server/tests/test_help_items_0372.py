@@ -160,7 +160,10 @@ def test_index_for_a_ts_token_shows_the_verified_commands(monkeypatch):
     body = client.get("/api/v1/help").json()
     assert "test_commands" in _names(body)
     assert "authoring_guide" in _names(body)
-    assert _hidden(body)["changed_files_format"] == "not_mutating_type"
+    # group 0390 R0001: TS is now a mutating step type, so it gets write tools and
+    # must report `## 변경 파일` like T/TR/TSR do.
+    assert "changed_files_format" in _names(body)
+    assert body["context"]["tool_kind"] == "read_write"
 
 
 def test_review_token_gets_read_tools_and_a_verdict_flavoured_submit(monkeypatch):

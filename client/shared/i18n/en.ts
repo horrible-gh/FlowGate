@@ -1941,6 +1941,8 @@ export default {
       tr_scope_stage_observe: 'Observe stage',
       tr_scope_stage_warn: 'Warn stage',
       tr_scope_stage_enforce: 'Enforce stage',
+      tr_scope_unevaluated: 'This document was not scope-checked when it was submitted, so there is no comparison result. The list below is what its body reports as changed.',
+      tr_scope_unevaluated_no_section: 'This document was not scope-checked when it was submitted, so there is no comparison result, and its body has no changed-files section. Check results will appear here from its next submission.',
       tr_scope_branch: 'Assigned branch',
       tr_scope_reported: 'Reported files',
       tr_scope_detected: 'Detected files',

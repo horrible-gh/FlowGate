@@ -14,7 +14,7 @@ VERSION = "v1"
 DISPLAY_ORDER = ("read", "grep", "glob", "stat", "write", "patch", "remove")
 READ_TOOLS = frozenset({"read", "grep", "glob", "stat"})
 WRITE_TOOLS = frozenset({"write", "patch", "remove"})
-MUTATING_STEP_TYPES = frozenset({"T", "TR", "TSR"})
+MUTATING_STEP_TYPES = frozenset({"T", "TR", "TSR", "TS"})
 
 _catalog_names = frozenset(DISPLAY_ORDER)
 _executable_names = frozenset(remote_tool_service.OPS)

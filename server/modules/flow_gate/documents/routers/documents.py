@@ -2335,6 +2335,28 @@ def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
         return None, []
 
 
+def _scope_fallback_body(doc: dict) -> Optional[str]:
+    """미검증 판정을 만들 때만 쓰는 본문 읽기 (0390 TR0005 rev2).
+
+    문서 본문은 documents 행이 아니라 파일에 있으므로 (`doc['content']` 같은 것은
+    없다) 여기서 직접 읽는다. 검증 대상 타입이면서 저장된 판정이 없는 문서에서만
+    불리도록 호출부가 순서를 잡고 있고, 이 함수도 대상 타입이 아니면 파일을 아예
+    열지 않는다 — 문서 상세는 탭을 열 때마다·SSE 갱신마다 불리는 길이라 모든
+    문서에 디스크 읽기를 하나씩 더 붙이지 않기 위한 것이다.
+    """
+    from modules.flow_gate.services import tool_registry
+
+    if str(doc.get("type_code") or "").upper() not in tool_registry.MUTATING_STEP_TYPES:
+        return None
+    try:
+        path = _document_file_path(doc)
+    except HTTPException:
+        return None
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
 @router.get("/{doc_id}")
 @require_permission("perm_document_read")
 def get_document(
@@ -2350,12 +2372,19 @@ def get_document(
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
     out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
     # TR 작업범위 검증 결과 (0299 D0004 §6). meta 안에 있지만 화면이 meta 문자열을
-    # 직접 파싱하지 않도록 여기서 펼친다. 없으면 키 자체를 두지 않는다 — 검증 도입
-    # 이전 TR 과 비대상 문서에서 화면이 빈 카드를 그리지 않게 하기 위한 것이다.
+    # 직접 파싱하지 않도록 여기서 펼친다. 0390 TR0005 rev2: 저장된 판정이 없어도
+    # 검증 대상 타입이고 본문에 `## 변경 파일` 절이 있으면 본문에서 읽은 신고
+    # 목록만 담은 미검증 판정을 대신 실어 준다 — 검증 대상이 되기 전에 제출된
+    # 문서(예: TS0006)에서 사이드바의 [작업범위 검증]이 통째로 사라지던 증상을
+    # 없애기 위한 것이다. 둘 다 없으면 예전처럼 키 자체를 두지 않는다.
     try:
         from modules.flow_gate.services import tr_scope_service as _tr_scope
 
         verdict = _tr_scope.verdict_from_meta(doc.get("meta"))
+        if verdict is None:
+            verdict = _tr_scope.unevaluated_verdict(
+                doc.get("type_code"), _scope_fallback_body(doc)
+            )
         if verdict is not None:
             out["tr_scope"] = verdict
     except Exception:  # noqa: BLE001 — 표시용 부가 정보가 문서 조회를 깨선 안 된다

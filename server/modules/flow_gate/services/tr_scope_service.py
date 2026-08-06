@@ -602,6 +602,47 @@ def verdict_from_meta(meta) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
+def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
+    """저장된 판정이 없는 문서를 위한 표시 전용 판정 (0390 TR0005 rev2).
+
+    ``meta['tr_scope']`` 는 제출된 그 순간에 한 번 계산돼 박히는 값이라, 검증
+    대상이 아니던 시절에 제출된 문서(예: TS 가 대상이 되기 전의 TS)에는 아예
+    키가 없다. 그런 문서에서 화면이 영역 자체를 감추면 "이 문서는 검증이
+    적용되지 않는 종류"인지 "검증을 안 받은 것"인지 사용자가 구분할 수 없다 —
+    사이드바에 [작업범위 검증]이 통째로 사라지는 것이 정확히 그 증상이다.
+
+    그래서 대상 타입(``MUTATING_STEP_TYPES``)이면 git 을 건드리지 않고 본문의
+    신고 목록만 읽어 ``evaluated: False`` 인 판정을 만들어 준다. 문서 상세 조회는
+    요청마다 불리므로 여기서 워크트리 대조(``evaluate``)를 다시 하지는 않는다 —
+    그것은 제출 시점의 기록이어야 하고, 조회 때마다 값이 달라져서도 안 된다.
+
+    rev3: 본문에 ``## 변경 파일`` 절이 없으면 rev2 는 None 을 돌려 카드를 감췄다.
+    그게 rev2 가 같은 사유로 또 반려된 이유다 — 검증 대상이 되기 전에 제출된 TS
+    문서에는 애초에 그 절을 쓰라는 안내가 실리지 않았으므로 절이 **없는 것이 정상**
+    이고, 결국 화면은 rev1 과 똑같이 비어 있었다. 지금은 절이 없어도 카드를 띄우고
+    ``scope_reason`` 으로 "절 자체가 없다"와 "절은 있고 대조만 못 했다"를 구분한다.
+    R0001 이 요구한 "사이드바에 작업범위 검증도 함께 제공"은 신고 목록이 있을 때만
+    제공하라는 뜻이 아니다.
+
+    ``body`` 가 None(본문 파일을 읽을 수 없음)이어도 같다 — 신고 0건으로 그린다.
+    """
+    from modules.flow_gate.services import tool_registry
+
+    if str(type_code or "").upper() not in tool_registry.MUTATING_STEP_TYPES:
+        return None
+    reported = parse_reported_files(body or "")
+    declared = [path for path in reported.paths if not is_excluded_path(path)]
+    return {
+        "verdict": VERDICT_SKIPPED,
+        "evaluated": False,
+        "stage": None,
+        "codes": [],
+        "branch": None,
+        "scope_reason": "not_evaluated" if reported.found else "not_evaluated_no_section",
+        "reported": {"count": len(declared), "items": declared[:MAX_ITEMS]},
+    }
+
+
 # ── 작업 지시에 실리는 안내 (D0004 §3.9, 언어 전달 T2/TR2) ───────────────────
 
 _TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {

@@ -1277,7 +1277,7 @@ def build_mention(
         commit_hint = ""
         # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
         # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
-        if str(parent_type or "").upper() == "TR":
+        if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
             commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
         content_source_hint = (
             "Choose exactly one document source (XOR):\n"
@@ -1315,7 +1315,7 @@ def build_mention(
             f"\n"
             f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
         )
-        if str(doc_type_value).upper() == "TR":
+        if str(doc_type_value).upper() in tool_registry.MUTATING_STEP_TYPES:
             s5_body += "\n" + _CHANGED_FILES_REQUIRED_TEXT[loc].format(
                 url=f"{base}/help/items/changed_files_format"
             )

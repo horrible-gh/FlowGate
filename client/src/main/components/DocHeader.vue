@@ -1143,8 +1143,11 @@ const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
-// TR 작업범위 검증 결과 (0299 D0004 §6). TR 이 아니거나 검증 도입 이전 문서면 서버가
-// 키 자체를 보내지 않으므로 null 이고, 그때 정보 패널은 영역을 아예 그리지 않는다.
+// TR 작업범위 검증 결과 (0299 D0004 §6). 0390 TR0005부터 대상은 문서 타입이 아니라
+// 서버의 tool_registry.MUTATING_STEP_TYPES 멤버십(T/TR/TSR/TS)이다 -- 그 타입이
+// 아니거나 검증 도입 이전 문서면 서버가 키 자체를 보내지 않으므로 null 이고, 그때
+// 정보 패널은 영역을 아예 그리지 않는다. 이 computed 자체는 타입을 보지 않는
+// 단순 전달(pass-through)이라 그 판정이 바뀌어도 고칠 코드가 없다.
 const trScope = computed(() => doc.value?.tr_scope ?? null)
 
 const docClass = computed((): string => {
