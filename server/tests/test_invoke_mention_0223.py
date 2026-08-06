@@ -153,6 +153,14 @@ class TestConversationMentionLookupBlock:
     Without them a chat worker asked about the source had nothing to call, guessed
     at a local directory and reported the guess as fact. The scopes were always
     there; the text was not.
+
+    0392 B0001/NR0003: the chat token itself never carries source scope — its
+    action_scope is "chat", which tool_registry.kind_for_step always demotes to
+    "none" (same judge /help/tools uses). The "Remote project source CRUD" block
+    is therefore always absent for a chat mention, remote mode or not; only the
+    document search/lookup rules below survive. Earlier revisions of this class
+    wrongly asserted the block WAS offered with read/grep tools, which is exactly
+    the mismatch B0001 hit as live 403s.
     """
 
     @staticmethod
@@ -174,24 +182,14 @@ class TestConversationMentionLookupBlock:
             api_base_url="http://h:1/api/v1",
         )
 
-    def test_source_search_endpoints_are_offered(self, monkeypatch):
-        # 0349 TR-2: the tools are named and their usage is one help call away, instead of
-        # one request-format block per tool inlined here.
-        text = self._mention(monkeypatch)
-        # The chat mention pins this section to English (_chat_lookup_sections), so the
-        # Korean label this line used to expect has not been produced for a while. The
-        # wording here is the one P0009 시나리오 11 records for the same section.
-        assert "Tools: read, grep, glob" in text
-        assert "GET http://h:1/api/v1/help/tools" in text
-        assert "http://h:1/api/v1/help/tools/{name}" in text
-
-    def test_source_block_stays_read_only(self, monkeypatch):
-        # The chat token resolves to ["read", "grep"]; advertising a mutating call
-        # would hand the worker an instruction its grant refuses.
-        text = self._mention(monkeypatch)
-        tool_section = text.split("## Remote project source CRUD")[1].split("\n\n## ")[0]
-        assert "write" not in tool_section
-        assert "remove" not in tool_section
+    def test_source_crud_block_is_never_offered_to_chat(self, monkeypatch):
+        # 0392 B0001/NR0003: kind_for_step("chat", "CH") is always ("none", ...), so the
+        # CRUD block that other document types get in remote mode never appears here --
+        # this must match what /help/tools actually grants a chat token (also none).
+        text = self._mention(monkeypatch, remote_mode=True)
+        assert "Remote project source CRUD" not in text
+        assert "help/tools" not in text
+        assert "Tools: read" not in text
 
     def test_document_search_is_pinned_to_the_token_project(self, monkeypatch):
         text = self._mention(monkeypatch)
@@ -221,11 +219,11 @@ class TestConversationMentionLookupBlock:
     @pytest.mark.parametrize("remote_mode", [True, False])
     def test_submission_json_remains_the_tail_of_the_mention(self, monkeypatch, remote_mode):
         # The new turn submission contract comes first; lookup guidance closes the mention
-        # with the warning that submission consumes the token.
+        # with the warning that submission consumes the token. 0392 B0001/NR0003: chat never
+        # gets the CRUD block (source_crud_block_is_never_offered_to_chat), so search/documents
+        # is the anchor in both modes now, not help/tools.
         text = self._mention(monkeypatch, remote_mode=remote_mode)
-        assert text.index("Submit: POST") < text.index(
-            "help/tools" if remote_mode else "search/documents"
-        )
+        assert text.index("Submit: POST") < text.index("search/documents")
         assert '"idempotency_key": "tok_20260729_000071"' in _submission_block(text)
         assert text.rstrip().endswith(
             "Submitting your turn consumes this token, so finish all reading and searching first."

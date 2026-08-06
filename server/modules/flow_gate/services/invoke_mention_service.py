@@ -90,7 +90,15 @@ def _chat_lookup_sections(
         # build_conversation_mention has no locale parameter of its own (chat mention
         # stays English-only by design — see its docstring); pin "en" explicitly rather
         # than falling through to the shared function's ko default.
-        section = mention_service._remote_source_crud_section(base, raw_token, "CH", "en")
+        #
+        # action_scope must be "chat" (0392 B0001/NR0003): the default "new" made this
+        # judge "read" while the real chat token's action_scope is "chat", which
+        # kind_for_step always demotes to "none" — the mention advertised tools the
+        # server would 403/401 on. Passing the real scope makes this section empty,
+        # matching what /help/tools actually grants a chat token.
+        section = mention_service._remote_source_crud_section(
+            base, raw_token, "CH", "en", action_scope="chat"
+        )
         if section:
             sections.append(section)
 
