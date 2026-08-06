@@ -38,6 +38,7 @@ from modules.flow_gate.documents import document_service
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.storage.paths import (
     get_storage_root,
@@ -1591,10 +1592,18 @@ def _tr_scope_meta(result: dict) -> dict:
 
 
 def _prior_tr_declared(group_id: str, exclude_doc_id: Optional[str] = None) -> list[str]:
-    """Return the union of paths already reported by earlier TRs in this group."""
+    """Return the union of paths already reported by earlier mutating-type docs in this group.
+
+    0390 TR0005 rev1: this used to hard-compare ``type_code == "TR"``, so a TS
+    document's own declared changed-files were invisible to every other document's
+    evaluate() call -- the same file could come back flagged "unconfirmed" for a
+    sibling TR/TS submission even though a TS already reported it. Widened to the
+    same tool_registry.MUTATING_STEP_TYPES membership used everywhere else in this
+    gate, so T/TR/TSR/TS all feed and read the same declared-paths pool.
+    """
     declared: set[str] = set()
     for document in db_docs.get_documents_by_group_id(group_id):
-        if str(document.get("type_code") or "").upper() != "TR":
+        if str(document.get("type_code") or "").upper() not in tool_registry.MUTATING_STEP_TYPES:
             continue
         if exclude_doc_id and document.get("doc_id") == exclude_doc_id:
             continue
@@ -2637,7 +2646,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 검증 자체가 실패하면(예상 못 한 예외) 통과시킨다 — 위반 탐지 기능이 정상적인
     # 제출을 500 으로 떨구는 것이 원래 사고보다 나쁘다.
     tr_scope_result: Optional[dict] = None
-    if doc_type.upper() == "TR":
+    if doc_type.upper() in tool_registry.MUTATING_STEP_TYPES:
         try:
             from modules.flow_gate import template_provision as _template_provision
 
@@ -3227,7 +3236,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 판정 시점이 다르므로 결과 기록도 다르다. edit 에는 이미 문서가 있으므로 통과·경고는
     # Step 7.1 에서 그 문서의 meta 에 갱신하고, 거부는 문서를 바꾸지 않은 채 반환한다.
     edit_tr_scope: Optional[dict] = None
-    if str(existing_doc.get("type_code") or "").upper() == "TR":
+    if str(existing_doc.get("type_code") or "").upper() in tool_registry.MUTATING_STEP_TYPES:
         try:
             from modules.flow_gate import template_provision as _template_provision
 

@@ -1940,6 +1940,8 @@ export default {
       tr_scope_stage_observe: '観測段階',
       tr_scope_stage_warn: '警告段階',
       tr_scope_stage_enforce: '強制段階',
+      tr_scope_unevaluated: 'この文書は提出時に作業範囲検証を受けておらず、照合結果がありません。以下は本文に申告された変更ファイルです。',
+      tr_scope_unevaluated_no_section: 'この文書は提出時に作業範囲検証を受けておらず照合結果がなく、本文に変更ファイルの節もありません。次回の提出から検証結果がここに表示されます。',
       tr_scope_branch: '割り当てブランチ',
       tr_scope_reported: '申告したファイル',
       tr_scope_detected: '検出されたファイル',

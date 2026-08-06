@@ -641,6 +641,115 @@ class TestInboxNew:
         assert doc is not None, f"document {expected_canonical!r} is not present in the DB"
         assert doc["doc_id"] == expected_canonical
 
+    def test_tr_scope_gate_runs_for_ts_new_submission(self, seed_data, tmp_path):
+        """0390 R0001/TR0005: TS is now a MUTATING_STEP_TYPES member, so a new TS
+        submission must go through the same Step 5.7 작업범위 검증 gate as TR — a
+        rejecting verdict must 422 the submission before any doc_id is reserved."""
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.db.connection import get_store, now_iso
+
+        store = get_store()
+        store._execute(
+            "INSERT OR IGNORE INTO document_types "
+            "(project_id, type_code, type_name, series, is_system, is_active, sort_order, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [None, "TS", "Test Scenario", "work", 1, 1, 0, now_iso(), now_iso()],
+        )
+
+        raw, _ = self._make_token(tmp_path)
+
+        reject_verdict = {
+            "verdict": "reject",
+            "stage": "enforce",
+            "codes": ["TRV-003"],
+            "notice": "TR 작업범위 검증 반려 (test)",
+            "out_of_scope": [],
+            "unconfirmed": ["some/other/file.py"],
+            "unreported": [],
+            "branch": "main",
+        }
+
+        with patch(
+            "modules.flow_gate.rbac.permission_service.has_permission",
+            return_value=True,
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.tr_scope_service.evaluate",
+            return_value=reject_verdict,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/api/v1/inbox",
+                json={
+                    "project": "testprj",
+                    "module": "__ALL__",
+                    "group": "0001",
+                    "action": "new",
+                    "target_id": "R0001",
+                    "doc_type": "TS",
+                    "content": "# TS Doc\n\n## 테스트 케이스\n### TC-1: x\n- cmd: echo x\n",
+                },
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+        assert resp.status_code == 422
+        assert "doc_id" not in resp.json()
+
+    def test_tr_scope_gate_skipped_for_non_mutating_new_submission(self, seed_data, tmp_path):
+        """Non-mutating types (e.g. NR) must not even invoke tr_scope_service.evaluate —
+        the MUTATING_STEP_TYPES membership check must short-circuit before the call,
+        so a broadened gate can never start rejecting requirement/notice submissions."""
+        from modules.flow_gate.api import inbox_routes
+        from unittest.mock import MagicMock
+
+        raw, _ = self._make_token(tmp_path)
+        never_called = MagicMock(side_effect=AssertionError(
+            "tr_scope_service.evaluate must not be called for a non-mutating doc_type"
+        ))
+
+        with patch(
+            "modules.flow_gate.api.inbox_routes.get_storage_root",
+            return_value=tmp_path,
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.document_path",
+            return_value=tmp_path / "docs" / "NR7001_document.md",
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
+            return_value="NR7001",
+        ), patch(
+            "modules.flow_gate.rbac.permission_service.has_permission",
+            return_value=True,
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.tr_scope_service.evaluate",
+            new=never_called,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/api/v1/inbox",
+                json={
+                    "project": "testprj",
+                    "module": "__ALL__",
+                    "group": "0001",
+                    "action": "new",
+                    "target_id": "R0001",
+                    "doc_type": "NR",
+                    "content": "# NR Doc\n\nNo scope section at all.",
+                },
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+        assert resp.status_code == 201
+        assert never_called.call_count == 0
+
 
 # ── 4. Inbound edit ─────────────────────────────────────────────────────────
 
@@ -848,6 +957,76 @@ class TestInboxEdit:
                 headers={"Authorization": f"Bearer {raw}"},
             )
         assert resp.status_code == 409
+
+    def test_tr_scope_gate_runs_for_ts_edit_resubmission(self, seed_data, tmp_path):
+        """0390 R0001/TR0005: a rejected TS document's edit/resubmission path
+        (_handle_edit Step 5.7) must also run the 작업범위 검증 gate — this is the
+        bypass TR0005 §2 point 2 called out (B0106-style hole if only _handle_new
+        were widened)."""
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = "testprj-__ALL__-0001-TS0001"
+        stored = tmp_path / "docs_ts" / f"{doc_id}_document.md"
+        stored.parent.mkdir(parents=True, exist_ok=True)
+        stored.write_text("# Original TS Content")
+        db_docs.create({
+            "doc_id": doc_id,
+            "project_id": "testprj",
+            "type_code": "TS",
+            "seq": 1,
+            "title": doc_id,
+            "group_id": "testprj-__ALL__-0001",
+            "module": "__ALL__",
+            "owner_id": "usr_test_001",
+            "file_path": str(stored),
+            "revision_no": 0,
+        })
+
+        raw = self._make_edit_token(tmp_path, doc_id)
+
+        reject_verdict = {
+            "verdict": "reject",
+            "stage": "enforce",
+            "codes": ["TRV-003"],
+            "notice": "TR 작업범위 검증 반려 (test)",
+            "out_of_scope": [],
+            "unconfirmed": ["some/other/file.py"],
+            "unreported": [],
+            "branch": "main",
+        }
+
+        with patch(
+            "modules.flow_gate.rbac.permission_service.has_permission",
+            return_value=True,
+        ), patch(
+            "modules.flow_gate.api.inbox_routes.tr_scope_service.evaluate",
+            return_value=reject_verdict,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/api/v1/inbox",
+                json={
+                    "project": "testprj",
+                    "module": "__ALL__",
+                    "group": "0001",
+                    "action": "edit",
+                    "doc_id": doc_id,
+                    "edit_reason": "worker_self",
+                    "content": "# Revised TS Content\n\n## 테스트 케이스\n### TC-1: x\n- cmd: echo x\n",
+                },
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+        assert resp.status_code == 422
+        # Rejection must not have written the edit through.
+        assert stored.read_text() == "# Original TS Content"
+        assert db_docs.get_by_id(doc_id)["revision_no"] == 0
 
 
 # ── 5. Access another doc_id with a reissued Phase 3 token -> 403 ──────────

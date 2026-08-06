@@ -11,6 +11,10 @@ export interface TrScopePathSlice {
 
 export interface TrScopeVerdict {
   verdict: 'pass' | 'warn' | 'reject' | 'skipped' | string
+  // 0390 TR0005 rev2 — false 면 제출 시점에 검증이 돌지 않아 본문의 신고 목록만
+  // 있는 상태다(서버 tr_scope_service.unevaluated_verdict). 감지 목록이 아예
+  // 없으므로 화면은 "감지 0건"이 아니라 미검증 안내를 보여준다.
+  evaluated?: boolean
   stage?: 'observe' | 'warn' | 'enforce' | null
   codes?: string[]
   branch?: string | null

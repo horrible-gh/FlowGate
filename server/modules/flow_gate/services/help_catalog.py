@@ -900,12 +900,13 @@ def _content_submit(ctx: dict) -> dict:
             "title": "<Fill this in>",
             "content": "<Fill this in>",
         }
-        if str(doc_type).upper() == "TR":
+        if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES:
             body["content"] = "<Fill this in>\n\n" + tr_scope_service.tr_section_placeholder(ctx["locale"])
-            body["commit_message"] = (
-                "<Optional. English one-line commit subject summarizing this group's work, "
-                "e.g. fix(git): preserve finalized commit subject>"
-            )
+            if str(doc_type).upper() == "TR":
+                body["commit_message"] = (
+                    "<Optional. English one-line commit subject summarizing this group's work, "
+                    "e.g. fix(git): preserve finalized commit subject>"
+                )
 
     payload = {
         "action_scope": scope or "new",
@@ -920,7 +921,7 @@ def _content_submit(ctx: dict) -> dict:
         ),
         "dry_run": dry_run,
     }
-    if str(doc_type).upper() == "TR" and scope != "edit":
+    if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES and scope != "edit":
         payload["changed_files_required"] = True
     return payload
 

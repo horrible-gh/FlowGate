@@ -105,12 +105,13 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 @pytest.mark.parametrize("head_type,expected", [
     ("T", "read, grep, glob, stat, write, patch, remove"),
     ("TR", "read, grep, glob, stat, write, patch, remove"),
-    # TSR is the single widening in this whole change (D-2): the test-report step really
-    # does edit test code, and TR-1 already gave its token write scope.
+    # TSR: the test-report step really does edit test code, and TR-1 already gave its
+    # token write scope. TS (group 0390 R0001): the test-scenario step now writes too, so
+    # the bug a scenario surfaces gets fixed instead of just the test being rewritten.
     ("TSR", "read, grep, glob, stat, write, patch, remove"),
     ("NR", "read, grep, glob, stat"),
     ("D", "read, grep, glob, stat"),
-    ("TS", "read, grep, glob, stat"),
+    ("TS", "read, grep, glob, stat, write, patch, remove"),
 ])
 def test_tool_list_matches_the_step_type(head_type, expected):
     assert f"도구: {expected}" in _section(_build(head_type=head_type))
