@@ -41,6 +41,8 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
     # continuation params as None/False — the token stays a plain workflow_decide token.
     # group 0230 T0005: request_workflow_decision now also threads continuation_instruction_mode
     # (None for a non-continuous request → legacy auto_approved handling downstream).
+    # group 0393 T0005 §2-2: …and ai_run_id, so a workflow_decide worker driven by [AI 호출]
+    # owns the lease its own run took. None here because this request is not run-backed.
     issue.assert_called_once_with(
         project="flowgate",
         group_id="flowgate.default.0002",
@@ -50,6 +52,7 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
         continuation_target_seq=None,
         continuation_review_mode=False,
         continuation_instruction_mode=None,
+        ai_run_id=None,
     )
     assert result["action_scope"] == "workflow_decide"
     assert result["raw_token"] == "worker-token"

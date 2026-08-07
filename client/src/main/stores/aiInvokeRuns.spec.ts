@@ -382,6 +382,51 @@ describe('aiInvokeRuns store', () => {
     })
   })
 
+  // 0393 B0001 / T0005 §2-6: the server has shipped `stop_reason` on the finished payload
+  // since 0359, but the card never read it — so a stopped run showed a bare code, and
+  // B0001's three refused reviews showed nothing at all ("원인도 모르고").
+  it('carries the server stop reason onto a finished card', () => {
+    const groupId = 'flowgate.default.0393'
+    store.trackStarted({
+      run_id: 'aiv-0393', group_id: groupId, doc_ref: `${groupId}.0001-B`, mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'aiv-0393', group_id: groupId, end_reason: 'exited', outcome: 'none',
+      stop_code: 'group_lease_denied', resumable: false,
+      stop_reason: "The group gate refused this run's own worker (GROUP_AI_RUN_OWNER_MISMATCH) on POST /flowgate/api/v1/inbox, so nothing it submitted was registered. A human must clear this: the run is not resumable.",
+    })
+
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      phase: 'finished',
+      stopCode: 'group_lease_denied',
+      stopReason: "The group gate refused this run's own worker (GROUP_AI_RUN_OWNER_MISMATCH) on POST /flowgate/api/v1/inbox, so nothing it submitted was registered. A human must clear this: the run is not resumable.",
+    })
+  })
+
+  it('keeps the stop reason across a paused bootstrap', async () => {
+    const groupId = 'flowgate.default.0394'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [],
+        paused: [{
+          group_id: groupId,
+          doc_ref: `${groupId}.0001-B`,
+          paused_at: '2026-08-07T17:10:00+09:00',
+          stop_kind: 'system',
+          stop_code: 'no_output_exhausted',
+          stop_reason: '3 attempts on this hop ended without producing a document.',
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]?.stopReason).toBe(
+      '3 attempts on this hop ended without producing a document.',
+    )
+  })
+
   it('correlates registered and answered questions to the group card', () => {
     const groupId = 'flowgate.default.2010'
     const qDocId = `${groupId}.0005-Q`

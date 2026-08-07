@@ -107,6 +107,16 @@
               <span>{{ elapsedText(entry) }}</span>
             </template>
           </div>
+          <!-- 0393 B0001 / T0005 §2-6: a stop CODE on its own is a cipher to the person
+               reading the card — the whole complaint in the bug report was "원인도 모르고".
+               The sentence rides right under the outcome line for every ended card. -->
+          <div
+            v-if="stopReasonText(entry)"
+            class="aiv-mini__meta aiv-mini__stop-reason"
+            data-test="ai-miniplayer-stop-reason"
+          >
+            {{ stopReasonText(entry) }}
+          </div>
           <div v-if="isAwaitingQ(entry)" class="aiv-mini__meta aiv-mini__meta--q">
             {{ t('main.ai_miniplayer.awaiting_q_line') }}
           </div>
@@ -205,7 +215,7 @@ import {
   type AiInvokeRunEntry,
 } from '../stores/aiInvokeRuns'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { showToast } = useToast()
 const store = useAiInvokeRunsStore()
 const tabsStore = useTabsStore()
@@ -287,6 +297,16 @@ function modeLabel(entry: AiInvokeRunEntry): string {
   return entry.mode === 'continuous'
     ? t('main.ai_miniplayer.mode_continuous')
     : t('main.ai_miniplayer.mode_single')
+}
+
+// 0393 T0005 §2-6: prefer a translated sentence when this build knows the stop code, and
+// otherwise show the server's own English one — which is authored for exactly this slot
+// (ai_invoke_service._stop_reason_text) and is better than showing nothing.
+function stopReasonText(entry: AiInvokeRunEntry): string {
+  if (entry.phase === 'running' || entry.phase === 'pause_requested') return ''
+  const key = entry.stopCode ? `main.ai_miniplayer.stop_reason_${entry.stopCode}` : ''
+  if (key && te(key)) return t(key)
+  return entry.stopReason ?? ''
 }
 
 function outcomeLabel(entry: AiInvokeRunEntry): string {
@@ -739,6 +759,11 @@ watch(entries, list => {
   gap: 4px 12px;
   color: var(--text-m);
   font-size: .7rem;
+}
+
+.aiv-mini__stop-reason {
+  white-space: normal;
+  line-height: 1.45;
 }
 
 .aiv-mini__meta--q {

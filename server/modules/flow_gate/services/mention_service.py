@@ -649,6 +649,26 @@ _SUBMIT_BODY_POINTER_TEXT: dict[str, str] = {
     "en": "The request body format and an example are in the help item: GET {url}",
 }
 
+# 0393 T0005 §2-7: the review submission's file form. Kept to one sentence so the
+# "address + pointer" shape of the section (0372 set 3) is preserved.
+_REVIEW_FILE_SUBMIT_TEXT: dict[str, str] = {
+    "ko": (
+        "판정을 파일로 낼 수도 있습니다: 이 토큰의 스크래치 디렉터리 안에 "
+        "verdict/findings/comment 를 담은 JSON 파일을 만들고, content 대신 doc_path 에 "
+        "그 절대 경로를 보내십시오."
+    ),
+    "ja": (
+        "判定をファイルで提出することもできます: このトークンのスクラッチディレクトリ内に "
+        "verdict/findings/comment を含む JSON ファイルを作成し、content の代わりに doc_path に "
+        "その絶対パスを送ってください。"
+    ),
+    "en": (
+        "The verdict may also be submitted as a file: write a JSON file holding "
+        "verdict/findings/comment inside this token's scratch directory and send its "
+        "absolute path as doc_path instead of content."
+    ),
+}
+
 _CHANGED_FILES_REQUIRED_TEXT: dict[str, str] = {
     "ko": "제출 본문에는 변경 파일 절이 반드시 있어야 합니다 — 서식은 GET {url} 에 있습니다.",
     "ja": "提出本文には変更ファイル節が必須です — 書式は GET {url} にあります。",
@@ -1916,7 +1936,8 @@ def build_review_mention(
         f"Submit your review: POST {base}/inbox\n"
         f"Authorization: Bearer {raw_token}\n"
         "\n"
-        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
+        f"{_SUBMIT_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}\n"
+        f"{_REVIEW_FILE_SUBMIT_TEXT[loc]}"
     )
 
     # ── Section 6: scratch directory ─────────────────────────────────────────

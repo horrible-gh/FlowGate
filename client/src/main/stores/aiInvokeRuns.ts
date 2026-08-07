@@ -65,6 +65,11 @@ export interface AiInvokeRunEntry {
   pausedAt: string | null
   stopKind: 'user' | 'system' | null
   stopCode: string | null
+  // 0393 B0001 / T0005 §2-6: the server already computes one sentence per stop code
+  // (ai_invoke_service._stop_reason_text) and ships it on the finished payload. The card
+  // never read it, so a stopped run showed a bare code — or, for B0001's three dead
+  // reviews, nothing at all.
+  stopReason: string | null
   stopRunId: string | null
   stopLastMessageExcerpt: string | null
   finishedAtMs: number | null
@@ -200,6 +205,7 @@ function startedEntry(
     pausedAt: sameRun ? previous?.pausedAt ?? null : null,
     stopKind: sameRun ? previous?.stopKind ?? null : null,
     stopCode: sameRun ? previous?.stopCode ?? null : null,
+    stopReason: sameRun ? previous?.stopReason ?? null : null,
     stopRunId: sameRun ? previous?.stopRunId ?? null : null,
     stopLastMessageExcerpt: sameRun ? previous?.stopLastMessageExcerpt ?? null : null,
     finishedAtMs: null,
@@ -251,6 +257,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     pausedAt: nullableString(payload.paused_at),
     stopKind: payload.stop_kind === 'system' ? 'system' : 'user',
     stopCode: nullableString(payload.stop_code),
+    stopReason: nullableString(payload.stop_reason) ?? previous?.stopReason ?? null,
     stopRunId: nullableString(payload.stop_run_id),
     stopLastMessageExcerpt: nullableString(payload.stop_last_message_excerpt),
     finishedAtMs: null,
@@ -539,6 +546,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       pausedAt: userPaused ? new Date().toISOString() : base.pausedAt,
       stopKind: userPaused ? 'user' : base.stopKind,
       stopCode: nullableString(payload.stop_code) ?? base.stopCode,
+      stopReason: nullableString(payload.stop_reason) ?? base.stopReason,
       stopRunId: userPaused ? runId : base.stopRunId,
       stopLastMessageExcerpt: base.stopLastMessageExcerpt,
       finishedAtMs: userPaused || handoffPending ? null : Date.now(),

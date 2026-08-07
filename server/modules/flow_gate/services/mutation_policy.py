@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 from urllib.parse import unquote
 
+import anyio.to_thread
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -18,6 +20,8 @@ from modules.flow_gate.db import group_ai_leases as db_leases
 
 MutationResource = Literal["group", "project_substrate", "personal", "system"]
 MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -320,5 +324,58 @@ class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
                     f"{request.method.upper()} {request.url.path}",
                 )
             except MutationPolicyError as exc:
+                await _record_denied_mutation(exc, request, principal)
                 return mutation_error_response(exc)
         return await call_next(request)
+
+
+async def _record_denied_mutation(
+    exc: MutationPolicyError, request: Request, principal: Optional[MutationPrincipal] = None,
+) -> None:
+    """Leave the refusal on the AI run that owns the lease (0393 B0001 / T0005 §2-6).
+
+    Until now a denial was a bare 403/423 on the wire and nothing else: the run record kept
+    an empty error list and exit code 0, so the only account of B0001's three dead reviews
+    was a sentence each worker volunteered in its last message. The lease names the run, so
+    the run can be told.
+
+    Two hard constraints, both from T0005 §2-6:
+
+    * `dispatch` is async. Calling the DB/registry write inline would trip the event-loop
+      blocking guard (`test_event_loop_blocking_*`), and wrapping it in a helper does not
+      launder it — the work goes to a worker thread via `anyio.to_thread`.
+    * Observability must never break the gate. The import is deferred (mutation_policy is
+      imported by app startup, ai_invoke_service is not) and every failure is swallowed, so
+      the original 403/423 always reaches the caller.
+    """
+    run_id = exc.error.get("run_id")
+    if not run_id:
+        return
+    group_id = exc.error.get("group_id")
+    code = str(exc.error.get("code") or "")
+    operation = f"{request.method.upper()} {request.url.path}"
+    # WHOSE refusal this is decides where it lands. A worker turned away is the run failing
+    # (B0001) — that belongs in the run's own error list and ends the run. A person turned
+    # away is the lease doing its job while the AI works; filing that as the AI's error
+    # would put a row on nearly every run and would eventually relabel a healthy run as
+    # failed. Both are still recorded, in the two different places (T0005 §2-6).
+    by_worker = principal is not None and principal.kind == "worker"
+
+    def _mark() -> None:
+        from modules.flow_gate.services import ai_invoke_service
+
+        ai_invoke_service.mark_group_lease_denied(
+            group_id=str(group_id) if group_id else None,
+            run_id=str(run_id),
+            code=code,
+            operation=operation,
+            status_code=exc.status_code,
+            by_worker=by_worker,
+        )
+
+    try:
+        await anyio.to_thread.run_sync(_mark)
+    except Exception:
+        logger.warning(
+            "group lease denial record failed for run %s (ignored)", run_id, exc_info=True,
+        )

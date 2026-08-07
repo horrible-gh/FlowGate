@@ -587,6 +587,11 @@ def advance_workflow(
                 continuation_instruction_mode=instruction_mode,
                 locale=locale,
                 continuous=True,
+                # 0393 NR0003 §6: this early return threw away the ai_run_id the ordinary
+                # token_service.issue call further down already forwards, so an unmanned
+                # chain that reached a TSR head minted a run-less token and died the same
+                # self-lock way the review path did.
+                ai_run_id=ai_run_id,
             )
             return {
                 "doc_ref": issue["doc_ref"],
@@ -712,6 +717,10 @@ def request_review(
     api_base_url: str,
     ref_doc_ids: Optional[list] = None,
     locale: str = "ko",
+    # 0393 B0001: the AI run this review token belongs to. Without it the minted token
+    # cannot name its own run, and the group lease that run holds refuses every mutation
+    # the reviewing worker attempts — including the verdict submission itself.
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a review-request token + mention for an existing document.
 
@@ -745,6 +754,7 @@ def request_review(
         action_scope="review",
         doc_ref=doc_id,
         issued_to=issued_to,
+        ai_run_id=ai_run_id,
     )
     raw_token: str = issue_result["raw_token"]
     scratch_dir: str = issue_result["scratch_dir"]
@@ -784,6 +794,8 @@ def request_workflow_decision(
     continuous: bool = False,
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
+    # 0393 NR0003 §6 — same reason as request_review's parameter.
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a document-bound token and prompt for AI workflow decision.
 
@@ -819,6 +831,7 @@ def request_workflow_decision(
         continuation_target_seq=CONTINUATION_TO_END if continuous else None,
         continuation_review_mode=bool(continuous and continuation_review_mode),
         continuation_instruction_mode=instruction_mode if continuous else None,
+        ai_run_id=ai_run_id,
     )
     recent_before_seq = db_documents.get_group_max_seq(group_id) or doc.get("seq", 0)
     recent_docs = db_documents.fetch_recent_group_docs(
@@ -860,6 +873,8 @@ def request_sequence_edit(
     issued_to: str,
     api_base_url: str,
     locale: str = "ko",
+    # 0393 NR0003 §6 — same reason as request_review's parameter.
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a document-bound token + prompt for an AI worker to EDIT the pending sequence.
 
@@ -898,6 +913,7 @@ def request_sequence_edit(
         action_scope="workflow_sequence_edit",
         doc_ref=doc_id,
         issued_to=issued_to,
+        ai_run_id=ai_run_id,
     )
 
     items = db_wfseq.get_sequence_items(seq["id"])
