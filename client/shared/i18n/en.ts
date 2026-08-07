@@ -1109,6 +1109,7 @@ export default {
       provider: 'Provider: {name}',
       state_paused: 'Paused — ready to resume.',
       stop_origin_system: 'System stop from an earlier continuous chain',
+      stop_reason_group_lease_denied: 'The group lease check refused the worker belonging to this run (403), so nothing it submitted was registered. A human must clear this; the run cannot be resumed.',
       stop_origin_user: 'Pause requested by the user',
       pause_scheduled: 'Pause scheduled',
       awaiting_q_badge: 'Awaiting answer {count}',

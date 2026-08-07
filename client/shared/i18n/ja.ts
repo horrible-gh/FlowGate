@@ -1108,6 +1108,7 @@ export default {
       provider: '実行: {name}',
       state_paused: '停止中 — 再開できます。',
       stop_origin_system: '以前の連続チェーンによるシステム停止',
+      stop_reason_group_lease_denied: 'グループ占有権の照合でこの実行のワーカーが拒否され(403)、登録されたものは一つもありません。人による確認が必要で、再開はできません。',
       stop_origin_user: 'ユーザーが要求した停止',
       pause_scheduled: '停止予約済み',
       awaiting_q_badge: '質疑待ち {count}',

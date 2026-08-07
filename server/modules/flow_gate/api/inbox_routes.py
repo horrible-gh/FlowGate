@@ -1944,14 +1944,31 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     findings = body.get("findings", [])
     comment = body.get("comment")
 
+    # 0393 T0005 §2-7: a verdict may now arrive as a FILE. The overall comment is long
+    # Korean prose, and squeezing it through a command line is how it gets mangled into the
+    # ???? the encoding guard then rejects. Document registration has had `doc_path` since
+    # D020 §7-5; review is the last submission that did not.
+    #
+    # Deliberate scope note: only the doc_path × content pair is exclusive. Sending NEITHER
+    # stays legal and keeps meaning "the verdict is inline in this request" — that is the
+    # shape the [멘트 복사] review path uses, and T0005 §1 puts it out of bounds ("지금도
+    # 정상이므로 손대지 말 것"). A request with neither a source nor an inline verdict still
+    # fails, on the verdict check below.
+    review_doc_path: Optional[str] = body.get("doc_path")
+    review_content: Optional[str] = body.get("content")
+    if review_doc_path is not None and review_content is not None:
+        return _fail(400, "Exactly one of doc_path or content must be provided")
+    external_source = review_doc_path is not None or review_content is not None
+
     if not project:
         return _fail(400, "Required field missing: project")
     if not doc_id_raw:
         return _fail(400, "Required field missing: doc_id")
-    if verdict not in ("pass", "issues", "hold"):
-        return _fail(400, "verdict must be one of: pass, issues, hold")
-    if not isinstance(findings, list):
-        return _fail(400, "findings must be a list")
+    if not external_source:
+        if verdict not in ("pass", "issues", "hold"):
+            return _fail(400, "verdict must be one of: pass, issues, hold")
+        if not isinstance(findings, list):
+            return _fail(400, "findings must be a list")
     project = str(project)
     doc_id = str(doc_id_raw)
 
@@ -1971,6 +1988,44 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         return _fail(403, "Context binding mismatch. Use the correct token.")
     if token_rec.get("doc_ref") not in (None, "", doc_id):
         return _fail(403, "Context binding mismatch. Use the correct token.")
+
+    # ── Step 3.5: load the verdict from its file / inline blob (0393 T0005 §2-7) ──
+    # Same three failure messages as _handle_new/_handle_edit, and the same two reusable
+    # pieces (validate_doc_path + _submission_text) — a second implementation of "is this
+    # path inside the scratch dir" is exactly how one of them drifts open.
+    if external_source:
+        if review_doc_path is not None:
+            scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(
+                token_rec["project"], token_rec["token_id"]
+            )
+            if not validate_doc_path(review_doc_path, scratch_dir):
+                return _fail(422, f"doc_path is not accessible: {review_doc_path}")
+            if not os.path.isfile(review_doc_path):
+                return _fail(422, f"doc_path file does not exist: {review_doc_path}")
+        try:
+            raw_payload = _submission_text(review_doc_path, review_content)
+        except OSError as exc:
+            return _fail(422, f"doc_path is not readable: {review_doc_path} ({exc})")
+        try:
+            parsed_payload = json.loads(raw_payload or "")
+        except ValueError as exc:
+            return _fail(400, f"Review payload is not valid JSON: {exc}")
+        if not isinstance(parsed_payload, dict):
+            return _fail(400, "Review payload must be a JSON object")
+        # The file wins for the verdict itself; project/doc_id stay bound to what the
+        # request declared, because the token was already checked against those two.
+        merged = {k: v for k, v in body.items() if k not in ("doc_path", "content")}
+        merged.update(parsed_payload)
+        body = merged
+        verdict = body.get("verdict")
+        findings = body.get("findings")
+        comment = body.get("comment")
+        if findings is None:
+            findings = []
+        if verdict not in ("pass", "issues", "hold"):
+            return _fail(400, "verdict must be one of: pass, issues, hold")
+        if not isinstance(findings, list):
+            return _fail(400, "findings must be a list")
 
     actor_user_id: str = token_rec["issued_to"]
 

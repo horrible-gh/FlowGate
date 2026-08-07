@@ -278,6 +278,62 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
+  // 0393 B0001 / T0005 §2-6: "실패(작업 미반영)" with an empty error list was the entire
+  // account the reporter got. The card now carries a sentence, not just a code.
+  it('spells out why a run was stopped instead of leaving the card mute', async () => {
+    const groupId = 'flowgate.default.0393'
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'aiv-0393', group_id: groupId, doc_ref: `${groupId}.0001-B`, mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'aiv-0393', group_id: groupId, end_reason: 'exited', outcome: 'none',
+      stop_code: 'group_lease_denied',
+      stop_reason: "The group gate refused this run's own worker (GROUP_AI_RUN_OWNER_MISMATCH) on POST /flowgate/api/v1/inbox, so nothing it submitted was registered. A human must clear this: the run is not resumable.",
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const reason = wrapper.find('[data-test="ai-miniplayer-stop-reason"]')
+    expect(reason.exists()).toBe(true)
+    // This build knows the code, so the reader gets it in their own language.
+    expect(reason.text()).toBe(t('main.ai_miniplayer.stop_reason_group_lease_denied'))
+    wrapper.unmount()
+  })
+
+  it('falls back to the server sentence for a stop code it has no wording for', async () => {
+    const groupId = 'flowgate.default.0395'
+    const sentence = '3 attempts on this hop ended without producing a document.'
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'aiv-0395', group_id: groupId, doc_ref: `${groupId}.0001-R`, mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'aiv-0395', group_id: groupId, end_reason: 'exited', outcome: 'none',
+      stop_code: 'no_output_exhausted', stop_reason: sentence,
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('[data-test="ai-miniplayer-stop-reason"]').text()).toBe(sentence)
+    wrapper.unmount()
+  })
+
+  it('shows no stop line while the run is still going', async () => {
+    const groupId = 'flowgate.default.0396'
+    const wrapper = mountPlayer()
+    useAiInvokeRunsStore().trackStarted({
+      run_id: 'aiv-0396', group_id: groupId, doc_ref: `${groupId}.0001-R`, mode: 'continuous',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('[data-test="ai-miniplayer-stop-reason"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('highlights awaiting-answer cards with the Q badge', async () => {
     const wrapper = mountPlayer()
     const store = useAiInvokeRunsStore()

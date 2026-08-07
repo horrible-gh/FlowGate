@@ -416,6 +416,9 @@ def issue_test_run_request(
     continuation_instruction_mode: Optional[str] = None,
     locale: Optional[str] = None,
     continuous: bool = False,
+    # 0393 NR0003 §6 — the AI run this token belongs to, so the group lease that run holds
+    # recognises the worker as its own owner.
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a test_run-scoped token + execution mention for an approved TS.
 
@@ -441,6 +444,7 @@ def issue_test_run_request(
         continuation_review_mode=bool(continuous and continuation_review_mode),
         continuation_instruction_mode=continuation_instruction_mode if continuous else None,
         continuation_locale=locale if continuous else None,
+        ai_run_id=ai_run_id,
     )
     mention = _build_test_run_mention(
         doc=doc,

@@ -2881,6 +2881,15 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         return "user_paused"
     if run.get("end_reason") == "all_providers_failed":
         return "providers_exhausted"
+    # 0393 B0001 / T0005 §2-6: the group gate refused this run's OWN worker, so nothing the
+    # worker submitted was ever registered. It outranks whatever the inbox tagged because
+    # the inbox never saw the request — the middleware turned it away first. Deliberately
+    # mode-independent: B0001's three dead reviews were mode="single", the exact shape that
+    # used to fall all the way through this function to `return None` (no code, no reason).
+    # Only claimed when the run produced nothing; a run that did land its documents and then
+    # tripped the gate on a stray call keeps its ordinary ending and the register_errors row.
+    if run.get("lease_denied_code") and int(run.get("docs_reached") or 0) == 0:
+        return "group_lease_denied"
     if run.get("inbox_stop_code"):
         return run["inbox_stop_code"]
     if respawn_pending:
@@ -2952,6 +2961,15 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
                 f"{run.get('inbox_stop_detail') or 'unknown error'}")
     if stop_code == "review_hold":
         return "Review mode: waiting for the human go."
+    if stop_code == "group_lease_denied":
+        # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
+        denied_op = run.get("lease_denied_operation") or "a group change"
+        denied_code = run.get("lease_denied_code") or "GROUP_AI_RUN_OWNER_MISMATCH"
+        return (
+            f"The group gate refused this run's own worker ({denied_code}) on {denied_op}, "
+            "so nothing it submitted was registered. A human must clear this: the run is "
+            "not resumable."
+        )
     return None
 
 
@@ -2984,6 +3002,57 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
         return False
     run["inbox_stop_code"] = stop_code
     run["inbox_stop_detail"] = detail
+    return True
+
+
+# Bounded so a worker that retries a refused call in a loop cannot grow the record without
+# limit; the first refusal is the informative one and it is never evicted.
+LEASE_DENIAL_RECORD_LIMIT = 10
+
+
+def mark_group_lease_denied(
+    *,
+    group_id: Optional[str],
+    run_id: str,
+    code: str,
+    operation: str,
+    status_code: int = 403,
+    by_worker: bool = True,
+) -> bool:
+    """Tell the lease-owning run that the group gate turned its own worker away (§2-6).
+
+    Called from `mutation_policy._record_denied_mutation`, off the event loop. Returns False
+    when the run is not in this process's registry (a chain resumed after a restart, or a
+    lease left behind by a run that already finished) — the caller treats that as a no-op.
+
+    Two things are written, because the incident report asked for both:
+      * `register_errors` — NR0003 §3 measured "오류 목록 빈 칸" on all three dead reviews.
+        The refusal belongs in the same list a failed inbox POST lands in.
+      * `lease_denied_*` — read by `_resolve_stop_code` / `_stop_reason_text` so the run
+        ends with the name `group_lease_denied` and a sentence, instead of exit code 0.
+    """
+    run = get_run_record(run_id) or (_active_run_for_group(group_id) if group_id else None)
+    if run is None:
+        return False
+    with _runs_lock:
+        if not by_worker:
+            # GROUP_AI_RUN_LOCKED — somebody ELSE was held off while this run worked. Worth
+            # having on the run (T0005 §2-6 names both codes), but it is not this run's
+            # error and must never end it.
+            others = run.setdefault("lease_blocked_others", [])
+            if len(others) < LEASE_DENIAL_RECORD_LIMIT:
+                others.append({"status": int(status_code), "code": code, "operation": operation})
+            return True
+        run.setdefault("register_errors", [])
+        if len(run["register_errors"]) < LEASE_DENIAL_RECORD_LIMIT:
+            run["register_errors"].append({
+                "status": int(status_code),
+                "reason": f"{code}: {operation}",
+                "turn": run.get("turn"),
+            })
+        run["lease_denied_code"] = code
+        run["lease_denied_operation"] = operation
+        run["lease_denied_count"] = int(run.get("lease_denied_count") or 0) + 1
     return True
 
 
@@ -3323,6 +3392,10 @@ def finished_payload(run: dict) -> dict:
         "stop_code": run.get("stop_code"),
         "stop_reason": run.get("stop_reason"),
         "resumable": bool(run.get("resumable")),
+        # 0393 T0005 §2-6: refusals this run's lease handed to OTHER actors. Live signal
+        # only (there is no column for it), but it is what tells a reader that the lease was
+        # actually in force while this run was going.
+        "lease_blocked_others": list(run.get("lease_blocked_others") or []),
         "hop_item_seq": run.get("hop_item_seq"),
         "token_id": run.get("token_id"),
         "attempts_used": int(run.get("attempts_used") or 0),

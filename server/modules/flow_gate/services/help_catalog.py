@@ -857,6 +857,16 @@ def _content_submit(ctx: dict) -> dict:
                 "body_chars": "<optional: character count of comment>",
                 "force_encoding_reason": "<optional: only if a genuinely-flagged comment must go through anyway>",
             },
+            # 0393 T0005 §2-7: a long Korean overall comment survives a file far better
+            # than a command line, so the verdict may travel the same way a document does.
+            "source_choice": (
+                "verdict/findings/comment may travel inline (as above) or in a file. For the "
+                "file form send `doc_path` instead — an absolute path inside this token's "
+                "scratch directory"
+                + (f" ({ctx['scratch_dir']})" if ctx.get("scratch_dir") else "")
+                + " holding a JSON object with those same keys. Sending both `doc_path` and "
+                "`content` is rejected."
+            ),
             "verdict_guide": {
                 "pass": "meets requirements, no blocking issues",
                 "issues": "defects found; list each one in findings (locus + note)",

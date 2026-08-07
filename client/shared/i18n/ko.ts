@@ -1108,6 +1108,7 @@ export default {
       provider: '실행: {name}',
       state_paused: '정지됨 — 재개할 수 있습니다.',
       stop_origin_system: '이전 연속 체인의 시스템 정지',
+      stop_reason_group_lease_denied: '그룹 점유권 대조에서 이 실행의 작업자가 거부되어(403) 등록된 것이 하나도 없습니다. 사람이 확인해야 하며 재개할 수 없습니다.',
       stop_origin_user: '사용자가 요청한 정지',
       pause_scheduled: '정지 예약됨',
       awaiting_q_badge: '질의 대기 {count}',

@@ -323,13 +323,20 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
 
     issue_builder = None
     if body.action_scope == "review":
-        def _issue_review():
+        # 0393 B0001 / NR0003 §4-2: the keyword MUST be declared here. _call_issue_builder
+        # inspects this signature and only hands the run id to a builder that names it, so a
+        # bare `def _issue_review():` minted a review token with ai_run_id NULL — and the
+        # reviewing worker was then refused by the very lease its own run had just taken
+        # (mutation_policy: GROUP_AI_RUN_OWNER_MISMATCH). `_issue_first_hop` below is the
+        # shape every issuer in this file has to keep.
+        def _issue_review(ai_run_id: Optional[str] = None):
             issued = workflow_decision_service.request_review(
                 doc_id=body.doc_ref,
                 issued_to=user_id,
                 api_base_url=_token_routes._build_api_base(request),
                 ref_doc_ids=None,
                 locale=locale,
+                ai_run_id=ai_run_id,
             )
             return {
                 "raw_token": issued["token"],
@@ -342,12 +349,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # 0268 B0001 (NR0003 결함 1): the invoke twin of WorkflowDecisionModal's [멘트 복사].
         # Same issuer as POST /workflow/sequence-edit-request, so the worker reads the exact
         # prompt the clipboard path produced — only the delivery differs.
-        def _issue_sequence_edit():
+        # 0393 NR0003 §6: same structural gap as review, simply never exercised since the
+        # lease landed. Declared here so it can never surface as its own bug report.
+        def _issue_sequence_edit(ai_run_id: Optional[str] = None):
             issued = workflow_decision_service.request_sequence_edit(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
                 api_base_url=_token_routes._build_api_base(request),
                 locale=locale,
+                ai_run_id=ai_run_id,
             )
             return {
                 "raw_token": issued["raw_token"],
@@ -360,7 +370,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # 0268 B0001 (NR0003 결함 2): the invoke twin of TestRunStrip's delegation copy.
         # issue_test_run_request returns the raw token under "token" (not "raw_token"),
         # so it is remapped here to the issue_builder contract start_run expects.
-        def _issue_test_run():
+        # 0393 NR0003 §6.
+        def _issue_test_run(ai_run_id: Optional[str] = None):
             from modules.flow_gate.services import test_run_service
 
             issued = test_run_service.issue_test_run_request(
@@ -368,6 +379,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 issued_to=user_id,
                 api_base_url=_token_routes._build_api_base(request),
                 locale=locale,
+                ai_run_id=ai_run_id,
             )
             return {
                 "raw_token": issued["token"],
@@ -377,7 +389,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_test_run
     if body.action_scope == "workflow_decide":
-        def _issue_workflow_decision():
+        # 0393 NR0003 §6.
+        def _issue_workflow_decision(ai_run_id: Optional[str] = None):
             return workflow_decision_service.request_workflow_decision(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
@@ -386,6 +399,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 continuous=is_continuous,
                 continuation_review_mode=body.continuation_review_mode,
                 continuation_instruction_mode=body.continuation_instruction_mode,
+                ai_run_id=ai_run_id,
             )
         issue_builder = _issue_workflow_decision
     elif is_continuous and body.action_scope == "new" and not body.continuation_review_mode:
