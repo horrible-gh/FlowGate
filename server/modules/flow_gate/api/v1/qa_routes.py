@@ -187,7 +187,7 @@ def post_answer(
     ment_text: Optional[str] = None
 
     ai_run_id: Optional[str] = None
-    if body.dispatch_mode in ("command", "ment_copy", "ai"):
+    if body.dispatch_mode in ("command", "ment_copy"):
         try:
             token_result = qa_service.issue_followup_token(
                 q_doc=q_doc,
@@ -211,7 +211,7 @@ def post_answer(
                 scratch_dir=scratch_dir,
             )
         else:
-            # ment_copy / ai: Build ment body (per M020)
+            # ment_copy: Build ment body (per M020).
             base = str(request.base_url).rstrip("/")
             context = settings.CONTEXT.rstrip("/")
             api_base_url = f"{base}{context}/api/v1"
@@ -224,95 +224,121 @@ def post_answer(
                 raw_token=raw_token,
             )
 
-        if body.dispatch_mode == "ai":
-            # In-app invoke (group 0223): feed the run the SAME ment_copy text a human
-            # would have pasted, through the already-issued follow-up token. On this
-            # branch the raw token stays server-side (P0005 표기 규칙).
-            from modules.flow_gate.services import ai_invoke_service
+    if body.dispatch_mode == "ai":
+        # The token is issued by start_run's builder so it can be bound to the new run,
+        # and remains server-side under the P0005 display rule.
+        from modules.flow_gate.services import ai_invoke_service
 
-            # Auto-resume (group 0252 L0009 §2.5 / P0008 S7): when the group holds a
-            # user-paused CONTINUOUS chain, the in-app answer resumes that chain instead
-            # of the single follow-up run. A resume conflict never fails the answer —
-            # the A document is already registered — it returns ok with resume_code and
-            # no re-run (답변 유실 금지, and no silent fallback to a single run either).
-            from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-            paused_row = None
-            try:
-                paused_row = db_paused.get_by_group(q_doc["group_id"])
-            except Exception:
-                import LogAssist.log as logger
-                logger.warning("[qa answer] paused-chain probe failed (ignored)")
-            if paused_row is not None and (paused_row.get("mode") or "continuous") == "continuous":
-                resume_code: Optional[str] = None
-                try:
-                    resumed = ai_invoke_service.resume_chain(
-                        group_id=q_doc["group_id"],
-                        user_id=actor_user_id,
-                        api_base_url=api_base_url,
-                        locale=request.headers.get("x-locale") or "ko",
-                    )
-                    ai_run_id = resumed.get("run_id")
-                except HTTPException as exc:
-                    detail = exc.detail if isinstance(exc.detail, dict) else {}
-                    resume_code = str(detail.get("code") or "resume_failed")
-                # The follow-up token minted above is not used on this path; retire it
-                # so no live single-run credential lingers behind the resumed chain.
-                try:
-                    from modules.flow_gate.services import token_service
-                    token_service.revoke(token_id, reason="qa_auto_resume")
-                except Exception:
-                    import LogAssist.log as logger
-                    logger.warning("[qa answer] follow-up token revoke failed (ignored)")
-                raw_token = None
-                ment_text = None
-                resp_extra: dict = {"ai_run_mode": "continuous" if ai_run_id else None}
-                if resume_code is not None:
-                    resp_extra["resume_code"] = resume_code
-                resp = {
-                    "ok": True,
-                    "a_doc_id": a_doc_id,
-                    "stored_path": stored_path,
-                    "raw_token": raw_token,
-                    "token_id": token_id,
-                    "scratch_dir": scratch_dir,
-                    "expires_at": expires_at,
-                    "dispatch_mode": body.dispatch_mode,
-                    **resp_extra,
-                }
-                if ai_run_id is not None:
-                    resp["ai_run_id"] = ai_run_id
-                return JSONResponse(content=resp)
+        base = str(request.base_url).rstrip("/")
+        context = settings.CONTEXT.rstrip("/")
+        api_base_url = f"{base}{context}/api/v1"
 
+        # Probe for a paused continuous chain before issuing a single-run token.
+        # A resume conflict never fails the already-registered answer.
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+        paused_row = None
+        try:
+            paused_row = db_paused.get_by_group(q_doc["group_id"])
+        except Exception:
+            import LogAssist.log as logger
+            logger.warning("[qa answer] paused-chain probe failed (ignored)")
+        if paused_row is not None and (paused_row.get("mode") or "continuous") == "continuous":
+            resume_code: Optional[str] = None
             try:
-                ai_run = ai_invoke_service.start_run(
-                    project_id=project_id,
-                    module=None,
+                resumed = ai_invoke_service.resume_chain(
                     group_id=q_doc["group_id"],
-                    doc_ref=q_id,
-                    action_scope="edit",
-                    mode="single",
-                    continuation_target_seq=None,
-                    continuation_review_mode=False,
-                    continuation_locale=None,
-                    issued_to=actor_user_id,
+                    user_id=actor_user_id,
                     api_base_url=api_base_url,
-                    mention_builder=lambda _raw, _scratch: ment_text,
-                    issue_builder=lambda: {
-                        "raw_token": raw_token,
-                        "token_id": token_id,
-                        "scratch_dir": scratch_dir,
-                        "mention": ment_text,
-                    },
+                    locale=request.headers.get("x-locale") or "ko",
                 )
+                ai_run_id = resumed.get("run_id")
             except HTTPException as exc:
-                detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
-                return JSONResponse(status_code=exc.status_code, content={
-                    "ok": False, "a_doc_id": a_doc_id, "stored_path": stored_path,
-                    "dispatch_mode": body.dispatch_mode, **detail,
-                })
-            ai_run_id = ai_run.get("run_id")
-            raw_token = None
-            ment_text = None
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                resume_code = str(detail.get("code") or "resume_failed")
+            resp_extra: dict = {"ai_run_mode": "continuous" if ai_run_id else None}
+            if resume_code is not None:
+                resp_extra["resume_code"] = resume_code
+            resp = {
+                "ok": True,
+                "a_doc_id": a_doc_id,
+                "stored_path": stored_path,
+                "raw_token": None,
+                "token_id": None,
+                "scratch_dir": None,
+                "expires_at": None,
+                "dispatch_mode": body.dispatch_mode,
+                **resp_extra,
+            }
+            if ai_run_id is not None:
+                resp["ai_run_id"] = ai_run_id
+            return JSONResponse(content=resp)
+
+        issued_holder: dict = {}
+
+        # Declaring ai_run_id is required: group 0378 made _call_issue_builder inspect
+        # this signature. Without it the token has no run owner and this worker is
+        # rejected by its own lease with 403 GROUP_AI_RUN_OWNER_MISMATCH, exactly as in
+        # q_answer_invoke_service.dispatch_answer_run.
+        def _issue(ai_run_id: Optional[str] = None) -> dict:
+            token_result = qa_service.issue_followup_token(
+                q_doc=q_doc,
+                a_doc_id=a_doc_id,
+                actor_user_id=actor_user_id,
+                dispatch_mode=body.dispatch_mode,
+                ai_run_id=ai_run_id,
+            )
+            issued_holder.update(token_result)
+            mention = qa_service.build_ment_text(
+                q_doc_id=q_id,
+                a_doc_id=a_doc_id,
+                scratch_dir=token_result["scratch_dir"],
+                prev_doc_id=q_doc.get("triggered_by"),
+                api_base_url=api_base_url,
+                raw_token=token_result["raw_token"],
+            )
+            return {
+                "raw_token": token_result["raw_token"],
+                "token_id": token_result["token_id"],
+                "scratch_dir": token_result["scratch_dir"],
+                "mention": mention,
+            }
+
+        try:
+            ai_run = ai_invoke_service.start_run(
+                project_id=project_id,
+                module=None,
+                group_id=q_doc["group_id"],
+                doc_ref=q_id,
+                action_scope="edit",
+                mode="single",
+                continuation_target_seq=None,
+                continuation_review_mode=False,
+                continuation_instruction_mode=None,
+                continuation_locale=None,
+                issued_to=actor_user_id,
+                api_base_url=api_base_url,
+                mention_builder=lambda raw, scratch: qa_service.build_ment_text(
+                    q_doc_id=q_id,
+                    a_doc_id=a_doc_id,
+                    scratch_dir=scratch,
+                    prev_doc_id=q_doc.get("triggered_by"),
+                    api_base_url=api_base_url,
+                    raw_token=raw,
+                ),
+                issue_builder=_issue,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            return JSONResponse(status_code=exc.status_code, content={
+                "ok": False, "a_doc_id": a_doc_id, "stored_path": stored_path,
+                "dispatch_mode": body.dispatch_mode, **detail,
+            })
+        ai_run_id = ai_run.get("run_id")
+        token_id = issued_holder.get("token_id")
+        scratch_dir = issued_holder.get("scratch_dir")
+        expires_at = issued_holder.get("expires_at")
+        raw_token = None
+        ment_text = None
 
     # ── Step 9: Return response ────────────────────────────────────────────────────
     resp: dict = {

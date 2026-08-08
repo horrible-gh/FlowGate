@@ -179,6 +179,7 @@ def issue_followup_token(
     a_doc_id: str,
     actor_user_id: str,
     dispatch_mode: str,
+    ai_run_id: Optional[str] = None,
 ) -> dict:
     """Issue a new token after A registration (D022 §4-3-4).
 
@@ -199,6 +200,7 @@ def issue_followup_token(
         action_scope="edit",
         doc_ref=prev_doc_id,
         issued_to=actor_user_id,
+        ai_run_id=ai_run_id,
     )
 
     # workflow_events: qna_token_reissued
