@@ -2303,6 +2303,9 @@ def _continuation_self_chain(
 
     review_mode = bool(token_rec.get("continuation_review_mode"))
     instruction_mode = token_rec.get("continuation_instruction_mode")
+    # 0352 T0004 §3.4: db/tokens.py decodes this back to a list on every read, so the
+    # consumed token record already carries a plain list (possibly empty) here.
+    auto_approve_item_seqs = token_rec.get("continuation_auto_approve_item_seqs") or []
     spine_doc_ref = token_rec.get("doc_ref")
     actor_user_id = token_rec["issued_to"]
     chain_group = token_rec.get("group_id")
@@ -2312,6 +2315,7 @@ def _continuation_self_chain(
         "continuation_review_mode": review_mode,
         "continuation_target_seq": target_seq,
         "continuation_instruction_mode": instruction_mode or "auto_approved",
+        "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
     }
 
     def _stop(stop_code: str, *, detail: Optional[str] = None,
@@ -2496,6 +2500,9 @@ def _continuation_self_chain(
             "target_seq": target_seq,
             "review_mode": review_mode,
             "instruction_mode": instruction_mode,
+            # 0352 T0004 §3.4/§3.5: carry the selection forward the same way instruction_mode
+            # already does, so a re-spawned hop (_spawn_auto_resume) re-applies it.
+            "auto_approve_item_seqs": auto_approve_item_seqs,
             "locale": (
                 token_rec.get("continuation_locale")
                 or request.headers.get("x-locale")
@@ -2580,6 +2587,7 @@ def _continuation_self_chain(
             continuation_target_seq=target_seq,
             continuation_review_mode=review_mode,
             continuation_instruction_mode=instruction_mode,
+            continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         )
     except (LookupError, ValueError) as exc:
         envelope["continuation_paused"] = True

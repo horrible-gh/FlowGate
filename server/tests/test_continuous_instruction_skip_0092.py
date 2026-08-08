@@ -227,6 +227,212 @@ def test_advance_continuous_ai_direct_mints_instruction(monkeypatch):
     assert result["continuation_instruction_mode"] == "ai_direct"
 
 
+# ── (0352 T0004 §2) per-item_seq N/T auto-approve selection within ai_direct ──────────
+
+def test_advance_continuous_ai_direct_auto_approves_selected_item_seq(monkeypatch):
+    # §4 완료기준 1: ai_direct + T at item_seq 1 and 3, selecting {3} auto-completes ONLY
+    # item_seq 3 server-side; item_seq 1 (not selected) still mints a worker token.
+    _patch_perms(monkeypatch)
+    doc = {"doc_id": "flowgate.default.0353.0001-R", "group_id": "flowgate.default.0353",
+           "project_id": "flowgate", "type_code": "R", "seq": 1}
+    _wire_advance_min(monkeypatch, doc)
+
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("T", 3))
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [{"item_seq": 3, "type": "T", "status": "pending"}],
+    )
+    created = []
+    monkeypatch.setattr(docs_mod, "create_next_approved_core",
+                        lambda **k: created.append(k["type_code"]) or {"doc_id": "x"})
+    mention_kw = {}
+    issue_kw = {}
+    monkeypatch.setattr(
+        svc.token_service, "issue",
+        lambda **k: issue_kw.update(k) or {"raw_token": "RAW", "scratch_dir": "/tmp/s",
+                                           "token_id": "tok", "expires_at": "2026-06-20"},
+    )
+    monkeypatch.setattr(svc.mention_service, "build_mention_from_token_rec",
+                        lambda **k: mention_kw.update(k) or "M")
+
+    result = svc.advance_workflow(
+        doc_id="flowgate.default.0353.0001-R", issued_to="pm-1",
+        api_base_url="http://h/flow_gate/api/v1",
+        continuous=True, continuation_target_seq=6,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[3],
+    )
+    # item_seq 3 (T) matched the selection → auto-completed server-side, same as auto_approved.
+    assert created == ["T"]
+    assert issue_kw["continuation_auto_approve_item_seqs"] == [3]
+    assert result["continuation_auto_approve_item_seqs"] == [3]
+
+
+def test_advance_continuous_ai_direct_leaves_unselected_item_seq_to_worker(monkeypatch):
+    # §4 완료기준 1 (converse): T at item_seq 1 is NOT in the selection {3} → the worker
+    # token is minted for it, exactly like plain (no-selection) ai_direct.
+    _patch_perms(monkeypatch)
+    doc = {"doc_id": "flowgate.default.0353.0001-R", "group_id": "flowgate.default.0353",
+           "project_id": "flowgate", "type_code": "R", "seq": 1}
+    _wire_advance_min(monkeypatch, doc)
+
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: _head("T", 1))
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [
+            {"item_seq": 1, "type": "T", "status": "pending"},
+            {"item_seq": 3, "type": "T", "status": "pending"},
+        ],
+    )
+    calls = []
+    monkeypatch.setattr(docs_mod, "create_next_approved_core",
+                        lambda **k: calls.append(k) or {"doc_id": "x"})
+    mention_kw = {}
+    monkeypatch.setattr(svc.mention_service, "build_mention_from_token_rec",
+                        lambda **k: mention_kw.update(k) or "M")
+
+    result = svc.advance_workflow(
+        doc_id="flowgate.default.0353.0001-R", issued_to="pm-1",
+        api_base_url="http://h/flow_gate/api/v1",
+        continuous=True, continuation_target_seq=6,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[3],
+    )
+    assert calls == []  # item_seq 1 is not selected → not auto-completed
+    assert mention_kw["head_type"] == "T"
+    assert result["token"] == "RAW" if "token" in result else True
+
+
+# ── (0352 T0004 §2) normalize / validate / is_auto_handled_step (pure functions) ──────
+
+def test_normalize_auto_approve_item_seqs_dedupes_sorts_and_empties():
+    assert svc.normalize_continuation_auto_approve_item_seqs(None) == []
+    assert svc.normalize_continuation_auto_approve_item_seqs([]) == []
+    assert svc.normalize_continuation_auto_approve_item_seqs([7, 3, 3, 1]) == [1, 3, 7]
+
+
+def test_normalize_auto_approve_item_seqs_rejects_non_positive_and_non_int():
+    import pytest
+    with pytest.raises(ValueError):
+        svc.normalize_continuation_auto_approve_item_seqs([0])
+    with pytest.raises(ValueError):
+        svc.normalize_continuation_auto_approve_item_seqs([-1])
+    with pytest.raises(ValueError):
+        svc.normalize_continuation_auto_approve_item_seqs(["3"])
+    with pytest.raises(ValueError):
+        svc.normalize_continuation_auto_approve_item_seqs([True])
+
+
+def test_is_auto_handled_step_formula():
+    # eligible = type in {N,T}; auto = eligible and (auto_approved OR (ai_direct and selected))
+    assert svc.is_auto_handled_step(
+        head_type="T", item_seq=3, instruction_mode="auto_approved",
+    ) is True
+    assert svc.is_auto_handled_step(
+        head_type="T", item_seq=3, instruction_mode="ai_direct",
+        auto_approve_item_seqs=[3],
+    ) is True
+    assert svc.is_auto_handled_step(
+        head_type="T", item_seq=1, instruction_mode="ai_direct",
+        auto_approve_item_seqs=[3],
+    ) is False
+    # TS is never eligible, in either mode, selected or not (group 0121 R0001).
+    assert svc.is_auto_handled_step(
+        head_type="TS", item_seq=3, instruction_mode="ai_direct",
+        auto_approve_item_seqs=[3],
+    ) is False
+    assert svc.is_auto_handled_step(
+        head_type="TS", item_seq=3, instruction_mode="auto_approved",
+    ) is False
+    # A report/other type is never eligible.
+    assert svc.is_auto_handled_step(
+        head_type="TR", item_seq=4, instruction_mode="auto_approved",
+    ) is False
+
+
+def test_validate_auto_approve_item_seqs_rejects_ineligible_type(monkeypatch):
+    import pytest
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [
+            {"item_seq": 1, "type": "N", "status": "pending"},
+            {"item_seq": 2, "type": "NR", "status": "pending"},
+        ],
+    )
+    # §4 완료기준 8: a non-N/T item_seq (here NR) is rejected.
+    with pytest.raises(ValueError, match="ineligible_auto_approve_item_seq"):
+        svc.validate_continuation_auto_approve_item_seqs([2], "r-doc", target_seq=6)
+
+
+def test_validate_auto_approve_item_seqs_rejects_beyond_target(monkeypatch):
+    import pytest
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [
+            {"item_seq": 1, "type": "N", "status": "pending"},
+            {"item_seq": 3, "type": "T", "status": "pending"},
+        ],
+    )
+    # §4 완료기준 8: target range 밖 item_seq is rejected.
+    with pytest.raises(ValueError, match="out_of_range_auto_approve_item_seq"):
+        svc.validate_continuation_auto_approve_item_seqs([3], "r-doc", target_seq=2)
+
+
+def test_validate_auto_approve_item_seqs_rejects_ts_type(monkeypatch):
+    import pytest
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [{"item_seq": 5, "type": "TS", "status": "pending"}],
+    )
+    # §2: TS is never a selectable target — group 0121 R0001 excludes it from
+    # INSTRUCTION_AUTO_TYPES entirely, so it fails the same "ineligible type" check.
+    with pytest.raises(ValueError, match="ineligible_auto_approve_item_seq"):
+        svc.validate_continuation_auto_approve_item_seqs([5], "r-doc", target_seq=6)
+
+
+def test_validate_auto_approve_item_seqs_rejects_unknown_item_seq(monkeypatch):
+    import pytest
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda _sid: [])
+    with pytest.raises(ValueError, match="unknown_auto_approve_item_seq"):
+        svc.validate_continuation_auto_approve_item_seqs([9], "r-doc", target_seq=9)
+
+
+def test_validate_auto_approve_item_seqs_rejects_already_done_at_front_door(monkeypatch):
+    import pytest
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [{"item_seq": 1, "type": "T", "status": "done"}],
+    )
+    # §2: 이미 끝난(승인 완료) 단계의 item_seq는 422 — the default (reject_already_done=True)
+    # front-door validation catches this.
+    with pytest.raises(ValueError, match="already_done_auto_approve_item_seq"):
+        svc.validate_continuation_auto_approve_item_seqs([1], "r-doc", target_seq=6)
+
+
+def test_validate_auto_approve_item_seqs_internal_reuse_allows_already_done(monkeypatch):
+    # advance_workflow's own internal reuse across an ongoing chain must NOT re-reject an
+    # item_seq that the server itself already completed earlier in the same run — otherwise
+    # the chain would 422 itself to death on the very next hop after an auto-approved step.
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [{"item_seq": 1, "type": "T", "status": "done"}],
+    )
+    svc.validate_continuation_auto_approve_item_seqs(
+        [1], "r-doc", target_seq=6, reject_already_done=False,
+    )  # must not raise
+
+
+def test_validate_auto_approve_item_seqs_empty_selection_is_always_a_noop():
+    # No DB lookup at all when the selection is empty — "no selection" never validates.
+    svc.validate_continuation_auto_approve_item_seqs([], "r-doc", target_seq=6)
+
+
 def test_advance_continuous_issues_worker_token_for_TS(monkeypatch):
     # group 0121 R0001: with TS removed from INSTRUCTION_AUTO_TYPES, a TS head is NOT
     # auto-completed — advance_workflow mints a worker token+mention for TS itself so the AI

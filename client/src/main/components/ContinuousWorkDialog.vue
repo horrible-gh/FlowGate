@@ -24,7 +24,11 @@
               :active="visible"
               :step-tag="stepProviderTag"
               :auto-handled-types="autoHandledTypes"
+              :auto-handled-item-seqs="autoApproveItemSeqs"
+              :auto-approve-candidate-types="autoApproveCandidateTypes"
+              :auto-approve-selected="autoApproveItemSeqs"
               @change="onPickerChange"
+              @toggle-auto-approve="onToggleAutoApprove"
             />
           </div>
 
@@ -237,6 +241,10 @@ const emit = defineEmits<{
     // steps the user singled out. Session-scoped, same as providerOverrides above.
     defaultMessage: string
     messageOverrides: Record<number, string>
+    // 0352 T0004 §2/§3.7: ai_direct-only — item_seqs of individual N/T steps the user picked
+    // for the SERVER to still auto-generate + auto-approve (like auto_approved does for that
+    // one step). Always [] outside ai_direct.
+    autoApproveItemSeqs: number[]
   }]
 }>()
 
@@ -263,6 +271,10 @@ const overrides = ref<Record<number, string>>({})
 // 밀어내지 않는다).
 const defaultMessage = ref('')
 const messageOverrides = ref<Record<number, string>>({})
+// 0352 T0004 §2/§3.7: ai_direct-only per-item_seq server-auto-approve selection. A checked
+// N/T step is server-generated + auto-approved exactly like auto_approved handles it, without
+// switching the whole chain out of ai_direct.
+const autoApproveItemSeqs = ref<number[]>([])
 
 // 0337 R0001 -----------------------------------------------------------------------------
 // A document step and an AI-execution step are not the same thing, and only the latter can
@@ -278,9 +290,21 @@ const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T']
 const autoHandledTypes = computed(
   () => (instructionMode.value === 'auto_approved' ? AUTO_APPROVED_INSTRUCTION_TYPES : []),
 )
+// 0352 T0004 §3.7: the checkbox itself only ever appears for N/T under ai_direct — under
+// auto_approved every N/T is already forced out via autoHandledTypes, so there is nothing
+// left to individually pick.
+const autoApproveCandidateTypes = computed(
+  () => (instructionMode.value === 'ai_direct' ? AUTO_APPROVED_INSTRUCTION_TYPES : []),
+)
 
 /** Not-yet-done steps, i.e. everything the picker still offers. */
 const runnableSteps = computed(() => (picker.value.steps ?? []).filter(s => s.status !== 'done'))
+
+// 0352 T0004 §2: the per-item_seq selection is only meaningful under ai_direct; switching
+// modes clears it (mirrors the picker's own autoHandledTypes/autoHandledItemSeqs split).
+const autoApproveItemSeqSet = computed(
+  () => (instructionMode.value === 'ai_direct' ? new Set(autoApproveItemSeqs.value) : new Set<number>()),
+)
 
 /** The steps an AI worker actually performs in THIS run — the provider table's rows. */
 const executionSteps = computed<WorkflowStepItem[]>(() => {
@@ -288,7 +312,9 @@ const executionSteps = computed<WorkflowStepItem[]>(() => {
   if (!sel || sel.fromDecision) return []
   const autoHandled = new Set(autoHandledTypes.value)
   return runnableSteps.value.filter(
-    s => s.item_seq <= sel.targetSeq && !autoHandled.has(String(s.type ?? '').toUpperCase()),
+    s => s.item_seq <= sel.targetSeq
+      && !autoHandled.has(String(s.type ?? '').toUpperCase())
+      && !autoApproveItemSeqSet.value.has(s.item_seq),
   )
 })
 
@@ -298,7 +324,9 @@ const excludedNote = computed(() => {
   if (!sel || sel.fromDecision) return ''
   const autoHandled = new Set(autoHandledTypes.value)
   const inRange = runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
-  const autoCount = inRange.filter(s => autoHandled.has(String(s.type ?? '').toUpperCase())).length
+  const autoCount = inRange.filter(
+    s => autoHandled.has(String(s.type ?? '').toUpperCase()) || autoApproveItemSeqSet.value.has(s.item_seq),
+  ).length
   const beyondCount = runnableSteps.value.length - inRange.length
   if (autoCount > 0 && beyondCount > 0) {
     return t('main.continuous_work.provider_scope_note_both', { auto: autoCount, beyond: beyondCount })
@@ -307,6 +335,13 @@ const excludedNote = computed(() => {
   if (beyondCount > 0) return t('main.continuous_work.provider_scope_note_beyond', { beyond: beyondCount })
   return ''
 })
+
+function onToggleAutoApprove(itemSeq: number, checked: boolean) {
+  const next = new Set(autoApproveItemSeqs.value)
+  if (checked) next.add(itemSeq)
+  else next.delete(itemSeq)
+  autoApproveItemSeqs.value = [...next].sort((a, b) => a - b)
+}
 
 // 0317 T0015: each step's select is pre-selected to the header default provider rather than a
 // blank "use default" option. `overrides` still stores ONLY genuine per-step overrides (a step
@@ -388,6 +423,28 @@ watch(executionSteps, (steps) => {
   }
 })
 
+// 0352 T0004 §3.7: the N/T item_seqs still eligible for the auto-approve checkbox — ai_direct
+// only, within the chosen target. Shrinking the target, switching back to auto_approved, or a
+// step no longer being N/T (sequence reload) must all drop the stale selection the same way
+// the provider/message overrides above do.
+const inRangeAutoApproveCandidates = computed<Set<number>>(() => {
+  const sel = picker.value.selection
+  if (!sel || sel.fromDecision || instructionMode.value !== 'ai_direct') return new Set()
+  const candidateTypes = new Set(AUTO_APPROVED_INSTRUCTION_TYPES)
+  return new Set(
+    runnableSteps.value
+      .filter(s => s.item_seq <= sel.targetSeq && candidateTypes.has(String(s.type ?? '').toUpperCase()))
+      .map(s => s.item_seq),
+  )
+})
+
+watch(inRangeAutoApproveCandidates, (validSet) => {
+  const kept = autoApproveItemSeqs.value.filter(seq => validSet.has(seq))
+  if (kept.length !== autoApproveItemSeqs.value.length) {
+    autoApproveItemSeqs.value = kept
+  }
+})
+
 function onProceed() {
   const sel = picker.value.selection
   if (!sel) return
@@ -400,6 +457,8 @@ function onProceed() {
   for (const [seq, note] of Object.entries(messageOverrides.value)) {
     if (note && note.trim() && inRun.has(Number(seq))) messageOverridesOut[Number(seq)] = note
   }
+  const validAutoApprove = inRangeAutoApproveCandidates.value
+  const autoApproveOut = autoApproveItemSeqs.value.filter(seq => validAutoApprove.has(seq))
   emit('confirm', {
     targetSeq: sel.targetSeq,
     targetType: sel.targetType,
@@ -411,6 +470,7 @@ function onProceed() {
     providerOverrides,
     defaultMessage: defaultMessage.value.trim(),
     messageOverrides: messageOverridesOut,
+    autoApproveItemSeqs: autoApproveOut,
   })
 }
 
@@ -429,6 +489,7 @@ watch(
       overrides.value = {}
       defaultMessage.value = ''
       messageOverrides.value = {}
+      autoApproveItemSeqs.value = []
     }
   },
   { immediate: true },

@@ -324,6 +324,97 @@ def test_provider_override_and_note_resolve_the_same_item_seq(run_env, instructi
     assert (provider, note) == ("provider1", f"note-{item_seq}")
 
 
+# ── (0352 T0004 §2/§3.5) per-item_seq N/T auto-approve selection within ai_direct ─────
+
+def test_ai_direct_selected_item_seq_folds_report_row_for_provider_and_note(run_env):
+    # §4 완료기준 2: a selected ai_direct N/T item_seq folds to its paired report row for
+    # BOTH provider override and note resolution, exactly like auto_approved's default fold
+    # — the selected step is excluded from provider/note targeting the same way.
+    run_env["wfseq"].items = [
+        {"item_seq": 1, "type": "N", "result_doc_id": None},
+        {"item_seq": 2, "type": "NR", "result_doc_id": None},
+    ]
+    chain = run_env["providers"]
+    provider = svc._resolve_continuation_hop_override(
+        ROOT_DOC,
+        {"1": "provider1", "2": "provider2"},
+        chain,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[1],
+    )
+    note = svc._resolve_continuation_hop_note(
+        ROOT_DOC,
+        {"1": "N note", "2": "NR note"},
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[1],
+    )
+    # item_seq 1 (N) is selected → folds to the NR row (item_seq 2), same as auto_approved.
+    assert provider == "provider2"
+    assert note == "NR note"
+
+
+def test_ai_direct_unselected_item_seq_does_not_fold(run_env):
+    run_env["wfseq"].items = [
+        {"item_seq": 1, "type": "N", "result_doc_id": None},
+        {"item_seq": 2, "type": "NR", "result_doc_id": None},
+    ]
+    chain = run_env["providers"]
+    # Same head (N@1), but item_seq 1 is NOT in the selection {3} → resolves its own row.
+    provider = svc._resolve_continuation_hop_override(
+        ROOT_DOC,
+        {"1": "provider1", "2": "provider2"},
+        chain,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[3],
+    )
+    assert provider == "provider1"
+
+
+def test_ai_direct_selected_item_seq_folds_provider_resolution(run_env, monkeypatch):
+    run_env["wfseq"].items = [
+        {"item_seq": 1, "type": "T", "result_doc_id": None},
+        {"item_seq": 2, "type": "TR", "result_doc_id": None},
+    ]
+    seen = []
+    monkeypatch.setattr(
+        svc.ai_settings_service, "resolve_doctype_provider",
+        lambda _project_id, doc_type: seen.append(doc_type) or f"assigned-{doc_type}",
+    )
+    result = svc._resolve_continuation_hop_provider(
+        "flowgate", ROOT_DOC,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[1],
+    )
+    # Selected → folds to the report type (TR), same doc-type resolution as auto_approved.
+    assert result == "assigned-TR"
+    assert seen == ["TR"]
+
+
+def test_docs_target_excludes_only_the_selected_ai_direct_item(run_env):
+    # §4 완료기준 3: _continuation_docs_target excludes ONLY the selected N/T item_seq(s);
+    # an ai_direct N/T that was NOT selected stays counted as a real worker document.
+    run_env["wfseq"].items = [
+        {"item_seq": 1, "type": "N", "result_doc_id": None},
+        {"item_seq": 2, "type": "NR", "result_doc_id": None},
+        {"item_seq": 3, "type": "T", "result_doc_id": None},
+        {"item_seq": 4, "type": "TR", "result_doc_id": None},
+    ]
+    # No selection: both N (1) and T (3) count as worker documents → 4 total.
+    assert svc._continuation_docs_target(
+        ROOT_DOC, 4, continuation_instruction_mode="ai_direct",
+    ) == 4
+    # Select only item_seq 1 (N): it drops out, T(3) stays counted → 3.
+    assert svc._continuation_docs_target(
+        ROOT_DOC, 4, continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[1],
+    ) == 3
+    # Select both: both drop out → 2 (NR, TR only).
+    assert svc._continuation_docs_target(
+        ROOT_DOC, 4, continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[1, 3],
+    ) == 2
+
+
 def test_missing_and_unknown_modes_preserve_legacy_auto_approved_fold(run_env):
     run_env["wfseq"].items = [
         {"item_seq": 1, "type": "N", "result_doc_id": None},

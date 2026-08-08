@@ -21,6 +21,10 @@
             <AppIcon name="gear" />
             {{ instructionModeText }}
           </div>
+          <div v-if="autoApproveCountText" class="cwarn-summary cwarn-summary--auto-approve">
+            <AppIcon name="seal-check" />
+            {{ autoApproveCountText }}
+          </div>
 
           <ul class="cwarn-list">
             <li>{{ t('main.continuous_work.warn_unmanned') }}</li>
@@ -102,6 +106,9 @@ const props = defineProps<{
   // R0001 "워크플로 결정부터": the run starts from the workflow decision; there is no step
   // count to quote, so the summary uses a dedicated decision-first line.
   fromDecision?: boolean
+  // 0352 T0004 §3.7: how many N/T steps the ai_direct chain picked for server auto-handling
+  // — shown so the consent screen states the full picture, not just the mode name.
+  autoApproveCount?: number
 }>()
 
 const emit = defineEmits<{
@@ -130,6 +137,14 @@ const instructionModeText = computed(() =>
     ? t('main.continuous_work.warn_instruction_mode_ai')
     : t('main.continuous_work.warn_instruction_mode_auto'),
 )
+// 0352 T0004 §3.7: state the auto-handled count on the consent screen too — only meaningful
+// under ai_direct with a non-empty selection (auto_approved already says "every N/T" via
+// instructionModeText above).
+const autoApproveCountText = computed(() => {
+  const count = props.autoApproveCount ?? 0
+  if (props.instructionMode !== 'ai_direct' || count <= 0) return ''
+  return t('main.continuous_work.warn_auto_approve_count', { count })
+})
 
 function onProviderChange(event: Event) {
   aiProviderStore.selectProvider((event.target as HTMLSelectElement).value)

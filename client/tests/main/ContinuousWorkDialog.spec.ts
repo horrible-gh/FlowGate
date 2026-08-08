@@ -337,6 +337,191 @@ describe('ContinuousWorkDialog', () => {
     expect(payload.targetType).toBe('')
   })
 
+  // 0352 T0004 §2/§3.7: per-item_seq N/T auto-approve selection within ai_direct — a single
+  // N/T step can still be handed to the server (auto-generated + auto-approved) without
+  // switching the whole chain out of "AI 직접 작성".
+  describe('per-item auto-approve within ai_direct (0352 T0004)', () => {
+    async function switchToAiDirect() {
+      const aiRadio = document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement
+      aiRadio.checked = true
+      aiRadio.dispatchEvent(new Event('change'))
+      await flushPromises()
+    }
+
+    it('shows the auto-approve checkbox only for N/T rows, only under ai_direct', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      // auto_approved (default): the type-level exclusion already applies — no per-item
+      // checkbox needed or shown.
+      expect(document.querySelectorAll('.wsp-step-auto-toggle')).toHaveLength(0)
+
+      await switchToAiDirect()
+
+      // Remaining steps in default range (T@3..TS@5): only T@3 is N/T-typed.
+      const toggles = document.querySelectorAll('.wsp-step-auto-toggle')
+      expect(toggles).toHaveLength(1)
+      const steps = document.querySelectorAll('.wsp-step')
+      expect(steps[2].querySelector('.wsp-step-auto-toggle')).not.toBeNull()
+      expect(steps[3].querySelector('.wsp-step-auto-toggle')).toBeNull()
+      expect(steps[4].querySelector('.wsp-step-auto-toggle')).toBeNull()
+
+      wrapper.unmount()
+    })
+
+    it('checking a step excludes it from the provider table and reports it in the confirm payload', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mount(ContinuousWorkDialog, {
+        props: {
+          visible: true,
+          docRef: 'flowgate.default.0086.0001-R',
+          providers: [{ id: 'aip_fable', name: 'Fable' }],
+          selectedProvider: 'aip_fable',
+        },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      await switchToAiDirect()
+
+      // Before checking: T@3, TR@4, TS@5 are all real execution steps under ai_direct.
+      ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+      await flushPromises()
+      expect(document.querySelectorAll('.cwd-override-row')).toHaveLength(3)
+
+      // Check the T@3 toggle.
+      const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      // T@3 drops out of the provider table — same exclusion effect auto_approved gives it.
+      expect(document.querySelectorAll('.cwd-override-row')).toHaveLength(2)
+      // ...and the step list marks it read-only / auto, like an auto_approved N/T row.
+      const steps = document.querySelectorAll('.wsp-step')
+      expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
+      expect(steps[2].querySelector('.wsp-step-tag--auto')).not.toBeNull()
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.autoApproveItemSeqs).toEqual([3])
+      expect(payload.instructionMode).toBe('ai_direct')
+
+      wrapper.unmount()
+    })
+
+    it('unchecking restores the step as an ordinary execution row', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+      await switchToAiDirect()
+
+      const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+      checkbox.checked = false
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      const steps = document.querySelectorAll('.wsp-step')
+      expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.autoApproveItemSeqs).toEqual([])
+
+      wrapper.unmount()
+    })
+
+    it('re-points the target at the paired report when the checked step was the target itself', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+      await switchToAiDirect()
+
+      // Move the target onto T@3 itself (idx 2).
+      ;(document.querySelectorAll('.wsp-step')[2] as HTMLButtonElement).click()
+      await flushPromises()
+      expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(document.querySelectorAll('.wsp-step')[2])
+
+      // Check its own toggle — T@3 can no longer be the target once it is server-handled.
+      const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      // The target re-points to the paired report (TR@4, idx 3) — the same machinery
+      // auto_approved already uses for a type-level exclusion.
+      const steps = document.querySelectorAll('.wsp-step')
+      expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(steps[3])
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.targetSeq).toBe(4)
+      expect(payload.autoApproveItemSeqs).toEqual([3])
+
+      wrapper.unmount()
+    })
+
+    it('drops a checked step from the payload when the target shrinks past it', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+      await switchToAiDirect()
+
+      const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      // Shrink the target below T@3 (idx 2) is impossible (head==idx2 is the floor); instead
+      // switch back to auto_approved (clears ai_direct's whole selection) then back to
+      // ai_direct — mirrors the mode round-trip the picker already guards against.
+      const autoRadio = document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement
+      autoRadio.checked = true
+      autoRadio.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      // Switching back to auto_approved clears the ai_direct-only selection.
+      expect(payload.autoApproveItemSeqs).toEqual([])
+      expect(payload.instructionMode).toBe('auto_approved')
+
+      wrapper.unmount()
+    })
+
+    it('resets the selection on reopen', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+      await switchToAiDirect()
+
+      const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      await wrapper.setProps({ visible: false })
+      await flushPromises()
+      await wrapper.setProps({ visible: true })
+      await flushPromises()
+
+      expect(document.querySelectorAll('.wsp-step-auto-toggle')).toHaveLength(0)
+
+      wrapper.unmount()
+    })
+  })
+
   // 0317 T0010 rev4: the doc-type-keyed assignment table (D0004) was replaced by a per-STEP
   // (item_seq) override table under a new "프로바이더" tab — the same doc TYPE appearing twice
   // in a chain (two T steps) can now resolve to different providers. Session-scoped: it rides
@@ -480,6 +665,11 @@ describe('ContinuousWorkDialog', () => {
       const wrapper = mountDialog()
       await flushPromises()
 
+      // The dialog intentionally defaults a trailing TS/TSR pair to TS. Extend this case to
+      // TSR so all three worker-visible rows are in scope before exercising per-step notes.
+      ;(document.querySelectorAll('.wsp-step')[5] as HTMLButtonElement).click()
+      await flushPromises()
+
       const tabs = document.querySelectorAll('.cwd-tab')
       ;(tabs[2] as HTMLButtonElement).click()
       await flushPromises()
@@ -536,6 +726,9 @@ describe('ContinuousWorkDialog', () => {
       const wrapper = mountDialog()
       await flushPromises()
 
+      // Put the trailing TSR in scope explicitly; the picker defaults this sequence to TS.
+      ;(document.querySelectorAll('.wsp-step')[5] as HTMLButtonElement).click()
+      await flushPromises()
       ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
       await flushPromises()
 

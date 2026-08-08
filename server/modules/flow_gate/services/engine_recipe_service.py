@@ -442,6 +442,10 @@ def _emit_repair(doc: dict, run: dict, items: list[dict], token_rec: dict, attem
         # onto the repair token too, so a test auto-recovery retry keeps the run's N/T handling
         # policy on every subsequent hop instead of silently reverting to auto_approved.
         continuation_instruction_mode=token_rec.get("continuation_instruction_mode"),
+        # 0352 T0004 §3.4: same reasoning — the ai_direct per-item_seq auto-approve selection
+        # must ride the repair token too, or a chain that selected specific N/T steps loses
+        # that selection the moment a TS auto-recovery retry fires.
+        continuation_auto_approve_item_seqs=token_rec.get("continuation_auto_approve_item_seqs"),
     )
     mention = _build_repair_mention(doc, run, items, attempt, issue["raw_token"], engine_hint)
     doc_row_id = None

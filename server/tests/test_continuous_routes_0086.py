@@ -45,6 +45,18 @@ def test_advance_body_defaults_are_ordinary():
     assert body.continuation_target_seq is None
     assert body.continuation_review_mode is False
     assert body.continuation_instruction_mode is None
+    assert body.continuation_auto_approve_item_seqs is None
+
+
+# 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+def test_advance_body_accepts_auto_approve_item_seqs():
+    body = wdr.AdvanceBodyRequest(
+        doc_id="flowgate.default.0086.0001-R",
+        continuous=True, continuation_target_seq=6,
+        continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[3, 7],
+    )
+    assert body.continuation_auto_approve_item_seqs == [3, 7]
 
 
 def test_token_issue_request_accepts_continuation_fields():
@@ -52,10 +64,12 @@ def test_token_issue_request_accepts_continuation_fields():
         project="flowgate", group="0086",
         continuation_target_seq=6, continuation_review_mode=True,
         continuation_instruction_mode="ai_direct",
+        continuation_auto_approve_item_seqs=[3],
     )
     assert body.continuation_target_seq == 6
     assert body.continuation_review_mode is True
     assert body.continuation_instruction_mode == "ai_direct"
+    assert body.continuation_auto_approve_item_seqs == [3]
 
 
 # ── /workflow/advance forwards continuation params (primary FE path) ───────────
@@ -98,6 +112,67 @@ def test_advance_route_ordinary_advance_unchanged(monkeypatch):
     assert captured["continuous"] is False
     assert captured["continuation_target_seq"] is None
     assert captured["continuation_review_mode"] is False
+
+
+# ── 0352 T0004 §2/§3.4: /workflow/advance forwards + validates the per-item_seq
+# N/T auto-approve selection ────────────────────────────────────────────────────
+
+def test_advance_route_forwards_auto_approve_item_seqs(monkeypatch):
+    captured: dict = {}
+    _wire_advance_route(monkeypatch, captured)
+    monkeypatch.setattr(wdr, "validate_continuation_auto_approve_item_seqs", lambda *a, **k: None)
+    resp = wdr.post_workflow_advance_rpc(
+        wdr.AdvanceBodyRequest(
+            doc_id="flowgate.default.0086.0001-R",
+            continuous=True, continuation_target_seq=6,
+            continuation_instruction_mode="ai_direct",
+            continuation_auto_approve_item_seqs=[3],
+        ),
+        _FakeRequest(),
+    )
+    assert resp.status_code == 201
+    assert captured["continuation_auto_approve_item_seqs"] == [3]
+
+
+def test_advance_route_rejects_ineligible_auto_approve_item_seq_with_422(monkeypatch):
+    # A semantically invalid item_seq (wrong type / beyond target / already done — surfaced
+    # by validate_continuation_auto_approve_item_seqs against the real sequence) maps to 422,
+    # not the generic 400 other ValueErrors from advance_workflow get.
+    captured: dict = {}
+    _wire_advance_route(monkeypatch, captured)
+
+    def _boom(*a, **k):
+        raise ValueError("ineligible_auto_approve_item_seq:5")
+    monkeypatch.setattr(wdr, "validate_continuation_auto_approve_item_seqs", _boom)
+    resp = wdr.post_workflow_advance_rpc(
+        wdr.AdvanceBodyRequest(
+            doc_id="flowgate.default.0086.0001-R",
+            continuous=True, continuation_target_seq=6,
+            continuation_auto_approve_item_seqs=[5],
+        ),
+        _FakeRequest(),
+    )
+    assert resp.status_code == 422
+    import json as _json
+    payload = _json.loads(resp.body)
+    assert payload["error"] == "invalid_auto_approve_item_seq"
+    assert "ineligible_auto_approve_item_seq:5" in payload["detail"]
+
+
+def test_advance_route_rejects_non_positive_item_seq_with_422(monkeypatch):
+    # Structural validation (not an int / <= 0) never needs the DB lookup — it is rejected
+    # by normalize_continuation_auto_approve_item_seqs before validate_ is ever reached.
+    captured: dict = {}
+    _wire_advance_route(monkeypatch, captured)
+    resp = wdr.post_workflow_advance_rpc(
+        wdr.AdvanceBodyRequest(
+            doc_id="flowgate.default.0086.0001-R",
+            continuous=True, continuation_target_seq=6,
+            continuation_auto_approve_item_seqs=[0],
+        ),
+        _FakeRequest(),
+    )
+    assert resp.status_code == 422
 
 
 # ── /token/issue fallback forwards flags + flips the mention to continuous ─────
@@ -165,6 +240,66 @@ def test_token_issue_route_ordinary_is_not_continuous(monkeypatch):
         {"user_id": "pm-1"},
     )
     assert mention_kw["continuous"] is False
+
+
+def test_token_issue_route_forwards_auto_approve_item_seqs(monkeypatch):
+    # 0352 T0004 §2/§3.4: the fallback direct-issue path validates + forwards the selection
+    # exactly like /workflow/advance.
+    issue_kw: dict = {}
+    monkeypatch.setattr(tr, "validate_project_id", lambda _p: None)
+    monkeypatch.setattr(tr, "validate_group_id", lambda _g: None)
+    monkeypatch.setattr(tr, "validate_doc_id", lambda _d: None)
+    monkeypatch.setattr(tr.db_projects, "get_by_id", lambda _p: {"project_id": "flowgate"})
+    monkeypatch.setattr(tr, "_resolve_group", lambda _p, _g: "flowgate.default.0086")
+    monkeypatch.setattr(tr, "has_permission", lambda _u, _p, _perm: True)
+    monkeypatch.setattr(tr, "validate_continuation_auto_approve_item_seqs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        tr.token_service, "issue",
+        lambda **k: issue_kw.update(k) or {
+            "raw_token": "RAW", "token_id": "tok", "expires_at": "x",
+            "scratch_dir": "/tmp/s", "group_id": "flowgate.default.0086",
+        },
+    )
+    monkeypatch.setattr(tr, "_build_mention_for_token", lambda **k: "MENTION")
+
+    resp = tr.issue_token(
+        tr.TokenIssueRequest(
+            project="flowgate", module="default", group="0086",
+            action_scope="new", doc_ref="flowgate.default.0086.0001-R",
+            continuation_target_seq=6, continuation_review_mode=True,
+            continuation_instruction_mode="ai_direct",
+            continuation_auto_approve_item_seqs=[3],
+        ),
+        _FakeRequest(),
+        {"user_id": "pm-1"},
+    )
+    assert resp.ok is True
+    assert issue_kw["continuation_auto_approve_item_seqs"] == [3]
+
+
+def test_token_issue_route_rejects_non_positive_item_seq_with_422(monkeypatch):
+    from fastapi import HTTPException
+    import pytest
+
+    monkeypatch.setattr(tr, "validate_project_id", lambda _p: None)
+    monkeypatch.setattr(tr, "validate_group_id", lambda _g: None)
+    monkeypatch.setattr(tr, "validate_doc_id", lambda _d: None)
+    monkeypatch.setattr(tr.db_projects, "get_by_id", lambda _p: {"project_id": "flowgate"})
+    monkeypatch.setattr(tr, "_resolve_group", lambda _p, _g: "flowgate.default.0086")
+    monkeypatch.setattr(tr, "has_permission", lambda _u, _p, _perm: True)
+
+    with pytest.raises(HTTPException) as exc:
+        tr.issue_token(
+            tr.TokenIssueRequest(
+                project="flowgate", module="default", group="0086",
+                action_scope="new", doc_ref="flowgate.default.0086.0001-R",
+                continuation_target_seq=6,
+                continuation_auto_approve_item_seqs=[-1],
+            ),
+            _FakeRequest(),
+            {"user_id": "pm-1"},
+        )
+    assert exc.value.status_code == 422
 
 
 # ── Start BEFORE the workflow is decided ("워크플로 결정부터", TR0004 rework) ─────────
@@ -271,6 +406,10 @@ def test_kickoff_resolves_sentinel_to_last_item_and_advances(monkeypatch):
     assert env["next_mention"] == "NEXT_MENTION"
     assert env["continuation_remaining"] == 4
     assert "continuation_paused" not in env
+    # 0352 T0004 §3.3: normalized to [] (empty selection) and threaded through — always
+    # empty in practice for this pre-decision path (no item_seq exists before the decision).
+    assert adv_kw["continuation_auto_approve_item_seqs"] == []
+    assert env["continuation_auto_approve_item_seqs"] == []
 
 
 def test_kickoff_no_op_for_ordinary_token():

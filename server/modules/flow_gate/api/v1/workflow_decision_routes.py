@@ -35,6 +35,8 @@ from modules.flow_gate.services.workflow_decision_service import (
     edit_workflow_pending,
     continuation_kickoff_after_decide,
     normalize_continuation_instruction_mode,
+    normalize_continuation_auto_approve_item_seqs,
+    validate_continuation_auto_approve_item_seqs,
 )
 from modules.flow_gate.db import documents as _db_documents
 from modules.flow_gate import process_service as _process_service
@@ -110,6 +112,9 @@ class AdvanceRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
+    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # Ignored (never even normalized) unless continuous + ai_direct — see post_workflow_advance.
+    continuation_auto_approve_item_seqs: Optional[List[int]] = None
 
 
 class DecideBodyRequest(BaseModel):
@@ -126,6 +131,7 @@ class AdvanceBodyRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
+    continuation_auto_approve_item_seqs: Optional[List[int]] = None
 
 
 class ReviewRequestBody(BaseModel):
@@ -188,6 +194,7 @@ def post_workflow_advance_rpc(body: AdvanceBodyRequest, request: Request):
             continuation_target_seq=body.continuation_target_seq,
             continuation_review_mode=body.continuation_review_mode,
             continuation_instruction_mode=body.continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=body.continuation_auto_approve_item_seqs,
         ),
     )
 
@@ -372,6 +379,12 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
                     continuation_review_mode=bool(auth.get("continuation_review_mode")),
                     continuation_instruction_mode=auth.get("continuation_instruction_mode"),
                     ai_run_id=auth.get("ai_run_id"),
+                    # 0352 T0004 §3.3: always empty in practice today (request_workflow_decision
+                    # never accepts a selection — see that function's docstring), threaded for
+                    # contract symmetry with advance_workflow.
+                    continuation_auto_approve_item_seqs=auth.get(
+                        "continuation_auto_approve_item_seqs"
+                    ),
                 )
                 if chain:
                     result = {**result, **chain}
@@ -423,6 +436,24 @@ def post_workflow_advance(
     if _disposed is not None:
         return _disposed
 
+    # 0352 T0004 §2/§3.4: this is a FRESH client request naming the selection, so the full
+    # 422 validation (including "already done") runs here — not inside advance_workflow,
+    # which reuses the same set on every later hop of an ongoing chain where an earlier
+    # selection legitimately reads back 'done' once the server has completed it.
+    try:
+        continuation_auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
+            body.continuation_auto_approve_item_seqs if body else None
+        )
+        if continuous:
+            validate_continuation_auto_approve_item_seqs(
+                continuation_auto_approve_item_seqs, doc_id, continuation_target_seq,
+            )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "invalid_auto_approve_item_seq", "detail": str(exc)},
+        )
+
     try:
         result = advance_workflow(
             doc_id=doc_id,
@@ -434,6 +465,7 @@ def post_workflow_advance(
             continuation_target_seq=continuation_target_seq,
             continuation_review_mode=continuation_review_mode,
             continuation_instruction_mode=continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
     except LookupError as exc:
         code, _, val = str(exc).partition(":")

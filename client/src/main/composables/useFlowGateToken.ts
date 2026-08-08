@@ -41,6 +41,9 @@ export interface TokenIssueParams {
   continuationTargetSeq?: number
   continuationReviewMode?: boolean
   continuationInstructionMode?: 'auto_approved' | 'ai_direct'
+  // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection.
+  // Sent on /workflow/advance (primary) and /token/issue (fallback), same as the mode above.
+  continuationAutoApproveItemSeqs?: number[]
 }
 
 /**
@@ -124,6 +127,9 @@ export function useFlowGateToken() {
                     continuation_target_seq: params.continuationTargetSeq,
                     continuation_review_mode: !!params.continuationReviewMode,
                     continuation_instruction_mode: params.continuationInstructionMode ?? 'auto_approved',
+                    ...(params.continuationAutoApproveItemSeqs?.length
+                      ? { continuation_auto_approve_item_seqs: params.continuationAutoApproveItemSeqs }
+                      : {}),
                   }
                 : {}),
             },
@@ -151,6 +157,7 @@ export function useFlowGateToken() {
         continuationTargetSeq,
         continuationReviewMode,
         continuationInstructionMode,
+        continuationAutoApproveItemSeqs,
         ...issueBody
       } = params
       const res = await postRequest<any>('/api/v1/token/issue', {
@@ -160,6 +167,9 @@ export function useFlowGateToken() {
               continuation_target_seq: continuationTargetSeq,
               continuation_review_mode: !!continuationReviewMode,
               continuation_instruction_mode: continuationInstructionMode ?? 'auto_approved',
+              ...(continuationAutoApproveItemSeqs?.length
+                ? { continuation_auto_approve_item_seqs: continuationAutoApproveItemSeqs }
+                : {}),
             }
           : {}),
       })

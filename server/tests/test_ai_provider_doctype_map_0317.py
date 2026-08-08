@@ -321,6 +321,45 @@ class TestHopWiring:
         monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: None)
         assert svc._resolve_continuation_hop_provider("proj_001", "x") is None
 
+    def test_ai_direct_selected_item_seq_resolve_hop_maps_to_report_type(self, monkeypatch):
+        # 0352 T0004 §2/§3.5: an ai_direct N/T head that IS in the auto-approve selection
+        # folds to its paired report type for doc-type provider resolution too — matching
+        # what auto_approved does for every N/T, just scoped to this one selected step.
+        from modules.flow_gate.services import ai_invoke_service as svc
+        from modules.flow_gate.settings.ai_settings_service import save_doctype_providers
+
+        ids = _make_three_providers()
+        save_doctype_providers("proj_001", [{"doc_type": "TR", "provider_id": ids["Opus"]}])
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+        monkeypatch.setattr(svc.db_wfseq, "get_effective_head",
+                            lambda _s: {"type": "T", "item_seq": 3})
+        assert svc._resolve_continuation_hop_provider(
+            "proj_001",
+            "proj_001.default.0317.0001-R",
+            continuation_instruction_mode="ai_direct",
+            continuation_auto_approve_item_seqs=[3],
+        ) == ids["Opus"]
+
+    def test_ai_direct_unselected_item_seq_resolve_hop_uses_own_type(self, monkeypatch):
+        from modules.flow_gate.services import ai_invoke_service as svc
+        from modules.flow_gate.settings.ai_settings_service import save_doctype_providers
+
+        ids = _make_three_providers()
+        # Assign the INSTRUCTION type itself (T), not the report — only reachable when the
+        # head does NOT fold (i.e. is not in the selection).
+        save_doctype_providers("proj_001", [{"doc_type": "T", "provider_id": ids["Fable"]}])
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 1})
+        monkeypatch.setattr(svc.db_wfseq, "get_effective_head",
+                            lambda _s: {"type": "T", "item_seq": 1})
+        assert svc._resolve_continuation_hop_provider(
+            "proj_001",
+            "proj_001.default.0317.0001-R",
+            continuation_instruction_mode="ai_direct",
+            continuation_auto_approve_item_seqs=[3],
+        ) == ids["Fable"]
+
 
 class TestPerHopRespawn:
     """0317 TR0011 (Q153 opt-1): the unmanned continuous chain re-spawns a worker per hop so

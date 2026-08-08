@@ -1,6 +1,7 @@
 """tokens table CRUD (D020 §5-1)."""
 from __future__ import annotations
 
+import json as _json
 from typing import Any, Optional
 
 from .connection import get_store, now_iso, iso_days_ago
@@ -34,10 +35,55 @@ def _invalidate_token_cache() -> None:
     auth_cache.invalidate_tokens()
 
 
-def get_by_id(token_id: str) -> Optional[dict]:
-    return get_store()._fetch_one(
-        "SELECT * FROM tokens WHERE token_id = ?", [token_id]
+def _dump_auto_approve_item_seqs(value: Any) -> Optional[str]:
+    """Serialize the N/T auto-approve item_seq selection for storage (0352 T0004 §2).
+
+    A positive-int list -> a JSON array TEXT; empty/None -> NULL ("no selection", same
+    meaning as an empty list per §2). Round-trips with :func:`_load_auto_approve_item_seqs`.
+    """
+    if not value:
+        return None
+    try:
+        return _json.dumps([int(v) for v in value])
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_auto_approve_item_seqs(value: Any) -> list:
+    """Deserialize the stored JSON-text item_seq list back to a Python list (0352 T0004 §2).
+
+    Defensive like ai_invoke_paused_chains.load_json_map: a missing/corrupt value degrades
+    to an empty list (== "no selection") rather than raising, so a damaged row cannot break
+    a token read.
+    """
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        parsed = _json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _decode_row(row: Optional[dict]) -> Optional[dict]:
+    """Read-path hook: turn the stored JSON-text column back into a list (§2 "읽을 때 JSON
+    문자열을 리스트로 되돌린다"). Every SELECT * in this module funnels through here."""
+    if row is None:
+        return None
+    row["continuation_auto_approve_item_seqs"] = _load_auto_approve_item_seqs(
+        row.get("continuation_auto_approve_item_seqs")
     )
+    return row
+
+
+def get_by_id(token_id: str) -> Optional[dict]:
+    return _decode_row(get_store()._fetch_one(
+        "SELECT * FROM tokens WHERE token_id = ?", [token_id]
+    ))
 
 
 def get_by_hash(token_hash: str) -> Optional[dict]:
@@ -51,9 +97,9 @@ def get_by_hash(token_hash: str) -> Optional[dict]:
     """
     cache = _token_cache()
     if cache is None:
-        return get_store()._fetch_one(
+        return _decode_row(get_store()._fetch_one(
             "SELECT * FROM tokens WHERE hash = ?", [token_hash]
-        )
+        ))
     row = cache.get_or_load(
         token_hash,
         lambda: get_store()._fetch_one(
@@ -64,7 +110,7 @@ def get_by_hash(token_hash: str) -> Optional[dict]:
     # it returns, and callers add their own keys. Without this the cached dict
     # would accumulate every caller's mutations and serve them to the next
     # request.
-    return dict(row) if row is not None else None
+    return _decode_row(dict(row) if row is not None else None)
 
 
 def create(data: dict[str, Any]) -> dict:
@@ -74,8 +120,9 @@ def create(data: dict[str, Any]) -> dict:
         "(token_id, hash, pepper_id, project, group_id, doc_ref, "
         "action_scope, issued_to, created_at, expires_at, consumed_at, revoked_at, scratch_dir, "
         "continuation_target_seq, continuation_review_mode, continuation_locale, "
-        "merge_id, continuation_instruction_mode, provider_id, ai_run_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "merge_id, continuation_instruction_mode, provider_id, ai_run_id, "
+        "continuation_auto_approve_item_seqs) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -93,6 +140,9 @@ def create(data: dict[str, Any]) -> dict:
             data.get("continuation_instruction_mode"),
             data.get("provider_id"),
             data.get("ai_run_id"),
+            # 0352 T0004 §2: per-item_seq N/T auto-approve selection (migration 078).
+            # NULL/[] for every non-ai_direct or selection-less continuation token.
+            _dump_auto_approve_item_seqs(data.get("continuation_auto_approve_item_seqs")),
         ],
     )
     _invalidate_token_cache()
@@ -165,12 +215,12 @@ def get_latest_consumed_by_scope_doc_ref(action_scope: str, doc_ref: str) -> Opt
     what authorizes the auto-assembled TSR's auto-approve. Persisted on the token row, so
     the signal survives a server restart between run start and TSR assembly.
     """
-    return get_store()._fetch_one(
+    return _decode_row(get_store()._fetch_one(
         "SELECT * FROM tokens WHERE doc_ref = ? AND action_scope = ? "
         "AND consumed_at IS NOT NULL "
         "ORDER BY consumed_at DESC, token_id DESC LIMIT 1",
         [doc_ref, action_scope],
-    )
+    ))
 
 
 def get_unconsumed_by_doc_ref(doc_ref: str) -> Optional[dict]:

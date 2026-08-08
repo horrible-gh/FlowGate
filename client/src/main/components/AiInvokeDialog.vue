@@ -56,6 +56,7 @@
                 :doc-ref="sequenceDocRef || docRef"
                 :active="pickerActive"
                 :auto-handled-types="autoHandledTypes"
+                :auto-handled-item-seqs="continuationAutoApproveItemSeqs"
                 @change="onPickerChange"
               />
               <div v-if="pickerSummary" class="aiv-seq-summary">{{ pickerSummary }}</div>
@@ -106,6 +107,9 @@ const props = defineProps<{
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
   continuationInstructionMode?: 'auto_approved' | 'ai_direct'
+  // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection chosen
+  // in ContinuousWorkDialog. Session-scoped, same lifetime as the fields around it.
+  continuationAutoApproveItemSeqs?: number[]
   // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode in
   // ContinuousWorkDialog. Session-scoped — rides this start request only.
   providerOverrides?: Record<number, string>
@@ -240,6 +244,11 @@ async function start() {
       if (props.defaultMessage) body.continuation_default_note = props.defaultMessage
       if (props.messageOverrides && Object.keys(props.messageOverrides).length) {
         body.continuation_note_overrides = props.messageOverrides
+      }
+      // 0352 T0004 §2/§3.7: never sent for a pre-decision (workflow_decide) start — no
+      // item_seq exists yet, and the server rejects a selection on that scope (§2).
+      if (!preDecision && props.continuationAutoApproveItemSeqs?.length) {
+        body.continuation_auto_approve_item_seqs = props.continuationAutoApproveItemSeqs
       }
     }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)

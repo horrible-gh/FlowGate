@@ -22,7 +22,11 @@ from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
-from modules.flow_gate.services.workflow_decision_service import normalize_continuation_instruction_mode
+from modules.flow_gate.services.workflow_decision_service import (
+    normalize_continuation_auto_approve_item_seqs,
+    normalize_continuation_instruction_mode,
+    validate_continuation_auto_approve_item_seqs,
+)
 from modules.flow_gate.utils.id_validators import (
     validate_project_id,
     validate_group_id,
@@ -55,6 +59,10 @@ class TokenIssueRequest(BaseModel):
     continuation_review_mode: bool = False
     merge_id: Optional[int] = None
     continuation_instruction_mode: Optional[str] = None
+    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection —
+    # this is the fallback direct-issue path, so a fresh selection is validated (422) here
+    # too, exactly like /workflow/advance and /ai-invoke/start.
+    continuation_auto_approve_item_seqs: Optional[list[int]] = None
 
 
 class TokenIssueResponse(BaseModel):
@@ -148,6 +156,24 @@ def issue_token(
     req_locale = request.headers.get("x-locale") or "ko"
     is_continuous = body.continuation_target_seq is not None
 
+    # 0352 T0004 §2/§3.4: a fresh selection arriving here is validated (422) the same way
+    # /workflow/advance and /ai-invoke/start do — this endpoint is the fallback direct-issue
+    # path (T244 §1-2 docstring on issue_token above).
+    continuation_auto_approve_item_seqs: list[int] = []
+    if is_continuous:
+        try:
+            continuation_auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
+                body.continuation_auto_approve_item_seqs
+            )
+            if body.doc_ref and continuation_auto_approve_item_seqs:
+                validate_continuation_auto_approve_item_seqs(
+                    continuation_auto_approve_item_seqs,
+                    body.doc_ref,
+                    body.continuation_target_seq,
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
     # Step 7: issue token
     result = token_service.issue(
         project=body.project,
@@ -162,6 +188,9 @@ def issue_token(
         continuation_instruction_mode=(
             normalize_continuation_instruction_mode(body.continuation_instruction_mode)
             if is_continuous else None
+        ),
+        continuation_auto_approve_item_seqs=(
+            continuation_auto_approve_item_seqs if is_continuous else None
         ),
     )
 
