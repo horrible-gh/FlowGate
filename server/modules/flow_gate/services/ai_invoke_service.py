@@ -1598,6 +1598,7 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "provider_id": current_chain[0].get("id"),
             "provider_name": current_chain[0].get("name"),
             "attempt_no": 1,
+            "started_at": run["started_at"],
         })
 
         while True:
@@ -3379,7 +3380,9 @@ def finished_payload(run: dict) -> dict:
         "last_message_received": run["last_message_received"],
         "last_message": run["last_message"],
         "provider_id": run["provider_id"],
+        "provider_name": (run.get("provider") or {}).get("name"),
         "attempt_no": run["attempt_no"],
+        "started_at": run.get("started_at"),
         "fallback_history": run["fallback_history"],
         "register_errors": run.get("register_errors", []),
         "tool_call_misses": run.get("tool_call_misses", 0),

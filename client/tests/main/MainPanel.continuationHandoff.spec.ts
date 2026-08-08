@@ -81,6 +81,7 @@ afterEach(() => {
 describe('MainPanel continuous invoke handoff', () => {
   it('keeps the monitor running between hops and rejects a late finish from the old run', () => {
     const groupId = 'flowgate.default.0345'
+    vi.setSystemTime(new Date('2026-08-08T12:10:00Z'))
     const store = useAiInvokeRunsStore()
     store.trackStarted({
       run_id: 'airun-hop-1',
@@ -91,6 +92,9 @@ describe('MainPanel continuous invoke handoff', () => {
       chain_id: 'airun-hop-1',
       chain_docs_target: 3,
       chain_docs_reached: 0,
+      provider_id: 'sonnet',
+      provider_name: 'Sonnet',
+      started_at: '2026-08-08T12:00:00Z',
     })
     const wrapper = mountPanel()
 
@@ -117,7 +121,8 @@ describe('MainPanel continuous invoke handoff', () => {
       chain_id: 'airun-hop-1',
       chain_docs_target: 3,
       chain_docs_reached: 1,
-      duration_ms: 2_500,
+      provider_id: 'sonnet',
+      duration_ms: 600_000,
     })
 
     const handoff = store.runsByGroup[groupId]
@@ -127,7 +132,11 @@ describe('MainPanel continuous invoke handoff', () => {
     expect(handoff.chainDocsReached).toBe(1)
     expect(handoff.chainDocsTarget).toBe(3)
     expect(handoff.finishedPayload).toBeNull()
+    expect(handoff.provider).toEqual({ id: 'sonnet', name: 'Sonnet' })
+    expect(handoff.startedAt).toBeNull()
+    expect(store.elapsedMsFor(groupId)).toBe(600_000)
 
+    vi.setSystemTime(new Date('2026-08-08T12:10:01Z'))
     lifecycle('started', {
       run_id: 'airun-hop-2',
       group_id: groupId,
@@ -137,6 +146,9 @@ describe('MainPanel continuous invoke handoff', () => {
       chain_id: 'airun-hop-1',
       chain_docs_target: 3,
       chain_docs_reached: 1,
+      provider_id: 'gpt',
+      provider_name: 'GPT',
+      started_at: '2026-08-08T12:10:01Z',
     })
     lifecycle('finished', {
       run_id: 'airun-hop-1',
@@ -158,6 +170,9 @@ describe('MainPanel continuous invoke handoff', () => {
     expect(replacement.docsReachedSoFar).toBe(0)
     expect(replacement.chainDocsTarget).toBe(3)
     expect(replacement.chainDocsReached).toBe(1)
+    expect(replacement.provider).toEqual({ id: 'gpt', name: 'GPT' })
+    expect(replacement.startedAt).toBe('2026-08-08T12:10:01Z')
+    expect(store.elapsedMsFor(groupId)).toBe(0)
 
     wrapper.unmount()
   })

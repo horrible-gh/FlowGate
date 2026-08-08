@@ -717,6 +717,10 @@ class TestEvents:
             "ai_invoke_finished",
             "group_view_refresh",
         ]
+        started = fake_env["events"][0][1]
+        assert started["provider_id"] == "aip_bad9"
+        assert started["provider_name"] == "bad"
+        assert started["started_at"] == res["started_at"]
         switched = fake_env["events"][1][1]
         assert switched["from_provider_id"] == "aip_bad9"
         assert switched["to_provider_id"] == "aip_good9"
@@ -725,7 +729,9 @@ class TestEvents:
         for key in (
             "run_id", "group_id", "outcome", "docs_reached", "docs_target",
             "reached_doc_ids", "end_reason", "exit_code", "last_message_received",
-            "last_message", "provider_id", "attempt_no", "fallback_history",
-            "source_dirty", "duration_ms",
+            "last_message", "provider_id", "provider_name", "attempt_no", "fallback_history",
+            "source_dirty", "duration_ms", "started_at",
         ):
             assert key in finished
+        assert finished["provider_name"] == "good"
+        assert finished["started_at"] == res["started_at"]
