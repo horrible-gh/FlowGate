@@ -60,6 +60,36 @@
                     : 'circle'"
               />
             </span>
+            <!-- 0352 T0004 §3.7: per-item_seq N/T auto-approve toggle — only for candidate
+                 types (N/T under ai_direct) at or past the head. A dedicated class + its own
+                 click/change stop keeps it from re-triggering the row's own target-select
+                 click (the row is a <button>).
+                 rev2 (반려 2회: "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의
+                 방식은 없냐"): a bare checkbox carried no caption, so the row gave no clue what
+                 checking it did. Redrawn as a labelled switch — track+thumb shape instead of a
+                 checkbox square, plus a visible text caption and a hover tooltip that spells out
+                 the effect. The underlying `<input type="checkbox">` and its `checked`/`change`
+                 contract are untouched (tests still query `.wsp-step-auto-toggle input`); only
+                 what's drawn around it changed. -->
+            <label
+              v-if="idx >= headIdx && idx <= selectedIdx && autoApproveCandidateIdx(idx)"
+              class="wsp-step-auto-toggle"
+              :title="t('main.continuous_work.auto_toggle_hint')"
+              @click.stop
+            >
+              <span class="wsp-step-auto-toggle-switch">
+                <input
+                  type="checkbox"
+                  :checked="autoApproveSelectedSet.has(item.item_seq)"
+                  @click.stop
+                  @change="onAutoApproveToggle(item.item_seq, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="wsp-step-auto-toggle-track">
+                  <span class="wsp-step-auto-toggle-thumb" />
+                </span>
+              </span>
+              <span class="wsp-step-auto-toggle-text">{{ t('main.continuous_work.auto_toggle_label') }}</span>
+            </label>
             <span class="wsp-step-badge doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
             <span class="wsp-step-label">{{ item.label }}</span>
             <span v-if="idx === headIdx" class="wsp-step-tag wsp-step-tag--head">
@@ -133,10 +163,30 @@ const props = defineProps<{
    * Callers that omit this prop keep the unrestricted picker.
    */
   autoHandledTypes?: string[]
+  /**
+   * 0352 T0004 §2/§3.7: item_seqs the caller's ai_direct chain has selected for server
+   * auto-handling — the per-STEP-INSTANCE counterpart of `autoHandledTypes` (which excludes
+   * every step of a TYPE under auto_approved). A selected item_seq is excluded from the
+   * target choice the exact same way, and the target re-points to its paired report if it
+   * was sitting on the step that just got selected (shared `selectableIdxSet` machinery).
+   */
+  autoHandledItemSeqs?: number[]
+  /**
+   * 0352 T0004 §3.7: doc types eligible for the per-step auto-approve checkbox itself (N/T,
+   * passed only when the caller's instruction mode is ai_direct). Omitted/empty ⇒ no checkbox
+   * renders anywhere — callers that don't support the feature (AiInvokeDialog's own picker)
+   * are unaffected.
+   */
+  autoApproveCandidateTypes?: string[]
+  /** Controlled: which item_seqs are currently checked (mirrors `autoHandledItemSeqs`, but
+   * the caller owns the source of truth so unrelated re-renders don't fight the checkbox). */
+  autoApproveSelected?: number[]
 }>()
 
 const emit = defineEmits<{
   change: [state: WorkflowStepPickerState]
+  /** 0352 T0004 §3.7: user (un)checked one step's auto-approve toggle. */
+  'toggle-auto-approve': [itemSeq: number, checked: boolean]
 }>()
 
 const { t } = useI18n()
@@ -182,11 +232,15 @@ const stepTags = computed(() => items.value.map(it => props.stepTag?.(it) ?? nul
 const autoHandledTypeSet = computed(
   () => new Set((props.autoHandledTypes ?? []).map(s => s.toUpperCase())),
 )
+// 0352 T0004 §2/§3.7: the per-item_seq selection, same exclusion effect as the per-TYPE set
+// above but scoped to individual step instances (so the same T appearing twice can differ).
+const autoHandledItemSeqSet = computed(() => new Set(props.autoHandledItemSeqs ?? []))
 const selectableIdxSet = computed(() => {
   const remaining: number[] = []
   for (let i = headIdx.value; i < items.value.length; i += 1) remaining.push(i)
   const selectable = remaining.filter(
-    i => !autoHandledTypeSet.value.has(String(items.value[i].type ?? '').toUpperCase()),
+    i => !autoHandledTypeSet.value.has(String(items.value[i].type ?? '').toUpperCase())
+      && !autoHandledItemSeqSet.value.has(items.value[i].item_seq),
   )
   // Guard: if EVERY remaining step is auto-handled there is no paired report to fall back to,
   // and hiding every choice would lock the user out of continuous work entirely. Degrade to
@@ -195,6 +249,24 @@ const selectableIdxSet = computed(() => {
 })
 function autoHandledIdx(idx: number): boolean {
   return idx >= headIdx.value && !selectableIdxSet.value.has(idx)
+}
+
+// 0352 T0004 §3.7: which rows show the checkbox itself — candidate type, not yet excluded by
+// TYPE (auto_approved already dims those rows entirely; the checkbox is for the ai_direct
+// per-step choice only, so a row auto_approved already forced out never doubles up on both).
+const autoApproveCandidateTypeSet = computed(
+  () => new Set((props.autoApproveCandidateTypes ?? []).map(s => s.toUpperCase())),
+)
+const autoApproveSelectedSet = computed(() => new Set(props.autoApproveSelected ?? []))
+function autoApproveCandidateIdx(idx: number): boolean {
+  if (autoApproveCandidateTypeSet.value.size === 0) return false
+  const item = items.value[idx]
+  if (!item) return false
+  if (autoHandledTypeSet.value.has(String(item.type ?? '').toUpperCase())) return false
+  return autoApproveCandidateTypeSet.value.has(String(item.type ?? '').toUpperCase())
+}
+function onAutoApproveToggle(itemSeq: number, checked: boolean) {
+  emit('toggle-auto-approve', itemSeq, checked)
 }
 /** Last step the user may stop at — the natural "run the whole remaining sequence" default. */
 function lastSelectableIdx(): number {
@@ -496,6 +568,90 @@ watch(
   color: var(--primary);
   border-color: var(--primary);
   background: var(--primary-l);
+}
+/* 0352 T0004 §3.7 / R rev1-2: dedicated class for the per-item_seq auto-approve control — a
+   new toolbar/inline control must not reuse an existing shared class (two prior regressions:
+   findAll(...).length / first-match assertions silently shifted when a new control quietly
+   folded into a shared selector).
+   rev1: rejected as "too small to hit reliably" — fixed by drawing a bigger checkbox box with
+   a wider hit halo, but the widget was still a bare checkbox square with no caption.
+   rev2 (반려 2회째, "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의 방식은
+   없냐"): resizing wasn't the actual ask — a checkbox alone doesn't say what it does. Redrawn
+   as a labelled switch: a track+thumb shape (not a checkbox square) plus a visible text
+   caption, so the row reads "auto-approve: on/off" at a glance instead of an unexplained box.
+   The `<input type="checkbox">` element and its `checked`/`change` contract are unchanged —
+   only visually hidden and reskinned via sibling selectors — so `.wsp-step-auto-toggle input`
+   + `.checked`/`change` still work exactly as the existing 21 client specs expect. */
+.wsp-step-auto-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  cursor: pointer;
+  padding: 6px;
+  margin: -6px;
+  border-radius: var(--r-sm);
+}
+.wsp-step-auto-toggle:hover {
+  background: var(--surface-h);
+}
+.wsp-step-auto-toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 18px;
+}
+.wsp-step-auto-toggle input {
+  /* Visually hidden, not display:none — stays a real, focusable, native checkbox so the
+     label-click-forwards-to-input browser behavior and the checked/change contract both
+     keep working; only its own box is invisible, the track+thumb below draw the visible
+     shape instead. */
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.wsp-step-auto-toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: background var(--tr), border-color var(--tr);
+}
+.wsp-step-auto-toggle input:checked ~ .wsp-step-auto-toggle-track {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.wsp-step-auto-toggle-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  transition: transform var(--tr);
+}
+.wsp-step-auto-toggle input:checked ~ .wsp-step-auto-toggle-track .wsp-step-auto-toggle-thumb {
+  transform: translateX(14px);
+}
+.wsp-step-auto-toggle input:focus-visible ~ .wsp-step-auto-toggle-track {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.wsp-step-auto-toggle-text {
+  font-size: .68rem;
+  font-weight: 600;
+  color: var(--text-m);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .wsp-note {
   font-size: .78rem;

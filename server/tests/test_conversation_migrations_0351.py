@@ -20,8 +20,12 @@ def test_all_migrations_create_21_column_token_and_conversation_schema():
     conn.execute("PRAGMA foreign_keys=ON")
     _apply(conn)
     columns = [row[1] for row in conn.execute("PRAGMA table_info(tokens)")]
-    assert len(columns) == 21
-    assert {"continuation_instruction_mode", "provider_id", "ai_run_id"} <= set(columns)
+    # 0352 T0004 §3.1 / migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
+    assert len(columns) == 22
+    assert {
+        "continuation_instruction_mode", "provider_id", "ai_run_id",
+        "continuation_auto_approve_item_seqs",
+    } <= set(columns)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"conversation_turns", "conversation_participants", "conversation_docs"} <= tables
 

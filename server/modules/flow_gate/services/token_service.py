@@ -143,6 +143,10 @@ def issue(
     continuation_instruction_mode: Optional[str] = None,
     provider_id: Optional[str] = None,
     ai_run_id: Optional[str] = None,
+    # 0352 T0004 §2: per-item_seq N/T auto-approve selection for an ai_direct continuation
+    # chain. NULL/[] for every non-continuous or selection-less token (db/tokens.py
+    # normalizes and JSON-round-trips this — see _dump_auto_approve_item_seqs).
+    continuation_auto_approve_item_seqs: Optional[list] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -194,6 +198,7 @@ def issue(
         "continuation_instruction_mode": continuation_instruction_mode,
         "provider_id": provider_id,
         "ai_run_id": ai_run_id,
+        "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
     })
 
     db_events.create({
@@ -224,6 +229,7 @@ def issue(
         "continuation_instruction_mode": continuation_instruction_mode,
         "provider_id": provider_id,
         "ai_run_id": ai_run_id,
+        "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
     }
 
 

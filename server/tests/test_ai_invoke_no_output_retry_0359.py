@@ -63,13 +63,21 @@ class FakePausedStore:
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
                continuation_target_seq, docs_target, docs_reached,
                stop_kind="user", stop_code=None, stop_run_id=None,
-               stop_last_message_excerpt=None):
+               stop_last_message_excerpt=None,
+               # 0352 T0004 §3.6: unlike the provider/note preference columns (never sent
+               # on a SYSTEM row — see ai_invoke_service._apply_stop_row's own comment),
+               # the N/T authoring mode + its per-item_seq selection ARE sent on every
+               # upsert call, system rows included — that is the pause->resume mode-loss
+               # bug fix this group's TR ships.
+               continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None):
         self.rows[group_id] = {
             "group_id": group_id, "doc_ref": doc_ref, "paused_by": paused_by,
             "paused_at": paused_at, "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
             "stop_kind": stop_kind, "stop_code": stop_code, "stop_run_id": stop_run_id,
             "stop_last_message_excerpt": stop_last_message_excerpt,
+            "continuation_instruction_mode": continuation_instruction_mode,
+            "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
         }
 
     def get_by_group(self, group_id):

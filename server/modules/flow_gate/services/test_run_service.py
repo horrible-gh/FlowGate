@@ -419,6 +419,11 @@ def issue_test_run_request(
     # 0393 NR0003 §6 — the AI run this token belongs to, so the group lease that run holds
     # recognises the worker as its own owner.
     ai_run_id: Optional[str] = None,
+    # 0352 T0004 §3.4: TS is never a member of the auto-approve item_seq set (it is excluded
+    # from INSTRUCTION_AUTO_TYPES entirely), so this has no bearing on THIS TSR hand-off's own
+    # behavior — it is threaded through purely so the chain's selection keeps riding every
+    # continuation token, including this one, without a silent drop at the TSR hop.
+    continuation_auto_approve_item_seqs: Optional[list] = None,
 ) -> dict:
     """Issue a test_run-scoped token + execution mention for an approved TS.
 
@@ -445,6 +450,9 @@ def issue_test_run_request(
         continuation_instruction_mode=continuation_instruction_mode if continuous else None,
         continuation_locale=locale if continuous else None,
         ai_run_id=ai_run_id,
+        continuation_auto_approve_item_seqs=(
+            continuation_auto_approve_item_seqs if continuous else None
+        ),
     )
     mention = _build_test_run_mention(
         doc=doc,

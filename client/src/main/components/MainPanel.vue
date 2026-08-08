@@ -1001,6 +1001,7 @@
       :target-label="continuousTargetLabel"
       :review-mode="continuousReviewMode"
       :instruction-mode="continuousInstructionMode"
+      :auto-approve-count="continuousAutoApproveItemSeqs.length"
       :from-decision="continuousFromDecision"
       @confirm="onContinuousWarnConfirm"
       @copy-mention="onContinuousWarnCopyMention"
@@ -1110,6 +1111,7 @@
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
       :continuation-instruction-mode="aiInvokeContinuationInstructionMode"
+      :continuation-auto-approve-item-seqs="aiInvokeContinuationAutoApproveItemSeqs"
       :provider-overrides="aiInvokeProviderOverrides"
       :default-message="aiInvokeDefaultMessage"
       :message-overrides="aiInvokeMessageOverrides"
@@ -1665,6 +1667,9 @@ const continuousProviderOverrides = ref<Record<number, string>>({})
 // through to the consent gate's start request (session-scoped, never persisted).
 const continuousDefaultMessage = ref('')
 const continuousMessageOverrides = ref<Record<number, string>>({})
+// 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection, carried
+// the same way the fields above are — session-scoped, never persisted.
+const continuousAutoApproveItemSeqs = ref<number[]>([])
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1705,6 +1710,9 @@ const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
 const aiInvokeContinuationInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection forwarded
+// onto the start request, same lifetime as the mode above.
+const aiInvokeContinuationAutoApproveItemSeqs = ref<number[]>([])
 // 0317 T0010 rev4: item_seq -> provider_id overrides forwarded onto the start request.
 const aiInvokeProviderOverrides = ref<Record<number, string>>({})
 // 0346 T0005: [전달멘트] tab values forwarded onto the start request.
@@ -2089,6 +2097,9 @@ function openAiInvokeDialog(
     targetSeq?: number | null
     reviewMode?: boolean
     instructionMode?: 'auto_approved' | 'ai_direct'
+    // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection
+    // chosen in ContinuousWorkDialog.
+    autoApproveItemSeqs?: number[]
     // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog.
     providerOverrides?: Record<number, string>
     // 0346 T0005: [전달멘트] tab values chosen in ContinuousWorkDialog.
@@ -2119,6 +2130,7 @@ function openAiInvokeDialog(
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
   aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? 'auto_approved'
+  aiInvokeContinuationAutoApproveItemSeqs.value = preset?.autoApproveItemSeqs ?? []
   aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
   aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
   aiInvokeMessageOverrides.value = preset?.messageOverrides ?? {}
@@ -3463,6 +3475,7 @@ function onContinuousDialogConfirm(payload: {
   providerOverrides: Record<number, string>
   defaultMessage: string
   messageOverrides: Record<number, string>
+  autoApproveItemSeqs: number[]
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
@@ -3472,6 +3485,7 @@ function onContinuousDialogConfirm(payload: {
   continuousProviderOverrides.value = payload.providerOverrides
   continuousDefaultMessage.value = payload.defaultMessage
   continuousMessageOverrides.value = payload.messageOverrides
+  continuousAutoApproveItemSeqs.value = payload.autoApproveItemSeqs
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -3501,6 +3515,7 @@ async function onContinuousWarnConfirm() {
       targetSeq,
       reviewMode: continuousReviewMode.value,
       instructionMode: continuousInstructionMode.value,
+      autoApproveItemSeqs: continuousAutoApproveItemSeqs.value,
       providerOverrides: continuousProviderOverrides.value,
       defaultMessage: continuousDefaultMessage.value,
       messageOverrides: continuousMessageOverrides.value,

@@ -182,6 +182,39 @@ def test_self_chain_carries_ai_direct_instruction_mode(monkeypatch):
     assert env["next_token"] == "NEXTRAW"
 
 
+def test_self_chain_carries_auto_approve_item_seqs(monkeypatch):
+    # 0352 T0004 §3.4: db/tokens.py hands the consumed token record back with the
+    # per-item_seq selection already decoded to a plain list — the self-chain must forward
+    # it onto the next hop's advance and report it in the envelope, exactly like the mode.
+    from modules.flow_gate.api import inbox_routes
+    captured = _wire_self_chain(monkeypatch)
+    env = inbox_routes._continuation_self_chain(
+        _FakeRequest(),
+        {"doc_ref": "flowgate.default.0230.0001-R", "issued_to": "pm",
+         "continuation_target_seq": 6, "continuation_review_mode": 0,
+         "continuation_instruction_mode": "ai_direct",
+         "continuation_auto_approve_item_seqs": [3]},
+        "flowgate", "flowgate.default.0230.0003-NR", "NR",
+    )
+    assert captured["continuation_auto_approve_item_seqs"] == [3]
+    assert env["continuation_auto_approve_item_seqs"] == [3]
+
+
+def test_self_chain_defaults_missing_auto_approve_item_seqs_to_empty(monkeypatch):
+    # A legacy/no-selection token carries no set at all — the self-chain must not choke on
+    # its absence and must report "no selection" (empty list), not None or a KeyError.
+    from modules.flow_gate.api import inbox_routes
+    captured = _wire_self_chain(monkeypatch)
+    env = inbox_routes._continuation_self_chain(
+        _FakeRequest(),
+        {"doc_ref": "flowgate.default.0230.0001-R", "issued_to": "pm",
+         "continuation_target_seq": 6, "continuation_review_mode": 0},
+        "flowgate", "flowgate.default.0230.0003-NR", "NR",
+    )
+    assert captured["continuation_auto_approve_item_seqs"] == []
+    assert env["continuation_auto_approve_item_seqs"] == []
+
+
 def test_self_chain_defaults_missing_mode_to_auto_approved(monkeypatch):
     # A legacy continuation token (no continuation_instruction_mode) still advances; the
     # envelope reports the legacy auto_approved policy (backward compatible).
@@ -219,10 +252,13 @@ def test_repair_token_inherits_instruction_mode(monkeypatch):
         items=[],
         token_rec={"issued_to": "pm", "continuation_target_seq": 6,
                    "continuation_review_mode": 0, "continuation_locale": "ko",
-                   "continuation_instruction_mode": "ai_direct"},
+                   "continuation_instruction_mode": "ai_direct",
+                   "continuation_auto_approve_item_seqs": [3]},
         attempt=1,
     )
     assert issue_kw["continuation_instruction_mode"] == "ai_direct"
+    # 0352 T0004 §3.4: the per-item_seq selection rides the repair token too, not just mode.
+    assert issue_kw["continuation_auto_approve_item_seqs"] == [3]
 
 
 # ── (§5.3 d) migration 063 adds the column with a safe default ────────────────────────
@@ -232,3 +268,24 @@ def test_migration_063_adds_instruction_mode_column(test_db):
     assert "continuation_instruction_mode" in cols
     # Additive + nullable (no NOT NULL): legacy rows read NULL → normalized to auto_approved.
     assert cols["continuation_instruction_mode"]["notnull"] == 0
+
+
+# ── (0352 T0004 §3.1) migration 078 adds the per-item_seq selection + paused-chain mode ──
+
+def test_migration_078_adds_auto_approve_item_seqs_and_paused_mode_columns(test_db):
+    token_cols = {
+        row["name"]: row for row in test_db.execute("PRAGMA table_info(tokens)").fetchall()
+    }
+    assert "continuation_auto_approve_item_seqs" in token_cols
+    assert token_cols["continuation_auto_approve_item_seqs"]["notnull"] == 0
+
+    paused_cols = {
+        row["name"]: row
+        for row in test_db.execute("PRAGMA table_info(ai_invoke_paused_chains)").fetchall()
+    }
+    # NR0003's root cause of the pause->resume mode-loss bug: this column did not exist at
+    # all before migration 078, so nothing could ever be read back on resume.
+    assert "continuation_instruction_mode" in paused_cols
+    assert paused_cols["continuation_instruction_mode"]["notnull"] == 0
+    assert "continuation_auto_approve_item_seqs" in paused_cols
+    assert paused_cols["continuation_auto_approve_item_seqs"]["notnull"] == 0

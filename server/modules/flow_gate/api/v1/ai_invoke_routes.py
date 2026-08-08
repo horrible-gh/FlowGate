@@ -45,6 +45,9 @@ class AiInvokeStartRequest(BaseModel):
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
+    # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # Validated (422) below when the request is a fresh continuous 'new' start.
+    continuation_auto_approve_item_seqs: Optional[list[int]] = None
     # 0317 T0010 rev4: item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
     # per-step override table. Session-scoped — consulted once, at start_run, never persisted.
     continuation_provider_overrides: Optional[dict[str, str]] = None
@@ -221,6 +224,28 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         target_error = _continuation_target_error(body.doc_ref, body.continuation_target_seq)
         if target_error:
             return _validation_failed([target_error])
+
+    # 0352 T0004 §2/§3.4: this is the FRESH client request naming the selection — the entry
+    # point where the full 422 validation (including "already done") runs. workflow_decide
+    # is excluded: no item_seq exists before the decision (§2 "결정 전에는 부분 선택 받지 않음").
+    continuation_auto_approve_item_seqs: list[int] = []
+    if body.mode == "continuous" and body.action_scope != "workflow_decide":
+        try:
+            continuation_auto_approve_item_seqs = (
+                workflow_decision_service.normalize_continuation_auto_approve_item_seqs(
+                    body.continuation_auto_approve_item_seqs
+                )
+            )
+            if body.doc_ref and continuation_auto_approve_item_seqs:
+                workflow_decision_service.validate_continuation_auto_approve_item_seqs(
+                    continuation_auto_approve_item_seqs,
+                    body.doc_ref,
+                    body.continuation_target_seq,
+                )
+        except ValueError as exc:
+            return _validation_failed([{
+                "loc": "continuation_auto_approve_item_seqs", "msg": str(exc),
+            }])
 
     # The mention is built through the exact token_routes path so the prompt the
     # invoked AI reads stays byte-identical to the copy-mention flow.
@@ -428,6 +453,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # 0359 L0007 §2.9: the first hop's token carries its run id too, so the
                 # tokens table can answer "which execution held this?" from hop 1 onward.
                 ai_run_id=ai_run_id,
+                continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
             )
             return {
                 "raw_token": adv["token"],
@@ -458,6 +484,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_provider_overrides=body.continuation_provider_overrides,
             continuation_default_note=body.continuation_default_note,
             continuation_note_overrides=body.continuation_note_overrides,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
     except HTTPException as exc:
         return _err(exc)

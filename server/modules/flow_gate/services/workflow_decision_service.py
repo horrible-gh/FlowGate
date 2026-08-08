@@ -63,6 +63,99 @@ def normalize_continuation_instruction_mode(mode: Optional[str]) -> str:
         return mode
     return CONTINUATION_INSTRUCTION_AUTO_APPROVED
 
+
+# ── Per-item_seq N/T auto-approve selection (group 0352 T0004 §2) ──────────────────
+# ai_direct normally hands EVERY N/T instruction head to the AI worker to author itself.
+# This lets the user pick individual N/T STEP INSTANCES (item_seq, not type) that the
+# server should still auto-generate + auto-approve, exactly like auto_approved does for
+# that one step — the rest of the ai_direct chain is unaffected. TS is never eligible
+# (it is excluded from INSTRUCTION_AUTO_TYPES entirely — its content is the AI's own
+# deliverable, group 0121 R0001).
+
+def normalize_continuation_auto_approve_item_seqs(raw: Optional[list]) -> list[int]:
+    """Positive ints only, de-duplicated, ascending (§2). Empty/None -> [] ("no selection").
+
+    Raises ValueError("invalid_auto_approve_item_seq_type:<repr>") for a non-integer or a
+    non-positive value — the 422 case §2 calls out ("정수가 아니거나 0 이하인 값").
+    """
+    if not raw:
+        return []
+    seen: set[int] = set()
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"invalid_auto_approve_item_seq_type:{value!r}")
+        if value <= 0:
+            raise ValueError(f"invalid_auto_approve_item_seq_type:{value!r}")
+        seen.add(value)
+    return sorted(seen)
+
+
+def validate_continuation_auto_approve_item_seqs(
+    item_seqs: list[int],
+    doc_id: str,
+    target_seq: Optional[int],
+    *,
+    reject_already_done: bool = True,
+) -> None:
+    """422-worthy semantic validation against doc_id's decided sequence (§2 검증).
+
+    Rejects (ValueError, message prefix distinguishes the reason):
+      - an item_seq that does not exist in the sequence at all
+      - an item_seq whose type is not N or T (TS/NR/TR/TSR/AC/...)
+      - an item_seq beyond ``target_seq`` (the chain's own stop point)
+      - an item_seq whose step already finished (status == 'done')
+
+    ``reject_already_done=False`` (the internal reuse path — advance_workflow calls back
+    into this on every hop of an ONGOING chain) skips the last check: an item_seq the set
+    named at selection time is expected to read back as 'done' once the server has already
+    auto-completed it earlier in the same run, and that must not retroactively invalidate
+    the rest of the chain. The true "already done at selection time" 422 is enforced by the
+    route layer, which calls this with the default (True) on every fresh client request.
+    """
+    if not item_seqs:
+        return
+    seq = db_wfseq.get_sequence_for_member_doc(doc_id)
+    items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+    by_seq = {item.get("item_seq"): item for item in items}
+    for item_seq in item_seqs:
+        item = by_seq.get(item_seq)
+        if item is None:
+            raise ValueError(f"unknown_auto_approve_item_seq:{item_seq}")
+        if (item.get("type") or "").upper() not in INSTRUCTION_AUTO_TYPES:
+            raise ValueError(f"ineligible_auto_approve_item_seq:{item_seq}")
+        if target_seq is not None and item_seq > target_seq:
+            raise ValueError(f"out_of_range_auto_approve_item_seq:{item_seq}")
+        if reject_already_done and item.get("status") == "done":
+            raise ValueError(f"already_done_auto_approve_item_seq:{item_seq}")
+
+
+def is_auto_handled_step(
+    *,
+    head_type: Optional[str],
+    item_seq: Optional[int],
+    instruction_mode: Optional[str],
+    auto_approve_item_seqs: Optional[list] = None,
+) -> bool:
+    """§2 자동처리 판정식 — the single source of truth, reused by ai_invoke_service so the
+    provider/note/docs-target accounting never drifts from the auto-complete loop's own
+    decision.
+
+    eligible = head.type in {N, T}
+    auto = eligible and (
+        instruction_mode == auto_approved
+        or (instruction_mode == ai_direct and head.item_seq in auto_approve_item_seqs)
+    )
+    """
+    eligible = (head_type or "").upper() in INSTRUCTION_AUTO_TYPES
+    if not eligible:
+        return False
+    mode = normalize_continuation_instruction_mode(instruction_mode)
+    if mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
+        return True
+    if mode == CONTINUATION_INSTRUCTION_AI_DIRECT:
+        return item_seq is not None and item_seq in set(auto_approve_item_seqs or [])
+    return False
+
 # ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
 # A continuous run started BEFORE the workflow is decided ("워크플로 결정부터") cannot name
 # a concrete target item_seq — the sequence does not exist yet. The workflow_decide token
@@ -356,14 +449,23 @@ def _auto_complete_instruction_heads(
     actor_user_id: str,
     locale: str,
     target_seq: Optional[int],
+    # 0352 T0004 §2: per-head auto-handling now follows is_auto_handled_step's formula
+    # instead of gating the whole loop on instruction_mode alone. Defaults preserve every
+    # existing direct caller (this file's own unit tests call this helper positionally with
+    # just the five original kwargs) — auto_approved i.e. "auto everything", matching the
+    # pre-0352 behavior exactly.
+    instruction_mode: str = CONTINUATION_INSTRUCTION_AUTO_APPROVED,
+    auto_approve_item_seqs: Optional[list] = None,
 ) -> int:
     """Server-side fill any instruction-series head (N/T/TS) so the worker never sees it.
 
-    Loops while the effective head is an instruction type: create + approve it via
+    Loops while the effective head is an instruction type AND is_auto_handled_step says this
+    exact head is server-handled: create + approve it via
     ``documents.create_next_approved_core`` (the same mechanics as the managed "자동승인문서"
-    button) so the head advances to its paired report step. Stops at the first
-    report/non-instruction head — which the caller (advance_workflow) then mints the worker
-    token + mention for. Returns the number of instruction steps auto-completed.
+    button) so the head advances to its paired report step. Stops at the first head that is
+    either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
+    selection — which the caller (advance_workflow) then mints the worker token + mention for.
+    Returns the number of instruction steps auto-completed.
 
     Permission source = the SAME resolver the live approve button and the inbox self-chain
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
@@ -405,9 +507,16 @@ def _auto_complete_instruction_heads(
         if head is None:
             break
         head_type = (head.get("type") or "").upper()
-        if head_type not in INSTRUCTION_AUTO_TYPES:
-            break  # report / AC / other → caller mints the worker mention here
         item_seq = head.get("item_seq")
+        if not is_auto_handled_step(
+            head_type=head_type,
+            item_seq=item_seq,
+            instruction_mode=instruction_mode,
+            auto_approve_item_seqs=auto_approve_item_seqs,
+        ):
+            # report / AC / other type, OR an ai_direct N/T not in the auto-approve
+            # selection → caller mints the worker mention here.
+            break
         # Never run past the chain's stop point (target = last item_seq of the run).
         if target_seq is not None and item_seq is not None and item_seq > target_seq:
             break
@@ -455,6 +564,10 @@ def advance_workflow(
     # 0359 L0007 §2.9: the AI run this hop belongs to, stamped onto the issued token. Default
     # None keeps every existing caller (managed advance, tests) working unchanged.
     ai_run_id: Optional[str] = None,
+    # 0352 T0004 §2/§3.3: the ai_direct chain's per-item_seq N/T auto-approve selection.
+    # Normalized + (lightly) validated here; the caller decides how strict — see
+    # validate_continuation_auto_approve_item_seqs's reject_already_done docstring.
+    continuation_auto_approve_item_seqs: Optional[list] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
@@ -510,13 +623,28 @@ def advance_workflow(
     # paired report before head/token/mention resolution proceeds as normal. Managed advance
     # (continuous=False) is untouched — the FE still drives "자동승인문서" explicitly there.
     instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
-    if continuous and instruction_mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
+    auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
+        continuation_auto_approve_item_seqs
+    )
+    if continuous and auto_approve_item_seqs:
+        # Internal reuse (reject_already_done=False): this same set rides every hop of an
+        # ongoing chain (token → self-chain → advance_workflow, hop after hop), and a step it
+        # named earlier in the run legitimately reads back 'done' once the server has already
+        # auto-completed it — that must not retroactively 422 the rest of the chain. The
+        # front-door 422 (a fresh client request) is enforced by the route layer instead.
+        validate_continuation_auto_approve_item_seqs(
+            auto_approve_item_seqs, doc_id, continuation_target_seq,
+            reject_already_done=False,
+        )
+    if continuous:
         _auto_complete_instruction_heads(
             spine_doc=doc,
             seq=seq,
             actor_user_id=issued_to,
             locale=locale,
             target_seq=continuation_target_seq,
+            instruction_mode=instruction_mode,
+            auto_approve_item_seqs=auto_approve_item_seqs,
         )
 
     head = db_wfseq.get_effective_head(seq["id"])
@@ -592,6 +720,7 @@ def advance_workflow(
                 # chain that reached a TSR head minted a run-less token and died the same
                 # self-lock way the review path did.
                 ai_run_id=ai_run_id,
+                continuation_auto_approve_item_seqs=auto_approve_item_seqs,
             )
             return {
                 "doc_ref": issue["doc_ref"],
@@ -607,6 +736,7 @@ def advance_workflow(
                 "continuation_target_seq": continuation_target_seq,
                 "continuation_review_mode": bool(continuation_review_mode),
                 "continuation_instruction_mode": instruction_mode,
+                "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
                 "continuation_remaining": remaining,
                 "head_item_seq": head_item_seq,
             }
@@ -631,6 +761,7 @@ def advance_workflow(
         # it, and 1,346 continuous tokens proved that a chain which dies here leaves no bridge
         # back to its own execution record.
         ai_run_id=ai_run_id,
+        continuation_auto_approve_item_seqs=auto_approve_item_seqs if continuous else None,
     )
     raw_token: str = issue_result["raw_token"]
     scratch_dir: str = issue_result["scratch_dir"]
@@ -706,6 +837,7 @@ def advance_workflow(
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
         "continuation_instruction_mode": instruction_mode if continuous else None,
+        "continuation_auto_approve_item_seqs": auto_approve_item_seqs if continuous else None,
         "continuation_remaining": remaining,
         "head_item_seq": head_item_seq,
     }
@@ -961,6 +1093,11 @@ def continuation_kickoff_after_decide(
     continuation_review_mode: bool = False,
     continuation_instruction_mode: Optional[str] = None,
     ai_run_id: Optional[str] = None,
+    # 0352 T0004 §3.3: currently always empty in practice — request_workflow_decision (the
+    # only issuer of a workflow_decide token) never accepts a per-item selection, since no
+    # item_seq exists before the decision. Accepted + threaded here anyway so this function's
+    # contract matches advance_workflow's and stays correct if a future caller supplies one.
+    continuation_auto_approve_item_seqs: Optional[list] = None,
 ) -> Optional[dict]:
     """Mint the first real step after an unmanned-chain workflow decision is saved.
 
@@ -980,10 +1117,14 @@ def continuation_kickoff_after_decide(
 
     review_mode = bool(continuation_review_mode)
     instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
+    auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
+        continuation_auto_approve_item_seqs
+    )
     envelope: dict = {
         "continuation": True,
         "continuation_review_mode": review_mode,
         "continuation_instruction_mode": instruction_mode,
+        "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
     }
 
     def _stop(stop_code: str, *, detail: Optional[str] = None) -> dict:
@@ -1055,6 +1196,7 @@ def continuation_kickoff_after_decide(
             continuation_target_seq=target_seq,
             continuation_review_mode=review_mode,
             continuation_instruction_mode=instruction_mode,
+            continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         )
     except Exception as exc:
         envelope["continuation_paused"] = True
@@ -1069,6 +1211,7 @@ def continuation_kickoff_after_decide(
             "next_expires_at": adv.get("expires_at"),
             "continuation_remaining": adv.get("continuation_remaining"),
             "continuation_instruction_mode": instruction_mode,
+            "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
         }
     )
     return envelope
