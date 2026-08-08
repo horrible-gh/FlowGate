@@ -108,14 +108,18 @@ function stringArray(value: unknown): string[] {
 function normalizeProvider(payload: Record<string, any>, previous: AiInvokeProvider | null = null): AiInvokeProvider | null {
   if (payload.provider && typeof payload.provider === 'object') {
     return {
-      id: nullableString(payload.provider.id ?? payload.provider.provider_id),
-      name: nullableString(payload.provider.name ?? payload.provider.provider_name),
+      id: payload.provider.id != null || payload.provider.provider_id != null
+        ? nullableString(payload.provider.id ?? payload.provider.provider_id)
+        : previous?.id ?? null,
+      name: payload.provider.name != null || payload.provider.provider_name != null
+        ? nullableString(payload.provider.name ?? payload.provider.provider_name)
+        : previous?.name ?? null,
     }
   }
   if (payload.provider_id != null || payload.provider_name != null) {
     return {
-      id: nullableString(payload.provider_id),
-      name: nullableString(payload.provider_name),
+      id: payload.provider_id != null ? nullableString(payload.provider_id) : previous?.id ?? null,
+      name: payload.provider_name != null ? nullableString(payload.provider_name) : previous?.name ?? null,
     }
   }
   return previous
@@ -525,6 +529,9 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
             ? base.chainDocsReached
             : payload.docs_reached ?? payload.docs_reached_so_far ?? base.docsReachedSoFar),
       ),
+      // A settled hop is only a chain-level placeholder until its successor is adopted.
+      // Stop its hop-local clock instead of presenting the old provider's runtime as the new hop.
+      startedAt: handoffPending ? null : base.startedAt,
       elapsedMs: Number(payload.duration_ms ?? payload.elapsed_ms ?? base.elapsedMs),
       providerSwitches: finishedSwitches.length > 0 ? finishedSwitches : base.providerSwitches,
       handoffPending,
