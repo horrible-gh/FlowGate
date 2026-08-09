@@ -93,13 +93,17 @@ TYPE_ACTIONS: dict[str, list[str]] = {
     "VR": ["approve_batch", "reject_batch"],
     "M": [],
     "CH": [],  # L0044.0008 §3.5: conversation — no review actions (non-gate, like M)
+    # 0395 D0007 §3.6: a work plan uses the EXISTING review lifecycle — no new states and
+    # no plan-only review procedure. It is reviewable and approvable like a design sheet;
+    # what the reviewer reads is a table instead of prose, which changes nothing here.
+    "WP": ["review_request", "approve", "reject"],
 }
 
 # Types eligible for review requests
-REVIEW_REQUEST_TYPES = {"D", "DB", "P", "L", "DC", "NR", "TR"}
+REVIEW_REQUEST_TYPES = {"D", "DB", "P", "L", "DC", "NR", "TR", "WP"}
 
 # Types that can be approved/rejected
-APPROVABLE_TYPES = {"AR", "DS", "N", "T", "DC", "VR", "TR", "NR"}
+APPROVABLE_TYPES = {"AR", "DS", "N", "T", "DC", "VR", "TR", "NR", "WP"}
 
 # Types eligible for revision requests (D004 §3.1)
 REVISION_REQUEST_TYPES = {"D", "DB", "P", "L", "NR", "TR"}

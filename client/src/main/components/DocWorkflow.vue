@@ -122,6 +122,10 @@ const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
 const isWorkflowRoot = computed(() => props.tab.typeCode === 'R' || props.tab.typeCode === 'B')
 
+// 0395 D0007 §7: 작업계획은 "요건정의 다음에 오는 일반 칸" — a sequence step like any
+// other, so it shows up in the strip and must be clickable there.
+const WORK_PLAN_TYPE = 'WP'
+
 // 0119 B0001 (NR0003 §6-B): decided workflow root whose steps were all deleted. Used to
 // keep the section + [Edit] button visible (recovery) instead of collapsing to nothing.
 const decidedEmpty = computed(() =>
@@ -132,6 +136,10 @@ const emit = defineEmits<{
   'sequence-updated': []
   'decide-workflow': []
   'next-action': []
+  // 0395 T0021 — open the work-plan create dialog. Carries the sequence-owning root
+  // (R/B) because the strip is also drawn on member documents, and a work plan may
+  // only attach to the root; sending the viewed document would 422.
+  'create-work-plan': [payload: { docId: string }]
   // 0018 R0001 — workflow-strip time-machine: a completed ('done') step cell was clicked.
   // Emits the strip index + step type code so the parent can resolve the slot's realised
   // document (by slot identity) and reopen the workflow there.
@@ -160,6 +168,13 @@ function stepHint(s: StepState, idx: number): string | undefined {
 // the head restores forward (reverse time-machine); other future steps are inert.
 function onStepClick(s: StepState, idx: number) {
   if ((s.visual === 'highlight' || s.visual === 'current') && props.canNextAction) {
+    // 0395 T0021 / D0007 §3.1 결정 3: a work plan is NOT created through the generic
+    // related-document path the next-step action uses — that path builds a Markdown
+    // body and touches the parent's status. It has its own dialog and route.
+    if (s.code === WORK_PLAN_TYPE) {
+      emitCreateWorkPlan()
+      return
+    }
     emit('next-action')
     return
   }
@@ -170,6 +185,10 @@ function onStepClick(s: StepState, idx: number) {
   if (s.visual === 'done') {
     emit('time-machine', { index: idx, code: s.code })
   }
+}
+
+function emitCreateWorkPlan() {
+  emit('create-work-plan', { docId: props.parentRDocId ?? props.tab.id })
 }
 
 const showEditModal = ref(false)

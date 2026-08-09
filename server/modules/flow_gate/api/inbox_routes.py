@@ -35,11 +35,16 @@ from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.numbering.id_formatter import parse_doc_code
 from modules.flow_gate.documents import document_service
+from modules.flow_gate.documents.constants import (
+    HEAD_TYPE_GUARD_EXEMPT_TYPES,
+    WORK_PLAN_TYPE,
+)
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
+from modules.flow_gate.services import work_plan_service
 from modules.flow_gate.storage.paths import (
     get_storage_root,
     group_path,
@@ -1779,12 +1784,17 @@ def _resolve_storage_path(
     group: dict,
     doc_id: str,
     branch: str = "main",
+    doc_type: Optional[str] = None,
 ) -> pathlib.Path:
     """Return canonical storage path using the D013 §5 pattern.
 
     The filename is composed of a short doc_code (`{seq}-{type}`) prefix plus `document.md`
     (consistent with other callers, e.g. `0002-M_document.md`).
     If a canonical full ID is given, the group prefix is stripped to use only the short code.
+
+    A work plan (WP) is the one type whose canonical body is not prose: it is stored as
+    `..._document.json` (P0009 §2.6 결정 2). Giving a JSON body a `.md` name would make the
+    viewer, search and backup all treat it as text.
     """
     group_code = group["group_id"]
     if doc_id.startswith(group_code + "."):
@@ -1793,11 +1803,14 @@ def _resolve_storage_path(
         doc_code = doc_id[len(group_code) + 1:]
     else:
         doc_code = doc_id
+    filename = "document.md"
+    if (doc_type or "").upper() == WORK_PLAN_TYPE:
+        filename = work_plan_service.DOCUMENT_FILENAME
     return document_path(
         project_id=project_id,
         group_code=group_code,
         doc_code=doc_code,
-        filename="document.md",
+        filename=filename,
         module=module,
         branch=branch,
     )
@@ -2745,6 +2758,51 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if design_error is not None:
         return design_error
 
+    # ── Step 5.6: 작업계획(WP) 본문 해석 (P0009 §5, D0007 §2.2) ────────────────
+    # doc_type 이 WP 이면 본문은 글이 아니라 정본 JSON 이다. 사람 경로(PUT
+    # /documents/{doc_id}/work-plan)와 **같은 검증기**를 부른다 — 두 경로가 각자 검사를
+    # 가지면 규칙이 곧 갈라진다(D0007 §2.2). 인박스는 서식만 바꾸고 경로는 그대로 쓰므로
+    # (P0009 §5 결정 8) 토큰 검사·번호 발급·워크플로 연결은 아래 흐름을 그대로 탄다.
+    #
+    # 자리가 중요하다. dry-run 분기보다 *앞*이라 미리보기와 실등록이 같은 판정을 받고,
+    # 거부는 numbering/storage 이전이라 문서 번호도 토큰도 소비되지 않는다(P0009 §5.2).
+    # 제목과 연결 대상은 인박스 메타데이터가 정본이며(결정 9), 본문에 title 이나
+    # parent_doc_id 를 적으면 검증기의 모르는 항목 규칙(unknown_field)에 걸려 거절된다 —
+    # 조용히 무시하면 AI 는 자기가 적은 제목이 반영된 줄 안다.
+    wp_plan: Optional[dict] = None
+    if doc_type.upper() == WORK_PLAN_TYPE:
+        wp_locale = work_plan_service.normalize_locale(
+            token_rec.get("continuation_locale") or request.headers.get("x-locale")
+        )
+        wp_raw = body_for_guards
+        if wp_raw is None:
+            wp_raw = _submission_text(doc_path, content) or ""
+        wp_parsed: object = None
+        try:
+            wp_parsed = json.loads(wp_raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            return _fail(
+                400,
+                work_plan_service.inbox_not_json_message(wp_raw, exc, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+        if not isinstance(wp_parsed, dict):
+            return _fail(
+                400,
+                work_plan_service.inbox_not_json_message(wp_raw, None, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+        try:
+            wp_plan = work_plan_service.validate(
+                wp_parsed, project_id=project, action="create",
+            )
+        except work_plan_service.WorkPlanValidationError as exc:
+            return _fail(
+                400,
+                work_plan_service.inbox_error_message(exc, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+
     # Refuse a substantial body that is byte-identical to an existing document in a
     # *different* group — the submission-layer contamination signature (correct title,
     # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
@@ -2756,7 +2814,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     try:
         body_for_fp = body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
         fingerprints = _content_fingerprints(body_for_fp)
-        twin = _find_body_twin(fingerprints, exclude_group_id=group["group_id"])
+        # 작업계획은 이 가드에서 빠진다. P0009 DEFERRED 가 "계획을 다른 그룹으로 복사해
+        # 오는 경로는 만들지 않는다 — 원문 보기의 [복사]와 인박스 생성으로 갈음한다"고
+        # 정했으므로, 같은 계획을 다른 그룹에 그대로 넣는 것이 **지원되는 사용법**이다.
+        # 같은 본문 판정으로 막으면 설계가 정한 유일한 복사 경로가 막힌다.
+        twin = (
+            None if wp_plan is not None
+            else _find_body_twin(fingerprints, exclude_group_id=group["group_id"])
+        )
         if twin is not None:
             return _fail(
                 409,
@@ -2845,9 +2910,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # mismatched preview and real submission fail identically without an orphan doc.
     # Standalone auto-complete types (M/CH) intentionally bypass this workflow-slot
     # constraint, matching their existing Step 7.5 behavior.
+    # 작업계획(WP)도 이 검사에서 빠진다. 워크플로 머리는 "다음에 올 단계 문서"를 못박는
+    # 값이고 그것이 단계 문서에는 맞지만, 작업계획은 자문형이라 그룹의 어느 시점에서도
+    # 쓸 수 있고 한 그룹에 여러 장을 둘 수 있다(D0007 §3.1 결정 5). 머리 타입에 묶으면
+    # 설계가 정한 AI 생성 경로(P0009 §5.1)가 그룹이 진행 중일 때마다 409 로 막힌다.
     workflow_head: Optional[dict] = None
-    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
-    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
+    if doc_type.upper() not in HEAD_TYPE_GUARD_EXEMPT_TYPES:
         try:
             workflow_head = db_wfseq.get_pending_head_by_group(group["group_id"], project)
         except Exception:
@@ -2905,6 +2973,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         new_checks.append("dup_body")
     if commit_message_draft is not None:
         new_checks.append("commit_message")
+    if wp_plan is not None:
+        new_checks.append("work_plan_body")
     would_register: dict = {
         "action": "new",
         "doc_id": None,
@@ -2939,11 +3009,24 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         seq = int(m.group(1)) if m else 0
     project_settings = db_projects.get_settings(project)
     branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
-    stored_path = _resolve_storage_path(project, module, group, canonical_doc_id, branch=branch)
+    stored_path = _resolve_storage_path(
+        project, module, group, canonical_doc_id, branch=branch, doc_type=doc_type,
+    )
 
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
-        if doc_path is not None:
+        if wp_plan is not None:
+            # 정본은 보내온 글자가 아니라 검증기가 돌려준 표준형으로 쓴다(P0009 §2.6
+            # 결정 3·4). 키 순서와 공백이 저장할 때마다 흔들리면 리비전 사이의 차이가
+            # 실제로 바뀐 값보다 커진다. 임시 파일에 쓴 뒤 통째로 갈아끼우므로 반쯤 쓰다
+            # 끊긴 정본이 남지 않는다.
+            work_plan_service.write_body_atomically(stored_path, wp_plan)
+            if doc_path is not None:
+                try:
+                    os.unlink(doc_path)
+                except OSError:
+                    pass
+        elif doc_path is not None:
             shutil.move(str(doc_path), str(stored_path))
         else:
             stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
@@ -2981,6 +3064,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
     if _force_encoding_reason:
         meta_payload["force_encoding_reason"] = _force_encoding_reason
+    # 작성 경로 표시(D0007 §3.7 결정 7): 문서 정보 패널의 "작성 경로: 사람 / AI" 한 줄이
+    # 이 값을 읽는다. 사람이 만든 것과 AI가 만든 것은 같은 검토를 받지만, 검토자는 둘을
+    # 구별할 수 있어야 한다. 어느 실행이 만들었는지도 함께 남긴다.
+    if wp_plan is not None:
+        meta_payload["work_plan"] = {
+            "origin": "ai",
+            "origin_run_id": token_rec.get("ai_run_id"),
+        }
     meta_value = json.dumps(meta_payload) if meta_payload else None
     try:
         db_docs.create({
@@ -3194,11 +3285,24 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 않고 응답으로만 나가므로 새 표도 새 컬럼도 필요 없다. 줄 번호는 **저장된 파일**
     # 기준이라 보낸 본문이 아니라 stored_path 를 다시 읽어 센다 — 그래야 목차 조회와
     # 저장 요약이 같은 줄 번호를 말한다.
-    resp_content["change_summary"] = _build_change_summary(
-        doc_id=canonical_doc_id,
-        after_path=stored_path,
-        after_revision_no=0,
-    )
+    if wp_plan is not None:
+        # 작업계획에는 절도 줄도 없다(P0009 §5 결정 10). 무인 작업자가 확인해야 하는 것은
+        # "몇 줄이 어느 절에 들어갔는가"가 아니라 자기가 보낸 수량과 배정이 그대로
+        # 저장됐는가이므로, kind 로 서식을 구별해 전용 요약을 돌려준다.
+        resp_content["change_summary"] = work_plan_service.change_summary(wp_plan)
+        resp_content.update({
+            "doc_type": doc_type.upper(),
+            "title": extracted_title,
+            "revision_no": 0,
+            "origin": "ai",
+            "origin_run_id": token_rec.get("ai_run_id"),
+        })
+    else:
+        resp_content["change_summary"] = _build_change_summary(
+            doc_id=canonical_doc_id,
+            after_path=stored_path,
+            after_revision_no=0,
+        )
     # Continuous work self-chain (group 0051 / NR0003 B안): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
@@ -3368,6 +3472,49 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if design_error is not None:
         return design_error
 
+    # ── 작업계획(WP) 본문 해석 — 수정 경로 (P0009 §5.4) ────────────────────────
+    # new 에만 붙이면 edit 이 통째로 우회로가 된다. 반려된 작업계획은 edit 으로 다시
+    # 올라오는데 거기에 검증이 없으면 규칙에 맞지 않는 정본이 그대로 저장되고, 그 문서는
+    # 그 뒤로 표로 열리지 않는다. 판정과 문구는 new 와 같은 검증기에서 나온다.
+    #
+    # 결정 11: 수정에는 리비전 검사를 걸지 않는다. 인박스의 edit 은 지금도 판 번호를 받지
+    # 않고, AI 작업자는 자기가 받은 토큰 하나로 한 문서를 고친다 — 두 사람이 같은 화면을
+    # 열어 둔 상황이 아니다. 대신 응답의 change_summary.changed 로 무엇이 무엇으로 바뀌
+    # 었는지 돌려주어, 남의 값을 덮었는지 작업자가 바로 알 수 있게 한다.
+    wp_plan: Optional[dict] = None
+    if edit_doc_type == WORK_PLAN_TYPE:
+        wp_locale = work_plan_service.normalize_locale(
+            token_rec.get("continuation_locale") or request.headers.get("x-locale")
+        )
+        wp_raw = edit_body_for_guards
+        if wp_raw is None:
+            wp_raw = _submission_text(doc_path, content) or ""
+        wp_parsed: object = None
+        try:
+            wp_parsed = json.loads(wp_raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            return _fail(
+                400,
+                work_plan_service.inbox_not_json_message(wp_raw, exc, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+        if not isinstance(wp_parsed, dict):
+            return _fail(
+                400,
+                work_plan_service.inbox_not_json_message(wp_raw, None, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+        try:
+            wp_plan = work_plan_service.validate(
+                wp_parsed, project_id=project, action="save",
+            )
+        except work_plan_service.WorkPlanValidationError as exc:
+            return _fail(
+                400,
+                work_plan_service.inbox_error_message(exc, wp_locale),
+                help_url=work_plan_service.HELP_TEMPLATE_PATH,
+            )
+
     # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
     # defended `new`, so the same contamination (correct title, stale/reused body from
     # another group) recurred through inbox edit — most often on CH conversations, whose
@@ -3384,7 +3531,12 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             else _submission_text(doc_path, content)
         )
         edit_fingerprints = _content_fingerprints(body_for_fp)
-        twin = _find_body_twin(edit_fingerprints, exclude_group_id=group["group_id"])
+        # new 경로와 같은 이유로 작업계획은 이 가드에서 빠진다: 같은 계획을 다른 그룹에
+        # 그대로 넣는 것이 설계가 정한 유일한 복사 경로다(P0009 DEFERRED).
+        twin = (
+            None if wp_plan is not None
+            else _find_body_twin(edit_fingerprints, exclude_group_id=group["group_id"])
+        )
         if twin is not None:
             return _fail(
                 409,
@@ -3484,6 +3636,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_checks.append("frontmatter_identity")
     if edit_fingerprints:
         edit_checks.append("dup_body")
+    if wp_plan is not None:
+        edit_checks.append("work_plan_body")
     edit_would_register: dict = {
         "action": "edit",
         "doc_id": doc_id,
@@ -3521,7 +3675,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if stored_path and stored_path.exists():
         revisions_dir = stored_path.parent / "revisions"
         revisions_dir.mkdir(parents=True, exist_ok=True)
-        backup_filename = f"{doc_id}.r{current_revision_no}.md"
+        # 백업은 원본과 같은 확장자를 쓴다. 작업계획 정본은 .json 이라 여기서 .md 로
+        # 굳히면 되돌릴 판이 글 파일로 쌓인다(P0009 §2.6 결정 2와 같은 이유).
+        backup_filename = f"{doc_id}.r{current_revision_no}{stored_path.suffix or '.md'}"
         backup_path = revisions_dir / backup_filename
         try:
             shutil.copy2(str(stored_path), str(backup_path))
@@ -3534,11 +3690,17 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if stored_path is None:
         project_settings = db_projects.get_settings(project)
         branch = (project_settings.get("branch") or "main").strip() if project_settings else "main"
-        stored_path = _resolve_storage_path(project, module, group, doc_id, branch=branch)
+        stored_path = _resolve_storage_path(
+            project, module, group, doc_id, branch=branch, doc_type=edit_doc_type,
+        )
 
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
-        if doc_path is not None:
+        if wp_plan is not None:
+            # new 와 같은 규칙: 보내온 글자가 아니라 검증기가 돌려준 표준형을 원자적으로
+            # 갈아끼운다(P0009 §2.6 결정 3·4).
+            work_plan_service.write_body_atomically(stored_path, wp_plan)
+        elif doc_path is not None:
             shutil.copy2(str(doc_path), str(stored_path))
         else:
             stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
@@ -3803,13 +3965,30 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 0370 4세트 (P0002 시나리오 14·16): 견줄 "저장 전"은 Step 6a 가 이미 떠 둔 백업
     # 파일이다. 그래서 요약을 위해 새로 저장할 것이 하나도 없다. 백업이 없으면(복사 실패
     # 등) 요약만 포기하고 저장은 성공으로 둔다.
-    resp_body["change_summary"] = _build_change_summary(
-        doc_id=doc_id,
-        after_path=stored_path,
-        after_revision_no=new_revision_no,
-        before_path=backup_path_str,
-        before_revision_no=current_revision_no,
-    )
+    if wp_plan is not None:
+        # 결정 11: 무엇이 무엇으로 바뀌었는지를 돌려준다. 견줄 "저장 전"은 Step 6a 가 떠
+        # 둔 백업이다. 백업을 못 읽으면(복사 실패·깨진 옛 정본) 비교만 포기하고 저장은
+        # 성공으로 둔다 — 요약 때문에 이미 끝난 저장을 실패로 되돌리지 않는다.
+        wp_before: Optional[dict] = None
+        if backup_path_str:
+            try:
+                with open(backup_path_str, encoding="utf-8") as _wp_fh:
+                    _wp_prev = json.load(_wp_fh)
+                if isinstance(_wp_prev, dict):
+                    wp_before = _wp_prev
+            except Exception as _wp_exc:  # noqa: BLE001
+                import LogAssist.log as logger
+                logger.warning(f"[inbox edit] work plan before-image unreadable (ignored): {_wp_exc}")
+        resp_body["change_summary"] = work_plan_service.change_summary(wp_plan, wp_before)
+        resp_body["doc_type"] = WORK_PLAN_TYPE
+    else:
+        resp_body["change_summary"] = _build_change_summary(
+            doc_id=doc_id,
+            after_path=stored_path,
+            after_revision_no=new_revision_no,
+            before_path=backup_path_str,
+            before_revision_no=current_revision_no,
+        )
     return JSONResponse(content=resp_body)
 
 

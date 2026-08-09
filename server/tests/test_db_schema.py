@@ -98,10 +98,33 @@ def test_seed_permissions_count(db):
 
 
 def test_seed_document_types_count(db):
+    # 21 seeded types + WP (work plan), added as a global system type by migration 078
+    # (flowgate.default.0395 D0007 §7: the type count assertion moves with the type).
     count = db.execute(
         "SELECT COUNT(*) FROM document_types WHERE project_id IS NULL AND is_system=1"
     ).fetchone()[0]
-    assert count == 21, f"Document types count mismatch: {count}"
+    assert count == 22, f"Document types count mismatch: {count}"
+
+
+def test_seed_work_plan_document_type(db):
+    """WP must exist in all three dialects; this asserts the sqlite branch (078)."""
+    row = db.execute(
+        "SELECT type_code, series, is_system, is_active FROM document_types "
+        "WHERE project_id IS NULL AND type_code = 'WP'"
+    ).fetchone()
+    assert row is not None, "WP document type was not seeded"
+    assert row["series"] == "general"
+    assert row["is_system"] == 1
+    assert row["is_active"] == 1
+    names = {
+        r["locale"]: r["type_name"]
+        for r in db.execute(
+            "SELECT dtn.locale, dtn.type_name FROM document_type_names dtn "
+            "JOIN document_types dt ON dt.id = dtn.document_type_id "
+            "WHERE dt.type_code = 'WP' AND dt.project_id IS NULL"
+        ).fetchall()
+    }
+    assert set(names) >= {"ko", "ja", "en"}, f"missing WP locales: {sorted(names)}"
 
 
 def test_seed_system_settings(db):
@@ -191,3 +214,26 @@ def test_v_tv_progress_view(db):
     rows = db.execute("SELECT * FROM v_tv_progress WHERE doc_id='tv1'").fetchall()
     assert len(rows) == 1
     assert rows[0]["scenario_total"] == 0
+
+@pytest.mark.parametrize(
+    ("dialect", "idempotent_marker"),
+    [
+        ("sqlite", "INSERT OR IGNORE"),
+        ("postgres", "ON CONFLICT DO NOTHING"),
+        ("mysql", "INSERT IGNORE"),
+    ],
+)
+def test_work_plan_seed_contract_is_equivalent_in_all_dialects(dialect, idempotent_marker):
+    """Keep 078 semantically aligned; live engines are exercised by T0017 regression."""
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "sql" / "migrations" / dialect / "078_seed_work_plan_doctype.sql"
+    )
+    sql = migration.read_text(encoding="utf-8")
+    assert idempotent_marker in sql
+    assert "'WP'" in sql and "'general'" in sql
+    assert "'작업계획'" in sql and "'作業計画'" in sql and "'Work Plan'" in sql
+    for locale in ("ko", "en", "ja"):
+        assert sql.count(f"'{locale}'") == 2, f"{dialect}: name + description required for {locale}"
+    assert sql.count("document_type_names") >= 3
+    assert sql.count("document_type_descriptions") >= 3

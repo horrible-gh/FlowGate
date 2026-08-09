@@ -8,6 +8,7 @@ from . import files as _files_router
 from modules.flow_gate.auth.auth_api import router as _auth_router
 from modules.flow_gate.documents.routers.documents import router as _documents_router
 from modules.flow_gate.documents.routers.conversation_turns import router as _conversation_turns_router
+from modules.flow_gate.documents.routers.work_plan import router as _work_plan_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
 from modules.flow_gate.settings.routers.users import router as _settings_users_router
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
@@ -140,6 +141,9 @@ app.add_middleware(GroupMutationPolicyMiddleware)
 app.include_router(_auth_router, prefix=f"{CONTEXT}/auth", tags=["Auth"])
 app.include_router(_documents_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_conversation_turns_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
+# Work plan (WP) routes live under the same /documents prefix but in their own module:
+# documents.py is already 112KB and the plan paths share nothing with it but the prefix.
+app.include_router(_work_plan_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_settings_system_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemSettings"])
 app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["UserAdmin"])
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])

@@ -191,8 +191,11 @@ def create_project_endpoint(
 
 def _doc_type_to_view(row: dict) -> dict:
     """Map a DB row to frontend field names."""
+    from modules.flow_gate.services import work_plan_service
+
     template_path = row.get("template_path")
-    return {
+    annotated = work_plan_service.annotate_types([row])[0]
+    view = {
         "id": row.get("id"),
         "project_id": row.get("project_id"),
         "code": row.get("type_code"),
@@ -204,7 +207,14 @@ def _doc_type_to_view(row: dict) -> dict:
         "is_system": row.get("is_system"),
         "is_active": row.get("is_active"),
         "sort_order": row.get("sort_order"),
+        # P0009 §4.1: "can this type be counted in a work plan, and in what unit".
+        # Additive — every key above keeps its meaning.
+        "countable": annotated.get("countable"),
+        "unit": annotated.get("unit"),
     }
+    if annotated.get("pair_code"):
+        view["pair_code"] = annotated["pair_code"]
+    return view
 
 
 @router.get("/projects/{project_id}/document-types")

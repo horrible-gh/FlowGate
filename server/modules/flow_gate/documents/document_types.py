@@ -24,8 +24,17 @@ def list_types(
     """Return the list of document types.
 
     When project_id is specified, returns global (NULL) types plus the project's own types.
+
+    Each row also carries ``countable`` / ``unit`` / ``pair_code`` (P0009 §4.1). Without
+    them the work plan's create dialog would have to list the type codes by hand, and
+    every new type would mean editing the screen as well as the table. Purely additive:
+    the existing keys are untouched.
     """
-    return list_document_types(project_id=project_id, series=series)
+    from modules.flow_gate.services import work_plan_service
+
+    return work_plan_service.annotate_types(
+        list_document_types(project_id=project_id, series=series)
+    )
 
 
 def get_type(

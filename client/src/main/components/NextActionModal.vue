@@ -192,7 +192,7 @@
                    the dialog's selected-refs become the new empty doc's context. The
                    create-empty emit is already wired to MainPanel.onNextActionCreateEmpty. -->
               <div class="nad-proceed-item" @click="onProceedAction('create-empty')">
-                <AppIcon name="file" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_create_empty') }}
+                <AppIcon name="file" style="width:1.2em;" /> {{ t(nextCreateLabelKey) }}
               </div>
               <div class="nad-proceed-item" @click="onProceedAction('copy-mention')">
                 <AppIcon name="copy" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_copy_mention') }}
@@ -285,6 +285,14 @@ const nextTypeLabel = computed(() => {
   if (props.nextTypeCode === 'none') return t('main.next_action_modal.none_module_label')
   return props.nextTypeCode ? docTypeStore.getLabel(props.nextTypeCode) : props.nextStepLabel
 })
+
+// 0395 T0030: preserve the create-empty event and let MainPanel route WP to the
+// existing work-plan dialog; only the user-facing action name is type-sensitive here.
+const nextCreateLabelKey = computed(() =>
+  (props.nextTypeCode ?? '').toUpperCase() === 'WP'
+    ? 'main.review_action_bar.btn_create_work_plan'
+    : 'main.next_action_modal.btn_create_empty',
+)
 
 // ── computed locked doc info ──────────────────────────────────────────────────
 const normalizedDocRef = computed(() =>

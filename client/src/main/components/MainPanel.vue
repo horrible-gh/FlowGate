@@ -92,6 +92,7 @@
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
             @return-to="onWorkflowStepReturn(tab.id, $event)"
+            @create-work-plan="onCreateWorkPlan(tab.id, $event.docId)"
           />
           <!-- 0115: git finalize panel — self-hiding unless the group has a git
                worktree (status !== 'none'); shown on workflow roots only. -->
@@ -216,6 +217,16 @@
               </Teleport>
             </div>
           </div>
+          <!-- WP (work plan): the body is JSON, not Markdown — a dedicated table editor
+               replaces MdViewer for this typeCode, the same way CH replaces it with a
+               conversation view. flowgate.default.0395 D0007 §6.4. -->
+          <WorkPlanEditor
+            v-else-if="tab.typeCode === 'WP'"
+            :ref="(el) => registerWorkPlanEditor(tab.id, el)"
+            :doc-id="tab.id"
+            :project-id="tab.projectId ?? null"
+            @apply-preset="(payload) => onWorkPlanPreset(tab.id, payload)"
+          />
           <div v-else-if="tab.type === 'qtui'" class="card md-preview-card">
             <div class="card-hd">
               <span class="card-title">
@@ -833,7 +844,17 @@
       @create-conversation="onActionBarCreateConversation(activeTabId)"
       @run-test="onActionBarRunTest(activeTabId)"
       @continuous-work="onActionBarContinuousWork(activeTabId)"
+      @fill-continuous="onActionBarFillContinuous(activeTabId)"
       @open-head-doc="onOpenHeadDocClick"
+    />
+
+    <!-- flowgate.default.0395 D0007 §6.3: create dialog for a new work-plan document. -->
+    <WorkPlanCreateDialog
+      v-model:visible="workPlanCreateVisible"
+      :parent-doc-id="workPlanCreateParentDocId"
+      :project-id="workPlanCreateProjectId"
+      :group-id="workPlanCreateGroupId"
+      @created="onWorkPlanCreated"
     />
 
     <!-- Document Full View Modal -->
@@ -987,6 +1008,7 @@
     <ContinuousWorkDialog
       v-model:visible="continuousDialogVisible"
       :doc-ref="continuousDocRef"
+      :preset="continuousPreset"
       :providers="aiProviderStore.providers"
       :selected-provider="aiProviderStore.selectedProviderId"
       :provider-loading="aiProviderStore.loading"
@@ -1283,6 +1305,9 @@ import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
 import ReviewHistoryDialog from './ReviewHistoryDialog.vue'
 import DesignHandoffDialog from './DesignHandoffDialog.vue'
+import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
+import WorkPlanEditor from './WorkPlanEditor.vue'
+import type { WorkPlanFillPreset } from '../types/workPlanFillPreset'
 import type { AiReview } from '../types/aiReview'
 import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
@@ -1645,9 +1670,16 @@ const nextActionModalModuleName = ref('')
 const nextActionModalTypeCode = ref('')
 const nextActionModalCurrentType = ref('')
 const nextActionModalInitialDocs = ref<string[]>([])
+// flowgate.default.0395 D0007 §6.3 / T0021: work-plan creation dialog, opened from
+// the [워크플로 시퀀스] section of the R/B root.
+const workPlanCreateVisible = ref(false)
+const workPlanCreateParentDocId = ref('')
+const workPlanCreateProjectId = ref('')
+const workPlanCreateGroupId = ref('')
 // Continuous work (R0001 group 0086): sequence selection feeds a consent gate that offers
 // either an in-app provider run or the external-AI continuous mention path.
 const continuousDialogVisible = ref(false)
+const continuousPreset = ref<WorkPlanFillPreset | null>(null)
 const continuousWarnVisible = ref(false)
 const continuousTabId = ref('')
 const continuousDocRef = ref('')
@@ -3337,6 +3369,16 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
     showToast(t('main.main_panel.error_empty_doc_not_allowed', { docType }), 'warning')
     return
   }
+  // 0395 T0026 재작업: 작업계획에는 "빈 문서"가 없다. 제목만 받아 만들면 수량도 공급자도
+  // 정해지지 않은 파일이 남고, 그 파일은 작업계획 화면이 표로 열지 못한다(사용자 신고).
+  // 같은 [빈 문서 만들기] 자리에서 계획을 끝까지 정하는 생성 대화상자로 넘긴다.
+  if (docType === 'WP') {
+    workPlanCreateParentDocId.value = docRef
+    workPlanCreateProjectId.value = project
+    workPlanCreateGroupId.value = groupId
+    workPlanCreateVisible.value = true
+    return
+  }
   nextEmptyDocProjectId.value = project
   nextEmptyDocGroupId.value = groupId
   nextEmptyDocPrevDocId.value = docRef
@@ -3436,12 +3478,61 @@ async function onActionBarRunTest(tabId: string) {
   }
 }
 
+// ── Work plan (flowgate.default.0395 D0007 §6.3 / T0021) ──────────────────────
+// Entry point is the [워크플로 시퀀스] section (DocWorkflow), which supplies the
+// sequence-owning R/B root — the strip is drawn on member documents too, and the
+// viewed tab is not necessarily the document a work plan may attach to.
+function onCreateWorkPlan(tabId: string, parentDocId: string) {
+  const h = docHeaderRefs[tabId]
+  workPlanCreateParentDocId.value = parentDocId || tabId
+  workPlanCreateProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  workPlanCreateGroupId.value = exposedValue<string>(h?.groupId) ?? ''
+  workPlanCreateVisible.value = true
+}
+
+function onWorkPlanCreated(payload: { docId: string; title: string }) {
+  tabsStore.openTab({
+    id: payload.docId,
+    title: payload.title,
+    path: '',
+    type: 'md',
+    typeCode: 'WP',
+    projectId: workPlanCreateProjectId.value || undefined,
+  })
+}
+
+// Work-plan apply does not start a run. It only opens the existing dialog with a preset.
+// 시안 xc32frrg 화면 1: [연속 작업에 채우기]는 액션바에 있고, 그 미리보기는
+// 열려 있는 작업계획 편집기가 갖고 있다. 액션바 → 편집기로 그대로 넘긴다.
+const workPlanEditorRefs: Record<string, { openApplyPreview: () => void } | null> = {}
+function registerWorkPlanEditor(tabId: string, el: unknown) {
+  workPlanEditorRefs[tabId] = (el as { openApplyPreview: () => void } | null) ?? null
+}
+function onActionBarFillContinuous(tabId: string) {
+  workPlanEditorRefs[tabId]?.openApplyPreview()
+}
+
+function onWorkPlanPreset(
+  tabId: string,
+  payload: { preset: WorkPlanFillPreset; ownerDocId: string },
+) {
+  const h = docHeaderRefs[tabId]
+  continuousTabId.value = tabId
+  continuousDocRef.value = payload.ownerDocId
+  continuousProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  continuousGroupId.value = exposedValue<string>(h?.groupId) ?? ''
+  continuousPreset.value = payload.preset
+  void aiProviderStore.ensureLoaded(continuousProjectId.value)
+  continuousDialogVisible.value = true
+}
+
 // ── Continuous (unmanned) work (R0001 group 0086) ──────────────────────────────
 // Entry from the 'workflow'/'next' action-bar dropdowns. Opens the sequence-pick dialog;
 // the dialog reads /workflow/sequence by the ROOT R (nextActionDocRef) and handles the
 // undecided/all-done cases itself, so this is NOT gated by guardNextActionAvailable.
 function onActionBarContinuousWork(tabId: string) {
   const h = docHeaderRefs[tabId]
+  continuousPreset.value = null
   continuousTabId.value = tabId
   continuousDocRef.value = nextActionDocRef(tabId)
   continuousProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
@@ -4085,6 +4176,7 @@ const TYPE_COLOR_MAP: Record<string, string> = {
   TR: '#0284c7', M: '#64748b', Q: '#d97706', AC: '#16a34a',
   N: '#0284c7', NR: '#6366f1', TS: '#db2777', L: '#7c3aed',
   A: '#16a34a', B: '#dc2626', P: '#0d9488', DB: '#ca8a04',
+  WP: '#14b8a6',
 }
 
 function typeBarWidth(count: number): number {

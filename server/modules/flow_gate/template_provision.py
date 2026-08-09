@@ -41,6 +41,18 @@ def is_design_type(type_code: str) -> bool:
     return tdb.is_design_type(type_code)
 
 
+def has_body_template(type_code: Optional[str]) -> bool:
+    """Whether the authenticated template help can supply this document body.
+
+    WP deliberately joins the design series here because its canonical body is JSON,
+    which cannot safely be inferred by an unattended writer. Help visibility and AI
+    hand-off mentions must call this same predicate so their guidance cannot drift.
+    """
+    if (type_code or "").upper() == "WP":
+        return True
+    return bool(type_code) and is_design_type(str(type_code))
+
+
 class UnknownDesignType(Exception):
     """type_code is not a valid design type (document_types series='design')."""
 

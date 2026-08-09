@@ -12,6 +12,7 @@ VALID_TYPES = {
     "V", "VR",
     "M", "AC", "RJ",
     "CH",  # L0044.0008 §2: conversation (chat) — auto-approve like M, non-gate
+    "WP",  # 0395 D0007 §7: work plan — advisory general-series document
 }
 REQUIRED_FIELDS = {"type", "project", "title"}
 CONFIRM_REQUIRED = {"type", "target", "action"}

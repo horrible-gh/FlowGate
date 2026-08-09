@@ -174,7 +174,7 @@
                   <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
                 </button>
                 <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
-                  <AppIcon name="file" /> {{ t('main.review_action_bar.btn_create_empty') }}
+                  <AppIcon name="file" /> {{ t(nextCreateLabelKey) }}
                 </button>
                 <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
                      opening the proceed dialog. -->
@@ -233,6 +233,19 @@
         </div>
 
         <div v-else class="sfb-actions">
+          <!-- Mockup xc32frrg screen 1: a work-plan document's action bar leads with
+               [연속 작업에 채우기]. MainPanel forwards it to the open WorkPlanEditor,
+               which owns the same preview overlay the editor button used to open. -->
+          <button
+            v-if="isWorkPlanDoc"
+            class="btn btn-secondary btn-sm"
+            type="button"
+            :disabled="isGroupBusy"
+            @click="$emit('fill-continuous')"
+          >
+            <AppIcon name="fast-forward" /> {{ t('main.work_plan.apply_to_continuous') }}
+          </button>
+
           <!-- Approve -->
           <button class="btn btn-success btn-sm" :disabled="!canApprove || isGroupBusy" @click="onApproveClick">
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
@@ -273,6 +286,11 @@
             </Teleport>
           </div>
         </div>
+
+        <!-- 0395 T0021: [작업계획 생성] used to sit here. It was moved to the
+             [워크플로 시퀀스] section (DocWorkflow.vue) because this bar hid it in the
+             two states NR0020 §1-1 measured (wf_done / rejected) while showing it on
+             documents the server rejects with 422 (NR0020 §1-2). -->
       </template>
     </div>
 
@@ -428,6 +446,8 @@ const emit = defineEmits<{
   'create-conversation': []
   'run-test': [] // test contract marker for shell-based TS: run-test: []
   'continuous-work': []
+  // 0395: work-plan action bar → open the plan's [연속 작업에 채우기] preview.
+  'fill-continuous': []
   'open-head-doc': [payload: { docId: string; title: string; typeCode: string | null }]
 }>()
 
@@ -654,8 +674,18 @@ const canCreateApproved = computed(() =>
   ['N', 'T'].includes((props.nextStepCode ?? '').toUpperCase()),
 )
 
+// 0395 T0030: this is still the existing create-empty action. Only its visible label
+// changes for WP; MainPanel remains the single owner of the work-plan dialog branch.
+const nextCreateLabelKey = computed(() =>
+  (props.nextStepCode ?? '').toUpperCase() === 'WP'
+    ? 'main.review_action_bar.btn_create_work_plan'
+    : 'main.review_action_bar.btn_create_empty',
+)
+
 // TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action
 // collapses to a single [Create conversation doc] auto-create button (no split / no dialog).
+const isWorkPlanDoc = computed(() => (props.docType ?? '').toUpperCase() === 'WP')
+
 const isNextConversation = computed(() =>
   (props.nextStepCode ?? '').toUpperCase() === 'CH',
 )

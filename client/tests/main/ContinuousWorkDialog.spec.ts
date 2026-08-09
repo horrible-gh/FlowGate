@@ -8,13 +8,15 @@ import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 // (first non-done step) + disables earlier (done) steps so the run cannot skip or start in
 // the middle, and confirms a target item_seq + review-mode flag for the warning gate.
 
-const { getRequest, putRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), putRequest: vi.fn() }))
+const { getRequest, postRequest, putRequest } = vi.hoisted(() => ({
+  getRequest: vi.fn(), postRequest: vi.fn(), putRequest: vi.fn(),
+}))
 
 vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
   getRequest,
   patchRequest: vi.fn(),
-  postRequest: vi.fn(),
+  postRequest,
   putRequest,
 }))
 
@@ -52,6 +54,7 @@ function mountDialog() {
 beforeEach(() => {
   putRequest.mockReset()
   putRequest.mockResolvedValue({ data: { ok: true } })
+  postRequest.mockReset()
   getRequest.mockReset()
 })
 afterEach(() => {
@@ -489,9 +492,9 @@ describe('ContinuousWorkDialog', () => {
       defaultInput.dispatchEvent(new Event('input'))
       await flushPromises()
 
-      // 3 rows: TR, TS, TSR (same run scope as the provider tab's table).
+      // 0388 NR0003: the default target stops at TS, so the run has TR and TS rows.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(3)
+      expect(rowInputs).toHaveLength(2)
       rowInputs[0].value = 'TR: 결제 실패 케이스도 문서화해줘'
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
@@ -539,8 +542,11 @@ describe('ContinuousWorkDialog', () => {
       ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
       await flushPromises()
 
-      // Note the LAST row (TSR, item_seq 6), then shrink the target past it.
+      // Extend the default TS target to TSR, note that last row, then shrink past it.
+      ;(document.querySelectorAll('.wsp-step')[5] as HTMLButtonElement).click()
+      await flushPromises()
       let rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      expect(rowInputs).toHaveLength(3)
       rowInputs[2].value = 'TSR용 멘트'
       rowInputs[2].dispatchEvent(new Event('input'))
       await flushPromises()
@@ -568,5 +574,54 @@ describe('ContinuousWorkDialog', () => {
 
       wrapper.unmount()
     })
+  })
+
+  it('injects a work-plan preset without starting work and keeps numeric item_seq overrides', async () => {
+    getRequest.mockResolvedValue(seqResponse())
+    const wrapper = mount(ContinuousWorkDialog, {
+      props: {
+        visible: true,
+        docRef: 'flowgate.default.0086.0001-R',
+        providers: [
+          { id: 'aip_fable', name: 'Fable' },
+          { id: 'aip_opus', name: 'Opus' },
+        ],
+        selectedProvider: 'aip_fable',
+        preset: {
+          sourceDocId: 'flowgate.default.0395.0002-WP',
+          sourceRevisionNo: 7,
+          instructionMode: 'auto_approved',
+          targetSeq: 6,
+          providerOverrides: { 4: 'aip_opus' },
+          messageOverrides: { 5: '테스트 범위를 우선 확인' },
+          defaultMessage: '계획 기준으로 진행',
+          filledSeqs: [4, 5],
+          warnings: [],
+        },
+      },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(document.querySelector('.cwd-preset-banner')).not.toBeNull()
+    expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(document.querySelectorAll('.wsp-step')[5])
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(2)
+    const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
+    expect(selects).toHaveLength(3)
+    expect(selects[0].value).toBe('aip_opus')
+
+    const next = document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    next.click()
+    await flushPromises()
+    const payload = wrapper.emitted('confirm')![0][0] as any
+    expect(payload.targetSeq).toBe(6)
+    expect(payload.providerOverrides).toEqual({ 4: 'aip_opus' })
+    expect(payload.messageOverrides).toEqual({ 5: '테스트 범위를 우선 확인' })
+    expect(payload.defaultMessage).toBe('계획 기준으로 진행')
+    expect(postRequest).not.toHaveBeenCalled()
+
+    wrapper.unmount()
   })
 })

@@ -2,8 +2,8 @@
   <!-- 0234 B0001: invocation-time provider confirm/change. Presentational only —
        the parent owns the aiProvider store and wires providers/modelValue + the
        update event, so this control stays usable in Pinia-free component tests. -->
-  <label class="aip-select" :class="{ 'aip-select--errored': errored }" :title="titleText">
-    <AppIcon name="robot" class="aip-select-icon" />
+  <label class="aip-select" :class="{ 'aip-select--errored': errored, 'aip-select--compact': compact }" :title="titleText">
+    <AppIcon v-if="!hideIcon" name="robot" class="aip-select-icon" />
     <span v-if="!hideLabel" class="aip-select-label">{{ t('main.ai_provider.run_label') }}</span>
     <span class="aip-select-input-wrap">
       <select
@@ -41,6 +41,8 @@ const props = withDefaults(
     loading?: boolean
     errored?: boolean
     hideLabel?: boolean
+    hideIcon?: boolean
+    compact?: boolean
   }>(),
   {
     providers: () => [],
@@ -48,6 +50,8 @@ const props = withDefaults(
     loading: false,
     errored: false,
     hideLabel: false,
+    hideIcon: false,
+    compact: false,
   },
 )
 
@@ -111,5 +115,20 @@ function onChange(event: Event) {
 }
 .aip-select--errored .aip-select-input {
   border-color: var(--danger);
+}
+.aip-select--compact {
+  gap: 0;
+  font-size: .74rem;
+}
+.aip-select--compact .aip-select-input {
+  height: 20px;
+  padding: 2px 8px;
+  font-size: .74rem;
+  appearance: auto;
+  -webkit-appearance: auto;
+  -moz-appearance: auto;
+}
+.aip-select--compact .aip-select-caret {
+  display: none;
 }
 </style>
