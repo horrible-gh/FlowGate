@@ -123,6 +123,11 @@ def upsert(
     # pause->resume mode-loss bug this migration/TR fixes.
     continuation_instruction_mode: Optional[str] = None,
     continuation_auto_approve_item_seqs=None,
+    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) the chain was
+    # started with. Same "every caller MUST pass it" contract as the columns above — this
+    # upsert overwrites every column, so a caller that omits it wipes the pick and a resumed
+    # hop silently falls back to HOP_TIMEOUT_SEC.
+    continuation_step_timeout_sec: Optional[int] = None,
 ) -> None:
     """Record (or refresh) the paused row for a group — idempotent on repeat pause.
 
@@ -147,8 +152,9 @@ def upsert(
         " continuation_base_provider_id, continuation_provider_overrides,"
         " continuation_default_note, continuation_note_overrides,"
         " continuation_instruction_mode, continuation_auto_approve_item_seqs,"
+        " continuation_step_timeout_sec,"
         " created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -169,6 +175,7 @@ def upsert(
         "continuation_note_overrides = excluded.continuation_note_overrides, "
         "continuation_instruction_mode = excluded.continuation_instruction_mode, "
         "continuation_auto_approve_item_seqs = excluded.continuation_auto_approve_item_seqs, "
+        "continuation_step_timeout_sec = excluded.continuation_step_timeout_sec, "
         "updated_at = excluded.updated_at",
         [group_id, doc_ref, paused_by, paused_at,
          continuation_target_seq, docs_target, docs_reached,
@@ -180,6 +187,7 @@ def upsert(
          dump_json_map(continuation_note_overrides),
          _clean_text(continuation_instruction_mode),
          dump_json_list(continuation_auto_approve_item_seqs),
+         continuation_step_timeout_sec,
          now, now],
     )
 

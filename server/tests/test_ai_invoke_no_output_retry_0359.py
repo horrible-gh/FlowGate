@@ -69,7 +69,10 @@ class FakePausedStore:
                # the N/T authoring mode + its per-item_seq selection ARE sent on every
                # upsert call, system rows included — that is the pause->resume mode-loss
                # bug fix this group's TR ships.
-               continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None):
+               continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
+               # flowgate.default.0400 M0005: sent on every upsert call, system rows included
+               # — same "policy, not preference" treatment as instruction_mode above.
+               continuation_step_timeout_sec=None):
         self.rows[group_id] = {
             "group_id": group_id, "doc_ref": doc_ref, "paused_by": paused_by,
             "paused_at": paused_at, "continuation_target_seq": continuation_target_seq,
@@ -78,6 +81,7 @@ class FakePausedStore:
             "stop_last_message_excerpt": stop_last_message_excerpt,
             "continuation_instruction_mode": continuation_instruction_mode,
             "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
+            "continuation_step_timeout_sec": continuation_step_timeout_sec,
         }
 
     def get_by_group(self, group_id):

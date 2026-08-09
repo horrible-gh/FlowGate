@@ -1143,6 +1143,7 @@
       :provider-overrides="aiInvokeProviderOverrides"
       :default-message="aiInvokeDefaultMessage"
       :message-overrides="aiInvokeMessageOverrides"
+      :continuation-step-timeout-sec="aiInvokeStepTimeoutSec"
       :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
@@ -1708,6 +1709,10 @@ const continuousMessageOverrides = ref<Record<number, string>>({})
 // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection, carried
 // the same way the fields above are — session-scoped, never persisted.
 const continuousAutoApproveItemSeqs = ref<number[]>([])
+// flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
+// ContinuousWorkDialog's [기본 설정] 시간 section, carried through the consent gate the same
+// way the fields above are — session-scoped, never persisted as a project setting.
+const continuousStepTimeoutSec = ref(3600)
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1756,6 +1761,10 @@ const aiInvokeProviderOverrides = ref<Record<number, string>>({})
 // 0346 T0005: [전달멘트] tab values forwarded onto the start request.
 const aiInvokeDefaultMessage = ref('')
 const aiInvokeMessageOverrides = ref<Record<number, string>>({})
+// flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) forwarded onto the
+// start request. null means "no explicit pick" (e.g. entry points other than
+// ContinuousWorkDialog), and the server falls back to its own default.
+const aiInvokeStepTimeoutSec = ref<number | null>(null)
 const aiInvokeAutoStart = ref(false)
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 // 0351 T4: a conversation-turn search result (GroupExplorer) opens this CH tab and
@@ -2166,6 +2175,9 @@ function openAiInvokeDialog(
     // 0346 T0005: [전달멘트] tab values chosen in ContinuousWorkDialog.
     defaultMessage?: string
     messageOverrides?: Record<number, string>
+    // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
+    // ContinuousWorkDialog's 시간 section.
+    stepTimeoutSec?: number | null
     autoStart?: boolean
     // 0242 NR0003 권고 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
@@ -2195,6 +2207,7 @@ function openAiInvokeDialog(
   aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
   aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
   aiInvokeMessageOverrides.value = preset?.messageOverrides ?? {}
+  aiInvokeStepTimeoutSec.value = preset?.stepTimeoutSec ?? null
   aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
@@ -3596,6 +3609,7 @@ function onContinuousDialogConfirm(payload: {
   defaultMessage: string
   messageOverrides: Record<number, string>
   autoApproveItemSeqs: number[]
+  stepTimeoutSec: number
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
@@ -3606,6 +3620,7 @@ function onContinuousDialogConfirm(payload: {
   continuousDefaultMessage.value = payload.defaultMessage
   continuousMessageOverrides.value = payload.messageOverrides
   continuousAutoApproveItemSeqs.value = payload.autoApproveItemSeqs
+  continuousStepTimeoutSec.value = payload.stepTimeoutSec
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -3639,6 +3654,7 @@ async function onContinuousWarnConfirm() {
       providerOverrides: continuousProviderOverrides.value,
       defaultMessage: continuousDefaultMessage.value,
       messageOverrides: continuousMessageOverrides.value,
+      stepTimeoutSec: continuousStepTimeoutSec.value,
       autoStart: true,
     },
   )

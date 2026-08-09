@@ -117,6 +117,11 @@ const props = defineProps<{
   // hop, and item_seq -> note for steps the user singled out. Session-scoped, same as above.
   defaultMessage?: string
   messageOverrides?: Record<number, string>
+  // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
+  // ContinuousWorkDialog's 시간 section. null/omitted ⇒ the server falls back to its own
+  // default (this dialog's own continuous picker, reached without ContinuousWorkDialog, never
+  // sets this).
+  continuationStepTimeoutSec?: number | null
   autoStart?: boolean
   // Parallel-invoke extras (group 0223): context the matching copy-mention flow
   // assembles client-side; forwarded so the server rebuilds the identical prompt.
@@ -244,6 +249,9 @@ async function start() {
       if (props.defaultMessage) body.continuation_default_note = props.defaultMessage
       if (props.messageOverrides && Object.keys(props.messageOverrides).length) {
         body.continuation_note_overrides = props.messageOverrides
+      }
+      if (props.continuationStepTimeoutSec) {
+        body.continuation_step_timeout_sec = props.continuationStepTimeoutSec
       }
       // 0352 T0004 §2/§3.7: never sent for a pre-decision (workflow_decide) start — no
       // item_seq exists yet, and the server rejects a selection on that scope (§2).

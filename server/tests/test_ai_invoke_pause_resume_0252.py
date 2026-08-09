@@ -63,7 +63,10 @@ class FakePausedStore:
                continuation_default_note=None, continuation_note_overrides=None,
                # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
                # selection — the pause->resume mode-loss bug fix under test in this file.
-               continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None):
+               continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
+               # flowgate.default.0400 M0005: the per-hop budget pick, same "rides every
+               # upsert call, including system rows" treatment as instruction_mode above.
+               continuation_step_timeout_sec=None):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
@@ -87,6 +90,7 @@ class FakePausedStore:
             "continuation_instruction_mode": (continuation_instruction_mode or "").strip() or None,
             "continuation_auto_approve_item_seqs": db_paused.dump_json_list(
                 continuation_auto_approve_item_seqs),
+            "continuation_step_timeout_sec": continuation_step_timeout_sec,
         }
 
     def get_by_group(self, group_id):
@@ -380,6 +384,7 @@ class TestPauseRun:
             continuation_default_note="공통멘트",
             continuation_note_overrides={"3": "개별멘트"},
             continuation_auto_approve_item_seqs=[3],
+            continuation_step_timeout_sec=10800,
         )
         try:
             svc.pause_run(res["run_id"], "usr_admin")
@@ -395,6 +400,8 @@ class TestPauseRun:
             assert row["continuation_instruction_mode"] == "ai_direct"
             assert db_paused.load_json_list(
                 row["continuation_auto_approve_item_seqs"]) == [3]
+            # flowgate.default.0400 M0005: same "survives the pause" contract.
+            assert row["continuation_step_timeout_sec"] == 10800
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
@@ -454,7 +461,8 @@ class TestPauseRun:
 
 def _seed_paused(fake_env, target=3, base_provider_id=None, overrides=None,
                  default_note=None, note_overrides=None,
-                 instruction_mode=None, auto_approve_item_seqs=None):
+                 instruction_mode=None, auto_approve_item_seqs=None,
+                 step_timeout_sec=None):
     fake_env["paused"].upsert(
         group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
         paused_at="2026-07-17T00:00:00+09:00",
@@ -466,6 +474,7 @@ def _seed_paused(fake_env, target=3, base_provider_id=None, overrides=None,
         continuation_note_overrides=note_overrides,
         continuation_instruction_mode=instruction_mode,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
+        continuation_step_timeout_sec=step_timeout_sec,
     )
 
 
@@ -617,6 +626,24 @@ class TestResumeChain:
         assert res == {"ok": True, "run_id": "aiv_fake"}
         assert captured["continuation_instruction_mode"] == "ai_direct"
         assert captured["continuation_auto_approve_item_seqs"] == [3]
+
+    def test_resume_forwards_step_timeout_to_start_run(self, fake_env, monkeypatch):
+        # flowgate.default.0400 M0005: the per-hop budget pick is exactly as perishable as
+        # the provider/note selections above — the paused row is the only place it survives
+        # a pause, so resume_chain must read it back and hand it to start_run.
+        _seed_paused(fake_env, step_timeout_sec=14400)
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_picked")]
+        captured = {}
+
+        def _fake_start_run(**kw):
+            captured.update(kw)
+            return {"ok": True, "run_id": "aiv_fake"}
+        monkeypatch.setattr(svc, "start_run", _fake_start_run)
+
+        res = svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                               api_base_url="http://x/api/v1")
+        assert res == {"ok": True, "run_id": "aiv_fake"}
+        assert captured["continuation_step_timeout_sec"] == 14400
 
     def test_resume_restores_instruction_mode_to_the_token_advance_path(self, fake_env, monkeypatch):
         # 0352 T0004 §3.6: the pause->resume mode-loss bug, TOKEN-issuance path (the other

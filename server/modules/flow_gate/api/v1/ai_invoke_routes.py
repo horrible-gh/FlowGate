@@ -56,6 +56,10 @@ class AiInvokeStartRequest(BaseModel):
     # keys) -> note overrides for individual hops. Session-scoped, same as the provider map.
     continuation_default_note: Optional[str] = None
     continuation_note_overrides: Optional[dict[str, str]] = None
+    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds), chosen in
+    # ContinuousWorkDialog's 시간 section. Session-scoped like the fields above — omitted or
+    # out of range falls back to the engine's own default (ai_invoke_service.HOP_TIMEOUT_SEC).
+    continuation_step_timeout_sec: Optional[int] = None
     provider_id: Optional[str] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
@@ -176,6 +180,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "mode", "msg": "continuous mode is not available for this action_scope"})
     if body.mode == "continuous" and body.continuation_target_seq is None:
         errors.append({"loc": "continuation_target_seq", "msg": "required for continuous mode"})
+    if body.continuation_step_timeout_sec is not None and not (
+        ai_invoke_service.STEP_TIMEOUT_MIN_SEC
+        <= body.continuation_step_timeout_sec
+        <= ai_invoke_service.STEP_TIMEOUT_MAX_SEC
+    ):
+        errors.append({
+            "loc": "continuation_step_timeout_sec",
+            "msg": f"must be between {ai_invoke_service.STEP_TIMEOUT_MIN_SEC} and "
+                   f"{ai_invoke_service.STEP_TIMEOUT_MAX_SEC} seconds",
+        })
     if (
         body.action_scope == "workflow_decide"
         and body.mode == "continuous"
@@ -509,6 +523,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_default_note=body.continuation_default_note,
             continuation_note_overrides=body.continuation_note_overrides,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            continuation_step_timeout_sec=body.continuation_step_timeout_sec,
         )
     except HTTPException as exc:
         return _err(exc)
