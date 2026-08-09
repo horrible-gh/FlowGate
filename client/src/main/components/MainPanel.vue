@@ -26,25 +26,24 @@
             :class="['doc-with-panel', { 'panel-collapsed': canShowDocInfoPanel(tab.id) && docInfoCollapsed }]"
           >
           <div class="doc-main">
-          <!-- Fail closed until active-run bootstrap completes. The run branch and the
-               document branch are mutually exclusive: removing this card cannot reveal DOM
-               that was never mounted. The one carve-out is the chat's own run: a CH document
-               reached by its own send is not covered (0251 B0001 / 0258 B0001, restored by
-               0386 B0001) — see activeChatOwnRun, which is folded into activeGroupRunActive
-               so this branch stays a single flag. -->
+          <!-- Fail closed only until active-run bootstrap completes. Afterwards the status
+               card and the same document component instances coexist; write surfaces derive
+               from aiRunDocumentLocked. A CH document's own run remains the one exception so
+               ConversationView keeps its existing STOP-button path. -->
           <div v-if="aiRunBootstrapPending" class="ai-run-bootstrap-pending">
             {{ t('common.loading') }}
           </div>
+          <template v-else>
           <AiInvokeInline
-            v-else-if="activeGroupRunActive"
+            v-if="activeGroupRunInlineVisible"
             :group-id="activeAiInvokeGroupId"
           />
-          <template v-else>
           <!-- 0155: test-failure strip (confirmed design B) — self-hides unless the
                viewed doc's latest test run failed. Sits above DocHeader as the first
                child of .doc-main, per the confirmed layout. A failed run assembles no
                TSR, so this is the only in-context signal of the failure (R0001). -->
           <TestFailStrip
+            v-if="!aiRunDocumentLocked"
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :doc-id="tab.id"
             @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
@@ -57,6 +56,7 @@
                other admissible state -> Run strip). Same testRun source as the fail strip;
                run-started re-fetches the doc so the embedded run/SSE state refreshes. -->
           <TestRunStrip
+            v-if="!aiRunDocumentLocked"
             :type-code="getTabTypeCode(tab.id)"
             :review-status="exposedValue(docHeaderRefs[tab.id]?.docReviewStatus) ?? null"
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
@@ -75,12 +75,13 @@
             v-if="tab.typeCode && (editTab?.id !== tab.id || headerEditModeVisible)"
             :ref="(el) => bindActiveRef(docHeaderRefs, tab.id, el)"
             :tab="tab"
+            :read-only="aiRunDocumentLocked"
             @related-doc-created="emit('related-doc-created', $event)"
             @doc-updated="onDocHeaderUpdated"
             @workflow-decided="onWorkflowDecided"
           />
           <DocWorkflow
-            v-if="tab.typeCode && tab.typeCode !== 'DC'"
+            v-if="!aiRunDocumentLocked && tab.typeCode && tab.typeCode !== 'DC'"
             :tab="tab"
             :workflow-decided="getWorkflowViewState(tab.id).mode !== 'workflow'"
             :parent-r-doc-id="exposedValue(docHeaderRefs[tab.id]?.parentRDocId) ?? null"
@@ -97,7 +98,7 @@
           <!-- 0115: git finalize panel — self-hiding unless the group has a git
                worktree (status !== 'none'); shown on workflow roots only. -->
           <GitFinalizePanel
-            v-if="tab.typeCode === 'R' || tab.typeCode === 'B'"
+            v-if="!aiRunDocumentLocked && (tab.typeCode === 'R' || tab.typeCode === 'B')"
             :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
             @open-archive="openGitArchive"
             @archived="onGitArchived"
@@ -116,7 +117,7 @@
                  done state, so the reorder tracks it exactly. The two mounts are
                  mutually exclusive (v-if / !v-if): only one panel exists at a time. -->
             <GitFinalizePanel
-              v-if="isCompletedDoc(tab.id)"
+              v-if="!aiRunDocumentLocked && isCompletedDoc(tab.id)"
               :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
               @open-archive="openGitArchive"
               @archived="onGitArchived"
@@ -154,7 +155,7 @@
                  0265 R0001: this below-the-card mount is now the PRE-approval
                  position only; the post-approval mount above leads instead. -->
             <GitFinalizePanel
-              v-if="!isCompletedDoc(tab.id)"
+              v-if="!aiRunDocumentLocked && !isCompletedDoc(tab.id)"
               :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
               @open-archive="openGitArchive"
               @archived="onGitArchived"
@@ -211,6 +212,7 @@
                   :doc-id="tab.id"
                   :project-id="tab.projectId ?? null"
                   :manual-copy-text="convManualCopy[tab.id] ?? null"
+                  :read-only="aiRunDocumentLocked && !activeChatOwnRun"
                   @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
                   @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
                 />
@@ -235,7 +237,7 @@
               </span>
             </div>
             <div class="card-bd" style="padding:16px;">
-              <QTDetailViewer :q-id="tab.id" @status-changed="onQStatusChanged" />
+              <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
             </div>
           </div>
           <div v-else-if="tab.type === 'md'" class="card md-preview-card">
@@ -248,7 +250,7 @@
                 </span>
               </div>
               <div class="card-bd" style="padding:16px;">
-                <QTDetailViewer :q-id="tab.id" @status-changed="onQStatusChanged" />
+                <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
               </div>
             </template>
 
@@ -260,7 +262,7 @@
                 {{ t('main.document_preview.title') }}
               </span>
               <div class="card-actions">
-                <div v-if="canEditTab(tab)" class="edit-dropdown-wrap">
+                <div v-if="!aiRunDocumentLocked && canEditTab(tab)" class="edit-dropdown-wrap">
                   <button
                     class="btn btn-outline btn-sm"
                     type="button"
@@ -286,9 +288,12 @@
                     </div>
                   </transition>
                 </div>
-                <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
+                <button v-if="!aiRunDocumentLocked" class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
                   <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
                 </button>
+                <span v-else class="ro-badge ro-badge-sm">
+                  <AppIcon name="lock-simple" /> {{ t('main.document_preview.edit_locked') }}
+                </span>
               </div>
             </div>
             <div class="card-bd">
@@ -305,6 +310,7 @@
                 :project-id="tab.projectId ?? null"
                 :git-group-id="tab.gitGroupId ?? null"
                 :git-commit="tab.gitCommit ?? null"
+                :read-only="aiRunDocumentLocked"
               />
             </div>
             </template>
@@ -321,7 +327,7 @@
                   <span>{{ t('main.document_preview.wrap_lines') }}</span>
                 </label>
                 <button
-                  v-if="canEditTab(tab)"
+                  v-if="!aiRunDocumentLocked && canEditTab(tab)"
                   class="btn btn-outline btn-sm"
                   type="button"
                   @click="onEditDirect(tab)"
@@ -1810,25 +1816,48 @@ const activeGroupRunActive = computed(() =>
   !activeChatOwnRun.value
   && aiInvokeRunsStore.isGroupInlineVisible(activeAiInvokeGroupId.value),
 )
+const activeGroupRunInlineVisible = computed(() => {
+  if (activeChatOwnRun.value) return false
+  const run = aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]
+  return activeGroupRunActive.value
+    || run?.phase === 'paused'
+    || run?.phase === 'finished'
+    || run?.phase === 'lost'
+})
 const aiRunDocumentLocked = computed(() =>
   aiRunBootstrapPending.value || activeGroupRunActive.value,
 )
 
-watch(activeGroupRunActive, (running, wasRunning) => {
+watch(activeGroupRunActive, async (running, wasRunning) => {
   if (running) {
-    // Unmounting the document branch drops its component-local drafts. Close the mutation
-    // surfaces owned here as well so no teleported modal survives the branch switch.
+    editVisible.value = false
+    editTab.value = null
     headerEditModeVisible.value = false
     editDropdownTabId.value = null
-    rejectDialogVisible.value = false
-    fullViewVisible.value = false
+    if (rejectDialogVisible.value) {
+      rejectDialogVisible.value = false
+      onRejectDialogClosed()
+    }
+    if (fullViewVisible.value) await closeFullView()
     aiInvokeVisible.value = false
+    nextActionModalVisible.value = false
+    continuousDialogVisible.value = false
+    continuousWarnVisible.value = false
+    designHandoffVisible.value = false
+    timeMachineVisible.value = false
+    returnConfirmVisible.value = false
     return
   }
   if (wasRunning) {
-    // The v-else branch remounts fresh instances. Explicitly ask the new header to refetch
-    // after the next paint so document/workflow/git state never comes from the pre-run cache.
-    void nextTick(() => docHeaderRefs[activeTabId.value ?? '']?.fetchDoc?.(activeTabId.value))
+    await nextTick()
+    const docId = activeTabId.value
+    if (!docId) return
+    void docHeaderRefs[docId]?.fetchDoc?.(docId)
+    window.dispatchEvent(new CustomEvent('fg:document_content_changed', {
+      detail: { doc_id: docId, refresh_key: `ai-run-finished:${Date.now()}` },
+    }))
+    window.dispatchEvent(new CustomEvent('fg:q_registered', { detail: { doc_id: docId } }))
+    void textViewerRefs[docId]?.loadContent?.()
   }
 })
 const aiInvokeSelectedDocs = ref<string[] | null>(null)
@@ -5119,4 +5148,18 @@ watch(textWrapEnabled, (enabled) => {
   .git-archive-purge .btn {
     justify-self: start;
   }
-}</style>
+}.ro-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-m);
+  background: var(--surface-h);
+  font-size: .66rem;
+  font-weight: 700;
+}
+
+.ro-badge-sm { margin-left: auto; }
+</style>

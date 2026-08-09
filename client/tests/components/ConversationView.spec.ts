@@ -161,9 +161,9 @@ function withoutProviders() {
   })
 }
 
-function mountView(docId = DOC_ID) {
+function mountView(docId = DOC_ID, readOnly = false) {
   return mount(ConversationView, {
-    props: { docId, projectId: 'flowgate' },
+    props: { docId, projectId: 'flowgate', readOnly },
     global: { plugins: [i18n, createPinia()] },
   })
 }
@@ -1024,6 +1024,35 @@ describe('ConversationView draft persistence', () => {
       '/api/v1/documents/flowgate.default.0085.0009-CH/conversation/turn',
       expect.objectContaining({ body: 'still sends' }),
     )
+  })
+})
+
+describe('ConversationView read-only contract', () => {
+  it('keeps turns, older paging and SSE updates while hiding every mutation entry point', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) return Promise.resolve(defaultChatSettingsResponse())
+      return Promise.resolve(turnsPage([
+        turn(3, { body: 'existing turn' }),
+        turn(4, { body: 'failed turn', failed: true }),
+      ], { has_more: true, prev_before_seq: 1 }))
+    })
+    const wrapper = mountView(DOC_ID, true)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('existing turn')
+    expect(wrapper.find('.conv-older').exists()).toBe(true)
+    expect(wrapper.find('.conv-composer').exists()).toBe(false)
+    expect(wrapper.find('.conv-retry').exists()).toBe(false)
+    expect(wrapper.find('.conv-settings').exists()).toBe(false)
+    expect(wrapper.find('.conv-gear-btn').exists()).toBe(false)
+    expect(wrapper.find('.conv-assist-btn').exists()).toBe(false)
+
+    window.dispatchEvent(new CustomEvent('fg:conversation_turn', {
+      detail: { doc_id: DOC_ID, head_seq: 5, turn: turn(5, { speaker: 'ai', body: 'live reply' }) },
+    }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('live reply')
   })
 })
 

@@ -1,143 +1,109 @@
 <template>
-  <div v-if="run && run.docRef !== suppressDocRef" class="aiv-inline-layer">
-    <section
-      class="aiv-inline"
-      :class="`aiv-inline--${run.phase}`"
-      aria-live="polite"
-      :aria-label="titleText"
+  <section
+    v-if="run && run.docRef !== suppressDocRef"
+    class="ai-invoke-status-card"
+    :class="`ai-invoke-status-card--${run.phase}`"
+    aria-live="polite"
+    :aria-label="titleText"
+  >
+    <div
+      v-if="run.phase === 'running'"
+      class="ai-invoke-status-spinner"
+      aria-hidden="true"
+    ></div>
+    <AppIcon
+      v-else
+      class="ai-invoke-status-icon"
+      :name="run.phase === 'finished' && run.outcome === 'complete' ? 'check-circle' : 'warning'"
+    />
+    <span
+      class="ai-invoke-status-text"
+      :data-test="run.phase === 'paused' || run.phase === 'pause_requested' ? 'ai-inline-pause-state' : undefined"
     >
-      <div class="aiv-inline__header">
-        <div class="aiv-inline__heading">
-          <AppIcon
-            :name="run.phase === 'running' ? 'circle-notch' : run.phase === 'finished' && run.outcome === 'complete' ? 'check-circle' : 'warning'"
-            :spin="run.phase === 'running'"
-          />
-          <div>
-            <div class="aiv-inline__title">{{ titleText }}</div>
-            <div class="aiv-inline__doc">{{ run.docRef }}</div>
-          </div>
-        </div>
-        <div class="aiv-inline__actions">
-          <button
-            v-if="run.phase === 'running'"
-            type="button"
-            class="btn btn-danger btn-sm"
-            :disabled="run.cancelling || cancelling"
-            @click="cancel"
-          >
-            <AppIcon name="prohibit" />
-            {{ t('main.ai_invoke_dialog.btn_cancel_run') }}
-          </button>
-          <button
-            v-else
-            type="button"
-            class="btn btn-ghost btn-sm"
-            data-test="ai-inline-close"
-            @click="closeSurface"
-          >
-            <AppIcon name="x" />
-            {{ t('common.close') }}
-          </button>
-        </div>
-      </div>
-
-      <template v-if="run.phase === 'running'">
-        <div class="aiv-inline__meta">
-          <span>{{ run.provider?.name || '—' }}</span>
-          <span v-if="run.attemptNo > 1">
-            {{ t('main.ai_invoke_dialog.attempt_no', { n: run.attemptNo }) }}
-          </span>
-          <span>{{ elapsedText }}</span>
-          <span v-if="run.docsTarget > 1">
-            {{ t('main.ai_invoke_dialog.docs_progress', {
-              reached: run.docsReachedSoFar,
-              target: run.docsTarget,
-            }) }}
-          </span>
-        </div>
-        <p v-if="run.cancelling" class="aiv-inline__notice">
-          {{ t('main.ai_invoke_dialog.cancelling') }}
-        </p>
-      </template>
-
-      <p
-        v-else-if="run.phase === 'paused' || run.phase === 'pause_requested'"
-        class="aiv-inline__notice"
-        data-test="ai-inline-pause-state"
+      {{ titleText }}
+    </span>
+    <div class="ai-invoke-status-actions">
+      <button
+        v-if="run.phase === 'running'"
+        type="button"
+        class="btn btn-outline btn-sm"
+        :disabled="run.cancelling || cancelling"
+        @click="cancel"
       >
-        {{ titleText }}
-      </p>
+        <AppIcon name="stop-circle" />
+        {{ t('common.cancel') }}
+      </button>
+      <button
+        v-else
+        type="button"
+        class="btn btn-outline btn-sm"
+        data-test="ai-inline-close"
+        @click="closeSurface"
+      >
+        <AppIcon name="x" />
+        {{ t('common.close') }}
+      </button>
+    </div>
 
-      <p v-else-if="run.phase === 'lost'" class="aiv-inline__notice aiv-inline__notice--warning">
-        {{ t('main.ai_invoke_dialog.error_run_lost') }}
-      </p>
+    <div v-if="run.phase === 'running'" class="ai-invoke-status-meta" data-test="ai-inline-running-meta">
+      <span>{{ run.provider?.name || '—' }}</span>
+      <span>{{ elapsedText }}</span>
+    </div>
 
-      <div v-else class="aiv-inline__result">
-        <div class="aiv-inline__meta">
-          <span>{{ run.provider?.name || '—' }}</span>
-          <span>{{ elapsedText }}</span>
-          <span v-if="run.docsTarget > 1">
-            {{ t('main.ai_invoke_dialog.docs_progress', {
-              reached: run.docsReached,
-              target: run.docsTarget,
-            }) }}
-          </span>
-        </div>
-
-        <p v-if="endReasonText" class="aiv-inline__notice">{{ endReasonText }}</p>
-
-        <div v-if="missingDocReasons.length > 0" class="aiv-inline__section aiv-inline__diagnostics">
-          <strong>{{ t(scoped ? 'main.ai_invoke_dialog.failure_details_scoped' : 'main.ai_invoke_dialog.failure_details') }}</strong>
-          <ul class="aiv-inline__history">
-            <li v-for="(reason, index) in missingDocReasons" :key="`${index}-${reason}`">
-              {{ reason }}
-            </li>
-          </ul>
-        </div>
-
-        <div v-if="run.reachedDocIds.length > 0" class="aiv-inline__section">
-          <strong>{{ t('main.ai_invoke_dialog.reached_docs') }}</strong>
-          <div class="aiv-inline__chips">
-            <code v-for="docId in run.reachedDocIds" :key="docId">{{ docId }}</code>
-          </div>
-        </div>
-
-        <div class="aiv-inline__section">
-          <strong>{{ t('main.ai_invoke_dialog.last_message') }}</strong>
-          <p class="aiv-inline__message">
-            {{ run.lastMessageReceived && run.lastMessage
-              ? run.lastMessage
-              : t('main.ai_invoke_dialog.last_message_none') }}
-          </p>
-        </div>
-
-        <div v-if="run.providerSwitches.length > 0" class="aiv-inline__section">
-          <strong>
-            {{ t('main.ai_invoke_dialog.fallback_history', { count: run.providerSwitches.length }) }}
-          </strong>
-          <ul class="aiv-inline__history">
-            <li v-for="(item, index) in run.providerSwitches" :key="`${index}-${item.attemptNo ?? ''}`">
-              <span>{{ providerSwitchLabel(item) }}</span>
-              <span v-if="item.reason"> · {{ fallbackReason(item.reason) }}</span>
-              <span v-if="item.detail"> — {{ item.detail }}</span>
-            </li>
-          </ul>
-        </div>
-
-        <div v-if="run.sourceDirty" class="aiv-inline__notice aiv-inline__notice--warning">
-          <AppIcon name="warning" />
-          {{ t('main.ai_invoke_dialog.source_dirty', { count: run.sourceDirtyFiles.length }) }}
-          <div v-if="run.sourceDirtyFiles.length > 0" class="aiv-inline__files">
-            {{ run.sourceDirtyFiles.join(', ') }}
-          </div>
+    <div v-if="run.phase === 'finished'" class="ai-invoke-status-details">
+      <div class="ai-invoke-status-meta">
+        <span>{{ run.provider?.name || '—' }}</span>
+        <span>{{ elapsedText }}</span>
+        <span v-if="run.docsTarget > 1">
+          {{ t('main.ai_invoke_dialog.docs_progress', {
+            reached: run.docsReached,
+            target: run.docsTarget,
+          }) }}
+        </span>
+      </div>
+      <p v-if="endReasonText" class="ai-invoke-status-notice">{{ endReasonText }}</p>
+      <div v-if="missingDocReasons.length > 0" class="ai-invoke-status-section ai-invoke-status-diagnostics">
+        <strong>{{ t(scoped ? 'main.ai_invoke_dialog.failure_details_scoped' : 'main.ai_invoke_dialog.failure_details') }}</strong>
+        <ul class="ai-invoke-status-history">
+          <li v-for="(reason, index) in missingDocReasons" :key="`${index}-${reason}`">{{ reason }}</li>
+        </ul>
+      </div>
+      <div v-if="run.reachedDocIds.length > 0" class="ai-invoke-status-section">
+        <strong>{{ t('main.ai_invoke_dialog.reached_docs') }}</strong>
+        <div class="ai-invoke-status-chips">
+          <code v-for="docId in run.reachedDocIds" :key="docId">{{ docId }}</code>
         </div>
       </div>
-    </section>
-  </div>
+      <div class="ai-invoke-status-section">
+        <strong>{{ t('main.ai_invoke_dialog.last_message') }}</strong>
+        <p class="ai-invoke-status-message">
+          {{ run.lastMessageReceived && run.lastMessage
+            ? run.lastMessage
+            : t('main.ai_invoke_dialog.last_message_none') }}
+        </p>
+      </div>
+      <div v-if="run.providerSwitches.length > 0" class="ai-invoke-status-section">
+        <strong>{{ t('main.ai_invoke_dialog.fallback_history', { count: run.providerSwitches.length }) }}</strong>
+        <ul class="ai-invoke-status-history">
+          <li v-for="(item, index) in run.providerSwitches" :key="`${index}-${item.attemptNo ?? ''}`">
+            <span>{{ providerSwitchLabel(item) }}</span>
+            <span v-if="item.reason"> · {{ fallbackReason(item.reason) }}</span>
+            <span v-if="item.detail"> — {{ item.detail }}</span>
+          </li>
+        </ul>
+      </div>
+      <div v-if="run.sourceDirty" class="ai-invoke-status-notice ai-invoke-status-notice--warning">
+        <AppIcon name="warning" />
+        {{ t('main.ai_invoke_dialog.source_dirty', { count: run.sourceDirtyFiles.length }) }}
+        <div v-if="run.sourceDirtyFiles.length > 0" class="ai-invoke-status-files">
+          {{ run.sourceDirtyFiles.join(', ') }}
+        </div>
+      </div>
+    </div>
+  </section>
 </template>
-
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import {
@@ -267,22 +233,6 @@ async function cancel(): Promise<void> {
   }
 }
 
-watch(
-  () => run.value?.phase === 'running' ? run.value.runId : null,
-  runId => {
-    if (!runId) return
-    void nextTick(() => {
-      const container = document.querySelector<HTMLElement>('.content-wrap')
-      if (!container) return
-      if (typeof container.scrollTo === 'function') {
-        container.scrollTo({ top: 0, behavior: 'auto' })
-      } else {
-        container.scrollTop = 0
-      }
-    })
-  },
-  { immediate: true },
-)
 
 watch(
   () => props.groupId,
@@ -294,127 +244,109 @@ watch(
 </script>
 
 <style scoped>
-.aiv-inline-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  min-height: 180px;
-  padding: 24px;
-  overflow: auto;
-  border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(2px);
-}
-
-.aiv-inline {
-  width: min(760px, 100%);
-  padding: 16px 18px;
-  border: 1px solid color-mix(in srgb, var(--primary) 40%, var(--border));
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--sh-md, 0 8px 24px rgba(15, 23, 42, .14));
-}
-
-.aiv-inline--lost {
-  border-color: var(--warning);
-}
-
-.aiv-inline__header,
-.aiv-inline__heading,
-.aiv-inline__meta,
-.aiv-inline__chips {
+.ai-invoke-status-card {
+  position: sticky;
+  top: 0;
+  z-index: 30;
   display: flex;
   align-items: center;
-}
-
-.aiv-inline__header {
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.aiv-inline__heading {
-  min-width: 0;
-  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid #93c5fd;
+  border-radius: var(--r);
+  background: #eff6ff;
+  box-shadow: var(--sh-sm);
 }
 
-.aiv-inline__heading > i {
+.ai-invoke-status-spinner {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--primary);
-  font-size: 1.1rem;
+  border: 2px solid #bfdbfe;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: ai-invoke-spin .9s linear infinite;
 }
 
-.aiv-inline--finished .aiv-inline__heading > i {
+@keyframes ai-invoke-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-invoke-status-icon {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 1rem;
+}
+
+.ai-invoke-status-card--finished .ai-invoke-status-icon {
   color: var(--success);
 }
 
-.aiv-inline--lost .aiv-inline__heading > i {
+.ai-invoke-status-card--lost .ai-invoke-status-icon {
   color: var(--warning);
 }
 
-.aiv-inline__title {
-  color: var(--text);
-  font-size: .9rem;
-  font-weight: 700;
+.ai-invoke-status-text {
+  flex: 1;
+  min-width: 0;
+  color: #1e40af;
+  font-size: .8rem;
+  font-weight: 600;
 }
 
-.aiv-inline__doc {
-  overflow: hidden;
-  margin-top: 2px;
-  color: var(--text-m);
-  font: 500 .72rem 'JetBrains Mono', monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.aiv-inline__actions {
+.ai-invoke-status-actions {
   flex: 0 0 auto;
 }
 
-.aiv-inline__meta {
+.ai-invoke-status-details {
+  display: grid;
+  flex: 0 0 100%;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid #bfdbfe;
+}
+
+.ai-invoke-status-meta,
+.ai-invoke-status-chips {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 5px 14px;
-  margin-top: 12px;
   color: var(--text-m);
   font-size: .74rem;
 }
 
-.aiv-inline__result {
-  display: grid;
-  gap: 12px;
+.ai-invoke-status-card > .ai-invoke-status-meta {
+  flex: 0 0 100%;
+  padding-left: 26px;
 }
 
-.aiv-inline__section {
+.ai-invoke-status-section {
   display: grid;
   gap: 6px;
   font-size: .78rem;
 }
 
-.aiv-inline__section strong {
+.ai-invoke-status-section strong {
   color: var(--text);
   font-size: .75rem;
 }
 
-.aiv-inline__chips {
-  flex-wrap: wrap;
-  gap: 6px;
-}
+.ai-invoke-status-chips { gap: 6px; }
 
-.aiv-inline__chips code {
+.ai-invoke-status-chips code {
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text-s);
   font-size: .7rem;
 }
 
-.aiv-inline__message,
-.aiv-inline__notice {
+.ai-invoke-status-message,
+.ai-invoke-status-notice {
   margin: 0;
   color: var(--text-s);
   font-size: .78rem;
@@ -423,33 +355,32 @@ watch(
   overflow-wrap: anywhere;
 }
 
-.aiv-inline__notice {
-  margin-top: 12px;
+.ai-invoke-status-notice {
   padding: 8px 10px;
   border-radius: var(--r);
-  background: var(--bg);
+  background: var(--surface);
 }
 
-.aiv-inline__notice--warning {
+.ai-invoke-status-notice--warning,
+.ai-invoke-status-diagnostics {
   color: var(--warning);
   background: var(--warning-l);
 }
 
-.aiv-inline__diagnostics {
+.ai-invoke-status-diagnostics {
   padding: 9px 10px;
   border: 1px solid var(--warning);
   border-radius: var(--r);
-  background: var(--warning-l);
 }
 
-.aiv-inline__history {
+.ai-invoke-status-history {
   display: grid;
   gap: 4px;
   color: var(--text-s);
   font-size: .74rem;
 }
 
-.aiv-inline__files {
+.ai-invoke-status-files {
   margin-top: 4px;
   font-family: 'JetBrains Mono', monospace;
   font-size: .68rem;
@@ -457,16 +388,7 @@ watch(
 }
 
 @media (max-width: 680px) {
-  .aiv-inline-layer {
-    padding: 10px;
-  }
-
-  .aiv-inline__header {
-    align-items: flex-start;
-  }
-
-  .aiv-inline__actions .btn {
-    padding-inline: 7px;
-  }
+  .ai-invoke-status-card { padding: 10px; }
+  .ai-invoke-status-actions .btn { padding-inline: 7px; }
 }
 </style>

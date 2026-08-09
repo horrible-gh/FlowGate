@@ -8,7 +8,7 @@
            Shown only on a pristine workflow root (R/B) before the workflow decision; the
            server enforces the same gate (409) and we surface its message on failure. -->
       <button
-        v-if="canConvertRootType"
+        v-if="!readOnly && canConvertRootType"
         class="doc-convert-btn"
         type="button"
         :disabled="converting"
@@ -28,6 +28,9 @@
         <AppIcon name="copy" class="doc-id-copy-icon" />
       </button>
       <span class="doc-status" :class="statusCls">{{ statusLabel }}</span>
+      <span v-if="readOnly" class="ro-badge">
+        <AppIcon name="lock-simple" /> {{ t('main.doc_header.read_only_ai') }}
+      </span>
       <!-- Mention-copied badge (R0001 group 0015 / NR0003 rev4): shown ONLY when this user has
            copied the document's mention. Absence == not copied; there is no 'before copy' state. -->
       <span v-if="mentionCopy" class="doc-mc-badge" :title="mentionCopyTooltip">
@@ -35,7 +38,7 @@
         {{ mentionCopyLabel }} · {{ t('main.doc_header.mention_copied_at', { time: mentionCopyTime }) }}
       </span>
       <div class="doc-hdr-actions">
-        <div v-if="hasGroup && headerTypeCode !== 'DC'" class="doc-hdr-more">
+        <div v-if="!readOnly && hasGroup && headerTypeCode !== 'DC'" class="doc-hdr-more">
           <button
             class="doc-hdr-more-btn"
             :class="{ open: showGroupMenu }"
@@ -58,7 +61,7 @@
       </div>
     </div>
     <div class="doc-title-row">
-      <template v-if="editingTitle">
+      <template v-if="editingTitle && !readOnly">
         <input
           ref="titleInputRef"
           v-model="editTitleValue"
@@ -85,7 +88,7 @@
       <template v-else>
         <span class="doc-title">{{ doc.title }}</span>
         <button
-          v-if="canEditDocument && headerTypeCode !== 'DC'"
+          v-if="!readOnly && canEditDocument && headerTypeCode !== 'DC'"
           class="doc-title-pencil"
           :title="t('main.doc_header.edit_title')"
           @click="startEditTitle"
@@ -93,7 +96,7 @@
           <AppIcon name="pencil" />
         </button>
         <button
-          v-if="canEditDocument && headerTypeCode !== 'DC' && groupTitle"
+          v-if="!readOnly && canEditDocument && headerTypeCode !== 'DC' && groupTitle"
           class="doc-title-btn doc-title-btn--group"
           type="button"
           :title="t('main.doc_header.use_group_name')"
@@ -122,14 +125,14 @@
       </div>
     </div>
     <FileUploadModal
-      v-if="doc"
+      v-if="doc && !readOnly"
       :tab="tab"
       :visible="showUploadModal"
       @update:visible="showUploadModal = $event"
       @uploaded="onFileUploaded"
     />
     <NewRelatedDocModal
-      v-if="showRelatedDocModal"
+      v-if="showRelatedDocModal && !readOnly"
       :tab="tab"
       @close="showRelatedDocModal = false"
       @created="onRelatedDocCreated"
@@ -141,6 +144,7 @@
     </div>
   </div>
   <WorkflowDecisionModal
+    v-if="!readOnly"
     mode="create"
     v-model:visible="showWorkflowDecisionModal"
     :doc-class="docClass"
@@ -148,6 +152,7 @@
     @confirmed="onWorkflowConfirmed"
   />
   <ConfirmModal
+    v-if="!readOnly"
     :visible="showConvertConfirm"
     :title="t('main.doc_header.convert_confirm_title')"
     :message="convertConfirmMessage"
@@ -155,7 +160,7 @@
     @update:visible="showConvertConfirm = $event"
     @confirm="doConvertRootType"
   />
-  <ContextMenu v-model:visible="showGroupMenu" :x="menuX" :y="menuY">
+  <ContextMenu v-if="!readOnly" v-model:visible="showGroupMenu" :x="menuX" :y="menuY">
     <div class="dgm-cap">{{ t('main.group_actions.menu_caption') }}</div>
     <ContextMenuItem icon="info" @click="openGroupInfo">
       {{ t('main.group_actions.group_info') }}
@@ -167,7 +172,7 @@
          exposed in the group menu (it is also a group-relevant action), keeping the type-chip
          pill button too. Shown by the SAME gate as the pill (canConvertRootType): only on a
          pristine root before the workflow decision; absent otherwise. -->
-    <template v-if="canConvertRootType">
+    <template v-if="!readOnly && canConvertRootType">
       <div class="dgm-sep" role="separator"></div>
       <ContextMenuItem icon="arrows-left-right" @click="openConvertFromMenu">
         {{ t('main.group_actions.convert_root_type', { to: convertTargetLabel }) }}
@@ -186,6 +191,7 @@
     @rename="openRename"
   />
   <GroupDiscardModal
+    v-if="!readOnly"
     v-model:visible="showGroupDiscard"
     :group-title="groupName"
     :documents="groupDocuments"
@@ -193,6 +199,7 @@
     @confirm="onConfirmDiscard"
   />
   <CreateEditGroupModal
+    v-if="!readOnly"
     v-model:visible="showRenameModal"
     mode="edit"
     dialog-mode="group"
@@ -231,7 +238,7 @@ import type { TestRun } from '../types/testRun'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopeVerdict } from '../types/trScope'
 
-const props = defineProps<{ tab: Tab }>()
+const props = defineProps<{ tab: Tab; readOnly?: boolean }>()
 
 const emit = defineEmits<{
   'related-doc-created': [payload: { docId: string; openAfter: boolean; projectId: string }]
@@ -340,6 +347,18 @@ const showGroupInfo = ref(false)
 const showGroupDiscard = ref(false)
 const showRenameModal = ref(false)
 const disposing = ref(false)
+
+watch(() => props.readOnly, (locked) => {
+  if (!locked) return
+  editingTitle.value = false
+  showUploadModal.value = false
+  showRelatedDocModal.value = false
+  showWorkflowDecisionModal.value = false
+  showConvertConfirm.value = false
+  showGroupMenu.value = false
+  showGroupDiscard.value = false
+  showRenameModal.value = false
+})
 // In-flight guard for a workflow decision. NR0003 item 2: onWorkflowConfirmed had no
 // progress flag, so during the async POST→refetch window the action could fire again
 // (the R0001 "the button could be pressed repeatedly" 409 burst). Block re-entry until it settles
@@ -363,7 +382,7 @@ const savingTitle = ref(false)
 const titleInputRef = ref<HTMLInputElement | null>(null)
 
 function startEditTitle() {
-  if (!doc.value) return
+  if (props.readOnly || !doc.value) return
   editTitleValue.value = doc.value.title
   editingTitle.value = true
   nextTick(() => titleInputRef.value?.focus())
@@ -375,7 +394,7 @@ function cancelEditTitle() {
 }
 
 async function saveTitle() {
-  if (!doc.value || savingTitle.value) return
+  if (props.readOnly || !doc.value || savingTitle.value) return
   const newTitle = editTitleValue.value.trim()
   if (!newTitle) return
   savingTitle.value = true
@@ -1589,5 +1608,17 @@ const statusLabel = computed(() => {
   height: 1px;
   margin: 4px 8px;
   background: var(--border);
+}
+.ro-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-m);
+  background: var(--surface-h);
+  font-size: .66rem;
+  font-weight: 700;
 }
 </style>

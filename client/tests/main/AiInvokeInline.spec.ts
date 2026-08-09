@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
@@ -5,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiInvokeInline from '@main/components/AiInvokeInline.vue'
 import { INLINE_RESULT_WINDOW_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+
+const inlineSource = readFileSync(join(process.cwd(), 'src/main/components/AiInvokeInline.vue'), 'utf8')
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest }))
@@ -22,6 +26,16 @@ describe('AiInvokeInline', () => {
     document.body.innerHTML = ''
   })
 
+  it('uses an in-flow sticky card without the former overlay or pointer-blocking styles', () => {
+    expect(inlineSource).toContain('class="ai-invoke-status-card"')
+    expect(inlineSource).toContain('position: sticky;')
+    expect(inlineSource).toContain('top: 0;')
+    expect(inlineSource).toContain('z-index: 30;')
+    expect(inlineSource).not.toContain('position: absolute;')
+    expect(inlineSource).not.toContain('inset: 0;')
+    expect(inlineSource).not.toContain('backdrop-filter')
+  })
+
   it('hides only a run whose docRef matches suppressDocRef', async () => {
     const wrapper = mount(AiInvokeInline, {
       props: {
@@ -37,18 +51,18 @@ describe('AiInvokeInline', () => {
       doc_ref: 'flowgate.default.0258.0009-CH', status: 'running',
     })
     await nextTick()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
 
     store.trackStarted({
       run_id: 'run-next', group_id: 'flowgate.default.0258',
       doc_ref: 'flowgate.default.0258.0001-B', status: 'running',
     })
     await nextTick()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('resets only the content scroller when a run starts and renders zero-document diagnostics', async () => {
+  it('preserves the content scroll position when a run starts and renders zero-document diagnostics', async () => {
     const content = document.createElement('div')
     content.className = 'content-wrap'
     const host = document.createElement('div')
@@ -56,6 +70,7 @@ describe('AiInvokeInline', () => {
     document.body.appendChild(content)
     const scrollTo = vi.fn()
     Object.defineProperty(content, 'scrollTo', { value: scrollTo, configurable: true })
+    content.scrollTop = 180
 
     const wrapper = mount(AiInvokeInline, {
       attachTo: host,
@@ -69,7 +84,8 @@ describe('AiInvokeInline', () => {
     })
     await nextTick()
     await nextTick()
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(content.scrollTop).toBe(180)
 
     store.trackFinished({
       run_id: 'run-0231', group_id: 'flowgate.default.0231', outcome: 'none', docs_reached: 0,
@@ -83,6 +99,26 @@ describe('AiInvokeInline', () => {
     expect(text).toContain('HTTP 403')
     expect(text).toContain('context_binding')
     expect(text).toContain(i18n.global.t('main.ai_invoke_dialog.turn_limit_exhausted'))
+    wrapper.unmount()
+  })
+
+  it('shows the currently running provider name and elapsed time on the running card', async () => {
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId: 'flowgate.default.0398' },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-provider', group_id: 'flowgate.default.0398',
+      doc_ref: 'flowgate.default.0398.0001-B', status: 'running',
+      provider_id: 'claude', provider_name: 'Claude',
+    })
+    await nextTick()
+
+    const meta = wrapper.find('[data-test="ai-inline-running-meta"]')
+    expect(meta.exists()).toBe(true)
+    expect(meta.text()).toContain('Claude')
+    expect(meta.text()).toMatch(/\d+:\d{2}/)
     wrapper.unmount()
   })
 
@@ -110,7 +146,7 @@ describe('AiInvokeInline', () => {
     expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none_scoped'))
 
     await wrapper.find('[data-test="ai-inline-close"]').trigger('click')
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
     expect(store.runsByGroup[groupId]?.phase).toBe('pause_requested')
     wrapper.unmount()
   })
@@ -138,7 +174,7 @@ describe('AiInvokeInline', () => {
     expect(wrapper.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.outcome_none_scoped'))
 
     await wrapper.find('[data-test="ai-inline-close"]').trigger('click')
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
     expect(store.runsByGroup[groupId]?.phase).toBe('paused')
     wrapper.unmount()
   })
@@ -162,11 +198,11 @@ describe('AiInvokeInline', () => {
         run_id: 'run-w', group_id: 'flowgate.default.0290', outcome: 'complete', docs_reached: 1,
       })
       await nextTick()
-      expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+      expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
 
       vi.advanceTimersByTime(INLINE_RESULT_WINDOW_MS + 1_000)
       await nextTick()
-      expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+      expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
       expect(store.runsByGroup['flowgate.default.0290']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
