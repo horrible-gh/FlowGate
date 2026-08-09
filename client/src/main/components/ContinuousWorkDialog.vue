@@ -99,6 +99,32 @@
                     </span>
                   </label>
                 </div>
+
+                <!-- 시간 설정 (flowgate.default.0400 M0005): the per-hop wall-clock budget. A
+                     small fixed list, not free input — fewer mistakes and a narrower control.
+                     Rendered as a combo box (TR0007 2nd rejection: "리스트 박스로 해라...
+                     콤보박스"), the same native-select pattern as AiProviderSelect's
+                     .aip-select-input used in the 프로바이더 tab, rather than a button/pill
+                     group or a radio-row list. Session-scoped like the provider/message tabs,
+                     but its last pick is also remembered in localStorage (D0005 Q&A) so
+                     reopening the dialog defaults to what was chosen last time, without
+                     becoming a project-level setting. -->
+                <div class="cwd-mode-group">
+                  <div class="cwd-section-title">{{ t('main.continuous_work.step_timeout_title') }}</div>
+                  <label class="cwd-timeout-combo">
+                    <select
+                      v-model="stepTimeoutMinutes"
+                      class="cwd-timeout-select"
+                      :aria-label="t('main.continuous_work.step_timeout_title')"
+                    >
+                      <option v-for="opt in STEP_TIMEOUT_OPTIONS_MIN" :key="opt" :value="opt">
+                        {{ t('main.continuous_work.step_timeout_option_minutes', { n: opt }) }}
+                      </option>
+                    </select>
+                    <AppIcon name="caret-down" class="cwd-timeout-caret" />
+                  </label>
+                  <p class="cwd-timeout-desc">{{ t('main.continuous_work.step_timeout_desc') }}</p>
+                </div>
               </div>
 
               <!-- 프로바이더: default provider + per-step (item_seq) overrides (0317 T0010 rev4:
@@ -262,6 +288,10 @@ const emit = defineEmits<{
     // for the SERVER to still auto-generate + auto-approve (like auto_approved does for that
     // one step). Always [] outside ai_direct.
     autoApproveItemSeqs: number[]
+    // flowgate.default.0400 M0005: the per-hop wall-clock budget, in seconds. Session-scoped
+    // (rides this run's start request only) — its last pick is remembered in localStorage so
+    // reopening the dialog defaults to it, but it is never a persisted project setting.
+    stepTimeoutSec: number
   }]
 }>()
 
@@ -269,6 +299,31 @@ const { t } = useI18n()
 
 const reviewMode = ref(false)
 const instructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 시간 설정 (0400 M0005): a fixed list of per-hop budgets, minutes. 60 is the default; 무제한
+// was deliberately rejected (M0005 대화) because it removes the only automatic guard against a
+// runaway unmanned hop.
+const STEP_TIMEOUT_OPTIONS_MIN = [30, 45, 60, 90, 120, 180, 240]
+const STEP_TIMEOUT_DEFAULT_MIN = 60
+const STEP_TIMEOUT_STORAGE_KEY = 'flowgate.continuousWork.stepTimeoutMinutes'
+function loadStoredStepTimeoutMin(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(STEP_TIMEOUT_STORAGE_KEY))
+    if (STEP_TIMEOUT_OPTIONS_MIN.includes(stored)) return stored
+  } catch {
+    // localStorage unavailable (private mode, SSR, ...) — fall back to the default below.
+  }
+  return STEP_TIMEOUT_DEFAULT_MIN
+}
+// Not reset by installPreset: this is a local UI preference, not part of a work-plan preset or
+// the per-run confirm state those functions manage.
+const stepTimeoutMinutes = ref(loadStoredStepTimeoutMin())
+watch(stepTimeoutMinutes, (value) => {
+  try {
+    window.localStorage.setItem(STEP_TIMEOUT_STORAGE_KEY, String(value))
+  } catch {
+    // Best-effort remembering only — a write failure must not block the dialog.
+  }
+})
 const picker = ref<WorkflowStepPickerState>({
   loading: true,
   errorKey: null,
@@ -510,6 +565,7 @@ function onProceed() {
     defaultMessage: defaultMessage.value.trim(),
     messageOverrides: messageOverridesOut,
     autoApproveItemSeqs: autoApproveOut,
+    stepTimeoutSec: stepTimeoutMinutes.value * 60,
   })
 }
 
@@ -762,6 +818,42 @@ watch(instructionMode, (value, previous) => {
 .cwd-toggle-text { display: flex; flex-direction: column; gap: 2px; }
 .cwd-toggle-title { font-size: .85rem; font-weight: 600; color: var(--text); }
 .cwd-toggle-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
+/* 시간 설정 (0400 M0005 / TR0007 2nd rejection: "리스트 박스로 해라... 콤보박스"): a native
+   select combo box, same input pattern as .aip-select-input in AiProviderSelect.vue. */
+.cwd-timeout-combo {
+  position: relative;
+  display: flex;
+}
+.cwd-timeout-select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .82rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.cwd-timeout-caret {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-m);
+  font-size: .7rem;
+  pointer-events: none;
+}
+.cwd-timeout-desc {
+  margin: 0;
+  font-size: .76rem;
+  color: var(--text-m);
+  line-height: 1.4;
+}
 .cwd-provider-block {
   display: flex;
   flex-direction: column;

@@ -817,4 +817,72 @@ describe('ContinuousWorkDialog', () => {
 
     wrapper.unmount()
   })
+
+  // flowgate.default.0400 T0006 / M0005: the 기본 설정 탭's 시간 section — a fixed per-hop
+  // budget picker (default 60 min), forwarded as stepTimeoutSec (seconds) on confirm and
+  // remembered in localStorage across dialog opens (not a persisted project setting).
+  describe('시간 section (0400 M0005)', () => {
+    const STORAGE_KEY = 'flowgate.continuousWork.stepTimeoutMinutes'
+
+    beforeEach(() => {
+      window.localStorage.clear()
+    })
+    afterEach(() => {
+      window.localStorage.clear()
+    })
+
+    it('defaults to 60 minutes and reports 3600 seconds on confirm', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-timeout-select') as HTMLSelectElement
+      expect(select.querySelectorAll('option')).toHaveLength(7)
+      expect(select.value).toBe('60')
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.stepTimeoutSec).toBe(3600)
+
+      wrapper.unmount()
+    })
+
+    it('picking another option updates the select and the confirm payload', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-timeout-select') as HTMLSelectElement
+      select.value = '240'
+      await select.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      expect(select.value).toBe('240')
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.stepTimeoutSec).toBe(240 * 60)
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe('240')
+
+      wrapper.unmount()
+    })
+
+    it('remembers the last pick across a dialog remount, without touching a preset', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      window.localStorage.setItem(STORAGE_KEY, '180')
+
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-timeout-select') as HTMLSelectElement
+      expect(select.value).toBe('180')
+      wrapper.unmount()
+    })
+  })
 })

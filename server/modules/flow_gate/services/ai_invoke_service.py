@@ -70,6 +70,11 @@ CONCURRENT_RUNS_PER_GROUP = 1
 # ran, produced nothing and exited 0 fell straight out of the loop with no retry, no record
 # and no signal. These parameters bound the retry branch that closes that hole.
 HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled by slots left
+# flowgate.default.0400 M0005: the ContinuousWorkDialog 시간 section's fixed option list, as
+# seconds — 30/45/60/90/120/180/240 minutes. A per-hop pick outside this range is rejected by
+# the route (422); HOP_TIMEOUT_SEC above remains the fallback when no pick was made at all.
+STEP_TIMEOUT_MIN_SEC = 1800
+STEP_TIMEOUT_MAX_SEC = 14400
 NO_OUTPUT_MAX_ATTEMPTS = 3       # per hop: the first attempt + 2 no-output retries
 RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open another attempt
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
@@ -843,6 +848,11 @@ def start_run(
     # provider resolution / docs_target counting / worker item_seq folding agrees with the
     # SAME selection the user made once at the start of the chain.
     continuation_auto_approve_item_seqs: Optional[list] = None,
+    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
+    # ContinuousWorkDialog's 시간 section. Session-scoped like the provider/note overrides
+    # above — never persisted outside the paused-chain row a pause snapshots it into. None (or
+    # out of STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC) falls back to HOP_TIMEOUT_SEC.
+    continuation_step_timeout_sec: Optional[int] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -1127,7 +1137,9 @@ def start_run(
     )
 
     started_at = now_iso()
-    timeout_sec = _resolve_timeout_sec(mode, docs_target, target_to_end)
+    timeout_sec = _resolve_timeout_sec(
+        mode, docs_target, target_to_end, continuation_step_timeout_sec
+    )
     run = {
         "run_id": run_id,
         "status": "running",
@@ -1214,6 +1226,13 @@ def start_run(
         ),
         "continuation_default_note": (
             continuation_default_note if mode == "continuous" else None
+        ),
+        # flowgate.default.0400 M0005: the per-hop budget PICK rides the run forward the same
+        # way the provider/note selections do, so a re-spawned hop (auto-resume, or a resume
+        # after a user pause) re-applies the same choice instead of silently falling back to
+        # HOP_TIMEOUT_SEC. Session-scoped — never persisted outside a paused-chain snapshot.
+        "continuation_step_timeout_sec": (
+            continuation_step_timeout_sec if mode == "continuous" else None
         ),
         # 0317 T0013 결함 ③: the header default provider pin rides the run too. Without it a
         # re-spawned hop that has NO per-step override lost the user's chosen default and fell
@@ -1306,7 +1325,12 @@ def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
 
 # ── 0359 L0007: hop budget, run identity, prompt reuse ───────────────────────
 
-def _resolve_timeout_sec(mode: str, docs_target: int, target_to_end: bool) -> int:
+def _resolve_timeout_sec(
+    mode: str,
+    docs_target: int,
+    target_to_end: bool,
+    continuation_step_timeout_sec: Optional[int] = None,
+) -> int:
     """The run's time budget (L0007 §2.13 / P0006 [홉 예산]).
 
     A continuous run IS one hop (0317 TR0011 re-spawns a worker per step), so scaling its
@@ -1314,8 +1338,18 @@ def _resolve_timeout_sec(mode: str, docs_target: int, target_to_end: bool) -> in
     the LAST hop the SMALLEST budget, which is backwards. NR0003 §7 cleared this of causing
     the reported incident (that hop had 2h and used 2m25s) but kept it as a live hazard: TR
     hops of 74 minutes were measured. Fixed per hop now; the single-run formula is untouched.
+
+    flowgate.default.0400 M0005: the fixed per-hop budget is now a user pick (30-240 minutes,
+    ContinuousWorkDialog 시간 section) instead of always HOP_TIMEOUT_SEC — an explicit,
+    in-range pick wins; anything else (not continuous, no pick, or an out-of-range value that
+    somehow reached here) keeps the old fixed budget.
     """
     if mode == "continuous":
+        if (
+            continuation_step_timeout_sec is not None
+            and STEP_TIMEOUT_MIN_SEC <= continuation_step_timeout_sec <= STEP_TIMEOUT_MAX_SEC
+        ):
+            return int(continuation_step_timeout_sec)
         return HOP_TIMEOUT_SEC
     if target_to_end:
         return RUN_TIMEOUT_CAP_SEC
@@ -3218,6 +3252,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     # mode on every user-paused chain before this fix.
                     continuation_instruction_mode=run.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+                    continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
                 )
         except Exception:
             logger.warning(
@@ -3267,8 +3302,13 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             # auto_approved, silently auto-approving N/T the user chose to author themselves
             # — exactly the mode-loss bug this TR fixes. So mode + its per-item_seq selection
             # ARE written on every system row, even though the other four selections are not.
+            # flowgate.default.0400 M0005: the per-hop budget pick is policy in the same sense
+            # — dropping it here would resume a chain the user picked 240 minutes for back at
+            # HOP_TIMEOUT_SEC (60), silently reopening the exact "hop budget too short" report
+            # this feature exists to fix. Written alongside instruction_mode for that reason.
             continuation_instruction_mode=run.get("continuation_instruction_mode"),
             continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+            continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
         )
     except Exception:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
@@ -3594,6 +3634,10 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # used to hard-code "auto_approved" because this row never carried anything else).
             continuation_instruction_mode=run.get("continuation_instruction_mode"),
             continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+            # flowgate.default.0400 M0005: same reasoning as the provider/note selections above
+            # — this row is where the run object's memory ends, so the per-hop budget pick must
+            # be written here or resume_chain has nothing to restore it from.
+            continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
         )
     except Exception:
         logger.warning("ai-invoke paused-row upsert failed for %s", run_id, exc_info=True)
@@ -3713,6 +3757,9 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # 지켜야 할 제약 4).
         "note_overrides": run.get("continuation_note_overrides"),
         "default_note": run.get("continuation_default_note"),
+        # flowgate.default.0400 M0005: the per-hop budget pick carries forward the same way —
+        # dropping it here would silently reset a re-spawned hop back to HOP_TIMEOUT_SEC.
+        "step_timeout_sec": run.get("continuation_step_timeout_sec"),
         # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
         # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
         "chain_id": run.get("chain_id"),
@@ -3751,6 +3798,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     base_provider_id = pending.get("base_provider_id")
     note_overrides = pending.get("note_overrides")
     default_note = pending.get("default_note")
+    step_timeout_sec = pending.get("step_timeout_sec")
     chain_id = pending.get("chain_id")
     chain_docs_target = pending.get("chain_docs_target")
     chain_docs_reached = pending.get("chain_docs_reached")
@@ -3806,6 +3854,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         chain_docs_target=chain_docs_target,
         chain_docs_reached=chain_docs_reached,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
+        continuation_step_timeout_sec=step_timeout_sec,
     )
 
 
@@ -3928,6 +3977,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     # drop the chain's ai_direct policy on retry.
                     continuation_instruction_mode=row.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=row.get("continuation_auto_approve_item_seqs"),
+                    continuation_step_timeout_sec=row.get("continuation_step_timeout_sec"),
                 )
             except Exception:
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
@@ -4009,6 +4059,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
         )
         note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
         default_note = (row.get("continuation_default_note") or "").strip() or None
+        step_timeout_sec = row.get("continuation_step_timeout_sec")
         try:
             return start_run(
                 project_id=project_id,
@@ -4033,6 +4084,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 chain_docs_target=row.get("chain_docs_target"),
                 chain_docs_reached=row.get("chain_docs_reached"),
                 continuation_auto_approve_item_seqs=resume_auto_approve_item_seqs,
+                continuation_step_timeout_sec=step_timeout_sec,
             )
         except HTTPException as exc:
             _restore_row()
