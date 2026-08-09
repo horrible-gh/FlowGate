@@ -181,6 +181,8 @@ const props = defineProps<{
   /** Controlled: which item_seqs are currently checked (mirrors `autoHandledItemSeqs`, but
    * the caller owns the source of truth so unrelated re-renders don't fight the checkbox). */
   autoApproveSelected?: number[]
+  /** Optional target injected by a work-plan fill preset. */
+  initialTargetSeq?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -427,7 +429,12 @@ async function loadSequence() {
       // Default to running the whole remaining sequence, so a user who knows nothing about
       // the sequence can just confirm and get the natural result (NR0003 권고 1). 0337 R0001-1:
       // the last SELECTABLE step — a trailing auto-handled instruction is not a stop point.
-      selectedIdx.value = lastSelectableIdx()
+      const presetIdx = props.initialTargetSeq == null
+        ? -1
+        : items.value.findIndex(item => item.item_seq === props.initialTargetSeq)
+      selectedIdx.value = presetIdx >= headIdx.value && selectableIdxSet.value.has(presetIdx)
+        ? presetIdx
+        : lastSelectableIdx()
       // Bring the current execution point into view instead of leaving the user parked on the
       // completed steps at the top (R0001).
       void revealActiveStep()
@@ -450,6 +457,15 @@ async function loadSequence() {
 // final one. Emitting the whole state (rather than exposing refs) keeps the picker the single
 // owner of head/target/all-done semantics.
 watch(state, (val) => emit('change', val), { immediate: true })
+
+watch(
+  () => props.initialTargetSeq,
+  (targetSeq) => {
+    if (targetSeq == null || items.value.length === 0) return
+    const idx = items.value.findIndex(item => item.item_seq === targetSeq)
+    if (idx >= headIdx.value && selectableIdxSet.value.has(idx)) selectedIdx.value = idx
+  },
+)
 
 watch(
   () => props.active,

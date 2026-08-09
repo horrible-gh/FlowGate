@@ -1394,7 +1394,7 @@ def build_mention(
     tmpl_type = parent_type if is_edit else head_type
     if tmpl_type:
         try:
-            if template_provision.is_design_type(tmpl_type):
+            if template_provision.has_body_template(tmpl_type):
                 template_section = _section(
                     "Document template",
                     template_provision.render_help_pointer(tmpl_type, locale, base),
@@ -1996,3 +1996,100 @@ def build_review_mention(
     sections.append(_section("Reminder", _no_choices_reminder(base, canonical_id, locale)))
 
     return "\n\n".join(sections)
+def build_work_plan_fill_mention(
+    *,
+    token_rec: dict,
+    target_doc: dict,
+    body: dict,
+    scope: dict,
+    api_base_url: str,
+    raw_token: str,
+    locale: str = "ko",
+) -> str:
+    """Build the bounded work-plan edit prompt used by the in-app AI runner."""
+    import json
+
+    language = locale if locale in {"ko", "en", "ja"} else "ko"
+    copy = {
+        "ko": {
+            "title": "작업계획 범위 채우기",
+            "canonical": "본문은 Markdown이 아니라 아래 정본 JSON 전체입니다.",
+            "quantity": "수량을 정해도 되는 타입",
+            "steps": "프로바이더와 한줄 멘트를 정해도 되는 단계",
+            "providers": "고를 수 있는 프로바이더",
+            "outside": "범위 밖 값은 지금 값 그대로 두십시오.",
+            "notes": "선택된 모든 비잠금 단계의 note를 반드시 채우십시오(200자 이내, 줄바꿈·탭 금지).",
+            "submit": "수정한 정본 JSON 전체를 인박스 수정(edit) 제출로 되돌려 주십시오.",
+        },
+        "en": {
+            "title": "Fill a bounded work-plan scope",
+            "canonical": "The body is the complete canonical JSON below, not Markdown.",
+            "quantity": "Types whose quantities may change",
+            "steps": "Steps whose provider and one-line note may change",
+            "providers": "Providers that may be chosen",
+            "outside": "Keep every value outside this scope exactly as it is.",
+            "notes": "Fill note for every selected unlocked step (at most 200 characters; no newlines or tabs).",
+            "submit": "Return the complete canonical JSON through an inbox edit submission.",
+        },
+        "ja": {
+            "title": "作業計画の指定範囲を入力",
+            "canonical": "本文はMarkdownではなく、以下の正本JSON全体です。",
+            "quantity": "数量を変更できるタイプ",
+            "steps": "プロバイダーと一行メモを変更できる段階",
+            "providers": "選択できるプロバイダー",
+            "outside": "範囲外の値は現在のまま変更しないでください。",
+            "notes": "選択したロックなし段階のnoteを必ず入力してください（200文字以内、改行・タブ禁止）。",
+            "submit": "正本JSON全体をインボックスのedit提出で返してください。",
+        },
+    }[language]
+    step_by_key = {str(step.get("key")): step for step in body.get("steps") or []}
+    provider_by_id = {
+        str(provider.get("provider_id")): provider
+        for provider in body.get("provider_candidates") or []
+    }
+    quantities = body.get("quantities") or {}
+    unit_copy = {
+        "ko": {"sheet": "장", "set": "세트"},
+        "en": {"sheet": "sheet", "set": "set"},
+        "ja": {"sheet": "枚", "set": "セット"},
+    }[language]
+
+    def step_label(key: str) -> str:
+        step = step_by_key.get(key) or {}
+        type_code = str(step.get("type") or "")
+        name = get_type_name(type_code, language) if type_code else "?"
+        quantity = quantities.get(type_code)
+        if not quantity and step.get("pair_key"):
+            quantity = quantities.get(str(step["pair_key"]).split("#", 1)[0])
+        ordinal = step.get("ordinal")
+        unit = unit_copy.get((quantity or {}).get("unit"))
+        if ordinal and unit:
+            suffix = f"{ordinal} {unit}" if language == "en" else f"{ordinal}{unit}"
+            name = f"{name} {suffix}"
+        return f"{key} · {name}"
+
+    quantity_lines = scope.get("quantity_type_codes") or []
+    step_lines = [step_label(key) for key in (scope.get("step_keys") or [])]
+    provider_lines = [
+        f"{provider_id} · {(provider_by_id.get(provider_id) or {}).get('display_name') or provider_id}"
+        for provider_id in scope.get("provider_ids") or []
+    ]
+    def bullets(items: list[str]) -> str:
+        return "\n".join(f"- {item}" for item in items) if items else "- (none)"
+
+    doc_id = target_doc.get("doc_id") or ""
+    scratch_dir = token_rec.get("scratch_dir") or ""
+    return (
+        f"## {copy['title']}\n\n"
+        f"- target_doc_id: {doc_id}\n"
+        f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
+        f"- Authorization: Bearer {raw_token}\n"
+        f"- scratch_dir: {scratch_dir}\n\n"
+        f"{copy['canonical']}\n\n"
+        f"```json\n{json.dumps(body, ensure_ascii=False, indent=2)}\n```\n\n"
+        f"### {copy['quantity']}\n\n{bullets(quantity_lines)}\n\n"
+        f"### {copy['steps']}\n\n{bullets(step_lines)}\n\n"
+        f"### {copy['providers']}\n\n{bullets(provider_lines)}\n\n"
+        f"{copy['outside']}\n\n{copy['notes']}\n\n{copy['submit']}\n"
+        f"POST {api_base_url}/flowgate/api/v1/inbox (action=edit, doc_id={doc_id})\n"
+    )

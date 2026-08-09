@@ -24,6 +24,7 @@ from modules.flow_gate.services import ai_invoke_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import workflow_decision_service
+from modules.flow_gate.services import work_plan_service
 from modules.flow_gate.workflow import prompt_copy_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.id_validators import (
@@ -65,6 +66,7 @@ class AiInvokeStartRequest(BaseModel):
     design_types: Optional[list[str]] = None       # design_handoff selected types
     design_mode: Optional[str] = None              # design_handoff "batch" | "single"
     design_first_label: Optional[str] = None       # design_handoff single-mode type label
+    work_plan_scope: Optional[dict] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -79,6 +81,7 @@ _TOKEN_SCOPE = {
     "vr_correction": "edit",
     "next_step_message": "new",
     "design_handoff": "new",
+    "work_plan_fill": "edit",
 }
 # review/resolve_conflict/workflow_sequence_edit/test_run keep their OWN token scope (the
 # identity fallthrough of `_TOKEN_SCOPE.get`), because each is minted by a dedicated service
@@ -391,6 +394,27 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "mention": issued.get("mention") or "",
             }
         issue_builder = _issue_sequence_edit
+    if body.action_scope == "work_plan_fill":
+        def _issue_work_plan_fill(ai_run_id: Optional[str] = None):
+            issued = work_plan_service.request_work_plan_fill(
+                doc_id=body.doc_ref or "",
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                scope=body.work_plan_scope or {
+                    "quantity_type_codes": [],
+                    "step_keys": [],
+                    "provider_ids": [],
+                },
+                locale=locale,
+                ai_run_id=ai_run_id,
+            )
+            return {
+                "raw_token": issued["raw_token"],
+                "token_id": issued["token_id"],
+                "scratch_dir": issued["scratch_dir"],
+                "mention": issued.get("mention") or "",
+            }
+        issue_builder = _issue_work_plan_fill
     if body.action_scope == "test_run":
         # 0268 B0001 (NR0003 결함 2): the invoke twin of TestRunStrip's delegation copy.
         # issue_test_run_request returns the raw token under "token" (not "raw_token"),

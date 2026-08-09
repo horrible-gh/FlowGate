@@ -415,6 +415,15 @@ const CATEGORIES = [
     items: [{ type: 'M', autoHintKey: '' }],
   },
   {
+    // 0395 T0021 / D0007 §7: 작업계획(WP) is "요건정의 다음에 오는 일반 칸" — a step
+    // that occupies a workflow slot (it is deliberately absent from
+    // NON_SLOT_WORKFLOW_TYPES on the server), so it has to be placeable here. Without
+    // this entry the only way to plan a group was a button that vanished half the
+    // time (NR0020), which is what "어디서 설정하지" was asking about.
+    key: 'plan',
+    items: [{ type: 'WP', autoHintKey: '' }],
+  },
+  {
     // CH (Conversation): general-series auto-complete type, sibling of M
     // (migration 047, AUTO_COMPLETE_TYPES). Surfaced here so the type is visible
     // and selectable in the workflow-decision / sequence-edit dialogs (TR0010 rev1).
@@ -439,12 +448,9 @@ const CATEGORIES = [
       { type: 'DB', autoHintKey: '' },
     ],
   },
-  {
-    key: 'action',
-    items: [
-      { type: 'C', autoHintKey: '' },
-    ],
-  },
+  // 0395 T0021: the 'action' category ([커밋] / C) was removed on instruction. C is
+  // still a registered document type — this only stops it being placed as a workflow
+  // step; sequences that already contain one keep rendering it.
 ]
 
 const AUTO_ONLY = [

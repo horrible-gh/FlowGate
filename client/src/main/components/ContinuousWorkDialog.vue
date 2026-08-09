@@ -13,6 +13,16 @@
           </button>
         </div>
 
+        <div v-if="presetActive" class="cwd-preset-banner">
+          <div>
+            <strong>{{ t('main.continuous_work.preset_source', { doc: preset?.sourceDocId }) }}</strong>
+            <span>{{ t('main.continuous_work.preset_not_started') }}</span>
+            <span v-if="presetUnsetCount">{{ t('main.continuous_work.preset_unset', { n: presetUnsetCount }) }}</span>
+          </div>
+          <button type="button" class="btn btn-outline btn-sm" @click="revertPreset">{{ t('main.continuous_work.preset_revert') }}</button>
+        </div>
+        <div v-if="presetRefreshMessage" class="cwd-preset-refresh">{{ presetRefreshMessage }}</div>
+
         <!-- ── Body: left = step list, right = settings tabs (0317 T0010 rev4) ── -->
         <div class="modal-bd cwd-body">
           <div class="cwd-col cwd-col-steps">
@@ -22,6 +32,7 @@
             <WorkflowStepPicker
               :doc-ref="docRef"
               :active="visible"
+              :initial-target-seq="presetTargetSeq"
               :step-tag="stepProviderTag"
               :auto-handled-types="autoHandledTypes"
               :auto-handled-item-seqs="autoApproveItemSeqs"
@@ -135,6 +146,7 @@
                         hide-label
                         @update:model-value="(v) => onStepProviderChange(item.item_seq, v)"
                       />
+                      <span v-if="filledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
                     </div>
                   </div>
                 </div>
@@ -170,6 +182,7 @@
                         :placeholder="t('main.continuous_work.message_step_placeholder')"
                         @input="onStepMessageChange(item.item_seq, ($event.target as HTMLInputElement).value)"
                       />
+                      <span v-if="filledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
                     </div>
                   </div>
                 </div>
@@ -202,15 +215,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
+import type { WorkPlanFillPreset } from '../types/workPlanFillPreset'
 
 const props = defineProps<{
   visible: boolean
   /** Sequence-owning root (R/B) doc id — the picker reads /workflow/sequence by this id. */
   docRef: string
+  /** Optional work-plan values. Omitted means the legacy dialog state exactly. */
+  preset?: WorkPlanFillPreset | null
   // 0234 B0001: runtime provider list + current selection, owned by MainPanel (which holds
   // the aiProvider store). Surfaced so the continuous run's provider is confirmable here.
   providers?: { id: string; name: string }[]
@@ -275,6 +292,15 @@ const messageOverrides = ref<Record<number, string>>({})
 // N/T step is server-generated + auto-approved exactly like auto_approved handles it, without
 // switching the whole chain out of ai_direct.
 const autoApproveItemSeqs = ref<number[]>([])
+const presetActive = ref(false)
+const presetTargetSeq = ref<number | null>(null)
+const filledSeqs = ref(new Set<number>())
+const editedSeqs = ref(new Set<number>())
+const presetRefreshMessage = ref('')
+let initializingPreset = false
+const presetUnsetCount = computed(() => (
+  props.preset?.warnings.find(warning => warning.code === 'provider_unset')?.count ?? 0
+))
 
 // 0337 R0001 -----------------------------------------------------------------------------
 // A document step and an AI-execution step are not the same thing, and only the latter can
@@ -351,7 +377,16 @@ function stepProviderValue(itemSeq: number): string {
   return overrides.value[itemSeq] ?? props.selectedProvider ?? ''
 }
 
+function markPresetEdited(itemSeq: number) {
+  if (!presetActive.value) return
+  editedSeqs.value = new Set([...editedSeqs.value, itemSeq])
+  const nextFilled = new Set(filledSeqs.value)
+  nextFilled.delete(itemSeq)
+  filledSeqs.value = nextFilled
+}
+
 function onStepProviderChange(itemSeq: number, value: string) {
+  markPresetEdited(itemSeq)
   const next = { ...overrides.value }
   // Selecting the header default (or nothing) folds back to "follow default" — no override row.
   if (!value || value === props.selectedProvider) delete next[itemSeq]
@@ -362,6 +397,7 @@ function onStepProviderChange(itemSeq: number, value: string) {
 // 0346 T0005 §2-1 항목 4: blank (or whitespace-only) input is the same as "no individual note
 // for this step" — mirrors onStepProviderChange's "같으면 삭제" rule with a "비면 삭제" rule.
 function onStepMessageChange(itemSeq: number, value: string) {
+  markPresetEdited(itemSeq)
   const next = { ...messageOverrides.value }
   if (!value.trim()) delete next[itemSeq]
   else next[itemSeq] = value
@@ -410,6 +446,9 @@ const summaryText = computed(() => {
 // were picked for the steps that just left the run. Drop them as soon as the row disappears, so
 // what the user sees in the table IS what the confirm payload carries — no stale key survives.
 watch(executionSteps, (steps) => {
+  // A preset is installed before the picker finishes loading. Do not interpret that temporary
+  // empty execution list as the user shrinking the run, or the injected overrides vanish.
+  if (picker.value.loading || picker.value.selection == null) return
   const inRun = new Set(steps.map(s => s.item_seq))
   const kept = Object.entries(overrides.value).filter(([seq]) => inRun.has(Number(seq)))
   if (kept.length !== Object.keys(overrides.value).length) {
@@ -478,25 +517,102 @@ function close() {
   emit('update:visible', false)
 }
 
+function installPreset(value: WorkPlanFillPreset | null | undefined) {
+  initializingPreset = true
+  reviewMode.value = false
+  activeTab.value = 'basic'
+  presetRefreshMessage.value = ''
+  editedSeqs.value = new Set()
+  if (value) {
+    presetActive.value = true
+    instructionMode.value = value.instructionMode
+    presetTargetSeq.value = value.targetSeq
+    overrides.value = { ...value.providerOverrides }
+    defaultMessage.value = value.defaultMessage
+    messageOverrides.value = { ...value.messageOverrides }
+    filledSeqs.value = new Set(value.filledSeqs)
+  } else {
+    presetActive.value = false
+    presetTargetSeq.value = null
+    instructionMode.value = 'auto_approved'
+    overrides.value = {}
+    defaultMessage.value = ''
+    messageOverrides.value = {}
+    filledSeqs.value = new Set()
+  }
+  setTimeout(() => { initializingPreset = false }, 0)
+}
+
+async function refreshPresetForMode() {
+  if (!props.preset || !presetActive.value) return
+  try {
+    const res = await postRequest<any>(
+      '/api/v1/documents/' + encodeURIComponent(props.preset.sourceDocId) + '/work-plan/apply/preview',
+      { instruction_mode: instructionMode.value },
+    )
+    const fill = res.data.fill_preview ?? {}
+    const incomingProviders: Record<number, string> = Object.fromEntries(
+      Object.entries(fill.provider_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
+    )
+    const incomingMessages: Record<number, string> = Object.fromEntries(
+      Object.entries(fill.note_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
+    )
+    const keepEdited = editedSeqs.value
+    for (const seq of keepEdited) {
+      if (overrides.value[seq] !== undefined) incomingProviders[seq] = overrides.value[seq]
+      if (messageOverrides.value[seq] !== undefined) incomingMessages[seq] = messageOverrides.value[seq]
+    }
+    overrides.value = incomingProviders
+    messageOverrides.value = incomingMessages
+    presetTargetSeq.value = fill.target_seq ?? presetTargetSeq.value
+    const refreshed = new Set<number>([
+      ...Object.keys(incomingProviders).map(Number),
+      ...Object.keys(incomingMessages).map(Number),
+    ])
+    for (const seq of keepEdited) refreshed.delete(seq)
+    filledSeqs.value = refreshed
+    presetRefreshMessage.value = t('main.continuous_work.preset_mode_refreshed', { n: keepEdited.size })
+  } catch (e: any) {
+    presetRefreshMessage.value = e?.response?.data?.message || t('main.continuous_work.preset_mode_failed')
+  }
+}
+
+function revertPreset() {
+  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+  installPreset(null)
+}
+
 watch(
   () => props.visible,
   (val) => {
     if (val) {
       // The picker reloads itself off `active`; reset only what this dialog owns.
-      reviewMode.value = false
-      instructionMode.value = 'auto_approved'
-      activeTab.value = 'basic'
-      overrides.value = {}
-      defaultMessage.value = ''
-      messageOverrides.value = {}
+      installPreset(props.preset)
       autoApproveItemSeqs.value = []
     }
   },
   { immediate: true },
 )
+watch(
+  () => props.preset,
+  (value) => {
+    if (props.visible) installPreset(value)
+  },
+)
+watch(instructionMode, (value, previous) => {
+  if (!initializingPreset && presetActive.value && value !== previous) void refreshPresetForMode()
+})
 </script>
 
 <style scoped>
+.cwd-preset-banner,.cwd-preset-refresh {
+  flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:8px 14px; background:#ecfeff; border-bottom:1px solid #a5f3fc; font-size:.74rem;
+}
+.cwd-preset-banner div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.cwd-preset-banner span { color:var(--text-m); }
+.cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
+.cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .modal-cwd {
   width: 860px;
   max-width: 96vw;

@@ -29,7 +29,7 @@ from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import document_service, document_types, template_service
-from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES, WORK_PLAN_TYPE
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import conversation_markdown_service, conversation_query_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -228,11 +228,18 @@ def _regenerate_target_path(doc: dict) -> Path:
         if storage_paths._within_allowed_roots(cand, project_id):
             return cand
         # escaping path → fall through to a recomputed jailed path
+    filename = "document.md"
+    if str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
+        # A work plan's canonical body is JSON (P0009 §2.6 결정 2). Recomputing a `.md`
+        # name here would recover the document into a file its own reader cannot open.
+        from modules.flow_gate.services import work_plan_service as _wp
+
+        filename = _wp.DOCUMENT_FILENAME
     return storage_paths.document_path(
         project_id=project_id,
         group_code=doc.get("group_id") or "",
         doc_code=_short_doc_code(doc),
-        filename="document.md",
+        filename=filename,
         module=doc.get("module") or "none",
         branch=branch,
     )
@@ -1131,28 +1138,43 @@ def create_next_empty_document(
     seq_no = int(m.group(1)) if m else 0
     doc_id = f"{body.group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
+    # 0395 T0026 재작업: 작업계획의 정본은 마크다운이 아니라 JSON 이다(P0009 §2.6 결정 2).
+    # 머리 칸이 WP 일 때 여기서 마크다운 뼈대를 쓰면 문서는 만들어지지만 그 문서의 판독기가
+    # 열지 못해, 화면에는 표 대신 "이 작업계획을 표로 열 수 없습니다"만 남는다(사용자 신고).
+    is_work_plan = type_code == WORK_PLAN_TYPE
+    from modules.flow_gate.services import work_plan_service as _wp
+
     doc_file_path = storage_paths.document_path(
         project_id=body.project_id,
         group_code=body.group_id,
         doc_code=doc_code,
-        filename="document.md",
+        filename=_wp.DOCUMENT_FILENAME if is_work_plan else "document.md",
         module=module,
         branch=_get_project_branch(body.project_id),
     )
-    md_content = _build_next_empty_content(
-        project_id=body.project_id,
-        module=module,
-        group_id=body.group_id,
-        type_code=type_code,
-        doc_code=doc_code,
-        title=title,
-        target_id=body.prev_doc_id,
-        next_type=next_type,
-    )
 
     try:
-        doc_file_path.parent.mkdir(parents=True, exist_ok=True)
-        doc_file_path.write_text(md_content, encoding="utf-8")
+        if is_work_plan:
+            # 이 길에는 생성 대화상자가 없어 사용자가 고른 수량·공급자가 없다. 지어내는 대신
+            # 이미 정해져 있는 것에서 읽어 채운다 — 수량은 이 그룹의 워크플로 시퀀스, 공급자는
+            # 프로젝트의 실행 체인과 문서종류 배정표(work_plan_service.auto_plan_body).
+            _wp.write_body_atomically(
+                doc_file_path,
+                _wp.auto_plan_body(body.project_id, _db_wfseq.get_sequence_items(seq["id"])),
+            )
+        else:
+            md_content = _build_next_empty_content(
+                project_id=body.project_id,
+                module=module,
+                group_id=body.group_id,
+                type_code=type_code,
+                doc_code=doc_code,
+                title=title,
+                target_id=body.prev_doc_id,
+                next_type=next_type,
+            )
+            doc_file_path.parent.mkdir(parents=True, exist_ok=True)
+            doc_file_path.write_text(md_content, encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to create document file: {exc}") from exc
 
@@ -1170,6 +1192,9 @@ def create_next_empty_document(
         "owner_id": current_user["user_id"],
         "file_path": storage_paths.to_storage_relative(doc_file_path, body.project_id),
     }
+    if is_work_plan:
+        # 작업계획 화면이 "사람이 만든 계획"으로 읽는 표시. 생성 대화상자 경로와 같은 값이다.
+        data["meta"] = _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False)
 
     try:
         store = get_store()
@@ -2525,6 +2550,15 @@ def regenerate_document_file(
     body = _latest_revision_body(doc_id, project_id)
     if body is not None:
         restored_from = "revision"
+    elif str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
+        # The metadata stub below is Markdown frontmatter, which a work plan reader can
+        # only report as "이 작업계획을 표로 열 수 없습니다". Recover a valid but undecided
+        # plan instead: every countable type present, every count 0. The response still
+        # says body_lost, so nobody mistakes it for the plan that was there.
+        from modules.flow_gate.services import work_plan_service as _wp
+
+        restored_from = "metadata"
+        body = _wp.dumps(_wp.empty_recovery_body(project_id))
     else:
         restored_from = "metadata"
         body = _build_next_empty_content(

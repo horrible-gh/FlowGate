@@ -36,6 +36,60 @@
         </div>
       </div>
 
+      <!-- Mockup xc32frrg screen 1 — 문서 정보의 [프로바이더 배정 (단계 기준)] 칸. -->
+      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.wp_assignments }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.wp_assignments" @click="toggleSection('wp_assignments')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="robot" />
+          {{ t('main.doc_info_panel.wp_assignments') }}
+        </button>
+        <div class="dip-sec-body">
+          <div v-if="wpAssignmentsLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
+          <div v-else-if="wpAssignmentsError" class="dip-qa-error">{{ t('main.doc_info_panel.wp_assignments_failed') }}</div>
+          <template v-else>
+            <ul v-if="wpAssignments.length" class="dip-wp-assignments">
+              <li v-for="row in wpAssignments" :key="row.provider_id">
+                <span class="dip-wp-dot"></span>
+                <span class="dip-wp-prov">{{ row.display_name }}</span>
+                <strong>{{ t('main.doc_info_panel.wp_assignment_steps', { n: row.step_count }) }}</strong>
+              </li>
+            </ul>
+            <div v-else class="dip-reject-empty">
+              <AppIcon name="info" /><span>{{ t('main.doc_info_panel.wp_no_assignment') }}</span>
+            </div>
+            <p v-if="wpUnassignedSteps > 0" class="dip-qa-error">
+              {{ t('main.doc_info_panel.wp_unassigned_steps', { n: wpUnassignedSteps }) }}
+            </p>
+          </template>
+        </div>
+      </div>
+
+      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.applications }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.applications" @click="toggleSection('applications')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="clock-counter-clockwise" />
+          {{ t('main.doc_info_panel.wp_last_application') }}
+          <span class="dip-wp-last">{{ lastApplication?.applied_at ?? t('main.doc_info_panel.wp_no_application_short') }}</span>
+        </button>
+        <div class="dip-sec-body">
+          <div v-if="applicationsLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
+          <div v-else-if="applicationsError" class="dip-qa-error">{{ t('main.doc_info_panel.wp_applications_failed') }}</div>
+          <div v-else-if="applications.length === 0" class="dip-reject-empty">
+            <AppIcon name="info" /><span>{{ t('main.doc_info_panel.wp_no_application') }}</span>
+          </div>
+          <ul v-else class="dip-wp-applications">
+            <li v-for="row in applications" :key="row.applied_at + '-' + row.applied_by">
+              <strong>{{ row.applied_at }}</strong>
+              <span>{{ row.applied_by }} · #{{ row.target_seq ?? '—' }}</span>
+              <small>{{ row.warning_codes?.join(', ') || t('main.doc_info_panel.wp_no_warnings') }}</small>
+            </li>
+          </ul>
+          <p v-if="applicationsBrokenLines" class="dip-qa-error">
+            {{ t('main.doc_info_panel.wp_broken_applications', { n: applicationsBrokenLines }) }}
+          </p>
+        </div>
+      </div>
+
       <!-- Section 1.5: source-change summary (0325 R0001 / N0004 §2·§3).
            최종 승인(AC) 시점에만, 질의 응답·AI 검수 의견·반려 사유가 비운 자리에
            들어간다. "머지할까 말까" 를 판단하는 그 화면에서 이번 그룹이 무엇을
@@ -493,9 +547,12 @@ const emit = defineEmits<{
 // under its own title caret — the same caret idiom as the left file-tree. This is
 // separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
 // emit) so the two controls don't fight. Sections start expanded.
-type SectionKey = 'status' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
+type SectionKey = 'status' | 'wp_assignments' | 'applications' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
+  // 시안 xc32frrg 화면 1 은 이 칸을 펼친 채로 그린다.
+  wp_assignments: false,
+  applications: true,
   qa: false,
   ai_review: false,
   reject: false,
@@ -504,6 +561,65 @@ const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   // 0325 T0006: AC 에서만 뜨는 섹션이고, 뜨는 이유 자체가 "지금 보라"이므로 펼친 채 시작한다.
   changes: false,
 })
+
+interface WorkPlanApplication {
+  applied_at: string
+  applied_by: string
+  target_seq: number | null
+  warning_codes: string[]
+}
+interface WorkPlanAssignment { provider_id: string; display_name: string; step_count: number }
+const wpAssignments = ref<WorkPlanAssignment[]>([])
+const wpUnassignedSteps = ref(0)
+const wpAssignmentsLoading = ref(false)
+const wpAssignmentsError = ref(false)
+
+async function fetchWpAssignments() {
+  if (props.typeCode !== 'WP') return
+  wpAssignmentsLoading.value = true
+  wpAssignmentsError.value = false
+  try {
+    const res = await getRequest<any>('/api/v1/documents/' + encodeURIComponent(props.docId) + '/work-plan')
+    wpAssignments.value = res.data.assignment_summary ?? []
+    wpUnassignedSteps.value = res.data.unassigned_step_count ?? 0
+  } catch {
+    wpAssignments.value = []
+    wpUnassignedSteps.value = 0
+    wpAssignmentsError.value = true
+  } finally {
+    wpAssignmentsLoading.value = false
+  }
+}
+
+const applications = ref<WorkPlanApplication[]>([])
+const applicationsLoading = ref(false)
+const applicationsError = ref(false)
+const applicationsBrokenLines = ref(0)
+const lastApplication = computed(() => applications.value[0] ?? null)
+
+async function fetchApplications() {
+  if (props.typeCode !== 'WP') return
+  applicationsLoading.value = true
+  applicationsError.value = false
+  try {
+    const res = await getRequest<any>(
+      '/api/v1/documents/' + encodeURIComponent(props.docId) + '/work-plan/applications',
+      { limit: 20 },
+    )
+    applications.value = res.data.items ?? []
+    applicationsBrokenLines.value = res.data.broken_lines ?? 0
+  } catch {
+    applications.value = []
+    applicationsError.value = true
+  } finally {
+    applicationsLoading.value = false
+  }
+}
+watch(
+  () => [props.docId, props.typeCode] as const,
+  () => { void fetchApplications(); void fetchWpAssignments() },
+  { immediate: true },
+)
 
 // 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
 const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
@@ -548,6 +664,8 @@ watch(
 )
 function toggleSection(key: SectionKey) {
   sectionCollapsed[key] = !sectionCollapsed[key]
+  // Re-read on expansion so an application created while this panel stayed mounted appears.
+  if (key === 'applications' && !sectionCollapsed.applications) void fetchApplications()
 }
 
 function formatRejectionDate(iso: string): string {
@@ -1554,4 +1672,11 @@ onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegister
   }
   .dip-ai-response.open .dip-ai-response-body::-webkit-scrollbar-thumb:hover { background: #3b73c4; }
 }
+
+/* 시안 xc32frrg 화면 1 — 프로바이더 배정 (단계 기준) */
+.dip-wp-assignments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.dip-wp-assignments li { display: flex; align-items: center; gap: 6px; font-size: .74rem; }
+.dip-wp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary, #2563eb); flex-shrink: 0; }
+.dip-wp-prov { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dip-wp-assignments strong { margin-left: auto; font-variant-numeric: tabular-nums; }
 </style>

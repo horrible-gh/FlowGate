@@ -1,9 +1,9 @@
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
 import { getRequest } from '@shared/api'
 import { useProjectStore } from './project'
 
-interface DocTypeItem {
+export interface DocTypeItem {
   id: number
   code: string
   label: string
@@ -11,11 +11,46 @@ interface DocTypeItem {
   color?: string
   is_active?: number
   sort_order?: number
+  // flowgate.default.0395 P0009 §4.1: additive fields the work-plan create dialog
+  // and editor need — whether this type can be counted, its unit, and its report pair.
+  countable?: boolean
+  unit?: 'sheet' | 'set' | null
+  pair_code?: string
 }
 
 export const useDocTypeStore = defineStore('docType', () => {
   const labelMap = ref<Record<string, string>>({})
+  const items = ref<DocTypeItem[]>([])
   const loaded = ref(false)
+
+  /** Countable types in server-registry order — the work-plan quantity list (P0009 §4.1). */
+  const countableTypes = computed(() => items.value.filter((item) => item.countable))
+
+  /**
+   * flowgate.default.0395 시안 xc32frrg: a work row is named after the pair, not after
+   * its instruction document — 조사 / 작업 / 테스트, not 조사지시 / 작업지시 / 테스트지시.
+   *
+   * The registry label is server-side and NOT localized, so the UI locale says nothing
+   * about which suffix it carries; strip whichever of the known suffixes it ends with.
+   */
+  const INSTRUCTION_SUFFIXES = ['지시', '指示', ' Instruction']
+
+  function getSetName(typeCode: string): string {
+    const label = getLabel(typeCode)
+    for (const suffix of INSTRUCTION_SUFFIXES) {
+      if (label.length > suffix.length && label.endsWith(suffix)) {
+        return label.slice(0, label.length - suffix.length).trim()
+      }
+    }
+    return label
+  }
+
+  /** The label of a type's report-pair, if it has one and that pair is itself registered. */
+  function getPairLabel(typeCode: string): string | undefined {
+    const item = items.value.find((entry) => entry.code === typeCode)
+    if (!item?.pair_code) return undefined
+    return items.value.find((entry) => entry.code === item.pair_code)?.label
+  }
 
   /**
    * Return the localized display name for typeCode.
@@ -51,17 +86,18 @@ export const useDocTypeStore = defineStore('docType', () => {
         `/api/v1/projects/${encodeURIComponent(projectId)}/document-types`,
         params,
       )
-      const items: DocTypeItem[] = res.data?.data ?? []
+      const rows: DocTypeItem[] = res.data?.data ?? []
       const map: Record<string, string> = {}
-      for (const item of items) {
+      for (const item of rows) {
         if (item.code) map[item.code] = item.label
       }
       labelMap.value = map
+      items.value = rows
       loaded.value = true
     } catch {
       // silent fail — components will display typeCode as fallback
     }
   }
 
-  return { labelMap, loaded, getLabel, loadLabels }
+  return { labelMap, items, countableTypes, loaded, getLabel, getSetName, getPairLabel, loadLabels }
 })

@@ -24,12 +24,14 @@ from typing import NamedTuple, Optional
 from modules.flow_gate import template_provision
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import templates as db_templates
+from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.services import (
     engine_recipe_service,
     remote_tool_service,
     test_command_service,
     tool_registry,
     tr_scope_service,
+    work_plan_service,
 )
 
 _logger = logging.getLogger(__name__)
@@ -298,6 +300,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "changed_files": "섹션 제목에 번호를 붙이면(예: '## 5. 변경 파일') 보고가 비어 있는 것으로 파싱됩니다.",
         "submit_dry_run": "본문에 \"dry_run\": true 를 넣으면 등록 없이 검증만 합니다. 토큰은 소비되지 않습니다.",
         "submit_encoding_guard": "본문이 깨진 글자(????)로 보이면 등록이 거절됩니다. 계산 순서: 먼저 본문을 UTF-8 파일로 쓰고, 그 파일에서 글자 수(body_chars)와 sha256(body_sha256)을 구한 다음 요청을 만드세요. 지문이 맞으면 그것으로 판정하고, 안 보내면 물음표 비율로 판정합니다. 지문이 어긋나거나 정말로 이대로 보내야 하면 force_encoding_reason 에 사유(공백 제외 10자 이상)를 적으세요.",
+        "submit_work_plan": "작업계획의 content에는 design_template/WP 형식의 정본 JSON만 넣으십시오. 새 작업계획을 등록할 때 제목은 title, 붙일 문서는 prev_doc_id 요청 항목으로 보내며 JSON 본문에 넣지 마십시오.",
     },
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
@@ -309,6 +312,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "changed_files": "Numbering the heading (e.g. '## 5. Changed Files') makes the report parse as empty.",
         "submit_dry_run": "Adding \"dry_run\": true to the body validates the submission without registering anything. The token is not consumed.",
         "submit_encoding_guard": "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the body to a UTF-8 file first, compute its character count (body_chars) and sha256 (body_sha256) from that file, then build the request. A matching fingerprint is trusted over the question-mark heuristic; if none is sent, the heuristic runs instead. If the fingerprint mismatches, or you must send it as-is, put a reason (>=10 non-whitespace chars) in force_encoding_reason.",
+        "submit_work_plan": "The work-plan content must contain only canonical JSON in the design_template/WP format. When registering a new work plan, send the title in the title request field and its attachment target in prev_doc_id; do not put either in the JSON body.",
     },
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
@@ -320,6 +324,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "changed_files": "見出しに番号を付ける(例: '## 5. 変更ファイル')と、報告が空としてパースされます。",
         "submit_dry_run": "本文に \"dry_run\": true を入れると、登録せず検証のみ行います。トークンは消費されません。",
         "submit_encoding_guard": "本文が文字化け(????)に見える場合、登録は拒否されます。計算順序: まず本文をUTF-8ファイルとして書き出し、そのファイルから文字数(body_chars)とsha256(body_sha256)を求めてからリクエストを作成してください。フィンガープリントが一致すればそれを優先し、送らなければ疑問符比率で判定します。フィンガープリントが一致しない場合、またはどうしてもそのまま送る必要がある場合は、force_encoding_reason に理由(空白を除き10文字以上)を記入してください。",
+        "submit_work_plan": "作業計画の content には design_template/WP 形式の正規 JSON だけを入れてください。新しい作業計画を登録する場合、タイトルは title、紐付け先文書は prev_doc_id リクエスト項目で送り、JSON 本文には入れないでください。",
     },
 }
 
@@ -495,6 +500,7 @@ def _is_design_type(type_code: Optional[str]) -> bool:
         return False
 
 
+
 def decide_visibility(name: str, ctx: dict) -> Decision:
     """Visible for this caller? The index and every direct call share this answer."""
     if name not in _CATALOG:
@@ -519,7 +525,7 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     doc_type = ctx.get("doc_type")
 
     if name == "design_template":
-        if authoring and _is_design_type(doc_type):
+        if authoring and template_provision.has_body_template(doc_type):
             return VISIBLE
         return Decision(False, "not_design_type")
 
@@ -588,6 +594,15 @@ def enumerate_children(name: str, ctx: dict) -> list[dict]:
                 "title": row.get("type_name") or code,
                 "summary": row.get("description") or "",
                 "url": item_url(base, "design_template", code),
+            })
+        # The work plan is not in the design series, so it is listed only for the worker
+        # who is actually writing one — a D author has no use for the WP body format.
+        if str(ctx.get("doc_type") or "").upper() == WORK_PLAN_TYPE:
+            children.append({
+                "name": WORK_PLAN_TYPE,
+                "title": _copy(_WORK_PLAN_TEMPLATE_TITLE, ctx["locale"], "title"),
+                "summary": _copy(_WORK_PLAN_TEMPLATE_TITLE, ctx["locale"], "summary"),
+                "url": item_url(base, "design_template", WORK_PLAN_TYPE),
             })
         return children
 
@@ -943,6 +958,10 @@ def _content_submit(ctx: dict) -> dict:
                     "e.g. fix(git): preserve finalized commit subject>"
                 )
 
+    is_work_plan = str(doc_type).upper() == WORK_PLAN_TYPE
+    if is_work_plan:
+        body["content"] = "<Canonical work-plan JSON>"
+
     payload = {
         "action_scope": scope or "new",
         "method": "POST",
@@ -957,6 +976,12 @@ def _content_submit(ctx: dict) -> dict:
         "dry_run": dry_run,
         "encoding_guard": encoding_guard,
     }
+    if is_work_plan:
+        payload["content_format"] = {
+            "format": "canonical_json",
+            "template_url": f"{base}/help/items/design_template/{WORK_PLAN_TYPE}",
+            "guidance": _copy(_ITEM_NOTES, ctx["locale"], "submit_work_plan"),
+        }
     if str(doc_type).upper() in tool_registry.MUTATING_STEP_TYPES and scope != "edit":
         payload["changed_files_required"] = True
     return payload
@@ -1081,9 +1106,27 @@ def _child_source_tool(child: str, ctx: dict) -> dict:
     }
 
 
+_WORK_PLAN_TEMPLATE_TITLE: dict[str, dict[str, str]] = {
+    "ko": {"title": "작업계획", "summary": "작업계획(WP) 정본 JSON 서식."},
+    "en": {"title": "Work Plan", "summary": "Canonical JSON body of a work plan (WP)."},
+    "ja": {"title": "作業計画", "summary": "作業計画(WP)の正本 JSON 書式。"},
+}
+
+
 def _child_design_template(child: str, ctx: dict) -> dict:
     locale = ctx["locale"]
     project = ctx.get("project")
+    if str(child or "").upper() == WORK_PLAN_TYPE:
+        # A work plan body is JSON, so it has no Markdown skeleton to resolve, no
+        # project override and no template row — the canonical shape comes from the
+        # same service that validates it, which is why it cannot drift from the rules.
+        content = work_plan_service.template_payload(locale, project)
+        return {
+            "name": "design_template",
+            "child": WORK_PLAN_TYPE,
+            "form": "content",
+            "content": content,
+        }
     try:
         resolved = template_provision.resolve_active_template(project, child, locale)
         meta = template_provision.resolve_active_meta(project, child, locale)
@@ -1111,6 +1154,10 @@ def _child_design_template(child: str, ctx: dict) -> dict:
         "form": "content",
         "content": {
             "type_code": child,
+            # P0009 §6: every template used to be Markdown, so its format never had to be
+            # stated. WP is JSON, so the format is now said out loud on BOTH branches —
+            # a worker must not have to infer it from the body it happens to receive.
+            "body_format": "markdown",
             "requested_locale": meta["requested_locale"],
             "resolved_locale": meta["resolved_locale"],
             "resolution": meta["resolution"],

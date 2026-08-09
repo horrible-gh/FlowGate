@@ -24,8 +24,19 @@ describe('WorkflowDecisionModal static config — R0001 cleanup', () => {
     expect(source).toMatch(/AUTO_TYPES\s*=\s*new Set\(\['NR',\s*'TR',\s*'TSR'\]\)/)
   })
 
-  it('① C action item is preserved', () => {
-    expect(source).toMatch(/type:\s*'C'/)
+  it('0395 T0021: the C (커밋) action item is gone from the picker', () => {
+    // 지시: "[워크플로 시퀀스] 에 있는 [커밋] 은 제거". C stays a registered document
+    // type — this only removes it as something you can place as a workflow step.
+    expect(source).not.toMatch(/type:\s*'C'/)
+    expect(source).not.toMatch(/key:\s*'action'/)
+  })
+
+  it('0395 T0021: WP (작업계획) is placeable in the sequence', () => {
+    // NR0020: the only entry point for a work plan was an action-bar button that
+    // vanished in the states where it was needed. D0007 §7 calls WP "요건정의 다음에
+    // 오는 일반 칸", so it belongs in the type picker like any other step type.
+    expect(source).toMatch(/key:\s*'plan'/)
+    expect(source).toMatch(/type:\s*'WP'/)
   })
 
   it('CH conversation type is selectable in the picker (TR0044.0010 rev1)', () => {

@@ -291,7 +291,7 @@ def _safe_label(label: Optional[str], type_: Optional[str], locale: str = "ko") 
     return label or ""
 
 
-def _expand_auto_reports(sequence: list[dict], locale: str = "ko") -> list[dict]:
+def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[dict]:
     """Ensure every instruction step is immediately followed by its report step.
 
     Idempotent: a sequence that already places the report right after the instruction
@@ -354,7 +354,7 @@ def decide_workflow(
         raise ValueError(f"already_decided:{doc_id}")
 
     # Attach report steps (NR/TR/TSR) so the AI decision path matches the client modal.
-    sequence = _expand_auto_reports(sequence)
+    sequence = expand_steps_with_reports(sequence)
 
     # 0391 T0005 §5-5: reject a corrupted step label outright instead of the previous
     # silent _safe_label swap, which discarded what the sender meant to write without
@@ -1335,11 +1335,11 @@ def edit_workflow_pending(
 
     # R0001 group 0208 (NR0003 §3-3): make the edit path symmetric with decide_workflow —
     # attach each instruction step's report (N→NR, T→TR, TS→TSR) here on the server, exactly
-    # as decide_workflow does. _expand_auto_reports is idempotent: the human edit modal already
+    # as decide_workflow does. expand_steps_with_reports is idempotent: the human edit modal already
     # interleaves the reports (they pass through untouched), while an AI worker that PATCHes a
     # bare instruction list (the new autonomous 시퀀스 수정 path) gets its report steps inserted,
     # so an AI edit can never drop them and desync the sequence.
-    new_items = _expand_auto_reports(new_items)
+    new_items = expand_steps_with_reports(new_items)
 
     # 0391 T0005 §5-5: same reject-not-swap treatment as decide_workflow, before any
     # pending item is deleted/replaced below.
