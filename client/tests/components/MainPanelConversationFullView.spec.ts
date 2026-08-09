@@ -219,19 +219,41 @@ describe('MainPanel CH full view', () => {
     startRun(chatDocId)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
   })
 
   // 0258 B0001: a run aimed at another document is a next-document transition, and the chat
   // must be covered for it exactly like any other doc type.
-  it('covers the chat with a run that targets the next document', async () => {
+  it('shows the status card and preserves the locked chat identity for another document run', async () => {
     const wrapper = mountPanel()
     await flushPromises()
+    const chat = wrapper.findComponent(ConversationView)
+    const chatElement = chat.element
 
     startRun(NEXT_DOC_ID)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
+    expect(wrapper.findComponent(ConversationView).element).toBe(chatElement)
+    expect(wrapper.findComponent(ConversationView).props('readOnly')).toBe(true)
+  })
+
+  it('closes CH full view through the teleport-safe path and returns the same instance to its card', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    const chatElement = wrapper.findComponent(ConversationView).element
+
+    await wrapper.find('.conv-card .card-actions button').trigger('click')
+    await flushPromises()
+    expect(chatElement.parentElement!.className).toContain('document-modal__body--conversation')
+
+    startRun(NEXT_DOC_ID, 'run-full-view')
+    await flushPromises()
+
+    expect(document.body.querySelector('.document-modal')).toBeNull()
+    expect(wrapper.findComponent(ConversationView).element).toBe(chatElement)
+    expect(chatElement.parentElement!.className).toContain('conv-card-bd')
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
   })
 
   it('still shows the AI-run layer on a non-chat document', async () => {
@@ -242,7 +264,7 @@ describe('MainPanel CH full view', () => {
     startRun(NEXT_DOC_ID)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
   })
 
   // NR0003 required regression 4: the cover is released once the run ends and is dismissed,
@@ -253,7 +275,7 @@ describe('MainPanel CH full view', () => {
 
     startRun(NEXT_DOC_ID)
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
 
     const store = useAiInvokeRunsStore()
     store.trackFinished({
@@ -264,12 +286,12 @@ describe('MainPanel CH full view', () => {
       docs_reached: 1,
     })
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
 
     store.dismiss(GROUP_ID)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
     expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
   })
 
@@ -284,15 +306,15 @@ describe('MainPanel CH full view', () => {
 
     startRun(CH_TAB.id)
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
 
     const tabs = useTabsStore()
     tabs.activeTabId = TR_TAB.id
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
 
     tabs.activeTabId = CH_TAB.id
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
   })
 })

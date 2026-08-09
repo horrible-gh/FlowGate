@@ -67,7 +67,7 @@
               <!-- A failed optimistic bubble is kept, not dropped: resending reuses the
                    SAME idempotency key, so a turn that did reach the server replays
                    instead of doubling (L0004 §2-17). -->
-              <p v-if="turn.failed" class="conv-failed">
+              <p v-if="turn.failed && !readOnly" class="conv-failed">
                 <AppIcon name="warning" />
                 {{ t('main.conversation_view.send_pending_failed') }}
                 <button type="button" class="conv-retry" @click="retryTurn(turn)">
@@ -105,7 +105,7 @@
          SEND button carries that run's progress (0235 R0001: no dialog for chat) and,
          since 0264 R0001, carries it as a STOP button rather than a passive spinner —
          the manual [Call AI] button still spins in lockstep. -->
-    <form class="conv-composer" @submit.prevent="send">
+    <form v-if="!readOnly" class="conv-composer" @submit.prevent="send">
       <!-- Inline manual-copy panel (B0001 / group 0240 — third recurrence of "a dialog
            covers the whole screen in chat"). A failed mention copy used to surface through
            notifyCopyFailure() → ClipboardFallbackModal, a fixed inset:0 overlay. On this
@@ -399,6 +399,7 @@ const props = defineProps<{
   // parent (MainPanel.onConversationCopyMention) hands it over instead of opening the
   // full-screen fallback modal; null/empty hides the inline panel.
   manualCopyText?: string | null
+  readOnly?: boolean
 }>()
 
 const emit = defineEmits<{

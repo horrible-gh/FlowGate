@@ -127,6 +127,30 @@ describe('MdViewer', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
+  it('keeps copy and scrolling available but hides regeneration in read-only mode', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    const readable = mount(MdViewer, {
+      props: { path: null, contentOverride: '# Read only', readOnly: true },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    const content = readable.find('.md-viewer__content').element as HTMLElement
+    content.scrollTop = 25
+    await readable.find('.md-copy-btn--main').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('# Read only')
+    expect(content.scrollTop).toBe(25)
+
+    getRequest.mockRejectedValueOnce({ response: { status: 404 } })
+    const missing = mount(MdViewer, {
+      props: { path: null, docId: 'flowgate.default.0398.0001-R', readOnly: true },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await flushPromises()
+    expect(missing.find('.md-viewer__empty').exists()).toBe(true)
+    expect(missing.find('.md-viewer__regen-btn').exists()).toBe(false)
+  })
+
   it('falls back to execCommand when the Clipboard API is unavailable', async () => {
     setClipboard(undefined)
     const execCommand = vi.fn().mockImplementation(() => {

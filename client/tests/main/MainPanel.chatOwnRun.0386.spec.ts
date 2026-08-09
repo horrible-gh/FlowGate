@@ -17,6 +17,7 @@ vi.mock('@shared/api', () => ({
 
 import MainPanel from '@main/components/MainPanel.vue'
 import ConversationView from '@main/components/ConversationView.vue'
+import MdViewer from '@main/components/MdViewer.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const GROUP_ID = 'flowgate.default.0386'
@@ -99,19 +100,23 @@ describe('MainPanel chat run cover branch (0386)', () => {
     startRun(CH_TAB.id)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
     expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
+    expect(wrapper.findComponent(ConversationView).props('readOnly')).toBe(false)
   })
 
-  it('still covers the chat when the run targets the next document', async () => {
+  it('shows the status card and locks the same chat instance when the run targets the next document', async () => {
     seedTabs([CH_TAB], CH_TAB.id)
     const wrapper = mountPanel()
     await flushPromises()
+    const chatElement = wrapper.findComponent(ConversationView).element
 
     startRun(TR_TAB.id)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
+    expect(wrapper.findComponent(ConversationView).element).toBe(chatElement)
+    expect(wrapper.findComponent(ConversationView).props('readOnly')).toBe(true)
   })
 
   it('keeps the 0378 document-side lockout for a non-chat document', async () => {
@@ -122,7 +127,9 @@ describe('MainPanel chat run cover branch (0386)', () => {
     startRun(TR_TAB.id)
     await flushPromises()
 
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+    expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
+    expect(wrapper.findComponent(MdViewer).exists()).toBe(true)
+    expect(wrapper.findComponent(MdViewer).props('readOnly')).toBe(true)
     expect(wrapper.findComponent({ name: 'ReviewActionBar' }).exists()).toBe(false)
   })
 })

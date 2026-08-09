@@ -27,7 +27,7 @@
     <div v-else class="md-viewer__empty">
       <div>{{ t('main.state.no_md_file') }}</div>
       <button
-        v-if="docId"
+        v-if="docId && !readOnly"
         class="md-viewer__regen-btn"
         :disabled="regenerating"
         @click="regenerateFile"
@@ -61,6 +61,7 @@ const props = defineProps<{
   // (checkout-free, read-only) instead of the base checkout.
   gitGroupId?: string | null
   gitCommit?: string | null
+  readOnly?: boolean
 }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()

@@ -68,29 +68,31 @@
               </template>
 
               <!-- Answer input -->
-              <div class="q-section-label"><AppIcon name="user-circle" /> {{ t('main.qt_detail_viewer.answer_input') }}</div>
-              <textarea
-                class="q-answer-textarea"
-                :placeholder="t('main.qt_detail_viewer.answer_placeholder', { seq: item.seq })"
-                v-model="answerDrafts[item.id]"
-              ></textarea>
-              <div class="md-format-hint">
-                <AppIcon name="markdown-logo" style="margin-right:4px;" />
-                <strong>{{ t('main.qt_detail_viewer.markdown_hints') }}</strong>:
-                <code>**bold**</code>&nbsp;
-                <code>*italic*</code>&nbsp;
-                <code>`code`</code>&nbsp;
-                <code>- list</code>&nbsp;
-                <code>```code block```</code>
-              </div>
-              <button
-                class="btn-save-ans"
-                :disabled="savingStates[item.id]"
-                @click="saveAnswer(item)"
-              >
-                <AppIcon :name="savingStates[item.id] ? 'spinner' : 'floppy-disk'" :spin="savingStates[item.id]" />
-                {{ savingStates[item.id] ? t('main.qt_detail_viewer.saving') : t('main.qt_detail_viewer.save_answer') }}
-              </button>
+              <template v-if="!readOnly">
+                <div class="q-section-label"><AppIcon name="user-circle" /> {{ t('main.qt_detail_viewer.answer_input') }}</div>
+                <textarea
+                  class="q-answer-textarea"
+                  :placeholder="t('main.qt_detail_viewer.answer_placeholder', { seq: item.seq })"
+                  v-model="answerDrafts[item.id]"
+                ></textarea>
+                <div class="md-format-hint">
+                  <AppIcon name="markdown-logo" style="margin-right:4px;" />
+                  <strong>{{ t('main.qt_detail_viewer.markdown_hints') }}</strong>:
+                  <code>**bold**</code>&nbsp;
+                  <code>*italic*</code>&nbsp;
+                  <code>`code`</code>&nbsp;
+                  <code>- list</code>&nbsp;
+                  <code>```code block```</code>
+                </div>
+                <button
+                  class="btn-save-ans"
+                  :disabled="savingStates[item.id]"
+                  @click="saveAnswer(item)"
+                >
+                  <AppIcon :name="savingStates[item.id] ? 'spinner' : 'floppy-disk'" :spin="savingStates[item.id]" />
+                  {{ savingStates[item.id] ? t('main.qt_detail_viewer.saving') : t('main.qt_detail_viewer.save_answer') }}
+                </button>
+              </template>
             </div>
           </div>
         </div>
@@ -114,7 +116,7 @@ import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { qApiPath } from '@shared/utils/docIdFormatter'
 
-const props = defineProps<{ qId: string }>()
+const props = defineProps<{ qId: string; readOnly?: boolean }>()
 const emit = defineEmits<{
   'status-changed': [payload: { qId: string; status: string; done: boolean }]
 }>()
