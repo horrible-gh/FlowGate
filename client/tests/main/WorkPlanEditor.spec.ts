@@ -142,38 +142,18 @@ beforeEach(() => {
 })
 
 describe('WorkPlanEditor', () => {
-  it('starts uncovered, opens apply preview on demand, and closes it from cancel or the backdrop', async () => {
-    postRequest.mockResolvedValue({ data: structuredClone(APPLY_PREVIEW) })
+  // 0399 M0020 — 편집기가 갖고 있던 전면 적용 미리보기 오버레이는 걷어냈다. 그것을 열던
+  // 액션바 단추도 함께 없앴고, 편집기는 이제 그 창을 열 길 자체를 노출하지 않는다.
+  it('적용 미리보기 오버레이도, 그것을 여는 길도 남아 있지 않다', async () => {
     const wrapper = mountEditor()
     await flushPromises()
 
     expect(wrapper.find('.wpa-overlay').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain(i18n.global.t('main.work_plan_apply.review_pending'))
-
-    // 시안 xc32frrg 화면 1: [연속 작업에 채우기]는 액션바에 있다. 편집기는 그 미리보기만
-    // 갖고 있고, 액션바가 openApplyPreview() 로 연다.
-    expect(
-      wrapper.findAll('button').some(
-        (button) => button.text().includes(i18n.global.t('main.work_plan.apply_to_continuous')),
-      ),
-    ).toBe(false)
-    const open = async () => {
-      ;(wrapper.vm as unknown as { openApplyPreview: () => void }).openApplyPreview()
-      await flushPromises()
-    }
-
-    await open()
-    expect(wrapper.find('.wpa-overlay').exists()).toBe(true)
-
-    const cancel = wrapper.findAll('.wpa-footer button').find(
-      (button) => button.text().includes(i18n.global.t('common.cancel')),
-    )!
-    await cancel.trigger('click')
-    expect(wrapper.find('.wpa-overlay').exists()).toBe(false)
-
-    await open()
-    await wrapper.get('.wpa-overlay').trigger('click')
-    expect(wrapper.find('.wpa-overlay').exists()).toBe(false)
+    expect((wrapper.vm as unknown as { openApplyPreview?: () => void }).openApplyPreview)
+      .toBeUndefined()
+    // 계획을 읽는 것 말고 다른 POST 는 나가지 않는다 — 예전엔 여기서 미리보기를 불렀다.
+    expect(postRequest.mock.calls.every(([url]) => !String(url).includes('/work-plan/apply')))
+      .toBe(true)
   })
 
   it('shows the server totals in the three summary cards of the mockup, and flags unassigned steps', async () => {

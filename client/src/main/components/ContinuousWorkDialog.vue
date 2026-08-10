@@ -21,6 +21,18 @@
           </div>
           <button type="button" class="btn btn-outline btn-sm" @click="revertPreset">{{ t('main.continuous_work.preset_revert') }}</button>
         </div>
+        <!-- 0399 T0018: the normal (post-save) entry — no unsaved preset, but the sequence
+             itself may already carry plan-poured notes (TR0015/TR0017) and/or note-empty rows.
+             One line names which plan the notes came from; the count of empty rows is informed
+             but never blocks (D0010 §3.5/§3.6). -->
+        <div v-else-if="showSequenceOriginBanner" class="cwd-preset-banner">
+          <div>
+            <strong>{{ t('main.continuous_work.sequence_source', { doc: sequenceSourceDocId }) }}</strong>
+            <span>{{ t('main.continuous_work.preset_not_started') }}</span>
+            <span v-if="noteUnsetCount" class="cwd-note-unset-flag">{{ t('main.continuous_work.note_unset', { n: noteUnsetCount }) }}</span>
+          </div>
+          <button type="button" class="btn btn-outline btn-sm" @click="revertSequenceNotes">{{ t('main.continuous_work.preset_revert') }}</button>
+        </div>
         <div v-if="presetRefreshMessage" class="cwd-preset-refresh">{{ presetRefreshMessage }}</div>
 
         <!-- ── Body: left = step list, right = settings tabs (0317 T0010 rev4) ── -->
@@ -182,7 +194,7 @@
                         :placeholder="t('main.continuous_work.message_step_placeholder')"
                         @input="onStepMessageChange(item.item_seq, ($event.target as HTMLInputElement).value)"
                       />
-                      <span v-if="filledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
+                      <span v-if="filledSeqs.has(item.item_seq) || noteFilledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
                     </div>
                   </div>
                 </div>
@@ -191,6 +203,7 @@
 
             <div class="cwd-summary">
               {{ summaryText }}
+              <span v-if="sequenceSourceDocId && noteUnsetCount" class="cwd-note-unset-flag">{{ t('main.continuous_work.note_unset', { n: noteUnsetCount }) }}</span>
             </div>
           </div>
         </div>
@@ -296,6 +309,11 @@ const presetActive = ref(false)
 const presetTargetSeq = ref<number | null>(null)
 const filledSeqs = ref(new Set<number>())
 const editedSeqs = ref(new Set<number>())
+// 0399 T0018: item_seqs whose [전달멘트] value came from the sequence's OWN stored note
+// (TR0015/TR0017 pour-and-save), not from the legacy preset flow above. Kept separate from
+// `filledSeqs` so the "계획에서 옴" badge never bleeds onto the 프로바이더 tab, which this
+// prefill does not touch.
+const noteFilledSeqs = ref(new Set<number>())
 const presetRefreshMessage = ref('')
 let initializingPreset = false
 const presetUnsetCount = computed(() => (
@@ -362,6 +380,52 @@ const excludedNote = computed(() => {
   return ''
 })
 
+// 0399 T0018 --------------------------------------------------------------------------------
+// The normal "AI 호출" entry has no `preset` (that prop is only the legacy, pre-save work-plan
+// apply-preview flow). But the sequence itself may already carry per-step notes saved via the
+// [시퀀스 수정] window (TR0015 note/source_doc_id columns, TR0017 direct-edit + type-change).
+// D0010 §3.6: the mention field reads that stored value back in, tags it "계획에서 옴" when it
+// followed a plan in, and counts (without blocking) the steps that still have none.
+const sequenceSourceDocId = computed<string | null>(() => {
+  for (const item of picker.value.steps ?? []) {
+    if (item.source_doc_id) return item.source_doc_id
+  }
+  return null
+})
+const noteUnsetCount = computed(
+  () => executionSteps.value.filter(item => !(messageOverrides.value[item.item_seq] ?? '').trim()).length,
+)
+// Gated on an actual plan origin — a plain, hand-built sequence (never poured from a plan) has
+// nothing to name here, and would otherwise show an empty-mention count on every open even
+// though D0010 §3.5's "멘트 없는 단계" warning is scoped to the plan-pour flow.
+const showSequenceOriginBanner = computed(() => !presetActive.value && !!sequenceSourceDocId.value)
+
+function applySequenceNotePrefill(steps: WorkflowStepItem[]) {
+  if (presetActive.value) return
+  const next: Record<number, string> = {}
+  const filled = new Set<number>()
+  for (const item of steps) {
+    if (item.note && item.note.trim()) {
+      next[item.item_seq] = item.note
+      filled.add(item.item_seq)
+    }
+  }
+  messageOverrides.value = next
+  noteFilledSeqs.value = filled
+}
+
+function revertSequenceNotes() {
+  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+  applySequenceNotePrefill(picker.value.steps ?? [])
+}
+
+function markNoteEdited(itemSeq: number) {
+  if (!noteFilledSeqs.value.has(itemSeq)) return
+  const next = new Set(noteFilledSeqs.value)
+  next.delete(itemSeq)
+  noteFilledSeqs.value = next
+}
+
 function onToggleAutoApprove(itemSeq: number, checked: boolean) {
   const next = new Set(autoApproveItemSeqs.value)
   if (checked) next.add(itemSeq)
@@ -398,6 +462,7 @@ function onStepProviderChange(itemSeq: number, value: string) {
 // for this step" — mirrors onStepProviderChange's "같으면 삭제" rule with a "비면 삭제" rule.
 function onStepMessageChange(itemSeq: number, value: string) {
   markPresetEdited(itemSeq)
+  markNoteEdited(itemSeq)
   const next = { ...messageOverrides.value }
   if (!value.trim()) delete next[itemSeq]
   else next[itemSeq] = value
@@ -523,6 +588,7 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''
   editedSeqs.value = new Set()
+  noteFilledSeqs.value = new Set()
   if (value) {
     presetActive.value = true
     instructionMode.value = value.instructionMode
@@ -602,6 +668,23 @@ watch(
 watch(instructionMode, (value, previous) => {
   if (!initializingPreset && presetActive.value && value !== previous) void refreshPresetForMode()
 })
+
+// 0399 T0018: re-seed from the sequence's own stored notes each time a fresh /workflow/sequence
+// load lands (steps is a new array reference only on an actual reload, never on a same-data
+// re-emit like a target-step click — see WorkflowStepPicker's `state` computed). Skipped while a
+// (legacy) preset is installed — that flow owns messageOverrides itself.
+watch(
+  () => picker.value.steps,
+  (steps, prevSteps) => {
+    if (!steps || steps === prevSteps) return
+    applySequenceNotePrefill(steps)
+  },
+)
+// Reverting an unsaved preset (installPreset(null)) hands the field back to the sequence's own
+// stored notes instead of leaving it blank.
+watch(presetActive, (active) => {
+  if (!active && picker.value.steps?.length) applySequenceNotePrefill(picker.value.steps)
+})
 </script>
 
 <style scoped>
@@ -613,6 +696,8 @@ watch(instructionMode, (value, previous) => {
 .cwd-preset-banner span { color:var(--text-m); }
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
+/* 0399 T0018: 멘트 없는 단계 안내 — informational, never blocks (D0010 §3.5). */
+.cwd-note-unset-flag { color:#b45309; font-weight:700; }
 .modal-cwd {
   width: 860px;
   max-width: 96vw;

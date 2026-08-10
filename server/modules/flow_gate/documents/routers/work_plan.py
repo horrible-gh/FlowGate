@@ -35,6 +35,7 @@ from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import work_plan_service as wp
 from modules.flow_gate.services import work_plan_apply_service as wpa
+from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 
@@ -77,6 +78,13 @@ class WorkPlanSuggest(BaseModel):
 
 class WorkPlanApplyPreview(BaseModel):
     instruction_mode: str = "auto_approved"
+
+
+class WorkPlanSequenceCandidates(BaseModel):
+    # Not an enum and not defaulted on purpose: L0011 §4.2 refuses anything that is not one
+    # of the two modes rather than quietly picking one, because a silently defaulted mode
+    # would rewrite a sequence the person never chose to rewrite.
+    mode: str
 
 
 class WorkPlanApply(BaseModel):
@@ -838,6 +846,48 @@ async def apply_work_plan(
         _locale(request),
         current_user["user_id"],
     ))
+
+
+def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, locale: str):
+    """0399 P0013 ① — read a plan and hand back the rows the edit dialog should open with.
+
+    Deliberately not routed through _load_doc: P0013 pins the two refusals to their own
+    bodies ({"error": "not_a_work_plan"} / {"error": "doc_not_found"}), and the shared
+    helper answers with FastAPI's generic {"detail": ...}. The caller here is a dialog that
+    branches on the code, so the code is the contract.
+    """
+    if body.mode not in wpseq.MODES:
+        return JSONResponse(status_code=422, content={
+            "error": "invalid_mode",
+            "allowed": list(wpseq.MODES),
+            "received": body.mode,
+        })
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": doc_id})
+    if str(doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
+        return JSONResponse(status_code=422, content={"error": "not_a_work_plan", "doc_id": doc_id})
+    try:
+        plan = wp.load_body(_plan_path(doc))
+    except wp.WorkPlanUnreadable as exc:
+        # L0011 §4.1-2 "plan_unreadable": a plan nobody can open as a table is a different
+        # problem from a plan with nothing in it, and the person's next move differs, so it
+        # keeps the reader's own 409 rather than being folded into an empty result.
+        return _unreadable_response(doc, exc, locale)
+    return wpseq.build_candidates(doc=doc, plan=plan, mode=body.mode, locale=locale)
+
+
+@router.post("/{doc_id}/work-plan/sequence-candidates")
+@require_permission("perm_document_read")
+async def work_plan_sequence_candidates(
+    request: Request,
+    doc_id: str,
+    body: WorkPlanSequenceCandidates,
+    current_user: dict = Depends(get_current_user),
+):
+    return await anyio.to_thread.run_sync(
+        partial(_sequence_candidates_sync, doc_id, body, _locale(request))
+    )
 
 
 def _applications_sync(doc_id: str, limit: int) -> dict:

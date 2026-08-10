@@ -24,6 +24,78 @@
         <AppIcon name="sliders-horizontal" />
         {{ t('main.review_action_bar.btn_manual_decision') }}
       </button>
+      <!-- 0399 D0010 §3.1 / §6.1 — the one thing this design adds to any screen. It exists
+           only on a work plan; every other document looks exactly as it did. Why it lives
+           here and not in the action list below the document: the action list is unchanged
+           by decision (D0010 §6.1), and this button acts on the sequence strip it sits on. -->
+      <span v-if="isWorkPlan" class="wf-apply-wrap">
+        <!-- M0020: the button never changes shape. It is not disabled, it grows no label
+             beside itself, and nothing about it depends on a request that is still in the
+             air — that is what made it flicker through three different states on load.
+             Whatever the plan turns out to be is said inside the menu, after a click. -->
+        <button
+          type="button"
+          class="wf-apply-btn"
+          :class="{ 'is-open': applyMenuOpen }"
+          :aria-expanded="applyMenuOpen"
+          @click.stop="toggleApplyMenu"
+        >
+          <AppIcon name="clipboard-text" />
+          {{ t('main.work_plan_pour.button') }}
+          <AppIcon name="caret-down" />
+        </button>
+        <div v-if="applyMenuOpen" class="wf-apply-menu" @click.stop>
+          <div class="wf-apply-hd">
+            {{ applyState === 'ready'
+              ? t('main.work_plan_pour.menu_title', { doc: wpShortCode, n: planStepCount })
+              : t('main.work_plan_pour.menu_title_plain', { doc: wpShortCode }) }}
+          </div>
+          <template v-if="applyState === 'ready'">
+            <button
+              v-for="opt in applyOptions"
+              :key="opt.mode"
+              type="button"
+              class="wf-apply-item"
+              @click="choosePourMode(opt.mode)"
+            >
+              <AppIcon :name="opt.icon" />
+              <span class="wf-apply-body">
+                <span class="wf-apply-name">{{ t(`main.work_plan_pour.mode_${opt.mode}`) }}</span>
+                <span class="wf-apply-desc">
+                  {{ t(`main.work_plan_pour.mode_${opt.mode}_desc`, { n: planStepCount }) }}
+                </span>
+                <span class="wf-apply-delta">
+                  {{ t('main.work_plan_pour.delta', {
+                    before: opt.change.before, after: opt.change.after,
+                  }) }}
+                  <span v-if="opt.change.deleted > 0" class="minus">−{{ opt.change.deleted }}</span>
+                  <span class="plus">+{{ opt.change.added }}</span>
+                </span>
+              </span>
+            </button>
+          </template>
+          <!-- Loading and failure live here, inside the opened menu, for the same reason:
+               a person only sees them because they asked, so nothing moves on its own. -->
+          <div v-else class="wf-apply-msg" :class="{ 'is-warn': applyState !== 'loading' }">
+            <AppIcon :name="applyState === 'loading' ? 'spinner' : 'warning'" :spin="applyState === 'loading'" />
+            <span class="wf-apply-msg-text">
+              {{ t(`main.work_plan_pour.blocked_${applyState}`) }}
+            </span>
+            <button
+              v-if="applyState === 'error' || applyState === 'unreadable'"
+              type="button"
+              class="wf-apply-retry"
+              @click="fetchCandidates(true)"
+            >
+              {{ t('main.work_plan_pour.retry') }}
+            </button>
+          </div>
+          <div class="wf-apply-foot">
+            <AppIcon name="info" />
+            <span>{{ t('main.work_plan_pour.menu_foot') }}</span>
+          </div>
+        </div>
+      </span>
       <button
         type="button"
         class="wf-collapse-btn"
@@ -91,18 +163,20 @@
     mode="edit"
     :visible="showEditModal"
     :doc-id="parentRDocId ?? tab.id"
-    @update:visible="showEditModal = $event"
-    @saved="emit('sequence-updated')"
+    :poured="pouredPayload"
+    @update:visible="onEditModalVisible"
+    @saved="onSequenceSaved"
   />
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { postRequest } from '@shared/api'
 import type { Tab } from '../stores/tabs'
 import type { StepState } from '../workflow/workflowViewState'
 import { useDocTypeStore } from '../stores/docTypeStore'
-import WorkflowDecisionModal from './WorkflowDecisionModal.vue'
+import WorkflowDecisionModal, { type PourPayload, type PourRow } from './WorkflowDecisionModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
@@ -192,6 +266,202 @@ function emitCreateWorkPlan() {
 }
 
 const showEditModal = ref(false)
+
+// ── 0399 [작업계획 적용] (D0010 §3.1~§3.3 / L0011 §4.1·§4.3) ────────────────────
+//
+// The two candidate sets are fetched when the section appears, not when the menu opens.
+// L0011 §4.1 requires the menu to say how many rows each mode adds and removes BEFORE it
+// is pressed, and D0010 §3.1 requires a blocked button to explain itself in place — both
+// need the server's answer already in hand. The calls read and write nothing (P0013 ①).
+
+interface RowCountChange {
+  before: number
+  after: number
+  deleted: number
+  added: number
+}
+
+interface CandidateResponse {
+  wp_doc_id: string
+  workflow_doc_id: string | null
+  mode: 'append' | 'replace_after'
+  plan_step_count: number
+  rows: PourRow[]
+  row_count_change: RowCountChange
+  notifications: Array<{ code: string; severity: string; count: number; [k: string]: unknown }>
+  workflow_tag: string
+}
+
+const POUR_MODES = ['append', 'replace_after'] as const
+type PourMode = (typeof POUR_MODES)[number]
+
+const isWorkPlan = computed(() => props.tab.typeCode === WORK_PLAN_TYPE)
+const candidates = ref<Partial<Record<PourMode, CandidateResponse>>>({})
+const applyMenuOpen = ref(false)
+const pouredPayload = ref<PourPayload | null>(null)
+const applyLoadFailed = ref(false)
+const applyUnreadable = ref(false)
+const applyLoaded = ref(false)
+// M0020 — one flight at a time, and a generation number so a slow answer from an earlier
+// flight can never overwrite a newer one. Both of those were missing, which is why the
+// state under the button changed several times a second while the page settled.
+let applyFlight: Promise<void> | null = null
+let applyGeneration = 0
+
+// Either mode's answer carries the same plan, so whichever one came back is the one that
+// can say how many steps it has — [이후 단계 교체] alone still knows.
+const planStepCount = computed(() =>
+  candidates.value.append?.plan_step_count
+  ?? candidates.value.replace_after?.plan_step_count
+  ?? 0,
+)
+
+// "flowgate.default.0399.0004-WP" → "WP0004": the short code the group view and the mockup
+// both use, so the menu names the plan the way the rest of the screen already does.
+const wpShortCode = computed(() => {
+  const tail = props.tab.id.split('.').pop() ?? props.tab.id
+  const [seq, code] = tail.split('-')
+  return code ? `${code}${seq}` : tail
+})
+
+// M0020 — what the OPEN MENU shows. Never what the button shows: the button is always the
+// same button. Approval is not consulted at all any more ("승인체크같은거 안해도
+// 되니까") — a plan that is still in review pours exactly like an approved one, and the
+// save at the end of the dialog is where a person decides whether that was a good idea.
+// plan_unreadable and plan_has_no_step stay apart because what the person does next is
+// different: one is a broken file, the other is an empty plan.
+type ApplyState = 'ready' | 'loading' | 'unreadable' | 'error' | 'no_step'
+const applyState = computed<ApplyState>(() => {
+  if (applyOptions.value.length > 0) return planStepCount.value < 1 ? 'no_step' : 'ready'
+  if (!applyLoaded.value) return 'loading'
+  if (applyUnreadable.value) return 'unreadable'
+  if (applyLoadFailed.value) return 'error'
+  return 'no_step'
+})
+
+const applyOptions = computed(() =>
+  POUR_MODES
+    .map(mode => ({
+      // 시안 fgh29xnk v3 · 화면 1은 ph-arrow-elbow-down-right 를 썼다. iconData.ts 는 손으로
+      // 고치지 말라고 적힌 생성 파일이고 그 이름이 없어, 뜻이 가장 가까운 arrow-down 을 쓴다.
+      mode,
+      icon: mode === 'append' ? 'arrow-down' : 'arrows-clockwise',
+      change: candidates.value[mode]?.row_count_change,
+    }))
+    .filter((opt): opt is { mode: PourMode; icon: string; change: RowCountChange } => !!opt.change),
+)
+
+async function fetchCandidates(force = false): Promise<void> {
+  if (!isWorkPlan.value) return
+  // Already asking. Joining the flight in progress is what keeps a burst of re-renders
+  // from turning into a burst of requests whose answers race each other.
+  if (applyFlight && !force) return applyFlight
+  const generation = ++applyGeneration
+  const flight = (async () => {
+    let unreadable = false
+    let failed = false
+    const results = await Promise.all(POUR_MODES.map(async (mode) => {
+      try {
+        const res = await postRequest<CandidateResponse>(
+          `/api/v1/documents/${encodeURIComponent(props.tab.id)}/work-plan/sequence-candidates`,
+          { mode },
+        )
+        return [mode, res.data] as const
+      } catch (e: any) {
+        // 409 wp_unreadable is the plan-file reader's own refusal (L0011 §4.1-2).
+        if (e?.response?.status === 409) unreadable = true
+        else failed = true
+        return [mode, null] as const
+      }
+    }))
+    // A late answer from a superseded flight is dropped whole rather than half-applied.
+    if (generation !== applyGeneration) return
+    const next: Partial<Record<PourMode, CandidateResponse>> = {}
+    for (const [mode, data] of results) if (data) next[mode] = data
+    // One assignment, one render. The previous version cleared this at the start of every
+    // fetch, so every refresh emptied the menu before refilling it.
+    candidates.value = next
+    // A mode that answered is a mode that works; only a total loss is a failure worth
+    // naming. [이후 단계 교체] refusing on its own must not hide [뒤에 이어 붙이기].
+    const anyData = Object.keys(next).length > 0
+    applyUnreadable.value = !anyData && unreadable
+    applyLoadFailed.value = !anyData && failed && !unreadable
+    applyLoaded.value = true
+  })()
+  applyFlight = flight
+  try {
+    await flight
+  } finally {
+    if (applyFlight === flight) applyFlight = null
+  }
+}
+
+function toggleApplyMenu() {
+  applyMenuOpen.value = !applyMenuOpen.value
+  // Opening is the only moment a fetch is actually needed; if the one fired on mount is
+  // still running or already done, this joins it instead of starting a second one.
+  if (applyMenuOpen.value && !applyLoaded.value) void fetchCandidates()
+}
+
+function closeApplyMenu() {
+  applyMenuOpen.value = false
+}
+
+// D0010 §3.3 — the promise this module is built on: choosing a mode opens the edit dialog in
+// that state and nothing else happens. The sequence changes when [저장] is pressed, there.
+function choosePourMode(mode: PourMode) {
+  const data = candidates.value[mode]
+  if (!data) return
+  applyMenuOpen.value = false
+  pouredPayload.value = {
+    wpDocId: data.wp_doc_id,
+    wpShortCode: wpShortCode.value,
+    mode: data.mode,
+    planStepCount: data.plan_step_count,
+    rows: data.rows,
+    rowCountChange: data.row_count_change,
+    notifications: data.notifications,
+    workflowTag: data.workflow_tag,
+  }
+  showEditModal.value = true
+}
+
+function onEditModalVisible(value: boolean) {
+  showEditModal.value = value
+  // Closing without saving leaves the sequence untouched (D0010 §3.3), so the poured state
+  // is dropped here rather than kept for the next time the dialog opens.
+  if (!value) pouredPayload.value = null
+}
+
+// M0020 — a save is the one event that really does change the row counts the menu quotes,
+// so it is the one event that refetches them. Nothing else does.
+function onSequenceSaved() {
+  pouredPayload.value = null
+  void fetchCandidates(true)
+  emit('sequence-updated')
+}
+
+function onDocumentClick() {
+  if (applyMenuOpen.value) applyMenuOpen.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+  void fetchCandidates()
+})
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
+
+// M0020 — only the document. stepStates.length used to be in here too, and it changes
+// several times while a page loads, so the menu refetched several times while a person was
+// looking at it. A save refreshes through onSequenceSaved() instead.
+watch(() => props.tab.id, () => {
+  closeApplyMenu()
+  candidates.value = {}
+  applyLoaded.value = false
+  applyLoadFailed.value = false
+  applyUnreadable.value = false
+  void fetchCandidates(true)
+})
 
 // ── Sequence accordion (R0001 group 0244) — persisted for the same reason as the
 // document header: the tablet constraint does not go away on reload.
@@ -293,6 +563,168 @@ function toggleSequenceCollapsed() {
 .wf-step.wf-return-clickable:hover {
   background: var(--success-l, #f0fdf4);
   box-shadow: 0 0 0 3px rgba(22, 163, 74, .3);
+}
+
+/* ── 0399 [작업계획 적용] 버튼과 두 갈래 리스트 (시안 fgh29xnk v3 · 화면 1) ──
+   The section needs a positioning context because the menu is absolutely placed against
+   this button, and .wf-section is the nearest box that never scrolls under the strip. */
+.wf-section {
+  position: relative;
+}
+.wf-apply-wrap {
+  order: 3;        /* after ::after (1) and [시퀀스 수정] (2), before the collapse caret */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+}
+.wf-apply-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: .72rem;
+  font-weight: 700;
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.wf-apply-btn:hover:not(:disabled) {
+  background: #bbf7d0;
+  border-color: #4ade80;
+}
+.wf-apply-btn.is-open {
+  background: #16a34a;
+  color: #fff;
+  border-color: #16a34a;
+}
+/* M0020 — 막힌 상태와 사유 문구를 버튼 옆에서 걷어냈다. 이유는 열린 차림표 안에서 말한다. */
+.wf-apply-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 13px;
+  font-size: .72rem;
+  color: var(--text-s);
+  border-bottom: 1px solid var(--border);
+}
+.wf-apply-msg.is-warn {
+  background: #fffbeb;
+  color: #92400e;
+}
+.wf-apply-msg-text {
+  flex: 1;
+  min-width: 0;
+}
+.wf-apply-retry {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  font-size: .68rem;
+  font-weight: 700;
+  color: var(--text-m);
+  background: var(--surface);
+  border: 1px solid var(--border-d);
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+}
+.wf-apply-retry:hover {
+  background: var(--surface-h);
+}
+.wf-apply-menu {
+  position: absolute;
+  top: 26px;
+  right: 0;
+  z-index: 40;
+  width: 430px;
+  max-width: 86vw;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border-d);
+  border-radius: var(--r-lg, 12px);
+  box-shadow: var(--sh-lg, 0 12px 28px rgba(15, 23, 42, .18));
+  overflow: hidden;
+}
+.wf-apply-hd {
+  padding: 8px 12px;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--text-m);
+  background: var(--surface-h);
+  border-bottom: 1px solid var(--border);
+}
+.wf-apply-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 13px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.wf-apply-item:hover {
+  background: #f0fdf4;
+}
+.wf-apply-item > i {
+  font-size: 1rem;
+  color: #16a34a;
+  margin-top: 2px;
+}
+.wf-apply-body {
+  flex: 1;
+  min-width: 0;
+}
+.wf-apply-name {
+  display: block;
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.wf-apply-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: .7rem;
+  color: var(--text-s);
+  line-height: 1.45;
+}
+.wf-apply-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: .67rem;
+  color: var(--text-s);
+}
+.wf-apply-delta .plus {
+  color: #16a34a;
+  font-weight: 600;
+}
+.wf-apply-delta .minus {
+  color: #dc2626;
+  font-weight: 600;
+}
+.wf-apply-foot {
+  display: flex;
+  gap: 7px;
+  padding: 9px 13px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: .69rem;
+  line-height: 1.5;
+}
+.wf-apply-foot i {
+  margin-top: 2px;
 }
 
 .wf-edit-btn {

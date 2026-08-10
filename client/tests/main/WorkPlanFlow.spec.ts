@@ -1,11 +1,14 @@
-// flowgate.default.0395 T0017 — connected create/edit/apply/continuous-work acceptance flow.
+// flowgate.default.0395 T0017 — connected create/edit/continuous-work acceptance flow.
+//
+// 0399 M0020: 이 흐름의 가운데에 있던 전면 [작업계획 적용] 미리보기 오버레이는
+// 사라졌다 — 눌러만 놓으면 저장 없이 워크플로를 바꿔 버렸기 때문이다. 이 파일은
+// 남은 두 끝(생성 → 편집 → 저장, 그리고 연속 작업 창의 프리셋 처리)을 그대로 지킨다.
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import WorkPlanCreateDialog from '@main/components/WorkPlanCreateDialog.vue'
 import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
-import WorkPlanApplyPreview from '@main/components/WorkPlanApplyPreview.vue'
 import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 import { useProjectStore } from '@main/stores/project'
 
@@ -141,45 +144,7 @@ afterEach(() => {
 })
 
 describe('WorkPlan connected flow', () => {
-  it('does not render or load the apply overlay while it is hidden', async () => {
-    const apply = mount(WorkPlanApplyPreview, {
-      props: { visible: false, docId: DOC_ID }, global: globalOptions(),
-    })
-    await flushPromises()
-    expect(apply.find('.wpa-overlay').exists()).toBe(false)
-    expect(postRequest).not.toHaveBeenCalled()
-  })
-
-  it('disables unavailable apply paths and explains why', async () => {
-    postRequest.mockResolvedValueOnce({
-      data: {
-        ...structuredClone(PREVIEW),
-        fill_preview: { ...structuredClone(PREVIEW.fill_preview), target_seq: null },
-        warnings: [{
-          code: 'nothing_to_fill', severity: 'warning', count: 1,
-          keys: [], item_seqs: [], message: 'server reason',
-        }],
-        can_apply: false,
-        can_apply_without_workflow: false,
-        can_apply_with_workflow: false,
-        apply_blockers: {
-          keep_workflow: 'nothing_to_fill',
-          change_workflow: 'nothing_to_fill',
-        },
-      },
-    })
-    const apply = mount(WorkPlanApplyPreview, {
-      props: { visible: true, docId: DOC_ID }, global: globalOptions(),
-    })
-    await flushPromises()
-
-    expect(apply.get('[data-test="work-plan-fill-only"]').attributes('disabled')).toBeDefined()
-    expect(apply.get('[data-test="work-plan-fit-and-fill"]').attributes('disabled')).toBeDefined()
-    expect(apply.findAll('.wpa-disabled-reason')).toHaveLength(2)
-    expect(apply.text()).toContain(i18n.global.t('main.work_plan_apply.warning_nothing_to_fill'))
-  })
-
-  it('passes live IDs and values from create through preset edit/revert, with all warnings translated', async () => {
+  it('passes live IDs and values from create through preset edit/revert', async () => {
     const create = mount(WorkPlanCreateDialog, {
       props: { visible: true, parentDocId: ROOT_ID, projectId: 'flowgate', groupId: 'flowgate.default.0395' },
       global: globalOptions(),
@@ -205,21 +170,24 @@ describe('WorkPlan connected flow', () => {
     expect(putRequest.mock.calls[0][1].body.steps[0].note).toBe('edited in the connected flow')
     editor.unmount()
 
-    const apply = mount(WorkPlanApplyPreview, {
-      props: { visible: true, docId: created.docId }, global: globalOptions(),
-    })
-    await flushPromises()
-    expect(apply.findAll('.wpa-warning')).toHaveLength(15)
-    for (const code of WARNING_CODES) {
-      expect(apply.text()).not.toContain(`server-sentinel-${code}`)
-      expect(apply.text()).toContain(i18n.global.t(`main.work_plan_apply.warning_${code}`, { n: 1 }))
+    // 예전에는 미리보기 오버레이가 /work-plan/apply 를 불러 여기서 바로 적용해 버리고
+    // 그 응답으로 프리셋을 만들었다. 그 오버레이를 걷어냈으므로, 연속 작업 창이 프리셋을
+    // 받았을 때 어떻게 하는지만 그대로 남기고 입력은 같은 모양으로 직접 만든다.
+    const applied = {
+      ownerDocId: ROOT_ID,
+      preset: {
+        sourceDocId: created.docId,
+        sourceRevisionNo: APPLY.fill.source_revision_no,
+        instructionMode: APPLY.fill.instruction_mode as 'auto_approved',
+        targetSeq: APPLY.fill.target_seq,
+        providerOverrides: { 2: 'aip_opus' },
+        messageOverrides: { 2: 'from plan' },
+        defaultMessage: APPLY.fill.default_note,
+        filledSeqs: APPLY.fill.filled_item_seqs,
+        warnings: [],
+      },
     }
-    await apply.findAll('button').find((node) => node.text().includes('맞추고 채우기'))!.trigger('click')
-    await flushPromises()
-    const applied = apply.emitted('applied')![0][0] as any
-    expect(applied.ownerDocId).toBe(ROOT_ID)
     expect(applied.preset.sourceDocId).toBe(created.docId)
-    apply.unmount()
 
     const continuous = mount(ContinuousWorkDialog, {
       attachTo: document.body,

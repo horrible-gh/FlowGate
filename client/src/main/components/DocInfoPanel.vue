@@ -36,56 +36,26 @@
         </div>
       </div>
 
-      <!-- Mockup xc32frrg screen 1 — 문서 정보의 [프로바이더 배정 (단계 기준)] 칸. -->
-      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.wp_assignments }">
+      <!-- Mockup xc32frrg screen 1 — 문서 정보의 [프로바이더 배정 (단계 기준)] 칸.
+           0399 M0020 반려 — 보여줄 배정이 하나도 없으면 이 칸을 아예 그리지 않는다.
+           읽는 동안의 "불러오는 중" 도, 읽기에 실패했다는 문구도 두지 않는다. 빈 칸이
+           사이드바에 돋아나 "안 보이던 사이드바" 로 읽히던 자리다. -->
+      <div v-if="typeCode === 'WP' && wpAssignmentsShown" class="dip-section" :class="{ collapsed: sectionCollapsed.wp_assignments }">
         <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.wp_assignments" @click="toggleSection('wp_assignments')">
           <AppIcon name="caret-down" class="dip-acc-caret" />
           <AppIcon name="robot" />
           {{ t('main.doc_info_panel.wp_assignments') }}
         </button>
         <div class="dip-sec-body">
-          <div v-if="wpAssignmentsLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
-          <div v-else-if="wpAssignmentsError" class="dip-qa-error">{{ t('main.doc_info_panel.wp_assignments_failed') }}</div>
-          <template v-else>
-            <ul v-if="wpAssignments.length" class="dip-wp-assignments">
-              <li v-for="row in wpAssignments" :key="row.provider_id">
-                <span class="dip-wp-dot"></span>
-                <span class="dip-wp-prov">{{ row.display_name }}</span>
-                <strong>{{ t('main.doc_info_panel.wp_assignment_steps', { n: row.step_count }) }}</strong>
-              </li>
-            </ul>
-            <div v-else class="dip-reject-empty">
-              <AppIcon name="info" /><span>{{ t('main.doc_info_panel.wp_no_assignment') }}</span>
-            </div>
-            <p v-if="wpUnassignedSteps > 0" class="dip-qa-error">
-              {{ t('main.doc_info_panel.wp_unassigned_steps', { n: wpUnassignedSteps }) }}
-            </p>
-          </template>
-        </div>
-      </div>
-
-      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.applications }">
-        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.applications" @click="toggleSection('applications')">
-          <AppIcon name="caret-down" class="dip-acc-caret" />
-          <AppIcon name="clock-counter-clockwise" />
-          {{ t('main.doc_info_panel.wp_last_application') }}
-          <span class="dip-wp-last">{{ lastApplication?.applied_at ?? t('main.doc_info_panel.wp_no_application_short') }}</span>
-        </button>
-        <div class="dip-sec-body">
-          <div v-if="applicationsLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
-          <div v-else-if="applicationsError" class="dip-qa-error">{{ t('main.doc_info_panel.wp_applications_failed') }}</div>
-          <div v-else-if="applications.length === 0" class="dip-reject-empty">
-            <AppIcon name="info" /><span>{{ t('main.doc_info_panel.wp_no_application') }}</span>
-          </div>
-          <ul v-else class="dip-wp-applications">
-            <li v-for="row in applications" :key="row.applied_at + '-' + row.applied_by">
-              <strong>{{ row.applied_at }}</strong>
-              <span>{{ row.applied_by }} · #{{ row.target_seq ?? '—' }}</span>
-              <small>{{ row.warning_codes?.join(', ') || t('main.doc_info_panel.wp_no_warnings') }}</small>
+          <ul v-if="wpAssignments.length" class="dip-wp-assignments">
+            <li v-for="row in wpAssignments" :key="row.provider_id">
+              <span class="dip-wp-dot"></span>
+              <span class="dip-wp-prov">{{ row.display_name }}</span>
+              <strong>{{ t('main.doc_info_panel.wp_assignment_steps', { n: row.step_count }) }}</strong>
             </li>
           </ul>
-          <p v-if="applicationsBrokenLines" class="dip-qa-error">
-            {{ t('main.doc_info_panel.wp_broken_applications', { n: applicationsBrokenLines }) }}
+          <p v-if="wpUnassignedSteps > 0" class="dip-qa-error">
+            {{ t('main.doc_info_panel.wp_unassigned_steps', { n: wpUnassignedSteps }) }}
           </p>
         </div>
       </div>
@@ -547,12 +517,11 @@ const emit = defineEmits<{
 // under its own title caret — the same caret idiom as the left file-tree. This is
 // separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
 // emit) so the two controls don't fight. Sections start expanded.
-type SectionKey = 'status' | 'wp_assignments' | 'applications' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
+type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   // 시안 xc32frrg 화면 1 은 이 칸을 펼친 채로 그린다.
   wp_assignments: false,
-  applications: true,
   qa: false,
   ai_review: false,
   reject: false,
@@ -562,22 +531,16 @@ const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   changes: false,
 })
 
-interface WorkPlanApplication {
-  applied_at: string
-  applied_by: string
-  target_seq: number | null
-  warning_codes: string[]
-}
 interface WorkPlanAssignment { provider_id: string; display_name: string; step_count: number }
 const wpAssignments = ref<WorkPlanAssignment[]>([])
 const wpUnassignedSteps = ref(0)
-const wpAssignmentsLoading = ref(false)
-const wpAssignmentsError = ref(false)
+// 0399 M0020 반려 — 보여줄 것이 실제로 생겼을 때만 칸이 나타난다. 읽는 도중이거나
+// 읽기에 실패했을 때는 자리를 차지하지 않으므로, 문서를 열 때 사이드바가
+// 늘었다 줄었다 하지 않는다.
+const wpAssignmentsShown = computed(() => wpAssignments.value.length > 0 || wpUnassignedSteps.value > 0)
 
 async function fetchWpAssignments() {
   if (props.typeCode !== 'WP') return
-  wpAssignmentsLoading.value = true
-  wpAssignmentsError.value = false
   try {
     const res = await getRequest<any>('/api/v1/documents/' + encodeURIComponent(props.docId) + '/work-plan')
     wpAssignments.value = res.data.assignment_summary ?? []
@@ -585,39 +548,12 @@ async function fetchWpAssignments() {
   } catch {
     wpAssignments.value = []
     wpUnassignedSteps.value = 0
-    wpAssignmentsError.value = true
-  } finally {
-    wpAssignmentsLoading.value = false
   }
 }
 
-const applications = ref<WorkPlanApplication[]>([])
-const applicationsLoading = ref(false)
-const applicationsError = ref(false)
-const applicationsBrokenLines = ref(0)
-const lastApplication = computed(() => applications.value[0] ?? null)
-
-async function fetchApplications() {
-  if (props.typeCode !== 'WP') return
-  applicationsLoading.value = true
-  applicationsError.value = false
-  try {
-    const res = await getRequest<any>(
-      '/api/v1/documents/' + encodeURIComponent(props.docId) + '/work-plan/applications',
-      { limit: 20 },
-    )
-    applications.value = res.data.items ?? []
-    applicationsBrokenLines.value = res.data.broken_lines ?? 0
-  } catch {
-    applications.value = []
-    applicationsError.value = true
-  } finally {
-    applicationsLoading.value = false
-  }
-}
 watch(
   () => [props.docId, props.typeCode] as const,
-  () => { void fetchApplications(); void fetchWpAssignments() },
+  () => { void fetchWpAssignments() },
   { immediate: true },
 )
 
@@ -664,8 +600,6 @@ watch(
 )
 function toggleSection(key: SectionKey) {
   sectionCollapsed[key] = !sectionCollapsed[key]
-  // Re-read on expansion so an application created while this panel stayed mounted appears.
-  if (key === 'applications' && !sectionCollapsed.applications) void fetchApplications()
 }
 
 function formatRejectionDate(iso: string): string {

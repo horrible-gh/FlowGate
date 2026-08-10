@@ -222,10 +222,8 @@
                conversation view. flowgate.default.0395 D0007 §6.4. -->
           <WorkPlanEditor
             v-else-if="tab.typeCode === 'WP'"
-            :ref="(el) => registerWorkPlanEditor(tab.id, el)"
             :doc-id="tab.id"
             :project-id="tab.projectId ?? null"
-            @apply-preset="(payload) => onWorkPlanPreset(tab.id, payload)"
           />
           <div v-else-if="tab.type === 'qtui'" class="card md-preview-card">
             <div class="card-hd">
@@ -844,7 +842,6 @@
       @create-conversation="onActionBarCreateConversation(activeTabId)"
       @run-test="onActionBarRunTest(activeTabId)"
       @continuous-work="onActionBarContinuousWork(activeTabId)"
-      @fill-continuous="onActionBarFillContinuous(activeTabId)"
       @open-head-doc="onOpenHeadDocClick"
     />
 
@@ -1008,7 +1005,6 @@
     <ContinuousWorkDialog
       v-model:visible="continuousDialogVisible"
       :doc-ref="continuousDocRef"
-      :preset="continuousPreset"
       :providers="aiProviderStore.providers"
       :selected-provider="aiProviderStore.selectedProviderId"
       :provider-loading="aiProviderStore.loading"
@@ -1309,7 +1305,6 @@ import ReviewHistoryDialog from './ReviewHistoryDialog.vue'
 import DesignHandoffDialog from './DesignHandoffDialog.vue'
 import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
 import WorkPlanEditor from './WorkPlanEditor.vue'
-import type { WorkPlanFillPreset } from '../types/workPlanFillPreset'
 import type { AiReview } from '../types/aiReview'
 import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
@@ -1681,7 +1676,6 @@ const workPlanCreateGroupId = ref('')
 // Continuous work (R0001 group 0086): sequence selection feeds a consent gate that offers
 // either an in-app provider run or the external-AI continuous mention path.
 const continuousDialogVisible = ref(false)
-const continuousPreset = ref<WorkPlanFillPreset | null>(null)
 const continuousWarnVisible = ref(false)
 const continuousTabId = ref('')
 const continuousDocRef = ref('')
@@ -3513,30 +3507,9 @@ function onWorkPlanCreated(payload: { docId: string; title: string }) {
   })
 }
 
-// Work-plan apply does not start a run. It only opens the existing dialog with a preset.
-// 시안 xc32frrg 화면 1: [연속 작업에 채우기]는 액션바에 있고, 그 미리보기는
-// 열려 있는 작업계획 편집기가 갖고 있다. 액션바 → 편집기로 그대로 넘긴다.
-const workPlanEditorRefs: Record<string, { openApplyPreview: () => void } | null> = {}
-function registerWorkPlanEditor(tabId: string, el: unknown) {
-  workPlanEditorRefs[tabId] = (el as { openApplyPreview: () => void } | null) ?? null
-}
-function onActionBarFillContinuous(tabId: string) {
-  workPlanEditorRefs[tabId]?.openApplyPreview()
-}
-
-function onWorkPlanPreset(
-  tabId: string,
-  payload: { preset: WorkPlanFillPreset; ownerDocId: string },
-) {
-  const h = docHeaderRefs[tabId]
-  continuousTabId.value = tabId
-  continuousDocRef.value = payload.ownerDocId
-  continuousProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
-  continuousGroupId.value = exposedValue<string>(h?.groupId) ?? ''
-  continuousPreset.value = payload.preset
-  void aiProviderStore.ensureLoaded(continuousProjectId.value)
-  continuousDialogVisible.value = true
-}
+// 0399 M0020 — 작업계획을 워크플로에 넣는 길은 시퀀스 칸의 [작업계획 적용] 하나다.
+// 액션바에서 미리보기 오버레이를 열어 그 자리에서 적용해 버리던 배선은 여기 있었고,
+// 오버레이와 함께 걷었다.
 
 // ── Continuous (unmanned) work (R0001 group 0086) ──────────────────────────────
 // Entry from the 'workflow'/'next' action-bar dropdowns. Opens the sequence-pick dialog;
@@ -3544,7 +3517,6 @@ function onWorkPlanPreset(
 // undecided/all-done cases itself, so this is NOT gated by guardNextActionAvailable.
 function onActionBarContinuousWork(tabId: string) {
   const h = docHeaderRefs[tabId]
-  continuousPreset.value = null
   continuousTabId.value = tabId
   continuousDocRef.value = nextActionDocRef(tabId)
   continuousProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''

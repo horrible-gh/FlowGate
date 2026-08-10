@@ -110,11 +110,24 @@ def insert_sequence_item(
     label: str,
     doc_class: str,
     sort_order: int,
+    note: str = "",
+    source_doc_id: Optional[str] = None,
+    source_revision_no: Optional[int] = None,
 ) -> None:
-    """Insert a sequence item."""
+    """Insert a sequence item.
+
+    0399 DB0012 §2/§4: ``note`` · ``source_doc_id`` · ``source_revision_no`` carry the step
+    note and its origin (which work plan poured the row, at which revision). They default to
+    the same values migration 079 gives a pre-existing row — an empty note and no source — so
+    every existing caller that only knows about the structural columns keeps working and
+    stores "this row did not come from a plan", which is the truth for those paths.
+    """
     store = get_store()
     sql = _sql(store, "workflow_sequences.insert_sequence_item")
-    store._execute(sql, [sequence_id, item_seq, type_, label, doc_class, sort_order])
+    store._execute(sql, [
+        sequence_id, item_seq, type_, label, doc_class, sort_order,
+        note or "", source_doc_id, source_revision_no,
+    ])
 
 
 def delete_pending_items(sequence_id: int) -> None:

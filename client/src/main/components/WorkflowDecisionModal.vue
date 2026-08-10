@@ -15,6 +15,49 @@
           </button>
         </div>
 
+        <!-- ── 0399 D0010 §3.3 / §6.2 — what was poured, and that it is not saved yet ──
+             The whole point of this strip: pressing a mode in [작업계획 적용] changed
+             nothing. It says so, and it offers the one-step way back (L0011 §3.3). -->
+        <div v-if="pourSession" class="wdm-banner">
+          <AppIcon name="clipboard-text" />
+          <span>
+            {{ t(`main.work_plan_pour.banner_${pourSession.mode}`, {
+              doc: pourSession.wpShortCode,
+              n: pourSession.planStepCount,
+              d: pourSession.rowCountChange.deleted,
+            }) }}
+            <!-- 시안 fgh29xnk v3 · 화면 3: 부은 뒤에 사람이 손본 양을 같은 줄에서 말한다. -->
+            <template v-if="pourEditsText">
+              {{ t('main.work_plan_pour.banner_edited', { edits: pourEditsText }) }}
+            </template>
+            {{ t('main.work_plan_pour.banner_unsaved') }}
+          </span>
+          <span class="wdm-banner-spacer"></span>
+          <button type="button" class="wdm-undo" @click="revertPour">
+            <AppIcon name="arrow-counter-clockwise" />
+            {{ t('main.work_plan_pour.undo') }}
+          </button>
+        </div>
+        <!-- 시안 화면 3의 두 번째 띄: 멘트 없는 단계를 갯수만이 아니라 이름과 사유까지 적는다.
+             서버가 부을 때 세어 보낸 갯수 대신 지금 목록에서 세는다 — 사람이 칸을 채우는 순간
+             줄어들어야 하는 숫자이기 때문이다. -->
+        <div v-if="pourSession && missingNoteRows.length > 0" class="wdm-banner wdm-banner--warn">
+          <AppIcon name="chat-slash" />
+          <span>
+            {{ t('main.work_plan_pour.notify_note_missing', {
+              n: missingNoteRows.length, list: missingNoteText,
+            }) }}
+          </span>
+        </div>
+        <div
+          v-for="note in pourNotifications"
+          :key="note.code"
+          class="wdm-banner wdm-banner--warn"
+        >
+          <AppIcon name="warning" />
+          <span>{{ notificationText(note) }}</span>
+        </div>
+
         <!-- ── Body ── -->
         <div class="modal-bd wdm-body">
 
@@ -142,6 +185,17 @@
                   {{ t('main.workflow_decision_modal.auto_map_desc') }}
                 </div>
               </div>
+
+              <!-- 0399 D0010 §6.2 — the rule for the notes, stated where the rows are made.
+                   It is here and not in the banner because it answers a question the person
+                   only has while editing: what happens to the note if I move this row. -->
+              <div v-if="pourSession" class="wdm-note">
+                <AppIcon name="chat-circle-dots" />
+                <div>
+                  <strong>{{ t('main.work_plan_pour.note_rule_title') }}</strong><br>
+                  {{ t('main.work_plan_pour.note_rule_desc') }}
+                </div>
+              </div>
             </div><!-- /wdm-left -->
 
             <!-- RIGHT: sequence editor -->
@@ -178,6 +232,7 @@
                   class="wdm-seq-item"
                   :class="{
                     'is-auto': item.isAuto,
+                    'from-plan': item.origin === 'plan' && !item.typeChanged,
                     'is-dragging': draggedId === item.id,
                     'drag-over': !item.isAuto && item.id === dragOverId && draggedId !== item.id,
                     'type-drag-over': !item.isAuto && item.id === typeDragOverId,
@@ -192,7 +247,45 @@
                   <span v-else class="wdm-drag-spacer"></span>
                   <span class="wdm-seq-num">{{ (mode === 'edit' ? lockedItems.length : 0) + idx + 1 }}</span>
                   <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
-                  <span class="wdm-seq-label">{{ docTypeStore.getLabel(item.type) }}</span>
+                  <!-- 0399 T0016 / D0010 §3.4 — the type can be swapped without deleting the
+                       row. Only manual rows may change type; auto followers are derived. -->
+                  <select
+                    v-if="!item.isAuto && mode === 'edit'"
+                    class="wdm-type-select"
+                    :aria-label="t('main.work_plan_pour.change_type_label')"
+                    :value="item.type"
+                    @change="changeRowType(item, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="opt in SELECTABLE_TYPES" :key="opt" :value="opt">{{ opt }}</option>
+                  </select>
+                  <!-- 0399 D0010 §3.4 — the note travels with the row. It is rendered ON the
+                       row for exactly that reason: move the row and the note moves with it,
+                       delete the row and the note goes too, with nothing to keep in sync. -->
+                  <span class="wdm-seq-main">
+                    <span class="wdm-seq-label">{{ docTypeStore.getLabel(item.type) }}</span>
+                    <span
+                      v-if="!item.isAuto && mode === 'edit'"
+                      class="wdm-seq-msg"
+                      :class="{ 'wdm-seq-msg--empty': !item.note }"
+                    >
+                      <AppIcon :name="item.note ? 'chat-circle-dots' : 'warning-circle'" />
+                      <input
+                        type="text"
+                        class="wdm-note-input"
+                        v-model="item.note"
+                        :placeholder="t('main.work_plan_pour.note_empty')"
+                      />
+                    </span>
+                  </span>
+                  <span
+                    v-if="item.origin === 'plan' && item.sourceDocId && !item.typeChanged"
+                    class="wdm-plan-badge"
+                  >
+                    {{ t('main.work_plan_pour.from_plan', { doc: shortCodeOf(item.sourceDocId) }) }}
+                  </span>
+                  <span v-else-if="item.typeChanged" class="wdm-changed-badge">
+                    {{ t('main.work_plan_pour.type_changed_badge') }}
+                  </span>
                   <span v-if="item.isAuto" class="wdm-auto-badge">
                     <AppIcon name="lightning" style="font-size:.58rem;" />
                     {{ t('main.workflow_decision_modal.auto_badge', { parent: parentTypeOf(item) }) }}
@@ -240,6 +333,8 @@
                 <div class="wdm-preview-label">
                   <AppIcon name="eye" />
                   {{ t('main.workflow_decision_modal.preview_label') }}
+                  <!-- 시안 fgh29xnk v3 · 화면 3 하단 캐프션. TR0015 §8이 미뤄 둔 줄이다. -->
+                  <template v-if="pourDiffText">— {{ pourDiffText }}</template>
                 </div>
                 <div class="wdm-preview">
                   <span v-if="(mode !== 'edit' && sequence.length === 0) || (mode === 'edit' && lockedItems.length === 0 && sequence.length === 0)" class="wdm-preview-empty">
@@ -278,8 +373,14 @@
         <div class="modal-ft">
           <!-- 0268 TR0005 rev1: the provider picker sits at the far left of the footer, ahead of
                the note and every button, so the run target is read before any action is chosen. -->
+          <!-- 0399 D0010 §3.7 / L0011 §4.4 — when this project has no usable provider the
+               picker is NOT drawn greyed out, it is not drawn at all, and the save still
+               works: moving a plan into the sequence never needed a provider. The one
+               source of truth is the project's effective provider list (NR0008 §8) — never
+               the plan body's candidate list, which is empty in plans whose providers are
+               registered and working. -->
           <AiProviderSelect
-            v-if="mode === 'edit' && !loading && !loadError"
+            v-if="mode === 'edit' && !loading && !loadError && providerRowVisible"
             class="wdm-provider"
             :providers="providerStore.providers"
             :model-value="providerStore.selectedProviderId"
@@ -363,6 +464,52 @@ export interface SequenceItem {
   label: string
   isAuto: boolean
   autoOfId: number | null
+  // 0399 D0010 §3.4 / L0011 §2.1: the note and its origin live ON the row. The save
+  // renumbers every pending row, so anything held beside the row — keyed on position or
+  // on item_seq — would attach itself to the wrong step the first time somebody reorders.
+  note: string
+  origin: 'plan' | 'manual' | 'auto'
+  planKey: string | null
+  sourceDocId: string | null
+  sourceRevisionNo: number | null
+  // 0399 T0016 / D0010 §3.4: "줄의 문서 종류를 다른 것으로 바꾸면 그 멘트는 더 이상 그
+  // 단계 이야기가 아니므로 비운다." — set the moment changeRowType() runs, never reset.
+  typeChanged: boolean
+}
+
+/** One row of P0013 ①'s response. */
+export interface PourRow {
+  type: string
+  label: string
+  status: 'pending' | 'in_progress' | 'done'
+  locked: boolean
+  poured: boolean
+  note: string
+  origin: 'plan' | 'manual' | 'auto'
+  plan_key: string | null
+  source_doc_id: string | null
+  source_revision_no: number | null
+}
+
+export interface PourNotification {
+  code: string
+  severity: string
+  count: number
+  types?: string[]
+  row_indexes?: number[]
+  items?: Array<Record<string, unknown>>
+}
+
+/** What [작업계획 적용] hands this dialog: a starting state, not a saved change. */
+export interface PourPayload {
+  wpDocId: string
+  wpShortCode: string
+  mode: 'append' | 'replace_after'
+  planStepCount: number
+  rows: PourRow[]
+  rowCountChange: { before: number; after: number; deleted: number; added: number }
+  notifications: PourNotification[]
+  workflowTag: string
 }
 
 export interface WfdConfirmPayload {
@@ -378,6 +525,9 @@ const props = defineProps<{
   /** True while the parent's decision POST is in flight — disables confirm to block
    *  the repeated-click 409 burst (R0001 / NR0003 item 2). */
   submitting?: boolean
+  /** 0399 — set when the dialog was opened by [작업계획 적용]. Absent on every other
+   *  entrance, and absent means this behaves exactly as it did before. */
+  poured?: PourPayload | null
 }>()
 
 const emit = defineEmits<{
@@ -479,12 +629,83 @@ interface ServerItem {
   label: string
   status: 'pending' | 'in_progress' | 'done'
   sort_order: number
+  // 0399 L0011 §2.1: read for EVERY row, not just poured ones. The save replaces the whole
+  // pending block, so a note this read skipped is a note the next save erases.
+  note?: string
+  source_doc_id?: string | null
+  source_revision_no?: number | null
 }
 
 const loading = ref(false)
 const loadError = ref(false)
 const saving = ref(false)
 const lockedItems = ref<ServerItem[]>([])
+
+// 0399 — the pour session. Present only between "a mode was chosen" and "saved / reverted /
+// closed"; L0011 §3.3 fixes UNDO_DEPTH at 1, so there is one of these and never a stack.
+const pourSession = ref<PourPayload | null>(null)
+// note_missing is recomputed live below, so the server's snapshot of it would only ever
+// disagree with what the rows on screen say once somebody starts typing.
+const pourNotifications = computed(() =>
+  (pourSession.value?.notifications ?? []).filter(n => n.code !== 'note_missing'),
+)
+
+// 시안 fgh29xnk v3 · 화면 3 — "그 뒤 직접 2줄 지움 · 1줄 타입 바꿈 · 1줄 추가" 를 쓰려면
+// 부은 직후가 어떤 모양이었는지를 기억해야 한다. 줄의 id 는 applyPour 가 매기므로 그것으로
+// 충분하다 — 지운 줄은 사라지고, 넣은 줄은 목록에 없는 새 id 를 갖는다.
+const pourBaselineIds = ref<Set<number>>(new Set())
+
+const pourManualRows = computed(() => sequence.value.filter(s => !s.isAuto))
+
+const pourEditsText = computed(() => {
+  if (!pourSession.value) return ''
+  const now = new Set(pourManualRows.value.map(s => s.id))
+  let deleted = 0
+  for (const id of pourBaselineIds.value) if (!now.has(id)) deleted += 1
+  const retyped = pourManualRows.value.filter(s => s.typeChanged).length
+  const added = pourManualRows.value.filter(s => !pourBaselineIds.value.has(s.id)).length
+  const parts: string[] = []
+  if (deleted > 0) parts.push(t('main.work_plan_pour.edit_deleted', { n: deleted }))
+  if (retyped > 0) parts.push(t('main.work_plan_pour.edit_type_changed', { n: retyped }))
+  if (added > 0) parts.push(t('main.work_plan_pour.edit_added', { n: added }))
+  return parts.join(' · ')
+})
+
+const pourDiffText = computed(() => {
+  const session = pourSession.value
+  if (!session) return ''
+  const planned = session.planStepCount
+  // A retyped row is still a row this plan put there, so it counts as applied and is
+  // reported once more, separately, as retyped — exactly the way the mockup counts it.
+  const applied = pourManualRows.value.filter(s => s.origin === 'plan').length
+  const parts = [t('main.work_plan_pour.preview_diff', { planned, applied })]
+  const removed = Math.max(planned - applied, 0)
+  const retyped = pourManualRows.value.filter(s => s.typeChanged).length
+  const added = pourManualRows.value.filter(s => !pourBaselineIds.value.has(s.id)).length
+  if (removed > 0) parts.push(t('main.work_plan_pour.diff_removed', { n: removed }))
+  if (retyped > 0) parts.push(t('main.work_plan_pour.diff_type_changed', { n: retyped }))
+  if (added > 0) parts.push(t('main.work_plan_pour.diff_added', { n: added }))
+  return parts.join(' · ')
+})
+
+const missingNoteRows = computed(() =>
+  pourManualRows.value.filter(s => !(s.note ?? '').trim()),
+)
+
+const missingNoteText = computed(() =>
+  missingNoteRows.value
+    .map((row) => {
+      const name = `${row.type} ${row.label || docTypeStore.getLabel(row.type)}`
+      if (row.typeChanged) {
+        return `${name}(${t('main.work_plan_pour.note_missing_reason_type_changed')})`
+      }
+      if (row.origin === 'manual') {
+        return `${name}(${t('main.work_plan_pour.note_missing_reason_manual')})`
+      }
+      return name
+    })
+    .join(', '),
+)
 
 // ── Computed ───────────────────────────────────────────────────────────────────
 
@@ -532,18 +753,49 @@ function findBlockEnd(startIdx: number): number {
   return end
 }
 
+// 0399 L0011 §2.7: a row a person adds here starts with an empty note and no plan behind
+// it. There is nowhere else it could come from — this row was not in any plan.
+function blankRowFields(): Pick<SequenceItem, 'note' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'typeChanged'> {
+  return { note: '', origin: 'manual', planKey: null, sourceDocId: null, sourceRevisionNo: null, typeChanged: false }
+}
+
+// 자동 줄은 멘트를 갖지 않는다 (L0011 §2.4): it never appears in the note list the
+// continuous-run dialog shows, so a value stored here could not be edited or seen.
+function buildAutoEntries(manualId: number, type: string): SequenceItem[] {
+  const autos = AUTO_MAP[type]
+  if (!autos) return []
+  return autos.map(autoType => ({
+    id: ++idCounter.value, type: autoType, label: docTypeStore.getLabel(autoType),
+    isAuto: true, autoOfId: manualId, ...blankRowFields(), origin: 'auto' as const,
+  }))
+}
+
 function buildEntries(type: string): SequenceItem[] {
   const manualId = ++idCounter.value
   const entries: SequenceItem[] = [
-    { id: manualId, type, label: docTypeStore.getLabel(type), isAuto: false, autoOfId: null },
+    { id: manualId, type, label: docTypeStore.getLabel(type), isAuto: false, autoOfId: null, ...blankRowFields() },
   ]
-  const autos = AUTO_MAP[type]
-  if (autos) {
-    for (const autoType of autos) {
-      entries.push({ id: ++idCounter.value, type: autoType, label: docTypeStore.getLabel(autoType), isAuto: true, autoOfId: manualId })
-    }
-  }
+  entries.push(...buildAutoEntries(manualId, type))
   return entries
+}
+
+// The types a row can be switched to. Excludes AUTO_ONLY (NR/TR/TSR follow their parent
+// automatically — a person never picks them directly, here or in the left panel).
+const SELECTABLE_TYPES = CATEGORIES.flatMap(cat => cat.items.map(i => i.type))
+
+// 0399 T0016 / D0010 §3.4: changing a row's type empties its note (it is no longer that
+// step's message) and, if the row followed an instruction type, rebuilds its auto-linked
+// followers (TR/TSR) for the new type — removing stale ones, adding missing ones.
+function changeRowType(item: SequenceItem, newType: string) {
+  if (newType === item.type || item.isAuto) return
+  item.type = newType
+  item.label = docTypeStore.getLabel(newType)
+  item.note = ''
+  item.typeChanged = true
+  const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
+  const idx = seq.findIndex(s => s.id === item.id)
+  if (idx >= 0) seq.splice(idx + 1, 0, ...buildAutoEntries(item.id, newType))
+  sequence.value = seq
 }
 
 // ── Sequence operations ────────────────────────────────────────────────────────
@@ -758,11 +1010,26 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
   let lastManualId: number | null = null
   for (const it of items) {
     const id = ++idCounter.value
+    const carried = {
+      note: it.note ?? '',
+      planKey: null,
+      sourceDocId: it.source_doc_id ?? null,
+      sourceRevisionNo: it.source_revision_no ?? null,
+      typeChanged: false,
+    }
     if (AUTO_TYPES.has(it.type)) {
-      result.push({ id, type: it.type, label: it.label || docTypeStore.getLabel(it.type), isAuto: true, autoOfId: lastManualId })
+      result.push({
+        id, type: it.type, label: it.label || docTypeStore.getLabel(it.type),
+        isAuto: true, autoOfId: lastManualId, ...carried, note: '', origin: 'auto',
+      })
     } else {
       lastManualId = id
-      result.push({ id, type: it.type, label: it.label || docTypeStore.getLabel(it.type), isAuto: false, autoOfId: null })
+      result.push({
+        id, type: it.type, label: it.label || docTypeStore.getLabel(it.type),
+        isAuto: false, autoOfId: null, ...carried,
+        // L0011 §2.1 origin_of_loaded_row: no stored source means a person put it there.
+        origin: it.source_doc_id ? 'plan' : 'manual',
+      })
     }
   }
   return result
@@ -789,19 +1056,105 @@ async function loadSequence() {
   }
 }
 
+// ── 0399 — opening on a poured plan ────────────────────────────────────────────
+
+/** Build the editing state straight from P0013 ①'s rows. No GET: the response already
+ *  describes the whole sequence, locked rows included, merged the way the mode says. */
+function applyPour(payload: PourPayload) {
+  loading.value = false
+  loadError.value = false
+  idCounter.value = 0
+  lockedItems.value = payload.rows
+    .filter(row => row.locked)
+    .map((row, index) => ({
+      id: -(index + 1),
+      type: row.type,
+      label: row.label,
+      status: row.status,
+      sort_order: index,
+      note: row.note,
+      source_doc_id: row.source_doc_id,
+      source_revision_no: row.source_revision_no,
+    }))
+  sequence.value = payload.rows
+    .filter(row => !row.locked)
+    .map(row => ({
+      id: ++idCounter.value,
+      type: row.type,
+      label: row.label || docTypeStore.getLabel(row.type),
+      isAuto: row.origin === 'auto',
+      autoOfId: null,
+      note: row.origin === 'auto' ? '' : row.note,
+      origin: row.origin,
+      planKey: row.plan_key,
+      sourceDocId: row.source_doc_id,
+      sourceRevisionNo: row.source_revision_no,
+      typeChanged: false,
+    }))
+  // The report rows arrive from the server already paired; relink each to the row above it
+  // so moving/deleting an instruction keeps carrying its report, exactly as a hand-built
+  // list does. Their identity is positional in the response — there is no id to match on.
+  let lastManualId: number | null = null
+  for (const item of sequence.value) {
+    if (item.isAuto) item.autoOfId = lastManualId
+    else lastManualId = item.id
+  }
+  pourBaselineIds.value = new Set(sequence.value.filter(s => !s.isAuto).map(s => s.id))
+  pourSession.value = payload
+}
+
+/** L0011 §3.3 — one step, and it goes all the way back: the pour AND every edit made after
+ *  it. Keeping the later edits would leave rows that were shaped around plan rows which are
+ *  no longer there, i.e. a list nobody wrote. Nothing was saved, so re-reading the stored
+ *  sequence IS the pre-pour state. */
+async function revertPour() {
+  pourSession.value = null
+  pourBaselineIds.value = new Set()
+  await loadSequence()
+}
+
+function shortCodeOf(docId: string): string {
+  const tail = docId.split('.').pop() ?? docId
+  const [seq, code] = tail.split('-')
+  return code ? `${code}${seq}` : tail
+}
+
+function notificationText(note: PourNotification): string {
+  const key = `main.work_plan_pour.notify_${note.code}`
+  return t(key, {
+    n: note.count,
+    types: (note.types ?? []).join(' · '),
+  })
+}
+
 async function save() {
   if (saving.value || wouldEmptyDecided.value) return
   saving.value = true
   try {
     await patchRequest('/api/v1/workflow/sequence', {
       doc_id: props.docId,
-      items: sequence.value.map(it => ({ type: it.type, label: it.label })),
+      items: sequence.value.map(it => ({
+        type: it.type,
+        label: it.label,
+        note: it.note,
+        source_doc_id: it.sourceDocId,
+        source_revision_no: it.sourceRevisionNo,
+      })),
+      // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
+      // snapshot to be stale against, and demanding one would break every other caller.
+      expected_workflow_tag: pourSession.value?.workflowTag,
     })
     showToast(t('main.workflow_edit_modal.toast_saved'), 'success')
+    pourSession.value = null
+    pourBaselineIds.value = new Set()
     emit('saved')
     emit('update:visible', false)
-  } catch {
-    showToast(t('main.workflow_edit_modal.error_save'), 'error')
+  } catch (e: any) {
+    if (e?.response?.data?.error === 'sequence_changed') {
+      showToast(t('main.work_plan_pour.error_sequence_changed'), 'error')
+    } else {
+      showToast(t('main.workflow_edit_modal.error_save'), 'error')
+    }
   } finally {
     saving.value = false
   }
@@ -861,19 +1214,48 @@ async function invokeAiSequenceEdit() {
   }
 }
 
+// 0399 L0011 §4.4 — the provider row is drawn only when this project actually has a usable
+// provider. loadedProjectId (not just a non-empty list) is what separates "none registered"
+// from "not asked yet"; without it the row would flicker in and out on every open.
+const providerRowVisible = computed(() =>
+  providerStore.loadedProjectId !== null && providerStore.providers.length > 0,
+)
+
 // Reset / load state when dialog opens
 watch(
   () => props.visible,
   (v) => {
     if (v) {
       if (props.mode === 'edit') {
-        loadSequence()
+        // A poured payload already contains the whole sequence (P0013 ①), so re-reading it
+        // would only race the state we were handed and throw the poured rows away.
+        if (props.poured) applyPour(props.poured)
+        else {
+          pourSession.value = null
+          loadSequence()
+        }
+        const project = (props.docId ?? '').split('.')[0]
+        if (project) providerStore.ensureLoaded(project)
       } else {
         sequence.value = []
         idCounter.value = 0
+        pourSession.value = null
+        pourBaselineIds.value = new Set()
       }
+    } else {
+      // M0020 "[작업계획 적용] 한다음에 저장하지도 않았는데 주구장창 적용되어 있다":
+      // 저장하지 않고 닫았으면 부어 넣은 목록은 그 자리에서 버린다. 다음에 열 창은
+      // 무조건 서버에 저장된 시퀀스를 다시 읽어서 그린다.
+      pourSession.value = null
+      pourBaselineIds.value = new Set()
+      sequence.value = []
+      lockedItems.value = []
+      idCounter.value = 0
     }
   },
+  // A dialog mounted with visible already true never sees a transition, so without this it
+  // would come up empty — no sequence, no poured rows, no provider list.
+  { immediate: true },
 )
 </script>
 
@@ -898,6 +1280,130 @@ watch(
   flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* ── 0399 작업계획 적용 — 부어 넣은 결과 알림 줄 (시안 fgh29xnk v3 · 화면 2/3) ── */
+.wdm-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 20px;
+  background: #ecfdf5;
+  border-bottom: 1px solid #a7f3d0;
+  font-size: .74rem;
+  line-height: 1.5;
+  color: #065f46;
+}
+.wdm-banner i {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.wdm-banner .wdm-banner-spacer {
+  flex: 1;
+}
+.wdm-banner--warn {
+  background: #fffbeb;
+  border-bottom-color: #fde68a;
+  color: #92400e;
+}
+.wdm-undo {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: var(--r, 8px);
+  border: 1px solid #34d399;
+  background: #fff;
+  color: #047857;
+  font-size: .69rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.wdm-undo:hover {
+  background: #d1fae5;
+}
+
+/* 계획에서 온 줄: 왼쪽 초록 띠로 한눈에 갈라 보인다 */
+.wdm-seq-item.from-plan {
+  border-color: #86efac;
+  box-shadow: inset 3px 0 0 #16a34a;
+}
+.wdm-seq-main {
+  flex: 1;
+  min-width: 0;
+}
+.wdm-seq-msg {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: .69rem;
+  color: var(--text-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wdm-seq-msg i {
+  color: #16a34a;
+  font-size: .72rem;
+  flex-shrink: 0;
+}
+.wdm-seq-msg--empty {
+  color: #b45309;
+}
+.wdm-seq-msg--empty i {
+  color: #d97706;
+}
+.wdm-plan-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+  font-size: .62rem;
+  font-weight: 700;
+}
+/* 0399 T0016 — 타입을 바꿔 계획 멘트가 비워진 줄 */
+.wdm-changed-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  font-size: .62rem;
+  font-weight: 700;
+}
+/* 0399 T0016 — 줄마다 멘트 입력. 밑줄만 남겨 정적 문구처럼 읽히되 실제로는 입력칸이다. */
+.wdm-note-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-bottom: 1px dashed transparent;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: .69rem;
+  color: inherit;
+}
+.wdm-note-input:hover,
+.wdm-note-input:focus {
+  border-bottom-color: var(--border-d);
+  outline: none;
+}
+.wdm-note-input::placeholder {
+  color: #b45309;
+}
+/* 0399 T0016 — 줄의 타입을 바꾸는 작은 드롭다운. doc-tag 색 배지는 그대로 두고 옆에 둔다. */
+.wdm-type-select {
+  flex-shrink: 0;
+  font-size: .6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-m);
+  padding: 1px 2px;
+  cursor: pointer;
 }
 
 /* ── Preset section ── */

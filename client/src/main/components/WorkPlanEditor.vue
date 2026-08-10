@@ -47,6 +47,17 @@
       </div>
 
       <template v-else-if="plan">
+        <!-- 0399 D0010 §6.1 (시안 fgh29xnk v3 · 화면 1) — the sentence that closes the gap
+             this whole module exists for: people approved a plan and expected the workflow
+             to follow. It does not, and it never did; the plan is a record until somebody
+             pours it. Said here, above the plan itself, rather than only on the button. -->
+        <div class="wp-usage-note">
+          <AppIcon name="lightning" />
+          <span>
+            <strong>{{ t('main.work_plan_pour.usage_title') }}</strong>
+            {{ t('main.work_plan_pour.usage_desc') }}
+          </span>
+        </div>
         <!-- Mockup xc32frrg screen 1 — 표 편집 모드 띠 -->
         <div class="wp-toolbar">
           <span class="wp-mode-pill"><AppIcon name="grid-four" /> {{ t('main.work_plan.table_mode') }}</span>
@@ -199,12 +210,6 @@
       </div>
     </div>
 
-    <WorkPlanApplyPreview
-      :visible="applyPreviewOpen"
-      :doc-id="docId"
-      @close="applyPreviewOpen = false"
-      @applied="onPlanApplied"
-    />
     <WorkPlanAiScopeDialog
       :visible="aiScopeOpen"
       :busy="aiSuggesting"
@@ -224,11 +229,9 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
-import WorkPlanApplyPreview from './WorkPlanApplyPreview.vue'
 import WorkPlanAiScopeDialog from './WorkPlanAiScopeDialog.vue'
 import type { WorkPlanScope } from './WorkPlanAiScopeDialog.vue'
 import { useContentLayoutTier } from '../composables/useContentLayoutTier'
-import type { WorkPlanFillPreset } from '../types/workPlanFillPreset'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { copyToClipboard } from '../utils/clipboard'
@@ -270,10 +273,6 @@ const props = defineProps<{
   docId: string
   projectId: string | null
 }>()
-const emit = defineEmits<{
-  'apply-preset': [payload: { preset: WorkPlanFillPreset; ownerDocId: string }]
-}>()
-
 const { t } = useI18n()
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
@@ -285,7 +284,6 @@ const aiSuggesting = ref(false)
 const aiScopeOpen = ref(false)
 const aiRunId = ref<string | null>(null)
 const rawViewOpen = ref(false)
-const applyPreviewOpen = ref(false)
 
 const plan = ref<WPBody | null>(null)
 const providerStatuses = ref<WPProviderStatus[]>([])
@@ -479,11 +477,6 @@ async function fetchPlan() {
 
 async function reload() {
   await fetchPlan()
-}
-
-function onPlanApplied(payload: { preset: WorkPlanFillPreset; ownerDocId: string }) {
-  applyPreviewOpen.value = false
-  emit('apply-preset', payload)
 }
 
 // ── Quantity editing ─────────────────────────────────────────────────────
@@ -749,14 +742,6 @@ async function save() {
 }
 
 watch(() => props.docId, () => { void fetchPlan() })
-
-// The mockup puts [연속 작업에 채우기] in the document action bar, which lives
-// outside this component; MainPanel calls this to open the same preview overlay.
-function openApplyPreview() {
-  if (loading.value || unreadable.value) return
-  applyPreviewOpen.value = true
-}
-defineExpose({ openApplyPreview })
 </script>
 
 <style scoped>
@@ -769,6 +754,26 @@ defineExpose({ openApplyPreview })
 .wp-body { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
 .wp-loading { padding: 24px; text-align: center; color: var(--text-m); }
 /* Mockup xc32frrg screen 1 — 표 편집 모드 띠 */
+/* 0399 D0010 §6.1 — 작업계획 본문 위 안내 한 줄 */
+.wp-usage-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--r, 8px);
+  font-size: .72rem;
+  line-height: 1.55;
+  color: #92400e;
+}
+.wp-usage-note i {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #d97706;
+}
+
 .wp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .wp-mode-pill {
   display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
