@@ -29,6 +29,20 @@ from modules.flow_gate.services import mention_service
 # is not a registered document_type, so attaching it would create an unprocessable step.
 AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
 
+
+class SequenceChanged(Exception):
+    """The sequence moved between reading it and saving it (0399 P0013 ② / L0011 §2.11).
+
+    Carries both fingerprints because the caller has to tell the person *that* it moved,
+    and the two values are what makes the report checkable rather than a bare apology.
+    """
+
+    def __init__(self, doc_id: str, expected: str, current: str):
+        super().__init__(f"sequence_changed:{doc_id}")
+        self.doc_id = doc_id
+        self.expected = expected
+        self.current = current
+
 _log = logging.getLogger(__name__)
 
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
@@ -1275,6 +1289,12 @@ def get_workflow_sequence(doc_id: str) -> dict:
                 "doc_class": it["doc_class"],
                 "sort_order": it["sort_order"],
                 "status": it["status"],
+                # 0399 L0011 §2.1: the note and its origin come back for EVERY row, not
+                # just the ones a plan poured. The save replaces the whole pending block,
+                # so a note this read left behind is a note the next save deletes.
+                "note": it.get("note") or "",
+                "source_doc_id": it.get("source_doc_id"),
+                "source_revision_no": it.get("source_revision_no"),
             }
             for it in items
         ],
@@ -1283,10 +1303,36 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
 # ── Edit workflow PENDING items ────────────────────────────────────────────────
 
+def _normalized_sequence_note(value) -> str:
+    """0399 L0011 §2.2 via P0013 ②: the server re-trims every note it is handed.
+
+    The dialog already trims, so this changes nothing on the normal path — that is the
+    point. It means an AI worker PATCHing straight to the API cannot store a note the
+    dialog could not have produced.
+    """
+    from modules.flow_gate.services.work_plan_sequence_service import normalize_note
+
+    return normalize_note(value)
+
+
+def assert_sequence_item_sources(new_items: list[dict]) -> None:
+    """Refuse a revision number that names no document (0399 DB0012 §5 불변식 2).
+
+    The same rule is a CHECK constraint in the postgres/mysql schema. Catching it here as
+    well is not redundancy for its own sake: it turns a raw driver error into the reason,
+    and it is the only place the rule is enforced on SQLite, which cannot add the CHECK to
+    an existing table (migration 079 sqlite header).
+    """
+    for index, item in enumerate(new_items or []):
+        if item.get("source_revision_no") is not None and not item.get("source_doc_id"):
+            raise ValueError(f"invalid_sequence_item:{index}:source_revision_no requires source_doc_id")
+
+
 def edit_workflow_pending(
     doc_id: str,
     new_items: list[dict],
     force_encoding_reason: Optional[str] = None,
+    expected_workflow_tag: Optional[str] = None,
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
@@ -1318,6 +1364,21 @@ def edit_workflow_pending(
         raise ValueError(f"sequence_not_decided:{doc_id}")
 
     existing = db_wfseq.get_sequence_items(seq["id"])
+
+    # 0399 P0013 ② / L0011 §2.11 can_save: a caller that poured a work plan sends back the
+    # fingerprint it was given, and the save only lands if the sequence still looks that way.
+    # Callers that never poured send nothing and keep today's behaviour — this is not a
+    # concurrency policy for every edit, it is the guard for the one path that computed its
+    # rows against a snapshot taken minutes earlier.
+    if expected_workflow_tag:
+        from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
+
+        current_tag = build_workflow_tag(seq, existing)
+        if current_tag != expected_workflow_tag:
+            raise SequenceChanged(doc_id, expected_workflow_tag, current_tag)
+
+    assert_sequence_item_sources(new_items)
+
     locked = [it for it in existing if it.get("result_doc_id") is not None]
     locked_count = len(locked)
 
@@ -1364,6 +1425,13 @@ def edit_workflow_pending(
                 label=item["label"] or "",  # NR0003 §7-2 / 0391 T0005 §5-5 (edit path)
                 doc_class=doc_class,
                 sort_order=locked_count + idx,
+                # 0399 D0010 §3.4: the note belongs to the row, not to the row number —
+                # which is exactly why it has to travel through this rewrite. The save
+                # renumbers every pending row, so anything keyed on item_seq would land on
+                # the wrong step the first time somebody reorders the list.
+                note=_normalized_sequence_note(item.get("note")),
+                source_doc_id=item.get("source_doc_id"),
+                source_revision_no=item.get("source_revision_no"),
             )
 
     # Sync documents.workflow_steps

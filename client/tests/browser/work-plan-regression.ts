@@ -4,7 +4,6 @@ import i18n from '../../shared/i18n'
 import api from '../../shared/api'
 import WorkPlanEditor from '../../src/main/components/WorkPlanEditor.vue'
 import WorkPlanCreateDialog from '../../src/main/components/WorkPlanCreateDialog.vue'
-import WorkPlanApplyPreview from '../../src/main/components/WorkPlanApplyPreview.vue'
 import ContinuousWorkDialog from '../../src/main/components/ContinuousWorkDialog.vue'
 import { useProjectStore } from '../../src/main/stores/project'
 
@@ -112,7 +111,6 @@ const App = {
     const createVisible = ref(true)
     const editorVisible = ref(false)
     const createdTitle = ref('')
-    const previewVisible = ref(false)
     const continuousVisible = ref(false)
     const onCreated = (payload: { title: string }) => {
       createdTitle.value = payload.title
@@ -178,12 +176,7 @@ const App = {
         .find((button) => button.textContent?.trim() === '+') as HTMLButtonElement | undefined
       const quantityAfter = Number(currentPlusButton?.previousElementSibling?.textContent ?? NaN)
 
-      previewVisible.value = true
-      await nextTick()
-      await new Promise(resolve => setTimeout(resolve, 0))
-      await nextTick()
-      const overlay = rect('.wpa-overlay')
-      previewVisible.value = false
+      // 0399 M0020 — 전면 적용 미리보기 오버레이는 없앴다. 여기서 재던 것도 함께 없어진다.
       continuousVisible.value = true
       await nextTick()
       ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement | undefined)?.click()
@@ -231,10 +224,8 @@ const App = {
         quantityBeforeCoordinateClick: quantityBefore,
         quantityAfterCoordinateClick: quantityAfter,
         quantityRaisedByCoordinateClick: quantityAfter === quantityBefore + 1,
-        overlayTop: Math.round(overlay?.top ?? 0),
         headerBottom: Math.round(header?.bottom ?? 0),
         actionbarBottom: Math.round(action?.bottom ?? 0),
-        overlayClearsHeaderAndActionbar: !!overlay && !!action && overlay.top >= action.bottom,
         modalWidth: Math.round(modal?.width ?? 0),
         presetBannerNotClipped: !!banner && banner.scrollWidth <= banner.clientWidth && banner.scrollHeight <= banner.clientHeight,
         filledBadgeCount: badges.length,
@@ -261,7 +252,6 @@ const App = {
           h('header', { id: 'document-header' }, '작업계획 문서 헤더'),
           h('div', { id: 'document-actionbar' }, '검토 · 승인 · 적용 액션바'),
           h('section', { id: 'editor-host' }, [editorVisible.value ? h(WorkPlanEditor, { docId: DOC_ID, projectId: 'flowgate' }) : null]),
-          h('section', { id: 'preview-host' }, [h(WorkPlanApplyPreview, { visible: previewVisible.value, docId: DOC_ID })]),
         ]),
         h('aside', { class: 'reg-info' }, '정보'),
       ]),
@@ -282,8 +272,6 @@ style.textContent = `
   #document-header{height:48px;padding:14px;border-bottom:1px solid #cbd5e1;font-weight:700}
   #document-actionbar{height:40px;padding:10px 14px;border-bottom:1px solid #cbd5e1;color:#475569}
   #editor-host{position:absolute;inset:88px 0 0;overflow:auto}
-  #preview-host{position:absolute;inset:88px 0 0;pointer-events:none}
-  #preview-host .wpa-overlay{pointer-events:auto}
   #regression-metrics{position:fixed;left:4px;bottom:4px;z-index:9999;max-width:calc(100vw - 8px);margin:0;padding:4px;background:#111;color:#0f0;font-size:10px;white-space:pre-wrap}
 `
 document.head.appendChild(style)

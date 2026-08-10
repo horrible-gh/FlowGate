@@ -247,18 +247,9 @@
         </div>
 
         <div v-else class="sfb-actions">
-          <!-- Mockup xc32frrg screen 1: a work-plan document's action bar leads with
-               [연속 작업에 채우기]. MainPanel forwards it to the open WorkPlanEditor,
-               which owns the same preview overlay the editor button used to open. -->
-          <button
-            v-if="isWorkPlanDoc"
-            class="btn btn-secondary btn-sm"
-            type="button"
-            :disabled="isGroupBusy"
-            @click="$emit('fill-continuous')"
-          >
-            <AppIcon name="fast-forward" /> {{ t('main.work_plan.apply_to_continuous') }}
-          </button>
+          <!-- 0399 M0020 — 예전에 여기 있던 [연속 작업에 채우기]는 눌러만 놓으면 저장 없이
+               워크플로를 바로 바꿔 버렸다. 지금은 시퀀스 칸의 [작업계획 적용] 하나로 모았고,
+               그쪽은 [저장]을 눌러야 확정된다. 시안 fgh29xnk v3 화면 1의 액션바에도 없다. -->
 
           <!-- Approve -->
           <button class="btn btn-success btn-sm" :disabled="!canApprove || isGroupBusy" @click="onApproveClick">
@@ -460,8 +451,6 @@ const emit = defineEmits<{
   'create-conversation': []
   'run-test': [] // test contract marker for shell-based TS: run-test: []
   'continuous-work': []
-  // 0395: work-plan action bar → open the plan's [연속 작업에 채우기] preview.
-  'fill-continuous': []
   'open-head-doc': [payload: { docId: string; title: string; typeCode: string | null }]
 }>()
 
@@ -719,8 +708,6 @@ const nextCreateLabelKey = computed(() =>
 
 // TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action
 // collapses to a single [Create conversation doc] auto-create button (no split / no dialog).
-const isWorkPlanDoc = computed(() => (props.docType ?? '').toUpperCase() === 'WP')
-
 const isNextConversation = computed(() =>
   (props.nextStepCode ?? '').toUpperCase() === 'CH',
 )

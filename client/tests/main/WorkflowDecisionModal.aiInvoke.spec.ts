@@ -74,13 +74,30 @@ beforeEach(() => {
   copiedTexts.length = 0
   i18n.global.locale.value = 'en'
   // A decided sequence with one locked and one pending step — the edit mode's precondition.
-  getRequest.mockResolvedValue({
-    data: {
-      items: [
-        { type: 'N', label: 'investigate', status: 'done' },
-        { type: 'T', label: 'implement', status: 'pending' },
-      ],
-    },
+  // The provider list is answered too: since 0399 (D0010 §3.7 / L0011 §4.4) the picker is
+  // drawn only when this project actually has a usable provider, so a run of this spec that
+  // reported an empty list would be asserting the picker's position in a screen that, by
+  // design, has no picker. One provider is also the honest precondition for these tests —
+  // they are about handing the edit to an AI.
+  getRequest.mockImplementation((url: string) => {
+    if (String(url).includes('/ai-invoke/providers')) {
+      return Promise.resolve({
+        data: {
+          ok: true,
+          project: 'proj',
+          providers: [{ id: 'claude', name: 'Claude', exec_type: 'cli', kind: 'claude' }],
+          default_provider_id: 'claude',
+        },
+      })
+    }
+    return Promise.resolve({
+      data: {
+        items: [
+          { type: 'N', label: 'investigate', status: 'done' },
+          { type: 'T', label: 'implement', status: 'pending' },
+        ],
+      },
+    })
   })
 })
 
@@ -145,7 +162,7 @@ describe('WorkflowDecisionModal — sequence edit hand-off (0268 B0001)', () => 
       doc_ref: DOC_ID,
       action_scope: 'workflow_sequence_edit',
       mode: 'single',
-      provider_id: undefined,
+      provider_id: 'claude',
     })
     // The server mints and delivers the mention on this path, so nothing is copied and
     // no token is issued client-side.

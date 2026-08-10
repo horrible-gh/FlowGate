@@ -26,6 +26,7 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 
 _log = logging.getLogger(__name__)
 from modules.flow_gate.services.workflow_decision_service import (
+    SequenceChanged,
     decide_workflow,
     advance_workflow,
     request_review,
@@ -157,12 +158,21 @@ class WorkflowDecisionRequestBody(BaseModel):
 class EditSequenceItem(BaseModel):
     type: str
     label: str
+    # 0399 P0013 ② / DB0012 §2: the step note and where the row came from. All three default
+    # to "no plan poured this row", which is what every caller that predates 0399 means.
+    note: Optional[str] = None
+    source_doc_id: Optional[str] = None
+    source_revision_no: Optional[int] = None
 
 
 class EditSequenceBodyRequest(BaseModel):
     doc_id: str
     items: list[EditSequenceItem]
     force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
+    # 0399 P0013 ②: the fingerprint handed out by /work-plan/sequence-candidates. Absent on
+    # an ordinary [시퀀스 수정] save, and absent means "do not compare" — the check exists for
+    # the pour path, whose rows were computed against a sequence read some time ago.
+    expected_workflow_tag: Optional[str] = None
 
 
 class SequenceEditRequestBody(BaseModel):
@@ -779,9 +789,34 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             doc_id=body.doc_id,
             new_items=[item.model_dump() for item in body.items],
             force_encoding_reason=body.force_encoding_reason,
+            expected_workflow_tag=body.expected_workflow_tag,
+        )
+    except SequenceChanged as exc:
+        # 0399 P0013 ②: do not overwrite. The rows in hand were built against a sequence
+        # that no longer exists, so the person is sent back to re-open rather than told
+        # "saved" over somebody else's change.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "sequence_changed",
+                "doc_id": exc.doc_id,
+                "expected_workflow_tag": exc.expected,
+                "current_workflow_tag": exc.current,
+            },
         )
     except ValueError as exc:
         msg = str(exc)
+        # 0399 P0013 ② / DB0012 §5: a revision number with no document to belong to.
+        if msg.startswith("invalid_sequence_item:"):
+            _, index, detail = msg.split(":", 2)
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "invalid_sequence_item",
+                    "detail": detail,
+                    "item_index": int(index),
+                },
+            )
         if msg.startswith("sequence_not_decided:"):
             doc_id_val = msg.split(":", 1)[1]
             return JSONResponse(

@@ -48,7 +48,6 @@ beforeEach(() => {
   getRequest.mockReset()
   postRequest.mockReset()
   getRequest.mockImplementation((url: string) => {
-    if (url.includes('/work-plan/applications')) return Promise.resolve({ data: { items: [], broken_lines: 0 } })
     if (url.includes('/work-plan')) return Promise.resolve({ data: WORK_PLAN_READ })
     return Promise.resolve({ data: { ok: true } })
   })
@@ -73,20 +72,18 @@ describe('시안 xc32frrg 대조 — 액션바', () => {
     return wrapper.findAll('button').find((b) => b.text().includes('연속 작업에 채우기'))
   }
 
-  it('작업계획 문서의 액션바에 [연속 작업에 채우기]가 있고, 누르면 fill-continuous 를 낸다', async () => {
+  // 0399 M0020 — [연속 작업에 채우기]는 없앴다. 눌러만 놓으면 저장 없이 워크플로가 바로
+  // 바뀌어 버리는 단추였고, 지금은 시퀀스 칸의 [작업계획 적용] → [저장] 하나로 모았다.
+  it('작업계획 문서의 액션바에도 [연속 작업에 채우기]가 없다', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: { ...props, docType: 'WP' },
       global: { plugins: [i18n] },
     })
     await flushPromises()
-
-    const button = fillButton(wrapper)
-    expect(button).toBeDefined()
-    await button!.trigger('click')
-    expect(wrapper.emitted('fill-continuous')).toHaveLength(1)
+    expect(fillButton(wrapper)).toBeUndefined()
   })
 
-  it('작업계획이 아닌 문서에서는 그 단추가 없다', async () => {
+  it('작업계획이 아닌 문서에서도 그 단추가 없다', async () => {
     const wrapper = mount(ReviewActionBar, {
       props: { ...props, docType: 'TR' },
       global: { plugins: [i18n] },
@@ -132,5 +129,50 @@ describe('시안 xc32frrg 대조 — 문서 정보', () => {
     await flushPromises()
     expect(wrapper.find('.dip-wp-assignments').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('프로바이더 배정 (단계 기준)')
+  })
+
+  // 0399 M0020 반려 — "안보이던 사이드바 뭐지?". 값이 없는 칸은 아예 그리지 않는다.
+  it('보여줄 배정이 하나도 없으면 그 칸 자체가 나타나지 않는다', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/work-plan')) {
+        return Promise.resolve({
+          data: { ...WORK_PLAN_READ, assignment_summary: [], unassigned_step_count: 0 },
+        })
+      }
+      return Promise.resolve({ data: { ok: true } })
+    })
+    const wrapper = mount(DocInfoPanel, {
+      props: props as never,
+      global: { plugins: [i18n], stubs: { teleport: true } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('프로바이더 배정 (단계 기준)')
+    expect(wrapper.find('.dip-wp-assignments').exists()).toBe(false)
+  })
+
+  it('배정을 읽지 못해도 실패 문구가 아니라 아무 칸도 뜨지 않는다', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/work-plan')) return Promise.reject(new Error('boom'))
+      return Promise.resolve({ data: { ok: true } })
+    })
+    const wrapper = mount(DocInfoPanel, {
+      props: props as never,
+      global: { plugins: [i18n], stubs: { teleport: true } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('프로바이더 배정 (단계 기준)')
+  })
+
+  it('[마지막 적용] 이력 칸은 어디에도 없고 그 요청도 나가지 않는다', async () => {
+    const wrapper = mount(DocInfoPanel, {
+      props: props as never,
+      global: { plugins: [i18n], stubs: { teleport: true } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('마지막 적용')
+    expect(wrapper.text()).not.toContain('적용 이력 없음')
+    expect(
+      getRequest.mock.calls.some(([url]) => String(url).includes('/work-plan/applications')),
+    ).toBe(false)
   })
 })

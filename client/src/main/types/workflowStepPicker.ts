@@ -10,6 +10,11 @@ export interface WorkflowStepItem {
   type: string
   label: string
   status: string // pending | in_progress | done
+  // 0399 T0018: the mention already saved on this sequence row (GET /workflow/sequence), and
+  // which document it followed a plan in from — undefined/empty for a person-typed row.
+  note?: string
+  source_doc_id?: string | null
+  source_revision_no?: number | null
 }
 
 /** A runnable target the user picked. Absent (null) whenever nothing is runnable. */

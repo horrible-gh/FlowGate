@@ -769,6 +769,121 @@ describe('ContinuousWorkDialog', () => {
     })
   })
 
+  // 0399 T0018: the normal (post-save) "AI 호출" entry has no `preset` prop — the mentions and
+  // plan-origin now come straight off the sequence itself (item.note/source_doc_id, saved by
+  // TR0015/TR0017's [시퀀스 수정] window), not the legacy pre-save preview flow above.
+  describe('sequence-stored notes (0399 T0018)', () => {
+    function seqResponseWithNotes() {
+      return {
+        data: {
+          doc_id: 'flowgate.default.0086.0001-R',
+          doc_class: 'R',
+          decided: true,
+          sequence: [
+            { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
+            { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
+            // T is auto-approved (server-handled) under the default instruction mode, so it
+            // never appears as an execution-table row — only TR@4/TS@5 below do.
+            {
+              id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending',
+              note: '', source_doc_id: null, source_revision_no: null,
+            },
+            {
+              id: 4, item_seq: 4, type: 'TR', label: '작업레포트', status: 'pending',
+              note: '결제 실패 케이스도 문서화해줘', source_doc_id: 'flowgate.default.0399.0004-WP', source_revision_no: 2,
+            },
+            {
+              id: 5, item_seq: 5, type: 'TS', label: '테스트시나리오', status: 'pending',
+              note: '', source_doc_id: null, source_revision_no: null,
+            },
+          ],
+          head: { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending' },
+        },
+      }
+    }
+
+    it('pre-fills the message tab from the sequence\'s own stored notes and tags them from-plan', async () => {
+      getRequest.mockResolvedValue(seqResponseWithNotes())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const tabs = document.querySelectorAll('.cwd-tab')
+      ;(tabs[2] as HTMLButtonElement).click()
+      await flushPromises()
+
+      // T@3 is auto-approved (server-handled) → execution rows are TR@4, TS@5.
+      const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      expect(rowInputs).toHaveLength(2)
+      expect(rowInputs[0].value).toBe('결제 실패 케이스도 문서화해줘')
+      expect(rowInputs[1].value).toBe('')
+
+      // Only the row whose stored note came from a plan gets the badge.
+      expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(1)
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.messageOverrides).toEqual({ 4: '결제 실패 케이스도 문서화해줘' })
+
+      wrapper.unmount()
+    })
+
+    it('shows which plan the sequence came from and a non-blocking empty-mention count', async () => {
+      getRequest.mockResolvedValue(seqResponseWithNotes())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const banner = document.querySelector('.cwd-preset-banner')
+      expect(banner).not.toBeNull()
+      expect(banner!.textContent).toContain(
+        i18n.global.t('main.continuous_work.sequence_source', { doc: 'flowgate.default.0399.0004-WP' }),
+      )
+      // TR@4 has a note, TS@5 does not → one step with no mention.
+      expect(banner!.textContent).toContain(i18n.global.t('main.continuous_work.note_unset', { n: 1 }))
+      // The same non-blocking notice repeats in the bottom summary (D0010 §3.5).
+      expect(document.querySelector('.cwd-summary')!.textContent).toContain(
+        i18n.global.t('main.continuous_work.note_unset', { n: 1 }),
+      )
+      // Informational only — [Next] stays enabled.
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      expect(next.disabled).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    it('lets the user edit a pre-filled mention, dropping its from-plan badge', async () => {
+      getRequest.mockResolvedValue(seqResponseWithNotes())
+      const wrapper = mountDialog()
+      await flushPromises()
+      ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
+      await flushPromises()
+
+      const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
+      rowInputs[0].value = '직접 고친 멘트'
+      rowInputs[0].dispatchEvent(new Event('input'))
+      await flushPromises()
+
+      expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.messageOverrides).toEqual({ 4: '직접 고친 멘트' })
+
+      wrapper.unmount()
+    })
+
+    it('does not show the sequence-origin banner for a plain sequence with no stored notes', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      mountDialog()
+      await flushPromises()
+
+      expect(document.querySelector('.cwd-preset-banner')).toBeNull()
+    })
+  })
+
   it('injects a work-plan preset without starting work and keeps numeric item_seq overrides', async () => {
     getRequest.mockResolvedValue(seqResponse())
     const wrapper = mount(ContinuousWorkDialog, {

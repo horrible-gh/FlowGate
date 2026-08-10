@@ -43,6 +43,17 @@ function koreanSyllableKeys(messages: Map<string, string>): string[] {
     .map(([key]) => key)
 }
 
+// 0399 M0020 반려 — "이 이상한 기호는 뭐하러 쓴거야? ㉮㉯㉰".
+// 화면에 나가는 문구에는 동그라미 글자(㉮ ㈀ ① Ⓐ …) 같은 장식 기호를 쓰지 않는다.
+// 번호가 필요하면 '1.' '2.' 처럼 보통 숫자로 적는다.
+const ENCLOSED_SYMBOL = /[\u2460-\u24FF\u3200-\u32FF]/
+
+function enclosedSymbolKeys(messages: Map<string, string>): string[] {
+  return [...messages.entries()]
+    .filter(([, value]) => ENCLOSED_SYMBOL.test(value))
+    .map(([key]) => key)
+}
+
 describe('i18n locales', () => {
   const locales = {
     ko: flattenMessages(ko),
@@ -68,6 +79,10 @@ describe('i18n locales', () => {
     ['ja', locales.ja],
   ])('%s has no Korean syllable leakage', (_, messages) => {
     expect(koreanSyllableKeys(messages)).toEqual([])
+  })
+
+  it.each(Object.entries(locales))('%s uses no enclosed decorative symbols', (_, messages) => {
+    expect(enclosedSymbolKeys(messages)).toEqual([])
   })
 
   it('defines every statically referenced translation key', () => {
