@@ -1082,17 +1082,14 @@ watch(
   { immediate: true },
 )
 
-// Live refresh: a worker (or another user) registering a Q on the doc on screen lands
-// server-side and fires SSE qna_q_registered, but this panel otherwise only refetches on
-// doc switch / mount — so the new Q was invisible until F5 (0059 B0001). Refetch when the
-// SSE-bridged window event targets this document. Idempotent GET, so an unrelated event
-// for another doc is filtered out by doc_id.
-function _onQRegistered(e: Event) {
+// Query registration, answer registration, and AI-run completion all use this refresh-only
+// signal. The semantic q_registered/q_answered events remain reserved for run-card state.
+function _onQaRefresh(e: Event) {
   const detail = (e as CustomEvent).detail as { doc_id?: string } | undefined
   if (detail?.doc_id && detail.doc_id === props.docId) fetchQa()
 }
-onMounted(() => window.addEventListener('fg:q_registered', _onQRegistered))
-onBeforeUnmount(() => window.removeEventListener('fg:q_registered', _onQRegistered))
+onMounted(() => window.addEventListener('fg:qa_refresh', _onQaRefresh))
+onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 </script>
 
 <style scoped>

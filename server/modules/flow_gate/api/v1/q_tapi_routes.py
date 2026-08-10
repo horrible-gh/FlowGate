@@ -267,6 +267,7 @@ def _register_answer_response(
             author_kind=body.author_kind,
             author_id=user_id if body.author_kind == "human" else None,
             selected_option_ids=body.selected_option_ids,
+            notify_audience=user_id,
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)

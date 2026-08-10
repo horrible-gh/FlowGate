@@ -70,6 +70,30 @@ def _notify_q_registered(
     publish_event_threadsafe(event)
 
 
+def _notify_q_answered(
+    audience: Optional[str],
+    doc_id: str,
+    project_id: Optional[str],
+    item_id: int,
+    unanswered_count: int,
+) -> None:
+    """Tell every tab for the answering user that server-side Q state changed."""
+    if not audience:
+        return
+    publish_event_threadsafe(FlowEvent(
+        event_type=EventType.QNA_ANSWER_REGISTERED,
+        payload={
+            "doc_id": doc_id,
+            "project_id": project_id,
+            "item_id": item_id,
+            "unanswered_count": unanswered_count,
+        },
+        audience=audience,
+        project=project_id,
+        doc_id=doc_id,
+    ))
+
+
 # ── Input normalization ──────────────────────────────────────────────────────────
 
 def _validate_options(raw_options: Any) -> list[str]:
@@ -304,6 +328,7 @@ def register_answer(
     author_kind: str = "human",
     author_id: Optional[str] = None,
     selected_option_ids: Optional[list[str]] = None,
+    notify_audience: Optional[str] = None,
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
@@ -369,6 +394,14 @@ def register_answer(
 
     all_answers = db_answers.list_by_question_item(item_id)
     answer_id: Optional[int] = all_answers[-1]["id"] if all_answers else None
+
+    _notify_q_answered(
+        audience=notify_audience,
+        doc_id=doc_id,
+        project_id=container.get("project_id"),
+        item_id=item_id,
+        unanswered_count=len(unanswered),
+    )
 
     return {
         "doc_id": doc_id,

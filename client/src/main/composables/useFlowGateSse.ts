@@ -627,13 +627,32 @@ export function useFlowGateSse(refreshAll: () => void) {
         // viewer (QTDetailViewer) load their items once on mount / doc switch and do
         // NOT consume invalidateAndRefresh's explorer-scoped fg:open_docs_refresh, so
         // a worker-registered Q on the doc on screen stayed invisible until F5
-        // (0059 B0001). Dispatch a doc-scoped window event those panels refetch on —\n        // mirrors the fg:doc_review_status_changed pattern used for review badges.
+        // (0059 B0001). Dispatch a doc-scoped window event those panels refetch on —
+        // mirrors the fg:doc_review_status_changed pattern used for review badges.
         if (typeof window !== 'undefined' && qDocId) {
-          window.dispatchEvent(new CustomEvent('fg:q_registered', {
-            detail: { doc_id: qDocId, project: data.project ?? null },
-          }))
+          const detail = { doc_id: qDocId, project: data.project ?? null }
+          window.dispatchEvent(new CustomEvent('fg:q_registered', { detail }))
+          window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail }))
         }
         invalidateAndRefresh(data.project)
+      } catch { /* ignore parse errors */ }
+    })
+
+    source.addEventListener('qna_answer_registered', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        const payload = data.payload ?? {}
+        const docId = payload.doc_id ?? data.doc_id ?? ''
+        if (typeof window !== 'undefined' && docId) {
+          const detail = {
+            doc_id: docId,
+            project: data.project ?? payload.project_id ?? null,
+            unanswered_count: Number(payload.unanswered_count ?? 0),
+          }
+          window.dispatchEvent(new CustomEvent('fg:q_answered', { detail }))
+          window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail }))
+        }
+        invalidateAndRefresh(data.project ?? payload.project_id)
       } catch { /* ignore parse errors */ }
     })
 
