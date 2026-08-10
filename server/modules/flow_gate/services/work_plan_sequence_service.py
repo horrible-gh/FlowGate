@@ -463,8 +463,9 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     locked_rows, pending_before = load_current_rows(items, locale)
     next_uid = len(items)
 
+    wp_revision_no = _int(doc.get("revision_no"), 0)
     plan_rows, dropped, next_uid = plan_to_rows(
-        plan, wp_doc_id, _int(doc.get("revision_no"), 0), locale, start_uid=next_uid,
+        plan, wp_doc_id, wp_revision_no, locale, start_uid=next_uid,
     )
     plan_step_count = len(plan_rows)
     pour_rows, next_uid = attach_auto_rows(plan_rows, locale, next_uid)
@@ -496,6 +497,10 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
 
     return {
         "wp_doc_id": wp_doc_id,
+        # 0403 NR0004 F2 — 행에만 적혀 있던 계획 리비전을 응답 머리에도 싣는다. 저장할 때
+        # 이 값을 그대로 돌려보내야 "대화상자를 연 뒤 계획이 바뀌었는지"를 서버가 판정할 수
+        # 있다. 행 안의 source_revision_no 는 저장 뒤에도 계속 따라다녀 이 판정에 못 쓴다.
+        "wp_revision_no": wp_revision_no,
         "workflow_doc_id": owner_doc_id,
         "mode": mode,
         "plan_step_count": plan_step_count,

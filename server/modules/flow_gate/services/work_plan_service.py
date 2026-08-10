@@ -1109,6 +1109,47 @@ def dumps(body: dict) -> str:
     return json.dumps(body, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
 
 
+# ── Where a plan's canonical file lives ──────────────────────────────────────
+
+def canonical_path_for_doc(doc: dict):
+    """문서 레코드가 가리키는 곳이 아니라, 이 문서의 정본이 있어야 할 자리."""
+    from modules.flow_gate.storage import paths as storage_paths
+
+    group_id = doc.get("group_id") or ""
+    doc_id = doc.get("doc_id") or ""
+    doc_code = doc_id[len(group_id) + 1:] if doc_id.startswith(group_id + ".") else doc_id
+    return storage_paths.document_path(
+        project_id=doc.get("project_id"),
+        group_code=group_id,
+        doc_code=doc_code,
+        filename=DOCUMENT_FILENAME,
+        module=doc.get("module") or "none",
+        branch=(doc.get("branch") or "main") or "main",
+    )
+
+
+def plan_path_for_doc(doc: dict):
+    """작업계획 문서 하나가 읽고 쓰는 정본 JSON 파일의 경로.
+
+    0403 NR0004 F3: 계획을 읽는 곳(문서 라우트)과 적용 이력을 남기는 곳(시퀀스 저장)이
+    각자 경로를 계산하면 언젠가 서로 다른 파일을 가리킨다. 계산은 여기 한 번만 한다.
+    """
+    from modules.flow_gate.storage import paths as storage_paths
+
+    stored = (doc.get("file_path") or "").strip()
+    branch = (doc.get("branch") or "main").strip() or "main"
+    if stored:
+        resolved = storage_paths.resolve_storage_path(stored, doc.get("project_id"), branch=branch)
+        if resolved is not None:
+            return resolved
+        # 파일이 아직 없을 수도 있다(되돌려진 트리). "작업계획이 아니다"라고 답하는 대신
+        # 정본이 있어야 할 자리로 떨어진다.
+        loose = storage_paths.resolve_storage_dir(stored, doc.get("project_id"))
+        if loose is not None:
+            return loose
+    return canonical_path_for_doc(doc)
+
+
 # ── Reading a stored plan (P0009 §4.4 / §4.5) ────────────────────────────────
 
 def load_body(path) -> dict:

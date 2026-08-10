@@ -43,6 +43,22 @@ class SequenceChanged(Exception):
         self.expected = expected
         self.current = current
 
+
+class PlanRevisionChanged(Exception):
+    """부어 넣은 작업계획이 그 사이에 바뀌었다 (0403 NR0004 F2).
+
+    워크플로 지문(SequenceChanged)과 짝이다. 지문은 "시퀀스가 움직였다"만 잡는다. 계획만
+    바뀐 경우 — 다른 사람이나 AI 가 같은 WP 를 저장해 리비전이 오른 경우 — 지문은 그대로라
+    저장이 통과했고, 화면에서 보고 있는 최신 계획이 아니라 대화상자를 열 때의 낡은 계획이
+    시퀀스에 조용히 들어갔다. 행에 적힌 source_revision_no 는 사후 흔적일 뿐 방어가 아니다.
+    """
+
+    def __init__(self, wp_doc_id: str, expected: int, current: int):
+        super().__init__(f"wp_changed:{wp_doc_id}")
+        self.wp_doc_id = wp_doc_id
+        self.expected = expected
+        self.current = current
+
 _log = logging.getLogger(__name__)
 
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
@@ -1328,11 +1344,122 @@ def assert_sequence_item_sources(new_items: list[dict]) -> None:
             raise ValueError(f"invalid_sequence_item:{index}:source_revision_no requires source_doc_id")
 
 
+def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
+    """부어 넣은 계획이 아직 그 리비전 그대로인지 확인한다 (0403 NR0004 F2).
+
+    ``expected_plan`` 은 계획을 부은 저장에만 실린다. 붓지 않은 평범한 [시퀀스 수정]에는
+    비교할 스냅숏이 없으므로 없는 것이 정상이고, 그때 이 함수는 아무것도 검사하지 않는다.
+
+    행에 실려 오는 ``source_revision_no`` 로 대신할 수 없다: 한 번 부어 저장된 행은 그
+    출처를 계속 달고 다니므로, 다음 번 평범한 편집이 그 낡은 번호를 그대로 되돌려 보낸다.
+    "이번 저장이 어느 계획을 부은 것인가"는 요청이 따로 말해 줘야 한다.
+    """
+    if not expected_plan:
+        return None
+    wp_doc_id = str(expected_plan.get("wp_doc_id") or "").strip()
+    if not wp_doc_id:
+        raise ValueError("invalid_expected_plan:wp_doc_id is required")
+    sent = expected_plan.get("wp_revision_no")
+    if sent is None:
+        raise ValueError("invalid_expected_plan:wp_revision_no is required")
+    try:
+        sent_no = int(sent)
+    except (TypeError, ValueError):
+        raise ValueError("invalid_expected_plan:wp_revision_no must be an integer")
+    plan_doc = db_documents.get_by_id(wp_doc_id)
+    if plan_doc is None:
+        raise ValueError(f"plan_not_found:{wp_doc_id}")
+    current_no = int(plan_doc.get("revision_no") or 0)
+    if sent_no != current_no:
+        raise PlanRevisionChanged(wp_doc_id, sent_no, current_no)
+    return plan_doc
+
+
+def _record_plan_application(
+    *,
+    plan_doc: dict,
+    owner_doc_id: str,
+    applied_by: Optional[str],
+    mode: Optional[str],
+    tag_before: str,
+    tag_after: str,
+    items: list[dict],
+    sequence_created: bool,
+) -> bool:
+    """계획을 워크플로에 부어 저장한 사실을 그 계획의 적용 이력에 남긴다 (0403 NR0004 F3).
+
+    이 기록은 지금까지 옛 ``/work-plan/apply`` 안에서만 만들어졌는데, 화면의 실제 적용
+    경로는 그 엔드포인트를 부르지 않는다. 그래서 사람이 계획을 워크플로에 부어 넣어도
+    ``last_application`` 과 ``/applications`` 는 영원히 "적용된 적 없음"이었고, "누가 어떤
+    계획 리비전을 언제 적용했는가"를 아무도 답할 수 없었다. 저장이 성공한 바로 그 자리에서
+    남긴다.
+
+    파일 추가가 실패해도 이미 저장된 시퀀스를 되돌리지는 않는다. 대신 성공 여부를 돌려주어
+    응답에 실린다 — 조용히 없어지는 것이 이 결함의 본체였다.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        from modules.flow_gate.services import work_plan_apply_service as wpa
+        from modules.flow_gate.services import work_plan_service as wp
+
+        wp_doc_id = str(plan_doc.get("doc_id") or "")
+        poured = [
+            int(item.get("item_seq") or 0) for item in items
+            if str(item.get("source_doc_id") or "") == wp_doc_id
+        ]
+        row = {
+            "applied_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "applied_by": applied_by or "unknown",
+            "wp_revision_no": int(plan_doc.get("revision_no") or 0),
+            "via": "sequence_edit",
+            "mode": mode or None,
+            "workflow_doc_id": owner_doc_id,
+            "workflow_changed": True,
+            "workflow_tag_before": tag_before,
+            "workflow_tag_after": tag_after,
+            "sequence_created": bool(sequence_created),
+            "poured_item_seqs": poured,
+            "row_count": len(items),
+        }
+        wpa.append_application(wp.plan_path_for_doc(plan_doc), wp_doc_id, row)
+        return True
+    except Exception:  # noqa: BLE001 — 시퀀스는 이미 저장되었다
+        _log.warning("plan application journal failed for %s", owner_doc_id, exc_info=True)
+        return False
+
+
+def _start_created_sequence(doc_id: str) -> None:
+    """계획으로 갓 만들어진 시퀀스를 decide_workflow 와 같은 출발선에 세운다 (F4).
+
+    시퀀스 행만 만들어 두면 문서는 아직 "워크플로 없음"으로 보이고, git 통합 프로젝트는
+    그룹 워크트리가 없어 첫 AI 실행에서 넘어진다. 결정 경로가 하는 두 가지를 그대로 한다.
+    """
+    doc = db_documents.get_by_id(doc_id)
+    if doc is None:
+        return
+    if doc.get("doc_review_status") != "wf_in_progress":
+        db_documents.update(doc_id, {"doc_review_status": "wf_in_progress"})
+    try:
+        if doc.get("project_id") and doc.get("group_id"):
+            from modules.flow_gate.services import git_service as _git_service
+
+            _git_service.ensure_worktree_async(
+                doc["project_id"],
+                doc.get("module") or "default",
+                doc["group_id"],
+            )
+    except Exception:  # noqa: BLE001 — 프로비저닝이 저장을 깨뜨려서는 안 된다
+        _log.warning("git worktree hook failed for %s", doc_id, exc_info=True)
+
+
 def edit_workflow_pending(
     doc_id: str,
     new_items: list[dict],
     force_encoding_reason: Optional[str] = None,
     expected_workflow_tag: Optional[str] = None,
+    expected_plan: Optional[dict] = None,
+    applied_by: Optional[str] = None,
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
@@ -1359,23 +1486,34 @@ def edit_workflow_pending(
     ValueError
         "sequence_not_decided:{doc_id}" — sequence not yet decided
     """
-    seq = db_wfseq.get_sequence_by_doc_id(doc_id)
-    if seq is None:
-        raise ValueError(f"sequence_not_decided:{doc_id}")
+    from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
 
-    existing = db_wfseq.get_sequence_items(seq["id"])
+    seq = db_wfseq.get_sequence_by_doc_id(doc_id)
+    existing = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+    tag_before = build_workflow_tag(seq, existing)
 
     # 0399 P0013 ② / L0011 §2.11 can_save: a caller that poured a work plan sends back the
     # fingerprint it was given, and the save only lands if the sequence still looks that way.
     # Callers that never poured send nothing and keep today's behaviour — this is not a
     # concurrency policy for every edit, it is the guard for the one path that computed its
     # rows against a snapshot taken minutes earlier.
-    if expected_workflow_tag:
-        from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
+    if expected_workflow_tag and tag_before != expected_workflow_tag:
+        raise SequenceChanged(doc_id, expected_workflow_tag, tag_before)
 
-        current_tag = build_workflow_tag(seq, existing)
-        if current_tag != expected_workflow_tag:
-            raise SequenceChanged(doc_id, expected_workflow_tag, current_tag)
+    # 0403 NR0004 F2 — 지문은 시퀀스만 본다. 계획 쪽이 움직였는지는 여기서 본다.
+    plan_doc = _verify_expected_plan(expected_plan)
+
+    # 0403 NR0004 F4 — 워크플로가 아직 없어도 계획으로 첫 시퀀스를 만든다.
+    # 후보 생성기는 시퀀스가 없어도 계획 행을 만들어 주는데 저장하는 쪽이 곧바로
+    # sequence_not_decided 로 거절했다. "계획을 먼저 세우고 그것으로 워크플로를 구성한다"는
+    # 사용 방식이 화면 끝에서 막혀 있었던 것이고, 옛 적용 서비스는 이미 할 수 있던 일이다.
+    # 계획을 부은 저장에만 연다: 평범한 [시퀀스 수정]은 여전히 결정된 워크플로를 요구한다.
+    create_sequence = seq is None
+    if create_sequence:
+        if plan_doc is None:
+            raise ValueError(f"sequence_not_decided:{doc_id}")
+        if not new_items:
+            raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
     assert_sequence_item_sources(new_items)
 
@@ -1410,12 +1548,21 @@ def edit_workflow_pending(
 
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"
+    if create_sequence:
+        # 물려받을 잠긴 줄이 없으니 시퀀스를 가진 문서의 종류를 따른다 (decide 경로와 같다).
+        _owner_doc = db_documents.get_by_id(doc_id)
+        doc_class = str((_owner_doc or {}).get("type_code") or doc_class).upper()
 
     # Avoid conflicts with existing item_seq: use numbers after the current max
-    max_seq = db_wfseq.get_max_item_seq(seq["id"])
+    max_seq = db_wfseq.get_max_item_seq(seq["id"]) if seq is not None else 0
 
     store = get_store()
     with store.transaction():
+        if create_sequence:
+            # 시퀀스를 만드는 것도 이 저장의 일부다. 라벨 거절 같은 뒤의 실패가 빈 시퀀스를
+            # 남기지 않도록, 검사가 모두 끝난 이 자리에서 같은 트랜잭션 안에서 만든다.
+            db_wfseq.insert_sequence(doc_id)
+            seq = db_wfseq.get_sequence_by_doc_id(doc_id)
         db_wfseq.delete_pending_items(seq["id"])
         for idx, item in enumerate(new_items):
             db_wfseq.insert_sequence_item(
@@ -1466,8 +1613,25 @@ def edit_workflow_pending(
                 if _c.get("type_code") == "AC" and _c.get("doc_review_status") not in _APPROVED:
                     db_documents.delete(_c["doc_id"])
 
-    return {
+    result = {
         "status": "updated",
         "doc_id": doc_id,
         "pending_count": len(new_items),
     }
+    if create_sequence:
+        result["sequence_created"] = True
+        _start_created_sequence(doc_id)
+    if plan_doc is not None:
+        result["wp_doc_id"] = plan_doc.get("doc_id")
+        result["wp_revision_no"] = int(plan_doc.get("revision_no") or 0)
+        result["application_recorded"] = _record_plan_application(
+            plan_doc=plan_doc,
+            owner_doc_id=doc_id,
+            applied_by=applied_by,
+            mode=str((expected_plan or {}).get("mode") or "") or None,
+            tag_before=tag_before,
+            tag_after=build_workflow_tag(db_wfseq.get_sequence_by_doc_id(doc_id), all_items),
+            items=all_items,
+            sequence_created=create_sequence,
+        )
+    return result

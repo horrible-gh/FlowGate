@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json as _json
 import re as _re
+import threading
 from functools import partial
 from typing import Any, Optional
 
@@ -117,32 +118,13 @@ def _load_doc(doc_id: str) -> dict:
 
 
 def _plan_path(doc: dict):
-    stored = (doc.get("file_path") or "").strip()
-    branch = (doc.get("branch") or "main").strip() or "main"
-    if stored:
-        resolved = storage_paths.resolve_storage_path(stored, doc.get("project_id"), branch=branch)
-        if resolved is not None:
-            return resolved
-        # The file may legitimately not exist yet (a rolled-back tree); fall through to
-        # the canonical location rather than reporting "not a work plan".
-        loose = storage_paths.resolve_storage_dir(stored, doc.get("project_id"))
-        if loose is not None:
-            return loose
-    return _canonical_path(doc)
+    # 0403 NR0004 F3 — 경로 계산은 work_plan_service 한 곳에 있다. 시퀀스 저장이 적용
+    # 이력을 남길 때도 같은 함수를 부르므로, 두 경로가 갈라질 자리가 없다.
+    return wp.plan_path_for_doc(doc)
 
 
 def _canonical_path(doc: dict):
-    group_id = doc.get("group_id") or ""
-    doc_id = doc.get("doc_id") or ""
-    doc_code = doc_id[len(group_id) + 1:] if doc_id.startswith(group_id + ".") else doc_id
-    return storage_paths.document_path(
-        project_id=doc.get("project_id"),
-        group_code=group_id,
-        doc_code=doc_code,
-        filename=wp.DOCUMENT_FILENAME,
-        module=doc.get("module") or "none",
-        branch=(doc.get("branch") or "main") or "main",
-    )
+    return wp.canonical_path_for_doc(doc)
 
 
 def _providers(project_id: str) -> list[dict]:
@@ -197,6 +179,50 @@ def _unreadable_response(doc: dict, exc: wp.WorkPlanUnreadable, locale: str) -> 
     return JSONResponse(status_code=409, content=content)
 
 
+# 0403 NR0004 F1 — 문서 하나의 저장을 한 번에 하나만 하게 하는 어드바이저리 잠금.
+# 문서 번호 예약(numbering_service._get_lock)과 같은 방식이고 같은 이유다: 이 서버가
+# 지키는 불변식 가운데 "두 요청이 동시에 들어와도 하나만 이긴다"에 해당하는 것들은 모두
+# 이 인프로세스 잠금에 기대고 있다. 잠금은 문서마다 따로여서, 서로 다른 계획을 저장하는
+# 요청끼리는 기다리지 않는다.
+_save_locks: dict[str, threading.Lock] = {}
+_save_locks_meta = threading.Lock()
+
+
+def _plan_save_lock(doc_id: str) -> threading.Lock:
+    with _save_locks_meta:
+        lock = _save_locks.get(doc_id)
+        if lock is None:
+            lock = threading.Lock()
+            _save_locks[doc_id] = lock
+        return lock
+
+
+def _revision_conflict_response(
+    doc: dict, locale: str, base_revision_no: Optional[int], current_revision: int,
+) -> JSONResponse:
+    """"이미 다른 사람이 저장했다"는 한 가지 대답 (P0009 §4.7 결정 7).
+
+    0403 NR0004 F1·F6: 저장 경로의 앞선 검사, 리비전 선점(CAS)에서 진 경우, 그리고 제안
+    경로의 낡은 기준까지 같은 본문을 쓴다. 화면은 이 code 하나만 보고 [새로 읽기] 띠를
+    띄우므로, 같은 사건이 자리마다 다른 모양으로 오면 안 된다.
+    """
+    conflict_copy = {
+        "ko": "다른 사람이 이미 저장했습니다. 새로 읽어 오세요.",
+        "en": "Someone else already saved this plan. Re-read it.",
+        "ja": "他の人が既に保存しました。読み直してください。",
+    }
+    return JSONResponse(status_code=409, content={
+        "code": "wp_revision_conflict",
+        "message": conflict_copy.get(locale, conflict_copy["ko"]),
+        "base_revision_no": base_revision_no,
+        "current_revision_no": current_revision,
+        # 결정 7: the other side's BODY is not shipped — there is no merge, so the
+        # screen has nothing to do with it. Who and when is what decides the next click.
+        "updated_by": _last_editor(doc),
+        "updated_at": doc.get("updated_at"),
+    })
+
+
 def _emit(doc: dict, operation: str, payload: dict, actor: str) -> None:
     """Best-effort screen refresh. A failed publish must never fail a saved write."""
     try:
@@ -234,6 +260,19 @@ def _read_view(doc: dict, body: dict) -> dict:
         meta = {}
     plan_meta = meta.get("work_plan") or {}
     applications = wpa.read_applications(_plan_path(doc), doc.get("doc_id") or "", limit=1)
+    # 0403 NR0004 F7 — 편집 가능 여부는 화면이 따로 계산하지 않는다.
+    # 화면은 doc_review_status == 'approved' 하나만 보고 표 전체를 잠갔고, 서버는 그룹
+    # 최종승인과 종료 상태를 봤다. 그래서 "화면은 잠겼는데 API/AI 는 고칠 수 있는" 계획과
+    # "화면은 열렸는데 저장이 422 로 막히는" 계획이 동시에 존재했다. 판정은 여기 한 곳에서
+    # 하고 화면은 그 답을 받아 쓴다.
+    final_approved = document_service.is_final_approved(doc)
+    editable = document_service.is_document_editable(doc, final_approved=final_approved)
+    if editable:
+        edit_locked_reason = None
+    elif final_approved:
+        edit_locked_reason = "final_approved"
+    else:
+        edit_locked_reason = "status"
     return {
         "ok": True,
         "doc_id": doc.get("doc_id"),
@@ -243,6 +282,8 @@ def _read_view(doc: dict, body: dict) -> dict:
         "parent_doc_id": doc.get("target_id") or doc.get("triggered_by"),
         "status": doc.get("status"),
         "doc_review_status": doc.get("doc_review_status"),
+        "editable": editable,
+        "edit_locked_reason": edit_locked_reason,
         "revision_no": doc.get("revision_no", 0),
         "stored_path": doc.get("file_path"),
         "origin": plan_meta.get("origin") or "human",
@@ -325,6 +366,13 @@ def create_work_plan(
     except wp.WorkPlanValidationError as exc:
         return _validation_response(exc, locale)
 
+    # 0403 NR0004 F8 — 제목 길이 검사는 문서 번호를 예약하기 전에 한다.
+    # 예약은 되돌릴 수 없다. 뒤에서 422 를 던지면 그 번호는 아무 문서도 갖지 않은 채 남아
+    # 그룹의 문서 번호에 구멍이 생긴다. 요청만 보고 판정할 수 있는 검사는 전부 예약 앞에.
+    requested_title = (body.title or "").strip()
+    if len(requested_title) > 100:
+        raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
+
     try:
         doc_code = numbering_service.reserve_document(
             group_id=group_id, doc_type=WORK_PLAN_TYPE, module=module,
@@ -346,9 +394,7 @@ def create_work_plan(
         module=module,
         branch=branch,
     )
-    title = (body.title or "").strip() or doc_id
-    if len(title) > 100:
-        raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
+    title = requested_title or doc_id
 
     try:
         wp.write_body_atomically(path, plan)
@@ -562,53 +608,70 @@ def save_work_plan(
     except wp.WorkPlanValidationError as exc:
         return _validation_response(exc, locale)
 
-    current_revision = doc.get("revision_no", 0) or 0
-    if body.base_revision_no != current_revision:
-        conflict_copy = {
-            "ko": "다른 사람이 이미 저장했습니다. 새로 읽어 오세요.",
-            "en": "Someone else already saved this plan. Re-read it.",
-            "ja": "他の人が既に保存しました。読み直してください。",
-        }
-        return JSONResponse(status_code=409, content={
-            "code": "wp_revision_conflict",
-            "message": conflict_copy.get(locale, conflict_copy["ko"]),
-            "base_revision_no": body.base_revision_no,
-            "current_revision_no": current_revision,
-            # 결정 7: the other side's BODY is not shipped — there is no merge, so the
-            # screen has nothing to do with it. Who and when is what decides the next click.
-            "updated_by": _last_editor(doc),
-            "updated_at": doc.get("updated_at"),
-        })
+    # 0403 NR0004 F1 — "읽고 · 확인하고 · 파일을 쓰고 · 리비전을 올린다"를 한 덩어리로 묶는다.
+    #
+    # 묶기 전에는 이랬다: 요청 두 개가 같은 리비전을 읽고 나란히 앞의 검사를 통과한 뒤, 둘 다
+    # 같은 정본 파일을 쓰고, 마지막에 DB 리비전 경쟁에서 한쪽만 이긴다. 진 쪽이 파일을 나중에
+    # 썼다면 사용자에게는 "저장 실패(409)"라고 답해 놓고 디스크의 정본은 그 사람의 본문이다.
+    # 이후의 읽기도 붓기도 전부 이 파일을 읽으므로, DB 리비전의 주인과 실제로 적용되는 계획
+    # 내용이 갈라진 채로 남는다.
+    #
+    # 잠금 방식은 문서 번호 예약(numbering_service)과 같다 — 문서 하나에 대한 인프로세스
+    # 어드바이저리 잠금. 잠금 안에서 리비전을 다시 읽으므로, 기다렸다 들어온 요청은 자기가
+    # 들고 있던 base_revision_no 가 이미 낡았다는 것을 파일에 손대기 전에 알게 된다.
+    with _plan_save_lock(doc_id):
+        fresh = db_docs.get_by_id(doc_id) or doc
+        current_revision = fresh.get("revision_no", 0) or 0
+        if body.base_revision_no != current_revision:
+            return _revision_conflict_response(
+                fresh, locale, body.base_revision_no, current_revision,
+            )
 
-    path = _plan_path(doc)
-    backup_rel: Optional[str] = None
-    if path.exists():
-        revisions_dir = path.parent / "revisions"
+        path = _plan_path(fresh)
+        backup_rel: Optional[str] = None
+        if path.exists():
+            revisions_dir = path.parent / "revisions"
+            try:
+                revisions_dir.mkdir(parents=True, exist_ok=True)
+                backup = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
+                backup.write_bytes(path.read_bytes())
+                backup_rel = storage_paths.to_storage_relative(backup, doc.get("project_id"))
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+        # 잠금 안이어도 리비전 증가를 파일 쓰기보다 앞에 둔다. 이 서버가 여러 프로세스로
+        # 뜨는 날에도 "리비전을 못 가져간 요청은 파일에 손대지 않는다"가 남는다.
+        now = now_iso()
+        store = get_store()
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
+             doc_id, current_revision],
+        )
+        refreshed = db_docs.get_by_id(doc_id)
+        if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
+            # 리비전을 가져가지 못했다. 파일은 이 요청이 손대지 않았고, 앞으로도 손대지 않는다.
+            return _revision_conflict_response(
+                refreshed or fresh, locale, body.base_revision_no, current_revision,
+            )
+        new_revision = refreshed["revision_no"]
+
         try:
-            revisions_dir.mkdir(parents=True, exist_ok=True)
-            backup = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-            backup.write_bytes(path.read_bytes())
-            backup_rel = storage_paths.to_storage_relative(backup, doc.get("project_id"))
+            wp.write_body_atomically(path, plan)
         except OSError as exc:
+            # 리비전만 오르고 본문은 옛것인 상태를 남기지 않는다. 되돌리기가 실패해도 파일은
+            # 여전히 이전 본문이므로 데이터는 일관적이다 — 리비전 번호만 한 칸 앞선다.
+            try:
+                store._execute(
+                    "UPDATE documents SET revision_no = ?, updated_at = ? "
+                    "WHERE doc_id = ? AND revision_no = ?",
+                    [current_revision, fresh.get("updated_at"), doc_id, new_revision],
+                )
+            except Exception as revert_exc:  # noqa: BLE001
+                import LogAssist.log as logger
+                logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-
-    try:
-        wp.write_body_atomically(path, plan)
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
-
-    now = now_iso()
-    store = get_store()
-    store._execute(
-        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-        "file_path = ? WHERE doc_id = ? AND revision_no = ?",
-        [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
-         doc_id, current_revision],
-    )
-    refreshed = db_docs.get_by_id(doc_id)
-    if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
-        raise HTTPException(status_code=409, detail="Concurrent modification conflict. Please retry.")
-    new_revision = refreshed["revision_no"]
 
     if backup_rel:
         try:
@@ -676,6 +739,15 @@ def suggest_work_plan(
     """Return a scoped, unsaved proposal from the project's existing assignment map."""
     locale = _locale(request)
     doc = _load_doc(doc_id)
+    # 0403 NR0004 F6 — 요청이 보낸 base_revision_no 를 실제로 검사한다.
+    # 이 라우트는 화면이 보내 준 범위를 디스크의 정본에 대고 검증한다. 그런데 화면은 아직
+    # 저장하지 않은 계획을 들고 있을 수 있어서, 화면에서 수량을 늘려 만든 정상적인 단계 키가
+    # 서버 정본에는 없어 wp_scope_invalid 로 거절되곤 했다. 반대로 화면에서 지운 단계는
+    # 서버에 남아 제안의 기준이 화면과 달랐다. 기준은 하나여야 한다 — 보낸 리비전이 서버의
+    # 리비전과 다르면 제안하지 않고 저장/새로 읽기를 먼저 하라고 답한다.
+    current_revision = doc.get("revision_no", 0) or 0
+    if body.base_revision_no is not None and body.base_revision_no != current_revision:
+        return _revision_conflict_response(doc, locale, body.base_revision_no, current_revision)
     try:
         plan = wp.load_body(_plan_path(doc))
     except wp.WorkPlanUnreadable as exc:

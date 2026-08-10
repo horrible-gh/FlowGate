@@ -503,7 +503,12 @@ export interface PourNotification {
 /** What [작업계획 적용] hands this dialog: a starting state, not a saved change. */
 export interface PourPayload {
   wpDocId: string
+  // 0403 NR0004 F2 — 이 창을 연 시점의 계획 리비전. 저장할 때 그대로 되돌려 보낸다.
+  wpRevisionNo: number
   wpShortCode: string
+  // 0403 NR0004 F4 — 시퀀스를 가진(또는 갖게 될) 문서. 워크플로가 아직 없는 그룹에서는
+  // 화면이 들고 있는 상위 문서가 비어 있을 수 있어, 후보 응답이 알려 준 주인을 쓴다.
+  workflowDocId: string | null
   mode: 'append' | 'replace_after'
   planStepCount: number
   rows: PourRow[]
@@ -1143,6 +1148,16 @@ async function save() {
       // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
       // snapshot to be stale against, and demanding one would break every other caller.
       expected_workflow_tag: pourSession.value?.workflowTag,
+      // 0403 NR0004 F2·F3·F4: 같은 규칙으로 붓기 저장에만 실린다. 지문은 시퀀스가 움직였는지만
+      // 보므로, 워크플로를 건드리지 않은 채 계획만 바뀐 경우를 잡지 못했다. 이 값이 그 판정의
+      // 근거이고, 동시에 "이 저장이 어느 계획을 부은 것인가"를 적용 이력에 남기는 근거다.
+      expected_plan: pourSession.value
+        ? {
+            wp_doc_id: pourSession.value.wpDocId,
+            wp_revision_no: pourSession.value.wpRevisionNo,
+            mode: pourSession.value.mode,
+          }
+        : undefined,
     })
     showToast(t('main.workflow_edit_modal.toast_saved'), 'success')
     pourSession.value = null
@@ -1152,6 +1167,10 @@ async function save() {
   } catch (e: any) {
     if (e?.response?.data?.error === 'sequence_changed') {
       showToast(t('main.work_plan_pour.error_sequence_changed'), 'error')
+    } else if (e?.response?.data?.error === 'wp_changed') {
+      // 0403 NR0004 F2: 워크플로는 그대로인데 계획이 바뀌었다. 지금 화면의 줄은 낡은 계획에서
+      // 나온 것이므로 덮어쓰지 않고, 다시 열어 최신 계획을 부으라고 말한다.
+      showToast(t('main.work_plan_pour.error_wp_changed'), 'error')
     } else {
       showToast(t('main.workflow_edit_modal.error_save'), 'error')
     }

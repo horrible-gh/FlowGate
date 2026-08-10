@@ -34,6 +34,7 @@ from modules.flow_gate.services.workflow_decision_service import (
     request_sequence_edit,
     get_workflow_sequence,
     edit_workflow_pending,
+    PlanRevisionChanged,
     continuation_kickoff_after_decide,
     normalize_continuation_instruction_mode,
     normalize_continuation_auto_approve_item_seqs,
@@ -173,6 +174,11 @@ class EditSequenceBodyRequest(BaseModel):
     # an ordinary [시퀀스 수정] save, and absent means "do not compare" — the check exists for
     # the pour path, whose rows were computed against a sequence read some time ago.
     expected_workflow_tag: Optional[str] = None
+    # 0403 NR0004 F2·F3·F4: { wp_doc_id, wp_revision_no, mode? } — 이 저장이 어느 작업계획을
+    # 어느 리비전으로 부은 것인지. 지문과 같은 규칙으로 붓기 저장에만 실린다. 실리면
+    # ① 그 사이 계획이 바뀌었는지 검사하고 ② 계획의 적용 이력에 기록을 남기며
+    # ③ 워크플로가 아직 없을 때 첫 시퀀스를 만들 수 있게 한다.
+    expected_plan: Optional[dict] = None
 
 
 class SequenceEditRequestBody(BaseModel):
@@ -790,6 +796,20 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             new_items=[item.model_dump() for item in body.items],
             force_encoding_reason=body.force_encoding_reason,
             expected_workflow_tag=body.expected_workflow_tag,
+            expected_plan=body.expected_plan,
+            applied_by=auth.get("issued_to"),
+        )
+    except PlanRevisionChanged as exc:
+        # 0403 NR0004 F2: 워크플로는 그대로여도 계획이 움직였다. 열어 둔 대화상자의 낡은
+        # 행을 시퀀스에 넣는 대신, 다시 열어 최신 계획을 부으라고 답한다.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "wp_changed",
+                "wp_doc_id": exc.wp_doc_id,
+                "expected_wp_revision_no": exc.expected,
+                "current_wp_revision_no": exc.current,
+            },
         )
     except SequenceChanged as exc:
         # 0399 P0013 ②: do not overwrite. The rows in hand were built against a sequence
@@ -822,6 +842,17 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             return JSONResponse(
                 status_code=400,
                 content={"error": "sequence_not_decided", "doc_id": doc_id_val},
+            )
+        # 0403 NR0004 F2: expected_plan 이 가리키는 계획이 없다 / 형식이 아니다.
+        if msg.startswith("plan_not_found:"):
+            return JSONResponse(
+                status_code=404,
+                content={"error": "plan_not_found", "wp_doc_id": msg.split(":", 1)[1]},
+            )
+        if msg.startswith("invalid_expected_plan:"):
+            return JSONResponse(
+                status_code=422,
+                content={"error": "invalid_expected_plan", "detail": msg.split(":", 1)[1]},
             )
         # 0391 T0005 §5-5/§5-6: a corrupted step label is now REJECTED (was: silently
         # swapped for the type name). The service raises the full explanation — why it

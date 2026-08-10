@@ -1061,6 +1061,13 @@ export default {
       advisory_lead: '작업계획은 기록·제안입니다. 이대로 실행이 강제되지 않습니다.',
       advisory_notice: 'AI가 제안한 수량·배정을 받아 두거나, 사용자가 몇 개를 쓸지 적어 두는 문서입니다. 실제로 돌릴 때는 연속 작업 대화상자가 이 값을 미리 채운 상태로 열리고, 거기서 단계를 빼거나 더해서 실행할 수 있습니다.',
       locked_after_approval: '승인된 작업계획입니다. 고치려면 반려 후 수정 흐름을 타야 합니다.',
+      // 0403 NR0004 F5·F7 — 잠금 사유는 서버 판정을 그대로 옮긴다.
+      locked_after_final_approval: '그룹 최종 승인이 끝나 더 고칠 수 없습니다.',
+      locked_by_status: '이 문서 상태에서는 고칠 수 없습니다.',
+      unsaved_changes: '저장하지 않은 변경이 있습니다. AI에 맡기면 이 값들이 서버에 저장된 계획으로 덮어써집니다.',
+      ai_needs_save: '저장한 뒤에 AI에 맡길 수 있습니다.',
+      last_application: '마지막 적용: {who} · {when} · 계획 r{rev}',
+      last_application_none: '아직 이 계획을 워크플로에 부은 적이 없습니다.',
       review_pending_hint: '검수 결과를 기다리는 중입니다. 승인·반려는 문서 아래 액션바에서 처리합니다.',
       status_pending_review: '검수대기',
       status_approved: '승인완료',
@@ -2174,6 +2181,8 @@ export default {
       decided_empty: '모든 단계가 삭제되었습니다. [시퀀스 수정]으로 단계를 다시 추가하세요.',
       time_machine_hint: '이 단계로 되돌리기',
       time_machine_return_hint: '이 단계로 복귀 (원위치로)',
+      // 0403 NR0004 F4 — 워크플로가 아직 없는 그룹의 작업계획 화면.
+      no_sequence_yet: '이 그룹의 워크플로가 아직 없습니다. 위 [작업계획 적용]을 누르면 이 계획으로 첫 시퀀스를 만들 수 있습니다.',
     },
     // 0399 D0010/L0011 — [작업계획 적용]. 문구를 T 단계에서 정하기로 두 설계서가 함께
     // 미뤄 둔 항목이라, 화면에 나가는 말은 전부 여기 한자리에 모아 둔다.
@@ -2222,6 +2231,7 @@ export default {
       notify_paired_note_dropped: '지시 단계에 이미 멘트가 있어 결과 단계의 멘트 {n}개는 버렸습니다.',
       notify_server_assembled_note: '서버가 스스로 만드는 단계의 멘트 {n}개는 버렸습니다.',
       error_sequence_changed: '다른 곳에서 시퀀스가 바뀌었습니다. 창을 닫고 다시 열어 주세요.',
+      error_wp_changed: '이 창을 연 뒤 작업계획이 바뀌었습니다. 창을 닫고 다시 열어 최신 계획을 부어 주세요.',
     },
     // 0325 TR0007 rev1 — 최종 승인 사이드바의 [변경사항 열기] 가 여는 변경사항 열람 화면.
     group_changes: {
