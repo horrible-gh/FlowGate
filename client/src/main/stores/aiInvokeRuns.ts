@@ -401,6 +401,16 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const bootstrapPending = ref(true)
   let persistDirty = false
 
+  // 0401 NR0003 SS3 원인 3 / T0004 작업 5: the server's lease can outlive this process's
+  // own view of a run (a 'lost' card, or a lease another process holds), so the button
+  // gate needs the lease's own truth too -- not just ACTIVE_PHASES. Keyed by group id;
+  // a group with no key here has no known active lease. Single-flight + a per-group
+  // generation counter (T0004 작업5 주의) so a slow response can never overwrite a
+  // newer one, and the button never flickers while a fetch is in flight.
+  const groupLeaseLive = reactive<Record<string, boolean>>({})
+  const leaseFetchInFlight = new Set<string>()
+  const leaseFetchGeneration = new Map<string, number>()
+
   // Batched through the 1s clock: the finished set changes in bursts (a sweep can drop
   // several cards at once) and sessionStorage writes are synchronous.
   function schedulePersist(): void {
@@ -811,10 +821,55 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (removed) schedulePersist()
   }
 
+  async function refreshGroupLease(groupId: string): Promise<void> {
+    // Single-flight per group: a caller that fires this on every render (e.g. a watcher
+    // on groupId) must not pile up overlapping requests (T0004 작업5 주의).
+    if (!groupId || leaseFetchInFlight.has(groupId)) return
+    leaseFetchInFlight.add(groupId)
+    const generation = (leaseFetchGeneration.get(groupId) ?? 0) + 1
+    leaseFetchGeneration.set(groupId, generation)
+    try {
+      const project = groupId.split('.', 1)[0]
+      const response = await getRequest<any>('/api/v1/ai-invoke/leases', { project })
+      // A newer call for this group already landed (or superseded this one) — a stale
+      // response must never overwrite a fresher verdict (T0004 작업5 주의, 세대 확인).
+      if (leaseFetchGeneration.get(groupId) !== generation) return
+      const items: Record<string, any>[] = Array.isArray(response.data?.items) ? response.data.items : []
+      const mine = items.find(item => item?.group_id === groupId)
+      if (mine) groupLeaseLive[groupId] = Boolean(mine.run_live)
+      else delete groupLeaseLive[groupId]
+    } catch {
+      // Best effort: keep whatever verdict was already known rather than guessing.
+    } finally {
+      leaseFetchInFlight.delete(groupId)
+    }
+  }
+
+  async function releaseGroupLease(groupId: string): Promise<void> {
+    await postRequest<any>(`/api/v1/ai-invoke/leases/${encodeURIComponent(groupId)}/release`, {})
+    delete groupLeaseLive[groupId]
+    void refreshGroupLease(groupId)
+  }
+
+  function isGroupLeaseLocked(groupId: string | null | undefined): boolean {
+    if (!groupId) return false
+    return groupId in groupLeaseLive
+  }
+
+  function isGroupLeaseOrphaned(groupId: string | null | undefined): boolean {
+    if (!groupId) return false
+    return groupLeaseLive[groupId] === false
+  }
+
   function isGroupRunning(groupId: string | null | undefined): boolean {
     if (!groupId) return false
     const phase = runsByGroup[groupId]?.phase
-    return phase != null && ACTIVE_PHASES.includes(phase)
+    if (phase != null && ACTIVE_PHASES.includes(phase)) return true
+    // 0401 NR0003 SS3 원인 3: a 'lost' (or never-tracked) card reads as "not busy" from
+    // the run registry alone, but the group can still sit under a lease -- live in
+    // another process, or orphaned. Either way the server will 423 a mutation, so the
+    // button must already read as locked.
+    return isGroupLeaseLocked(groupId)
   }
 
   function isGroupInlineVisible(groupId: string | null | undefined): boolean {
@@ -973,6 +1028,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     sweepFinishedCards,
     isGroupRunning,
     isGroupInlineVisible,
+    isGroupLeaseLocked,
+    isGroupLeaseOrphaned,
+    refreshGroupLease,
+    releaseGroupLease,
     elapsedMsFor,
   }
 })

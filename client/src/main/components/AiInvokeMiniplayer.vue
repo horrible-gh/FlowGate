@@ -117,6 +117,17 @@
           >
             {{ stopReasonText(entry) }}
           </div>
+          <!-- 0401 NR0003 / T0004 작업 3: a lost card's lease can outlive the process that
+               acquired it -- [제거] only clears the CARD, never the server-side lock, so the
+               group stayed stuck even after the card was gone. This calls the actual release
+               endpoint and shows the reason inline when it can't (still-live / already gone). -->
+          <div
+            v-if="releaseErrors[entry.groupId]"
+            class="aiv-mini__meta aiv-mini__release-error"
+            data-test="ai-miniplayer-release-error"
+          >
+            {{ releaseErrors[entry.groupId] }}
+          </div>
           <div v-if="isAwaitingQ(entry)" class="aiv-mini__meta aiv-mini__meta--q">
             {{ t('main.ai_miniplayer.awaiting_q_line') }}
           </div>
@@ -178,6 +189,17 @@
               <AppIcon name="prohibit" />
             </button>
             <button
+              v-if="entry.phase === 'lost'"
+              type="button"
+              class="btn btn-warning btn-sm aiv-mini__release-btn"
+              data-test="ai-miniplayer-release-lease"
+              :disabled="busy.has(entry.groupId)"
+              @click="doReleaseLease(entry)"
+            >
+              <AppIcon name="lock" />
+              {{ t('main.ai_miniplayer.btn_release_lease') }}
+            </button>
+            <button
               v-if="entry.phase === 'finished' || entry.phase === 'lost'"
               type="button"
               class="btn btn-ghost btn-sm"
@@ -229,6 +251,7 @@ const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 const busy = reactive(new Set<string>())
 const titles = reactive<Record<string, string>>({})
+const releaseErrors = reactive<Record<string, string>>({})
 
 const entries = computed<AiInvokeRunEntry[]>(() =>
   Object.values(store.runsByGroup).slice().sort(compareRunEntries),
@@ -389,6 +412,27 @@ async function doCancel(entry: AiInvokeRunEntry): Promise<void> {
     await store.cancel(entry.groupId)
   } catch {
     showToast(t('main.ai_invoke_dialog.error_cancel_failed'), 'danger')
+  } finally {
+    busy.delete(entry.groupId)
+  }
+}
+
+async function doReleaseLease(entry: AiInvokeRunEntry): Promise<void> {
+  busy.add(entry.groupId)
+  delete releaseErrors[entry.groupId]
+  try {
+    await store.releaseGroupLease(entry.groupId)
+    store.dismiss(entry.groupId)
+  } catch (error: any) {
+    const status = error?.response?.status
+    if (status === 404) {
+      // Already gone (expired / released elsewhere) -- the goal state is already true.
+      store.dismiss(entry.groupId)
+    } else if (status === 409) {
+      releaseErrors[entry.groupId] = t('main.ai_miniplayer.error_release_lease_still_live')
+    } else {
+      releaseErrors[entry.groupId] = t('main.ai_miniplayer.error_release_lease_failed')
+    }
   } finally {
     busy.delete(entry.groupId)
   }
@@ -769,6 +813,12 @@ watch(entries, list => {
 .aiv-mini__meta--q {
   color: var(--warning);
   font-weight: 600;
+}
+
+.aiv-mini__release-error {
+  color: var(--danger);
+  white-space: normal;
+  line-height: 1.45;
 }
 
 .aiv-mini__actions {

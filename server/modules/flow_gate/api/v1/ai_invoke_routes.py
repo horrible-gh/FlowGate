@@ -665,6 +665,68 @@ def list_ai_invoke_runs(
     return JSONResponse(status_code=200, content=result)
 
 
+@router.get("/leases")
+def list_ai_invoke_leases(project: str, request: Request):
+    """Locked-group inventory for the manual-unlock screen (0401 T0004 작업 2).
+    Declared ahead of GET /{run_id} so "leases" is never read as a run id."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_project_id(project)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "project", "msg": str(exc)}])
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    from modules.flow_gate.db import group_ai_leases as db_leases
+
+    items = []
+    for lease in db_leases.list_active_by_project(project):
+        run_id = str(lease.get("run_id") or "")
+        items.append({
+            "group_id": lease.get("group_id"),
+            "run_id": run_id,
+            "state": lease.get("state"),
+            "acquired_at": lease.get("acquired_at"),
+            "heartbeat_at": lease.get("heartbeat_at"),
+            "expires_at": lease.get("expires_at"),
+            "run_live": ai_invoke_service.is_run_live(run_id),
+        })
+    return JSONResponse(status_code=200, content={"ok": True, "project": project, "items": items})
+
+
+@router.post("/leases/{group_id}/release")
+def release_ai_invoke_lease(group_id: str, request: Request):
+    """Manual escape hatch for a lease its owning process can never release again
+    (0401 T0004 작업 2). Declared ahead of GET /{run_id} for the same path-shadowing
+    reason as GET /leases above."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    project = group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    try:
+        result = ai_invoke_service.force_release_group_lease(group_id)
+    except HTTPException as exc:
+        return _err(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
 @router.get("/{run_id}")
 def get_ai_invoke_status(run_id: str, request: Request):
     auth = _require_user(request)

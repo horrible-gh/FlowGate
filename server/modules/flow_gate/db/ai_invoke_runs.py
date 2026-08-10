@@ -167,6 +167,28 @@ def upsert(row: dict[str, Any]) -> None:
     )
 
 
+def max_serial_for_date(date_str: str) -> int:
+    """Highest NNNNNN serial already used by a FINISHED run whose run_id starts with
+    ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 작업 7).
+
+    Paired with group_ai_leases.max_serial_for_date (which covers a run still open,
+    with no row here yet) to floor the in-memory run-id counter after a restart --
+    otherwise a fresh process reissues a serial an earlier process already used
+    today, and upsert() being keyed on run_id means the earlier row is silently
+    overwritten at the next finalize.
+    """
+    rows = get_store()._fetch_all(
+        "SELECT run_id FROM ai_invoke_runs WHERE run_id LIKE ?", [f"aiv_{date_str}_%"]
+    )
+    highest = 0
+    for row in rows:
+        try:
+            highest = max(highest, int(str(row["run_id"]).rsplit("_", 1)[-1]))
+        except (TypeError, ValueError):
+            continue
+    return highest
+
+
 def get(run_id: str) -> Optional[dict]:
     """Detail lookup (DB0008 4 Q1) -- only consulted when the run is not in memory."""
     row = get_store()._fetch_one(

@@ -85,13 +85,33 @@ def principal_from_request(request: Request) -> MutationPrincipal:
     return worker_principal(token)
 
 
+def _lease_run_live(run_id: Optional[str]) -> bool:
+    """0401 NR0003 SS3 원인 3 / T0004 작업 4: is the lease's OWN run still alive?
+
+    Shares ai_invoke_service.is_run_live so the 423 body and the screen it drives
+    can never again say two different things. Deferred import -- mutation_policy is
+    imported by app startup, ai_invoke_service is not (see _record_denied_mutation).
+    Fails toward True ("assume it's real") on any lookup trouble, so an inability to
+    answer never turns into an invitation to force-unlock a run that is actually busy.
+    """
+    if not run_id:
+        return False
+    try:
+        from modules.flow_gate.services import ai_invoke_service
+        return ai_invoke_service.is_run_live(str(run_id))
+    except Exception:
+        return True
+
+
 def _locked(lease: dict) -> MutationPolicyError:
+    run_id = lease.get("run_id")
     return MutationPolicyError(
         423,
         "GROUP_AI_RUN_LOCKED",
         "Modification not allowed while an AI run owns this group.",
         group_id=lease.get("group_id"),
-        run_id=lease.get("run_id"),
+        run_id=run_id,
+        run_live=_lease_run_live(run_id),
     )
 
 
@@ -249,10 +269,16 @@ _PERSONAL_PATHS = (
 
 
 def is_policy_control_path(path: str) -> bool:
-    """Run start/resume and cancel/pause own the lease lifecycle, so never self-block."""
+    """Run start/resume, cancel/pause, and the manual lease release all own the lease
+    lifecycle, so none of them may self-block (0401 T0004 작업 2 adds the last one --
+    a lease's own release request must not be rejected BY that same lease)."""
     if "ai-invoke" not in path:
         return False
-    return bool(re.search(r"/(?:start|resume)$", path) or re.search(r"/(?:cancel|pause)$", path))
+    return bool(
+        re.search(r"/(?:start|resume)$", path)
+        or re.search(r"/(?:cancel|pause)$", path)
+        or re.search(r"/leases/[^/]+/release$", path)
+    )
 
 
 def classify_mutation_route(path: str, methods: set[str]) -> tuple[MutationResource, str]:
