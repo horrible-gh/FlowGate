@@ -181,6 +181,33 @@ describe('useFlowGateSse document content bridge', () => {
     window.removeEventListener('fg:document_content_changed', listener)
   })
 
+  it('bridges answer SSE with the server remaining-item count', () => {
+    const answered = vi.fn()
+    const refresh = vi.fn()
+    window.addEventListener('fg:q_answered', answered)
+    window.addEventListener('fg:qa_refresh', refresh)
+    const wrapper = mount(Harness, { global: { plugins: [i18n] } })
+
+    MockEventSource.instance?.emit('qna_answer_registered', {
+      project: 'test',
+      doc_id: 'test.none.0002.0004-D',
+      payload: {
+        doc_id: 'test.none.0002.0004-D',
+        unanswered_count: 1,
+      },
+    })
+
+    expect((answered.mock.calls[0][0] as CustomEvent).detail).toMatchObject({
+      doc_id: 'test.none.0002.0004-D',
+      unanswered_count: 1,
+    })
+    expect(refresh).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+    window.removeEventListener('fg:q_answered', answered)
+    window.removeEventListener('fg:qa_refresh', refresh)
+  })
+
   it('surfaces a distinct error when the open viewer fails to reload', () => {
     const wrapper = mount(Harness, { global: { plugins: [i18n] } })
 

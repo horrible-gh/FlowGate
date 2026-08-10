@@ -182,6 +182,30 @@ def test_ai_question_uses_system_user_and_ai_answer_nulls_author(store):
     assert row["author_id"] is None                  # AI → author_id NULL
 
 
+def test_open_q_doc_ids_uses_real_unanswered_container_items(store):
+    from modules.flow_gate.services import ai_invoke_service, q_service
+
+    added = q_service.add_questions(
+        DOC,
+        [{"body": "first?"}, {"body": "second?"}],
+        asker_kind="human",
+        created_by="u1",
+    )
+    assert ai_invoke_service._open_q_doc_ids("p.none.0001") == [DOC]
+
+    q_service.register_answer(
+        DOC, added["added_item_ids"][0], "first answer",
+        author_kind="human", author_id="u1",
+    )
+    assert ai_invoke_service._open_q_doc_ids("p.none.0001") == [DOC]
+
+    q_service.register_answer(
+        DOC, added["added_item_ids"][1], "second answer",
+        author_kind="human", author_id="u1",
+    )
+    assert ai_invoke_service._open_q_doc_ids("p.none.0001") == []
+
+
 def test_requestion_reopens_done_container(store):
     from modules.flow_gate.services import q_service
     r1 = q_service.add_questions(DOC, [{"body": "q1"}], asker_kind="human", created_by="u1")

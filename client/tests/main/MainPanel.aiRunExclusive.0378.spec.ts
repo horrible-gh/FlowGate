@@ -66,7 +66,8 @@ describe('MainPanel AI-run read-only coexistence contract (0398)', () => {
     expect(panel).toContain('await closeFullView()')
     expect(panel).toContain('onRejectDialogClosed()')
     expect(panel).toContain("new CustomEvent('fg:document_content_changed'")
-    expect(panel).toContain("new CustomEvent('fg:q_registered'")
+    expect(panel).toContain("new CustomEvent('fg:qa_refresh'")
+    expect(panel).not.toContain("new CustomEvent('fg:q_registered'")
     expect(panel).toContain('textViewerRefs[docId]?.loadContent?.()')
   })
 

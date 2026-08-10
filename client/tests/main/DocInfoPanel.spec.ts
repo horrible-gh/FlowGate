@@ -316,10 +316,10 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
   })
 
   // 0059 B0001 rework: a worker registering a Q on the doc on screen arrives via SSE
-  // (qna_q_registered → fg:q_registered window event). The panel must refetch live so the
+  // (qna_q_registered → fg:qa_refresh window event). The panel must refetch live so the
   // new Q surfaces WITHOUT F5. Without the listener it stayed at the mount-time fetch.
   //
-  // Note: fg:q_registered is a global window event and earlier tests leave panels mounted,
+  // Note: fg:qa_refresh is a global window event and earlier tests leave panels mounted,
   // so each live-refresh test uses a UNIQUE docId to isolate which panel reacts. We count
   // only GETs to this doc's own endpoint, not the shared mock's total call count.
   function mountWithDoc(docId: string) {
@@ -329,23 +329,23 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     return getRequest.mock.calls.filter((c) => c[0] === `/api/v1/q/${docId}`).length
   }
 
-  it('refetches the container on a matching fg:q_registered event (live, no F5)', async () => {
+  it('refetches the container on a matching fg:qa_refresh event (live, no F5)', async () => {
     const docId = 'q.live.match.0001-T'
     const wrapper = mountWithDoc(docId)
     await flushPromises()
     expect(getCallsFor(docId)).toBe(1) // mount fetch
-    window.dispatchEvent(new CustomEvent('fg:q_registered', { detail: { doc_id: docId } }))
+    window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail: { doc_id: docId } }))
     await flushPromises()
     expect(getCallsFor(docId)).toBe(2) // live refetch
     wrapper.unmount()
   })
 
-  it('ignores fg:q_registered for a different document', async () => {
+  it('ignores fg:qa_refresh for a different document', async () => {
     const docId = 'q.live.ignore.0001-T'
     const wrapper = mountWithDoc(docId)
     await flushPromises()
     expect(getCallsFor(docId)).toBe(1)
-    window.dispatchEvent(new CustomEvent('fg:q_registered', { detail: { doc_id: 'some.other.doc-T' } }))
+    window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail: { doc_id: 'some.other.doc-T' } }))
     await flushPromises()
     expect(getCallsFor(docId)).toBe(1) // unchanged — not this doc
     wrapper.unmount()
@@ -357,7 +357,7 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     await flushPromises()
     expect(getCallsFor(docId)).toBe(1)
     wrapper.unmount()
-    window.dispatchEvent(new CustomEvent('fg:q_registered', { detail: { doc_id: docId } }))
+    window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail: { doc_id: docId } }))
     await flushPromises()
     expect(getCallsFor(docId)).toBe(1) // listener gone — no extra fetch
   })

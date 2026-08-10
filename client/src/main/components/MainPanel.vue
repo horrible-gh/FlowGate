@@ -1865,7 +1865,7 @@ watch(activeGroupRunActive, async (running, wasRunning) => {
     window.dispatchEvent(new CustomEvent('fg:document_content_changed', {
       detail: { doc_id: docId, refresh_key: `ai-run-finished:${Date.now()}` },
     }))
-    window.dispatchEvent(new CustomEvent('fg:q_registered', { detail: { doc_id: docId } }))
+    window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail: { doc_id: docId } }))
     void textViewerRefs[docId]?.loadContent?.()
   }
 })

@@ -31,9 +31,11 @@ def test_register_answer_human_transitions_done_when_all_answered():
         patch.object(q_service.db_question_items, "list_unanswered", return_value=[]),
         patch.object(q_service.db_questions, "update_status") as update_status,
         patch.object(q_service.db_answers, "list_by_question_item", return_value=[{"id": 21}]),
+        patch.object(q_service, "_notify_q_answered") as notify_answered,
     ):
         result = q_service.register_answer(
             doc_id=doc_id, item_id=10, body="Answer", author_kind="human", author_id="usr_test",
+            notify_audience="usr_test",
         )
 
     assert result == {
@@ -46,6 +48,10 @@ def test_register_answer_human_transitions_done_when_all_answered():
     )
     inc.assert_called_once_with(pk=10)
     update_status.assert_called_once_with(doc_id, "done")
+    notify_answered.assert_called_once_with(
+        audience="usr_test", doc_id=doc_id, project_id=None, item_id=10,
+        unanswered_count=0,
+    )
 
 
 def test_register_answer_ai_nulls_author_id_and_stays_pending():

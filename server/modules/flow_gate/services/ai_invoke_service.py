@@ -41,6 +41,7 @@ from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import questions as db_questions
+from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -3551,6 +3552,8 @@ def get_status(run_id: str) -> dict:
         "deadline_at": run.get("deadline_at"),
         "attempts_used": int(run.get("attempts_used") or 0),
         "attempts_max": run.get("attempts_max"),
+        # Server truth: an explicit empty array clears stale client state on the next poll.
+        "pending_q_doc_ids": _open_q_doc_ids(run["group_id"]),
     }
 
 
@@ -4112,17 +4115,20 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
 
 
 def _open_q_doc_ids(group_id: str) -> list[str]:
-    """Open Q documents of the group — the live source for pending_q_doc_ids
-    (DB0010 §4: derived, never stored; answering flips the Q doc to 'answered')."""
+    """Group documents that still have at least one unanswered container item."""
     try:
-        docs = db_docs.get_documents_by_group_id(group_id)
+        pending: set[str] = set()
+        for doc in db_docs.get_documents_by_group_id(group_id):
+            doc_id = doc.get("doc_id")
+            if not doc_id:
+                continue
+            container = db_questions.get_container_by_doc(doc_id)
+            if container and db_question_items.list_unanswered(container["id"]):
+                pending.add(doc_id)
+        return sorted(pending)
     except Exception:
         logger.warning("open-Q lookup failed for %s", group_id, exc_info=True)
         return []
-    return sorted(
-        d["doc_id"] for d in docs
-        if (d.get("type_code") or "").upper() == "Q" and (d.get("status") or "") == "open"
-    )
 
 
 def active_all(user_id: str) -> dict:

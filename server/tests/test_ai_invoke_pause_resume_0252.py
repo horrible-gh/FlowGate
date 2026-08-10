@@ -787,7 +787,8 @@ class TestActiveAll:
         assert GROUP not in fake_env["paused"].rows
 
 
-    def test_scopes_runs_by_issuer_and_derives_pending_q(self, fake_env):
+    def test_scopes_runs_by_issuer_and_derives_pending_q(
+            self, fake_env, monkeypatch):
         res = _start(fake_env, cmd=_slow_cmd())
         try:
             other_group = "flowgate.default.9999"
@@ -796,24 +797,35 @@ class TestActiveAll:
                 paused_by="usr_admin", paused_at="2026-07-17T00:00:00+09:00",
                 continuation_target_seq=5, docs_target=4, docs_reached=2,
             )
+            pending_doc = f"{other_group}.0005-D"
+            answered_doc = f"{other_group}.0003-D"
             fake_env["docs"].docs = [
-                {"doc_id": f"{other_group}.0005-Q", "seq": 5, "type_code": "Q",
-                 "status": "open"},
-                {"doc_id": f"{other_group}.0003-Q", "seq": 3, "type_code": "Q",
-                 "status": "answered"},
-                {"doc_id": f"{other_group}.0002-D", "seq": 2, "type_code": "D",
-                 "status": "open"},
+                {"doc_id": pending_doc, "seq": 5, "type_code": "D", "status": "open"},
+                {"doc_id": answered_doc, "seq": 3, "type_code": "D", "status": "open"},
             ]
+            containers = {
+                pending_doc: {"id": 5, "doc_id": pending_doc},
+                answered_doc: {"id": 3, "doc_id": answered_doc},
+            }
+            monkeypatch.setattr(
+                svc.db_questions, "get_container_by_doc", containers.get,
+            )
+            monkeypatch.setattr(
+                svc.db_question_items,
+                "list_unanswered",
+                lambda container_id: [{"id": 50}] if container_id == 5 else [],
+            )
 
             mine = svc.active_all("usr_admin")
             assert [r["run_id"] for r in mine["runs"]] == [res["run_id"]]
             assert mine["runs"][0]["doc_ref"] == DOC_REF
+            assert "pending_q_doc_ids" in mine["runs"][0]
             assert len(mine["paused"]) == 1
             paused = mine["paused"][0]
             assert paused["group_id"] == other_group
             assert paused["docs_reached"] == 2
-            # Only the OPEN Q surfaces — answered ones are excluded live (DB0010 §4).
-            assert paused["pending_q_doc_ids"] == [f"{other_group}.0005-Q"]
+            # Host type is D: pending state comes from the real Q container/items model.
+            assert paused["pending_q_doc_ids"] == [pending_doc]
 
             theirs = svc.active_all("usr_other")
             assert theirs["runs"] == []

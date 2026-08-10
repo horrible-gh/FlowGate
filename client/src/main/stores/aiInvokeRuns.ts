@@ -844,11 +844,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!run.pendingQDocIds.includes(docId)) run.pendingQDocIds.push(docId)
   }
 
-  function trackQuestionAnswered(docId: string): void {
+  function trackQuestionAnswered(docId: string, hasUnanswered = false): void {
     const groupId = groupIdFromDocId(docId)
     if (!groupId) return
     const run = runsByGroup[groupId]
-    if (!run) return
+    if (!run || hasUnanswered) return
     run.pendingQDocIds = run.pendingQDocIds.filter(id => id !== docId)
   }
 
@@ -888,8 +888,13 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function onQAnswered(event: Event): void {
-    const docId = (event as CustomEvent<{ doc_id?: string }>).detail?.doc_id
-    if (docId) trackQuestionAnswered(String(docId))
+    const detail = (event as CustomEvent<{
+      doc_id?: string
+      unanswered_count?: number
+    }>).detail
+    if (detail?.doc_id) {
+      trackQuestionAnswered(String(detail.doc_id), Number(detail.unanswered_count ?? 0) > 0)
+    }
   }
 
   function onRecoverySignal(): void {

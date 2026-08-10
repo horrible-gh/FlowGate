@@ -386,21 +386,19 @@ async function saveAnswer(item: QuestionItem) {
   }
 }
 
-// Live refresh: same gap as DocInfoPanel — a Q registered on the doc this viewer shows
-// arrives via SSE but the viewer only fetched on mount / qId switch, so it needed F5
-// (0059 B0001). Refetch when the SSE-bridged window event targets this q-doc.
-function _onQRegistered(e: Event) {
+// Keep this legacy viewer fresh without conflating refreshes with semantic Q events.
+function _onQaRefresh(e: Event) {
   const detail = (e as CustomEvent).detail as { doc_id?: string } | undefined
   if (detail?.doc_id && detail.doc_id === props.qId) fetchQ(props.qId)
 }
 
 onMounted(() => {
   fetchQ(props.qId)
-  window.addEventListener('fg:q_registered', _onQRegistered)
+  window.addEventListener('fg:qa_refresh', _onQaRefresh)
 })
 watch(() => props.qId, fetchQ)
 onBeforeUnmount(() => {
-  window.removeEventListener('fg:q_registered', _onQRegistered)
+  window.removeEventListener('fg:qa_refresh', _onQaRefresh)
   closeTimers.forEach((timer) => window.clearTimeout(timer))
   closeTimers.clear()
 })

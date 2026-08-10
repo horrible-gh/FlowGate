@@ -7,6 +7,7 @@ class EventType(str, Enum):
     NOTIFICATION_NEW_ACTION_CANDIDATE     = "notification_new_action_candidate"
     EDIT_MARKER_ADDED                     = "edit_marker_added"
     QNA_Q_REGISTERED                      = "qna_q_registered"   # D022 §3-3 Phase 3 added
+    QNA_ANSWER_REGISTERED                 = "qna_answer_registered"
     DOC_REVIEW_STATUS_CHANGED             = "doc_review_status_changed"  # M026 §8-1 Phase 5 added
     AI_REVIEW_ARRIVED                     = "ai_review_arrived"  # inbox action:review push — notify reviewers a verdict landed
     TEST_RUN_STARTED                      = "test_run_started"

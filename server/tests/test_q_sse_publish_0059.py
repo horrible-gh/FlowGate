@@ -48,6 +48,29 @@ async def test_notify_q_registered_delivers_from_worker_thread():
 
 
 @pytest.mark.asyncio
+async def test_notify_q_answered_delivers_remaining_item_count_from_worker_thread():
+    audience = "answer-user-0402"
+    q = await publisher.subscribe(audience)
+    publisher._main_loop = asyncio.get_running_loop()
+    try:
+        await asyncio.to_thread(
+            q_service._notify_q_answered,
+            audience,
+            "flowgate.default.0402.0004-T",
+            "flowgate",
+            42,
+            1,
+        )
+        ev = await asyncio.wait_for(q.get(), timeout=2.0)
+        assert getattr(ev.event_type, "value", ev.event_type) == "qna_answer_registered"
+        assert ev.payload["doc_id"] == "flowgate.default.0402.0004-T"
+        assert ev.payload["item_id"] == 42
+        assert ev.payload["unanswered_count"] == 1
+    finally:
+        await publisher.unsubscribe(audience, q)
+
+
+@pytest.mark.asyncio
 async def test_notify_q_registered_is_audience_scoped():
     """Not delivered to other users' queues (PM-only, not a broadcast)."""
     pm = await publisher.subscribe("pm-scoped")

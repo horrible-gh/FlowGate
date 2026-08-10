@@ -427,9 +427,9 @@ describe('aiInvokeRuns store', () => {
     )
   })
 
-  it('correlates registered and answered questions to the group card', () => {
+  it('keeps refresh signals out of Q state and clears only after every item is answered', () => {
     const groupId = 'flowgate.default.2010'
-    const qDocId = `${groupId}.0005-Q`
+    const qDocId = `${groupId}.0005-D`
     store.trackStarted({ run_id: 'run-q', group_id: groupId, doc_ref: 'r', mode: 'continuous' })
 
     store.trackQuestionRegistered(qDocId)
@@ -437,13 +437,38 @@ describe('aiInvokeRuns store', () => {
     expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([qDocId])
     expect(store.awaitingQCount).toBe(1)
 
+    // AI-run completion refreshes Q&A panels but is not a semantic registration.
+    window.dispatchEvent(new CustomEvent('fg:qa_refresh', { detail: { doc_id: qDocId } }))
+    expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([qDocId])
+
     // A Q for a group without a card is ignored (the document panel owns it).
-    store.trackQuestionRegistered('flowgate.default.9999.0001-Q')
+    store.trackQuestionRegistered('flowgate.default.9999.0001-D')
     expect(store.runsByGroup['flowgate.default.9999']).toBeUndefined()
 
-    store.trackQuestionAnswered(qDocId)
+    store.trackQuestionAnswered(qDocId, true)
+    expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([qDocId])
+    store.trackQuestionAnswered(qDocId, false)
     expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([])
     expect(store.awaitingQCount).toBe(0)
+  })
+
+  it('clears stale pending Q state when polling returns an explicit empty array', async () => {
+    const groupId = 'flowgate.default.2011'
+    const docId = `${groupId}.0004-D`
+    store.trackStarted({ run_id: 'run-poll', group_id: groupId, doc_ref: docId })
+    store.trackQuestionRegistered(docId)
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        run_id: 'run-poll',
+        group_id: groupId,
+        status: 'running',
+        pending_q_doc_ids: [],
+      },
+    } as any)
+
+    await store.refresh(groupId)
+
+    expect(store.runsByGroup[groupId].pendingQDocIds).toEqual([])
   })
   it.each(['complete', 'none'] as const)(
     'keeps an exited hop_handoff live regardless of %s outcome',
