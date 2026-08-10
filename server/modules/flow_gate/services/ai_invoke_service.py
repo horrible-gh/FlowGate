@@ -177,6 +177,9 @@ _RESOLVE_TOOL_SCHEMA = {
 _runs: dict[str, dict] = {}
 _runs_lock = threading.Lock()
 _run_counter = 0
+# 0401 NR0003 §4 / T0004 작업 7: which UTC date the counter above was last floored
+# against the durable stores for. None until the first _next_run_id() call.
+_run_counter_floor_date: Optional[str] = None
 
 # Per-group resume serialization (0252 L0009 §2.4 step 1): the FIRST line of defense
 # against double resume. The atomic paused-row delete (delete_and_return) is the second.
@@ -295,9 +298,30 @@ def _require_group_worktree(project_id: str, module: str, group_id: str, branch:
 
 
 def _next_run_id() -> str:
-    global _run_counter
+    global _run_counter, _run_counter_floor_date
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     with _runs_lock:
+        if _run_counter_floor_date != date_str:
+            # 0401 NR0003 §4 / T0004 작업 7: this counter starts at 0 every process, so
+            # the first run_id a fresh process mints today can already belong to a run
+            # an earlier process issued -- ai_invoke_runs.upsert() is keyed on run_id, so
+            # that earlier row would be silently overwritten the next time THIS process's
+            # same-numbered run finalizes. Floor once per date against whatever the
+            # durable stores already show as today's highest serial: finished runs AND
+            # leases still open on one (an open lease has no ai_invoke_runs row yet).
+            # Best-effort -- a lookup failure keeps the counter as-is rather than
+            # blocking a run from starting at all.
+            try:
+                from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+                floor = max(
+                    db_runs.max_serial_for_date(date_str),
+                    db_group_ai_leases.max_serial_for_date(date_str),
+                )
+                _run_counter = max(_run_counter, floor)
+            except Exception:
+                logger.warning("run_id floor lookup failed for %s", date_str, exc_info=True)
+            _run_counter_floor_date = date_str
         _run_counter += 1
         return f"aiv_{date_str}_{_run_counter:06d}"
 
@@ -313,6 +337,104 @@ def _active_run_for_group(group_id: str) -> Optional[dict]:
 def get_run_record(run_id: str) -> Optional[dict]:
     with _runs_lock:
         return _runs.get(run_id)
+
+
+def is_run_live(run_id: str) -> bool:
+    """Is *run_id* an admission this process still tracks and has not finished?
+
+    The one definition of "alive" shared by the lease-owner mutation gate
+    (``mutation_policy._locked``), the manual lease-release guard below, and the
+    ``GET /ai-invoke/leases`` route — a duplicated check here is exactly how the
+    screen and the server told two different stories before (0401 NR0003 §3 원인 3).
+    """
+    run = get_run_record(run_id)
+    return run is not None and run.get("status") != "finished"
+
+
+def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
+    """Give a dead lease's run a durable end record, if it doesn't already have one
+    (0401 NR0003 / T0004 작업 1~2). A lease row alone (group/run/token/timestamps) has
+    no doc_ref or mode — both live on the token it was issued with — so this looks
+    the token up. Best-effort: a run this cannot explain still gets its lease
+    cleared by the caller either way, it just won't carry the extra explanation.
+    """
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    run_id = str(lease_row.get("run_id") or "")
+    if not run_id or db_runs.get(run_id) is not None:
+        return
+    doc_ref, mode = "", "single"
+    token_id = lease_row.get("token_id")
+    if token_id:
+        token = db_tokens.get_by_id(token_id)
+        if token:
+            doc_ref = token.get("doc_ref") or ""
+            mode = "continuous" if token.get("continuation_target_seq") is not None else "single"
+    stamp = now_iso()
+    started = lease_row.get("acquired_at") or stamp
+    db_runs.upsert({
+        "run_id": run_id,
+        "group_id": lease_row["group_id"],
+        "project_id": lease_row["project_id"],
+        "doc_ref": doc_ref,
+        "mode": mode,
+        "outcome": "none",
+        "end_reason": end_reason,
+        "resumable": False,
+        "started_at": started,
+        "finished_at": stamp,
+        "created_at": started,
+        "updated_at": stamp,
+    })
+
+
+def startup_recover_leases() -> int:
+    """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 작업 1).
+
+    Called once from ``server/startup.py``, before the app accepts traffic. Every
+    lease still on the table at that instant is dead: this process's own ``_runs``
+    registry starts empty, so nothing it has admitted yet could hold one. Bound to
+    the process's own start time so a multi-process deployment cannot reclaim a
+    lease a sibling process is mid-admission on.
+    """
+    before = now_iso()
+    victims = db_group_ai_leases.reclaim_orphaned(before)
+    for row in victims:
+        try:
+            _record_orphaned_lease_run(row, "orphaned_by_restart")
+        except Exception:
+            logger.warning(
+                "orphaned-lease end record failed for run %s", row.get("run_id"), exc_info=True
+            )
+    if victims:
+        logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
+    return len(victims)
+
+
+def force_release_group_lease(group_id: str) -> dict:
+    """Manually release a group's lease from the blocked screen (0401 T0004 작업 2).
+
+    Refuses (and leaves the lease untouched) when the lease's run is still live —
+    the same :func:`is_run_live` gate everything else uses, so this can never cut
+    off a run that is actually working. Only a lease whose run this process cannot
+    find, or has already finished, is orphaned and eligible.
+    """
+    lease = db_group_ai_leases.get(group_id)
+    if lease is None:
+        raise _http_error(404, "lease_not_found", "No AI run lease is held for this group.",
+                          group_id=group_id)
+    run_id = str(lease.get("run_id") or "")
+    if is_run_live(run_id):
+        raise _http_error(409, "run_still_live",
+                          "This group's AI run is still active; it cannot be force-released.",
+                          group_id=group_id, run_id=run_id)
+    released = db_group_ai_leases.release(group_id, run_id)
+    if released:
+        try:
+            _record_orphaned_lease_run(lease, "orphaned_by_manual_release")
+        except Exception:
+            logger.warning("orphaned-lease end record failed for run %s", run_id, exc_info=True)
+    return {"ok": True, "group_id": group_id, "run_id": run_id, "released": bool(released)}
 
 
 # ── 0359 L0007 §2.10.2~3: run lookup that survives a restart (bundle 4) ──────────
@@ -1031,14 +1153,37 @@ def start_run(
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
     run_id = _next_run_id()
     lease_chain_id = chain_id or run_id
-    lease = db_group_ai_leases.acquire(
-        group_id=group_id,
-        project_id=project_id,
-        run_id=run_id,
-        chain_id=lease_chain_id,
-        action_scope=action_scope,
-        worker_identity=issued_to,
-    )
+    try:
+        lease = db_group_ai_leases.acquire(
+            group_id=group_id,
+            project_id=project_id,
+            run_id=run_id,
+            chain_id=lease_chain_id,
+            action_scope=action_scope,
+            worker_identity=issued_to,
+        )
+    except db_group_ai_leases.RunIdCollision:
+        # 0401 NR0003 §4 / T0004 작업 7: two runs minted the same today-serial in the same
+        # instant -- genuinely rare even without the floor in _next_run_id, and that floor
+        # makes it rarer still. One retry with a freshly minted id is enough for something
+        # this rare; a second hit is a real systemic problem, so it surfaces as a clean
+        # 409 instead of retrying forever or falling through as a raw DB error.
+        run_id = _next_run_id()
+        lease_chain_id = chain_id or run_id
+        try:
+            lease = db_group_ai_leases.acquire(
+                group_id=group_id,
+                project_id=project_id,
+                run_id=run_id,
+                chain_id=lease_chain_id,
+                action_scope=action_scope,
+                worker_identity=issued_to,
+            )
+        except db_group_ai_leases.RunIdCollision:
+            raise _http_error(
+                409, "run_id_collision",
+                "실행 번호 발급이 충돌했습니다. 다시 시도해 주세요.",
+            )
     if lease is None:
         active = db_group_ai_leases.get_active(group_id) or {}
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",

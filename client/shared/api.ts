@@ -395,7 +395,17 @@ export const localizeApiError = (error: AxiosError): AxiosError => {
   const code = record?.error?.code ?? record?.code ?? record?.detail?.error?.code
   if (error.response?.status !== 423 && code !== 'GROUP_AI_RUN_LOCKED') return error
 
-  const detail = String(i18n.global.t('main.review_action_bar.ai_running_hint'))
+  // 0401 NR0003 SS3 원인 3 / T0004 작업 4: "진행 중" is only true when the lease's OWN run
+  // is still live. A lease left behind by a dead process gets a sentence that tells the
+  // user what to do about it instead of asking them to wait for something that will never
+  // finish. run_live is absent on any 423 this build doesn't recognize -- default to the
+  // old wait message, same fail-toward-safe choice mutation_policy makes server-side.
+  const runLive = record?.error?.run_live
+  const detail = String(i18n.global.t(
+    runLive === false
+      ? 'main.review_action_bar.ai_lease_orphaned_hint'
+      : 'main.review_action_bar.ai_running_hint',
+  ))
   if (record) {
     // Preserve the structured server contract for programmatic callers while keeping the
     // legacy detail field consumed by existing UI error surfaces during the transition.

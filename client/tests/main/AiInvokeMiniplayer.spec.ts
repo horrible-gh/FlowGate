@@ -771,4 +771,92 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
     expect(reloaded.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--done')
     reloaded.unmount()
   })
+
+  // 0401 NR0003 / T0004 작업 3: a lost card's server-side lease can outlive the process
+  // that acquired it -- [제거] only ever cleared the CARD, never that lock, so the group
+  // stayed stuck even with the card gone. [잠금 해제] must call the real release endpoint.
+  describe('releasing a lost card lease', () => {
+    function mountLostCard() {
+      const wrapper = mountPlayer()
+      const store = useAiInvokeRunsStore()
+      store.trackStarted({ run_id: 'run-lost-1', group_id: 'flowgate.default.3030', doc_ref: 'r' })
+      store.markLost('flowgate.default.3030', 'run-lost-1')
+      return { wrapper, store }
+    }
+
+    it('shows [잠금 해제] on a lost card but not on a finished one', async () => {
+      const { wrapper, store } = mountLostCard()
+      store.trackStarted({ run_id: 'run-fin-1', group_id: 'flowgate.default.3031', doc_ref: 'r' })
+      store.trackFinished({ run_id: 'run-fin-1', group_id: 'flowgate.default.3031', outcome: 'complete' })
+      await flushPromises()
+      await openPopover(wrapper)
+
+      const releaseButtons = wrapper.findAll('[data-test="ai-miniplayer-release-lease"]')
+      expect(releaseButtons).toHaveLength(1)
+      expect(releaseButtons[0].text()).toContain(t('main.ai_miniplayer.btn_release_lease'))
+      // [제거] must still be offered on BOTH cards -- releasing the lease is additive.
+      expect(wrapper.findAll('[data-test="ai-miniplayer-remove"]')).toHaveLength(2)
+      wrapper.unmount()
+    })
+
+    it('calls the release endpoint and drops the card on success', async () => {
+      postRequest.mockResolvedValue({ data: { ok: true, released: true } })
+      const { wrapper, store } = mountLostCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
+      await flushPromises()
+
+      expect(postRequest).toHaveBeenCalledWith(
+        '/api/v1/ai-invoke/leases/flowgate.default.3030/release', {},
+      )
+      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('shows the still-live reason inline on a 409 and keeps the card', async () => {
+      postRequest.mockRejectedValue({ response: { status: 409, data: { code: 'run_still_live' } } })
+      const { wrapper, store } = mountLostCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
+        .toBe(t('main.ai_miniplayer.error_release_lease_still_live'))
+      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      wrapper.unmount()
+    })
+
+    it('treats a 404 (already gone) as success and drops the card', async () => {
+      postRequest.mockRejectedValue({ response: { status: 404 } })
+      const { wrapper, store } = mountLostCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
+      await flushPromises()
+
+      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('shows a generic failure message on an unexpected error', async () => {
+      postRequest.mockRejectedValue(new Error('network down'))
+      const { wrapper, store } = mountLostCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
+        .toBe(t('main.ai_miniplayer.error_release_lease_failed'))
+      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      wrapper.unmount()
+    })
+  })
 })

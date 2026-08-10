@@ -36,10 +36,24 @@
               class="sfb-status-pill ai-arrived"
             ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_arrived') }}</span>
             <span
-              v-if="isGroupBusy"
+              v-if="isGroupBusy && !isLeaseOrphaned"
               class="sfb-status-pill ai-running"
               :title="t('main.review_action_bar.ai_running_hint')"
             ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_running') }}</span>
+            <span
+              v-if="isLeaseOrphaned"
+              class="sfb-status-pill ai-lease-orphaned"
+              :title="t('main.review_action_bar.ai_lease_orphaned_hint')"
+            >
+              <AppIcon name="warning" /> {{ t('main.review_action_bar.ai_lease_orphaned') }}
+              <button
+                type="button"
+                class="sfb-lease-release-btn"
+                data-test="action-bar-release-lease"
+                :disabled="releasingLease"
+                @click.stop="onReleaseLeaseClick"
+              >{{ t('main.review_action_bar.btn_release_lease') }}</button>
+            </span>
           </template>
           <template v-else>
             <span class="sfb-mono">{{ docRef }}</span>
@@ -472,6 +486,27 @@ const gitAuxOpen = ref(false)
 // the same predicate the server enforces as its per-group 409 run_in_progress.
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 const isGroupBusy = computed(() => aiInvokeRunsStore.isGroupRunning(props.groupId))
+// 0401 NR0003 SS3 / T0004 작업 5: the lease-fetch drives whether the pill above reads
+// "AI 실행중" or "잠금 남음" -- fetched per group, single-flight + generation-guarded in
+// the store itself, so this watcher can fire freely without causing flicker.
+const isLeaseOrphaned = computed(() => aiInvokeRunsStore.isGroupLeaseOrphaned(props.groupId))
+const releasingLease = ref(false)
+
+watch(() => props.groupId, groupId => {
+  if (groupId) void aiInvokeRunsStore.refreshGroupLease(groupId)
+}, { immediate: true })
+
+async function onReleaseLeaseClick(): Promise<void> {
+  if (!props.groupId || releasingLease.value) return
+  releasingLease.value = true
+  try {
+    await aiInvokeRunsStore.releaseGroupLease(props.groupId)
+  } catch {
+    showToast(t('main.review_action_bar.error_release_lease_failed'), 'danger')
+  } finally {
+    releasingLease.value = false
+  }
+}
 
 // flowgate.default.0162 §3.1 "본선": git finalize state for an AC final-approval doc.
 // Fetched from the same per-group endpoint the GitFinalizePanel uses, so the choice
@@ -1146,6 +1181,31 @@ onBeforeUnmount(() => {
   background: #e0f2fe;
   color: #0284c7;
   border: 1px solid #bae6fd;
+}
+
+.sfb-status-pill.ai-lease-orphaned {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.sfb-lease-release-btn {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: .68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sfb-lease-release-btn:disabled {
+  opacity: .6;
+  cursor: default;
 }
 
 .sfb-hint {

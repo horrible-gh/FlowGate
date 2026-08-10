@@ -63,6 +63,14 @@
             </template>
             <div v-if="startError" class="aiv-error">
               <AppIcon name="warning" /> {{ startError }}
+              <button
+                v-if="lockedGroupId"
+                type="button"
+                class="btn btn-warning btn-sm aiv-release-lease-btn"
+                data-test="ai-invoke-dialog-release-lease"
+                :disabled="releasingLease"
+                @click="onReleaseLeaseClick"
+              >{{ t('main.review_action_bar.btn_release_lease') }}</button>
             </div>
         </div>
 
@@ -81,7 +89,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
@@ -144,6 +152,10 @@ const aiInvokeStore = useAiInvokeRunsStore()
 const mode = ref<'single' | 'continuous'>('single')
 const starting = ref(false)
 const startError = ref('')
+// 0401 NR0003 §3 원인 4 / T0004 작업 6: a group whose 409 named a dead run_id -- the lease's
+// group id, so the inline [잠금 해제] button below has something to release.
+const lockedGroupId = ref<string | null>(null)
+const releasingLease = ref(false)
 const picker = ref<WorkflowStepPickerState>({
   loading: true,
   errorKey: null,
@@ -209,6 +221,36 @@ function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
   starting.value = false
   startError.value = ''
+  lockedGroupId.value = null
+}
+
+// 0401 NR0003 §3 원인 4: the 409 body always names a run_id, whether or not it is still
+// alive -- the server-side end record (T0004 작업 1~2) means a dead one now answers with a
+// persisted status='finished' payload instead of 404, so both cases are readable here.
+async function checkRunLive(runId: string): Promise<boolean> {
+  try {
+    const res = await getRequest<any>(`/api/v1/ai-invoke/${encodeURIComponent(runId)}`)
+    const status = res.data?.status
+    return status === 'running' || status === 'pause_requested'
+  } catch (e: any) {
+    // Unknown run_id ⇒ definitely not live. Any other failure fails toward "live" (the
+    // pre-T0004 behaviour) so a transient lookup error cannot dead-end the dialog either.
+    return e?.response?.status !== 404
+  }
+}
+
+async function onReleaseLeaseClick(): Promise<void> {
+  if (!lockedGroupId.value || releasingLease.value) return
+  releasingLease.value = true
+  try {
+    await aiInvokeStore.releaseGroupLease(lockedGroupId.value)
+    lockedGroupId.value = null
+    startError.value = ''
+  } catch {
+    startError.value = t('main.ai_invoke_dialog.error_release_lease_failed')
+  } finally {
+    releasingLease.value = false
+  }
 }
 
 async function start() {
@@ -274,16 +316,24 @@ async function start() {
     const status = e?.response?.status
     const data = e?.response?.data ?? {}
     if (status === 409 && data.code === 'run_in_progress' && data.run_id) {
-      // Adopt the already-running run instead of erroring (scenario 8 restore).
       const groupId = data.group_id ?? aiInvokeGroupId(props.project, props.module, props.group)
-      aiInvokeStore.trackStarted({
-        run_id: data.run_id,
-        group_id: groupId,
-        doc_ref: props.docRef,
-        mode: mode.value,
-      })
-      void aiInvokeStore.refresh(groupId)
-      emit('update:visible', false)
+      // 0401 NR0003 §3 원인 4: the 409 body always names A run_id, live or not -- adopting it
+      // unconditionally closed this dialog onto a run that was already gone, and the very next
+      // poll turned it back into the '실행 기록이 소실되었습니다' card this run was trying to
+      // escape. Verify liveness first; only a genuinely live run gets adopted (scenario 8 restore).
+      if (await checkRunLive(data.run_id)) {
+        aiInvokeStore.trackStarted({
+          run_id: data.run_id,
+          group_id: groupId,
+          doc_ref: props.docRef,
+          mode: mode.value,
+        })
+        void aiInvokeStore.refresh(groupId)
+        emit('update:visible', false)
+      } else {
+        lockedGroupId.value = groupId
+        startError.value = t('main.ai_invoke_dialog.error_run_in_progress_orphaned')
+      }
     } else if (status === 409 && data.code === 'no_provider_registered') {
       // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
       // to switch on, so point at the seed script instead of at a toggle.
@@ -388,5 +438,9 @@ watch(
   background: var(--danger-light, #fee2e2);
   border-radius: var(--r-sm);
   padding: 8px 10px;
+}
+.aiv-release-lease-btn {
+  display: block;
+  margin-top: 6px;
 }
 </style>

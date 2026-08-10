@@ -8,6 +8,20 @@ from typing import Optional
 
 from .connection import get_store, now_iso
 
+
+class RunIdCollision(Exception):
+    """A caller tried to stamp a run_id onto a lease row that another row already
+    carries (0401 NR0003 §4 / T0004 작업 7).
+
+    The INSERT's ON CONFLICT target is group_id only (one lease per group), but
+    run_id also carries its own UNIQUE index (migration 077 idx_group_ai_leases_run)
+    -- a colliding run_id would otherwise fall through as a raw, unhandled DB
+    integrity error, which is exactly "AI 호출 자체가 서버 오류로 죽습니다" from the
+    report. Callers (ai_invoke_service.start_run) catch this and retry with a
+    freshly minted run_id instead of letting the driver exception surface as a 500.
+    """
+
+
 ACQUIRING_TTL_SEC = 120
 ACTIVE_GRACE_SEC = 300
 ACTIVE_HEARTBEAT_TTL_SEC = (4 * 60 * 60) + ACTIVE_GRACE_SEC
@@ -87,6 +101,33 @@ def recover_expired(group_id: Optional[str] = None) -> int:
     return len(rows)
 
 
+def reclaim_orphaned(before: str) -> list[dict]:
+    """Reclaim every lease acquired before *before* -- the startup dead-lease sweep
+    (flowgate.default.0401 NR0003 SS6-1 / T0004 작업 1).
+
+    Unlike :func:`recover_expired`, this ignores ``expires_at``: a lease can sit
+    orphaned for its whole 4h05m TTL before that check would ever touch it. It is
+    safe to be this aggressive only because the caller passes the CALLING process's
+    own start time -- the in-memory run registry that could still legitimately own a
+    lease starts empty every process, so anything acquired earlier belongs to a
+    process that is gone. A lease acquired at or after *before* is left alone (another
+    process may be mid-admission for it). Returns the reclaimed rows (group/run/
+    acquired_at and the rest) so the caller can explain each one's disappearance.
+    """
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            victims = [dict(row) for row in _memory.values() if str(row.get("acquired_at") or "") < before]
+            for row in victims:
+                _memory.pop(row["group_id"], None)
+            return victims
+    store = get_store()
+    rows = store._fetch_all("SELECT * FROM group_ai_leases WHERE acquired_at < ?", [before])
+    if rows:
+        store._execute("DELETE FROM group_ai_leases WHERE acquired_at < ?", [before])
+    return rows
+
+
 def get_active(group_id: str) -> Optional[dict]:
     recover_expired(group_id)
     row = get(group_id)
@@ -117,6 +158,11 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
             if current and _expired(current):
                 _memory.pop(group_id, None)
                 current = None
+            if any(row.get("run_id") == run_id for gid, row in _memory.items() if gid != group_id):
+                # 0401 NR0003 §4 / T0004 작업 7: mirrors the DB-path pre-check below so the
+                # in-memory contract direct service tests run against (PYTEST_CURRENT_TEST
+                # forces _using_memory() True) matches production's.
+                raise RunIdCollision(run_id)
             if current:
                 if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
                     return None
@@ -138,6 +184,13 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
         if current and _expired(current):
             store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, current["run_id"]])
             current = None
+        # 0401 NR0003 §4 / T0004 작업 7: neither write below is protected against the
+        # run_id UNIQUE index (migration 077) -- only group_id has an ON CONFLICT target.
+        # Check first so a colliding run_id (two runs minted the same today-serial) comes
+        # back as RunIdCollision for the caller to retry, instead of an unhandled DB
+        # integrity error surfacing as a raw 500 out of the AI-invoke start path.
+        if store._fetch_one("SELECT 1 AS x FROM group_ai_leases WHERE run_id = ?", [run_id]) is not None:
+            raise RunIdCollision(run_id)
         if current:
             if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
                 return None
@@ -241,6 +294,41 @@ def release(group_id: str, run_id: str) -> bool:
         return False
     get_store()._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, run_id])
     return get(group_id) is None
+
+
+def max_serial_for_date(date_str: str) -> int:
+    """Highest NNNNNN serial already claimed by an OPEN lease whose run_id starts
+    with ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 작업 7).
+
+    A run still admitting or running has no ai_invoke_runs row yet (that table is
+    written once, at finalize), but its lease already reserves the serial -- so the
+    in-memory run-id counter must be floored against this too, not just the
+    finished-run table, or a fresh process could still mint an id that collides
+    with a run that is mid-flight in another process.
+    """
+    prefix = f"aiv_{date_str}_"
+    if _using_memory():
+        with _memory_lock:
+            _sync_test_scope()
+            highest = 0
+            for row in _memory.values():
+                run_id = str(row.get("run_id") or "")
+                if run_id.startswith(prefix):
+                    try:
+                        highest = max(highest, int(run_id.rsplit("_", 1)[-1]))
+                    except ValueError:
+                        continue
+            return highest
+    rows = get_store()._fetch_all(
+        "SELECT run_id FROM group_ai_leases WHERE run_id LIKE ?", [f"{prefix}%"]
+    )
+    highest = 0
+    for row in rows:
+        try:
+            highest = max(highest, int(str(row["run_id"]).rsplit("_", 1)[-1]))
+        except (TypeError, ValueError):
+            continue
+    return highest
 
 
 def list_active_by_project(project_id: str) -> list[dict]:

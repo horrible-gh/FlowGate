@@ -23,6 +23,23 @@ def preload_singletons():
         logger.warning(f"[startup] test-run worker bootstrap failed: {exc}")
 
 
+def recover_ai_invoke_leases():
+    """0401 NR0003 / T0004 작업 1: clear AI-run group leases orphaned by a restart.
+
+    Every lease still in the table when this runs belongs to a process that no
+    longer exists (this process's live-run registry starts empty), so it is safe
+    to reclaim unconditionally at this point in the bootstrap sequence.
+    """
+    try:
+        from modules.flow_gate.services import ai_invoke_service
+
+        reclaimed = ai_invoke_service.startup_recover_leases()
+        if reclaimed:
+            logger.info(f"[startup] reclaimed {reclaimed} orphaned AI-run lease(s)")
+    except Exception as exc:
+        logger.warning(f"[startup] AI-run lease recovery failed: {exc}")
+
+
 def recover_git_sessions():
     """0115 L0006 E8: restore/clean merge-conflict sessions and stale git locks."""
     try:
@@ -54,5 +71,6 @@ def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
     preload_singletons()
+    recover_ai_invoke_leases()
     recover_git_sessions()
     encrypt_ai_provider_keys()
