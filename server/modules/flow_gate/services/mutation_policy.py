@@ -230,7 +230,9 @@ async def resolve_request_group(
     doc_id = _find(body, {"doc_id", "doc_ref", "document_id", "target_doc_id"})
     if not doc_id:
         doc_id = _path_candidate(path, ("documents", "document", "workflow", "queries"))
-    resolved = group_id_from_doc_id(doc_id)
+    # 0394 T0016 항목 4: 문서 한 건을 DB 에서 읽는다 — 위 dispatch 주석과 같은 이유로
+    # 이벤트 루프 밖에서 돌린다.
+    resolved = await anyio.to_thread.run_sync(group_id_from_doc_id, doc_id)
     if resolved:
         return resolved
 
@@ -314,11 +316,18 @@ class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.method.upper() not in MUTATION_METHODS or is_policy_control_path(request.url.path):
             return await call_next(request)
-        principal = principal_from_request(request)
+        # 0394 T0016 항목 4: 아래 두 단계는 DB 를 동기로 읽고(토큰 조회, 리스 조회) 쓴다
+        # (하트비트). dispatch 는 **모든** 변경 요청이 지나는 async 함수라, 그 읽기를 그대로
+        # 부르면 그 시간 동안 서버의 다른 모든 요청이 함께 멈춘다 — 0275/0279 가 라우트
+        # 핸들러에서 없앤 바로 그 결함이, 트래픽 전량이 지나는 자리에 남아 있었다.
+        # (그 가드가 `@router.*` 만 보고 미들웨어는 보지 않았기 때문에 드러나지 않았다.)
+        # 워커 스레드로 넘긴다 — 판정 결과도 순서도 그대로이고, 도는 스레드만 달라진다.
+        principal = await anyio.to_thread.run_sync(principal_from_request, request)
         group_id = await resolve_request_group(request, principal)
         if group_id:
             try:
-                assert_group_mutation_allowed(
+                await anyio.to_thread.run_sync(
+                    assert_group_mutation_allowed,
                     group_id,
                     principal,
                     f"{request.method.upper()} {request.url.path}",

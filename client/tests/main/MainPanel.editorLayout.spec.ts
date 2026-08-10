@@ -1,3 +1,7 @@
+// (A) 유지 — 0394 T0016 / NR0003 §6.3.
+// 이 파일이 읽는 것은 CSS 선언과, ".document-modal 규칙이 세 시트를 통틀어 한 벌뿐"이라는
+// 전역 불변식이다(두 벌이 되는 순간 편집기와 변경사항 창이 조용히 갈라진다). jsdom은 스타일을
+// 적용하지 않으므로 어느 쪽도 마운트로는 관찰할 수 없다.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'

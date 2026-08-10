@@ -1,14 +1,18 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiRunMonitorCard from '@main/components/AiRunMonitorCard.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { mountMainPanel } from '../helpers/mountMainPanel'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
-vi.mock('@shared/api', () => ({ getRequest, postRequest }))
+vi.mock('@shared/api', () => ({
+  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  getRequest,
+  postRequest,
+  patchRequest: vi.fn(),
+}))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 
@@ -170,13 +174,18 @@ describe('AiRunMonitorCard (dashboard)', () => {
 
   // The card must actually be wired into the dashboard overview, not merely exist:
   // a component nobody mounts is exactly the "안 보인다" failure this fixes.
-  it('is mounted by the dashboard overview panel', () => {
-    const mainPanel = readFileSync(
-      resolve(process.cwd(), 'src/main/components/MainPanel.vue'),
-      'utf-8',
-    )
-    expect(mainPanel).toContain("import AiRunMonitorCard from './AiRunMonitorCard.vue'")
-    const overview = mainPanel.slice(mainPanel.indexOf('class="overview-panel"'))
-    expect(overview.slice(0, overview.indexOf('</script>'))).toContain('<AiRunMonitorCard />')
+  //
+  // 0394 T0016 (NR0003 §6.2-라): this case used to read MainPanel.vue as text — an import
+  // line, then the tag somewhere after the string `class="overview-panel"`. Both halves
+  // are text placement, not behaviour: renaming the panel's class, or leaving the tag in a
+  // branch that never renders, keeps the substrings in place and the case green. Mount the
+  // panel in the state where the dashboard IS the screen (no document open) and look for
+  // the component in the rendered tree instead.
+  it('is mounted by the dashboard overview panel', async () => {
+    const wrapper = await mountMainPanel({ tabs: [] })
+
+    expect(wrapper.find('.overview-panel').exists()).toBe(true)
+    expect(wrapper.findComponent(AiRunMonitorCard).exists()).toBe(true)
+    wrapper.unmount()
   })
 })

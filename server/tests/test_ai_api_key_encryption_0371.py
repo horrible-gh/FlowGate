@@ -132,25 +132,17 @@ class TestApiKeyCrypto:
 # ── DB fixtures (test_ai_settings_api.py precedent) ──────────────────────────
 
 @pytest.fixture(scope="module")
-def test_db_path(tmp_path_factory):
-    db_path = str(tmp_path_factory.mktemp("db") / "test_ai_key_encryption.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    for _sql_file in sorted((_SERVER_DIR / "sql" / "migrations" / "sqlite").glob("*.sql")):
-        try:
-            conn.executescript(_sql_file.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            pass  # re-added tables/columns are safe to ignore in tests
-    conn.executescript(
-        """
+def test_db_path(migrated_sqlite_db):
+    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): built by the shared
+    conftest.py factory instead of a private migration loop, so this suite's schema
+    can never drift from the others the way test_auth.py's hand-picked subset did."""
+    return migrated_sqlite_db(
+        "test_ai_key_encryption.db",
+        seed_sql="""
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)
             VALUES('__SYSTEM__','[System]',1,datetime('now'),datetime('now'));
-    """
+        """,
     )
-    conn.commit()
-    conn.close()
-    return db_path
 
 
 @pytest.fixture(autouse=True)

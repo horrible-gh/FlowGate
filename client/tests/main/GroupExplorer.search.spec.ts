@@ -1,3 +1,7 @@
+// (A) 유지 — 0394 T0016 / NR0003 §6.3.
+// 두 케이스만 GroupExplorer.vue의 <style scoped> 블록을 읽는다. 어두운 사이드바 위 글자색과
+// 폰트 스택은 CSS 선언이고, jsdom은 scoped 스타일을 계산하지 않는다. 나머지 케이스는 전부
+// 마운트해서 검색 동작을 본다.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'

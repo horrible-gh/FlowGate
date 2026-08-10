@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from inbox_client import post_inbox
 
-def _resp_json(resp) -> dict:
-    return json.loads(bytes(resp.body).decode("utf-8"))
+# 0394 T0004 (NR0003 §13-5): the two inbox cases below used to call the private
+# `_handle_test_run` under `asyncio.run(...)`, which stopped working the moment that
+# handler became a plain `def` dispatched with anyio.to_thread — an internal change with
+# no effect on the endpoint. They post to /api/v1/inbox now; the assertions are the same.
 
 
 def test_execution_env_disables_pytest_cacheprovider():
@@ -157,19 +158,13 @@ def test_inbox_test_run_dry_run(monkeypatch):
     consume = MagicMock()
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
 
-    resp = asyncio.run(
-        inbox_routes._handle_test_run(
-            MagicMock(),
-            "raw",
-            {
-                "action": "test_run",
-                "project": "flowgate",
-                "doc_id": "flowgate.default.0138.0005-TS",
-                "dry_run": True,
-            },
-        )
-    )
-    data = _resp_json(resp)
+    resp = post_inbox({
+        "action": "test_run",
+        "project": "flowgate",
+        "doc_id": "flowgate.default.0138.0005-TS",
+        "dry_run": True,
+    })
+    data = resp.json()
     assert resp.status_code == 200
     assert data["would_register"]["action"] == "test_run"
     inc.assert_called_once_with("tok-1")
@@ -209,18 +204,12 @@ def test_inbox_test_run_accepts_and_consumes(monkeypatch):
     consume = MagicMock()
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
 
-    resp = asyncio.run(
-        inbox_routes._handle_test_run(
-            MagicMock(),
-            "raw",
-            {
-                "action": "test_run",
-                "project": "flowgate",
-                "doc_id": "flowgate.default.0138.0005-TS",
-            },
-        )
-    )
-    data = _resp_json(resp)
+    resp = post_inbox({
+        "action": "test_run",
+        "project": "flowgate",
+        "doc_id": "flowgate.default.0138.0005-TS",
+    })
+    data = resp.json()
     assert resp.status_code == 202
     assert data["run_id"] == "trun_20260703_000001"
     create.assert_called_once()

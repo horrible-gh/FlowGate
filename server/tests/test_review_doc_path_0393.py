@@ -29,6 +29,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from inbox_client import post_inbox
+
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost:5173")
@@ -106,11 +108,11 @@ def _write_payload(directory: Path, name: str = "verdict.json", payload=None) ->
 def test_a_verdict_file_inside_the_scratch_directory_registers(review_env):
     doc_path = _write_payload(review_env["scratch"])
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=doc_path),
+    response = post_inbox(
+        _body(doc_path=doc_path),
     )
 
-    assert response.status_code == 201, response.body
+    assert response.status_code == 201, response.text
     kwargs = review_env["insert"].call_args.kwargs
     assert kwargs["verdict"] == "issues"
     assert kwargs["comment"] == VERDICT_PAYLOAD["comment"]
@@ -126,12 +128,11 @@ def test_a_verdict_file_inside_the_scratch_directory_registers(review_env):
 def test_the_same_payload_inline_as_content_also_registers(review_env):
     """`content` is the other half of the pair; a worker that already has the JSON in hand
     should not have to write a file just to use the new door."""
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw",
+    response = post_inbox(
         _body(content=json.dumps(VERDICT_PAYLOAD, ensure_ascii=False)),
     )
 
-    assert response.status_code == 201, response.body
+    assert response.status_code == 201, response.text
     assert review_env["insert"].call_args.kwargs["verdict"] == "issues"
 
 
@@ -140,24 +141,24 @@ def test_the_same_payload_inline_as_content_also_registers(review_env):
 def test_a_path_outside_the_scratch_directory_is_refused(review_env):
     doc_path = _write_payload(review_env["outside"])
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=doc_path),
+    response = post_inbox(
+        _body(doc_path=doc_path),
     )
 
     assert response.status_code == 422
-    assert "doc_path is not accessible" in json.loads(response.body)["error_message"]
+    assert "doc_path is not accessible" in response.json()["error_message"]
     review_env["insert"].assert_not_called()
 
 
 def test_a_path_that_does_not_exist_is_refused(review_env):
     missing = str(review_env["scratch"] / "never-written.json")
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=missing),
+    response = post_inbox(
+        _body(doc_path=missing),
     )
 
     assert response.status_code == 422
-    assert "doc_path file does not exist" in json.loads(response.body)["error_message"]
+    assert "doc_path file does not exist" in response.json()["error_message"]
     review_env["insert"].assert_not_called()
 
 
@@ -166,13 +167,12 @@ def test_a_path_that_does_not_exist_is_refused(review_env):
 def test_sending_both_a_file_and_inline_content_is_refused(review_env):
     doc_path = _write_payload(review_env["scratch"])
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw",
+    response = post_inbox(
         _body(doc_path=doc_path, content=json.dumps(VERDICT_PAYLOAD, ensure_ascii=False)),
     )
 
     assert response.status_code == 400
-    assert json.loads(response.body)["error_message"] == (
+    assert response.json()["error_message"] == (
         "Exactly one of doc_path or content must be provided"
     )
     review_env["insert"].assert_not_called()
@@ -190,12 +190,11 @@ def test_the_error_wording_matches_the_document_paths(review_env):
 # ── the shape that must NOT change (T0005 §1: the copy-mention review path) ───────────
 
 def test_an_inline_verdict_with_no_source_field_still_registers(review_env):
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw",
+    response = post_inbox(
         _body(verdict="pass", findings=[], comment="ok"),
     )
 
-    assert response.status_code == 201, response.body
+    assert response.status_code == 201, response.text
     assert review_env["insert"].call_args.kwargs["verdict"] == "pass"
 
 
@@ -204,24 +203,24 @@ def test_a_file_holding_a_bad_verdict_is_still_refused(review_env):
         review_env["scratch"], payload={"verdict": "looks-fine", "findings": []},
     )
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=doc_path),
+    response = post_inbox(
+        _body(doc_path=doc_path),
     )
 
     assert response.status_code == 400
-    assert "verdict must be one of" in json.loads(response.body)["error_message"]
+    assert "verdict must be one of" in response.json()["error_message"]
 
 
 def test_a_file_that_is_not_json_is_refused(review_env):
     target = review_env["scratch"] / "prose.md"
     target.write_text("# 검토 결과\n\nverdict: issues\n", encoding="utf-8")
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=str(target)),
+    response = post_inbox(
+        _body(doc_path=str(target)),
     )
 
     assert response.status_code == 400
-    assert "not valid JSON" in json.loads(response.body)["error_message"]
+    assert "not valid JSON" in response.json()["error_message"]
 
 
 def test_the_file_cannot_repoint_the_review_at_another_document(review_env):
@@ -232,11 +231,11 @@ def test_the_file_cannot_repoint_the_review_at_another_document(review_env):
         payload={**VERDICT_PAYLOAD, "doc_id": "flowgate.v02.0003.0001-R", "project": "other"},
     )
 
-    response = inbox_routes._handle_review(
-        MagicMock(), "raw", _body(doc_path=doc_path),
+    response = post_inbox(
+        _body(doc_path=doc_path),
     )
 
-    assert response.status_code == 201, response.body
+    assert response.status_code == 201, response.text
     assert review_env["insert"].call_args.kwargs["doc_id"] == DOC_ID
 
 

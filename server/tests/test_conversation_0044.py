@@ -285,11 +285,36 @@ def test_ch_in_type_sets():
     assert "M" not in CONVERSATION_TYPE_CODES
 
 
-def test_ch_inbox_process_tuple_in_db_documents():
-    import inspect
+def test_ch_inbox_process_tuple_in_db_documents(monkeypatch):
+    """CH 문서가 inbox 처리 질의의 대상에 실제로 실려 나가야 한다.
+
+    0394 T0016 항목 4 (NR0003 §6.2-라): 예전에는 `inspect.getsource(...)` 로 함수 소스를
+    읽어 '"CH"' 라는 글자가 있는지만 봤다. 그 글자는 주석에 있어도, 죽은 분기에 있어도
+    통과하고, 반대로 튜플을 상수로 빼내 재사용하면 글자가 사라져 무고하게 빨개진다.
+    질의에 실제로 실려 나가는 파라미터를 보는 것이 같은 것을 훨씬 곧게 확인한다.
+
+    같은 목록이 `db/__init__.py` 의 INBOX_PROCESS_TYPES 로 한 벌 더 있으므로, 두 벌이
+    어긋나면 한쪽 화면에서만 문서가 사라진다 — 그래서 두 목록이 같은지도 함께 못박는다.
+    """
+    from modules.flow_gate.db import INBOX_PROCESS_TYPES
     from modules.flow_gate.db import documents as db_docs
-    src = inspect.getsource(db_docs.get_inbox_process_documents)
-    assert '"CH"' in src
+
+    seen: dict[str, object] = {}
+
+    class _Recorder:
+        def _fetch_all(self, sql, params):
+            seen["sql"] = sql
+            seen["params"] = list(params)
+            return []
+
+    monkeypatch.setattr(db_docs, "get_store", lambda: _Recorder())
+
+    assert db_docs.get_inbox_process_documents(group_id="flowgate.default.0044") == []
+    assert "CH" in seen["params"], "CH 가 inbox 처리 질의의 type_code 목록에 없다"
+    assert set(seen["params"]) - {"flowgate.default.0044"} == set(INBOX_PROCESS_TYPES), (
+        "get_inbox_process_documents 의 타입 목록이 db.INBOX_PROCESS_TYPES 와 어긋난다 — "
+        "두 벌이 갈라지면 목록에서만 빠진 타입이 조용히 안 보이게 된다"
+    )
 
 
 def test_process_service_ch_maps():

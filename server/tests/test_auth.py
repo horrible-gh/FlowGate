@@ -26,9 +26,6 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 # Schema paths
 # ─────────────────────────────────────────────────────────────────────────────
 _SERVER_DIR = Path(__file__).resolve().parents[1]
-_SCHEMA_001 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "001_flowgate_schema.sql"
-_SCHEMA_002 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "002_auth_columns.sql"
-_SCHEMA_005 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "005_login_lock.sql"
 
 sys.path.insert(0, str(_SERVER_DIR))
 
@@ -38,25 +35,16 @@ sys.path.insert(0, str(_SERVER_DIR))
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def test_db_path(tmp_path_factory):
-    db_path = str(tmp_path_factory.mktemp("db") / "test_auth.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(_SCHEMA_001.read_text(encoding="utf-8"))
-    try:
-        conn.executescript(_SCHEMA_002.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        # Ignore if the column already exists
-        pass
-    try:
-        conn.executescript(_SCHEMA_005.read_text(encoding="utf-8"))
-    except sqlite3.OperationalError:
-        # Ignore if the column already exists
-        pass
-    conn.commit()
-    conn.close()
-    return db_path
+def test_db_path(migrated_sqlite_db):
+    """The auth schema, built from every migration (0394 T0004, NR0003 §13-6).
+
+    This used to run migrations 001, 002 and 005 and stop — a hand-picked subset from
+    when those were the only ones that touched auth. It went stale silently: 067a added
+    the `auth_sessions` table on 2026-07-17, the login path started writing to it, and
+    seven cases here began failing with `no such table` against a schema no product
+    install has ever had. Every new auth table would have cost the same day again.
+    """
+    return migrated_sqlite_db("test_auth.db")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -434,6 +422,7 @@ class TestLockCounter:
 def api_client(test_db_path):
     """TestClient with in-memory SQLite FlowGateStore override."""
     import sqlite3 as _sqlite3
+    from contextlib import contextmanager
 
     from fastapi.testclient import TestClient
     from modules.flow_gate.auth.auth_api import router as auth_router
@@ -442,10 +431,20 @@ def api_client(test_db_path):
     app = FastAPI()
     app.include_router(auth_router, prefix="/auth")
 
-    # Replace FlowGateStore with a SQLite-file-backed store
+    # Replace FlowGateStore with a SQLite-file-backed store.
+    #
+    # 0394 T0004 (NR0003 §13-6): this double reproduces FlowGateStore's interface, and
+    # like the frozen migration list above it fell behind the original. Session handling
+    # (067a) writes through `store.transaction()`, which was never here, so logout /
+    # refresh-rotation / reuse-detection / password-change all died on AttributeError as
+    # soon as the schema was current enough to reach that code. `transaction()` is
+    # implemented properly rather than stubbed out: one connection for the whole block,
+    # committed at the end and rolled back on error, so a test can still tell an
+    # all-or-nothing revoke from a half-finished one.
     class _SqliteStore:
         def __init__(self, db_path):
             self._db_path = db_path
+            self._txn = None
 
         def _conn(self):
             conn = _sqlite3.connect(self._db_path)
@@ -453,21 +452,50 @@ def api_client(test_db_path):
             conn.execute("PRAGMA foreign_keys = ON")
             return conn
 
+        @contextmanager
+        def transaction(self):
+            if self._txn is not None:   # already inside one: join it, like the real store
+                yield self
+                return
+            conn = self._conn()
+            self._txn = conn
+            try:
+                yield self
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                self._txn = None
+                conn.close()
+
+        def with_transaction(self):
+            return self.transaction()
+
         def _execute(self, sql, params=None):
+            if self._txn is not None:
+                self._txn.execute(sql, params or [])
+                return
             with self._conn() as conn:
                 conn.execute(sql, params or [])
                 conn.commit()
 
         def _fetch_one(self, sql, params=None):
-            with self._conn() as conn:
-                row = conn.execute(sql, params or []).fetchone()
+            if self._txn is not None:
+                row = self._txn.execute(sql, params or []).fetchone()
+            else:
+                with self._conn() as conn:
+                    row = conn.execute(sql, params or []).fetchone()
             if row is None:
                 return None
             return dict(row)
 
         def _fetch_all(self, sql, params=None):
-            with self._conn() as conn:
-                rows = conn.execute(sql, params or []).fetchall()
+            if self._txn is not None:
+                rows = self._txn.execute(sql, params or []).fetchall()
+            else:
+                with self._conn() as conn:
+                    rows = conn.execute(sql, params or []).fetchall()
             return [dict(r) for r in rows]
 
     store = _SqliteStore(test_db_path)

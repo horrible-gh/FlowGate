@@ -1,4 +1,4 @@
-"""Group 0238 T0004: worker-token 401 hint + real help_url.
+"""Group 0238 T0004: real help_url (and what became of the worker-token 401 hint).
 
 NR0003 traced a false bug report to two things the server told the worker:
 
@@ -7,6 +7,16 @@ NR0003 traced a false bug report to two things the server told the worker:
      no document-read scope" rather than "wrong API — use singular /document/{id}".
   2. Every error envelope offered help_url = https://example.com/api/v1/help, a
      placeholder domain, so the hint that should have corrected the worker was dead.
+
+Item 2 is still guarded below. Item 1 is not, because the product no longer does it:
+`middleware.verify_token` has no worker-token branch, and GET /help now states the bare
+401 as the expected answer ("worker token은 401 'Invalid authentication credentials'를
+받는다", help_routes.py) — the correction moved from the error message into the docs the
+worker reads first. The case asserting the corrective 401 was deleted under 0394 T0004
+(NR0003 §4.2 S7) rather than repaired: it described a feature that was withdrawn, so
+making it pass would mean putting the feature back, which is not this group's call. The
+three cases around it still hold and are unchanged — the generic 401 for a bogus
+credential, the 401 (not 500) when the token store is down, and the expired-JWT message.
 """
 from __future__ import annotations
 
@@ -72,10 +82,16 @@ class TestHelpPayload:
         assert "/documents/" in notes
 
 
-class TestWorkerTokenHint:
-    """A worker token aimed at the internal UI API gets told so."""
+class TestUiApiRejects:
+    """What the internal UI API tells a non-JWT credential. See the module docstring
+    for why the corrective-hint case is gone."""
 
-    def test_worker_token_gets_corrective_401(self):
+    def test_worker_token_gets_the_same_generic_401(self):
+        """A live worker token is still just "not a session JWT" to this API.
+
+        Kept as the positive record of the withdrawn hint: the 401 is expected, and it
+        must not leak anything about the token that was presented.
+        """
         from modules.flow_gate.auth import middleware
 
         with patch(
@@ -86,10 +102,7 @@ class TestWorkerTokenHint:
                 middleware.verify_token("a-worker-token-which-is-not-a-jwt")
 
         assert exc.value.status_code == 401
-        detail = exc.value.detail
-        assert "worker token" in detail
-        assert "/api/v1/document/{doc_id}" in detail
-        assert "example.com" not in detail
+        assert exc.value.detail == "Invalid authentication credentials"
 
     def test_bogus_credential_keeps_generic_401(self):
         """Anything that is not a live worker token must not learn more than before."""

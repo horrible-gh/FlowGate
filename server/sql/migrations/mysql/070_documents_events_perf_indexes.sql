@@ -10,7 +10,7 @@
 --    069/068 등 기존 생성물과 같은 처리다.
 --
 -- 2. TEXT 컬럼 prefix 길이 — documents.doc_review_status 는 이 방언에서 TEXT 라
---    prefix 길이 없이는 인덱싱할 수 없다(1170 에러). 067_auth_sessions.sql 의
+--    prefix 길이 없이는 인덱싱할 수 없다(1170 에러). 067a_auth_sessions.sql 의
 --    `revoked_at(191)` 과 같은 방식으로 191 을 붙였다. 191 은 이 스키마가 문자열 키에
 --    쓰는 VARCHAR 폭이며, doc_review_status 의 실제 값은 가장 긴 것이
 --    'wf_in_progress'(14자)라 잘림이 발생하지 않는다.

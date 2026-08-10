@@ -245,9 +245,25 @@ describe('MainPanel CH full view', () => {
     expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
   })
 
-  // NR0003 required regression 4: the cover is released once the run ends and is dismissed,
-  // handing the chat back to the user. A finished run keeps its result panel until dismissed.
-  it('releases the chat once a next-document run finishes and is dismissed', async () => {
+  // NR0003 required regression 4: the cover is released and the chat comes back once the run
+  // is over.
+  //
+  // 0394 T0004 (NR0003 §13.1-2 — one of the two calls left to a decision): this case used to
+  // demand that the cover SURVIVE the finish and only lift on dismiss. The product changed on
+  // 2026-08-03 so that `isGroupInlineVisible` admits only `running` / `pause_requested`, which
+  // lifts the cover the moment the run ends. Reading the two halves apart settles it:
+  //
+  //   * the cover is a full-bleed layer over .doc-main, so keeping it after the run is over
+  //     locks the user out of a document nothing is writing to any more;
+  //   * the RESULT is not what the cover was carrying. A finished run stays in the store as a
+  //     finished card — dismiss()/dismissAllFinished()/finishedCount and the 30-minute TTL all
+  //     exist for it — and is read from the miniplayer and the run monitor until dismissed.
+  //
+  // So the finish releases the surface while the result keeps waiting to be read, and the
+  // requirement this case records ("the user must not lose the outcome") is intact. It is
+  // rewritten to the current contract, and now asserts BOTH halves so a future change that
+  // silently drops the finished card is caught here rather than passing as "cover released".
+  it('releases the chat when a next-document run finishes, keeping the result until dismissed', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -264,11 +280,17 @@ describe('MainPanel CH full view', () => {
       docs_reached: 1,
     })
     await flushPromises()
-    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(true)
+
+    // The cover is gone the moment the run ends — the chat is usable again.
+    expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
+    expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
+    // ...and the outcome is still on hand, unread, for as long as the user wants it.
+    expect(store.finishedCount).toBe(1)
 
     store.dismiss(GROUP_ID)
     await flushPromises()
 
+    expect(store.finishedCount).toBe(0)
     expect(wrapper.find('.aiv-inline-layer').exists()).toBe(false)
     expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
   })

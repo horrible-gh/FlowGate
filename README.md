@@ -178,7 +178,8 @@ FlowGate/
 │   ├── flowgate.service       # systemd unit template (rendered by setup.sh)
 │   └── docker-entrypoint.sh   # container init: secrets, DB wait, admin seed
 ├── setup.sh                   # one-shot staging deploy (Linux)
-└── setup.ps1                  # one-shot staging deploy (Windows)
+├── setup.ps1                  # one-shot staging deploy (Windows)
+└── TESTING.md                 # how to run the suites (Fast/Standard/Full) and when to add a test
 ```
 
 ---

@@ -230,6 +230,12 @@ def seed_data(tmp_db, tmp_storage):
 
     # Jail document content reads to this storage root so resolve_storage_path()
     # accepts the seeded file (the current contract rejects files outside the root).
+    #
+    # 0394 T0004: remember what was here first. The teardown below used to pop the
+    # variable outright, which is not the same thing — several other suites publish
+    # their own storage root at import time, and popping deletes theirs too. See the
+    # teardown for the failure that caused.
+    _prev_storage_dir = os.environ.get("FLOWGATE_STORAGE_DIR")
     os.environ["FLOWGATE_STORAGE_DIR"] = str(tmp_storage)
 
     doc_rel = "testprj-__ALL__-0001-NR0002.md"
@@ -450,7 +456,18 @@ def seed_data(tmp_db, tmp_storage):
 
     yield
 
-    os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+    # 0394 T0004: put back what was there, rather than removing the variable.
+    #
+    # `pop` left the process with NO storage root at all, so every later test that
+    # relied on one set at import time silently fell back to the default location.
+    # test_worktree_resolution_e2e_0280.py is the one that showed it: it publishes its
+    # own temp storage root when it is imported, and after this fixture had run,
+    # `ensure_worktree` provisioned into the wrong tree and returned "failed" — 7 tests
+    # erroring in a full run and passing when the file is run alone.
+    if _prev_storage_dir is None:
+        os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+    else:
+        os.environ["FLOWGATE_STORAGE_DIR"] = _prev_storage_dir
 
 
 

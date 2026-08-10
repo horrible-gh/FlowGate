@@ -94,12 +94,28 @@ class _TestTxn:
 
 @pytest.fixture(scope="module")
 def ts021_storage(tmp_path_factory):
-    """Temporary directory on the real filesystem."""
+    """Temporary directory on the real filesystem.
+
+    0394 T0004: teardown used to `os.environ.pop(...)`, which is not a restore — it is a
+    delete. `test_worktree_resolution_e2e_0280.py` sets FLOWGATE_STORAGE_DIR at import
+    time (as does test_git_integration_0115.py), so once this module had run, that value
+    was simply gone and every later `ensure_worktree` resolved against the default
+    storage root. Eight tests in the two worktree suites errored in setup with
+    `ensure_worktree(...) == 'failed'`, only in a full run and never on their own — the
+    file that broke them stayed green, which is what makes this shape expensive to find.
+
+    Put back what was there, whatever it was, including "nothing".
+    """
     d = tmp_path_factory.mktemp("ts021_storage")
+    previous = os.environ.get("FLOWGATE_STORAGE_DIR")
     os.environ["FLOWGATE_STORAGE_DIR"] = str(d)
-    yield d
-    # Restore (minimize impact on other tests)
-    os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+    try:
+        yield d
+    finally:
+        if previous is None:
+            os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+        else:
+            os.environ["FLOWGATE_STORAGE_DIR"] = previous
 
 
 @pytest.fixture(scope="module")

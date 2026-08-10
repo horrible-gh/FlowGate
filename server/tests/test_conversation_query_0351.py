@@ -559,10 +559,28 @@ def test_worker_query_without_a_bearer_header_is_401():
 
 
 def test_worker_read_route_is_async_and_offloads_blocking_work():
-    """Reading hits the DB synchronously, so it must not run on the event loop."""
-    import inspect
+    """Reading hits the DB synchronously, so it must not run on the event loop.
 
-    from modules.flow_gate.api.v1 import conversation_routes
+    0394 T0016 항목 4 (NR0003 §5.3): 예전에는 이 함수의 소스에 'anyio.to_thread.run_sync'
+    라는 글자가 있는지만 봤다. 주석에 있어도 통과하고, 오프로드를 실제로 걷어내도 다른 줄에
+    글자가 남아 있으면 통과한다. 같은 규칙 — "async 라우트 핸들러는 동기 DB/파일 작업에
+    닿지 않는다" — 을 소스 트리 전체에 강제하는 가드가 이미 있으므로
+    (test_event_loop_blocking_0279), 그 판정기를 그대로 불러 이 파일에 적용한다.
+    규칙을 두 벌 쓰지 않으면서, 이 라우터가 그 규칙 안에 있다는 사실도 함께 고정된다.
+    """
+    from pathlib import Path
 
-    source = inspect.getsource(conversation_routes.list_worker_conversation_turns)
-    assert "anyio.to_thread.run_sync" in source
+    from test_event_loop_blocking_0279 import find_blocking_calls
+
+    routes_path = (
+        Path(__file__).resolve().parents[1]
+        / "modules" / "flow_gate" / "api" / "v1" / "conversation_routes.py"
+    )
+    findings = find_blocking_calls(
+        routes_path.read_text(encoding="utf-8"), filename="conversation_routes.py"
+    )
+    assert findings == [], "\n  ".join(["conversation_routes blocks the event loop:", *findings])
+
+    # ...and the detector is actually looking at this route (a renamed handler would
+    # otherwise leave the assertion above trivially true).
+    assert "list_worker_conversation_turns" in routes_path.read_text(encoding="utf-8")

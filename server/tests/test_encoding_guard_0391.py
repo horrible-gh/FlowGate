@@ -9,12 +9,12 @@ plus the new line-based detector in workflow_decision_service.
 """
 from __future__ import annotations
 
-import json
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
 
+from inbox_client import post_inbox
 from modules.flow_gate.services import workflow_decision_service as wf_decision
 
 CORRUPT = "??? ?? ? 0082(??3) ?? ? ?? ??"
@@ -50,10 +50,6 @@ def test_text_is_corrupted_catches_what_the_whole_body_ratio_misses():
 
 
 # ── inbox_routes._handle_new (Step 5.9) ──────────────────────────────────────────
-
-def _response_json(response) -> dict:
-    return json.loads(bytes(response.body).decode("utf-8"))
-
 
 def _new_body(*, title=None, content="clean body", questions=None, dry_run=False, **extra):
     body = {
@@ -117,10 +113,10 @@ def test_new_corrupted_content_rejected_before_numbering(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _new_body(content=CORRUPT)
+    response = post_inbox(
+        _new_body(content=CORRUPT)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 422
     assert payload["ok"] is False
@@ -133,8 +129,8 @@ def test_new_corrupted_title_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _new_body(title=CORRUPT, content=CLEAN_KO)
+    response = post_inbox(
+        _new_body(title=CORRUPT, content=CLEAN_KO)
     )
 
     assert response.status_code == 422
@@ -145,8 +141,8 @@ def test_new_corrupted_question_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CLEAN_KO, questions=[{"title": CORRUPT, "body": "x"}]),
     )
 
@@ -158,10 +154,10 @@ def test_new_clean_body_passes(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _new_body(content=CLEAN_KO, dry_run=True)
+    response = post_inbox(
+        _new_body(content=CLEAN_KO, dry_run=True)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 200
     assert payload["ok"] is True
@@ -172,8 +168,8 @@ def test_new_force_encoding_reason_bypasses_corruption_reject(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CORRUPT, dry_run=True, force_encoding_reason="worker confirms intentional"),
     )
     assert response.status_code == 200
@@ -183,8 +179,8 @@ def test_new_force_encoding_reason_too_short_still_rejects(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CORRUPT, dry_run=True, force_encoding_reason="short"),
     )
     assert response.status_code == 422
@@ -194,11 +190,11 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64),
     )
-    payload = _response_json(response)
+    payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
 
@@ -213,8 +209,8 @@ def test_new_fingerprint_match_passes_even_when_body_looks_corrupted(monkeypatch
 
     _patch_new_validation(monkeypatch)
     digest = hashlib.sha256(CORRUPT.encode("utf-8")).hexdigest()
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CORRUPT, dry_run=True, body_sha256=digest, body_chars=len(CORRUPT)),
     )
     assert response.status_code == 200
@@ -224,8 +220,8 @@ def test_new_char_count_mismatch_rejects(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _new_body(content=CLEAN_KO, dry_run=True, body_chars=999999),
     )
     assert response.status_code == 422
@@ -293,10 +289,10 @@ def test_edit_corrupted_content_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_edit_validation(monkeypatch)
-    response = inbox_routes._handle_edit(
-        MagicMock(headers={}), "raw", _edit_body(content=CORRUPT)
+    response = post_inbox(
+        _edit_body(content=CORRUPT)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 422
     mocks["update"].assert_not_called()
@@ -307,8 +303,8 @@ def test_edit_corrupted_rejection_response_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_edit_validation(monkeypatch)
-    response = inbox_routes._handle_edit(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _edit_body(content=CLEAN_KO, rejection_response=CORRUPT),
     )
     assert response.status_code == 422
@@ -318,10 +314,10 @@ def test_edit_clean_body_dry_run_passes(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_edit_validation(monkeypatch)
-    response = inbox_routes._handle_edit(
-        MagicMock(headers={}), "raw", _edit_body(content=CLEAN_KO, dry_run=True)
+    response = post_inbox(
+        _edit_body(content=CLEAN_KO, dry_run=True)
     )
-    payload = _response_json(response)
+    payload = response.json()
     assert response.status_code == 200
     assert payload["ok"] is True
     mocks["increment"].assert_called_once()
@@ -331,8 +327,8 @@ def test_edit_force_encoding_reason_bypasses(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_edit_validation(monkeypatch)
-    response = inbox_routes._handle_edit(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _edit_body(content=CORRUPT, dry_run=True, force_encoding_reason="worker confirms intentional"),
     )
     assert response.status_code == 200
@@ -386,8 +382,8 @@ def test_review_corrupted_comment_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_review_validation(monkeypatch)
-    response = inbox_routes._handle_review(
-        MagicMock(headers={}), "raw", _review_body(comment=CORRUPT)
+    response = post_inbox(
+        _review_body(comment=CORRUPT)
     )
 
     assert response.status_code == 422
@@ -399,8 +395,8 @@ def test_review_corrupted_finding_note_rejected(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_review_validation(monkeypatch)
-    response = inbox_routes._handle_review(
-        MagicMock(headers={}), "raw",
+    response = post_inbox(
+
         _review_body(findings=[{"locus": "x", "note": CORRUPT}]),
     )
 
@@ -412,8 +408,8 @@ def test_review_clean_comment_passes(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     mocks = _patch_review_validation(monkeypatch)
-    response = inbox_routes._handle_review(
-        MagicMock(headers={}), "raw", _review_body(comment=CLEAN_EN)
+    response = post_inbox(
+        _review_body(comment=CLEAN_EN)
     )
 
     assert response.status_code == 201

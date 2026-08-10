@@ -57,7 +57,14 @@ def test_request_workflow_decision_issues_dedicated_token(monkeypatch):
     assert result["action_scope"] == "workflow_decide"
     assert result["raw_token"] == "worker-token"
     assert "POST http://localhost/flowgate/api/v1/workflow/decide" in result["mention"]
-    assert '"doc_id": "flowgate.default.0002.0001-R"' in result["mention"]
+    # 0394 T0004 (NR0003 §4.2 S5): this used to look for the literal
+    # `"doc_id": "flowgate.default.0002.0001-R"` — a fragment of the sample JSON body the
+    # mention used to print. The 0372 mention-reduction chain replaced that sample with a
+    # link to the `submit` help item, so the assertion went red over a formatting change
+    # while the thing it protects (a decision worker knows WHICH document it is deciding,
+    # and how to phrase the call) still holds. Both halves are checked directly instead.
+    assert doc["doc_id"] in result["mention"]
+    assert "http://localhost/flowgate/api/v1/help/items/submit" in result["mention"]
 
 
 def test_workflow_decide_rejects_wrong_worker_scope(monkeypatch):

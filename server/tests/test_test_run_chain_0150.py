@@ -6,24 +6,16 @@ the inbox action allowlist (the dead-code 400 fixed in T0004), the chain envelop
 """
 from __future__ import annotations
 
-import asyncio
-import json
 from unittest.mock import MagicMock
 
+from inbox_client import post_inbox
 
-def _resp_json(resp) -> dict:
-    return json.loads(bytes(resp.body).decode("utf-8"))
-
-
-class _FakeRequest:
-    """Minimal Request stand-in for the inbox entry (headers + async json)."""
-
-    def __init__(self, body: dict, bearer: str = "raw-token"):
-        self._body = body
-        self.headers = {"Authorization": f"Bearer {bearer}"}
-
-    async def json(self):
-        return self._body
+# 0394 T0004 (NR0003 §13-5): these used to drive the inbox by handing a hand-rolled
+# request object to the module-private handlers under `asyncio.run(...)`. That bound the
+# suite to the handlers being coroutines, and it broke the day they became plain `def`s
+# run on a worker thread — an internal change that left the HTTP contract untouched.
+# Everything below now posts to /api/v1/inbox (see tests/inbox_client.py), so the shape
+# of the handler is the product's business again and the payload assertions are unchanged.
 
 
 def test_inbox_action_allowlist_accepts_test_run(monkeypatch):
@@ -33,24 +25,20 @@ def test_inbox_action_allowlist_accepts_test_run(monkeypatch):
 
     sentinel = inbox_routes.JSONResponse(status_code=299, content={"reached": True})
 
-    async def _stub(_request, _raw, _body):
+    def _stub(_request, _raw, _body):
         return sentinel
 
     monkeypatch.setattr(inbox_routes, "_handle_test_run", _stub)
 
-    resp = asyncio.run(
-        inbox_routes.inbox(_FakeRequest({"action": "test_run"}))
-    )
+    resp = post_inbox({"action": "test_run"})
     assert resp.status_code == 299  # dispatched to the handler, not the 400 allowlist
+    assert resp.json() == {"reached": True}
 
 
-def test_inbox_action_allowlist_still_rejects_unknown(monkeypatch):
-    from modules.flow_gate.api import inbox_routes
-
-    resp = asyncio.run(
-        inbox_routes.inbox(_FakeRequest({"action": "bogus"}))
-    )
+def test_inbox_action_allowlist_still_rejects_unknown():
+    resp = post_inbox({"action": "bogus"})
     assert resp.status_code == 400
+    assert resp.json()["error_message"] == "action must be new, edit, review, or test_run"
 
 
 def _chain_token_rec(target_seq=7):
@@ -94,18 +82,12 @@ def test_inbox_test_run_chain_token_gets_continuation_envelope(monkeypatch):
     )
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
 
-    resp = asyncio.run(
-        inbox_routes._handle_test_run(
-            MagicMock(),
-            "raw",
-            {
-                "action": "test_run",
-                "project": "flowgate",
-                "doc_id": "flowgate.default.0150.0005-TS",
-            },
-        )
-    )
-    data = _resp_json(resp)
+    resp = post_inbox({
+        "action": "test_run",
+        "project": "flowgate",
+        "doc_id": "flowgate.default.0150.0005-TS",
+    })
+    data = resp.json()
     assert resp.status_code == 202
     assert data["continuation"] is True
     assert data["continuation_async"] is True
@@ -132,18 +114,12 @@ def test_inbox_test_run_ordinary_token_has_no_envelope(monkeypatch):
     )
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
 
-    resp = asyncio.run(
-        inbox_routes._handle_test_run(
-            MagicMock(),
-            "raw",
-            {
-                "action": "test_run",
-                "project": "flowgate",
-                "doc_id": "flowgate.default.0150.0005-TS",
-            },
-        )
-    )
-    data = _resp_json(resp)
+    resp = post_inbox({
+        "action": "test_run",
+        "project": "flowgate",
+        "doc_id": "flowgate.default.0150.0005-TS",
+    })
+    data = resp.json()
     assert resp.status_code == 202
     assert "continuation" not in data
 

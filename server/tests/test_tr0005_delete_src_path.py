@@ -33,16 +33,30 @@ from scratch_support import remove_tree, session_scratch
 
 from app import app
 from modules.flow_gate.db import projects as db_projects
-from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.services import git_service
 from modules.flow_gate.api.v1 import tree_routes as tr
 
 PID = "proj-del-tr0005"
+PROJECT_NAME = "del-project"
 # 0382 B0001: this was `Path(__file__).resolve().parent / "_scratch_tr0005_delete_src"`
 # — a scratch tree inside server/tests, and `ROOT.parent` below put two more siblings
 # next to it. All three now live outside the repository, so a failed Windows cleanup
 # can no longer leave anything for the next finalize commit to swallow.
-ROOT = session_scratch("tr0005") / "src"
+#
+# 0394 T0004 (NR0003 §13-7 / §6.2-나): the scratch tree used to be `<scratch>/src`, made
+# reachable by stubbing `storage_paths.src_root`. The route stopped calling that function
+# — it resolves through `git_service.base_src_root` now — so the stub simply stopped being
+# consulted, the tests read a real path that does not exist, and all six turned into 404s
+# against a product that was working. Nothing announced the miss; a stub that no longer
+# matches anything is silent by construction, which is the failure mode NR0003 flags.
+#
+# So point the resolver at this tree the way an install does, through the storage root,
+# and let every layer below the route run for real. `src_root()` is
+# `<storage>/src/<project_name>/<branch>`, so build exactly that path and hand the
+# resolver the storage root it reads first (FLOWGATE_STORAGE_DIR). No path function is
+# stubbed anywhere now, which is what makes a rename below the route show up here.
+STORAGE_ROOT = session_scratch("tr0005") / "storage"
+ROOT = STORAGE_ROOT / "src" / PROJECT_NAME / "main"
 BASE_GIT_SENTINEL = {"dirty": True, "files": ["docs/gone.md"]}
 
 
@@ -53,12 +67,14 @@ def _url() -> str:
 def _client(monkeypatch, *, is_user_jwt=True, can_delete=True) -> TestClient:
     remove_tree(ROOT)
     ROOT.mkdir(parents=True, exist_ok=True)
+    # Per-test, and undone on teardown: a module-level os.environ write would follow the
+    # process into every suite that runs after this one.
+    monkeypatch.setenv("FLOWGATE_STORAGE_DIR", str(STORAGE_ROOT))
     monkeypatch.setattr(
         db_projects, "get_by_id",
-        lambda pid: {"project_name": "del-project"} if pid == PID else None,
+        lambda pid: {"project_name": PROJECT_NAME} if pid == PID else None,
     )
     monkeypatch.setattr(db_projects, "get_settings", lambda _pid: {"branch": "main"})
-    monkeypatch.setattr(storage_paths, "src_root", lambda _name, _branch: ROOT)
     rec = {"issued_to": "u1"}
     if is_user_jwt:
         rec["_is_user_jwt"] = True

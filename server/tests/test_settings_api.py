@@ -16,34 +16,18 @@ os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
-_SCHEMA_001 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "001_flowgate_schema.sql"
-_SCHEMA_002 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "002_auth_columns.sql"
-_SCHEMA_006 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "006_add_color_to_projects.sql"
-_SCHEMA_008 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "008_document_types_color.sql"
-_SCHEMA_022 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "022_document_types_description_locale.sql"
-_SCHEMA_023 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "023_series_requirements_to_general.sql"
-_SCHEMA_025 = _SERVER_DIR / "sql" / "migrations" / "sqlite" / "025_document_type_names.sql"
 sys.path.insert(0, str(_SERVER_DIR))
 
 
 @pytest.fixture(scope="module")
-def test_db_path(tmp_path_factory):
-    db_path = str(tmp_path_factory.mktemp("db") / "test_settings.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    # Apply ALL migrations so the schema matches current product (e.g. project_settings
-    # has columns added by later migrations such as `branch`). A hardcoded subset went
-    # stale as the schema evolved.
-    _migrations_dir = _SERVER_DIR / "sql" / "migrations" / "sqlite"
-    for _sql_file in sorted(_migrations_dir.glob("*.sql")):
-        try:
-            conn.executescript(_sql_file.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            # Some migrations re-add existing tables/columns - safe to ignore in tests.
-            pass
-    conn.executescript(
-        """
+def test_db_path(migrated_sqlite_db):
+    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): shared conftest.py factory —
+    applies every migration so the schema always matches current product (e.g.
+    project_settings' `branch` column), the same guarantee the old per-file loop over
+    every migration gave, without a second copy of the loop to keep in sync."""
+    return migrated_sqlite_db(
+        "test_settings.db",
+        seed_sql="""
         INSERT OR IGNORE INTO roles(role_id,role_name,is_system,created_at,updated_at)
             VALUES('role_admin','Administrator',1,datetime('now'),datetime('now')),
                   ('role_manager','Manager',1,datetime('now'),datetime('now'));
@@ -90,11 +74,8 @@ def test_db_path(tmp_path_factory):
                   ('usr_manager','proj_001','role_manager',datetime('now'));
         INSERT OR IGNORE INTO system_settings(setting_key,setting_value,value_type,updated_at)
             VALUES('storage_root','/data/flowgate','string',datetime('now'));
-    """
+        """,
     )
-    conn.commit()
-    conn.close()
-    return db_path
 
 
 @pytest.fixture(autouse=True)
@@ -205,8 +186,19 @@ class TestSystemSettingsService:
         assert get_one("log_retention_days")["setting_value"] == "30"
         assert get_one("log_level")["setting_value"] == "INFO"
 
-    def test_storage_root_empty_uses_default(self):
+    def test_storage_root_empty_uses_default(self, monkeypatch):
+        """빈 storage_root 는 기본 경로로 대체된다.
+
+        0394 T0004: 이 케이스는 FLOWGATE_STORAGE_DIR 이 **없어야** 성립한다
+        (`get_storage_root` 의 1순위가 그 변수다). 그런데 스스로 지운 적이 없고, 앞서
+        실행된 다른 모듈이 정리하면서 그 변수를 지워 준 덕에 통과하고 있었다 — 그
+        누출을 막자 이 케이스가 빨간불이 됐다. NR0003 §5.1 이 말한 "옆 테스트 덕에
+        우연히 통과" 의 실물이라, 전제를 자기 손으로 만들도록 고친다. monkeypatch 는
+        테스트가 끝나면 원래 값을 되돌려 준다.
+        """
         from modules.flow_gate.settings.system_settings_service import get_one, set_values
+
+        monkeypatch.delenv("FLOWGATE_STORAGE_DIR", raising=False)
 
         try:
             set_values({"storage_root": ""})

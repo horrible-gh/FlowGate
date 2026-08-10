@@ -88,10 +88,18 @@ def _patch_store(_db):
             raise NotImplementedError
 
     original = conn_mod.STORE
+    # 0394 T0004: 이 모듈은 자기 pepper 로 갈아끼워야 하지만, 그건 이 모듈이 도는
+    # 동안만이다. 다른 스위트도 import 시점에 각자 ACTIVE_ID 를 발행하므로, 돌려놓지
+    # 않으면 뒤에 오는 쪽이 남의 pepper 로 토큰을 검증하게 된다.
+    original_pepper = os.environ.get("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID")
     os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = "test1"
     conn_mod.STORE = _PatchedStore()
     yield
     conn_mod.STORE = original
+    if original_pepper is None:
+        os.environ.pop("FLOWGATE_TOKEN_PEPPER_ACTIVE_ID", None)
+    else:
+        os.environ["FLOWGATE_TOKEN_PEPPER_ACTIVE_ID"] = original_pepper
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -186,10 +194,11 @@ def test_edit_repoints_file_path_for_empty_column(tmp_path):
     }
     new_body = "# Re-done after time-machine rollback\n\nfresh body\n"
 
-    with patch(
-        "modules.flow_gate.rbac.permission_service.has_permission",
+    with patch.object(
+        inbox_routes,
+        "has_permission",
         return_value=True,
-    ), patch.object(storage_paths, "get_storage_root", return_value=tmp_path), \
+    ) as permission, patch.object(storage_paths, "get_storage_root", return_value=tmp_path), \
             patch.object(token_service, "verify", return_value=token_rec), \
             patch.object(token_service, "consume", return_value=None):
         app = FastAPI()
@@ -208,6 +217,7 @@ def test_edit_repoints_file_path_for_empty_column(tmp_path):
             headers={"Authorization": "Bearer dummy-token"},
         )
 
+        permission.assert_called()
         assert resp.status_code == 200, resp.text
         assert resp.json()["revision_no"] == 1
 

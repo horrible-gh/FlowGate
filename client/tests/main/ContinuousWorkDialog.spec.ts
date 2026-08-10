@@ -489,9 +489,12 @@ describe('ContinuousWorkDialog', () => {
       defaultInput.dispatchEvent(new Event('input'))
       await flushPromises()
 
-      // 3 rows: TR, TS, TSR (same run scope as the provider tab's table).
+      // One row per hop in the default run scope (same scope as the provider tab's
+      // table): TR and TS. 0394 T0004 — this used to expect a third row for TSR, from
+      // when the default target ran to the end of the sequence; the default now stops
+      // at TS, so the third row is gone by design and the count follows the product.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(3)
+      expect(rowInputs).toHaveLength(2)
       rowInputs[0].value = 'TR: 결제 실패 케이스도 문서화해줘'
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
@@ -539,16 +542,20 @@ describe('ContinuousWorkDialog', () => {
       ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
       await flushPromises()
 
-      // Note the LAST row (TSR, item_seq 6), then shrink the target past it.
+      // Note the LAST row of the default scope (TS, item_seq 5), then shrink the target
+      // past it by picking TR as the end step. 0394 T0004 — the default used to run to
+      // TSR, so this used to note row index 2 and land on 2 remaining rows; with the
+      // shorter default it is row index 1 and 1 remaining row. What is under test is
+      // unchanged: a note whose row leaves the run is dropped from the payload.
       let rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      rowInputs[2].value = 'TSR용 멘트'
-      rowInputs[2].dispatchEvent(new Event('input'))
+      rowInputs[1].value = 'TS용 멘트'
+      rowInputs[1].dispatchEvent(new Event('input'))
       await flushPromises()
 
-      ;(document.querySelectorAll('.wsp-step')[4] as HTMLButtonElement).click()
+      ;(document.querySelectorAll('.wsp-step')[3] as HTMLButtonElement).click()
       await flushPromises()
       rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(2)
+      expect(rowInputs).toHaveLength(1)
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()

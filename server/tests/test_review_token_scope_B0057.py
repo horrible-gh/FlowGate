@@ -13,11 +13,19 @@ Two invariants are locked here:
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from unittest.mock import MagicMock
 
+from inbox_client import post_inbox
+
 os.environ.setdefault("TESTING", "1")
+
+# 0394 T0004 (NR0003 §13-5): invariants 2 and 3 below are about who the inbox lets
+# through, which is an HTTP-level contract. They used to assert it by calling the private
+# `_handle_review` / `_handle_edit` under `asyncio.run(...)`, and broke when those became
+# plain `def`s dispatched onto a worker thread — while the 403s they guard never moved.
+# Posting to /api/v1/inbox checks the same refusals at the boundary an attacker actually
+# reaches, and the `action` key each body now carries is what routes it there.
 
 
 # ── Invariant 1: request_review issues a review-scoped token ───────────────────────────
@@ -59,6 +67,7 @@ def test_request_review_issues_review_scope(monkeypatch):
 # ── Invariant 2: _handle_review enforces the review scope ───────────────────────────────
 def _review_body() -> dict:
     return {
+        "action": "review",
         "project": "flowgate",
         "doc_id": "flowgate.default.0057.0001-B",
         "verdict": "pass",
@@ -79,15 +88,15 @@ def test_handle_review_rejects_non_review_scope_token(monkeypatch):
         "doc_ref": "flowgate.default.0057.0001-B",
     })
 
-    resp = asyncio.run(
-        inbox_routes._handle_review(MagicMock(), "raw", _review_body())
-    )
+    resp = post_inbox(_review_body())
     assert resp.status_code == 403
+    assert resp.json()["error_message"] == "Context binding mismatch. Use the correct token."
 
 
 def test_handle_review_accepts_review_scope_token(monkeypatch):
     """The normal review path still works with a review-scoped token (no regression)."""
     from modules.flow_gate.api import inbox_routes
+
     from modules.flow_gate.db import document_reviews as db_reviews
 
     monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: {
@@ -108,9 +117,7 @@ def test_handle_review_accepts_review_scope_token(monkeypatch):
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
 
-    resp = asyncio.run(
-        inbox_routes._handle_review(MagicMock(), "raw", _review_body())
-    )
+    resp = post_inbox(_review_body())
     assert resp.status_code == 201
     insert.assert_called_once()
 
@@ -165,6 +172,7 @@ def test_handle_edit_rejects_review_scope_token(monkeypatch):
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
 
     body = {
+        "action": "edit",
         "project": "flowgate",
         "module": "default",
         "group_name": "flowgate.default.0057",
@@ -172,5 +180,6 @@ def test_handle_edit_rejects_review_scope_token(monkeypatch):
         "edit_reason": "worker_self",
         "content": "ATTACKER OVERWRITE",
     }
-    resp = asyncio.run(inbox_routes._handle_edit(MagicMock(), "raw", body))
+    resp = post_inbox(body)
     assert resp.status_code == 403
+    assert resp.json()["error_message"] == "Context binding mismatch. Use the correct token."

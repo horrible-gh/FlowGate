@@ -1,3 +1,6 @@
+// (A) 유지 — 0394 T0016 / NR0003 §6.3.
+// 마지막 케이스만 shared/app.css를 읽는다. 두 줄 미리보기(-webkit-line-clamp)와 펼친 뒤의
+// 스크롤 상한은 CSS 선언 그 자체이고, jsdom은 레이아웃을 계산하지 않아 마운트로 관찰할 수 없다.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
