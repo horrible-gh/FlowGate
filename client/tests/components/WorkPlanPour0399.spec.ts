@@ -95,7 +95,7 @@ function candidateResponse(mode: 'append' | 'replace_after') {
   }
 }
 
-function mountStrip(tab = WP_TAB) {
+function mountStrip(tab = WP_TAB, overrides: Record<string, unknown> = {}) {
   return mount(DocWorkflow, {
     props: {
       tab: tab as never,
@@ -103,6 +103,7 @@ function mountStrip(tab = WP_TAB) {
       parentRDocId: OWNER_DOC_ID,
       stepStates: STEP_STATES as never,
       canNextAction: false,
+      ...overrides,
     },
     global: { plugins: [i18n], stubs: { teleport: true } },
   })
@@ -557,5 +558,49 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
     const added = wrapper.findAll('.wdm-seq-item').at(-1)!
     expect(added.classes()).not.toContain('from-plan')
     expect(added.find('.wdm-seq-msg--empty').exists()).toBe(true)
+  })
+})
+
+
+describe('작업계획 읽기전용 전환 (0404)', () => {
+  it('처음부터 읽기전용이면 적용 영역과 편집 버튼을 렌더하지 않는다', async () => {
+    const wrapper = mountStrip(WP_TAB, { readOnly: true })
+    await flushPromises()
+
+    expect(wrapper.find('.wf-section').exists()).toBe(true)
+    expect(wrapper.find('.wf-apply-wrap').exists()).toBe(false)
+    expect(wrapper.find('.wf-edit-btn').exists()).toBe(false)
+  })
+
+  it('잠금 전환 시 열린 메뉴와 poured 모달 상태를 버리고 해제 후 되살리지 않는다', async () => {
+    const wrapper = mountStrip()
+    await flushPromises()
+
+    await wrapper.find('.wf-apply-btn').trigger('click')
+    expect(wrapper.find('.wf-apply-menu').exists()).toBe(true)
+    await wrapper.setProps({ readOnly: true })
+    await flushPromises()
+    expect(wrapper.find('.wf-apply-wrap').exists()).toBe(false)
+
+    await wrapper.setProps({ readOnly: false })
+    await flushPromises()
+    expect(wrapper.find('.wf-apply-menu').exists()).toBe(false)
+
+    await wrapper.find('.wf-apply-btn').trigger('click')
+    await wrapper.findAll('.wf-apply-item')[0].trigger('click')
+    await flushPromises()
+    const modal = wrapper.findComponent(WorkflowDecisionModal)
+    expect(modal.props('visible')).toBe(true)
+    expect(modal.props('poured')).not.toBeNull()
+
+    await wrapper.setProps({ readOnly: true })
+    await flushPromises()
+    expect(modal.props('visible')).toBe(false)
+    expect(modal.props('poured')).toBeNull()
+
+    await wrapper.setProps({ readOnly: false })
+    await flushPromises()
+    expect(modal.props('visible')).toBe(false)
+    expect(modal.props('poured')).toBeNull()
   })
 })

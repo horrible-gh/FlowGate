@@ -7,7 +7,7 @@
     <div class="sec-title">
       <AppIcon name="flow-arrow" /> {{ t('main.doc_workflow.title') }}
       <button
-        v-if="workflowDecided"
+        v-if="workflowDecided && !readOnly"
         type="button"
         class="wf-edit-btn"
         @click="showEditModal = true"
@@ -16,7 +16,7 @@
         {{ t('main.doc_workflow.edit_btn') }}
       </button>
       <button
-        v-if="isWorkflowRoot && workflowDecided === false"
+        v-if="!readOnly && isWorkflowRoot && workflowDecided === false"
         type="button"
         class="wf-edit-btn"
         @click="emit('decide-workflow')"
@@ -28,7 +28,7 @@
            only on a work plan; every other document looks exactly as it did. Why it lives
            here and not in the action list below the document: the action list is unchanged
            by decision (D0010 §6.1), and this button acts on the sequence strip it sits on. -->
-      <span v-if="isWorkPlan" class="wf-apply-wrap">
+      <span v-if="isWorkPlan && !readOnly" class="wf-apply-wrap">
         <!-- M0020: the button never changes shape. It is not disabled, it grows no label
              beside itself, and nothing about it depends on a request that is still in the
              air — that is what made it flicker through three different states on load.
@@ -150,9 +150,9 @@
             class="wf-step"
             :class="[
               s.className,
-              (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
-              s.visual === 'done' ? 'wf-done-clickable' : '',
-              isReturnTarget(idx) ? 'wf-return-clickable' : '',
+              !readOnly && (s.visual === 'highlight' || s.visual === 'current') && canNextAction ? 'wf-current-clickable' : '',
+              !readOnly && s.visual === 'done' ? 'wf-done-clickable' : '',
+              !readOnly && isReturnTarget(idx) ? 'wf-return-clickable' : '',
             ]"
             :title="stepHint(s, idx)"
             @click="onStepClick(s, idx)"
@@ -173,7 +173,7 @@
        그때 작업계획 자신에게 시퀀스를 만들어 버리면 그 그룹은 영영 이상해진다. -->
   <WorkflowDecisionModal
     mode="edit"
-    :visible="showEditModal"
+    :visible="!readOnly && showEditModal"
     :doc-id="pouredPayload?.workflowDocId ?? parentRDocId ?? tab.id"
     :poured="pouredPayload"
     @update:visible="onEditModalVisible"
@@ -191,7 +191,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import WorkflowDecisionModal, { type PourPayload, type PourRow } from './WorkflowDecisionModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tab: Tab
   workflowDecided?: boolean
   parentRDocId?: string | null
@@ -202,7 +202,11 @@ const props = defineProps<{
    *  rewound steps sitting AHEAD of the current head; hovering makes them clickable to roll the
    *  workflow forward (restore) to that step. Empty/absent when no active return point. */
   returnTargets?: number[]
-}>()
+  /** Disable every document/workflow mutation affordance while keeping the sequence visible. */
+  readOnly?: boolean
+}>(), {
+  readOnly: false,
+})
 
 const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
@@ -244,6 +248,7 @@ function isReturnTarget(idx: number): boolean {
 // Hover tooltip: a rewound step ahead of the head hints "return here"; a completed step behind
 // the head hints "roll back here". (A cell is only ever one of the two.)
 function stepHint(s: StepState, idx: number): string | undefined {
+  if (props.readOnly) return undefined
   if (isReturnTarget(idx)) return t('main.doc_workflow.time_machine_return_hint')
   if (s.visual === 'done') return t('main.doc_workflow.time_machine_hint')
   return undefined
@@ -253,6 +258,7 @@ function stepHint(s: StepState, idx: number): string | undefined {
 // (done) step behind the head opens the time-machine (roll back); a return-target step ahead of
 // the head restores forward (reverse time-machine); other future steps are inert.
 function onStepClick(s: StepState, idx: number) {
+  if (props.readOnly) return
   if ((s.visual === 'highlight' || s.visual === 'current') && props.canNextAction) {
     // 0395 T0021 / D0007 §3.1 결정 3: a work plan is NOT created through the generic
     // related-document path the next-step action uses — that path builds a Markdown
@@ -317,6 +323,14 @@ const pouredPayload = ref<PourPayload | null>(null)
 const applyLoadFailed = ref(false)
 const applyUnreadable = ref(false)
 const applyLoaded = ref(false)
+
+watch(() => props.readOnly, (readOnly) => {
+  if (!readOnly) return
+  applyMenuOpen.value = false
+  showEditModal.value = false
+  pouredPayload.value = null
+})
+
 // M0020 — one flight at a time, and a generation number so a slow answer from an earlier
 // flight can never overwrite a newer one. Both of those were missing, which is why the
 // state under the button changed several times a second while the page settled.

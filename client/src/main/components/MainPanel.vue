@@ -81,8 +81,9 @@
             @workflow-decided="onWorkflowDecided"
           />
           <DocWorkflow
-            v-if="!aiRunDocumentLocked && tab.typeCode && tab.typeCode !== 'DC'"
+            v-if="tab.typeCode && tab.typeCode !== 'DC'"
             :tab="tab"
+            :read-only="aiRunDocumentLocked"
             :workflow-decided="getWorkflowViewState(tab.id).mode !== 'workflow'"
             :parent-r-doc-id="exposedValue(docHeaderRefs[tab.id]?.parentRDocId) ?? null"
             :step-states="getWorkflowViewState(tab.id).stepStates"

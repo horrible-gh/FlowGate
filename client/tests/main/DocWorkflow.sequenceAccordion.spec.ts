@@ -113,3 +113,23 @@ describe('DocWorkflow sequence accordion (R0001 group 0244)', () => {
     }
   })
 })
+
+
+describe('DocWorkflow sequence accordion readOnly (0404)', () => {
+  it('keeps collapse/expand local behavior while hiding sequence editing', async () => {
+    const wrapper = mountComp({ readOnly: true })
+
+    expect(wrapper.find('.wf-edit-btn').exists()).toBe(false)
+    const collapse = wrapper.find('.wf-collapse-btn')
+    expect(collapse.exists()).toBe(true)
+    expect(collapse.attributes('aria-expanded')).toBe('true')
+
+    await collapse.trigger('click')
+    expect(wrapper.find('.wf-section').classes()).toContain('collapsed')
+    expect(collapse.attributes('aria-expanded')).toBe('false')
+
+    await collapse.trigger('click')
+    expect(wrapper.find('.wf-section').classes()).not.toContain('collapsed')
+    expect(collapse.attributes('aria-expanded')).toBe('true')
+  })
+})

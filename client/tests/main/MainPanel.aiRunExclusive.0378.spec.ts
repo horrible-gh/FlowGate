@@ -27,7 +27,8 @@ describe('MainPanel AI-run read-only coexistence contract (0398)', () => {
   it('locks mutation surfaces while keeping the header and body viewers mounted', () => {
     expect(panel).toContain('v-if="!aiRunDocumentLocked"\n            :test-run=')
     expect(panel).toContain('v-if="!aiRunDocumentLocked"\n            :type-code=')
-    expect(panel).toContain('v-if="!aiRunDocumentLocked && tab.typeCode')
+    expect(panel).toContain('v-if="tab.typeCode && tab.typeCode !== \'DC\'"')
+    expect(panel).toContain(':read-only="aiRunDocumentLocked"')
     expect(panel).toContain('v-if="!aiRunDocumentLocked && (tab.typeCode')
     expect(panel).toContain('v-if="!aiRunDocumentLocked && canShowDocInfoPanel(tab.id)"')
     expect(panel).toContain('v-if="!aiRunDocumentLocked && activeTabId != null && activeTab')
