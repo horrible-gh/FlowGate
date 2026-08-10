@@ -1060,6 +1060,13 @@ export default {
       ai_suggest_success: '{n}個のセルに提案を入れました。',
       advisory_notice: '作業計画は記録・提案です。このままでは実行が強制されません。実際に実行する際は、連続作業ダイアログがこの値を予め入力した状態で開き、そこで段階を減らしたり増やしたりできます。',
       locked_after_approval: 'この作業計画は承認済みです。変更するには却下後の修正フローを通る必要があります。',
+      // 0403 NR0004 F5·F7 — ロック理由はサーバーの判定をそのまま表示する。
+      locked_after_final_approval: 'グループの最終承認が完了したため、これ以上変更できません。',
+      locked_by_status: 'この文書の状態では変更できません。',
+      unsaved_changes: '保存していない変更があります。AIに任せると、サーバーに保存された計画で上書きされます。',
+      ai_needs_save: '保存してからAIに任せられます。',
+      last_application: '最終適用: {who} · {when} · 計画 r{rev}',
+      last_application_none: 'この計画をワークフローに流し込んだことはまだありません。',
       review_pending_hint: '検収結果を待っています。承認・却下は文書下部のアクションバーで行います。',
       status_pending_review: '検収待ち',
       status_approved: '承認完了',
@@ -2172,6 +2179,8 @@ export default {
       decided_empty: 'すべてのステップが削除されました。[シーケンス編集]からステップを再追加してください。',
       time_machine_hint: 'このステップに差し戻す',
       time_machine_return_hint: 'このステップに復帰（元の位置へ）',
+      // 0403 NR0004 F4 — ワークフローがまだないグループの作業計画画面。
+      no_sequence_yet: 'このグループのワークフローはまだありません。上の[作業計画を適用]から、この計画で最初のシーケンスを作れます。',
     },
     // 0399 D0010/L0011 — [作業計画を適用]。文言は T 段階で決めると両設計書が揃って
     // 先送りした項目なので、画面に出る言葉はすべてここにまとめる。
@@ -2220,6 +2229,7 @@ export default {
       notify_paired_note_dropped: '指示段階に既にメモがあるため、結果段階のメモ {n} 件は破棄しました。',
       notify_server_assembled_note: 'サーバーが自動組立する段階のメモ {n} 件は破棄しました。',
       error_sequence_changed: '別の場所でシーケンスが変わりました。画面を閉じて開き直してください。',
+      error_wp_changed: 'この画面を開いた後に作業計画が変わりました。閉じて開き直し、最新の計画を流し込んでください。',
     },
     // 0325 TR0007 rev1 — 最終承認サイドバーの[変更内容を開く]が開く変更閲覧画面。
     group_changes: {

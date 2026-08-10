@@ -58,6 +58,22 @@
             {{ t('main.work_plan_pour.usage_desc') }}
           </span>
         </div>
+        <!-- 0403 NR0004 F3 — 이 계획이 워크플로에 실제로 부어진 적이 있는지 한 줄로 말한다.
+             서버는 적용 이력을 갖고 있었지만 화면 어디에도 나오지 않았고, 새 붓기 경로는
+             기록조차 남기지 않아 "적용했는데 아무 데도 안 남는다"가 보이지 않았다. 한 번도
+             부은 적이 없는 계획은 그 사실을 그대로 그린다. -->
+        <p class="wp-last-apply" :class="{ 'is-none': !lastApplication }">
+          <AppIcon name="info" />
+          <span v-if="lastApplication">
+            {{ t('main.work_plan.last_application', {
+              who: lastApplication.applied_by ?? '?',
+              when: lastApplication.applied_at ?? '',
+              rev: lastApplication.wp_revision_no ?? 0,
+            }) }}
+          </span>
+          <span v-else>{{ t('main.work_plan.last_application_none') }}</span>
+        </p>
+
         <!-- Mockup xc32frrg screen 1 — 표 편집 모드 띠 -->
         <div class="wp-toolbar">
           <span class="wp-mode-pill"><AppIcon name="grid-four" /> {{ t('main.work_plan.table_mode') }}</span>
@@ -66,7 +82,8 @@
           <button
             class="btn btn-outline btn-sm"
             type="button"
-            :disabled="loading || !!unreadable || aiSuggesting"
+            :disabled="loading || !!unreadable || aiSuggesting || dirty"
+            :title="dirty ? t('main.work_plan.ai_needs_save') : undefined"
             @click="aiScopeOpen = true"
           >
             <AppIcon name="robot" /> {{ aiSuggesting ? t('main.work_plan.ai_filling') : t('main.work_plan.ai_suggest') }}
@@ -78,11 +95,28 @@
           <span><strong>{{ t('main.work_plan.advisory_lead') }}</strong> {{ t('main.work_plan.advisory_notice') }}</span>
         </div>
         <p v-if="isLocked" class="wp-locked-hint">
-          <AppIcon name="lock" /> {{ t('main.work_plan.locked_after_approval') }}
+          <AppIcon name="lock" /> {{ lockedHint }}
         </p>
         <p v-else-if="docReviewStatus === 'pending_review'" class="wp-review-hint">
           {{ t('main.work_plan.review_pending_hint') }}
         </p>
+
+        <!-- 0403 NR0004 F5 — 저장하지 않은 편집이 AI 채우기에 조용히 지워지지 않게 한다.
+             AI 채우기는 서버의 정본을 읽고, 끝나면 화면을 그 정본으로 통째로 갈아끼운다.
+             그래서 직전에 손으로 넣은 수량·배정·멘트가 아무 안내 없이 사라졌다. 여기서
+             먼저 저장하게 하면 AI 가 읽는 계획과 화면의 계획이 같아진다(F6 과 같은 이유). -->
+        <div v-if="dirty" class="wp-dirty-banner">
+          <AppIcon name="warning-circle" />
+          <span>{{ t('main.work_plan.unsaved_changes') }}</span>
+          <button
+            type="button"
+            class="btn btn-outline btn-sm"
+            :disabled="saving || isLocked"
+            @click="save"
+          >
+            {{ saving ? t('main.work_plan.saving') : t('main.work_plan.save') }}
+          </button>
+        </div>
 
         <div v-if="conflict" class="wp-conflict-banner">
           <AppIcon name="warning-circle" />
@@ -142,8 +176,8 @@
 
           <div class="wp-defaults-row">
             <span class="wp-defaults-label">{{ t('main.work_plan.defaults_label') }}</span>
-            <AiProviderSelect :providers="providerOptionsWithUnassigned" :model-value="plan.defaults.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => { if (plan) plan.defaults.provider_id = v || null }" />
-            <input v-model="plan.defaults.note" type="text" class="wp-defaults-note" :maxlength="NOTE_MAX_CHARS" :placeholder="t('main.work_plan.defaults_note_placeholder')" :disabled="isLocked" />
+            <AiProviderSelect :providers="providerOptionsWithUnassigned" :model-value="plan.defaults.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => setDefaultProvider(v || null)" />
+            <input :value="plan.defaults.note" type="text" class="wp-defaults-note" :maxlength="NOTE_MAX_CHARS" :placeholder="t('main.work_plan.defaults_note_placeholder')" :disabled="isLocked" @input="(e) => setDefaultNote((e.target as HTMLInputElement).value)" />
             <button type="button" class="btn btn-outline btn-sm" :disabled="isLocked" @click="applyDefaults">{{ t('main.work_plan.apply_to_all') }}</button>
           </div>
 
@@ -291,6 +325,15 @@ const assignmentSummary = ref<WPAssignmentSummary[]>([])
 const unassignedStepCount = ref(0)
 const revisionNo = ref(0)
 const docReviewStatus = ref<string | null>(null)
+// 0403 NR0004 F5 — 저장하지 않은 편집이 있는지. AI 채우기가 화면을 서버 정본으로
+// 갈아끼우기 때문에, 이 값이 참인 동안에는 AI 에 맡기지 못하게 한다.
+const dirty = ref(false)
+// 0403 NR0004 F7 — 편집 가능 여부는 서버가 판정해 응답에 실어 준다. 화면이 승인 상태만
+// 보고 따로 잠그면, 서버는 허용하는데 화면만 잠긴 계획(그리고 그 반대)이 생긴다.
+const editable = ref(true)
+const editLockedReason = ref<string | null>(null)
+// 0403 NR0004 F3 — 이 계획이 마지막으로 워크플로에 부어진 기록.
+const lastApplication = ref<{ applied_at?: string; applied_by?: string; wp_revision_no?: number } | null>(null)
 const totals = ref({ design_sheets: 0, work_sets: 0, steps: 0 })
 const conflict = ref<{ updatedBy: string | null; updatedAt: string | null } | null>(null)
 const topLevelErrors = ref<string[]>([])
@@ -302,7 +345,17 @@ const unreadable = ref<{ message: string; detail: string; raw: string | null; re
 // recoverable by its logical key until the plan is actually saved.
 const restoreBuffer = new Map<string, WPStep>()
 
-const isLocked = computed(() => docReviewStatus.value === 'approved')
+const isLocked = computed(() => !editable.value)
+
+const lockedHint = computed(() =>
+  editLockedReason.value === 'final_approved'
+    ? t('main.work_plan.locked_after_final_approval')
+    : t('main.work_plan.locked_by_status'),
+)
+
+function markDirty() {
+  dirty.value = true
+}
 
 const statusLabel = computed(() => {
   const key = `main.work_plan.status_${docReviewStatus.value}`
@@ -456,6 +509,12 @@ async function fetchPlan() {
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
     revisionNo.value = res.data.revision_no
     docReviewStatus.value = res.data.doc_review_status
+    // 0403 NR0004 F7: 서버가 판정한 값을 그대로 쓴다. 응답에 없으면(옛 응답·목) 열어 둔다 —
+    // 잠글지 말지는 서버만 알고, 화면이 혼자 추측해 잠그던 것이 이 결함이었다.
+    editable.value = res.data.editable === undefined ? true : !!res.data.editable
+    editLockedReason.value = res.data.edit_locked_reason ?? null
+    lastApplication.value = res.data.last_application ?? null
+    dirty.value = false
     totals.value = res.data.totals ?? { design_sheets: 0, work_sets: 0, steps: plan.value.steps.length }
   } catch (e: any) {
     const status = e?.response?.status
@@ -510,7 +569,20 @@ function setQuantity(code: string, next: number) {
   const { result } = reexpand(plan.value.steps, plan.value.counted_types, quantities)
   plan.value.quantities = quantities
   plan.value.steps = result
+  markDirty()
   updateDerivedSummary()
+}
+
+function setDefaultProvider(providerId: string | null) {
+  if (!plan.value || isLocked.value) return
+  plan.value.defaults.provider_id = providerId
+  markDirty()
+}
+
+function setDefaultNote(note: string) {
+  if (!plan.value || isLocked.value) return
+  plan.value.defaults.note = note
+  markDirty()
 }
 
 // ── Step editing ──────────────────────────────────────────────────────────
@@ -533,6 +605,7 @@ function setStepProvider(key: string, providerId: string | null) {
   step.provider_id = providerId
   step.provider_display_name = providerDisplayName(providerId)
   step.origin = 'human'
+  markDirty()
   updateDerivedSummary()
 }
 
@@ -541,6 +614,7 @@ function setStepNote(key: string, note: string) {
   if (!step || step.locked) return
   step.note = note
   step.origin = 'human'
+  markDirty()
 }
 
 const providerOptionsWithUnassigned = computed(() => {
@@ -596,6 +670,7 @@ function applyDefaults() {
     step.note = plan.value.defaults.note || null
     step.origin = 'human'
   }
+  markDirty()
   updateDerivedSummary()
   showToast(t('main.work_plan.apply_to_all_done'), 'success')
 }
@@ -629,11 +704,20 @@ async function fetchSuggestion(scope: WorkPlanScope) {
       if (suggested.note !== undefined) target.note = suggested.note
       target.origin = 'ai_suggested'
     }
+    // 제안을 받은 결과도 아직 저장되지 않은 편집이다.
+    markDirty()
     updateDerivedSummary()
     aiScopeOpen.value = false
     showToast(t('main.work_plan.ai_scope_success', { quantities: Object.keys(quantities).length, steps: steps.length }), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.message || String(e), 'danger')
+    const data = e?.response?.data
+    // 0403 NR0004 F6: 제안 기준이 화면과 어긋났다. 저장 경로와 같은 코드로 오므로 같은
+    // [새로 읽기] 띠를 띄운다 — 토스트만 띄우면 무엇을 해야 하는지가 사라진다.
+    if (e?.response?.status === 409 && data?.code === 'wp_revision_conflict') {
+      conflict.value = { updatedBy: data.updated_by ?? null, updatedAt: data.updated_at ?? null }
+      aiScopeOpen.value = false
+    }
+    showToast(data?.message || String(e), 'danger')
   } finally {
     aiSuggesting.value = false
   }
@@ -711,6 +795,7 @@ async function save() {
     assignmentSummary.value = res.data.assignment_summary ?? []
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
     restoreBuffer.clear()
+    dirty.value = false
     showToast(t('main.work_plan.save_success'), 'success')
     const unassigned = res.data.unassigned_step_count ?? 0
     if (unassigned > 0) showToast(t('main.work_plan.unassigned_warning', { n: unassigned }), 'warning', 5000)
@@ -791,6 +876,18 @@ watch(() => props.docId, () => { void fetchPlan() })
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px; border-radius: var(--r, 6px);
 }
 .wp-conflict-banner { background: var(--warning-l, #fef3c7); color: var(--warning, #b45309); }
+/* 0403 NR0004 F5 — 저장하지 않은 편집 띠. 저장 충돌 띠와 같은 자리, 같은 모양. */
+.wp-dirty-banner {
+  display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px;
+  border-radius: var(--r, 6px); background: var(--warning-l, #fef3c7); color: var(--warning, #b45309);
+}
+.wp-dirty-banner button { margin-left: auto; }
+/* 0403 NR0004 F3 — 마지막 적용 한 줄. */
+.wp-last-apply {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-size: .72rem; color: var(--text-m);
+}
+.wp-last-apply.is-none { color: var(--text-m); opacity: .85; }
 .wp-error-banner { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
 .wp-section { display: flex; flex-direction: column; gap: 10px; }
 .wp-section-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

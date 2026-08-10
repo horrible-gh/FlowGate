@@ -1060,6 +1060,13 @@ export default {
       ai_suggest_success: 'Filled {n} cell(s) with a suggestion.',
       advisory_notice: 'A work plan is a record/proposal. It does not force anything to run as-is. When you actually run it, the continuous-work dialog opens pre-filled with these values, and you can still add or remove steps there.',
       locked_after_approval: 'This work plan is approved. To change it, go through reject-then-revise.',
+      // 0403 NR0004 F5·F7 — the lock reason is the server's verdict, copied verbatim.
+      locked_after_final_approval: 'Final approval is complete, so this plan can no longer be changed.',
+      locked_by_status: 'This document cannot be changed in its current status.',
+      unsaved_changes: 'You have unsaved changes. Handing this to the AI overwrites them with the plan stored on the server.',
+      ai_needs_save: 'Save first, then hand it to the AI.',
+      last_application: 'Last applied: {who} · {when} · plan r{rev}',
+      last_application_none: 'This plan has never been poured into a workflow.',
       review_pending_hint: 'Waiting for the review result. Approve or reject it from the document action bar below.',
       status_pending_review: 'Pending review',
       status_approved: 'Approved',
@@ -2173,6 +2180,8 @@ export default {
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
       time_machine_hint: 'Roll back to this step',
       time_machine_return_hint: 'Return to this step (original position)',
+      // 0403 NR0004 F4 — the work plan screen of a group with no workflow yet.
+      no_sequence_yet: 'This group has no workflow yet. Use [Apply work plan] above to build the first sequence from this plan.',
     },
     // 0399 D0010/L0011 — [Apply work plan]. Both design documents deferred the wording to
     // the T stage, so every sentence this feature shows lives together here.
@@ -2221,6 +2230,7 @@ export default {
       notify_paired_note_dropped: '{n} result-step notes were dropped because the instruction step already had one.',
       notify_server_assembled_note: '{n} notes on server-assembled steps were dropped.',
       error_sequence_changed: 'The sequence changed elsewhere. Close this dialog and open it again.',
+      error_wp_changed: 'The work plan changed after this dialog was opened. Close it and pour the latest plan again.',
     },
     // 0325 TR0007 rev1 — the changes viewer opened by [Open changes] in the AC sidebar.
     group_changes: {

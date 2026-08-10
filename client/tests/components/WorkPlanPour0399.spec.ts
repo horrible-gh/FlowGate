@@ -79,6 +79,7 @@ function candidateResponse(mode: 'append' | 'replace_after') {
   return {
     data: {
       wp_doc_id: WP_DOC_ID,
+      wp_revision_no: 1,
       workflow_doc_id: OWNER_DOC_ID,
       mode,
       plan_step_count: 3,
@@ -290,6 +291,9 @@ describe('작업계획 문서의 [작업계획 적용] 버튼', () => {
 function pourPayload(over: Partial<PourPayload> = {}): PourPayload {
   return {
     wpDocId: WP_DOC_ID,
+    // 0403 NR0004 F2·F4 — 창이 열릴 때 함께 받아 저장할 때 되돌려 보내는 두 값.
+    wpRevisionNo: 1,
+    workflowDocId: OWNER_DOC_ID,
     wpShortCode: 'WP0002',
     mode: 'append',
     planStepCount: 3,

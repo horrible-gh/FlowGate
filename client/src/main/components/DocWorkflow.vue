@@ -1,6 +1,6 @@
 <template>
   <div
-    v-if="stepStates.length > 0 || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))"
+    v-if="stepStates.length > 0 || isWorkPlan || (isWorkflowRoot && (workflowDecided === false || decidedEmpty))"
     class="wf-section"
     :class="{ collapsed: sequenceCollapsed }"
   >
@@ -134,6 +134,15 @@
           <span>{{ t('main.doc_workflow.decided_empty') }}</span>
         </div>
       </template>
+      <!-- 0403 NR0004 F4 — 워크플로가 아직 없는 그룹의 작업계획 탭. 지금까지는 이 칸이
+           통째로 그려지지 않아 [작업계획 적용] 버튼조차 없었고, "계획을 먼저 세우고 그것으로
+           워크플로를 구성한다"가 화면에서 막혀 있었다. 빈 띠 대신 무엇을 할 수 있는지 쓴다. -->
+      <template v-else-if="stepStates.length === 0">
+        <div class="wf-empty-recover">
+          <AppIcon name="info" />
+          <span>{{ t('main.doc_workflow.no_sequence_yet') }}</span>
+        </div>
+      </template>
       <!-- Normal: v-for over stepStates -->
       <template v-else>
         <div v-for="(s, idx) in stepStates" :key="s.code + idx" class="wf-unit">
@@ -159,10 +168,13 @@
     </div>
   </div>
 
+  <!-- 0403 NR0004 F4: 계획을 부어 여는 창은 후보 응답이 알려 준 시퀀스 주인에게 저장한다.
+       워크플로가 아직 없는 그룹에서는 화면이 들고 있는 상위 문서가 비어 있을 수 있고,
+       그때 작업계획 자신에게 시퀀스를 만들어 버리면 그 그룹은 영영 이상해진다. -->
   <WorkflowDecisionModal
     mode="edit"
     :visible="showEditModal"
-    :doc-id="parentRDocId ?? tab.id"
+    :doc-id="pouredPayload?.workflowDocId ?? parentRDocId ?? tab.id"
     :poured="pouredPayload"
     @update:visible="onEditModalVisible"
     @saved="onSequenceSaved"
@@ -283,6 +295,9 @@ interface RowCountChange {
 
 interface CandidateResponse {
   wp_doc_id: string
+  // 0403 NR0004 F2 — 저장할 때 그대로 돌려보내는 계획 리비전. 이것이 있어야 서버가
+  // "이 창을 연 뒤 계획이 바뀌었는지"를 판정할 수 있다.
+  wp_revision_no: number
   workflow_doc_id: string | null
   mode: 'append' | 'replace_after'
   plan_step_count: number
@@ -415,7 +430,9 @@ function choosePourMode(mode: PourMode) {
   applyMenuOpen.value = false
   pouredPayload.value = {
     wpDocId: data.wp_doc_id,
+    wpRevisionNo: data.wp_revision_no,
     wpShortCode: wpShortCode.value,
+    workflowDocId: data.workflow_doc_id,
     mode: data.mode,
     planStepCount: data.plan_step_count,
     rows: data.rows,
