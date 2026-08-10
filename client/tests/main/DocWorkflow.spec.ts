@@ -696,3 +696,68 @@ describe('DocWorkflow — wf_done 강조 해제 렌더링 (T871)', () => {
     expect(wrapper.emitted('next-action')).toBeFalsy()
   })
 })
+
+
+describe('DocWorkflow — readOnly mutation guard (0404)', () => {
+  function mountReadOnly(overrides: Record<string, unknown> = {}) {
+    return mount(DocWorkflow, {
+      props: {
+        tab: { id: 'test.t', typeCode: 'T' },
+        workflowDecided: true,
+        stepStates: [
+          ss('R', 'done'),
+          ss('WP', 'highlight'),
+          ss('T', 'future'),
+        ],
+        canNextAction: true,
+        returnTargets: [2],
+        readOnly: true,
+        ...overrides,
+      } as any,
+      global: {
+        plugins: [i18n],
+        stubs: { WorkflowDecisionModal: true },
+      },
+    })
+  }
+
+  it('keeps decided sequence cells visible but removes every action affordance and emit path', async () => {
+    const wrapper = mountReadOnly()
+    const steps = wrapper.findAll('.wf-step')
+
+    expect(steps).toHaveLength(3)
+    expect(wrapper.find('.wf-edit-btn').exists()).toBe(false)
+    expect(wrapper.find('.wf-apply-wrap').exists()).toBe(false)
+    for (const step of steps) {
+      expect(step.classes()).not.toContain('wf-current-clickable')
+      expect(step.classes()).not.toContain('wf-done-clickable')
+      expect(step.classes()).not.toContain('wf-return-clickable')
+      expect(step.attributes('title')).toBeUndefined()
+      await step.trigger('click')
+    }
+    for (const event of ['next-action', 'create-work-plan', 'time-machine', 'return-to']) {
+      expect(wrapper.emitted(event)).toBeFalsy()
+    }
+
+    const normal = mountReadOnly({
+      tab: { id: 'test.t', typeCode: 'T' },
+      stepStates: [ss('R', 'done'), ss('T', 'current')],
+      returnTargets: [],
+    })
+    await normal.findAll('.wf-step')[1].trigger('click')
+    expect(normal.emitted('next-action')).toBeFalsy()
+  })
+
+  it('keeps the undecided sequence placeholder visible without the manual decision button', () => {
+    const wrapper = mountReadOnly({
+      tab: { id: 'test.r', typeCode: 'R' },
+      workflowDecided: false,
+      stepStates: [],
+      returnTargets: [],
+    })
+
+    expect(wrapper.find('.wf-section').exists()).toBe(true)
+    expect(wrapper.findAll('.wf-step')).toHaveLength(2)
+    expect(wrapper.find('.wf-edit-btn').exists()).toBe(false)
+  })
+})
