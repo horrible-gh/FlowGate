@@ -11,12 +11,9 @@
 //
 // Memory: [feedback_actionbar_always_shows]
 
-import { shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import i18n from '@shared/i18n'
-import MainPanel from '@main/components/MainPanel.vue'
-import { useTabsStore } from '@main/stores/tabs'
+import { expectDocumentBranchMounted, mountMainPanel } from '../helpers/mountMainPanel'
 
 const { getRequest } = vi.hoisted(() => ({
   getRequest: vi.fn().mockResolvedValue({ data: { questions: [] } }),
@@ -69,28 +66,8 @@ vi.mock('@main/workflow/workflowViewState', async (importOriginal) => {
   }
 })
 
-const STUBS = {
-  TabBar: true,
-  DocHeader: true,
-  DocWorkflow: true,
-  MdViewer: true,
-  TextViewer: true,
-  DocInfoPanel: true,
-  ReviewActionBar: true,
-  ReviewRejectDialog: true,
-  DesignHandoffDialog: true,
-  NextActionModal: true,
-  NextEmptyDocModal: true,
-  CommandSelectorModal: true,
-  QTDetailViewer: true,
-  NewQModal: true,
-}
-
 function mountWith(tabs: any[], activeTabId: string) {
-  const store = useTabsStore()
-  store.tabs = tabs
-  store.activeTabId = activeTabId
-  return shallowMount(MainPanel, { global: { plugins: [i18n], stubs: STUBS } })
+  return mountMainPanel({ tabs, activeTabId })
 }
 
 beforeEach(() => {
@@ -111,15 +88,18 @@ describe('MainPanel — file-mode action bar (0137)', () => {
   }
 
   it('file tab active → getActionBarMode returns null (bar suppressed)', async () => {
-    const wrapper = mountWith([FILE_TAB], FILE_TAB.id)
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith([FILE_TAB], FILE_TAB.id)
     const vm = wrapper.vm as any
     expect(vm.getActionBarMode(FILE_TAB.id)).toBeNull()
   })
 
   it('file tab active → ReviewActionBar is NOT rendered and no has-sticky-footer', async () => {
-    const wrapper = mountWith([FILE_TAB], FILE_TAB.id)
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith([FILE_TAB], FILE_TAB.id)
+    // 0394 T0004 (NR0003 §5.1): both expectations below are "X is absent", which the
+    // bootstrap placeholder satisfies for free — it renders no document branch at all.
+    // Prove the branch is up first, so an absent action bar means the file-tab guard
+    // suppressed it rather than the gate never opening.
+    expectDocumentBranchMounted(wrapper)
     expect(wrapper.findComponent({ name: 'ReviewActionBar' }).exists()).toBe(false)
     expect(wrapper.find('.has-sticky-footer').exists()).toBe(false)
   })
@@ -132,8 +112,7 @@ describe('MainPanel — file-mode action bar (0137)', () => {
       type: 'md' as const,
       typeCode: 'D',
     }
-    const wrapper = mountWith([docTab], docTab.id)
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith([docTab], docTab.id)
     const vm = wrapper.vm as any
     // Not a file tab → falls through to the placeholder mode from the mock.
     expect(vm.getActionBarMode(docTab.id)).toBe('review')
@@ -150,8 +129,7 @@ describe('MainPanel — file-mode action bar (0137)', () => {
       type: 'md' as const,
       // no typeCode, no projectId
     }
-    const wrapper = mountWith([loadingDocTab], loadingDocTab.id)
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith([loadingDocTab], loadingDocTab.id)
     const vm = wrapper.vm as any
     expect(vm.getActionBarMode(loadingDocTab.id)).toBe('review')
   })

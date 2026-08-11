@@ -10,6 +10,7 @@ Test procedure:
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -21,12 +22,24 @@ _MIGRATIONS_DIR = (
 )
 
 
+# A migration ordinal is three digits, optionally followed by one letter: the
+# letter is how a file that arrived second on the same number keeps its position
+# in sort order (0394 T0004, e.g. 031a). Read the digits and ignore the letter —
+# 031 and 031a are both "up to 031", which is what this suite has always applied.
+_ORDINAL = re.compile(r"^(\d+)")
+
+
+def _ordinal(name: str) -> int:
+    match = _ORDINAL.match(name)
+    assert match, f"migration file name has no ordinal: {name}"
+    return int(match.group(1))
+
+
 def _apply_migrations_up_to(conn: sqlite3.Connection, up_to: int) -> None:
     """Apply migration files in order up to the given number."""
     files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
     for f in files:
-        num = int(f.name.split("_")[0])
-        if num <= up_to:
+        if _ordinal(f.name) <= up_to:
             conn.executescript(f.read_text(encoding="utf-8"))
 
 

@@ -230,6 +230,11 @@ def test_pollution_guard_fails_a_session_that_leaves_ignored_scratch(tmp_path):
         encoding="utf-8",
     )
     env = os.environ.copy()
+    # This child is intentionally a minimal synthetic repository: it has no API source
+    # tree because the only contract under test is the pollution guard. Do not inherit
+    # the parent release gate, or capability validation masks the guard failure this
+    # subprocess exists to assert.
+    env.pop("FLOWGATE_REQUIRE_FULL_SUITE", None)
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
 
     proc = subprocess.run(

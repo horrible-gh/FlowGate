@@ -9,12 +9,9 @@
 // This guards the DOM order against a regression back to the fixed card-first layout.
 
 import { defineComponent, h } from 'vue'
-import { shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import i18n from '@shared/i18n'
-import MainPanel from '@main/components/MainPanel.vue'
-import { useTabsStore } from '@main/stores/tabs'
+import { mountMainPanel } from '../helpers/mountMainPanel'
 
 const { getRequest } = vi.hoisted(() => ({
   getRequest: vi.fn().mockResolvedValue({ data: { questions: [] } }),
@@ -86,20 +83,7 @@ const GitFinalizePanelStub = defineComponent({
 
 function baseStubs(status: string) {
   return {
-    TabBar: true,
     DocHeader: docHeaderStub(status),
-    DocWorkflow: true,
-    MdViewer: true,
-    TextViewer: true,
-    DocInfoPanel: true,
-    ReviewActionBar: true,
-    ReviewRejectDialog: true,
-    DesignHandoffDialog: true,
-    NextActionModal: true,
-    NextEmptyDocModal: true,
-    CommandSelectorModal: true,
-    QTDetailViewer: true,
-    NewQModal: true,
     GitFinalizePanel: GitFinalizePanelStub,
   }
 }
@@ -113,10 +97,7 @@ const AC_TAB = {
 }
 
 function mountAc(status: string) {
-  const store = useTabsStore()
-  store.tabs = [AC_TAB]
-  store.activeTabId = AC_TAB.id
-  return shallowMount(MainPanel, { global: { plugins: [i18n], stubs: baseStubs(status) } })
+  return mountMainPanel({ tabs: [AC_TAB], stubs: baseStubs(status) })
 }
 
 beforeEach(() => {
@@ -128,8 +109,7 @@ beforeEach(() => {
 
 describe('MainPanel — AC finalize panel ordering (0265)', () => {
   it('before final approval → [최종 승인] card is above [Git 반영]', async () => {
-    const wrapper = mountAc('pending_review')
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountAc('pending_review')
     const html = wrapper.html()
     const cardIdx = html.indexOf('ac-final-approval-body')
     const gitIdx = html.indexOf('git-fin-stub')
@@ -140,8 +120,7 @@ describe('MainPanel — AC finalize panel ordering (0265)', () => {
 
   for (const status of ['approved', 'wf_done']) {
     it(`after final approval (${status}) → [Git 반영] rises above [최종 승인] card`, async () => {
-      const wrapper = mountAc(status)
-      await wrapper.vm.$nextTick()
+      const wrapper = await mountAc(status)
       const html = wrapper.html()
       const cardIdx = html.indexOf('ac-final-approval-body')
       const gitIdx = html.indexOf('git-fin-stub')

@@ -1,9 +1,6 @@
-import { shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import i18n from '@shared/i18n'
-import MainPanel from '@main/components/MainPanel.vue'
-import { useTabsStore } from '@main/stores/tabs'
+import { expectDocumentBranchMounted, mountMainPanel } from '../helpers/mountMainPanel'
 
 // Regression: the [Request review] button on a NOT-yet-approved doc must copy a review-request
 // mention (read the doc → evaluate → submit a verdict via inbox action:review), NOT a
@@ -52,41 +49,28 @@ const PAYLOAD = {
   docRef: 'test.none.0002.0003-DS',
 }
 
+// 0394 T0004 (NR0003 §5.1): the review status below is the whole point of both cases,
+// and it only reaches MainPanel through DocHeader's exposed values. While MainPanel's
+// bootstrap gate is still closed DocHeader is not mounted at all, so the status reads
+// back as undefined — and the product's pre-approval branch treats undefined the same
+// as 'pending_review'. That made the first case pass without ever using the status it
+// planted. mountMainPanel awaits the gate, so the stub is actually consulted.
 function mountWith(reviewStatus: string, workflowSteps: string[]) {
-  const store = useTabsStore()
-  store.tabs = [{ id: PAYLOAD.docId, title: 'DS doc', path: '', type: 'md', typeCode: 'DS' }]
-  store.activeTabId = PAYLOAD.docId
-
-  return shallowMount(MainPanel, {
-    global: {
-      plugins: [i18n],
-      stubs: {
-        TabBar: true,
-        DocHeader: {
-          template: '<div />',
-          setup() {
-            return {
-              docLoaded: true,
-              docProjectId: 'test',
-              groupId: 'test.none.0002',
-              docReviewStatus: reviewStatus,
-              workflowSteps,
-              workflowHeadType: 'D',
-            }
-          },
+  return mountMainPanel({
+    tabs: [{ id: PAYLOAD.docId, title: 'DS doc', path: '', type: 'md', typeCode: 'DS' }],
+    stubs: {
+      DocHeader: {
+        template: '<div />',
+        setup() {
+          return {
+            docLoaded: true,
+            docProjectId: 'test',
+            groupId: 'test.none.0002',
+            docReviewStatus: reviewStatus,
+            workflowSteps,
+            workflowHeadType: 'D',
+          }
         },
-        DocWorkflow: true,
-        MdViewer: true,
-        TextViewer: true,
-        DocInfoPanel: true,
-        ReviewActionBar: true,
-        ReviewRejectDialog: true,
-        DesignHandoffDialog: true,
-        NextActionModal: true,
-        NextEmptyDocModal: true,
-        CommandSelectorModal: true,
-        QTDetailViewer: true,
-        NewQModal: true,
       },
     },
   })
@@ -106,8 +90,8 @@ beforeEach(() => {
 
 describe('MainPanel review-request vs handoff mention', () => {
   it('pending_review doc → copies a review-request mention (no create-next handoff)', async () => {
-    const wrapper = mountWith('pending_review', ['DS', 'D'])
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith('pending_review', ['DS', 'D'])
+    expectDocumentBranchMounted(wrapper)
 
     await (wrapper.vm as any).onReviewOpenMentionDialog({ ...PAYLOAD })
 
@@ -120,8 +104,8 @@ describe('MainPanel review-request vs handoff mention', () => {
   })
 
   it('approved doc with design next → opens create-next handoff, not review', async () => {
-    const wrapper = mountWith('approved', ['DS', 'D'])
-    await wrapper.vm.$nextTick()
+    const wrapper = await mountWith('approved', ['DS', 'D'])
+    expectDocumentBranchMounted(wrapper)
 
     await (wrapper.vm as any).onReviewOpenMentionDialog({ ...PAYLOAD })
 

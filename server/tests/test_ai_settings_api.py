@@ -22,30 +22,19 @@ sys.path.insert(0, str(_SERVER_DIR))
 
 
 @pytest.fixture(scope="module")
-def test_db_path(tmp_path_factory):
-    db_path = str(tmp_path_factory.mktemp("db") / "test_ai_settings.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    _migrations_dir = _SERVER_DIR / "sql" / "migrations" / "sqlite"
-    for _sql_file in sorted(_migrations_dir.glob("*.sql")):
-        try:
-            conn.executescript(_sql_file.read_text(encoding="utf-8"))
-        except sqlite3.OperationalError:
-            # Some migrations re-add existing tables/columns - safe to ignore in tests.
-            pass
-    conn.executescript(
-        """
+def test_db_path(migrated_sqlite_db):
+    """flowgate.default.0394 T0010 (NR0003 §13-6 / §7.2): shared conftest.py factory,
+    mirroring test_settings_api.py."""
+    return migrated_sqlite_db(
+        "test_ai_settings.db",
+        seed_sql="""
         INSERT OR IGNORE INTO projects(project_id,project_name,is_active,created_at,updated_at)
             VALUES('__SYSTEM__','[System]',1,datetime('now'),datetime('now')),
                   ('proj_001','TestProject',1,datetime('now'),datetime('now'));
         INSERT OR IGNORE INTO users(user_id,username,email,password,is_active,is_admin,first_login_required,created_at,updated_at)
             VALUES('usr_admin','admin','admin@test.com','hashed_pw',1,1,0,datetime('now'),datetime('now'));
-    """
+        """,
     )
-    conn.commit()
-    conn.close()
-    return db_path
 
 
 @pytest.fixture(autouse=True)

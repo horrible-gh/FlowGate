@@ -267,9 +267,21 @@ describe('MainPanel CH full view', () => {
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
   })
 
-  // NR0003 required regression 4: the cover is released once the run ends and is dismissed,
-  // handing the chat back to the user. A finished run keeps its result panel until dismissed.
-  it('releases the chat once a next-document run finishes and is dismissed', async () => {
+  // NR0003 required regression 4: the run's outcome stays on screen after the run ends, and
+  // the surface is handed back only when the user dismisses it.
+  //
+  // 0394 T0004 asked which of the two halves — "release the chat at finish" or "keep the
+  // result until dismissed" — this case should record, back when the status card was a
+  // full-bleed cover and the two were in tension. 0398 removed the tension: the card no
+  // longer covers anything. It renders alongside the document (MainPanel keeps DocHeader and
+  // the body viewers mounted, read-only, for the whole run), so the chat below stays readable
+  // while the outcome waits its turn. Both halves now hold at once, and both are asserted:
+  //
+  //   * the finished card survives the finish (`activeGroupRunInlineVisible` admits the
+  //     `finished` phase) and disappears on dismiss;
+  //   * the chat is mounted throughout — during the run, after it, and after the dismiss —
+  //     so a future change that goes back to burying the document fails here.
+  it('keeps the finished result until dismissed, with the chat readable throughout', async () => {
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -286,12 +298,18 @@ describe('MainPanel CH full view', () => {
       docs_reached: 1,
     })
     await flushPromises()
+
+    // The outcome is still on hand, unread, for as long as the user wants it...
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
+    expect(store.finishedCount).toBe(1)
+    // ...and it never cost the user the chat underneath it.
+    expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
 
     store.dismiss(GROUP_ID)
     await flushPromises()
 
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
+    expect(store.finishedCount).toBe(0)
     expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
   })
 

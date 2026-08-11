@@ -20,7 +20,16 @@ from pathlib import Path
 import pytest
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
-SCAN_ROOTS = ("modules", "tests")
+
+# 0394 T0016 항목 4 (NR0003 §5.3 "규칙은 전역인데 검사는 국소"): 규칙 — 같은 스코프에 같은
+# 이름을 두 번 정의하지 않는다 — 은 서버 소스 전체에 걸리는데, 검사는 modules/ 와 tests/ 두
+# 뿌리만 보고 있었다. server 루트의 app.py / startup.py / config.py 와 routers/ · util/ ·
+# tools/ 는 한 번도 검사되지 않았다. 범위를 서버 트리 전체로 넓힌다(403 → 433 파일).
+# 넓혀서 드러난 위반은 0건이었다.
+#
+# 순회에서 빼는 것은 파이썬 소스가 아닌 것들뿐이다 — 가상환경·캐시·런타임 산출물.
+# 규칙의 예외가 아니라 애초에 검사 대상이 아니다.
+_SKIP_DIRS = frozenset({"__pycache__", ".venv", "venv", "node_modules", "storage", "logs"})
 
 _DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 _DEFINITION_NODES = (*_DEF_NODES, ast.ClassDef)
@@ -31,10 +40,11 @@ _LEGIT_REDEFINITION_SUFFIXES = ("setter", "deleter", "getter", "overload")
 
 
 def _python_files() -> list[Path]:
-    files: list[Path] = []
-    for root in SCAN_ROOTS:
-        files.extend(sorted((SERVER_DIR / root).rglob("*.py")))
-    return files
+    return [
+        path
+        for path in sorted(SERVER_DIR.rglob("*.py"))
+        if not (_SKIP_DIRS & set(path.relative_to(SERVER_DIR).parts))
+    ]
 
 
 def _decorator_names(node: ast.AST) -> list[str]:
@@ -85,7 +95,7 @@ def parsed_sources() -> list[tuple[Path, ast.Module]]:
     assert unreadable == [], "이 파일들을 AST로 읽지 못해 중복 정의를 검사할 수 없다:\n" + "\n".join(
         unreadable
     )
-    assert parsed, f"검사 대상 파이썬 파일을 하나도 찾지 못했다 (roots={SCAN_ROOTS})"
+    assert parsed, "검사 대상 파이썬 파일을 하나도 찾지 못했다 (server 트리 전체)"
     return parsed
 
 
@@ -105,6 +115,26 @@ def test_scan_actually_covers_git_service(parsed_sources):
     ]
     assert "read_group_file_diff" in top_level
     assert Counter(top_level)["read_group_file_diff"] == 1
+
+
+def test_scan_reaches_outside_modules_and_tests(parsed_sources):
+    """0394 T0016 항목 4: 넓힌 범위가 실제로 넓어져 있는지 고정한다.
+
+    modules/ 와 tests/ 만 보던 시절에는 server 루트의 진입점(app.py / startup.py)과
+    routers/ · util/ 가 통째로 검사 밖이었다. 여기서 한 번 더 좁아지면 그 구멍이 조용히
+    다시 열리므로, 두 뿌리 밖의 파일이 실제로 수집되었는지 이름으로 못박는다.
+    """
+    scanned = {path for path, _ in parsed_sources}
+    for relative in ("app.py", "startup.py", "config.py"):
+        assert SERVER_DIR / relative in scanned, f"{relative} 이 검사 범위에서 빠졌다"
+    outside = [
+        path for path in scanned
+        if path.relative_to(SERVER_DIR).parts[0] not in {"modules", "tests"}
+    ]
+    assert len(outside) >= 20, (
+        "modules/ · tests/ 밖의 파이썬 파일이 거의 수집되지 않았다 — 범위가 다시 좁아졌다: "
+        f"{len(outside)}개"
+    )
 
 
 def test_no_duplicate_top_level_definitions(parsed_sources):

@@ -1,9 +1,27 @@
-"""T330 validation ? token/issue response mention text (sequence consistency + actual token).
+"""T330 — the mention returned by POST /token/issue agrees with the workflow sequence.
 
-Three cases:
-1. Sequence determined document (head_status=pending) ? next_type should contain head_type
-2. Sequence unresolved (no seq) ? next_type should contain <??? ???>
-3. Sequence in progress (head_status != pending) ? next_type should contain <?? ?: head_type>
+Three cases, driven through the endpoint with a real issued token:
+  1. sequence decided, head pending      → next_type is the head type ('D')
+  2. no sequence on the document         → next_type is the "undecided" placeholder
+  3. sequence decided, head in progress  → next_type marks the head as already running
+
+flowgate.default.0394 T0004 (NR0003 §7.1 / §13-14) — this file is the survivor of four.
+
+T330 left `test_t330_direct_mention.py`, `test_t330_mention_integration.py`,
+`test_t330_mention_verification.py` and `test_t330_verify_mention.py` side by side, about
+39 KB in total, and nothing in the four names said what distinguished them. Three of them
+— integration, verification, verify_mention — turned out to be the same three cases
+against the same endpoint, asserting the same two things (the next_type line, and that the
+mention echoes the token it was issued with); they differed only in wording and in each
+carrying its own private DB double. This one was kept because its assertions are the
+strictest of the three (it checks that the mention and the token exist at all, and reads
+the Authorization line specifically rather than searching the whole text), and the other
+two were deleted. No case was lost: every assertion the deleted files made is made here.
+
+`test_t330_direct_mention.py` still stands and is NOT a duplicate — it calls the mention
+builder directly, with no HTTP and no token, so it fails differently (a builder bug rather
+than a wiring bug) and is the faster of the two ways to find the same defect. The pair is
+deliberate: one unit, one through the endpoint.
 """
 from __future__ import annotations
 

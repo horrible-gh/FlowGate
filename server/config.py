@@ -368,6 +368,35 @@ class DatabaseSetting:
         """Initialize DB instance."""
         logger.debug("config", self.config)
 
+        # 0394 T0004: sqloader's migrator keys the `migrations` table on the FILE
+        # NAME, so the duplicate-number cleanup (031a / 042a / ... / 076b) looks
+        # like ten brand-new migrations to any DB that already applied them under
+        # the old names — and re-running an ALTER TABLE ADD COLUMN aborts the boot.
+        # Carry the bookkeeping rows over first. No-op on a fresh DB, and on a DB
+        # that has already been carried over. Must precede database_init(), which
+        # is what constructs (and runs) the migrator.
+        try:
+            from modules.flow_gate.db.migration_renames import apply_migration_renames
+
+            carried = apply_migration_renames(
+                settings.DB_TYPE.value,
+                sqlite_path=settings.DB_PATH,
+                host=settings.DB_HOST,
+                port=settings.DB_PORT,
+                user=settings.DB_USER,
+                password=settings.DB_PASSWORD,
+                database=settings.DB_DATABASE,
+                schema=settings.DB_SCHEMA,
+            )
+            if carried:
+                logger.debug(f"✅ migration bookkeeping: {carried} renamed file(s) carried over")
+        except Exception as e:
+            # Never block the boot here: the migrator that follows reports the
+            # real consequence (a failed re-apply) with the file name attached.
+            import traceback
+            logger.error(f"⚠️ migration filename carry-over skipped: {e}")
+            logger.error(traceback.format_exc())
+
         try:
             self.db_instance, self.sqloader, self.migrator = database_init(self.config)
             logger.debug(f"✅ DB initialized - type: {type(self.db_instance).__name__}, db_type: {getattr(self.db_instance, 'db_type', 'N/A')}")

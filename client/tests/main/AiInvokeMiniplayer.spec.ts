@@ -1,3 +1,7 @@
+// (A) 유지 — 0394 T0016 / NR0003 §6.3.
+// 이 파일에서 소스를 읽는 것은 뒤쪽 세 케이스뿐이고, 대상은 SFC <style> 블록과
+// shared/app.css의 선언값(위치·배경·테두리 알파)이다. jsdom은 스타일시트를 적용하지 않으므로
+// 마운트해도 관찰할 수 없다 — 나머지 케이스는 전부 마운트해서 DOM을 본다.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { flushPromises, mount } from '@vue/test-utils'

@@ -345,13 +345,42 @@ class TestNoteInjectionFailureIsSwallowed:
         assert _read(outfile).decode("utf-8") == expected
 
 
-class TestNotesStaySessionScoped:
-    """D0004 / T0005 완료 기준 '공통': the feature adds NO schema and NO persistence — the notes
-    live in the in-memory run dict and the start request only. A migration or a db/ write added
-    later would silently turn a per-run note into stored user content (and would have to be
-    reasoned about for retention), so the absence is asserted rather than assumed."""
+class TestNotesStayInsideThePause:
+    """The notes are per-run content, and the ONE place they may be stored is a paused chain.
+
+    D0004 / T0005 완료 기준 '공통' originally said the feature adds no schema and no
+    persistence: the notes were to live in the in-memory run dict and the start request,
+    nowhere else. This class asserted that by searching all of `server/sql` and
+    `server/modules/flow_gate/db` for the two field names and demanding zero hits.
+
+    0394 T0004 (NR0003 §13.1-1) is where that had to be decided rather than repaired.
+    Pause/resume arrived afterwards and cannot work without keeping them: a paused chain
+    survives a server restart, so whatever the resumed hop must be told has to be on
+    disk. `076a_ai_invoke_paused_provider.sql` adds the two columns to
+    `ai_invoke_paused_chains` and `db/ai_invoke_paused_chains.py` writes them — which is
+    what turned this guard red. Deleting the guard would give the field names free rein;
+    keeping "zero hits" would mean deleting pause/resume. So the rule is re-stated with
+    the boundary the original was really drawing: the notes may be stored in the paused
+    chain and NOWHERE else. A migration that put them on documents, tokens, or the run
+    history — where they would outlive the run and become user content nobody scheduled
+    for deletion — still fails here, which was the point.
+
+    Two things make that boundary safe, and both are asserted below:
+
+      * the only table involved is `ai_invoke_paused_chains`, and
+      * a row there is deleted when the chain is resumed, cancelled or swept
+        (`delete_and_return` / `delete_by_group` / `delete_system_stop`), so retention is
+        bounded by the pause itself rather than being open-ended.
+
+    The retention review the original wording asked for therefore has an answer: the
+    notes live exactly as long as the pause the user created, and go with it.
+    """
 
     FIELDS = ("continuation_default_note", "continuation_note_overrides")
+
+    # The paused-chain snapshot is the sanctioned home. Anything else is a finding.
+    ALLOWED_SQL = {"076a_ai_invoke_paused_provider.sql"}
+    ALLOWED_DB_MODULES = {"ai_invoke_paused_chains.py"}
 
     def _hits(self, root: Path, patterns=("*.sql", "*.py")) -> list[str]:
         found = []
@@ -364,15 +393,36 @@ class TestNotesStaySessionScoped:
                     found.append(str(path.relative_to(_SERVER_DIR)))
         return sorted(found)
 
-    def test_no_migration_or_query_mentions_the_note_fields(self):
+    def test_only_the_paused_chain_migration_stores_the_note_fields(self):
         sql_root = _SERVER_DIR / "sql"
         assert sql_root.is_dir(), "server/sql must exist for this guard to mean anything"
-        assert self._hits(sql_root) == []
 
-    def test_no_db_layer_module_mentions_the_note_fields(self):
+        unexpected = [h for h in self._hits(sql_root) if Path(h).name not in self.ALLOWED_SQL]
+        assert unexpected == [], (
+            "전달멘트가 일시정지 스냅샷 밖의 표에 저장된다: "
+            f"{unexpected}. 이 값은 해당 실행에만 속하는 사용자 입력이라, 일시정지가 "
+            "풀리면 함께 사라져야 한다 — 다른 표에 넣으려면 보관 기간을 먼저 정하라."
+        )
+
+    def test_only_the_paused_chain_module_writes_the_note_fields(self):
         db_root = _SERVER_DIR / "modules" / "flow_gate" / "db"
         assert db_root.is_dir(), "server/modules/flow_gate/db must exist for this guard to mean anything"
-        assert self._hits(db_root) == []
+
+        unexpected = [
+            h for h in self._hits(db_root) if Path(h).name not in self.ALLOWED_DB_MODULES
+        ]
+        assert unexpected == [], (
+            f"전달멘트를 일시정지 스냅샷 밖에서 읽거나 쓰는 db 모듈이 있다: {unexpected}."
+        )
+
+    def test_the_paused_row_is_deleted_when_the_pause_ends(self):
+        """Bounded retention: the row carrying the notes has a delete path out of it."""
+        from modules.flow_gate.db import ai_invoke_paused_chains as paused
+
+        for remover in ("delete_and_return", "delete_by_group", "delete_system_stop"):
+            assert callable(getattr(paused, remover, None)), (
+                f"{remover} 가 없다. 일시정지 행이 지워지지 않으면 전달멘트가 무기한 남는다."
+            )
 
 
 class TestNoteRunDictAndAutoResume:

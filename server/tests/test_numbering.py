@@ -29,6 +29,33 @@ def get_all_migrations() -> list[Path]:
     return files
 
 
+@pytest.fixture(autouse=True)
+def keep_storage_dir_env():
+    """Undo this module's FLOWGATE_STORAGE_DIR edits, restoring the prior value.
+
+    0394 T0004. Seven tests below point the storage root at their own tmp_path and
+    then `del os.environ["FLOWGATE_STORAGE_DIR"]` in a finally block. Deleting is not
+    undoing: other suites publish a storage root of their own when they are imported,
+    and pytest imports every module before running anything, so the `del` removed
+    THEIR value too and left the whole process with no storage root.
+
+    What that cost: test_worktree_resolution_e2e_0280.py sets its own temp root at
+    import time. Run alone it passes; run after this file, `ensure_worktree` built
+    into the default location instead and returned "failed", erroring 7 tests in
+    module setup. It was invisible in the failure list because pytest reports errors
+    separately from failures, and `-rf` does not print them.
+
+    So the value is snapshotted per test and put back afterwards, whatever the test
+    did to it in between — the `del` inside the tests stays harmless and local.
+    """
+    previous = os.environ.get("FLOWGATE_STORAGE_DIR")
+    yield
+    if previous is None:
+        os.environ.pop("FLOWGATE_STORAGE_DIR", None)
+    else:
+        os.environ["FLOWGATE_STORAGE_DIR"] = previous
+
+
 @pytest.fixture
 def db_conn() -> Generator[sqlite3.Connection, None, None]:
     """In-memory SQLite DB with FlowGate schema."""

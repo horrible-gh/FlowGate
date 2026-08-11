@@ -15,6 +15,12 @@ email-validator==2.3.0
 psycopg2-binary==2.9.12
 pytest==8.3.4
 pytest-asyncio==0.25.2
+# 0394 T0004 (NR0003 §10.3): the suite is 3,200+ cases on one process and the time is
+# spread thin, so tiers alone cannot fix it — parallel execution is the only lever that
+# shortens a FULL run without deleting a test. Use `-n auto --dist loadfile`; loadfile is
+# required, because module/session-scoped DB fixtures break if one file is split across
+# workers. See TESTING.md.
+pytest-xdist==3.6.1
 httpx==0.28.1
 requests==2.32.3
 auth2fa==0.1.4

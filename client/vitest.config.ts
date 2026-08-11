@@ -7,6 +7,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // 0394 T0004 (NR0003 §5.4): unit tests must not reach a real server. Four specs
+    // were opening XHRs at the dev server's address and passing only because nothing
+    // answered; see tests/setup/blockNetwork.ts.
+    setupFiles: ['./tests/setup/blockNetwork.ts'],
   },
   resolve: {
     // Windows: the source tree can live on a drive letter mapped to a UNC share.

@@ -682,9 +682,15 @@ describe('ContinuousWorkDialog', () => {
       defaultInput.dispatchEvent(new Event('input'))
       await flushPromises()
 
-      // 0388 NR0003: the default target stops at TS, so the run has TR and TS rows.
+      // One row per hop in the run scope, the same scope the provider tab's table uses.
+      // 0388 NR0003 shortened the DEFAULT target to TS (TR + TS); the click above extends
+      // it back to TSR, so all three worker-visible rows are in scope here.
+      //
+      // The count was left at 2 when that click was added, which passed only because the
+      // dialog had not yet been re-read — it is the run scope, not the default scope, that
+      // decides. Corrected while merging 0394 T0016.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(2)
+      expect(rowInputs).toHaveLength(3)
       rowInputs[0].value = 'TR: 결제 실패 케이스도 문서화해줘'
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
@@ -735,19 +741,20 @@ describe('ContinuousWorkDialog', () => {
       ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
       await flushPromises()
 
-      // Extend the default TS target to TSR, note that last row, then shrink past it.
-      ;(document.querySelectorAll('.wsp-step')[5] as HTMLButtonElement).click()
-      await flushPromises()
+      // Note the LAST row now in scope, then shrink the target past it by picking TR as
+      // the end step. 0388 NR0003 shortened the DEFAULT target to TS, which is why the
+      // click above is needed to reach TSR at all; what is under test is unchanged — a
+      // note whose row leaves the run is dropped from the payload.
       let rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
       expect(rowInputs).toHaveLength(3)
       rowInputs[2].value = 'TSR용 멘트'
       rowInputs[2].dispatchEvent(new Event('input'))
       await flushPromises()
 
-      ;(document.querySelectorAll('.wsp-step')[4] as HTMLButtonElement).click()
+      ;(document.querySelectorAll('.wsp-step')[3] as HTMLButtonElement).click()
       await flushPromises()
       rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(2)
+      expect(rowInputs).toHaveLength(1)
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()

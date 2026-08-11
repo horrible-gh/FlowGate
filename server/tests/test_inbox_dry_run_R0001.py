@@ -12,8 +12,8 @@ Implements the design set D0005/P0006/L0007/DB0008. The contract under test:
     with no counter bump (P0006 §3.5).
   * Omitting the flag leaves the real path byte-for-byte unchanged (backward compat).
 
-Test style mirrors test_review_token_scope_B0057.py: monkeypatch the handler deps and
-drive the synchronous handler directly, asserting on the JSONResponse + call spies.
+The handler dependencies are monkeypatched, but requests enter through POST /api/v1/inbox so
+the tests stay independent of the private handlers being synchronous, async, or threaded.
 """
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from inbox_client import post_inbox
+
 os.environ.setdefault("TESTING", "1")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
@@ -33,10 +35,6 @@ _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 
 def _body(content: dict) -> dict:
     return json.loads(json.dumps(content))  # defensive copy
-
-
-def _resp_json(resp) -> dict:
-    return json.loads(bytes(resp.body).decode("utf-8"))
 
 
 # ── Common dep patching ────────────────────────────────────────────────────────────────
@@ -99,8 +97,8 @@ def test_new_dry_run_success(monkeypatch):
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_new(MagicMock(), "raw", _new_body(dry_run=True))
-    data = _resp_json(resp)
+    resp = post_inbox(_new_body(dry_run=True))
+    data = resp.json()
 
     assert resp.status_code == 200
     assert data["dry_run"] is True and data["ok"] is True
@@ -129,10 +127,10 @@ def test_new_design_dry_run_rejects_template_mismatch_before_counting(monkeypatc
     request = MagicMock()
     request.headers = {}
 
-    resp = inbox_routes._handle_new(
-        request, "raw", _new_body(doc_type="P", dry_run=True)
+    resp = post_inbox(
+        _new_body(doc_type="P", dry_run=True)
     )
-    data = _resp_json(resp)
+    data = resp.json()
     assert resp.status_code == 422
     assert data["help_url"] == "/help/items/design_template/P"
     inc.assert_not_called()
@@ -151,8 +149,8 @@ def test_new_design_dry_run_passes_after_template_structure_match(monkeypatch):
     request = MagicMock()
     request.headers = {}
 
-    resp = inbox_routes._handle_new(
-        request, "raw", _new_body(doc_type="P", dry_run=True)
+    resp = post_inbox(
+        _new_body(doc_type="P", dry_run=True)
     )
     assert resp.status_code == 200
     inc.assert_called_once_with("tok-1")
@@ -166,7 +164,7 @@ def test_new_dry_run_backward_compat_real_path(monkeypatch):
     monkeypatch.setattr(inbox_routes.numbering_service, "reserve_document", reserve)
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_new(MagicMock(), "raw", _new_body())
+    resp = post_inbox(_new_body())
     assert resp.status_code == 503   # numbering error → proves we passed the dry-run branch
     reserve.assert_called_once()
     inc.assert_not_called()
@@ -179,8 +177,9 @@ def test_new_dry_run_validation_failure_not_counted(monkeypatch):
     _patch_new_validation(monkeypatch, _token_rec("edit", "flowgate.default.0050.0001-R"))
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_new(MagicMock(), "raw", _new_body(dry_run=True))
+    resp = post_inbox(_new_body(dry_run=True))
     assert resp.status_code == 403
+    assert resp.json()["error_message"] == "Context binding mismatch. Use the correct token."
     inc.assert_not_called()
 
 
@@ -194,8 +193,8 @@ def test_new_dry_run_limit_exceeded(monkeypatch):
     monkeypatch.setattr(inbox_routes.numbering_service, "reserve_document", reserve)
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_new(MagicMock(), "raw", _new_body(dry_run=True))
-    data = _resp_json(resp)
+    resp = post_inbox(_new_body(dry_run=True))
+    data = resp.json()
     assert resp.status_code == 429
     assert data["dry_run_count"] == 5 and data["dry_run_remaining"] == 0
     inc.assert_not_called()       # 429 itself is not counted (L0007 §5.3)
@@ -244,8 +243,8 @@ def test_edit_dry_run_success(monkeypatch):
     monkeypatch.setattr(inbox_routes.shutil, "copy2", copy2)
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_edit(MagicMock(), "raw", _edit_body(dry_run=True))
-    data = _resp_json(resp)
+    resp = post_inbox(_edit_body(dry_run=True))
+    data = resp.json()
 
     assert resp.status_code == 200
     assert data["would_register"]["action"] == "edit"
@@ -290,10 +289,10 @@ def test_review_dry_run_success(monkeypatch):
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
     inc = _patch_increment(monkeypatch)
 
-    resp = inbox_routes._handle_review(
-        MagicMock(), "raw", _review_body(dry_run=True, findings=[{"locus": "a", "note": "b"}])
+    resp = post_inbox(
+        _review_body(dry_run=True, findings=[{"locus": "a", "note": "b"}])
     )
-    data = _resp_json(resp)
+    data = resp.json()
 
     assert resp.status_code == 200
     assert data["would_register"]["action"] == "review"

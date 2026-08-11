@@ -17,6 +17,10 @@
  *      tests, with zero failed and zero pending/skipped.
  *
  * Any mismatch exits non-zero with a one-line reason.
+ *
+ * (C) 대상 아님 — 0394 T0016 / NR0003 §6.3. 이 파일은 테스트가 아니라 TS 게이트 스크립트다.
+ * 여기서 읽는 파일은 제품 소스가 아니라 vitest가 방금 쓴 JSON 리포트이므로, "제품 소스의
+ * 텍스트 배치를 단언한다"는 전환 대상에 해당하지 않는다.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

@@ -1,3 +1,8 @@
+// (A) 유지 — 0394 T0016 / NR0003 §6.3.
+// 마지막 케이스만 shared/app.css를 읽는다. "DocHeader가 그릴 수 있는 모든 타입 코드에 칩
+// 배경색이 정의돼 있어야 한다"는 스타일시트 전역 불변식이고, jsdom은 CSS를 적용하지 않아
+// 마운트로는 흰 글씨/흰 배경을 구분할 수 없다 — 그래서 마크업 단언만으로는 여섯 번의 반려
+// 동안 계속 초록이었다.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { flushPromises, shallowMount } from '@vue/test-utils'

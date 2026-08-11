@@ -44,6 +44,18 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 _API_DIR = _SERVER_DIR / "modules" / "flow_gate" / "api"
 
 # Module-level names whose attribute calls mean "synchronous DB / filesystem work".
+#
+# 0394 T0016 항목 4 (NR0003 §5.3): 이 목록은 0279 당시 존재하던 서비스 모듈 이름을 손으로
+# 적은 것이었다. 그 뒤에 생긴 서비스(conversation_query_service, conversation_turn_service,
+# ai_invoke_service, token_service, document_service …)는 목록에 없으므로 **그 호출을 async
+# 핸들러에서 그냥 부르면 가드가 아무 말도 하지 않았다.** 실측으로 확인했다: worker 대화 조회
+# 라우트의 `anyio.to_thread.run_sync` 를 걷어내고 `_list_authenticated(...)` 를 직접 부르게
+# 바꿔도 이 가드는 초록이었다. 규칙은 전역인데 판정기가 국소였던 것이다.
+#
+# 그래서 이름을 하나씩 적는 대신 접미사로 판정한다 — 이 저장소의 서비스 계층은 예외 없이
+# `*_service` 로 끝나고, 저장소 게이트웨이는 `*_store` / `db` 다. 넓힌 뒤 새로 드러난 위반은
+# 0건이었다(현재 모든 async 핸들러가 이미 오프로드한다). 즉 이 확장의 값어치는 지금 잡히는
+# 것이 아니라, 앞으로 새 서비스에서 오프로드를 빠뜨렸을 때 잡힌다는 데 있다.
 _SYNC_MODULE_NAMES = {
     "service",
     "process_service",
@@ -55,6 +67,21 @@ _SYNC_MODULE_NAMES = {
     "_db",
     "db",
 }
+_SYNC_MODULE_SUFFIXES = ("_service", "_store")
+# `from modules.flow_gate.db import documents as db_documents` — the db package is always
+# aliased with this prefix in this codebase, and every call on it is a synchronous query.
+_SYNC_MODULE_PREFIXES = ("db_",)
+
+
+def _is_sync_module(root: str | None) -> bool:
+    """True for a module name whose attribute calls reach synchronous DB/filesystem work."""
+    if not root:
+        return False
+    return (
+        root in _SYNC_MODULE_NAMES
+        or root.endswith(_SYNC_MODULE_SUFFIXES)
+        or root.startswith(_SYNC_MODULE_PREFIXES)
+    )
 
 # Bare calls that block on the filesystem or open a DB connection.
 _BLOCKING_CALLS = {"open", "get_store"}
@@ -95,6 +122,55 @@ def _is_route_handler(node: ast.AST) -> bool:
     return False
 
 
+# 0394 T0016 항목 4 (NR0003 §5.3): 규칙은 "이벤트 루프에서 동기 작업을 하지 않는다" 인데
+# 검사는 `@router.*` 가 붙은 핸들러만 봤다. `BaseHTTPMiddleware.dispatch` 도 똑같이 루프
+# 위에서 돌고, 게다가 **모든** 요청을 지나가므로 여기서 막히면 라우트 하나가 아니라 서버
+# 전체가 멈춘다. 검사 대상을 미들웨어의 dispatch 까지 넓힌다.
+def _is_middleware_dispatch(node: ast.AST, class_bases: tuple[str, ...]) -> bool:
+    """True for `async def dispatch` inside a BaseHTTPMiddleware subclass."""
+    return (
+        isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "dispatch"
+        and "BaseHTTPMiddleware" in class_bases
+    )
+
+
+def _event_loop_entries(tree: ast.Module) -> list[ast.AsyncFunctionDef]:
+    """Every `async def` that FastAPI/Starlette runs directly on the event loop."""
+    entries = [node for node in ast.walk(tree) if _is_route_handler(node)]
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = tuple(
+            base.id if isinstance(base, ast.Name)
+            else base.attr if isinstance(base, ast.Attribute) else ""
+            for base in node.bases
+        )
+        entries.extend(
+            child for child in node.body if _is_middleware_dispatch(child, bases)
+        )
+    return entries
+
+
+def _offloaded_function_names(tree: ast.Module) -> set[str]:
+    """Names handed to an offload wrapper as a callable — `run_sync(_mark)`.
+
+    Without this the detector reports the body of `_mark` as blocking: the nested `def`
+    is a child of the enclosing function, so the walk reaches it directly instead of
+    through the `run_sync(...)` call whose subtree it skips. The work genuinely runs in a
+    worker thread, so reporting it would be a false alarm — and one false alarm is all it
+    takes for the next person to add an opt-out marker instead of a fix.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _called_name(node) not in _OFFLOAD_FUNCS:
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                names.add(arg.id)
+    return names
+
+
 def _root_name(node: ast.AST) -> str | None:
     """Leftmost Name of a dotted expression: `a.b.c()` -> 'a'."""
     while isinstance(node, ast.Attribute):
@@ -122,7 +198,7 @@ def _describe_blocking_call(call: ast.Call) -> str | None:
 
     if isinstance(func, ast.Attribute):
         root = _root_name(func)
-        if root in _SYNC_MODULE_NAMES:
+        if _is_sync_module(root):
             return f"{root}.{func.attr}() — synchronous service/db call"
         if root == "os" and func.attr in _BLOCKING_OS_FUNCS:
             return f"os.{func.attr}() — blocking filesystem call"
@@ -145,6 +221,8 @@ def find_blocking_calls(source: str, filename: str = "<src>") -> list[str]:
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
+    offloaded = _offloaded_function_names(tree)
+
     findings: list[str] = []
     seen: set[str] = set()
 
@@ -160,6 +238,13 @@ def find_blocking_calls(source: str, filename: str = "<src>") -> list[str]:
 
     def walk(node: ast.AST, handler: str, via: list[str], stack: tuple[str, ...]) -> None:
         for child in ast.iter_child_nodes(node):
+            # A nested def handed to run_sync() runs in a worker thread — see
+            # _offloaded_function_names.
+            if (
+                isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and child.name in offloaded
+            ):
+                continue
             if isinstance(child, ast.Call):
                 name = _called_name(child)
 
@@ -184,18 +269,32 @@ def find_blocking_calls(source: str, filename: str = "<src>") -> list[str]:
 
             walk(child, handler, via, stack)
 
-    for node in ast.walk(tree):
-        if _is_route_handler(node):
-            for child in ast.iter_child_nodes(node):
-                if child in node.decorator_list:
-                    continue
-                walk(child, node.name, [], (node.name,))
+    for node in _event_loop_entries(tree):
+        for child in ast.iter_child_nodes(node):
+            if child in node.decorator_list:
+                continue
+            walk(child, node.name, [], (node.name,))
 
     return findings
 
 
+_MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
+
+
 def _router_sources() -> list[Path]:
-    return sorted(p for p in _API_DIR.rglob("*.py") if p.name != "__init__.py")
+    """Every file that can define something Starlette runs on the event loop.
+
+    0394 T0016 항목 4: 라우터 파일(api/)에 더해, 미들웨어를 정의하는 파일도 포함한다 —
+    `GroupMutationPolicyMiddleware` 는 services/ 에 있어서 예전 범위(api/ 전용) 밖이었고,
+    그래서 모든 변경 요청이 지나는 dispatch 가 한 번도 검사되지 않았다.
+    """
+    files = {p for p in _API_DIR.rglob("*.py") if p.name != "__init__.py"}
+    for path in _MODULE_ROOT.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        if "BaseHTTPMiddleware" in path.read_text(encoding="utf-8-sig"):
+            files.add(path)
+    return sorted(files)
 
 
 @pytest.mark.skipif(not _API_DIR.is_dir(), reason="api source tree not present")

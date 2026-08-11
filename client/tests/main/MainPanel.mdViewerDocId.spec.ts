@@ -1,10 +1,8 @@
-import { shallowMount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
-import i18n from '@shared/i18n'
-import MainPanel from '@main/components/MainPanel.vue'
-import { useTabsStore, type Tab } from '@main/stores/tabs'
+import { type Tab } from '@main/stores/tabs'
+import { mountMainPanel } from '../helpers/mountMainPanel'
 
 const { getRequest } = vi.hoisted(() => ({
   getRequest: vi.fn().mockResolvedValue({ data: { questions: [] } }),
@@ -49,36 +47,11 @@ const MdViewerStub = defineComponent({
   },
 })
 
-const STUBS = {
-  TabBar: true,
-  DocHeader: true,
-  DocWorkflow: true,
-  MdViewer: MdViewerStub,
-  TextViewer: true,
-  DocInfoPanel: true,
-  ReviewActionBar: true,
-  ReviewRejectDialog: true,
-  DesignHandoffDialog: true,
-  NextActionModal: true,
-  NextEmptyDocModal: true,
-  CommandSelectorModal: true,
-  QTDetailViewer: true,
-  NewQModal: true,
-  AiInvokeInline: true,
-  GitFinalizePanel: true,
-  ConfirmModal: true,
-  TimeMachineDialog: true,
-  MentionAddModal: true,
-  ClipboardFallbackModal: true,
-}
-
 function mountWith(tab: Tab) {
-  const store = useTabsStore()
-  store.tabs = [tab]
-  store.activeTabId = tab.id
-  return shallowMount(MainPanel, {
+  return mountMainPanel({
+    tabs: [tab],
     attachTo: document.body,
-    global: { plugins: [i18n], stubs: { teleport: false, ...STUBS } },
+    stubs: { teleport: false, MdViewer: MdViewerStub },
   })
 }
 
@@ -94,7 +67,7 @@ afterEach(() => {
 })
 
 describe('MainPanel MdViewer doc-id routing (0310)', () => {
-  it('passes doc-id for a DB document tab even when typeCode is missing', () => {
+  it('passes doc-id for a DB document tab even when typeCode is missing', async () => {
     const docTab: Tab = {
       id: 'flowgate.default.0310.0008-TR',
       title: 'TR without metadata',
@@ -104,7 +77,7 @@ describe('MainPanel MdViewer doc-id routing (0310)', () => {
       projectId: null,
     }
 
-    const wrapper = mountWith(docTab)
+    const wrapper = await mountWith(docTab)
     const viewer = wrapper.findComponent(MdViewerStub)
 
     expect(viewer.exists()).toBe(true)
@@ -113,7 +86,7 @@ describe('MainPanel MdViewer doc-id routing (0310)', () => {
     expect(viewer.props('projectId')).toBeNull()
   })
 
-  it('keeps file tabs path-backed by suppressing doc-id', () => {
+  it('keeps file tabs path-backed by suppressing doc-id', async () => {
     const fileTab: Tab = {
       id: 'flowgate:/client/src/main/components/MainPanel.vue',
       title: 'MainPanel.vue',
@@ -123,7 +96,7 @@ describe('MainPanel MdViewer doc-id routing (0310)', () => {
       projectId: 'flowgate',
     }
 
-    const wrapper = mountWith(fileTab)
+    const wrapper = await mountWith(fileTab)
     const viewer = wrapper.findComponent(MdViewerStub)
 
     expect(viewer.exists()).toBe(true)
@@ -142,7 +115,7 @@ describe('MainPanel MdViewer doc-id routing (0310)', () => {
       projectId: null,
     }
 
-    const wrapper = mountWith(docTab)
+    const wrapper = await mountWith(docTab)
 
     await wrapper.find('.card-actions .btn-secondary').trigger('click')
     await wrapper.vm.$nextTick()

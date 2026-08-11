@@ -9,7 +9,6 @@ schema, a chat-only env var, or a second copy of the corruption threshold.
 """
 from __future__ import annotations
 
-import inspect
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -193,18 +192,42 @@ def test_dry_run_field_omitted_is_unchanged():
 
 # ── the corruption threshold is defined in exactly one place ───────────────────────
 
-def test_corruption_threshold_is_defined_once_and_reused_by_chat():
-    """0391 T0005 §5-4: chat now goes through _text_is_corrupted (line-based — a long
-    AI turn can dilute the whole-body '?' ratio below threshold exactly like the long
-    document bodies NR0004 measured), not _label_is_corrupted directly. _text_is_corrupted
-    itself still reuses _label_is_corrupted line-by-line inside workflow_decision_service,
-    so the threshold constants stay defined exactly once — this assertion just points at
-    the new call name."""
-    decision_source = inspect.getsource(workflow_decision_service)
-    assert decision_source.count("_CORRUPT_MIN_MARKS = 2") == 1
-    assert decision_source.count("_CORRUPT_RATIO = 0.5") == 1
+def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
+    """0391 T0005 §5-4: chat goes through the line-based `_text_is_corrupted`, not
+    `_label_is_corrupted` directly — a long AI turn dilutes the whole-body '?' ratio below
+    the threshold exactly like the long document bodies NR0004 measured (0.404 on the
+    reporting document's own body, under the 0.5 cut).
 
-    conversation_source = inspect.getsource(service)
-    assert "_CORRUPT_MIN_MARKS" not in conversation_source
-    assert "_CORRUPT_RATIO" not in conversation_source
-    assert "workflow_decision_service._text_is_corrupted" in conversation_source
+    0394 T0016 항목 4 (NR0003 §6.2-라): 예전에는 두 모듈의 소스를 읽어 상수 정의 횟수를 세고
+    'workflow_decision_service._text_is_corrupted' 라는 호출 문자열이 있는지 확인했다.
+    그 방식은 정작 문제를 못 잡는다 — 상수를 채팅 쪽에 복사해 놓고 이름만 다르게 두면
+    (`_CHAT_RATIO = 0.5`) 셋 다 통과하면서 임계값은 두 벌이 된다. 그래서 판정 그 자체를
+    본다: 같은 입력에 대해 채팅 경로의 판정이 문서 경로의 판정과 일치해야 한다.
+    """
+    long_clean_tail = "\n".join("정상적인 한국어 문장입니다." for _ in range(200))
+    cases = {
+        # 한 줄만 깨진 긴 본문 — 전체 비율로는 임계 아래, 줄 단위로는 위. NR0004 의 실물 모양.
+        "one corrupted line in a long clean body": "?????? ??\n" + long_clean_tail,
+        "all corrupted": "?????? ??????",
+        "clean korean": long_clean_tail,
+        # '?' 로 끝나는 평범한 영문 — 잡으면 안 되는 쪽.
+        "ordinary question": "Done?\nAll good?",
+        "empty": "",
+    }
+
+    for name, text in cases.items():
+        document_verdict = workflow_decision_service._text_is_corrupted(text)
+        chat_complaint = service._encoding_violation(
+            body_raw=text, body_sha256=None, body_chars=None, force_encoding_reason=None,
+        )
+        chat_verdict = chat_complaint is not None
+        assert chat_verdict == document_verdict, (
+            f"{name}: 채팅 판정({chat_verdict})이 문서 판정({document_verdict})과 다르다 — "
+            "임계값이 두 벌이 됐다는 뜻이다"
+        )
+
+    # 그리고 이 사례가 실제로 '줄 단위라야만 잡히는' 것인지 못박는다. 아니라면 위의 일치
+    # 확인은 통과하면서도 0391 이 고친 것을 하나도 지키지 못한다.
+    diluted = cases["one corrupted line in a long clean body"]
+    assert workflow_decision_service._text_is_corrupted(diluted) is True
+    assert workflow_decision_service._label_is_corrupted(diluted) is False

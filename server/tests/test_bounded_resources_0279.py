@@ -29,8 +29,6 @@ import asyncio
 import importlib.util
 from pathlib import Path
 
-import pytest
-
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _FG = _SERVER_DIR / "modules" / "flow_gate"
 _PUBLISHER = _FG / "api" / "v1" / "events" / "publisher.py"
@@ -147,25 +145,72 @@ def test_normal_delivery_is_unchanged():
     asyncio.run(scenario())
 
 
-def test_publisher_has_no_blocking_put():
-    """No ``await q.put(...)`` may return to publisher.py.
+# 0394 T0016 항목 4 (NR0003 §5.3): "가득 찬 asyncio.Queue 에 await put 하지 않는다"는
+# publisher.py 만의 규칙이 아니다 — 어떤 모듈이든 큐를 하나 만드는 순간 같은 교착이
+# 성립한다. 그런데 검사는 publisher.py 한 파일만 보고 있었다. 범위를 flow_gate 트리에서
+# asyncio.Queue 를 실제로 쓰는 모든 모듈로 넓힌다.
+#
+# 왜 "asyncio.Queue 를 쓰는 모듈"로 한정하는가: `await client.put(url)` 은 HTTP PUT 이고
+# 이 규칙과 아무 상관이 없다. 큐를 만들지 않는 모듈까지 훑으면 그런 호출을 오탐한다.
+_QUEUE_PUT_EXEMPT: dict[str, str] = {
+    # 경로 -> 사유. 비어 있고, 비어 있는 채로 두는 것이 맞다. 넣을 때는 날짜와 사유,
+    # 그리고 후속 T 번호를 함께 적어라 — 조용히 범위를 좁히는 것과 구분되어야 한다.
+}
 
-    ``put_nowait`` is the whole point; an ``await q.put`` reintroduces the deadlock.
+
+def _queue_owning_sources() -> list[Path]:
+    """flow_gate 안에서 asyncio.Queue 를 직접 만드는 모듈들."""
+    owners: list[Path] = []
+    for path in sorted(_FG.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if "asyncio.Queue" in path.read_text(encoding="utf-8-sig"):
+            owners.append(path)
+    return owners
+
+
+def test_queue_scan_actually_reaches_the_publisher():
+    """범위가 좁아지면 아래 검사가 '볼 게 없어서' 통과한다. 그 무증상 통과를 막는 앵커다."""
+    owners = _queue_owning_sources()
+    assert _PUBLISHER in owners, "publisher.py 가 큐 소유 모듈 목록에서 빠졌다"
+    assert len(owners) >= 1
+
+
+def test_no_blocking_queue_put_anywhere():
+    """No ``await q.put(...)`` may return — in publisher.py or in any other queue owner.
+
+    ``put_nowait`` is the whole point; an ``await q.put`` reintroduces the deadlock, and
+    a queue in a different module deadlocks exactly the same way.
     """
-    tree = ast.parse(_source(_PUBLISHER))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Await):
+    offenders: list[str] = []
+    for path in _queue_owning_sources():
+        rel = path.relative_to(_SERVER_DIR).as_posix()
+        if rel in _QUEUE_PUT_EXEMPT:
+            continue
+        tree = ast.parse(_source(path), filename=rel)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Await):
+                continue
             call = node.value
             if (
                 isinstance(call, ast.Call)
                 and isinstance(call.func, ast.Attribute)
                 and call.func.attr == "put"
             ):
-                pytest.fail(
-                    f"publisher.py:{node.lineno}: `await q.put(...)` blocks when the "
-                    "subscriber queue is full, and does so while holding _lock. "
-                    "Use the non-blocking _offer() helper instead (0279 P3-9)."
-                )
+                offenders.append(f"{rel}:{node.lineno}")
+
+    assert offenders == [], (
+        "`await <queue>.put(...)` blocks when the queue is full — in publisher.py it did so "
+        "while holding _lock, wedging every publish/subscribe process-wide. Use a "
+        "non-blocking put_nowait()/_offer() instead (0279 P3-9):\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_queue_put_exemptions_still_exist():
+    """면제 목록의 항목은 실재하는 파일이어야 한다 — 낡은 면제가 구멍을 열어 두지 않도록."""
+    for rel in sorted(_QUEUE_PUT_EXEMPT):
+        assert (_SERVER_DIR / rel).is_file(), f"_QUEUE_PUT_EXEMPT 가 없는 파일을 가리킨다: {rel}"
 
 
 # --------------------------------------------------------------------------

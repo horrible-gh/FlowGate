@@ -1,14 +1,11 @@
 """0374 T0004 — reject new inbox documents whose type differs from the workflow head."""
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
-
-def _response_json(response) -> dict:
-    return json.loads(bytes(response.body).decode("utf-8"))
+from inbox_client import post_inbox
 
 
 def _body(doc_type: str, *, dry_run: bool = False) -> dict:
@@ -73,10 +70,10 @@ def test_repeated_t_tr_head_rejects_tr_before_any_storage(monkeypatch, dry_run):
     monkeypatch.setattr(inbox_routes.db_docs, "create", create)
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
 
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _body("tr", dry_run=dry_run)
+    response = post_inbox(
+        _body("tr", dry_run=dry_run)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 409
     assert payload["ok"] is False
@@ -96,8 +93,8 @@ def test_matching_head_dry_run_passes_and_reports_executed_check(monkeypatch):
     reserve = MagicMock()
     monkeypatch.setattr(inbox_routes.numbering_service, "reserve_document", reserve)
 
-    response = inbox_routes._handle_new(MagicMock(headers={}), "raw", _body("t", dry_run=True))
-    payload = _response_json(response)
+    response = post_inbox(_body("t", dry_run=True))
+    payload = response.json()
 
     assert response.status_code == 200
     assert payload["ok"] is True
@@ -129,9 +126,9 @@ def test_matching_head_real_submit_reaches_step75_and_links_slot(monkeypatch, tm
     monkeypatch.setattr(inbox_routes, "_build_change_summary", lambda **_k: {"changed": True})
     monkeypatch.setattr(inbox_routes, "_continuation_self_chain", lambda *_a, **_k: None)
 
-    response = inbox_routes._handle_new(MagicMock(headers={}), "raw", _body("T"))
+    response = post_inbox(_body("T"))
 
-    assert response.status_code == 201, bytes(response.body).decode("utf-8")
+    assert response.status_code == 201, response.text
     create.assert_called_once()
     register.assert_called_once()
     assert register.call_args.kwargs["item_id"] == 18
@@ -146,10 +143,10 @@ def test_auto_complete_types_bypass_head_comparison(monkeypatch, doc_type):
     from modules.flow_gate.api import inbox_routes
 
     get_head, _increment = _patch_validation(monkeypatch, {"id": 18, "type": "T"})
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _body(doc_type, dry_run=True)
+    response = post_inbox(
+        _body(doc_type, dry_run=True)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 200
     assert "workflow_head" not in payload["would_register"]["checks_passed"]
@@ -160,10 +157,10 @@ def test_group_without_workflow_head_keeps_legacy_creation_path(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     get_head, _increment = _patch_validation(monkeypatch, None)
-    response = inbox_routes._handle_new(
-        MagicMock(headers={}), "raw", _body("NR", dry_run=True)
+    response = post_inbox(
+        _body("NR", dry_run=True)
     )
-    payload = _response_json(response)
+    payload = response.json()
 
     assert response.status_code == 200
     assert "workflow_head" not in payload["would_register"]["checks_passed"]
