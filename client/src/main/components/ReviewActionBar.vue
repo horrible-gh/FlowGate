@@ -163,6 +163,44 @@
               </div>
             </Teleport>
           </div>
+          <!-- 0405 T0011 rev2 (반려: "액션바에 [작업계획 생성] 추가해서 바로 작업계획
+               생성할수 있게 해야지"): 다음 단계가 작업계획이면 이 자리는 목록을 여는 단추가
+               아니라 [작업계획 생성] 그 자체다. 한 번 눌러 곧바로 작업계획 창이 열린다 —
+               꺾쇠를 열어 항목을 찾아 들어가는 길을 거치지 않는다. 나머지 항목은 옆의 꺾쇠에
+               남는다(시험 실행 단추와 같은 얼개). -->
+          <div v-else-if="isNextWorkPlan" class="ab-split-wrap">
+            <button
+              class="btn btn-primary btn-sm ab-split-main ab-wp-main"
+              type="button"
+              data-test="ab-create-work-plan"
+              :disabled="canNextAction === false || isGroupBusy"
+              @click="onNextCreateEmptyClick"
+            >
+              <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.btn_create_work_plan') }}
+            </button>
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+              <AppIcon name="caret-up" />
+            </button>
+            <Teleport to="body">
+              <div
+                v-if="dropdownOpen"
+                ref="dropdownMenuRef"
+                class="ab-split-dd"
+                :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
+                @click.stop
+              >
+                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <!-- 0405 T0011 rev1 (반려: "AI 호출을 없애고 그자리에 넣어야할거아냐"):
+                     예전 [AI 호출]이 앉아 있던 맨 아래 자리를 [작업계획 생성]이 차지한다.
+                     액션바의 단추와 똑같은 일을 한다. -->
+                <button class="ab-split-item ab-split-item--continuous ab-split-item--main" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
+                  <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.btn_create_work_plan') }}
+                </button>
+              </div>
+            </Teleport>
+          </div>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
                  mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking
@@ -705,6 +743,10 @@ const nextCreateLabelKey = computed(() =>
     ? 'main.review_action_bar.btn_create_work_plan'
     : 'main.review_action_bar.btn_create_empty',
 )
+
+// 0405 T0011: 다음 단계가 작업계획일 때는 이 목록의 메인 작업이 [작업계획 생성]이다.
+// 사용자 반려: "[AI호출]이 아니라 [작업계획 생성]이 주인공이어야 한다."
+const isNextWorkPlan = computed(() => (props.nextStepCode ?? '').toUpperCase() === 'WP')
 
 // TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action
 // collapses to a single [Create conversation doc] auto-create button (no split / no dialog).
@@ -1296,6 +1338,19 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--border, #e2e8f0);
   color: var(--primary, #2563eb);
   font-weight: 600;
+}
+
+/* 0405 T0011 rev1: 작업계획이 다음 단계일 때 꺾쇠 목록의 맨 아래 자리(예전 [AI 호출]
+   자리)를 차지하는 [작업계획 생성]의 강조. 다른 타입에서는 예전 그대로 [AI 호출]이다. */
+.ab-split-item--main {
+  color: var(--primary, #2563eb);
+  font-weight: 700;
+}
+
+/* 0405 T0011 rev2: 액션바 위에 그대로 드러난 [작업계획 생성]. 목록을 여는 단추가 아니라
+   누르면 바로 작업계획 창이 열리는 주 단추다. */
+.ab-wp-main {
+  font-weight: 700;
 }
 
 /* flowgate.default.0162 §3.1 — git finalize choice inside the AC approve confirm. */

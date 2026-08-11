@@ -894,11 +894,22 @@ def test_submit_help_explains_the_work_plan_body_contract(seed, locale, needle):
 
 
 def test_human_create_refuses_an_empty_selection(seed):
+    # 0405 T0011 rev2: 후보를 비워 보낸 요청이 거절되는 것은 "고를 수 있는데 비웠을 때"다.
+    # 등록된 공급자가 하나도 없는 프로젝트에서는 고를 방법 자체가 없어 빈 후보가 정상이므로
+    # (사용자 반려: "AI공급자 선택할게 없으면 ... 1만 선택하고 생성할수 있게"), 이 시험이
+    # 말하려는 상황 — 고를 수 있는 프로젝트 — 을 명시한다.
+    from unittest.mock import patch as mock_patch
+
     client = _client()
-    resp = client.post("/api/v1/documents/work-plan", json={
-        "parent_doc_id": ROOT_DOC, "title": "빈 선택",
-        "counted_types": [], "provider_candidates": [],
-    })
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers",
+        return_value=[{"id": "aip_opus", "name": "Claude Opus", "kind": "claude",
+                       "exec_type": "cli", "enabled": True}],
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC, "title": "빈 선택",
+            "counted_types": [], "provider_candidates": [],
+        })
     assert resp.status_code == 422
     payload = resp.json()
     assert payload["code"] == "wp_validation_failed"

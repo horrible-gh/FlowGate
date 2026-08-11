@@ -44,6 +44,23 @@ export interface TokenIssueParams {
   // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection.
   // Sent on /workflow/advance (primary) and /token/issue (fallback), same as the mode above.
   continuationAutoApproveItemSeqs?: number[]
+  // 0405 P0004: the work-plan proposal scope. Only /workflow/advance understands it, and the
+  // server only reads it when the head type is WP — every other advance is unchanged.
+  workPlanScope?: WorkPlanScope
+}
+
+/** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
+ *  step_keys 를 뺐다(제안 창에 단계를 고르는 칸이 없어졌다). 작업계획 편집 화면의
+ *  범위 고르기(WorkPlanAiScopeDialog)는 단계를 계속 고르므로 그쪽 서식은 그대로다. */
+export interface WorkPlanScope {
+  quantity_type_codes: string[]
+  provider_ids: string[]
+}
+
+/** A meaningful /workflow/advance refusal (409) the WP proposal dialog must show, not swallow. */
+export interface AdvanceFailure {
+  code: string
+  message?: string
 }
 
 /**
@@ -121,6 +138,7 @@ export function useFlowGateToken() {
             {
               doc_id: params.doc_ref!,
               ...(params.selected_docs ? { ref_doc_ids: params.selected_docs } : {}),
+              ...(params.workPlanScope ? { work_plan_scope: params.workPlanScope } : {}),
               ...(params.continuous
                 ? {
                     continuous: true,
@@ -158,6 +176,7 @@ export function useFlowGateToken() {
         continuationReviewMode,
         continuationInstructionMode,
         continuationAutoApproveItemSeqs,
+        workPlanScope: _workPlanScope,
         ...issueBody
       } = params
       const res = await postRequest<any>('/api/v1/token/issue', {
@@ -196,6 +215,51 @@ export function useFlowGateToken() {
     }
   }
 
+  /**
+   * 0405 P0004 [멘트복사 — 범위를 실은 토큰을 발급한다].
+   *
+   * issueToken 은 advance 의 비인증 오류를 /token/issue 로 폴백한다. 그 폴백은 머리 칸을
+   * 진행시키지 않은 채 토큰만 만들어 내므로, 이 화면의 계약("409 면 복사하지 않고 창을
+   * 열어 둔다")과 정면으로 어긋난다. 그래서 이 경로만 폴백 없이 직접 부르고, 실패 사유를
+   * 삼키지 않고 그대로 돌려준다.
+   */
+  async function advanceWithWorkPlanScope(params: {
+    docId: string
+    workPlanScope: WorkPlanScope
+    refDocIds?: string[]
+  }): Promise<{ token: IssuedToken | null; error: AdvanceFailure | null }> {
+    issuing.value = true
+    try {
+      const res = await postRequest<any>('/api/v1/workflow/advance', {
+        doc_id: params.docId,
+        ...(params.refDocIds?.length ? { ref_doc_ids: params.refDocIds } : {}),
+        work_plan_scope: params.workPlanScope,
+      })
+      const d = res.data as any
+      return {
+        token: {
+          raw_token: d.token,
+          token_id: d.token_id,
+          expires_at: d.expires_at,
+          scratch_dir: d.scratch_dir,
+          action_scope: d.action_scope ?? 'new',
+          doc_ref: d.doc_ref ?? params.docId,
+          mention: d.mention ?? null,
+          selected_docs: params.refDocIds,
+        },
+        error: null,
+      }
+    } catch (e: any) {
+      const data = e?.response?.data ?? {}
+      return {
+        token: null,
+        error: { code: String(data.error ?? data.code ?? 'issue_failed'), message: data.detail ?? data.message },
+      }
+    } finally {
+      issuing.value = false
+    }
+  }
+
   // Review request: issue a token bound to doc_id and get a "please review this doc"
   // mention (read → evaluate → submit verdict via inbox action:review). Distinct from
   // issueToken/advance, which hands off CREATING the next document.
@@ -406,6 +470,7 @@ export function useFlowGateToken() {
   return {
     issuing,
     issueToken,
+    advanceWithWorkPlanScope,
     requestReview,
     requestWorkflowDecision,
     requestSequenceEdit,

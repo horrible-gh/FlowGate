@@ -852,6 +852,22 @@
       @open-head-doc="onOpenHeadDocClick"
     />
 
+    <!-- flowgate.default.0405 P0004: the work-plan-only proposal dialog. The next-action
+         list never opens for a WP head — this window replaces it and carries one scope into
+         all four buttons. -->
+    <WorkPlanProposalDialog
+      v-model:visible="workPlanProposalVisible"
+      :parent-doc-id="workPlanCreateParentDocId"
+      :project-id="workPlanCreateProjectId"
+      :group-id="workPlanCreateGroupId"
+      :busy-action="workPlanProposalBusy"
+      :external-notice="workPlanProposalNotice"
+      :ai-active="workPlanProposalAiActive"
+      @created="onWorkPlanCreated"
+      @copy-mention="onWorkPlanProposalCopyMention"
+      @invoke-ai="onWorkPlanProposalInvokeAi"
+    />
+
     <!-- flowgate.default.0395 D0007 §6.3: create dialog for a new work-plan document. -->
     <WorkPlanCreateDialog
       v-model:visible="workPlanCreateVisible"
@@ -1311,7 +1327,8 @@ import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
 import ReviewHistoryDialog from './ReviewHistoryDialog.vue'
 import DesignHandoffDialog from './DesignHandoffDialog.vue'
-import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
+import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
+import WorkPlanProposalDialog, { type WorkPlanScope } from './WorkPlanProposalDialog.vue'
 import WorkPlanEditor from './WorkPlanEditor.vue'
 import type { AiReview } from '../types/aiReview'
 import NextActionModal from './NextActionModal.vue'
@@ -1321,7 +1338,7 @@ import MentionMessageDialog from './MentionMessageDialog.vue'
 import { buildCandidateList, type MessageEntry } from '../utils/mentionMessages'
 import { copyToClipboard, copyToClipboardDeferred, ClipboardAbort, consumeLastFailedCopyText } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
-import type { IssuedToken } from '../composables/useFlowGateToken'
+import type { AdvanceFailure, IssuedToken } from '../composables/useFlowGateToken'
 import NextEmptyDocModal from './NextEmptyDocModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import CommandSelectorModal from './CommandSelectorModal.vue'
@@ -1489,6 +1506,7 @@ const docTypeStore = useDocTypeStore()
 const { showToast } = useToast()
 const {
   issueToken,
+  advanceWithWorkPlanScope,
   requestReview,
   requestWorkflowDecision,
   composeMention,
@@ -1681,6 +1699,13 @@ const workPlanCreateVisible = ref(false)
 const workPlanCreateParentDocId = ref('')
 const workPlanCreateProjectId = ref('')
 const workPlanCreateGroupId = ref('')
+// flowgate.default.0405 P0004: the WP-only proposal window. It reuses the three
+// workPlanCreate* context refs (same parent doc / project / group) and adds the state the
+// four-button row needs — which request is in flight and the one reason line under it.
+const workPlanProposalVisible = ref(false)
+const workPlanProposalBusy = ref<'' | 'copy' | 'ai'>('')
+const workPlanProposalNotice = ref('')
+const workPlanProposalAiActive = ref(false)
 // Continuous work (R0001 group 0086): sequence selection feeds a consent gate that offers
 // either an in-app provider run or the external-AI continuous mention path.
 const continuousDialogVisible = ref(false)
@@ -2525,6 +2550,9 @@ function onNextActionClick(tabId: string) {
   nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
+  // 0405 P0004 [제안 창 열기]: 다음 타입이 작업계획이면 공용 진행 목록을 열지 않는다.
+  // 그 목록의 다섯 항목은 작업계획에 맞지 않고, 세 갈래가 나를 범위를 물어볼 곳도 없다.
+  if (openWorkPlanProposalIfWp()) return
   nextActionModalVisible.value = true
 }
 
@@ -3215,6 +3243,9 @@ function onNonRNextActionClick(tabId: string) {
   nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
+  // 0405 P0004 [제안 창 열기]: 다음 타입이 작업계획이면 공용 진행 목록을 열지 않는다.
+  // 그 목록의 다섯 항목은 작업계획에 맞지 않고, 세 갈래가 나를 범위를 물어볼 곳도 없다.
+  if (openWorkPlanProposalIfWp()) return
   nextActionModalVisible.value = true
 }
 
@@ -3420,8 +3451,17 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
   }
   // 0395 T0026 재작업: 작업계획에는 "빈 문서"가 없다. 제목만 받아 만들면 수량도 공급자도
   // 정해지지 않은 파일이 남고, 그 파일은 작업계획 화면이 표로 열지 못한다(사용자 신고).
-  // 같은 [빈 문서 만들기] 자리에서 계획을 끝까지 정하는 생성 대화상자로 넘긴다.
+  // 같은 [빈 문서 만들기] 자리에서 계획을 끝까지 정하는 창으로 넘긴다.
+  //
+  // 0405 T0011: 그 창이 예전에는 [+ 생성] 하나뿐인 생성 대화상자였다. 같은 이름의
+  // [작업계획 생성]인데도 시퀀스 칸에서 연 창과 달리 [문서생성]·[멘트복사]·[AI 호출]이
+  // 없었다는 뜻이다. 두 진입점을 한 창(전용 제안 창)으로 모은다.
   if (docType === 'WP') {
+    nextActionModalDocRef.value = docRef
+    nextActionModalProjectId.value = project
+    nextActionModalGroupId.value = groupId
+    nextActionModalTypeCode.value = docType
+    if (openWorkPlanProposalIfWp()) return
     workPlanCreateParentDocId.value = docRef
     workPlanCreateProjectId.value = project
     workPlanCreateGroupId.value = groupId
@@ -3533,12 +3573,145 @@ async function onActionBarRunTest(tabId: string) {
 // viewed tab is not necessarily the document a work plan may attach to.
 function onCreateWorkPlan(tabId: string, parentDocId: string) {
   const h = docHeaderRefs[tabId]
-  workPlanCreateParentDocId.value = parentDocId || tabId
-  workPlanCreateProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
-  workPlanCreateGroupId.value = exposedValue<string>(h?.groupId) ?? ''
+  const docRef = parentDocId || tabId
+  const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
+  const groupId = exposedValue<string>(h?.groupId) ?? ''
+  // 0405 P0004 [제안 창 열기]: 이 이벤트는 워크플로 시퀀스의 머리 칸이 작업계획일 때만
+  // 올라온다 (DocWorkflow.onStepClick 의 WP 분기, 0395 T0036 이 시퀀스 칸을 유일한 진입점으로
+  // 고정했다). 곧 이 클릭이 문서 화면의 [다음 단계 진행] 이므로, 여기서 열려야 하는 창은
+  // 기존 생성 대화상자가 아니라 맡길 범위를 묻는 전용 제안 창이다.
+  nextActionModalTabId.value = tabId
+  nextActionModalDocRef.value = docRef
+  nextActionModalCurrentType.value = getTabTypeCode(tabId) ?? 'R'
+  nextActionModalInitialDocs.value = []
+  nextActionModalStep.value = getNextStepLabel(tabId)
+  nextActionModalTypeCode.value = getNextStepCode(tabId) || 'WP'
+  nextActionModalProjectId.value = project
+  nextActionModalGroupId.value = groupId
+  nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
+  if (openWorkPlanProposalIfWp()) return
+  // 머리 칸이 작업계획이 아닌 상태에서 올라온 경우에만 기존 생성 대화상자를 연다.
+  workPlanCreateParentDocId.value = docRef
+  workPlanCreateProjectId.value = project
+  workPlanCreateGroupId.value = groupId
   workPlanCreateVisible.value = true
 }
 
+/**
+ * 0405 P0004 — 다음 타입이 WP 일 때만 전용 제안 창을 연다. 그 밖의 타입은 false 를 돌려
+ * 공용 진행 목록으로 그대로 간다(회귀 금지).
+ */
+function openWorkPlanProposalIfWp(): boolean {
+  if (String(nextActionModalTypeCode.value || '').toUpperCase() !== 'WP') return false
+  workPlanCreateParentDocId.value = nextActionModalDocRef.value
+  workPlanCreateProjectId.value = nextActionModalProjectId.value
+  workPlanCreateGroupId.value = nextActionModalGroupId.value
+  workPlanProposalBusy.value = ''
+  workPlanProposalNotice.value = ''
+  workPlanProposalAiActive.value = false
+  workPlanProposalVisible.value = true
+  // P0004 [제안 창 열기]: the active probe only decides the [AI 호출] reason line. It never
+  // moves or removes a button, so the row is drawn before the answer arrives.
+  const groupId = workPlanCreateGroupId.value
+  if (groupId) {
+    void getRequest<any>('/api/v1/ai-invoke/active', { group_id: groupId })
+      .then((res) => {
+        const payload = res.data ?? {}
+        workPlanProposalAiActive.value = !!payload.active && payload.status !== 'finished'
+      })
+      .catch(() => { /* best effort — a real 409 on start still reports it */ })
+  }
+  return true
+}
+
+function workPlanProposalFailureText(failure: AdvanceFailure): string {
+  if (failure.code === 'sequence_exhausted') return t('main.work_plan_proposal_dialog.notice_sequence_exhausted')
+  if (failure.code === 'head_in_progress') return t('main.work_plan_proposal_dialog.notice_head_in_progress')
+  return failure.message || t('main.work_plan_proposal_dialog.notice_issue_failed')
+}
+
+/**
+ * [멘트복사] — 범위를 실은 토큰을 발급하고 그 멘트를 클립보드에 넣는다. 창은 요청 전에
+ * 닫지 않는다: 복사가 끝난 뒤에만 닫고, 409 면 사유 한 줄만 바꾼 채 열어 둔다.
+ */
+async function onWorkPlanProposalCopyMention(scope: WorkPlanScope) {
+  const docRef = workPlanCreateParentDocId.value
+  if (!docRef || workPlanProposalBusy.value) return
+  workPlanProposalNotice.value = ''
+  workPlanProposalBusy.value = 'copy'
+  const outcome: { token: IssuedToken | null; error: AdvanceFailure | null } = { token: null, error: null }
+  try {
+    await copyMentionDeferred(
+      async () => {
+        const res = await advanceWithWorkPlanScope({
+          docId: docRef, workPlanScope: scope, refDocIds: [docRef],
+        })
+        outcome.token = res.token
+        outcome.error = res.error
+        if (!outcome.token) throw new ClipboardAbort()
+        return composeMention(outcome.token, [docRef])
+      },
+      {
+        tabId: nextActionModalTabId.value,
+        kind: 'next_step',
+        successToast: t('main.work_plan_proposal_dialog.copy_toast'),
+        aborted: () => outcome.token == null,
+      },
+    )
+  } finally {
+    workPlanProposalBusy.value = ''
+  }
+  if (outcome.error) {
+    workPlanProposalNotice.value = workPlanProposalFailureText(outcome.error)
+    return
+  }
+  if (outcome.token) workPlanProposalVisible.value = false
+}
+
+/**
+ * [AI 호출] — 공용 연속작업 창을 거치지 않는 단일 실행. 서버는 work_plan_proposal 을
+ * advance_workflow 로 태우므로 여기서 실행되는 AI 가 읽는 글은 [멘트복사]가 클립보드에
+ * 넣는 글과 같은 함수에서 나온다.
+ */
+async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; providerId: string }) {
+  const docRef = workPlanCreateParentDocId.value
+  const project = workPlanCreateProjectId.value
+  const groupId = workPlanCreateGroupId.value
+  if (!docRef || !project || !groupId || workPlanProposalBusy.value) return
+  workPlanProposalNotice.value = ''
+  workPlanProposalBusy.value = 'ai'
+  const gParts = splitGroupId(groupId)
+  try {
+    await postRequest('/api/v1/ai-invoke/start', {
+      project,
+      ...(gParts?.module != null ? { module: gParts.module } : {}),
+      group: gParts?.groupCode ?? groupId,
+      doc_ref: docRef,
+      action_scope: 'work_plan_proposal',
+      mode: 'single',
+      provider_id: payload.providerId,
+      selected_docs: [docRef],
+      work_plan_scope: payload.scope,
+    })
+    workPlanProposalVisible.value = false
+  } catch (e: any) {
+    const data = e?.response?.data ?? {}
+    // 409 run_in_progress 의 서버 메시지는 영어다. 이 사유는 화면이 이미 자기 말로
+    // 가지고 있으므로(blockReason 의 block_ai_active) aiActive 만 세우고 사유 문자열은
+    // 비워 둔다 — 한국어 화면에 영어 한 줄이 끼어들지 않게 한다.
+    if (data.code === 'run_in_progress') {
+      workPlanProposalAiActive.value = true
+      workPlanProposalNotice.value = ''
+      return
+    }
+    workPlanProposalNotice.value = data.message
+      || data.detail
+      || t('main.work_plan_proposal_dialog.notice_ai_failed')
+  } finally {
+    workPlanProposalBusy.value = ''
+  }
+}
+
 function onWorkPlanCreated(payload: { docId: string; title: string }) {
   tabsStore.openTab({
     id: payload.docId,

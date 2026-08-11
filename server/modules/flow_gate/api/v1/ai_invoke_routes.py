@@ -86,6 +86,11 @@ _TOKEN_SCOPE = {
     "next_step_message": "new",
     "design_handoff": "new",
     "work_plan_fill": "edit",
+    # 0405 P0004 [AI 호출]: a proposal WRITES a work plan that does not exist yet, so it
+    # takes a 'new' token and goes through advance_workflow — the same path [멘트복사] uses,
+    # which is what keeps the pasted text and the invoked text one function's output.
+    # Not to be confused with work_plan_fill, which EDITS an existing plan.
+    "work_plan_proposal": "new",
 }
 # review/resolve_conflict/workflow_sequence_edit/test_run keep their OWN token scope (the
 # identity fallthrough of `_TOKEN_SCOPE.get`), because each is minted by a dedicated service
@@ -176,6 +181,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
     if body.action_scope not in _ALLOWED_SCOPES:
         errors.append({"loc": "action_scope", "msg": f"must be one of {', '.join(_ALLOWED_SCOPES)}"})
+    # 0405 P0004: "mode 는 항상 single 이다. 이 창은 연속 작업 체인을 시작하지 않는다."
+    if body.action_scope == "work_plan_proposal" and body.mode != "single":
+        errors.append({"loc": "mode", "msg": "work_plan_proposal must be single"})
     if body.mode == "continuous" and body.action_scope not in ("new", "edit", "workflow_decide"):
         errors.append({"loc": "mode", "msg": "continuous mode is not available for this action_scope"})
     if body.mode == "continuous" and body.continuation_target_seq is None:
@@ -429,6 +437,29 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "mention": issued.get("mention") or "",
             }
         issue_builder = _issue_work_plan_fill
+    if body.action_scope == "work_plan_proposal":
+        # 0405 P0004 [AI 호출 — 같은 범위, 같은 참조, 같은 작성법으로 바로 실행한다]:
+        # the invoke twin of the proposal dialog's [멘트복사]. Both call advance_workflow,
+        # so the head advances once and the worker reads the very mention a person would
+        # have pasted — including the '## 작업계획 맡길 범위' section built from this scope.
+        def _issue_work_plan_proposal(ai_run_id: Optional[str] = None):
+            adv = workflow_decision_service.advance_workflow(
+                doc_id=body.doc_ref or "",
+                issued_to=user_id,
+                api_base_url=_token_routes._build_api_base(request),
+                ref_doc_ids=body.selected_docs,
+                locale=locale,
+                continuous=False,
+                ai_run_id=ai_run_id,
+                work_plan_scope=body.work_plan_scope,
+            )
+            return {
+                "raw_token": adv["token"],
+                "token_id": adv["token_id"],
+                "scratch_dir": adv["scratch_dir"],
+                "mention": adv["mention"] or "",
+            }
+        issue_builder = _issue_work_plan_proposal
     if body.action_scope == "test_run":
         # 0268 B0001 (NR0003 결함 2): the invoke twin of TestRunStrip's delegation copy.
         # issue_test_run_request returns the raw token under "token" (not "raw_token"),

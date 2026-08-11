@@ -676,6 +676,138 @@ _CHANGED_FILES_REQUIRED_TEXT: dict[str, str] = {
 }
 
 
+# ── 0405 P0004 [멘트 본문] — 작업계획(WP) 제안 범위 절 ────────────────────────────
+# 다음 액션이 작업계획일 때, 사람이 제안 창에서 고른 범위를 워커에게 넘기는 단 하나의
+# 통로. P0004 "이 멘트가 반드시 지켜야 할 것"이 정한 조건 그대로다.
+#   · 머리 타입이 WP 이고 work_plan_scope 를 받았을 때에만 나온다 — 그 밖의 멘트는
+#     한 바이트도 달라지지 않는다.
+#   · 자리는 '## Instruction to include next document header' 바로 다음,
+#     '## Document template' 바로 앞. 워커가 "무엇을" 다음에 "어떤 서식으로"를 읽는 순서다.
+#   · 두 배열이 비면 절을 지우지 않고 그 줄에 (없음) 을 적는다. 절이 통째로 사라지면
+#     "범위가 없다"와 "범위 절을 못 받았다"를 구분할 수 없다.
+#   · 0405 T0011 rev1 (반려 "맡길 단계??? 이건 대체 왜나와"): 사람이 단계를 고르는 칸을
+#     화면에서 없앴다. 그래서 이 절도 '맡길 단계' 줄을 적지 않는다 — 단계 배분은 언제나
+#     작업계획을 쓰는 워커의 몫이고, 그 사실은 아래 tail 한 줄이 말한다.
+_WORK_PLAN_SCOPE_HEAD_TYPE = "WP"
+
+# P0004 [DEFERRED] 1행이 이 작업지시로 넘긴 항목: ko 문안은 P0004 가 확정했고,
+# en·ja 표기는 여기서 정한다.
+_WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
+    "ko": {
+        "header": "작업계획 맡길 범위",
+        "lead": "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오.",
+        "quantities": "장수를 셀 타입",
+        "providers": "후보 공급자",
+        "none": "(없음)",
+        "tail": (
+            "고른 타입의 수량은 각각 1입니다. 후보에 없는 공급자를 steps[].provider_id 에 "
+            "적지 마십시오.\n"
+            "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
+        ),
+        "tail_no_providers": (
+            "고른 타입의 수량은 각각 1입니다. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
+            "steps[].provider_id 는 비워 두십시오.\n"
+            "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
+        ),
+    },
+    "en": {
+        "header": "Work plan scope to delegate",
+        "lead": "A person chose the scope below on screen. Write the work plan to this scope.",
+        "quantities": "Types to count",
+        "providers": "Candidate providers",
+        "none": "(none)",
+        "tail": (
+            "Every chosen type has a quantity of 1. Do not write a provider outside these "
+            "candidates into steps[].provider_id.\n"
+            "Laying the steps out is delegated to you — expand them from the types and "
+            "quantities above."
+        ),
+        "tail_no_providers": (
+            "Every chosen type has a quantity of 1. This project has no registered AI "
+            "provider, so leave steps[].provider_id empty.\n"
+            "Laying the steps out is delegated to you — expand them from the types and "
+            "quantities above."
+        ),
+    },
+    "ja": {
+        "header": "作業計画を任せる範囲",
+        "lead": "以下の範囲は人が画面で選んだものです。この範囲どおりに作業計画を作成してください。",
+        "quantities": "枚数を数えるタイプ",
+        "providers": "候補プロバイダー",
+        "none": "(なし)",
+        "tail": (
+            "選んだタイプの数量はそれぞれ 1 です。候補にないプロバイダーを "
+            "steps[].provider_id に書かないでください。\n"
+            "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
+        ),
+        "tail_no_providers": (
+            "選んだタイプの数量はそれぞれ 1 です。このプロジェクトには登録済みの AI "
+            "プロバイダーがないため、steps[].provider_id は空欄にしてください。\n"
+            "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
+        ),
+    },
+}
+
+
+def _work_plan_scope_lines(value) -> list:
+    """Accept only a list/tuple of non-blank strings — anything else is an empty scope."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _work_plan_provider_names(project_id: str) -> dict:
+    """provider_id → display name. A failed lookup degrades to the bare id, never to a 500."""
+    try:
+        from modules.flow_gate.settings import ai_settings_service
+
+        effective = ai_settings_service.resolve_effective(project_id)
+        return {
+            str(provider.get("id")): str(provider.get("name") or provider.get("id"))
+            for provider in (effective.get("providers") or [])
+            if provider.get("id")
+        }
+    except Exception:  # a provider lookup must never abort mention generation
+        logger.warning(
+            "work-plan scope: provider display names unavailable for project=%s",
+            project_id, exc_info=True,
+        )
+        return {}
+
+
+def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
+    """Render the P0004 '## 작업계획 맡길 범위' section from the screen's scope payload."""
+    loc = template_provision.normalize_locale(locale)
+    copy = _WORK_PLAN_SCOPE_COPY[loc]
+    scope = scope if isinstance(scope, dict) else {}
+
+    type_codes = [code.upper() for code in _work_plan_scope_lines(scope.get("quantity_type_codes"))]
+    provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
+
+    quantity_text = " / ".join(
+        f"{code} {get_type_name(code, loc) or code}" for code in type_codes
+    ) or copy["none"]
+
+    def _block(caption: str, items: list) -> str:
+        if not items:
+            return f"{caption}: {copy['none']}"
+        return caption + ":\n" + "\n".join(f"- {item}" for item in items)
+
+    names = _work_plan_provider_names(project_id) if provider_ids else {}
+    # 0405 T0011 rev2: 후보가 비어 있을 때 "후보에 없는 공급자를 적지 마십시오"는 워커에게
+    # 아무것도 말해 주지 않는다. 그 자리에 "공급자가 없으니 비워 두라"를 대신 적는다.
+    tail = copy["tail"] if provider_ids else copy["tail_no_providers"]
+    body = "\n".join([
+        copy["lead"],
+        "",
+        f"{copy['quantities']}: {quantity_text}",
+        _block(copy["providers"], [f"{pid} · {names.get(pid, pid)}" for pid in provider_ids]),
+        "",
+        tail,
+    ])
+    return _section(copy["header"], body)
+
+
 # TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
 # it remotely from the project source root. Without this block the worker receives a
 # generic new-document mention and the TS it writes fails parse_test_plan
@@ -1087,6 +1219,10 @@ def build_mention(
     # ``continuous``), the replacement block is the review variant that keeps the Q
     # latitude (scrutinise → Q-if-blocked → else proceed) instead of "never stop, never ask".
     continuous_review_mode: bool = False,
+    # 0405 P0004: the work-plan proposal scope a person chose on screen
+    # ({quantity_type_codes, step_keys, provider_ids}). Read ONLY when the head type is
+    # WP and this is not an edit; every other mention is byte-identical without it.
+    work_plan_scope: Optional[dict] = None,
 ) -> Optional[str]:
     """Return an R018-enhanced prompt string.
 
@@ -1433,6 +1569,18 @@ def build_mention(
     if source_crud_section:
         sections.append(source_crud_section)
     sections.append(_section(s2_header, s2_body))
+    # 0405 P0004 [멘트 본문]: '## Instruction to include next document header' 바로 다음,
+    # '## Document template' 바로 앞. WP 머리가 아니거나 범위를 받지 못했으면 아무것도
+    # 덧붙이지 않으므로 기존 멘트는 그대로다.
+    if (
+        work_plan_scope is not None
+        and not is_edit
+        and str(head_type or "").upper() == _WORK_PLAN_SCOPE_HEAD_TYPE
+    ):
+        try:
+            sections.append(_work_plan_scope_section(work_plan_scope, project, locale))
+        except Exception:  # a scope section must never abort mention generation
+            logger.warning("work-plan scope section failed", exc_info=True)
     if scope_section:
         sections.append(scope_section)
     if nt_authoring_section:
@@ -1493,6 +1641,7 @@ def build_mention_from_token_rec(
     head_context_doc: Optional[dict] = None,
     continuous: bool = False,
     continuous_review_mode: bool = False,
+    work_plan_scope: Optional[dict] = None,
 ) -> Optional[str]:
     """Generate an R018-enhanced prompt from token_rec + a document record.
 
@@ -1572,6 +1721,7 @@ def build_mention_from_token_rec(
         head_doc_title=head_doc_title,
         continuous=continuous,
         continuous_review_mode=continuous_review_mode,
+        work_plan_scope=work_plan_scope,
     )
 
 

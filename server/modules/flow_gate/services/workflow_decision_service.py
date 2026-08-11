@@ -598,6 +598,10 @@ def advance_workflow(
     # Normalized + (lightly) validated here; the caller decides how strict — see
     # validate_continuation_auto_approve_item_seqs's reject_already_done docstring.
     continuation_auto_approve_item_seqs: Optional[list] = None,
+    # 0405 P0004: the work-plan proposal scope chosen on screen. Handed to the mention
+    # builder untouched; it renders the '## 작업계획 맡길 범위' section only when the head
+    # type is WP, so every other advance is byte-identical with or without this argument.
+    work_plan_scope: Optional[dict] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
@@ -844,6 +848,7 @@ def advance_workflow(
         head_context_doc=head_context_doc,
         continuous=continuous,
         continuous_review_mode=bool(continuous and continuation_review_mode),
+        work_plan_scope=work_plan_scope,
     )
 
     # continuation_remaining = steps left from the current head to the target (inclusive
