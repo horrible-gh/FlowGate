@@ -40,12 +40,30 @@ _BOUND_COLUMNS = (
     "fallback_history", "register_errors", "tool_call_misses", "turn_limit_exhausted",
     "oracle_mismatch", "source_dirty", "scratch_retained", "hop_item_seq",
     "token_id", "issued_to", "started_at", "finished_at", "duration_ms",
-    "timeout_sec", "deadline_at", "created_at", "updated_at",
+    "timeout_sec", "deadline_at",
+    # ── 0406 T0022 작업 3·5 (migration 080) ──────────────────────────────────
+    # 누가 이 홉을 수행했고, 서버가 무엇을 대신 처리했으며, 사용자가 넣은 전달멘트가
+    # 실제로 프롬프트에 들어갔는지. 원문은 저장하지 않는다 — 결정 종류와 길이·sha256뿐.
+    "worker_document_type",
+    "continuation_instruction_mode_requested",
+    "continuation_instruction_mode_normalized",
+    "continuation_instruction_mode_fallback_applied",
+    "auto_handled_item_seqs",
+    "prompt_message_source",
+    "prompt_common_default_applied",
+    "prompt_user_message_length",
+    "prompt_user_message_sha256",
+    "prompt_final_length",
+    "prompt_final_sha256",
+    "created_at", "updated_at",
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
-_ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors")
-_BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch")
+_ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
+                 "auto_handled_item_seqs")
+_BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
+                "continuation_instruction_mode_fallback_applied",
+                "prompt_common_default_applied")
 _NULLABLE_BOOL_FIELDS = ("source_dirty",)
 
 _last_purge_mono: Optional[float] = None
@@ -57,7 +75,7 @@ def _dump_array(field: str, value: Any) -> Optional[str]:
         return None
     items = list(value)
 
-    if field == "reached_doc_ids":
+    if field in ("reached_doc_ids", "auto_handled_item_seqs"):
         if len(items) > _REACHED_DOC_IDS_MAX_ITEMS:
             items = items[-_REACHED_DOC_IDS_MAX_ITEMS:]  # drop the oldest (head)
         return json.dumps(items, ensure_ascii=False)
@@ -145,6 +163,28 @@ def upsert(row: dict[str, Any]) -> None:
         "duration_ms": row.get("duration_ms"),
         "timeout_sec": row.get("timeout_sec"),
         "deadline_at": row.get("deadline_at"),
+        # ── 0406 T0022 작업 3·5 (migration 080) ─────────────────────────────
+        "worker_document_type": row.get("worker_document_type"),
+        "continuation_instruction_mode_requested": row.get(
+            "continuation_instruction_mode_requested"
+        ),
+        "continuation_instruction_mode_normalized": row.get(
+            "continuation_instruction_mode_normalized"
+        ),
+        "continuation_instruction_mode_fallback_applied": (
+            1 if row.get("continuation_instruction_mode_fallback_applied") else 0
+        ),
+        "auto_handled_item_seqs": _dump_array(
+            "auto_handled_item_seqs", row.get("auto_handled_item_seqs")
+        ),
+        "prompt_message_source": row.get("prompt_message_source"),
+        "prompt_common_default_applied": (
+            1 if row.get("prompt_common_default_applied") else 0
+        ),
+        "prompt_user_message_length": int(row.get("prompt_user_message_length") or 0),
+        "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
+        "prompt_final_length": int(row.get("prompt_final_length") or 0),
+        "prompt_final_sha256": row.get("prompt_final_sha256"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

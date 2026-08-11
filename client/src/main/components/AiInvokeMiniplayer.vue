@@ -107,6 +107,19 @@
               <span>{{ elapsedText(entry) }}</span>
             </template>
           </div>
+          <div
+            v-if="entry.workerDocumentType || entry.workerItemSeq != null || entry.endReason"
+            class="aiv-mini__meta aiv-mini__worker-fact"
+            data-test="ai-miniplayer-worker-fact"
+          >
+            <span v-if="entry.workerDocumentType || entry.workerItemSeq != null">
+              {{ t('main.ai_miniplayer.worker_fact', {
+                type: entry.workerDocumentType || '—',
+                seq: entry.workerItemSeq ?? '—',
+              }) }}
+            </span>
+            <span v-if="entry.endReason">{{ t('main.ai_miniplayer.end_reason_fact', { reason: entry.endReason }) }}</span>
+          </div>
           <!-- 0393 B0001 / T0005 §2-6: a stop CODE on its own is a cipher to the person
                reading the card — the whole complaint in the bug report was "원인도 모르고".
                The sentence rides right under the outcome line for every ended card. -->

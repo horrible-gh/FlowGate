@@ -283,10 +283,16 @@
                       <input
                         type="text"
                         class="wdm-note-input"
+                        :class="{ 'wdm-note-input--over': (item.note ?? '').length > noteMaxChars }"
                         v-model="item.note"
                         :placeholder="t('main.work_plan_pour.note_empty')"
                         @input="item.noteSource = null"
                       />
+                      <small class="wdm-note-count" :class="{ 'wdm-note-count--over': (item.note ?? '').length > noteMaxChars }">
+                        {{ (item.note ?? '').length > noteMaxChars
+                          ? t('main.work_plan.note_char_over', { current: (item.note ?? '').length, max: noteMaxChars })
+                          : t('main.work_plan.note_char_count', { current: (item.note ?? '').length, max: noteMaxChars }) }}
+                      </small>
                     </span>
                   </span>
                   <span
@@ -660,6 +666,8 @@ interface ServerItem {
 
 const loading = ref(false)
 const loadError = ref(false)
+// Canonical value comes from GET /workflow/sequence; fallback keeps old mocks readable.
+const noteMaxChars = ref(1000)
 const metaContractMissing = ref(false)
 const saving = ref(false)
 const lockedItems = ref<ServerItem[]>([])
@@ -1071,6 +1079,7 @@ async function loadSequence() {
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.docId })
     const data = (res.data as any)
+    noteMaxChars.value = Number(data?.note_max_chars) || 1000
     // 0406 T0013: the canonical handler answers `items`. A body without that key is a
     // pre-0406 duplicate-route response, so keep reading its rows — a list the user can SEE
     // beats an empty dialog — but treat the shape itself as the missing contract. Dropping
@@ -1446,6 +1455,19 @@ watch(
 }
 .wdm-note-input::placeholder {
   color: #b45309;
+}
+.wdm-note-input--over {
+  border-bottom-color: var(--danger);
+  color: var(--danger);
+}
+.wdm-note-count {
+  flex-shrink: 0;
+  color: var(--text-m);
+  font-size: .58rem;
+}
+.wdm-note-count--over {
+  color: var(--danger);
+  font-weight: 700;
 }
 /* 0399 T0016 — 줄의 타입을 바꾸는 작은 드롭다운. doc-tag 색 배지는 그대로 두고 옆에 둔다. */
 .wdm-type-select {

@@ -59,3 +59,11 @@ WORK_PLAN_STEP_TYPES = frozenset(
 
 # Steps the server assembles itself — no provider, no note (DS0006 §2-7).
 WORK_PLAN_LOCKED_TYPES = frozenset({"TSR"})
+
+# ── 한줄 멘트 길이 상한 — 정본 (0406 T0022 작업 6 / M0019) ────────────────────
+# 같은 값이 work_plan_service, work_plan_sequence_service, 화면 세 곳에 따로 박혀
+# 있었고 셋 다 200 이었다. 작업계획 편집기는 그 200 에서 경고 없이 타이핑을 막았고,
+# 시퀀스 저장 경로는 200 뒤를 조용히 잘랐다 — "작업 계획도 존나 끊겨서 들어가네".
+# 이제 상한은 여기 한 곳이고, 서버의 두 서비스와 화면(API 응답의 limits)이 모두 이
+# 값을 읽는다. 저장 경로는 넘치면 자르지 않고 note_too_long 으로 거절한다.
+STEP_NOTE_MAX_CHARS = 1000

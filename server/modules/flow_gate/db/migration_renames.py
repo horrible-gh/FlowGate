@@ -2,7 +2,7 @@
 
 flowgate.default.0394 T0004 (NR0003 §4.4, 권고 1).
 
-`sql/migrations/<dialect>/` had eight numbers carrying more than one file — two
+`sql/migrations/<dialect>/` had ten numbers carrying more than one file — two
 parallel groups each picked the same next number, and the loser was only ever
 distinguished by the rest of its name. T0004 gives each file a unique ordinal by
 appending a letter to the later arrivals (`076_ai_invoke_runs.sql` ->
@@ -57,6 +57,10 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("074_document_type_descriptions.sql", "074b_document_type_descriptions.sql"),
     ("076_ai_invoke_paused_provider.sql", "076a_ai_invoke_paused_provider.sql"),
     ("076_ai_invoke_runs.sql", "076b_ai_invoke_runs.sql"),
+    ("078_continuation_auto_approve.sql", "078a_continuation_auto_approve.sql"),
+    ("078_seed_work_plan_doctype.sql", "078b_seed_work_plan_doctype.sql"),
+    ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
+    ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
 )
 
 

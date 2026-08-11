@@ -117,14 +117,16 @@ def test_missing_invalid_or_blank_defaults_preserves_empty_note_and_note_missing
     assert "note_missing" in {item["code"] for item in result["notifications"]}
 
 
-def test_shared_note_reuses_normalization_limit_and_control_character_removal():
+def test_shared_note_reuses_normalization_and_control_character_removal():
+    # 0406 T0022 작업 6: 후보 생성은 표시 경로다 — 자르지 않고 그대로 나른다. 상한을 넘긴
+    # 값은 [저장]에서 note_too_long 으로 거절되며, 그 판정은 저장 경로가 한다.
+    body = "가" * (wpseq.NOTE_MAX_CHARS + 50)
     rows, _, _ = _rows({
-        "defaults": {"note": " \x00" + ("가" * (wpseq.NOTE_MAX_CHARS + 50)) + "\n"},
+        "defaults": {"note": " \x00" + body + "\n"},
         "steps": [{"key": "D#1", "type": "D", "note": ""}],
     })
 
-    assert len(rows[0]["note"]) == wpseq.NOTE_MAX_CHARS
-    assert rows[0]["note"] == "가" * wpseq.NOTE_MAX_CHARS
+    assert rows[0]["note"] == body
     assert rows[0]["note_source"] == "defaults"
 
 

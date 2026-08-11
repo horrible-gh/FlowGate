@@ -387,7 +387,7 @@ def test_all_three_dialects_seed_the_type():
         # Not named `path`: the repo-scratch guard (0382) tracks names transitively
         # derived from __file__ across the whole file, so reusing that name here would
         # make an unrelated `path.unlink()` on a tmp file below read as a repo write.
-        sql_path = roots / dialect / "078_seed_work_plan_doctype.sql"
+        sql_path = roots / dialect / "078b_seed_work_plan_doctype.sql"
         assert sql_path.is_file(), f"missing {dialect} migration"
         sql = sql_path.read_text(encoding="utf-8")
         assert "'WP'" in sql and "작업계획" in sql

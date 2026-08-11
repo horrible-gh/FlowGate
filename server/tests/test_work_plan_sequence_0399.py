@@ -296,11 +296,21 @@ def test_an_undecided_workflow_makes_the_two_modes_agree(monkeypatch):
 
 # ── L0011 §2.2 · §2.3 · §2.4 — the conversion rules on their own ─────────────
 
-def test_normalize_note_strips_control_characters_and_cuts_at_the_limit():
+def test_normalize_note_strips_control_characters_and_never_truncates():
     assert wpseq.normalize_note("  a\tb\n  ") == "ab"
     assert wpseq.normalize_note(None) == ""
     assert wpseq.normalize_note(1234) == ""
-    assert len(wpseq.normalize_note("가" * 400)) == wpseq.NOTE_MAX_CHARS
+    # 0406 T0022 작업 6 / M0019: 옛 계약은 상한 뒤를 조용히 잘랐다. 이제 자르지 않는다 —
+    # 표시 경로는 있는 그대로 돌려주고, 저장 경로(strict)는 거절한다.
+    long_note = "가" * (wpseq.NOTE_MAX_CHARS + 200)
+    assert wpseq.normalize_note(long_note) == long_note
+    with pytest.raises(wpseq.NoteTooLong) as excinfo:
+        wpseq.normalize_note(long_note, strict=True)
+    assert excinfo.value.max_chars == wpseq.NOTE_MAX_CHARS
+    assert excinfo.value.length == len(long_note)
+    assert wpseq.normalize_note("가" * wpseq.NOTE_MAX_CHARS, strict=True) == (
+        "가" * wpseq.NOTE_MAX_CHARS
+    )
 
 
 def test_a_result_step_note_fills_an_empty_instruction_and_never_overwrites_one():
@@ -415,12 +425,31 @@ def test_saving_stores_the_note_and_where_the_row_came_from(save_wired):
 
 def test_saving_retrims_the_note_it_is_handed(save_wired):
     inserted, _ = save_wired
+    body = "가" * 400
     wds.edit_workflow_pending(OWNER_DOC_ID, [
-        {"type": "D", "label": "기본설계", "note": "  긴\t말  " + "가" * 400},
+        {"type": "D", "label": "기본설계", "note": "  긴\t말  " + body},
     ])
     note = inserted[0]["note"]
     assert note.startswith("긴 말") is False and note.startswith("긴말")
-    assert len(note) == wpseq.NOTE_MAX_CHARS
+    # 0406 T0022 작업 6: 400 자는 새 상한(1,000) 안이므로 손실 없이 그대로 저장된다.
+    # 옛 계약에서는 여기서 200 자로 잘려 나갔다.
+    assert note == "긴말  " + body
+
+
+def test_saving_rejects_a_note_over_the_limit_instead_of_cutting_it(save_wired):
+    """0406 T0022 작업 6 / M0019 — "작업 계획도 존나 끊겨서 들어가네".
+
+    저장 경로가 사용자 입력을 말없이 줄이면 화면은 성공했다고 말하고 값은 사라진다.
+    자르지 않고 거절하며, 거절은 아무 줄도 쓰지 않는다.
+    """
+    inserted, _ = save_wired
+    with pytest.raises(wpseq.NoteTooLong) as excinfo:
+        wds.edit_workflow_pending(OWNER_DOC_ID, [
+            {"type": "D", "label": "기본설계", "note": "가" * (wpseq.NOTE_MAX_CHARS + 1)},
+        ])
+    assert excinfo.value.max_chars == wpseq.NOTE_MAX_CHARS
+    assert excinfo.value.item_index == 0
+    assert inserted == []
 
 
 def test_an_ordinary_save_stores_an_empty_note_and_no_source(save_wired):

@@ -52,7 +52,15 @@ def mock_db(test_db_path):
             self._conn.execute("PRAGMA foreign_keys = ON")
 
         def _execute(self, sql, params=None):
-            self._conn.execute(sql, params or [])
+            # 0406 T0022 작업 4: 실패한 문장을 롤백하지 않으면 sqlite 는 쓰기 트랜잭션을
+            # 연 채로 둔다. 그러면 이 파일이 테스트마다 새로 여는 다음 연결이
+            # "database is locked" 로 죽는다 — 실패한 것은 한 문장뿐인데 뒤따르는
+            # 픽스처가 통째로 무너진다. 진짜 저장소는 이미 이렇게 동작한다.
+            try:
+                self._conn.execute(sql, params or [])
+            except Exception:
+                self._conn.rollback()
+                raise
             self._conn.commit()
 
         def _fetch_one(self, sql, params=None):
@@ -81,6 +89,11 @@ def mock_db(test_db_path):
             "modules.flow_gate.db.projects",
             "modules.flow_gate.db.ai_providers",
             "modules.flow_gate.db.ai_provider_doctype_map",
+            # 0406 T0022 작업 4: request_auto_resume 은 이제 홉 핸드오프 의도를 durable
+            # 정지행으로도 남긴다. 이 모듈을 같이 갈아끼우지 않으면 그 쓰기가 진짜
+            # 저장소로 새 연결을 열고, 이 파일의 TestStore 연결과 같은 sqlite 파일을
+            # 두고 잠금 경합을 일으켜 다음 픽스처가 "database is locked" 로 죽는다.
+            "modules.flow_gate.db.ai_invoke_paused_chains",
             "modules.flow_gate.rbac.decorators",
         )
     ]
@@ -427,13 +440,45 @@ class TestPerHopRespawn:
 
         gid = "flowgate.default.0317"
         calls = []
+        parked = []
         monkeypatch.setattr(svc, "_spawn_auto_resume", lambda g, p: calls.append((g, p)))
+        monkeypatch.setattr(svc, "_park_handoff",
+                            lambda run, pending, code: parked.append((run, pending, code)))
         svc.request_auto_resume(gid, {"doc_ref": "d", "target_seq": 3})
         # A timeout / cancel / provider-exhaustion hop is a real stop: do not continue...
-        svc._maybe_auto_resume_hop({"group_id": gid, "end_reason": "timeout", "cancel_event": None})
+        svc._maybe_auto_resume_hop({
+            "group_id": gid, "end_reason": "timeout", "cancel_event": None,
+            "run_id": "aiv_x", "stop_code": "timeout",
+        })
         assert calls == []
         # ...and the stale queue is consumed so it cannot fire on a later run.
         assert svc.peek_auto_resume(gid) is None
+        # 0406 T0022 작업 4: 큐는 버리되 **의도는 버리지 않는다.** 이 분기는 지금까지
+        # 아무것도 남기지 않아, 재개할 좌표도 없고 핸드오프로 releasing 이 된 lease 도
+        # 풀리지 않았다. 이제 사유를 stop_code 로 구분해 durable 정지행으로 park 한다.
+        assert len(parked) == 1
+        _run, pending, code = parked[0]
+        assert code == "timeout"
+        assert pending["doc_ref"] == "d"
+
+    def test_maybe_resume_parks_the_intent_when_the_spawn_itself_fails(self, monkeypatch):
+        """0406 T0022 작업 4: _spawn_auto_resume 예외는 지금까지 로그 한 줄로 끝났다."""
+        from modules.flow_gate.services import ai_invoke_service as svc
+
+        gid = "flowgate.default.0317"
+        parked = []
+
+        def _boom(_g, _p):
+            raise RuntimeError("advance blew up")
+
+        monkeypatch.setattr(svc, "_spawn_auto_resume", _boom)
+        monkeypatch.setattr(svc, "_park_handoff",
+                            lambda run, pending, code: parked.append((run, pending, code)))
+        svc.request_auto_resume(gid, {"doc_ref": "d", "target_seq": 3})
+        svc._maybe_auto_resume_hop({
+            "group_id": gid, "end_reason": "exited", "cancel_event": None, "run_id": "aiv_y",
+        })
+        assert [code for _r, _p, code in parked] == [svc.HOP_HANDOFF_FAILED_STOP_CODE]
 
     def test_maybe_resume_noop_without_queue(self, monkeypatch):
         from modules.flow_gate.services import ai_invoke_service as svc

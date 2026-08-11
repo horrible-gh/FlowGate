@@ -370,7 +370,7 @@ class DatabaseSetting:
 
         # 0394 T0004: sqloader's migrator keys the `migrations` table on the FILE
         # NAME, so the duplicate-number cleanup (031a / 042a / ... / 076b) looks
-        # like ten brand-new migrations to any DB that already applied them under
+        # like fourteen brand-new migrations to any DB that already applied them under
         # the old names — and re-running an ALTER TABLE ADD COLUMN aborts the boot.
         # Carry the bookkeeping rows over first. No-op on a fresh DB, and on a DB
         # that has already been carried over. Must precede database_init(), which

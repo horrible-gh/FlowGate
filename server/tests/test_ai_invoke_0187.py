@@ -703,6 +703,48 @@ class TestAdmission:
 
 # ── SSE contract (P0005) ─────────────────────────────────────────────────────
 
+class TestWorkerVisibility:
+    """0406 T0022 작업 3 — 실행 중에도 "누가 이 홉을 수행하는가"를 답한다.
+
+    NR0021 §11 이 확정한 현상은, auto_approved 에서 서버가 N/T 를 대신 작성·승인해
+    AI 워커가 아예 붙지 않았고 그 사실이 어디에도 남지 않았다는 것이다. 끝난 뒤의
+    기록만으로는 부족하다 — 시작 응답과 시작 이벤트가 먼저 답해야 실행 중 화면이
+    "N/T 가 사라졌다"와 "TR 워커가 정상 실행됐다"를 구분해 그릴 수 있다.
+    """
+
+    def test_start_response_names_the_worker_and_the_mode_it_actually_used(self, fake_env):
+        cmd = f'"{PY}" -c "import sys; sys.stdin.read(); print(\'ok\')"'
+        res = _start(fake_env, [_provider(cmd=cmd)], mode="continuous", target=6)
+        _wait_finished(res["run_id"])
+
+        for key in (
+            "continuation_instruction_mode",
+            "continuation_instruction_mode_requested",
+            "continuation_instruction_mode_normalized",
+            "continuation_instruction_mode_fallback_applied",
+            "hop_item_seq",
+            "worker_document_type",
+            "auto_handled_item_seqs",
+        ):
+            assert key in res, key
+        # _start 는 모드를 보내지 않는다 — 하위호환대로 auto_approved 로 접히되,
+        # 접혔다는 사실이 응답에 적혀 있다(작업 2).
+        assert res["continuation_instruction_mode"] == "auto_approved"
+        assert res["continuation_instruction_mode_requested"] is None
+        assert res["continuation_instruction_mode_normalized"] == "auto_approved"
+        assert res["continuation_instruction_mode_fallback_applied"] is True
+
+    def test_started_event_carries_the_same_worker_facts(self, fake_env):
+        cmd = f'"{PY}" -c "import sys; sys.stdin.read(); print(\'ok\')"'
+        res = _start(fake_env, [_provider(cmd=cmd)], mode="continuous", target=6)
+        _wait_finished(res["run_id"])
+
+        started = next(p for name, p in fake_env["events"] if name == "ai_invoke_started")
+        for key in ("hop_item_seq", "worker_document_type", "auto_handled_item_seqs"):
+            assert key in started, key
+        assert started["auto_handled_item_seqs"] == res["auto_handled_item_seqs"]
+
+
 class TestEvents:
     def test_started_switched_finished_sequence(self, fake_env):
         bad = _provider(name="bad", cmd=f'"{PY}" -c "import sys; sys.exit(3)"', pid="aip_bad9")

@@ -1,4 +1,4 @@
--- 078_continuation_auto_approve.sql
+-- 078a_continuation_auto_approve.sql
 -- flowgate.default.0352 T0004 (R0001 / NR0003): per-item_seq N/T auto-approve selection for
 -- the [지시서 작성 후 진행] (ai_direct) continuous chain, plus the paused-chain mode/set columns
 -- needed to fix the pause->resume mode-loss bug (a chain started with ai_direct lost the mode

@@ -20,6 +20,7 @@ status API surfaces as 404 run_not_found.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -102,6 +103,24 @@ INBOX_NOTIFY_STOP_CODES = frozenset({
     "head_slot_mismatch", "approve_denied", "approve_failed", "advance_blocked",
 })
 NOTIFY_STOP_CODES = ENGINE_NOTIFY_STOP_CODES | INBOX_NOTIFY_STOP_CODES
+
+# ── 홉 핸드오프의 내구성 (0406 T0022 작업 4) ──────────────────────────────────
+# 다음 홉의 의도는 프로세스 메모리 dict(_auto_resume) 에만 있었다. 서버가 재기동하면
+# 통째로 사라지고, 현재 홉이 exited 가 아니면 큐를 pop 한 뒤 그냥 버렸으며,
+# _spawn_auto_resume 예외도 로그 한 줄로 끝났다. FlowGate 는 타임머신이다 — 큐를
+# 버리더라도 의도는 지우지 않는다. 같은 의도를 ai_invoke_paused_chains 에 시스템
+# 정지행으로 남기고, **후속 홉이 실제로 start 에 성공한 뒤에만** 지운다.
+HOP_HANDOFF_STOP_CODE = "hop_handoff"
+# 정상 핸드오프는 0~3 초 안에 끝난다(0406 실측). 그 사이에도 durable 행은 존재하므로,
+# 이 유예 안에서는 미니플레이어에 정지 카드로 띄우지 않는다 — 성공하는 핸드오프마다
+# "멈췄다"가 깜빡이면 그 표시는 아무 뜻도 없어진다. 유예를 넘겨서도 남아 있다면 그
+# 핸드오프는 실제로 끊긴 것이고, 그때는 보여야 한다.
+HOP_HANDOFF_GRACE_SEC = 120
+# 재기동으로 메모리 큐를 잃은 핸드오프. 기동 시점에 이 코드로 바꿔 두면 유예 판정에
+# 걸리지 않고 곧바로 [이어서 진행] 카드가 된다.
+HOP_HANDOFF_INTERRUPTED_STOP_CODE = "hop_handoff_interrupted"
+# 큐는 있었는데 후속 홉을 띄우지 못했다(_spawn_auto_resume 예외).
+HOP_HANDOFF_FAILED_STOP_CODE = "hop_handoff_failed"
 
 ANTHROPIC_VERSION = "2023-06-01"
 API_CALL_MAX_TIMEOUT_SEC = 600   # single model-call ceiling inside the run deadline
@@ -409,6 +428,9 @@ def startup_recover_leases() -> int:
             )
     if victims:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))
+    # 0406 T0022 작업 4: 같은 기동 시점에 끊긴 홉 핸드오프도 복원한다. lease 회수와
+    # 짝이다 — 하나는 자물쇠를, 하나는 "다음에 무엇을 할 예정이었는가"를 되찾는다.
+    startup_recover_handoffs()
     return len(victims)
 
 
@@ -509,6 +531,25 @@ def _run_detail_from_row(row: dict) -> dict:
         "finished_at": row.get("finished_at"),
         "timeout_sec": row.get("timeout_sec"),
         "deadline_at": row.get("deadline_at"),
+        # 0406 T0022 작업 3·5: 실행이 끝난 뒤에도 같은 질문에 답할 수 있어야 한다 —
+        # 누가 이 홉을 수행했나, 서버가 무엇을 대신 처리했나, 전달멘트가 들어갔나.
+        "worker_document_type": row.get("worker_document_type"),
+        "continuation_instruction_mode_requested": row.get(
+            "continuation_instruction_mode_requested"
+        ),
+        "continuation_instruction_mode_normalized": row.get(
+            "continuation_instruction_mode_normalized"
+        ),
+        "continuation_instruction_mode_fallback_applied": bool(
+            row.get("continuation_instruction_mode_fallback_applied")
+        ),
+        "auto_handled_item_seqs": row.get("auto_handled_item_seqs") or [],
+        "prompt_message_source": row.get("prompt_message_source"),
+        "prompt_common_default_applied": bool(row.get("prompt_common_default_applied")),
+        "prompt_user_message_length": row.get("prompt_user_message_length"),
+        "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
+        "prompt_final_length": row.get("prompt_final_length"),
+        "prompt_final_sha256": row.get("prompt_final_sha256"),
     }
 
 
@@ -997,8 +1038,9 @@ def start_run(
         normalize_continuation_instruction_mode,
     )
 
+    requested_continuation_instruction_mode = continuation_instruction_mode
     continuation_instruction_mode = normalize_continuation_instruction_mode(
-        continuation_instruction_mode
+        requested_continuation_instruction_mode
     )
     continuation_auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
         continuation_auto_approve_item_seqs
@@ -1243,6 +1285,14 @@ def start_run(
     # override, an individual note does NOT replace the common one: D0004 §3-3 treats them as
     # stackable ("무엇을 위한 것인가" + "너는 무엇을 맡는가"), so both are adopted when present.
     # A resolution failure must not stall the hop (same contract as the provider override).
+    # 0406 T0022 작업 5: 이 홉의 사용자 메시지가 어디서 왔는지와, 최종 프롬프트가 무엇이
+    # 됐는지를 run 에 실어 둔다. 원문은 남기지 않는다 — 결정 종류와 길이·해시뿐이다.
+    prompt_audit: dict = {
+        "prompt_message_source": "none",
+        "prompt_common_default_applied": False,
+        "prompt_user_message_length": 0,
+        "prompt_user_message_sha256": None,
+    }
     if mode == "continuous" or (mode == "single" and action_scope == "new"):
         mention = _inject_hop_notes(
             mention,
@@ -1253,7 +1303,9 @@ def start_run(
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
             fold_worker_item_seq=(mode == "continuous"),
             locale=continuation_locale,
+            audit=prompt_audit,
         )
+    _prompt_final_length, _prompt_final_sha256 = prompt_digest(mention)
 
     if scope_oracle_run:
         # After issue() (the judge target comes from the token) but before the worker is
@@ -1352,6 +1404,28 @@ def start_run(
         "continuation_auto_approve_item_seqs": (
             continuation_auto_approve_item_seqs if mode == "continuous" else None
         ),
+        # ── 0406 T0022 작업 2·3·5: 이 홉을 사후에 판정하기 위한 값들 ────────────────
+        # 요청이 보낸 모드 원값 / 서버가 읽은 값 / 정규화가 실제로 발동했는지. 셋을 나눠
+        # 두어야 "사용자가 auto_approved 를 골랐다"와 "진입점이 모드를 빠뜨려 서버가 대신
+        # 골랐다"를 가를 수 있다.
+        "continuation_instruction_mode_requested": (
+            requested_continuation_instruction_mode if mode == "continuous" else None
+        ),
+        "continuation_instruction_mode_normalized": (
+            continuation_instruction_mode if mode == "continuous" else None
+        ),
+        "continuation_instruction_mode_fallback_applied": bool(
+            mode == "continuous"
+            and _instruction_mode_fallback_applied(requested_continuation_instruction_mode)
+        ),
+        # 이 홉의 워커가 실제로 채운 칸의 문서 타입과, 서버가 대신 처리해 워커가 아예
+        # 붙지 않은 N/T 의 item_seq. advance_workflow 가 알려 준다(없는 builder 도 있다).
+        "worker_document_type": issue.get("worker_document_type"),
+        "auto_handled_item_seqs": list(issue.get("auto_handled_item_seqs") or []),
+        # 전달멘트 결정 결과 + 길이/해시. 원문은 저장하지 않는다.
+        **prompt_audit,
+        "prompt_final_length": _prompt_final_length,
+        "prompt_final_sha256": _prompt_final_sha256,
         # 0359 L0007 §2.5: the retry rebuilds this hop's prompt from scratch when the token
         # has to be reissued, and a prompt is only correct in the locale the chain chose.
         "continuation_locale": (continuation_locale if mode == "continuous" else None),
@@ -1450,6 +1524,22 @@ def start_run(
         "continuation_auto_approve_item_seqs": (
             continuation_auto_approve_item_seqs if mode == "continuous" else None
         ),
+        # 0406 T0022 작업 3: 시작 응답이 이미 답한다 — 요청 원값과 정규화값(정규화가
+        # 발동했는지), 이 홉의 실제 worker 칸과 문서 타입, 서버가 대신 처리해 워커가
+        # 아예 붙지 않은 N/T. 이것들을 끝난 뒤에야 알 수 있으면 "N/T 가 사라졌다"는
+        # 관찰은 실행 중에는 확인할 길이 없다.
+        "continuation_instruction_mode_requested": run[
+            "continuation_instruction_mode_requested"
+        ],
+        "continuation_instruction_mode_normalized": run[
+            "continuation_instruction_mode_normalized"
+        ],
+        "continuation_instruction_mode_fallback_applied": run[
+            "continuation_instruction_mode_fallback_applied"
+        ],
+        "hop_item_seq": run["hop_item_seq"],
+        "worker_document_type": run["worker_document_type"],
+        "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
         "attempt_no": 1,
         "started_at": run["started_at"],
@@ -1458,6 +1548,22 @@ def start_run(
         "timeout_sec": run["timeout_sec"],
         "deadline_at": run["deadline_at"],
     }
+
+
+def _normalized_instruction_mode(mode: Optional[str]) -> str:
+    from modules.flow_gate.services.workflow_decision_service import (
+        normalize_continuation_instruction_mode,
+    )
+
+    return normalize_continuation_instruction_mode(mode)
+
+
+def _instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
+    from modules.flow_gate.services.workflow_decision_service import (
+        instruction_mode_fallback_applied,
+    )
+
+    return instruction_mode_fallback_applied(mode)
 
 
 def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
@@ -1546,6 +1652,19 @@ def _hop_item_seq_or_none(doc_ref: str) -> Optional[int]:
         return None
 
 
+def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
+    """길이와 sha256 만 남긴다 — 원문은 저장하지 않는다 (0406 T0022 작업 5).
+
+    "사용자가 넣은 문구가 실제로 들어갔는가"를 판정하는 데 원문은 필요 없다. 같은 문자열을
+    다시 해싱해 맞춰 보면 되고, 길이 하나만으로도 "빈 값이 들어갔다"는 신고를 즉시 가른다.
+    원문을 남기면 그것대로 새는 정보가 되므로 남기지 않는다.
+    """
+    if not text:
+        return 0, None
+    encoded = text.encode("utf-8")
+    return len(text), hashlib.sha256(encoded).hexdigest()
+
+
 def _inject_hop_notes(
     mention: Optional[str],
     doc_ref: str,
@@ -1556,6 +1675,7 @@ def _inject_hop_notes(
     locale: Optional[str],
     auto_approve_item_seqs: Optional[list] = None,
     fold_worker_item_seq: bool = True,
+    audit: Optional[dict] = None,
 ) -> Optional[str]:
     """Prepend the common note plus the effective step note for continuous and single runs.
 
@@ -1563,15 +1683,23 @@ def _inject_hop_notes(
     the user's tombstone and must suppress the stored sequence note. Only an absent key falls
     back to the note stored on the row. Continuous hops use the mode-aware N/T -> NR/TR fold;
     a single new hop writes the current head directly and therefore does not fold.
+
+    0406 T0022 작업 5 — ``audit`` 를 주면 이 홉의 사용자 메시지가 (a) 단계 override,
+    (b) 공통 기본값, (c) 저장된 시퀀스 note 폴백, (d) 없음 중 무엇으로 결정됐는지와 그
+    문자열의 길이·sha256 을 채워 돌려준다. NR0021 §8 이 확정한 구조적 공백이 바로 이
+    자리다: 세션형 [전달멘트] 는 어디에도 보존되지 않아, 사용자가 넣었다고 기억하는 문구가
+    실제로 프롬프트에 들어갔는지 사후에 증명도 반증도 할 수 없었다.
     """
     if not mention:
         return mention
 
     notes: list[str] = []
-    if default_note and default_note.strip():
+    common_applied = bool(default_note and default_note.strip())
+    if common_applied:
         notes.append(default_note.strip())
 
     hop_note: Optional[str] = None
+    hop_source: Optional[str] = None
     try:
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
         head = db_wfseq.get_effective_head(seq["id"]) if seq is not None else None
@@ -1602,18 +1730,38 @@ def _inject_hop_notes(
             from modules.flow_gate.services.work_plan_sequence_service import normalize_note
 
             hop_note = normalize_note(override_value) or None
+            hop_source = "override"
         elif item_seq is not None:
             hop_note = resolve_stored_step_note(doc_ref, item_seq)
+            hop_source = "stored_note" if hop_note else None
     except Exception:  # noqa: BLE001 — a note lookup failure must not stall the hop
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
 
     if hop_note:
         notes.append(hop_note)
+    elif hop_source == "override":
+        # 빈 override 는 사용자의 묘비다 — 저장된 note 를 눌러 없애는 것이 그 뜻이므로
+        # "override 가 적용됐다"로 기록하되 붙는 글자는 없다.
+        hop_source = "override_tombstone"
     try:
         if notes:
             mention = invoke_mention_service.prepend_messages_section(mention, notes, locale)
     except Exception:  # noqa: BLE001 — a note failure must not stall the hop
         logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
+    if audit is not None:
+        sources = []
+        if hop_source:
+            sources.append(hop_source)
+        if common_applied:
+            sources.append("common_default")
+        applied = "\n\n".join(notes)
+        length, digest = prompt_digest(applied)
+        audit.update({
+            "prompt_message_source": "+".join(sources) or "none",
+            "prompt_common_default_applied": common_applied,
+            "prompt_user_message_length": length,
+            "prompt_user_message_sha256": digest,
+        })
     return mention
 
 
@@ -1862,6 +2010,11 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             "provider_id": current_chain[0].get("id"),
             "provider_name": current_chain[0].get("name"),
             "attempt_no": 1,
+            # 0406 T0022 작업 3: 미니플레이어는 이 payload 로 카드를 만든다. 여기에 없으면
+            # 실행 중 카드에는 실제 worker 타입이 비어 있고, 끝난 뒤에야 채워진다.
+            "hop_item_seq": run.get("hop_item_seq"),
+            "worker_document_type": run.get("worker_document_type"),
+            "auto_handled_item_seqs": list(run.get("auto_handled_item_seqs") or []),
         })
 
         while True:
@@ -1926,7 +2079,16 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             run["status"] = "finished"
         # A crashed hop is a real stop, not a boundary: drop any pending re-spawn so the
         # chain does not silently continue past a failure.
-        clear_auto_resume(run.get("group_id"))
+        # 0406 T0022 작업 4 — 큐는 버리되, 의도는 버리지 않는다. 크래시는 spawn 하지
+        # 않는 세 번째 분기다: _finalize_run 은 pending 이 보이면 begin_handoff 만 하고
+        # release 를 건너뛰므로, 그냥 비우면 그 그룹의 다음 실행이 lease 만료까지 막힌다.
+        # durable 행을 남겨 사용자가 [이어서 진행]으로 같은 자리에서 체인을 이어갈 수 있게 한다.
+        crashed_pending = pop_auto_resume(run.get("group_id"))
+        if crashed_pending is not None:
+            crashed_code = run.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE
+            if crashed_code == HOP_HANDOFF_STOP_CODE:
+                crashed_code = HOP_HANDOFF_FAILED_STOP_CODE
+            _park_handoff(run, crashed_pending, crashed_code)
 
 
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
@@ -2205,6 +2367,7 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if run.get("mode") == "continuous" or (
         run.get("mode") == "single" and run.get("action_scope") == "new"
     ):
+        retry_audit: dict = {}
         mention = _inject_hop_notes(
             mention,
             run["doc_ref"],
@@ -2214,13 +2377,23 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
             auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
             fold_worker_item_seq=(run.get("mode") == "continuous"),
             locale=run.get("continuation_locale"),
+            audit=retry_audit,
         )
+        # 0406 T0022 작업 5: 재시도는 프롬프트를 처음부터 다시 만든다. 기록도 그 프롬프트를
+        # 가리켜야 한다 — 그러지 않으면 attempt 1 의 해시를 attempt 2 의 실행에 붙인 채
+        # "멘트가 들어갔다"고 말하게 된다.
+        run.update(retry_audit)
     before = token_id
     run["token_id"] = issue.get("token_id")
     if run.get("group_id"):
         db_group_ai_leases.update_token(run["group_id"], run["run_id"], run["token_id"])
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
     run["mention"] = mention
+    run["prompt_final_length"], run["prompt_final_sha256"] = prompt_digest(mention)
+    if issue.get("worker_document_type"):
+        run["worker_document_type"] = issue.get("worker_document_type")
+    if issue.get("auto_handled_item_seqs") is not None:
+        run["auto_handled_item_seqs"] = list(issue.get("auto_handled_item_seqs") or [])
     return {"mention": mention, "token_id": issue.get("token_id"),
             "token_id_before": before, "reissued": True}
 
@@ -3565,6 +3738,27 @@ def _persist_run_record(run: dict) -> None:
             "duration_ms": run.get("duration_ms"),
             "timeout_sec": run.get("timeout_sec"),
             "deadline_at": run.get("deadline_at"),
+            # ── 0406 T0022 작업 3·5 ─────────────────────────────────────────
+            # NR0021 §8: 세션형 [전달멘트] 와 최종 프롬프트는 어디에도 남지 않아,
+            # "사용자가 넣은 문구가 실제로 들어갔는가"를 사후에 판정할 방법이 없었다.
+            # 그 공백을 여기서 메운다 — run_id 로 조회되는 한 줄에.
+            "worker_document_type": run.get("worker_document_type"),
+            "continuation_instruction_mode_requested": run.get(
+                "continuation_instruction_mode_requested"
+            ),
+            "continuation_instruction_mode_normalized": run.get(
+                "continuation_instruction_mode_normalized"
+            ),
+            "continuation_instruction_mode_fallback_applied": bool(
+                run.get("continuation_instruction_mode_fallback_applied")
+            ),
+            "auto_handled_item_seqs": list(run.get("auto_handled_item_seqs") or []),
+            "prompt_message_source": run.get("prompt_message_source"),
+            "prompt_common_default_applied": bool(run.get("prompt_common_default_applied")),
+            "prompt_user_message_length": int(run.get("prompt_user_message_length") or 0),
+            "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
+            "prompt_final_length": int(run.get("prompt_final_length") or 0),
+            "prompt_final_sha256": run.get("prompt_final_sha256"),
             "created_at": stamp,
             "updated_at": stamp,
         })
@@ -3696,6 +3890,26 @@ def finished_payload(run: dict) -> dict:
         "attempts_max": run.get("attempts_max"),
         "timeout_sec": run.get("timeout_sec"),
         "deadline_at": run.get("deadline_at"),
+        # 0406 T0022 작업 3·5: 끝난 홉의 카드/상세가 "N/T 가 사라졌다"와 "TR 워커가
+        # 정상 실행됐다"를 구분해 말할 수 있게 하는 값들. 살아 있는 run 에서도 같은 이름.
+        "worker_document_type": run.get("worker_document_type"),
+        "continuation_instruction_mode": run.get("continuation_instruction_mode"),
+        "continuation_instruction_mode_requested": run.get(
+            "continuation_instruction_mode_requested"
+        ),
+        "continuation_instruction_mode_normalized": run.get(
+            "continuation_instruction_mode_normalized"
+        ),
+        "continuation_instruction_mode_fallback_applied": bool(
+            run.get("continuation_instruction_mode_fallback_applied")
+        ),
+        "auto_handled_item_seqs": list(run.get("auto_handled_item_seqs") or []),
+        "prompt_message_source": run.get("prompt_message_source"),
+        "prompt_common_default_applied": bool(run.get("prompt_common_default_applied")),
+        "prompt_user_message_length": run.get("prompt_user_message_length"),
+        "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
+        "prompt_final_length": run.get("prompt_final_length"),
+        "prompt_final_sha256": run.get("prompt_final_sha256"),
     }
     if run["source_dirty"]:
         payload["source_dirty_files"] = run["source_dirty_files"]
@@ -3904,11 +4118,176 @@ def has_active_run(group_id: Optional[str]) -> bool:
 def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     """Queue the next hop of an unmanned continuous chain for a fresh worker. Called by the
     inbox self-chain at a step boundary INSTEAD of handing next_token to the still-running
-    worker; consumed by _maybe_auto_resume_hop when the current hop's worker settles."""
+    worker; consumed by _maybe_auto_resume_hop when the current hop's worker settles.
+
+    0406 T0022 작업 4: 같은 의도를 DB 에도 남긴다. 메모리 dict 는 재기동을 못 넘기고,
+    비정상 종료 분기는 pop 한 뒤 버린다 — 어느 쪽이든 "다음에 무엇을 할 예정이었는가"가
+    조용히 없어졌다. 새 저장소를 만들지 않고 ai_invoke_paused_chains 를 쓴다: 그 표는
+    이미 체인 하나를 되살리는 데 필요한 열을 전부 갖고 있고, resume_chain 이 그 행 하나로
+    체인을 재개한다.
+    """
     if not group_id:
         return
     with _auto_resume_lock:
         _auto_resume[group_id] = dict(payload)
+    _write_handoff_row(group_id, payload, _active_run_for_group(group_id))
+
+
+def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
+    """큐의 의도 + 이 홉의 세션 선택값 = 다음 홉을 그대로 되살릴 한 벌.
+
+    inbox 가 넣는 payload 에는 공급자 핀·[전달멘트]·홉 예산이 없다. 그것들은 토큰이
+    아니라 run 을 타고 홉에서 홉으로 넘어가기 때문이다. durable 행은 둘을 합쳐야
+    의미가 있다 — 반쪽만 저장하면 재개가 프로젝트 기본 공급자와 빈 멘트로 떨어진다
+    (0365 가 겪은 결함).
+    """
+    run = run or {}
+    return {
+        "doc_ref": pending.get("doc_ref") or run.get("doc_ref"),
+        "target_seq": pending.get("target_seq"),
+        "review_mode": bool(pending.get("review_mode")),
+        "instruction_mode": (
+            pending.get("instruction_mode") or run.get("continuation_instruction_mode")
+        ),
+        "auto_approve_item_seqs": (
+            pending.get("auto_approve_item_seqs")
+            if pending.get("auto_approve_item_seqs") is not None
+            else run.get("continuation_auto_approve_item_seqs")
+        ),
+        "locale": pending.get("locale") or run.get("continuation_locale") or "ko",
+        "issued_to": pending.get("issued_to") or run.get("issued_to"),
+        "api_base_url": pending.get("api_base_url") or run.get("api_base_url"),
+        "provider_overrides": run.get("continuation_provider_overrides"),
+        "base_provider_id": run.get("continuation_base_provider_id"),
+        "note_overrides": run.get("continuation_note_overrides"),
+        "default_note": run.get("continuation_default_note"),
+        "step_timeout_sec": run.get("continuation_step_timeout_sec"),
+        "chain_id": run.get("chain_id"),
+        "chain_docs_target": run.get("chain_docs_target"),
+        "chain_docs_reached": run.get("chain_docs_reached"),
+        "stop_run_id": run.get("run_id"),
+    }
+
+
+def _write_handoff_row(
+    group_id: Optional[str],
+    pending: dict,
+    run: Optional[dict],
+    *,
+    stop_code: str = HOP_HANDOFF_STOP_CODE,
+) -> None:
+    """핸드오프 의도를 시스템 정지행으로 남긴다 (0406 T0022 작업 4).
+
+    invariant I3 을 지킨다 — 이 upsert 는 모든 열을 덮어쓰므로 한 열이라도 빠뜨리면
+    재개가 기본 공급자/빈 멘트로 떨어진다. 사람이 직접 만든 정지행(stop_kind='user')은
+    건드리지 않는다: 사용자의 일시정지가 시스템 행보다 우선한다.
+    최선 노력 — 기록 실패가 진행 중인 체인을 죽여서는 안 된다.
+    """
+    if not group_id:
+        return
+    bundle = _handoff_bundle(pending, run)
+    if not bundle.get("doc_ref") or not bundle.get("issued_to"):
+        return
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        existing = db_paused.get_by_group(group_id)
+        if existing is not None and (existing.get("stop_kind") or "user") != "system":
+            return
+        stamp = now_iso()
+        db_paused.upsert(
+            group_id=group_id,
+            doc_ref=bundle["doc_ref"],
+            paused_by=bundle["issued_to"],
+            paused_at=stamp,
+            continuation_target_seq=bundle.get("target_seq"),
+            docs_target=(run or {}).get("docs_target"),
+            docs_reached=int((run or {}).get("docs_reached") or 0),
+            chain_id=bundle.get("chain_id"),
+            chain_docs_target=bundle.get("chain_docs_target"),
+            chain_docs_reached=int(bundle.get("chain_docs_reached") or 0),
+            stop_kind="system",
+            stop_code=stop_code,
+            stop_run_id=bundle.get("stop_run_id"),
+            stop_last_message_excerpt=excerpt((run or {}).get("last_message")),
+            continuation_base_provider_id=bundle.get("base_provider_id"),
+            continuation_provider_overrides=bundle.get("provider_overrides"),
+            continuation_default_note=bundle.get("default_note"),
+            continuation_note_overrides=bundle.get("note_overrides"),
+            continuation_instruction_mode=bundle.get("instruction_mode"),
+            continuation_auto_approve_item_seqs=bundle.get("auto_approve_item_seqs"),
+            continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+        )
+    except Exception:  # noqa: BLE001 — 기록은 보조 수단이지 진행 조건이 아니다
+        logger.warning("ai-invoke handoff row write failed for %s", group_id, exc_info=True)
+
+
+def _clear_handoff_row(group_id: Optional[str], stop_run_id: Optional[str]) -> None:
+    """후속 홉이 실제로 뜬 뒤에만 부른다 (0406 T0022 작업 4).
+
+    delete_system_stop 은 같은 stop_run_id 의 **시스템** 행만 지운다 — 그 사이에 사람이
+    누른 일시정지나 더 최신의 정지행은 살아남는다.
+    """
+    if not group_id or not stop_run_id:
+        return
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        db_paused.delete_system_stop(group_id, stop_run_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-invoke handoff row cleanup failed for %s", group_id, exc_info=True)
+
+
+def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
+    """후속 홉을 띄우지 않기로 한 모든 분기의 종착점 (0406 T0022 작업 4).
+
+    두 가지를 반드시 한다.
+      1. durable 행을 남긴다 — 사유를 stop_code 로 구분해, 사용자가 [이어서 진행]으로
+         같은 자리에서 체인을 이어갈 수 있게 한다. 조용히 사라지는 분기는 없다.
+      2. 핸드오프 때문에 releasing 으로 바꿔 둔 lease 를 푼다. _finalize_run 은 큐가
+         보이면 begin_handoff 만 하고 release 를 건너뛰므로, 여기서 풀지 않으면 그
+         그룹의 다음 실행이 lease 만료까지 막힌다. release 는 run_id 가 맞는 행만
+         지우므로 두 번 불려도 안전하다(재기동 회수와 겹쳐도 마찬가지).
+    """
+    group_id = run.get("group_id")
+    _write_handoff_row(group_id, pending, run, stop_code=stop_code)
+    if not group_id:
+        return
+    try:
+        db_group_ai_leases.release(group_id, run["run_id"])
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-invoke handoff lease release failed for %s", group_id, exc_info=True)
+
+
+def startup_recover_handoffs() -> int:
+    """재기동으로 메모리 큐를 잃은 핸드오프를 명시적 재개 대기 상태로 바꾼다
+    (0406 T0022 작업 4).
+
+    기동 시점에 이 프로세스의 ``_auto_resume`` 는 비어 있다. 그러므로 표에 남아 있는
+    ``hop_handoff`` 행은 전부 "다음 홉을 띄우려던 참에 프로세스가 죽었다"는 뜻이다.
+    행을 지우지 않는다 — 그것이 의도를 잃는 일이다. stop_code 만 바꿔 유예 판정에서
+    빼고, 사용자가 [이어서 진행]으로 집어 갈 수 있는 카드로 만든다.
+    """
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        rows = [
+            row for row in db_paused.list_all_system_stops()
+            if (row.get("stop_code") or "") == HOP_HANDOFF_STOP_CODE
+        ]
+        for row in rows:
+            db_paused.mark_stop_code(
+                row["group_id"], HOP_HANDOFF_INTERRUPTED_STOP_CODE,
+                stop_run_id=row.get("stop_run_id"),
+            )
+        if rows:
+            logger.warning(
+                "[ai_invoke] startup recovered %d interrupted hop handoff(s)", len(rows)
+            )
+        return len(rows)
+    except Exception:  # noqa: BLE001
+        logger.warning("ai-invoke handoff startup recovery failed", exc_info=True)
+        return 0
 
 
 def peek_auto_resume(group_id: Optional[str]) -> Optional[dict]:
@@ -3944,10 +4323,16 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     pending = pop_auto_resume(group_id)
     if pending is None:
         return
-    if run.get("end_reason") != "exited":
-        return
+    # 0406 T0022 작업 4: 아래 두 분기는 지금까지 pop 한 큐를 그대로 버렸다. 큐는 여전히
+    # 버린다 — 비정상으로 끝난 홉을 자동으로 이어 달리게 하면 안 된다 — 그러나 **의도는**
+    # durable 행으로 남기고, 핸드오프 때문에 releasing 으로 바꿔 둔 lease 를 반드시 푼다.
     cancel_event = run.get("cancel_event")
-    if cancel_event is not None and cancel_event.is_set():
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    if run.get("end_reason") != "exited" or cancelled:
+        parked_code = run.get("stop_code")
+        if not parked_code or parked_code == HOP_HANDOFF_STOP_CODE:
+            parked_code = "cancelled" if cancelled else HOP_HANDOFF_FAILED_STOP_CODE
+        _park_handoff(run, pending, parked_code)
         return
     # Carry the session override map AND the header default pin forward so the re-spawned hop
     # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
@@ -3975,13 +4360,23 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # for server auto-handling.
         "auto_approve_item_seqs": run.get("continuation_auto_approve_item_seqs"),
     }
+    # durable 행을 이 시점의 완전한 한 벌로 새로 쓴다. request_auto_resume 때는 inbox 가
+    # 준 절반(문서·목표·모드)뿐이었고, 공급자 핀과 [전달멘트]와 홉 예산은 run 을 타고
+    # 오기 때문에 여기서야 다 모인다 — invariant I3.
+    _write_handoff_row(group_id, pending, run)
     try:
         _spawn_auto_resume(group_id, pending)
     except HTTPException as exc:
         logger.warning("ai-invoke auto-resume rejected for %s: %s",
                        group_id, getattr(exc, "detail", exc))
+        _park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
+        return
     except Exception:
         logger.exception("ai-invoke auto-resume failed for %s", group_id)
+        _park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
+        return
+    # 후속 홉이 실제로 떴다. **그때서야** 의도를 지운다.
+    _clear_handoff_row(group_id, run.get("run_id"))
 
 
 def _spawn_auto_resume(group_id: str, pending: dict) -> None:
@@ -4033,6 +4428,9 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
             "token_id": adv["token_id"],
             "scratch_dir": adv["scratch_dir"],
             "mention": adv["mention"],
+            # 0406 T0022 작업 3 — 재생성 홉도 같은 사실을 실어 나른다.
+            "worker_document_type": adv.get("worker_document_type"),
+            "auto_handled_item_seqs": adv.get("auto_handled_item_seqs") or [],
         }
 
     start_run(
@@ -4246,6 +4644,9 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 "token_id": adv["token_id"],
                 "scratch_dir": adv["scratch_dir"],
                 "mention": adv["mention"],
+                # 0406 T0022 작업 3 — 재개 홉도 같다.
+                "worker_document_type": adv.get("worker_document_type"),
+                "auto_handled_item_seqs": adv.get("auto_handled_item_seqs") or [],
             }
 
         parts = group_id.split(".")
@@ -4332,6 +4733,32 @@ def _open_q_doc_ids(group_id: str) -> list[str]:
         return []
 
 
+def _handoff_row_in_flight(row: dict) -> bool:
+    """Is this a hop handoff that is still plausibly landing? (0406 T0022 작업 4)
+
+    True only for a ``hop_handoff`` system row whose group still has a live run, or whose
+    write is younger than :data:`HOP_HANDOFF_GRACE_SEC`. Anything else — a handoff the
+    startup recovery re-labelled, a parked failure, a user pause — is a real card.
+    """
+    if (row.get("stop_kind") or "user") != "system":
+        return False
+    if (row.get("stop_code") or "") != HOP_HANDOFF_STOP_CODE:
+        return False
+    if _active_run_for_group(row.get("group_id") or "") is not None:
+        return True
+    stamp = row.get("updated_at") or row.get("paused_at")
+    if not stamp:
+        return False
+    try:
+        written = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return False
+    if written.tzinfo is None:
+        written = written.astimezone()
+    age = (datetime.now(timezone.utc) - written.astimezone(timezone.utc)).total_seconds()
+    return age < HOP_HANDOFF_GRACE_SEC
+
+
 def active_all(user_id: str) -> dict:
     """Global widget bootstrap (P0008 S1): every live run the user started plus every
     chain the user paused — the refresh-proof source the miniplayer restores from."""
@@ -4358,6 +4785,12 @@ def active_all(user_id: str) -> dict:
         logger.warning("paused-chain list failed for %s", user_id, exc_info=True)
         rows = []
     for row in rows:
+        if _handoff_row_in_flight(row):
+            # 0406 T0022 작업 4: 정상 핸드오프는 몇 초짜리다. 그 몇 초 동안 durable 행이
+            # 존재한다고 해서 "멈췄다" 카드를 띄우면, 성공하는 홉마다 카드가 깜빡여 정지
+            # 표시 자체가 뜻을 잃는다. 아직 진행 중인 핸드오프는 감춘다 — 유예를 넘겨
+            # 남아 있는 행은 실제로 끊긴 것이고, 그때는 아래로 내려와 카드가 된다.
+            continue
         if _system_pause_row_is_stale(row):
             # Delete only the exact system-stop snapshot inspected above. A concurrent
             # user pause or a newer stop for the group must survive this cleanup.

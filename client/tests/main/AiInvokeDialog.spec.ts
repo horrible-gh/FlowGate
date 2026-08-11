@@ -44,6 +44,9 @@ function mountDialog(props: Record<string, unknown> = {}) {
       group: '0242',
       docRef: MEMBER,
       sequenceDocRef: ROOT,
+      // 0406 T0022 작업 2: the mode is a required prop now — the component no longer
+      // falls back to 'auto_approved' on its own, so every mount states it.
+      continuationInstructionMode: 'auto_approved',
       actionScope: 'edit',
       ...props,
     },
@@ -116,9 +119,9 @@ describe('AiInvokeDialog continuous target', () => {
     // Done steps cannot be targeted — no skipping / no mid-start.
     expect((steps[0] as HTMLButtonElement).disabled).toBe(true)
     expect((steps[1] as HTMLButtonElement).disabled).toBe(true)
-    // 0337 R0001-1: this dialog chains in auto_approved mode unless told otherwise, so the T
-    // step (idx 2) is server-approved rather than AI-run and is not a stop point here either —
-    // both continuous entry points must agree on what can be selected.
+    // 0337 R0001-1: mounted in auto_approved mode, so the T step (idx 2) is server-approved
+    // rather than AI-run and is not a stop point here either — both continuous entry points
+    // must agree on what can be selected.
     expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
     expect((steps[3] as HTMLButtonElement).disabled).toBe(false)
 

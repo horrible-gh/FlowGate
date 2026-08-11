@@ -247,6 +247,39 @@ def delete_system_stop(group_id: str, stop_run_id: Optional[str]) -> None:
     )
 
 
+def list_all_system_stops() -> list[dict]:
+    """Every system-parked row, whoever owns it (0406 T0022 작업 4).
+
+    Read at process start, where there is no user to scope by: a handoff row left behind by
+    the process that died belongs to whoever was running that chain, and all of them have to
+    be looked at exactly once.
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM ai_invoke_paused_chains "
+        "WHERE COALESCE(stop_kind, 'user') = 'system' ORDER BY paused_at DESC",
+        [],
+    )
+
+
+def mark_stop_code(group_id: str, stop_code: str, *, stop_run_id: Optional[str] = None) -> None:
+    """Re-label a system row without touching anything else (0406 T0022 작업 4).
+
+    Deliberately NOT the full ``upsert``: that one overwrites every column, and a startup
+    recovery that only wants to say "this handoff never landed" must not risk wiping the
+    provider / note / mode selections the row is being kept for. Scoped to system rows so a
+    user pause written in between survives, and to ``stop_run_id`` when one is known.
+    """
+    sql = (
+        "UPDATE ai_invoke_paused_chains SET stop_code = ?, updated_at = ? "
+        "WHERE group_id = ? AND COALESCE(stop_kind, 'user') = 'system'"
+    )
+    params = [stop_code, now_iso(), group_id]
+    if stop_run_id:
+        sql += " AND stop_run_id = ?"
+        params.append(stop_run_id)
+    get_store()._execute(sql, params)
+
+
 def list_by_user(user_id: str) -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM ai_invoke_paused_chains WHERE paused_by = ? ORDER BY paused_at DESC",

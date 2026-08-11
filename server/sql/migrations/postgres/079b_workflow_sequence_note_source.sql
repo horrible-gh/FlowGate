@@ -1,4 +1,4 @@
--- 079_workflow_sequence_note_source.sql
+-- 079b_workflow_sequence_note_source.sql
 -- flowgate.default.0399 DB0012 §2·§3 (D0010 §3.4 / L0011 §2.1): a sequence row had nowhere
 -- to keep the step note, so a row poured from a work plan lost its note and its origin the
 -- moment it was saved. Three additive columns fix that:

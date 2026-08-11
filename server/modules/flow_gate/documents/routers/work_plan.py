@@ -296,6 +296,9 @@ def _read_view(doc: dict, body: dict) -> dict:
         "assignment_summary": wp.assignment_summary(body, providers),
         "unassigned_step_count": wp.unassigned_step_count(body),
         "totals": wp.totals(body),
+        # 0406 T0022 작업 6: 화면이 200 을 따로 들고 있다가 경고 없이 입력을 막던 자리.
+        # 상한은 서버가 말해 주고, 편집기는 그 값으로 남은 글자 수를 그린다.
+        "limits": {"note_max_chars": wp.NOTE_MAX_CHARS},
         "last_application": (applications.get("items") or [None])[0],
     }
 

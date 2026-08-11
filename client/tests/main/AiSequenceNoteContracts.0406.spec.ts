@@ -49,7 +49,7 @@ afterEach(() => { document.body.innerHTML = '' })
 describe('single stored handoff display (0406 T0011)', () => {
   function mountSingle(actionScope: 'new' | 'review' | 'rework' = 'new') {
     return mount(AiInvokeDialog, {
-      props: { visible: true, project: 'flowgate', module: 'default', group: '0406', docRef: MEMBER, sequenceDocRef: ROOT, actionScope },
+      props: { visible: true, project: 'flowgate', module: 'default', group: '0406', docRef: MEMBER, sequenceDocRef: ROOT, actionScope, continuationInstructionMode: 'ai_direct' },
       global: { plugins: [i18n] },
     })
   }
@@ -104,9 +104,11 @@ describe('continuous tombstone and sequence-edit identity (0406 T0011)', () => {
     ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
     await flushPromises()
     const inputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-    expect(inputs).toHaveLength(2)
-    inputs[0].value = ''
-    inputs[0].dispatchEvent(new Event('input'))
+    expect(inputs).toHaveLength(3)
+    // ai_direct is the default now (0406 T0022 작업 1), so the pending T row has an input too
+    // and the stored-prefill row (item_seq 2) is the second one.
+    inputs[1].value = ''
+    inputs[1].dispatchEvent(new Event('input'))
     await flushPromises()
     ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
     await flushPromises()
@@ -132,5 +134,24 @@ describe('continuous tombstone and sequence-edit identity (0406 T0011)', () => {
     const call = postRequest.mock.calls.find(call => call[0] === '/api/v1/ai-invoke/start')
     expect(call).toBeTruthy()
     expect(call![1]).toMatchObject({ action_scope: 'workflow_sequence_edit', mode: 'single', doc_ref: ROOT })
+  })
+
+  it('keeps over-limit note text visible and reports the 1000-character contract', async () => {
+    getRequest.mockResolvedValue(sequence(''))
+    const wrapper = mount(WorkflowDecisionModal, {
+      props: { visible: true, mode: 'edit', docId: ROOT },
+      global: { plugins: [i18n], stubs: { teleport: true } },
+    })
+    await flushPromises()
+
+    const note = wrapper.find('.wdm-note-input')
+    expect(note.attributes('maxlength')).toBeUndefined()
+    await note.setValue('가'.repeat(1001))
+    expect((note.element as HTMLInputElement).value).toBe('가'.repeat(1001))
+    expect(wrapper.find('.wdm-note-count').text())
+      .toBe(i18n.global.t('main.work_plan.note_char_over', { current: 1001, max: 1000 }))
+    expect(wrapper.find('.wdm-note-input').classes()).toContain('wdm-note-input--over')
+
+    wrapper.unmount()
   })
 })
