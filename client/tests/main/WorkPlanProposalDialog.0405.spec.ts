@@ -101,6 +101,57 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(0)
   })
 
+  it('① [전체]/[해제]는 타입 전체와 서버 등록 순서의 scope를 만든다', async () => {
+    const wrapper = await mountDialog()
+
+    await wrapper.get('[data-test="wpp-select-all-types"]').trigger('click')
+    expect(rows(wrapper, 'type').filter((row: any) => row.classes('on')).length).toBe(4)
+    expect(wrapper.findAll('.wpp-count-pill')[0].text()).toBe('4 / 4')
+
+    await pick(wrapper, 'provider', 0)
+    await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+    const scope = wrapper.emitted('copy-mention')![0][0] as any
+    expect(scope.quantity_type_codes).toEqual(['DS', 'D', 'T', 'TS'])
+
+    await wrapper.get('[data-test="wpp-clear-all-types"]').trigger('click')
+    expect(rows(wrapper, 'type').filter((row: any) => row.classes('on')).length).toBe(0)
+    expect(wrapper.findAll('.wpp-count-pill')[0].text()).toBe('0 / 4')
+    expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('장수를 하나도 고르지 않았습니다')
+  })
+
+  it('② [전체]/[해제]는 공급자 전체와 서버 등록 순서의 scope를 만든다', async () => {
+    const wrapper = await mountDialog()
+
+    await pick(wrapper, 'type', 0)
+    await wrapper.get('[data-test="wpp-select-all-providers"]').trigger('click')
+    expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(2)
+    expect(wrapper.findAll('.wpp-count-pill')[1].text()).toBe('2 / 2')
+
+    await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+    const scope = wrapper.emitted('copy-mention')![0][0] as any
+    expect(scope.provider_ids).toEqual(['aip_opus', 'aip_sonnet'])
+
+    await wrapper.get('[data-test="wpp-clear-all-providers"]').trigger('click')
+    expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(0)
+    expect(wrapper.findAll('.wpp-count-pill')[1].text()).toBe('0 / 2')
+    expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('공급자를 하나도 고르지 않았습니다')
+  })
+
+  it('ko/en/ja에서 전체선택/해제 문안을 실제 문자열로 제공한다', () => {
+    const cases = [
+      ['ko', '전체', '해제'],
+      ['en', 'Select all', 'Clear'],
+      ['ja', '全て', '解除'],
+    ] as const
+
+    for (const [locale, selectAll, clearAll] of cases) {
+      i18n.global.locale.value = locale
+      expect(i18n.global.t('main.work_plan_proposal_dialog.select_all')).toBe(selectAll)
+      expect(i18n.global.t('main.work_plan_proposal_dialog.clear_all')).toBe(clearAll)
+    }
+    i18n.global.locale.value = 'ko'
+  })
+
   it('맡길 단계를 고르는 칸은 창에 없다', async () => {
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 2)   // T (set) — 예전에는 여기서 단계 후보가 펼쳐졌다
@@ -217,10 +268,13 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
   })
 
-  it('다시 열면 두 칸이 초기 상태로 돌아온다', async () => {
+  it('일괄 선택했어도 다시 열면 두 칸이 초기 상태로 돌아온다', async () => {
     const wrapper = await mountDialog()
-    await pick(wrapper, 'type', 0)
-    await pick(wrapper, 'provider', 0)
+    await wrapper.get('[data-test="wpp-select-all-types"]').trigger('click')
+    await wrapper.get('[data-test="wpp-select-all-providers"]').trigger('click')
+    expect(rows(wrapper, 'type').every((row: any) => row.classes('on'))).toBe(true)
+    expect(rows(wrapper, 'provider').every((row: any) => row.classes('on'))).toBe(true)
+
     await wrapper.setProps({ visible: false })
     await wrapper.setProps({ visible: true })
     await flushPromises()
@@ -288,8 +342,12 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     expect(wrapper.findAll('[data-test="wpp-provider"]').length).toBe(0)
     expect(wrapper.findAll('.wpp-sec').length).toBe(1)
     expect(wrapper.text()).not.toContain('후보 공급자')
-    // ① 칸은 그대로 고를 수 있다.
+    // ① 칸은 그대로 고를 수 있고 일괄 선택/해제도 남는다. ② 액션은 칸과 함께 사라진다.
     expect(wrapper.findAll('[data-test="wpp-type"]').length).toBe(4)
+    expect(wrapper.find('[data-test="wpp-select-all-types"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="wpp-clear-all-types"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="wpp-select-all-providers"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="wpp-clear-all-providers"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -308,7 +366,8 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     const wrapper = await mountNoProviders()
     expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('장수를 하나도 고르지 않았습니다')
 
-    await pick(wrapper, 'type', 0)
+    await wrapper.get('[data-test="wpp-select-all-types"]').trigger('click')
+    expect(rows(wrapper, 'type').filter((row: any) => row.classes('on')).length).toBe(4)
     const notice = wrapper.get('[data-test="wpp-notice"]')
     expect(notice.text()).not.toContain('공급자를 하나도 고르지 않았습니다')
     expect(notice.text()).toContain('등록된 AI 공급자 없음')

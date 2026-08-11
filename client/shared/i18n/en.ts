@@ -1010,6 +1010,8 @@ export default {
       types_load_failed: 'Cannot choose types — the document type list could not be read.',
       providers_load_failed: 'Cannot choose providers — the provider list could not be read.',
       retry: 'Retry',
+      select_all: 'Select all',
+      clear_all: 'Clear',
       providers_hint: '[Call AI] runs with the first of the chosen providers.',
       summary: 'Design {design} · Work {work} · Providers {providers}',
       // 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
