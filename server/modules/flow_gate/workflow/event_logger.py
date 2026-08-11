@@ -51,6 +51,13 @@ EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
 #   MAX_REPAIR_ATTEMPTS repair rows + one exhausted row per doc, so no 0118 per-step 폭증.
 EVT_TEST_RUN_REPAIR = "test_run_repair"
 EVT_TEST_RUN_REPAIR_EXHAUSTED = "test_run_repair_exhausted"
+# EVT_CONTINUATION_HEAD_AUTO_HANDLED — flowgate.default.0406 T0022 작업 3. 무인 체인에서
+#   서버가 N/T 지시서를 대신 만들고 승인해 AI 워커를 아예 붙이지 않은 사실. 사용자가 본
+#   화면에서는 그 단계가 그냥 없어진 것처럼 보이고, 지금까지 그 사실은 어디에도 남지
+#   않아 "멘트가 안 들어왔다"는 신고를 사후에 판정할 수 없었다. 홉당 최대 한 줄이라
+#   0118 의 per-step 폭증과는 무관하고, 알림 피드에는 **올리지 않는다** — 정상 동작의
+#   기록이지 사람이 손봐야 하는 사건이 아니다.
+EVT_CONTINUATION_HEAD_AUTO_HANDLED = "continuation_head_auto_handled"
 
 
 def log_event(
@@ -95,6 +102,36 @@ def log_event(
             "to_state": to_state,
             "metadata": meta_str,
         }
+    )
+
+
+def log_continuation_head_auto_handled(
+    *,
+    project_id: str,
+    actor_user_id: str,
+    group_id: str | None,
+    document_id: int | None,
+    doc_id: str | None,
+    auto_handled_item_seqs: list[int],
+    instruction_mode: str,
+    mode_requested: str | None,
+    mode_fallback_applied: bool,
+) -> dict:
+    """서버가 자동 작성·승인한 N/T 칸과, 모드 정규화가 발동했는지를 남긴다
+    (flowgate.default.0406 T0022 작업 2·3)."""
+    return log_event(
+        event_type=EVT_CONTINUATION_HEAD_AUTO_HANDLED,
+        project_id=project_id,
+        actor_user_id=actor_user_id,
+        group_id=group_id,
+        document_id=document_id,
+        metadata={
+            "doc_id": doc_id,
+            "auto_handled_item_seqs": list(auto_handled_item_seqs or []),
+            "instruction_mode": instruction_mode,
+            "instruction_mode_requested": mode_requested,
+            "instruction_mode_fallback_applied": bool(mode_fallback_applied),
+        },
     )
 
 

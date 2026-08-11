@@ -1,6 +1,6 @@
 """Global guards for the migration file set (flowgate.default.0394 T0004, 권고 2).
 
-NR0003 §5.3 의 지적이 이 파일의 존재 이유다. 마이그레이션 번호 중복은 8묶음이었는데
+NR0003 §5.3 의 지적이 이 파일의 존재 이유다. 마이그레이션 번호 중복은 10묶음이었는데
 빨간불은 1건뿐이었다 — 076 을 검사하는 가드가 `test_chat_settings_0362` 안에
 **076 만 보도록** 쓰여 있었기 때문이다. 앞선 7묶음은 검사하는 테스트가 아예 없어서
 결함이 있는 채로 계속 초록이었다.
@@ -48,6 +48,12 @@ from modules.flow_gate.db.migration_renames import (  # noqa: E402
 
 MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations"
 DIALECTS = ("sqlite", "postgres", "mysql")
+REQUIRED_COLLISION_RENAMES = {
+    ("078_continuation_auto_approve.sql", "078a_continuation_auto_approve.sql"),
+    ("078_seed_work_plan_doctype.sql", "078b_seed_work_plan_doctype.sql"),
+    ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
+    ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
+}
 
 # NNN, optionally followed by one lowercase letter. The letter is how a file that
 # arrived second on the same number keeps its position in sort order without
@@ -159,6 +165,13 @@ def test_the_rename_ledger_matches_what_is_on_disk():
                 f"있어서, 다시 있으면 이미 이관한 DB 가 이 파일을 통째로 다시 적용한다."
             )
             assert (directory / new).is_file(), f"{dialect}/{new} 이 없다"
+
+
+def test_the_latest_collision_renames_are_in_the_ledger():
+    assert REQUIRED_COLLISION_RENAMES <= set(RENAMES), (
+        "078/079 번호 충돌을 고치면서 적용 장부 이관을 빠뜨리면 이미 적용된 DB가 "
+        "079b를 새 마이그레이션으로 오인해 note 열을 다시 추가한다."
+    )
 
 
 def test_the_rename_ledger_maps_one_to_one():
@@ -279,3 +292,50 @@ class TestFilenameCarryOver:
 
         assert apply_migration_renames("sqlite3", sqlite_path=path) == 0
         assert self._names(path) == set(news)
+
+    def test_real_migrator_reboot_after_carryover_adds_no_duplicate_column(self, tmp_path):
+        """End-to-end proof, not a hand-rolled bookkeeping check.
+
+        The previous revision only exercised `apply_migration_renames()` against a
+        `migrations` table with no real schema behind it — so it could show the
+        *ledger* rows move, but never proved that the real `sqloader.DatabaseMigrator`
+        actually skips re-applying `079b_workflow_sequence_note_source.sql` afterwards.
+        That is the exact gap the rejection's `duplicate column name: note` sits in:
+        a ledger-only test cannot catch a migrator that still tries to re-run an
+        ADD COLUMN against a column that is already there.
+
+        This test runs the real pipeline in the same order `config.py`
+        `instance_init()` does: fresh install -> simulate an already-migrated
+        pre-rename database by rewriting the ledger back to the fourteen OLD
+        filenames (exactly what any database migrated before this cleanup looks
+        like right now) -> `apply_migration_renames()` -> construct a brand new
+        `DatabaseMigrator` against the *same* on-disk `sql/migrations/sqlite`
+        directory again. If the carry-over did not work, this second construction
+        raises `Exception("Failed to apply migration 079b_workflow_sequence_note_source.sql: ...")`
+        exactly like `sqloader.init.database_init()` does at real boot.
+        """
+        from sqloader import SQLiteWrapper, DatabaseMigrator
+
+        db_path = str(tmp_path / "real_reboot.db")
+
+        db = SQLiteWrapper(db_name=db_path)
+        DatabaseMigrator(db, str(MIGRATIONS_DIR / "sqlite"), True)
+
+        conn = sqlite3.connect(db_path)
+        try:
+            for old, new in RENAMES:
+                conn.execute(
+                    "UPDATE migrations SET filename = ? WHERE filename = ?", (old, new)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        carried = apply_migration_renames("sqlite3", sqlite_path=db_path)
+        assert carried == len(RENAMES)
+
+        db2 = SQLiteWrapper(db_name=db_path)
+        try:
+            DatabaseMigrator(db2, str(MIGRATIONS_DIR / "sqlite"), True)
+        except Exception as exc:  # pragma: no cover - failure path is the point
+            pytest.fail(f"real migrator re-boot after carry-over failed: {exc}")

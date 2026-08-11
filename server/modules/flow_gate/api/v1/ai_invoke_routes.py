@@ -529,6 +529,11 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "token_id": adv["token_id"],
                 "scratch_dir": adv["scratch_dir"],
                 "mention": adv["mention"],
+                # 0406 T0022 작업 3: 이 홉의 워커가 실제로 무슨 문서였는지와, 서버가
+                # 대신 처리해 워커가 아예 붙지 않은 N/T 가 무엇이었는지. 실행 기록으로
+                # 내려가야 "N/T 가 사라졌다"를 사후에 설명할 수 있다.
+                "worker_document_type": adv.get("worker_document_type"),
+                "auto_handled_item_seqs": adv.get("auto_handled_item_seqs") or [],
             }
         issue_builder = _issue_first_hop
 

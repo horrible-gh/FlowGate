@@ -259,7 +259,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
-import type { WorkPlanFillPreset } from '../types/workPlanFillPreset'
+import { DEFAULT_INSTRUCTION_MODE, type WorkPlanFillPreset } from '../types/workPlanFillPreset'
 
 const props = defineProps<{
   visible: boolean
@@ -311,7 +311,13 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const reviewMode = ref(false)
-const instructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 0406 T0022 작업 1 — 기본값은 ai_direct 다.
+// 사용자 반려 원문: "연속 작업 (무인) 에 멘트가 똑바로 안들어간다고 / N/T/TS NR/TR 계열말야".
+// NR0021 이 실측으로 확정한 원인은 auto_approved 에서 N/T 는 서버가 고정 템플릿으로
+// 만들고 승인해 AI 워커도 워커 멘트도 아예 없다는 것이었다(0406 의 T0013·T0017 이 정확히
+// 그 경로였다). 사용자가 라디오로 auto_approved 를 **명시적으로** 고르면 그대로 존중한다 —
+// 바뀌는 것은 기본값뿐이다.
+const instructionMode = ref<'auto_approved' | 'ai_direct'>(DEFAULT_INSTRUCTION_MODE)
 // 시간 설정 (0400 M0005): a fixed list of per-hop budgets, minutes. 60 is the default; 무제한
 // was deliberately rejected (M0005 대화) because it removes the only automatic guard against a
 // runaway unmanned hop.
@@ -671,7 +677,9 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   } else {
     presetActive.value = false
     presetTargetSeq.value = null
-    instructionMode.value = 'auto_approved'
+    // 0406 T0022 작업 1: 리셋도 같은 기본값이어야 한다 — 한 곳이라도 auto_approved 로
+    // 남으면 진입점마다 결과가 달라진다.
+    instructionMode.value = DEFAULT_INSTRUCTION_MODE
     overrides.value = {}
     defaultMessage.value = ''
     messageOverrides.value = {}

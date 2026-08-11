@@ -177,7 +177,14 @@
           <div class="wp-defaults-row">
             <span class="wp-defaults-label">{{ t('main.work_plan.defaults_label') }}</span>
             <AiProviderSelect :providers="providerOptionsWithUnassigned" :model-value="plan.defaults.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => setDefaultProvider(v || null)" />
-            <input :value="plan.defaults.note" type="text" class="wp-defaults-note" :maxlength="NOTE_MAX_CHARS" :placeholder="t('main.work_plan.defaults_note_placeholder')" :disabled="isLocked" @input="(e) => setDefaultNote((e.target as HTMLInputElement).value)" />
+            <span class="wp-note-field">
+              <input :value="plan.defaults.note" type="text" class="wp-defaults-note" :class="{ 'is-over-limit': plan.defaults.note.length > noteMaxChars }" :placeholder="t('main.work_plan.defaults_note_placeholder')" :disabled="isLocked" @input="(e) => setDefaultNote((e.target as HTMLInputElement).value)" />
+              <small class="wp-note-count" :class="{ 'is-over-limit': plan.defaults.note.length > noteMaxChars }">
+                {{ plan.defaults.note.length > noteMaxChars
+                  ? t('main.work_plan.note_char_over', { current: plan.defaults.note.length, max: noteMaxChars })
+                  : t('main.work_plan.note_char_count', { current: plan.defaults.note.length, max: noteMaxChars }) }}
+              </small>
+            </span>
             <button type="button" class="btn btn-outline btn-sm" :disabled="isLocked" @click="applyDefaults">{{ t('main.work_plan.apply_to_all') }}</button>
           </div>
 
@@ -194,7 +201,14 @@
               <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
               <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
               <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
-              <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested' }" type="text" :maxlength="NOTE_MAX_CHARS" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
+              <span class="wp-note-field">
+                <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
+                <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
+                  {{ (step.note ?? '').length > noteMaxChars
+                    ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
+                    : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
+                </small>
+              </span>
             </div>
           </div>
 
@@ -301,7 +315,8 @@ interface WPBody {
 const LOCKED_TYPES = new Set(['TSR'])
 const COUNT_MIN = 0
 const COUNT_MAX = 20
-const NOTE_MAX_CHARS = 200
+// The server response limit is canonical; 1000 is compatibility for old mocks.
+const noteMaxChars = ref(1000)
 
 const props = defineProps<{
   docId: string
@@ -508,6 +523,7 @@ async function fetchPlan() {
     assignmentSummary.value = res.data.assignment_summary ?? []
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
     revisionNo.value = res.data.revision_no
+    noteMaxChars.value = Number(res.data.limits?.note_max_chars) || 1000
     docReviewStatus.value = res.data.doc_review_status
     // 0403 NR0004 F7: 서버가 판정한 값을 그대로 쓴다. 응답에 없으면(옛 응답·목) 열어 둔다 —
     // 잠글지 말지는 서버만 알고, 화면이 혼자 추측해 잠그던 것이 이 결함이었다.
@@ -924,7 +940,11 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-qty-value.zero { color:var(--text-m); }
 .wp-defaults-row { display:grid; grid-template-columns:auto minmax(150px,172px) minmax(190px,1fr) auto; align-items:center; gap:8px; margin-top:8px; }
 .wp-defaults-label { font-size:.7rem; font-weight:700; color:var(--text-m); }
+.wp-note-field { display:flex; min-width:0; flex-direction:column; gap:2px; }
 .wp-defaults-note { width:100%; min-width:0; padding:4px 8px; border:1px solid var(--border); border-radius:var(--r-sm); }
+.wp-note-count { color:var(--text-m); font-size:.62rem; line-height:1.15; text-align:right; }
+.wp-note-count.is-over-limit { color:var(--danger); font-weight:700; }
+.wp-defaults-note.is-over-limit,.wp-step-msg.is-over-limit { border-color:var(--danger); background:color-mix(in srgb,var(--danger) 6%,var(--surface)); }
 .wp-step-head,.wp-step-row { display:grid; gap:8px; grid-template-columns:52px 40px minmax(110px,1fr) 172px minmax(190px,1.5fr); align-items:center; }
 .wp-step-head { padding:7px 10px 6px; margin-top:10px; border-bottom:1px solid var(--border-d); color:var(--text-m); font-size:.62rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
 .wp-step-list {

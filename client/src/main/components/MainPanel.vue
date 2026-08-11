@@ -1331,6 +1331,10 @@ import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
 import WorkPlanProposalDialog, { type WorkPlanScope } from './WorkPlanProposalDialog.vue'
 import WorkPlanEditor from './WorkPlanEditor.vue'
 import type { AiReview } from '../types/aiReview'
+import {
+  DEFAULT_INSTRUCTION_MODE,
+  type ContinuationInstructionMode,
+} from '../types/workPlanFillPreset'
 import NextActionModal from './NextActionModal.vue'
 import ContinuousWorkDialog from './ContinuousWorkDialog.vue'
 import ContinuousWarningDialog from './ContinuousWarningDialog.vue'
@@ -1718,7 +1722,8 @@ const continuousTargetSeq = ref<number | null>(null)
 const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
-const continuousInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+// 0406 T0022 작업 1: 무인 연속 체인의 N/T 도 AI 가 쓰는 것이 기본이다 (DEFAULT_INSTRUCTION_MODE).
+const continuousInstructionMode = ref<ContinuationInstructionMode>(DEFAULT_INSTRUCTION_MODE)
 // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
 // through the consent gate to the start request (session-scoped, never persisted).
 const continuousProviderOverrides = ref<Record<number, string>>({})
@@ -1772,7 +1777,7 @@ const aiInvokeActionScope = ref<AiInvokeScope>('new')
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
-const aiInvokeContinuationInstructionMode = ref<'auto_approved' | 'ai_direct'>('auto_approved')
+const aiInvokeContinuationInstructionMode = ref<ContinuationInstructionMode>(DEFAULT_INSTRUCTION_MODE)
 // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection forwarded
 // onto the start request, same lifetime as the mode above.
 const aiInvokeContinuationAutoApproveItemSeqs = ref<number[]>([])
@@ -2186,7 +2191,7 @@ function openAiInvokeDialog(
     mode?: 'single' | 'continuous'
     targetSeq?: number | null
     reviewMode?: boolean
-    instructionMode?: 'auto_approved' | 'ai_direct'
+    instructionMode?: ContinuationInstructionMode
     // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection
     // chosen in ContinuousWorkDialog.
     autoApproveItemSeqs?: number[]
@@ -2222,7 +2227,7 @@ function openAiInvokeDialog(
   aiInvokeInitialMode.value = preset?.mode ?? 'single'
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
-  aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? 'auto_approved'
+  aiInvokeContinuationInstructionMode.value = preset?.instructionMode ?? DEFAULT_INSTRUCTION_MODE
   aiInvokeContinuationAutoApproveItemSeqs.value = preset?.autoApproveItemSeqs ?? []
   aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
   aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
@@ -3748,7 +3753,7 @@ function onContinuousDialogConfirm(payload: {
   targetType: string
   targetLabel: string
   reviewMode: boolean
-  instructionMode: 'auto_approved' | 'ai_direct'
+  instructionMode: ContinuationInstructionMode
   stepCount: number
   fromDecision: boolean
   providerOverrides: Record<number, string>
@@ -3819,6 +3824,10 @@ async function issueContinuousToken(): Promise<IssuedToken | null> {
     return requestWorkflowDecision(docRef, {
       continuous: true,
       continuationReviewMode: continuousReviewMode.value,
+      // 0406 T0022 작업 2: 이 진입점은 모드를 아예 보내지 않아 서버가 조용히
+      // auto_approved 로 접었다 — 같은 창에서 [지시서 작성 후 진행]을 골라도
+      // "워크플로 결정부터" 체인만 N/T 를 서버가 자동 승인해 버렸다.
+      continuationInstructionMode: continuousInstructionMode.value,
     })
   }
   const groupParts = splitGroupId(groupId)
@@ -3831,6 +3840,8 @@ async function issueContinuousToken(): Promise<IssuedToken | null> {
     continuous: true,
     continuationTargetSeq: targetSeq,
     continuationReviewMode: continuousReviewMode.value,
+    // 0406 T0022 작업 2: [멘트복사] 로 여는 반자동 체인도 같은 모드로 시작해야 한다.
+    continuationInstructionMode: continuousInstructionMode.value,
   })
 }
 

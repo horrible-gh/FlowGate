@@ -71,10 +71,10 @@ describe('ContinuousWorkDialog', () => {
     // The two done (pre-head) steps are disabled — no skipping / no mid-start.
     expect((steps[0] as HTMLButtonElement).disabled).toBe(true)
     expect((steps[1] as HTMLButtonElement).disabled).toBe(true)
-    // 0337 R0001-1: the dialog opens in auto_approved mode, where the head (T, item_seq 3) is
-    // written and approved by the SERVER — it is executed but is not a stop point, so it is
-    // not offered as a choice either. TR (idx 3) onward stay selectable.
-    expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
+    // 0406 T0022: new/reopened continuous work defaults to AI-authored N/T, so the head T is
+    // an ordinary selectable worker step. The radio outcome is explicit as well.
+    expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
+    expect((document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement).checked).toBe(true)
     expect((steps[3] as HTMLButtonElement).disabled).toBe(false)
     // Default target = last step → whole remaining sequence; [Next] is enabled.
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -90,25 +90,27 @@ describe('ContinuousWorkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    // auto_approved (default): the T step is read-only and labelled 자동 승인.
+    // ai_direct (default): T is a normal AI step.
     const steps = document.querySelectorAll('.wsp-step')
-    expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
-    expect(steps[2].querySelector('.wsp-step-tag--auto')?.textContent).toContain(
+    expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
+    expect(steps[2].querySelector('.wsp-step-tag--auto')).toBeNull()
+
+    // Explicitly selecting server auto-write removes the AI invocation and labels the outcome.
+    const autoRadio = document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement
+    autoRadio.checked = true
+    autoRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+    const autoSteps = document.querySelectorAll('.wsp-step')
+    expect((autoSteps[2] as HTMLButtonElement).disabled).toBe(true)
+    expect(autoSteps[2].querySelector('.wsp-step-tag--auto')?.textContent).toContain(
       i18n.global.t('main.continuous_work.auto_step_tag'),
     )
-    // Clicking it cannot move the target.
-    ;(steps[2] as HTMLButtonElement).click()
-    await flushPromises()
-    // 0388 NR0003: the sequence ends TS→TSR, so the default target is TS (steps[4]), one step
-    // short of the paired report.
-    expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(steps[4])
 
-    // Switch N/T handling to "AI 직접 작성" → T becomes a real AI step again.
+    // Switching back restores T as an ordinary AI-authored execution step.
     const aiRadio = document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement
     aiRadio.checked = true
     aiRadio.dispatchEvent(new Event('change'))
     await flushPromises()
-
     const afterSteps = document.querySelectorAll('.wsp-step')
     expect((afterSteps[2] as HTMLButtonElement).disabled).toBe(false)
     expect(afterSteps[2].querySelector('.wsp-step-tag--auto')).toBeNull()
@@ -357,9 +359,9 @@ describe('ContinuousWorkDialog', () => {
       const wrapper = mountDialog()
       await flushPromises()
 
-      // auto_approved (default): the type-level exclusion already applies — no per-item
-      // checkbox needed or shown.
-      expect(document.querySelectorAll('.wsp-step-auto-toggle')).toHaveLength(0)
+      // ai_direct is the default, so its per-item server-auto-write escape hatch is visible
+      // immediately. Re-selecting the mode is idempotent.
+      expect(document.querySelectorAll('.wsp-step-auto-toggle')).toHaveLength(1)
 
       await switchToAiDirect()
 
@@ -520,7 +522,9 @@ describe('ContinuousWorkDialog', () => {
       await wrapper.setProps({ visible: true })
       await flushPromises()
 
-      expect(document.querySelectorAll('.wsp-step-auto-toggle')).toHaveLength(0)
+      const freshToggles = document.querySelectorAll('.wsp-step-auto-toggle')
+      expect(freshToggles).toHaveLength(1)
+      expect((freshToggles[0].querySelector('input') as HTMLInputElement).checked).toBe(false)
 
       wrapper.unmount()
     })
@@ -557,18 +561,17 @@ describe('ContinuousWorkDialog', () => {
 
     // 0317 T0015: no per-step disclosure toggle — the step rows are shown directly.
     expect(document.querySelector('.cwd-disclosure-btn')).toBeNull()
-    // 0337 R0001-1: one row per step an AI worker actually runs. The 2 done steps (N, NR) and
-    // the auto-approved T are excluded. 0388 NR0003: the default target also stops at TS (one
-    // step short of the paired TSR report) → TR, TS = 2.
+    // One row per AI worker step. With ai_direct as the default and the target at TS,
+    // T, TR, and TS are all in scope.
     const rows = document.querySelectorAll('.cwd-override-row')
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(3)
     const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     // 0317 T0015: each step is pre-selected to the header default provider (not a blank option).
     expect(selects[0].value).toBe('aip_fable')
     expect(selects[1].value).toBe('aip_fable')
-    // Override the first AI-execution step (TR, item_seq 4) to Opus.
-    selects[0].value = 'aip_opus'
-    selects[0].dispatchEvent(new Event('change'))
+    // Override TR (item_seq 4); T is now the first row under the ai_direct default.
+    selects[1].value = 'aip_opus'
+    selects[1].dispatchEvent(new Event('change'))
     await flushPromises()
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -607,17 +610,17 @@ describe('ContinuousWorkDialog', () => {
     ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
     await flushPromises()
 
-    // 0388 NR0003: the default target now stops at TS (item_seq 5) → TR, TS = 2 rows.
+    // The default target stops at TS; ai_direct executes T, TR, and TS.
     let selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
-    expect(selects).toHaveLength(2)
+    expect(selects).toHaveLength(3)
 
     // Extend the target to TSR (item_seq 6) — still selectable, just no longer the default.
     ;(document.querySelectorAll('.wsp-step')[5] as HTMLButtonElement).click()
     await flushPromises()
     selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
-    expect(selects).toHaveLength(3)
+    expect(selects).toHaveLength(4)
     // Override the LAST step (TSR, item_seq 6) — then take it out of the run again.
-    selects[2].value = 'aip_opus'
+    selects[3].value = 'aip_opus'
     selects[2].dispatchEvent(new Event('change'))
     await flushPromises()
 
@@ -625,9 +628,9 @@ describe('ContinuousWorkDialog', () => {
     ;(document.querySelectorAll('.wsp-step')[4] as HTMLButtonElement).click()
     await flushPromises()
     selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
-    expect(selects).toHaveLength(2)
+    expect(selects).toHaveLength(3)
     // ...and the step-6 provider tag is gone from the step list too.
-    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(2)
+    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(3)
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
     next.click()
@@ -691,9 +694,9 @@ describe('ContinuousWorkDialog', () => {
       // dialog had not yet been re-read — it is the run scope, not the default scope, that
       // decides. Corrected while merging 0394 T0016.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(3)
-      rowInputs[0].value = 'TR: 결제 실패 케이스도 문서화해줘'
-      rowInputs[0].dispatchEvent(new Event('input'))
+      expect(rowInputs).toHaveLength(4)
+      rowInputs[1].value = 'TR: 결제 실패 케이스도 문서화해줘'
+      rowInputs[1].dispatchEvent(new Event('input'))
       await flushPromises()
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -747,15 +750,15 @@ describe('ContinuousWorkDialog', () => {
       // click above is needed to reach TSR at all; what is under test is unchanged — a
       // note whose row leaves the run is dropped from the payload.
       let rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(3)
-      rowInputs[2].value = 'TSR용 멘트'
-      rowInputs[2].dispatchEvent(new Event('input'))
+      expect(rowInputs).toHaveLength(4)
+      rowInputs[3].value = 'TSR용 멘트'
+      rowInputs[3].dispatchEvent(new Event('input'))
       await flushPromises()
 
       ;(document.querySelectorAll('.wsp-step')[3] as HTMLButtonElement).click()
       await flushPromises()
       rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(1)
+      expect(rowInputs).toHaveLength(2)
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()
@@ -790,8 +793,7 @@ describe('ContinuousWorkDialog', () => {
           items: [
             { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
             { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
-            // T is auto-approved (server-handled) under the default instruction mode, so it
-            // never appears as an execution-table row — only TR@4/TS@5 below do.
+            // T is an ordinary AI-authored row under the default instruction mode.
             {
               id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending',
               note: '', source_doc_id: null, source_revision_no: null,
@@ -819,11 +821,12 @@ describe('ContinuousWorkDialog', () => {
       ;(tabs[2] as HTMLButtonElement).click()
       await flushPromises()
 
-      // T@3 is auto-approved (server-handled) → execution rows are TR@4, TS@5.
+      // ai_direct includes T@3 as well as TR@4 and TS@5.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      expect(rowInputs).toHaveLength(2)
-      expect(rowInputs[0].value).toBe('결제 실패 케이스도 문서화해줘')
-      expect(rowInputs[1].value).toBe('')
+      expect(rowInputs).toHaveLength(3)
+      expect(rowInputs[0].value).toBe('')
+      expect(rowInputs[1].value).toBe('결제 실패 케이스도 문서화해줘')
+      expect(rowInputs[2].value).toBe('')
 
       // Only the row whose stored note came from a plan gets the badge.
       expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(1)
@@ -847,11 +850,11 @@ describe('ContinuousWorkDialog', () => {
       expect(banner!.textContent).toContain(
         i18n.global.t('main.continuous_work.sequence_source', { doc: 'flowgate.default.0399.0004-WP' }),
       )
-      // TR@4 has a note, TS@5 does not → one step with no mention.
-      expect(banner!.textContent).toContain(i18n.global.t('main.continuous_work.note_unset', { n: 1 }))
+      // T@3 and TS@5 have no note, while TR@4 does.
+      expect(banner!.textContent).toContain(i18n.global.t('main.continuous_work.note_unset', { n: 2 }))
       // The same non-blocking notice repeats in the bottom summary (D0010 §3.5).
       expect(document.querySelector('.cwd-summary')!.textContent).toContain(
-        i18n.global.t('main.continuous_work.note_unset', { n: 1 }),
+        i18n.global.t('main.continuous_work.note_unset', { n: 2 }),
       )
       // Informational only — [Next] stays enabled.
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
@@ -868,8 +871,8 @@ describe('ContinuousWorkDialog', () => {
       await flushPromises()
 
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-      rowInputs[0].value = '직접 고친 멘트'
-      rowInputs[0].dispatchEvent(new Event('input'))
+      rowInputs[1].value = '직접 고친 멘트'
+      rowInputs[1].dispatchEvent(new Event('input'))
       await flushPromises()
 
       expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)

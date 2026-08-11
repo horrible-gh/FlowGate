@@ -23,7 +23,7 @@ function getFlowGateBaseUrl(): string {
   return `${origin}${raw.startsWith('/') ? '' : '/'}${raw}`
 }
 
-export interface TokenIssueParams {
+interface TokenIssueBaseParams {
   project: string
   module?: string
   group: string
@@ -32,22 +32,30 @@ export interface TokenIssueParams {
   action_scope?: 'new' | 'edit' | 'chat'
   doc_ref?: string | null
   selected_docs?: string[]
-  // Continuous work (group 0086 R0001 / NR0003 B안): when continuationTargetSeq is set the
-  // minted token starts an unmanned self-chaining run up to that sequence item_seq, and its
-  // mention swaps the Q-guard for the delegation/unmanned block. continuationReviewMode pauses
-  // the chain after the first step for human Q&A. Sent on /workflow/advance (primary) and
-  // /token/issue (fallback).
-  continuous?: boolean
-  continuationTargetSeq?: number
-  continuationReviewMode?: boolean
-  continuationInstructionMode?: 'auto_approved' | 'ai_direct'
-  // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection.
-  // Sent on /workflow/advance (primary) and /token/issue (fallback), same as the mode above.
-  continuationAutoApproveItemSeqs?: number[]
-  // 0405 P0004: the work-plan proposal scope. Only /workflow/advance understands it, and the
-  // server only reads it when the head type is WP — every other advance is unchanged.
+  // 0405 P0004: only /workflow/advance reads this, and only for a WP head.
   workPlanScope?: WorkPlanScope
 }
+
+// 0406 T0022 작업 2: a continuous request cannot exist without an explicit N/T authoring
+// policy. The non-continuous arm uses never so a new caller cannot accidentally attach a
+// meaningless mode either; missing modes now fail type-checking before they can reach the
+// server's legacy-compatible auto_approved normalizer.
+export type TokenIssueParams = TokenIssueBaseParams & (
+  | {
+      continuous: true
+      continuationTargetSeq: number
+      continuationReviewMode?: boolean
+      continuationInstructionMode: 'auto_approved' | 'ai_direct'
+      continuationAutoApproveItemSeqs?: number[]
+    }
+  | {
+      continuous?: false
+      continuationTargetSeq?: never
+      continuationReviewMode?: never
+      continuationInstructionMode?: never
+      continuationAutoApproveItemSeqs?: never
+    }
+)
 
 /** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
  *  step_keys 를 뺐다(제안 창에 단계를 고르는 칸이 없어졌다). 작업계획 편집 화면의
@@ -144,7 +152,7 @@ export function useFlowGateToken() {
                     continuous: true,
                     continuation_target_seq: params.continuationTargetSeq,
                     continuation_review_mode: !!params.continuationReviewMode,
-                    continuation_instruction_mode: params.continuationInstructionMode ?? 'auto_approved',
+                    continuation_instruction_mode: params.continuationInstructionMode,
                     ...(params.continuationAutoApproveItemSeqs?.length
                       ? { continuation_auto_approve_item_seqs: params.continuationAutoApproveItemSeqs }
                       : {}),
@@ -185,7 +193,7 @@ export function useFlowGateToken() {
           ? {
               continuation_target_seq: continuationTargetSeq,
               continuation_review_mode: !!continuationReviewMode,
-              continuation_instruction_mode: continuationInstructionMode ?? 'auto_approved',
+              continuation_instruction_mode: continuationInstructionMode,
               ...(continuationAutoApproveItemSeqs?.length
                 ? { continuation_auto_approve_item_seqs: continuationAutoApproveItemSeqs }
                 : {}),
@@ -298,11 +306,18 @@ export function useFlowGateToken() {
   // run once the decision is saved. continuationReviewMode pauses after the first produced step.
   async function requestWorkflowDecision(
     docId: string,
-    opts?: {
-      continuous?: boolean
-      continuationReviewMode?: boolean
-      continuationInstructionMode?: 'auto_approved' | 'ai_direct'
-    },
+    opts?: (
+      | {
+          continuous: true
+          continuationReviewMode?: boolean
+          continuationInstructionMode: 'auto_approved' | 'ai_direct'
+        }
+      | {
+          continuous?: false
+          continuationReviewMode?: never
+          continuationInstructionMode?: never
+        }
+    ),
   ): Promise<IssuedToken | null> {
     issuing.value = true
     try {
@@ -312,7 +327,7 @@ export function useFlowGateToken() {
           ? {
               continuous: true,
               continuation_review_mode: !!opts.continuationReviewMode,
-              continuation_instruction_mode: opts.continuationInstructionMode ?? 'auto_approved',
+              continuation_instruction_mode: opts.continuationInstructionMode,
             }
           : {}),
       })

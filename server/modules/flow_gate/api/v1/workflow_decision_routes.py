@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from modules.flow_gate.services.auth_outbound import verify_bearer
 
 _log = logging.getLogger(__name__)
+from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
 from modules.flow_gate.services.workflow_decision_service import (
     SequenceChanged,
     decide_workflow,
@@ -832,6 +833,20 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 "doc_id": exc.doc_id,
                 "expected_workflow_tag": exc.expected,
                 "current_workflow_tag": exc.current,
+            },
+        )
+    except NoteTooLong as exc:
+        # 0406 T0022 작업 6 / M0019: 옛 저장은 상한 뒤를 조용히 잘라 넣고 성공이라고
+        # 답했다. 이제 거절한다. 서식은 작업계획 저장이 이미 쓰는 note_too_long 과
+        # 같다 — 코드, 상한, 실제 길이, 몇 번째 줄인지.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "note_too_long",
+                "doc_id": body.doc_id,
+                "max": exc.max_chars,
+                "length": exc.length,
+                "item_index": getattr(exc, "item_index", None),
             },
         )
     except ValueError as exc:

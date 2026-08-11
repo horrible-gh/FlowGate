@@ -18,11 +18,14 @@ from typing import Any, Iterable, Optional
 
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.document_type_labels import get_type_name
+from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
 from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
 
 # ── L0011 §1.1 — numeric parameters ──────────────────────────────────────────
-NOTE_MAX_CHARS = 200
+# 0406 T0022 작업 6: 값은 documents.constants 의 정본을 읽는다. 이름은 그대로 두어
+# 기존 호출부(시험 포함)가 wpseq.NOTE_MAX_CHARS 로 계속 물어볼 수 있게 한다.
+NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 POUR_ROWS_MAX = 100
 UNDO_DEPTH = 1
 PLACEABLE_MIN = 1
@@ -69,6 +72,22 @@ class InvalidMode(ValueError):
     """The caller asked for a mode that is neither append nor replace_after."""
 
 
+class NoteTooLong(ValueError):
+    """저장하려는 한줄 멘트가 상한을 넘었다 (0406 T0022 작업 6 / M0019).
+
+    옛 동작은 조용한 절단이었다. 사용자가 1,000 자를 적어 저장해도 아무 말 없이 200 자만
+    남았고, 화면은 저장에 성공했다고 말했다. 자르는 대신 거절하고, 작업계획 저장이 이미
+    쓰는 ``note_too_long`` 과 같은 모양(코드 + max + 실제 길이)으로 사실을 실어 보낸다.
+    """
+
+    code = "note_too_long"
+
+    def __init__(self, length: int, max_chars: int = NOTE_MAX_CHARS):
+        super().__init__(f"note_too_long:{length}>{max_chars}")
+        self.length = int(length)
+        self.max_chars = int(max_chars)
+
+
 def _int(value: Any, default: Optional[int] = None) -> Optional[int]:
     try:
         return int(value)
@@ -82,18 +101,26 @@ def label_of(code: str, locale: str = "ko") -> str:
 
 # ── L0011 §2.2 ───────────────────────────────────────────────────────────────
 
-def normalize_note(raw: Any) -> str:
+def normalize_note(raw: Any, *, strict: bool = False) -> str:
     """Trim a step note down to what a sequence row may carry.
 
     "값이 없음"과 "빈 글자"를 나누지 않는다 (L0011 §2.2): both come back as "". Keeping the
     distinction would flip the stored value on every save round-trip for no visible gain.
+
+    0406 T0022 작업 6 — **조용한 절단은 없다.** 옛 구현은 상한을 넘는 글자를 말없이 버렸고,
+    저장은 성공한 것처럼 보였다. 이제 자르지 않는다:
+
+    * ``strict=True`` (저장 경로) 는 상한을 넘으면 :class:`NoteTooLong` 을 올려 거절한다.
+    * ``strict=False`` (읽기·프롬프트 조립 같은 표시 경로) 는 있는 그대로 돌려준다. 읽는
+      쪽이 옛 데이터 때문에 터지면 안 되고, 읽기가 값을 줄이면 그것도 같은 종류의 조용한
+      손실이기 때문이다.
     """
     if raw is None or not isinstance(raw, str):
         return ""
     text = "".join(ch for ch in raw if ch not in _CONTROL_CHARS)
     text = text.strip()
-    if len(text) > NOTE_MAX_CHARS:
-        text = text[:NOTE_MAX_CHARS]
+    if strict and len(text) > NOTE_MAX_CHARS:
+        raise NoteTooLong(len(text))
     return text
 
 

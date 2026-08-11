@@ -59,6 +59,10 @@ export interface AiInvokeRunEntry {
   toolCallMisses: number
   turnLimitExhausted: boolean
   oracleMismatch: boolean
+  // 0406 T0022 작업 3: the actual worker slot, distinct from auto-handled N/T slots.
+  workerItemSeq: number | null
+  workerDocumentType: string | null
+  autoHandledItemSeqs: number[]
   // Miniplayer additions (group 0252): the awaiting-answer overlay is a DERIVED flag
   // built from pendingQDocIds — never a phase value (D0007 decision 3).
   pendingQDocIds: string[]
@@ -203,6 +207,11 @@ function startedEntry(
     toolCallMisses: 0,
     turnLimitExhausted: false,
     oracleMismatch: false,
+    workerItemSeq: payload.hop_item_seq == null ? null : Number(payload.hop_item_seq),
+    workerDocumentType: nullableString(payload.worker_document_type),
+    autoHandledItemSeqs: Array.isArray(payload.auto_handled_item_seqs)
+      ? payload.auto_handled_item_seqs.map(Number)
+      : [],
     pendingQDocIds: Array.isArray(payload.pending_q_doc_ids)
       ? stringArray(payload.pending_q_doc_ids)
       : (sameRun ? previous?.pendingQDocIds ?? [] : []),
@@ -257,6 +266,11 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     toolCallMisses: 0,
     turnLimitExhausted: false,
     oracleMismatch: false,
+    workerItemSeq: payload.hop_item_seq == null ? previous?.workerItemSeq ?? null : Number(payload.hop_item_seq),
+    workerDocumentType: nullableString(payload.worker_document_type) ?? previous?.workerDocumentType ?? null,
+    autoHandledItemSeqs: Array.isArray(payload.auto_handled_item_seqs)
+      ? payload.auto_handled_item_seqs.map(Number)
+      : previous?.autoHandledItemSeqs ?? [],
     pendingQDocIds: stringArray(payload.pending_q_doc_ids),
     pausedAt: nullableString(payload.paused_at),
     stopKind: payload.stop_kind === 'system' ? 'system' : 'user',
@@ -560,6 +574,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       toolCallMisses: Number(payload.tool_call_misses ?? 0),
       turnLimitExhausted: Boolean(payload.turn_limit_exhausted),
       oracleMismatch: Boolean(payload.oracle_mismatch),
+      workerItemSeq: payload.hop_item_seq == null ? base.workerItemSeq : Number(payload.hop_item_seq),
+      workerDocumentType: nullableString(payload.worker_document_type) ?? base.workerDocumentType,
+      autoHandledItemSeqs: Array.isArray(payload.auto_handled_item_seqs)
+        ? payload.auto_handled_item_seqs.map(Number)
+        : base.autoHandledItemSeqs,
       pausedAt: userPaused ? new Date().toISOString() : base.pausedAt,
       stopKind: userPaused ? 'user' : base.stopKind,
       stopCode: nullableString(payload.stop_code) ?? base.stopCode,

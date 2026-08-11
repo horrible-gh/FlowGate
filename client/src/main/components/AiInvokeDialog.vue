@@ -128,7 +128,7 @@ const props = defineProps<{
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
-  continuationInstructionMode?: 'auto_approved' | 'ai_direct'
+  continuationInstructionMode: 'auto_approved' | 'ai_direct'
   // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection chosen
   // in ContinuousWorkDialog. Session-scoped, same lifetime as the fields around it.
   continuationAutoApproveItemSeqs?: number[]
@@ -226,7 +226,7 @@ async function loadSingleStepNote() {
 // N/T steps as ContinuousWorkDialog — otherwise the two continuous entry points would disagree
 // on what a valid stop point is.
 const autoHandledTypes = computed(() =>
-  (props.continuationInstructionMode ?? 'auto_approved') === 'auto_approved' ? ['N', 'T'] : [],
+  props.continuationInstructionMode === 'auto_approved' ? ['N', 'T'] : [],
 )
 
 /** The chain's stop point, or null when nothing runnable is chosen yet. */
@@ -324,7 +324,7 @@ async function start() {
     if (mode.value === 'continuous') {
       body.continuation_target_seq = target?.seq ?? null
       body.continuation_review_mode = !!props.continuationReviewMode
-      body.continuation_instruction_mode = props.continuationInstructionMode ?? 'auto_approved'
+      body.continuation_instruction_mode = props.continuationInstructionMode
       if (props.providerOverrides && Object.keys(props.providerOverrides).length) {
         body.continuation_provider_overrides = props.providerOverrides
       }

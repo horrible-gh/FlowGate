@@ -57,7 +57,9 @@ def test_auto_complete_fills_instruction_then_stops_at_report(monkeypatch):
                    "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    assert n == 1
+    # 0406 T0022 작업 3: 개수가 아니라 **어느 칸을** 서버가 대신 처리했는지를 돌려준다.
+    # 그 목록이 없으면 "N/T 단계가 사라졌다"는 관찰을 사후에 설명할 근거가 없다.
+    assert n == [1]
     assert created == ["N"]  # only the instruction head was auto-completed
 
 
@@ -75,7 +77,7 @@ def test_auto_complete_does_not_auto_approve_TS(monkeypatch):
         spine_doc={"doc_id": "r", "group_id": "g", "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    assert n == 0 and calls == []  # TS head → nothing auto-created; token issued by caller
+    assert n == [] and calls == []  # TS head → nothing auto-created; token issued by caller
 
 
 def test_auto_complete_noop_when_head_already_report(monkeypatch):
@@ -88,7 +90,7 @@ def test_auto_complete_noop_when_head_already_report(monkeypatch):
         spine_doc={"doc_id": "r", "group_id": "g", "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    assert n == 0
+    assert n == []
     assert calls == []  # report head → nothing auto-created, no perm/DB work either
 
 
@@ -103,7 +105,7 @@ def test_auto_complete_does_not_run_past_target(monkeypatch):
         spine_doc={"doc_id": "r", "group_id": "g", "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    assert n == 0 and calls == []
+    assert n == [] and calls == []
 
 
 def test_auto_complete_skips_in_progress_head(monkeypatch):
@@ -121,7 +123,7 @@ def test_auto_complete_skips_in_progress_head(monkeypatch):
         spine_doc={"doc_id": "r", "group_id": "g", "project_id": "p", "module": "default"},
         seq={"id": 7}, actor_user_id="pm", locale="ko", target_seq=6,
     )
-    assert n == 0 and calls == []
+    assert n == [] and calls == []
 
 
 def test_auto_complete_pauses_when_approve_denied(monkeypatch):

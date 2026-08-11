@@ -28,6 +28,7 @@ from typing import Any, Iterable, Optional
 
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate.documents.constants import (
+    STEP_NOTE_MAX_CHARS,
     WORK_PLAN_COUNTABLE_ORDER,
     WORK_PLAN_LOCKED_TYPES,
     WORK_PLAN_PAIR_MAP,
@@ -42,7 +43,9 @@ WP_VERSION_SUPPORTED = 1
 COUNT_MIN = 0
 COUNT_MAX = 20
 STEPS_MAX = 100
-NOTE_MAX_CHARS = 200
+# 0406 T0022 작업 6: 한줄 멘트 상한의 정본은 documents.constants 하나뿐이다. 여기에
+# 200 을 따로 적어 두었던 것이 시퀀스 쪽 200 과 화면의 200 과 함께 세 벌로 늘어났다.
+NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 PROVIDER_CANDIDATES_MAX = 50
 ERRORS_REPORTED_MAX = 50
 

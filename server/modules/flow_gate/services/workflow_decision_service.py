@@ -94,6 +94,18 @@ def normalize_continuation_instruction_mode(mode: Optional[str]) -> str:
     return CONTINUATION_INSTRUCTION_AUTO_APPROVED
 
 
+def instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
+    """요청이 모드를 말하지 않았거나 모르는 값을 보내 정규화가 실제로 발동했는가
+    (0406 T0022 작업 2·3).
+
+    하위호환은 유지한다 — 외부·레거시 요청은 계속 ``auto_approved`` 로 접힌다. 다만 그
+    접힘이 **일어났다는 사실**은 더 이상 조용하지 않다. 0406 의 T0013·T0017 처럼 "N/T 에
+    멘트가 안 왔다"는 신고가 들어왔을 때, 사용자가 auto_approved 를 골랐기 때문인지 아니면
+    어떤 진입점이 모드를 빠뜨려 서버가 대신 골라 준 것인지를 사후에 가를 수 있어야 한다.
+    """
+    return mode not in CONTINUATION_INSTRUCTION_MODES
+
+
 # ── Per-item_seq N/T auto-approve selection (group 0352 T0004 §2) ──────────────────
 # ai_direct normally hands EVERY N/T instruction head to the AI worker to author itself.
 # This lets the user pick individual N/T STEP INSTANCES (item_seq, not type) that the
@@ -486,7 +498,7 @@ def _auto_complete_instruction_heads(
     # pre-0352 behavior exactly.
     instruction_mode: str = CONTINUATION_INSTRUCTION_AUTO_APPROVED,
     auto_approve_item_seqs: Optional[list] = None,
-) -> int:
+) -> list[int]:
     """Server-side fill any instruction-series head (N/T/TS) so the worker never sees it.
 
     Loops while the effective head is an instruction type AND is_auto_handled_step says this
@@ -495,7 +507,11 @@ def _auto_complete_instruction_heads(
     button) so the head advances to its paired report step. Stops at the first head that is
     either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
     selection — which the caller (advance_workflow) then mints the worker token + mention for.
-    Returns the number of instruction steps auto-completed.
+
+    0406 T0022 작업 3 — **어떤 칸을 서버가 대신 처리했는지 그 item_seq 목록을 돌려준다.**
+    옛 구현은 개수(int)만 돌려주었고 호출부는 그것마저 버렸다. 그래서 "N/T 단계가 그냥
+    사라졌다"는 관찰과 "서버가 그 칸을 자동 작성·승인했고 AI 워커는 다음 NR/TR 에만
+    붙었다"는 사실을 사후에 구분할 방법이 아무 데도 없었다.
 
     Permission source = the SAME resolver the live approve button and the inbox self-chain
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
@@ -530,7 +546,7 @@ def _auto_complete_instruction_heads(
             _perms_cache["perms"] = _resolve_user_permissions(actor_user)
         return _perms_cache["perms"]
 
-    completed = 0
+    completed: list[int] = []
     prev_item_seq: Optional[int] = None
     while True:
         head = db_wfseq.get_effective_head(seq["id"])
@@ -575,7 +591,8 @@ def _auto_complete_instruction_heads(
             raise ValueError(
                 f"instruction_auto_complete_failed:{head_type}:{exc.detail}"
             ) from exc
-        completed += 1
+        if item_seq is not None:
+            completed.append(int(item_seq))
     return completed
 
 
@@ -657,9 +674,14 @@ def advance_workflow(
     # paired report before head/token/mention resolution proceeds as normal. Managed advance
     # (continuous=False) is untouched — the FE still drives "자동승인문서" explicitly there.
     instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
+    # 0406 T0022 작업 2·3: 요청이 실제로 무엇을 보냈는지와 서버가 그것을 무엇으로 읽었는지를
+    # 갈라 둔다. 둘이 다르면(= 정규화가 발동했으면) 응답과 기록이 그 사실을 말한다.
+    mode_requested = continuation_instruction_mode
+    mode_fallback_applied = instruction_mode_fallback_applied(continuation_instruction_mode)
     auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
         continuation_auto_approve_item_seqs
     )
+    auto_handled_item_seqs: list[int] = []
     if continuous and auto_approve_item_seqs:
         # Internal reuse (reject_already_done=False): this same set rides every hop of an
         # ongoing chain (token → self-chain → advance_workflow, hop after hop), and a step it
@@ -671,7 +693,7 @@ def advance_workflow(
             reject_already_done=False,
         )
     if continuous:
-        _auto_complete_instruction_heads(
+        auto_handled_item_seqs = list(_auto_complete_instruction_heads(
             spine_doc=doc,
             seq=seq,
             actor_user_id=issued_to,
@@ -679,6 +701,14 @@ def advance_workflow(
             target_seq=continuation_target_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+        ) or [])
+        _log_auto_handled_heads(
+            doc=doc,
+            actor_user_id=issued_to,
+            auto_handled_item_seqs=auto_handled_item_seqs,
+            instruction_mode=instruction_mode,
+            mode_requested=mode_requested,
+            mode_fallback_applied=mode_fallback_applied,
         )
 
     head = db_wfseq.get_effective_head(seq["id"])
@@ -770,6 +800,13 @@ def advance_workflow(
                 "continuation_target_seq": continuation_target_seq,
                 "continuation_review_mode": bool(continuation_review_mode),
                 "continuation_instruction_mode": instruction_mode,
+                # 0406 T0022 작업 3: 이 홉의 워커가 실제로 무엇이었는지와, 서버가 대신
+                # 처리해 화면에서 사라진 N/T 가 무엇이었는지를 응답이 직접 말한다.
+                "continuation_instruction_mode_requested": mode_requested,
+                "continuation_instruction_mode_fallback_applied": mode_fallback_applied,
+                "auto_handled_item_seqs": auto_handled_item_seqs,
+                "worker_item_seq": head_item_seq,
+                "worker_document_type": "TSR",
                 "continuation_auto_approve_item_seqs": auto_approve_item_seqs,
                 "continuation_remaining": remaining,
                 "head_item_seq": head_item_seq,
@@ -872,10 +909,62 @@ def advance_workflow(
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
         "continuation_instruction_mode": instruction_mode if continuous else None,
+        # 0406 T0022 작업 3 — 사건 뒤에도 답할 수 있어야 하는 세 가지.
+        #   1) 요청이 보낸 원값과 서버가 읽은 값(정규화 발동 여부),
+        #   2) 서버가 자동 작성·승인해 워커를 아예 안 붙인 N/T 의 item_seq,
+        #   3) 이 홉의 워커가 실제로 채운 칸과 그 문서 타입.
+        # "N/T 가 사라졌다"와 "TR 워커가 정상 실행됐다"를 가르는 값들이다.
+        "continuation_instruction_mode_requested": mode_requested if continuous else None,
+        "continuation_instruction_mode_fallback_applied": (
+            mode_fallback_applied if continuous else False
+        ),
+        "auto_handled_item_seqs": auto_handled_item_seqs,
+        "worker_item_seq": head_item_seq,
+        "worker_document_type": head_type,
         "continuation_auto_approve_item_seqs": auto_approve_item_seqs if continuous else None,
         "continuation_remaining": remaining,
         "head_item_seq": head_item_seq,
     }
+
+
+def _log_auto_handled_heads(
+    *,
+    doc: dict,
+    actor_user_id: str,
+    auto_handled_item_seqs: list[int],
+    instruction_mode: str,
+    mode_requested: Optional[str],
+    mode_fallback_applied: bool,
+) -> None:
+    """서버가 대신 처리한 N/T 를 사건 기록에 남긴다 (0406 T0022 작업 3).
+
+    응답은 그 요청을 받은 사람만 본다. 무인 체인에서는 그 요청을 받는 쪽이 곧 종료를
+    앞둔 워커라서, 응답에만 실린 사실은 아무 데도 남지 않는다 — 0406 의 T0013·T0017 이
+    정확히 그렇게 흔적 없이 지나갔다. 그래서 같은 사실을 이벤트로도 남긴다.
+
+    정규화가 발동한 경우(요청에 모드가 없거나 모르는 값이었던 경우)는 자동처리된 칸이
+    하나도 없어도 남긴다 — 그것이 작업 2 가 요구하는 기록이다. 최선 노력이며, 실패해도
+    이미 발급된 토큰/멘트를 되돌리지 않는다.
+    """
+    if not auto_handled_item_seqs and not mode_fallback_applied:
+        return
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        event_logger.log_continuation_head_auto_handled(
+            project_id=doc.get("project_id") or "",
+            actor_user_id=actor_user_id,
+            group_id=doc.get("group_id"),
+            document_id=doc.get("id"),
+            doc_id=doc.get("doc_id"),
+            auto_handled_item_seqs=auto_handled_item_seqs,
+            instruction_mode=instruction_mode,
+            mode_requested=mode_requested,
+            mode_fallback_applied=mode_fallback_applied,
+        )
+    except Exception:  # noqa: BLE001 — 기록은 보조 수단이지 진행 조건이 아니다
+        _log.warning("auto-handled head event failed for %s (ignored)",
+                     doc.get("doc_id"), exc_info=True)
 
 
 def request_review(
@@ -1298,12 +1387,18 @@ def get_workflow_sequence(doc_id: str) -> dict:
     if seq is None:
         raise ValueError(f"sequence_not_decided:{doc_id}")
 
+    from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
+
     items = db_wfseq.get_sequence_items(seq["id"])
     return {
         "doc_id": doc_id,
         "doc_class": _resolve_doc_class(doc),
         "decided": True,
         "sequence_id": seq["id"],
+        # 0406 T0022 작업 6: 한줄 멘트 상한은 서버가 정본이다. 화면은 이 값을 받아
+        # 남은 글자 수를 그리고 초과를 안내한다 — 상수를 세 벌로 베껴 두었던 것이
+        # 200 자 조용한 절단이 세 곳에서 따로 굳은 원인이었다.
+        "note_max_chars": STEP_NOTE_MAX_CHARS,
         "items": [
             {
                 "id": it["id"],
@@ -1330,16 +1425,37 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
 # ── Edit workflow PENDING items ────────────────────────────────────────────────
 
-def _normalized_sequence_note(value) -> str:
+def _normalized_sequence_note(value, *, strict: bool = False) -> str:
     """0399 L0011 §2.2 via P0013 ②: the server re-trims every note it is handed.
 
     The dialog already trims, so this changes nothing on the normal path — that is the
     point. It means an AI worker PATCHing straight to the API cannot store a note the
     dialog could not have produced.
+
+    0406 T0022 작업 6 — ``strict`` 는 저장 경로 전용이다. 상한을 넘는 멘트는 잘리지 않고
+    :class:`~modules.flow_gate.services.work_plan_sequence_service.NoteTooLong` 으로
+    거절된다. 읽기 경로는 옛 데이터를 그대로 보여 줘야 하므로 기본값(False)을 쓴다.
     """
     from modules.flow_gate.services.work_plan_sequence_service import normalize_note
 
-    return normalize_note(value)
+    return normalize_note(value, strict=strict)
+
+
+def assert_sequence_notes_fit(new_items: list[dict]) -> None:
+    """저장 전에 모든 줄의 멘트 길이를 한 번에 검사한다 (0406 T0022 작업 6).
+
+    트랜잭션 밖에서 먼저 돈다. 삽입 루프 안에서 처음 터지면 그 앞 줄들은 이미 지워진
+    뒤이므로, 거절이 시퀀스를 반쯤 비운 채 끝난다. 몇 번째 줄이 문제였는지도 함께
+    올려 화면이 그 줄을 짚을 수 있게 한다.
+    """
+    from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
+
+    for index, item in enumerate(new_items or []):
+        try:
+            _normalized_sequence_note(item.get("note"), strict=True)
+        except NoteTooLong as exc:
+            exc.item_index = index
+            raise
 
 
 def assert_sequence_item_sources(new_items: list[dict]) -> None:
@@ -1527,6 +1643,9 @@ def edit_workflow_pending(
             raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
     assert_sequence_item_sources(new_items)
+    # 0406 T0022 작업 6: 길이 초과는 여기서 거절한다. 옛 저장 경로는 200 자 뒤를 말없이
+    # 잘라 넣고 "저장됨"이라고 답했다 — 사용자가 M0019 에서 신고한 바로 그 손실이다.
+    assert_sequence_notes_fit(new_items)
 
     locked = [it for it in existing if it.get("result_doc_id") is not None]
     locked_count = len(locked)
@@ -1587,7 +1706,7 @@ def edit_workflow_pending(
                 # which is exactly why it has to travel through this rewrite. The save
                 # renumbers every pending row, so anything keyed on item_seq would land on
                 # the wrong step the first time somebody reorders the list.
-                note=_normalized_sequence_note(item.get("note")),
+                note=_normalized_sequence_note(item.get("note"), strict=True),
                 source_doc_id=item.get("source_doc_id"),
                 source_revision_no=item.get("source_revision_no"),
             )

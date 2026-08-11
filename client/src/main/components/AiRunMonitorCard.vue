@@ -47,6 +47,12 @@
                 <template v-if="targetFor(entry) > 1">
                   · {{ t('main.ai_miniplayer.progress', { reached: reachedFor(entry), target: targetFor(entry) }) }}
                 </template>
+                <template v-if="entry.workerDocumentType">
+                  · {{ t('main.ai_miniplayer.worker_short', { type: entry.workerDocumentType }) }}
+                </template>
+                <template v-if="entry.endReason">
+                  · {{ entry.endReason }}
+                </template>
               </span>
             </span>
             <span
