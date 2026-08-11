@@ -258,7 +258,11 @@ class TestEveryWireScopeHasAJudge:
     """
 
     # NR0003's 전수 조사, as an executable table: wire scope → does it make a document?
-    DOCUMENT_PRODUCING = {"new", "next_step_message", "design_handoff"}
+    # 0405 P0004: work_plan_proposal joins the row. It is not an edit of an existing plan
+    # (that is work_plan_fill, which has its own probe) — it hands the worker a 'new' token
+    # through advance_workflow and the worker registers a WP document, so the document
+    # oracle is exactly the right judge for it.
+    DOCUMENT_PRODUCING = {"new", "next_step_message", "design_handoff", "work_plan_proposal"}
     SPECIAL_CASED = {"workflow_decide", "resolve_conflict"}  # own judge branch in _settle_and_judge
 
     def test_no_wire_scope_silently_inherits_the_document_oracle(self):

@@ -332,16 +332,28 @@ def create_work_plan(
     errors = []
     if not body.counted_types:
         errors.append(wp.empty_selection_error("counted_types"))
-    if not body.provider_candidates:
+    # 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
+    # 선택하고 생성할수 있게 해야하지 않겠니?"): 등록된 공급자가 하나도 없는 프로젝트에서는
+    # 고를 방법 자체가 없으므로 빈 후보를 받는다 — 그런 프로젝트에서만이다. 고를 수 있는데
+    # 비워 보내면 지금까지대로 반려한다. 후보가 비어도 되는 것은 정본 규칙과도 어긋나지
+    # 않는다 (work_plan_service: "후보가 비어 있으면 steps[].provider_id 를 비워 둡니다").
+    registered_providers = _providers(parent.get("project_id"))
+    if not body.provider_candidates and registered_providers:
         errors.append(wp.empty_selection_error("provider_candidates"))
+    # 0405 NR0006 §3.2: this pre-check used to demand >= 1 for EVERY entry, which
+    # contradicted the canonical rule (work_plan_service.COUNT_MIN = 0, and a count of 0
+    # simply produces no step). The screen always sends the full countable key set with 0
+    # for the types nobody picked, so a perfectly normal partial selection — the very
+    # {DS:1, D:0, T:1} shape WorkPlanCreateDialog.spec.ts pins — was rejected with 422.
+    # The canonical validator below still enforces the real 0..20 range.
     invalid_quantities = {
         code: count for code, count in body.quantities.items()
-        if isinstance(count, bool) or count < 1
+        if isinstance(count, bool) or count < wp.COUNT_MIN
     }
     if invalid_quantities:
         raise HTTPException(
             status_code=422,
-            detail="quantities values must be integers greater than or equal to 1.",
+            detail=f"quantities values must be integers greater than or equal to {wp.COUNT_MIN}.",
         )
     if errors:
         return _validation_response(
@@ -352,7 +364,7 @@ def create_work_plan(
     group_id = parent.get("group_id")
     module = parent.get("module") or "none"
 
-    candidates = wp.snapshot_candidates(list(body.provider_candidates), _providers(project_id))
+    candidates = wp.snapshot_candidates(list(body.provider_candidates), registered_providers)
     plan = wp.initial_body(
         list(body.counted_types),
         candidates,

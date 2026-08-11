@@ -77,7 +77,10 @@ describe('MainPanel [빈 문서 만들기] — 머리 칸이 작업계획일 때
     i18n.global.locale.value = 'ko'
   })
 
-  it('작업계획 생성 대화상자를 열고, 빈 문서 대화상자는 열지 않는다', async () => {
+  // 0405 T0011: 그 "생성 대화상자"가 [+ 생성] 하나뿐이라 사용자가 반려했다. 같은 자리에서
+  // 이제 [문서생성]·[멘트복사]·[AI 호출]을 가진 전용 제안 창이 열린다 — 계획을 끝까지
+  // 정하고 나서 문서가 만들어진다는 0395 T0026 의 요구는 그대로다.
+  it('작업계획 제안 창을 열고, 빈 문서 대화상자는 열지 않는다', async () => {
     const wrapper = mountPanel()
     const vm = wrapper.vm as any
     seedNextAction(vm, 'WP')
@@ -87,7 +90,8 @@ describe('MainPanel [빈 문서 만들기] — 머리 칸이 작업계획일 때
     modal.vm.$emit('create-empty')
     await wrapper.vm.$nextTick()
 
-    expect(vm.workPlanCreateVisible).toBe(true)
+    expect(vm.workPlanProposalVisible).toBe(true)
+    expect(vm.workPlanCreateVisible).toBe(false)
     expect(vm.nextEmptyDocModalVisible).toBe(false)
     // 계획은 시퀀스를 가진 뿌리 문서에 붙는다 — 보고 있던 탭이 아니다.
     expect(vm.workPlanCreateParentDocId).toBe('test.test.0002.0001-R')
@@ -108,6 +112,7 @@ describe('MainPanel [빈 문서 만들기] — 머리 칸이 작업계획일 때
     expect(vm.nextEmptyDocModalVisible).toBe(true)
     expect(vm.nextEmptyDocType).toBe('N')
     expect(vm.workPlanCreateVisible).toBe(false)
+    expect(vm.workPlanProposalVisible).toBe(false)
 
     wrapper.unmount()
   })
@@ -130,6 +135,9 @@ function mountActionBar(nextStepCode: string) {
       mode: 'next',
       nextStepLabel: nextStepCode,
       nextStepCode,
+      // 0405 T0011 rev2: 액션바 위로 나온 주 단추는 다른 주 단추와 같은 규칙으로
+      // 진행 가능 여부를 따른다. 이 값이 없으면 Vue 가 boolean 프롭을 false 로 채운다.
+      canNextAction: true,
     },
     global: { plugins: [i18n], stubs: { teleport: true, AppIcon: true } },
   })
@@ -152,12 +160,21 @@ function mountNextAction(nextTypeCode: string) {
 describe('작업계획 다음 단계 생성 라벨', () => {
   it.each(entryLabelCases)('액션바가 %s 로케일의 [작업계획 생성]을 렌더하고 기존 create-empty 이벤트를 유지한다', async (locale, label) => {
     i18n.global.locale.value = locale
+    // 0405 T0011 rev2 (반려: "액션바에 [작업계획 생성] 추가해서 바로 작업계획 생성할수
+    // 있게 해야지"): 이 라벨은 이제 꺾쇠 목록을 열어야 보이는 항목이 아니라 액션바 위에
+    // 그대로 드러난 단추다. 0395 T0030 이 못 박은 것(세 로케일의 라벨 + create-empty)은
+    // 두 자리 모두에서 그대로다.
     const wrapper = mountActionBar('WP')
-    await wrapper.get('.ab-dd-toggle').trigger('click')
+    const main = wrapper.get('[data-test="ab-create-work-plan"]')
+    expect(main.text()).toContain(label)
+    await main.trigger('click')
+    expect(wrapper.emitted('create-empty')).toHaveLength(1)
+
+    await wrapper.get('.ab-split-caret').trigger('click')
     const item = wrapper.findAll('.ab-split-item').find(node => node.text().includes(label))
     expect(item).toBeDefined()
     await item!.trigger('click')
-    expect(wrapper.emitted('create-empty')).toHaveLength(1)
+    expect(wrapper.emitted('create-empty')).toHaveLength(2)
     wrapper.unmount()
   })
 

@@ -117,6 +117,11 @@ class AdvanceRequest(BaseModel):
     # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
     # Ignored (never even normalized) unless continuous + ai_direct — see post_workflow_advance.
     continuation_auto_approve_item_seqs: Optional[List[int]] = None
+    # 0405 P0004 [멘트복사]: {quantity_type_codes, step_keys, provider_ids} — the work-plan
+    # proposal scope a person chose on screen. Optional: omitted (or a non-WP head) produces
+    # the exact same mention as before. Declared here because Pydantic's default extra='ignore'
+    # dropped it silently, so the field could never have reached the mention builder.
+    work_plan_scope: Optional[dict] = None
 
 
 class DecideBodyRequest(BaseModel):
@@ -134,6 +139,7 @@ class AdvanceBodyRequest(BaseModel):
     continuation_review_mode: bool = False
     continuation_instruction_mode: Optional[str] = None
     continuation_auto_approve_item_seqs: Optional[List[int]] = None
+    work_plan_scope: Optional[dict] = None  # 0405 P0004 — see AdvanceRequest
 
 
 class ReviewRequestBody(BaseModel):
@@ -211,6 +217,7 @@ def post_workflow_advance_rpc(body: AdvanceBodyRequest, request: Request):
             continuation_review_mode=body.continuation_review_mode,
             continuation_instruction_mode=body.continuation_instruction_mode,
             continuation_auto_approve_item_seqs=body.continuation_auto_approve_item_seqs,
+            work_plan_scope=body.work_plan_scope,
         ),
     )
 
@@ -447,6 +454,8 @@ def post_workflow_advance(
     continuation_instruction_mode = normalize_continuation_instruction_mode(
         body.continuation_instruction_mode if body else None
     )
+    # 0405 P0004: forwarded as-is. advance_workflow only reads it when the head type is WP.
+    work_plan_scope = body.work_plan_scope if body else None
 
     _disposed = _disposed_group_response(doc_id, _db_documents.get_by_id(doc_id))
     if _disposed is not None:
@@ -482,6 +491,7 @@ def post_workflow_advance(
             continuation_review_mode=continuation_review_mode,
             continuation_instruction_mode=continuation_instruction_mode,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            work_plan_scope=work_plan_scope,
         )
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
