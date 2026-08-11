@@ -75,6 +75,17 @@
 
           <template v-else>
 
+            <div
+              v-if="mode === 'edit' && metaContractMissing"
+              class="wem-error wem-meta-contract-warning"
+            >
+              <AppIcon name="warning-circle" />
+              <span>{{ t('main.workflow_edit_modal.meta_contract_missing') }}</span>
+              <button type="button" class="btn btn-secondary wem-reload-btn" @click="loadSequence">
+                {{ t('main.workflow_edit_modal.reload') }}
+              </button>
+            </div>
+
             <!-- Locked section (edit mode only) -->
             <div v-if="mode === 'edit'" class="wem-locked-section">
               <div class="wem-section-title wem-locked-title">
@@ -274,12 +285,14 @@
                         class="wdm-note-input"
                         v-model="item.note"
                         :placeholder="t('main.work_plan_pour.note_empty')"
+                        @input="item.noteSource = null"
                       />
                     </span>
                   </span>
                   <span
                     v-if="item.origin === 'plan' && item.sourceDocId && !item.typeChanged"
                     class="wdm-plan-badge"
+                    :title="item.noteSource === 'defaults' ? t('main.work_plan_pour.defaults_note_title') : undefined"
                   >
                     {{ t('main.work_plan_pour.from_plan', { doc: shortCodeOf(item.sourceDocId) }) }}
                   </span>
@@ -432,8 +445,10 @@
             v-if="mode === 'edit' && !loading && !loadError"
             type="button"
             class="btn btn-primary"
-            :disabled="saving || wouldEmptyDecided"
-            :title="wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
+            :disabled="saving || wouldEmptyDecided || metaContractMissing"
+            :title="metaContractMissing
+              ? t('main.workflow_edit_modal.cannot_save_missing_meta')
+              : wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
             @click="save"
           >
             <AppIcon name="floppy-disk" />
@@ -468,6 +483,7 @@ export interface SequenceItem {
   // renumbers every pending row, so anything held beside the row — keyed on position or
   // on item_seq — would attach itself to the wrong step the first time somebody reorders.
   note: string
+  noteSource: 'step' | 'pair' | 'defaults' | null
   origin: 'plan' | 'manual' | 'auto'
   planKey: string | null
   sourceDocId: string | null
@@ -485,6 +501,7 @@ export interface PourRow {
   locked: boolean
   poured: boolean
   note: string
+  note_source: 'step' | 'pair' | 'defaults' | null
   origin: 'plan' | 'manual' | 'auto'
   plan_key: string | null
   source_doc_id: string | null
@@ -643,6 +660,7 @@ interface ServerItem {
 
 const loading = ref(false)
 const loadError = ref(false)
+const metaContractMissing = ref(false)
 const saving = ref(false)
 const lockedItems = ref<ServerItem[]>([])
 
@@ -760,8 +778,8 @@ function findBlockEnd(startIdx: number): number {
 
 // 0399 L0011 §2.7: a row a person adds here starts with an empty note and no plan behind
 // it. There is nowhere else it could come from — this row was not in any plan.
-function blankRowFields(): Pick<SequenceItem, 'note' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'typeChanged'> {
-  return { note: '', origin: 'manual', planKey: null, sourceDocId: null, sourceRevisionNo: null, typeChanged: false }
+function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'typeChanged'> {
+  return { note: '', noteSource: null, origin: 'manual', planKey: null, sourceDocId: null, sourceRevisionNo: null, typeChanged: false }
 }
 
 // 자동 줄은 멘트를 갖지 않는다 (L0011 §2.4): it never appears in the note list the
@@ -796,6 +814,7 @@ function changeRowType(item: SequenceItem, newType: string) {
   item.type = newType
   item.label = docTypeStore.getLabel(newType)
   item.note = ''
+  item.noteSource = null
   item.typeChanged = true
   const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
   const idx = seq.findIndex(s => s.id === item.id)
@@ -1017,6 +1036,7 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
     const id = ++idCounter.value
     const carried = {
       note: it.note ?? '',
+      noteSource: null,
       planKey: null,
       sourceDocId: it.source_doc_id ?? null,
       sourceRevisionNo: it.source_revision_no ?? null,
@@ -1044,15 +1064,27 @@ async function loadSequence() {
   if (!props.docId) return
   loading.value = true
   loadError.value = false
+  metaContractMissing.value = false
   lockedItems.value = []
   sequence.value = []
   idCounter.value = 0
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.docId })
     const data = (res.data as any)
+    // 0406 T0013: the canonical handler answers `items`. A body without that key is a
+    // pre-0406 duplicate-route response, so keep reading its rows — a list the user can SEE
+    // beats an empty dialog — but treat the shape itself as the missing contract. Dropping
+    // to `[]` here would silence the guard below and let a save wipe the whole pending block.
+    const legacyShape = !Array.isArray(data?.items)
     const items: ServerItem[] = data?.items ?? data?.sequence ?? []
     lockedItems.value = items.filter(it => it.status !== 'pending')
     const pendingItems = items.filter(it => it.status === 'pending')
+    metaContractMissing.value = legacyShape || pendingItems.some(row =>
+      !['note', 'source_doc_id', 'source_revision_no'].every(key =>
+        Object.prototype.hasOwnProperty.call(row, key),
+      ),
+    )
+    // Missing provenance also makes origin inference wrong; never let that normalized row save.
     sequence.value = dbItemsToSequence(pendingItems)
   } catch {
     loadError.value = true
@@ -1068,6 +1100,7 @@ async function loadSequence() {
 function applyPour(payload: PourPayload) {
   loading.value = false
   loadError.value = false
+  metaContractMissing.value = false
   idCounter.value = 0
   lockedItems.value = payload.rows
     .filter(row => row.locked)
@@ -1090,6 +1123,7 @@ function applyPour(payload: PourPayload) {
       isAuto: row.origin === 'auto',
       autoOfId: null,
       note: row.origin === 'auto' ? '' : row.note,
+      noteSource: row.note_source ?? null,
       origin: row.origin,
       planKey: row.plan_key,
       sourceDocId: row.source_doc_id,
@@ -1133,7 +1167,7 @@ function notificationText(note: PourNotification): string {
 }
 
 async function save() {
-  if (saving.value || wouldEmptyDecided.value) return
+  if (saving.value || wouldEmptyDecided.value || metaContractMissing.value) return
   saving.value = true
   try {
     await patchRequest('/api/v1/workflow/sequence', {

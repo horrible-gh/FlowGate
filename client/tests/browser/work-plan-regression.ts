@@ -45,7 +45,7 @@ const preview = {
 }
 const sequence = {
   doc_id: ROOT_ID, doc_class: 'R', decided: true,
-  sequence: [
+  items: [
     { id: 1, item_seq: 1, type: 'D', label: '기본설계', status: 'pending' },
     { id: 2, item_seq: 2, type: 'D', label: '기본설계', status: 'pending' },
     { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending' },

@@ -1243,13 +1243,15 @@ def start_run(
     # override, an individual note does NOT replace the common one: D0004 §3-3 treats them as
     # stackable ("무엇을 위한 것인가" + "너는 무엇을 맡는가"), so both are adopted when present.
     # A resolution failure must not stall the hop (same contract as the provider override).
-    if mode == "continuous":
+    if mode == "continuous" or (mode == "single" and action_scope == "new"):
         mention = _inject_hop_notes(
             mention,
             doc_ref,
-            default_note=continuation_default_note,
-            note_overrides=continuation_note_overrides,
+            default_note=(continuation_default_note if mode == "continuous" else None),
+            note_overrides=(continuation_note_overrides if mode == "continuous" else None),
             instruction_mode=continuation_instruction_mode,
+            auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            fold_worker_item_seq=(mode == "continuous"),
             locale=continuation_locale,
         )
 
@@ -1552,34 +1554,83 @@ def _inject_hop_notes(
     note_overrides: Optional[dict],
     instruction_mode: Optional[str],
     locale: Optional[str],
+    auto_approve_item_seqs: Optional[list] = None,
+    fold_worker_item_seq: bool = True,
 ) -> Optional[str]:
-    """0346 T0005 §2-5 / D0004 §3-3: prepend the [전달멘트] tab's common note and/or this
-    hop's individual note at the single point every builder's prompt has converged into one
-    string. An individual note does NOT replace the common one (D0004 §3-3 treats them as
-    stackable), and a resolution failure must never stall the hop.
+    """Prepend the common note plus the effective step note for continuous and single runs.
 
-    0359: lifted out of start_run so a no-output RETRY can rebuild the same prompt. A
-    reissued token comes back as a bare mention, and without this the second attempt would
-    silently lose the notes the first one had — the exact first-hop-only regression shape
-    0346 exists to prevent.
+    A present override key wins even when its value normalizes to empty: that empty string is
+    the user's tombstone and must suppress the stored sequence note. Only an absent key falls
+    back to the note stored on the row. Continuous hops use the mode-aware N/T -> NR/TR fold;
+    a single new hop writes the current head directly and therefore does not fold.
     """
-    if not mention or not (note_overrides or default_note):
+    if not mention:
         return mention
+
+    notes: list[str] = []
+    if default_note and default_note.strip():
+        notes.append(default_note.strip())
+
+    hop_note: Optional[str] = None
     try:
-        notes: list[str] = []
-        if default_note and default_note.strip():
-            notes.append(default_note.strip())
-        if note_overrides:
-            hop_note = _resolve_continuation_hop_note(
-                doc_ref, note_overrides, continuation_instruction_mode=instruction_mode,
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        head = db_wfseq.get_effective_head(seq["id"]) if seq is not None else None
+        item_seq = None
+        if head:
+            item_seq = (
+                _hop_worker_item_seq(
+                    seq["id"],
+                    head,
+                    continuation_instruction_mode=instruction_mode,
+                    continuation_auto_approve_item_seqs=auto_approve_item_seqs,
+                )
+                if fold_worker_item_seq
+                else head.get("item_seq")
             )
-            if hop_note:
-                notes.append(hop_note)
+
+        override_present = False
+        override_value = None
+        if item_seq is not None and isinstance(note_overrides, dict):
+            if str(item_seq) in note_overrides:
+                override_present = True
+                override_value = note_overrides[str(item_seq)]
+            elif item_seq in note_overrides:
+                override_present = True
+                override_value = note_overrides[item_seq]
+
+        if override_present:
+            from modules.flow_gate.services.work_plan_sequence_service import normalize_note
+
+            hop_note = normalize_note(override_value) or None
+        elif item_seq is not None:
+            hop_note = resolve_stored_step_note(doc_ref, item_seq)
+    except Exception:  # noqa: BLE001 — a note lookup failure must not stall the hop
+        logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
+
+    if hop_note:
+        notes.append(hop_note)
+    try:
         if notes:
             mention = invoke_mention_service.prepend_messages_section(mention, notes, locale)
     except Exception:  # noqa: BLE001 — a note failure must not stall the hop
         logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
     return mention
+
+
+def resolve_stored_step_note(doc_ref: str, item_seq: int) -> Optional[str]:
+    """Return one normalized sequence-row note; lookup failures degrade to no note."""
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        for item in db_wfseq.get_sequence_items(seq["id"]) or []:
+            if item.get("item_seq") == item_seq:
+                from modules.flow_gate.services.work_plan_sequence_service import normalize_note
+
+                return normalize_note(item.get("note")) or None
+    except Exception:  # noqa: BLE001 — prompt enrichment must never stop execution
+        logger.warning("stored step note resolution failed for %s", doc_ref, exc_info=True)
+    return None
 
 
 def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) -> Optional[str]:
@@ -2151,14 +2202,19 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     mention = issue.get("mention")
     if not mention:
         return None
-    mention = _inject_hop_notes(
-        mention,
-        run["doc_ref"],
-        default_note=run.get("continuation_default_note"),
-        note_overrides=run.get("continuation_note_overrides"),
-        instruction_mode=run.get("continuation_instruction_mode"),
-        locale=run.get("continuation_locale"),
-    )
+    if run.get("mode") == "continuous" or (
+        run.get("mode") == "single" and run.get("action_scope") == "new"
+    ):
+        mention = _inject_hop_notes(
+            mention,
+            run["doc_ref"],
+            default_note=run.get("continuation_default_note"),
+            note_overrides=run.get("continuation_note_overrides"),
+            instruction_mode=run.get("continuation_instruction_mode"),
+            auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+            fold_worker_item_seq=(run.get("mode") == "continuous"),
+            locale=run.get("continuation_locale"),
+        )
     before = token_id
     run["token_id"] = issue.get("token_id")
     if run.get("group_id"):

@@ -23,7 +23,7 @@ function seqResponse() {
       doc_id: ROOT,
       doc_class: 'R',
       decided: true,
-      sequence: [
+      items: [
         { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
         { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
         { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending' },
@@ -159,7 +159,9 @@ describe('AiInvokeDialog continuous target', () => {
     // — scope workflow_decide, the run-to-end sentinel, and the sequence ROOT as doc_ref.
     getRequest.mockImplementation((url: string) =>
       url === '/api/v1/workflow/sequence'
-        ? Promise.resolve({ data: { doc_id: ROOT, doc_class: 'R', decided: false, sequence: [], head: null } })
+        // 0406 T0013: the canonical query-form handler reports an undecided sequence as a 400,
+        // not as 200 + decided:false. Mock what production actually answers.
+        ? Promise.reject({ response: { status: 400, data: { error: 'sequence_not_decided', doc_id: ROOT } } })
         : Promise.resolve({ data: { providers: [] } }),
     )
     const wrapper = mountDialog()
@@ -179,13 +181,38 @@ describe('AiInvokeDialog continuous target', () => {
     wrapper.unmount()
   })
 
-  it('blocks the start when every step is already done', async () => {
+  it('ignores a legacy sequence-shaped body: only `items` is a sequence', async () => {
+    // 0406 T0013: the duplicate route that answered `sequence` is gone. Reading that key again
+    // would let a fixture keep a dead contract alive — the exact blind spot NR0003 Q7 named.
     getRequest.mockImplementation((url: string) =>
       url === '/api/v1/workflow/sequence'
         ? Promise.resolve({
             data: {
               doc_id: ROOT, doc_class: 'R', decided: true, head: null,
               sequence: [
+                { id: 1, item_seq: 1, type: 'T', label: '작업지시', status: 'pending' },
+              ],
+            },
+          })
+        : Promise.resolve({ data: { providers: [] } }),
+    )
+    const wrapper = mountDialog()
+    await pickContinuous()
+
+    // No real step is read from the dead key; the picker falls back to the decision start.
+    expect(document.querySelectorAll('.wsp-step--pending')).toHaveLength(0)
+    expect(document.body.textContent).toContain(i18n.global.t('main.continuous_work.from_decision_title'))
+
+    wrapper.unmount()
+  })
+
+  it('blocks the start when every step is already done', async () => {
+    getRequest.mockImplementation((url: string) =>
+      url === '/api/v1/workflow/sequence'
+        ? Promise.resolve({
+            data: {
+              doc_id: ROOT, doc_class: 'R', decided: true, head: null,
+              items: [
                 { id: 1, item_seq: 1, type: 'T', label: '작업지시', status: 'done' },
                 { id: 2, item_seq: 2, type: 'TR', label: '작업레포트', status: 'done' },
               ],

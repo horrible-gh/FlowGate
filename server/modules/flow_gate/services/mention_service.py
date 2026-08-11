@@ -649,6 +649,34 @@ _SUBMIT_BODY_POINTER_TEXT: dict[str, str] = {
     "en": "The request body format and an example are in the help item: GET {url}",
 }
 
+_SEQUENCE_EDIT_METADATA_COPY: dict[str, dict[str, str]] = {
+    "ko": {
+        "json_intro": "아래 JSON 배열은 PATCH items에 그대로 넣을 수 있는 대기 행입니다.",
+        "rules": (
+            "손대지 않은 행은 받은 note/source_doc_id/source_revision_no를 글자 그대로 "
+            "되돌리십시오. 타입을 바꾸거나 새로 넣은 행은 세 값을 비우고, 지우는 행은 "
+            "보내지 마십시오. NR/TR/TSR 레포트 행은 서버가 자동으로 붙이므로 보내지 마십시오."
+        ),
+    },
+    "ja": {
+        "json_intro": "次の JSON 配列は PATCH の items にそのまま入れられる保留行です。",
+        "rules": (
+            "変更しない行は受け取った note/source_doc_id/source_revision_no を文字どおり "
+            "返してください。タイプを変えた行と新規行では3値を空にし、削除行は送らないで "
+            "ください。NR/TR/TSR レポート行はサーバーが自動追加するため送らないでください。"
+        ),
+    },
+    "en": {
+        "json_intro": "The JSON array below can be returned unchanged as PATCH items.",
+        "rules": (
+            "Return note/source_doc_id/source_revision_no byte-for-byte for untouched rows. "
+            "Clear all three for retyped or newly inserted rows, omit deleted rows, and omit "
+            "NR/TR/TSR report rows because the server adds them automatically."
+        ),
+    },
+}
+
+
 # 0393 T0005 §2-7: the review submission's file form. Kept to one sentence so the
 # "address + pointer" shape of the section (0372 set 3) is preserved.
 _REVIEW_FILE_SUBMIT_TEXT: dict[str, str] = {
@@ -1781,7 +1809,32 @@ def build_sequence_edit_mention(
     # Current sequence, split into locked (immutable) vs pending (editable).
     items = sequence_items or []
     locked = [it for it in items if (it.get("status") or "") != "pending"]
-    pending = [it for it in items if (it.get("status") or "") == "pending"]
+    pending = [it for it in items if (it.get("status") or "") == "pending"]
+    has_pending_metadata = any(
+        bool(it.get("note"))
+        or it.get("source_doc_id") is not None
+        or it.get("source_revision_no") is not None
+        for it in pending
+    )
+    pending_json = ""
+    metadata_rules = ""
+    if has_pending_metadata:
+        copy = _SEQUENCE_EDIT_METADATA_COPY[template_provision.normalize_locale(locale)]
+        payload = [
+            {
+                "type": it.get("type", ""),
+                "label": it.get("label", ""),
+                "note": it.get("note") or "",
+                "source_doc_id": it.get("source_doc_id"),
+                "source_revision_no": it.get("source_revision_no"),
+            }
+            for it in pending
+        ]
+        pending_json = (
+            f"\n\n{copy['json_intro']}\n"
+            f"```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
+        )
+        metadata_rules = f"\n{copy['rules']}"
 
     def _fmt(rows: list) -> str:
         if not rows:
@@ -1798,7 +1851,7 @@ def build_sequence_edit_mention(
         "preserved server-side no matter what you submit:\n"
         f"{_fmt(locked)}\n\n"
         "Pending steps — the editable tail; your submission REPLACES exactly this list:\n"
-        f"{_fmt(pending)}"
+        f"{_fmt(pending)}{pending_json}"
     )
 
     s2_body = (
@@ -1810,7 +1863,8 @@ def build_sequence_edit_mention(
         "instruction and design steps. Do NOT edit the root document. Valid type codes:\n"
         f"GET {base}/help/items/doc_type\n"
         "You may not empty a decided workflow that has no locked\n"
-        "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
+        "step — an empty pending list in that case is rejected (invalid_sequence_empty)."
+        f"{metadata_rules}"
     )
 
     s3_body = (

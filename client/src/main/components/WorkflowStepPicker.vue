@@ -135,6 +135,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
 import type {
   WorkflowStepItem,
   WorkflowStepPickerState,
@@ -215,10 +216,7 @@ const allDone = ref(false)
 
 // Head = first step that is not yet done. Steps before it are completed and cannot be a
 // target (no skipping / no mid-start, R0001). All-done → no head (headIdx = length).
-const headIdx = computed(() => {
-  const i = items.value.findIndex(it => it.status !== 'done')
-  return i === -1 ? items.value.length : i
-})
+const headIdx = computed(() => findSequenceHeadIndex(items.value))
 const headInProgress = computed(
   () => headIdx.value < items.value.length && items.value[headIdx.value].status === 'in_progress',
 )
@@ -404,15 +402,15 @@ async function loadSequence() {
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.docRef })
     const data = res.data as any
-    // The live /workflow/sequence is served by workflow_head_routes (included before the
-    // decision_routes handler in routers/main.py, so it shadows it), whose response shape is
-    // { decided, sequence, head } — NOT the { items } / 400-on-undecided shape this picker
-    // first targeted. Read `sequence` (fall back to `items` for the shadowed handler), exactly
-    // as the sibling WorkflowDecisionModal does (`data?.items ?? data?.sequence`).
-    items.value = (data?.sequence ?? data?.items ?? []) as WorkflowStepItem[]
+    // 0406 T0013: the query-form endpoint has ONE canonical decision_routes handler and it
+    // answers `items`. The `sequence` fallback died with the duplicate route it came from —
+    // keeping it would let a fixture drift back to a shape production can no longer return,
+    // which is how B0001 stayed invisible to the suite (NR0003 Q7).
+    items.value = (data?.items ?? []) as WorkflowStepItem[]
     if (data?.decided === false || items.value.length === 0) {
-      // R0001 "워크플로 결정부터": the workflow has not been decided yet. head_routes signals
-      // this with 200 + decided:false (NOT a 400), so do NOT block with "워크플로 단계가
+      // R0001 "워크플로 결정부터": the workflow has not been decided yet — the canonical
+      // handler answers 400 sequence_not_decided (caught below), and a decided-but-emptied
+      // sequence lands here with zero rows. Neither may block with "워크플로 단계가
       // 없습니다" (error_empty). Start the continuous run from the workflow-decision step and
       // run to the end of the sequence the AI decides; the server self-chains from the decide
       // response.
@@ -440,8 +438,8 @@ async function loadSequence() {
       void revealActiveStep()
     }
   } catch (e: any) {
-    // Defensive fallback: the shadowed decision_routes handler would return 400
-    // sequence_not_decided. Treat it the same as decided:false.
+    // The canonical decision_routes handler reports an undecided sequence as this 400.
+    // Preserve the existing "start from workflow decision" state for that contract.
     const code = e?.response?.data?.error
     if (e?.response?.status === 400 && code === 'sequence_not_decided') {
       fromDecision.value = true

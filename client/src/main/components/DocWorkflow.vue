@@ -427,9 +427,14 @@ async function fetchCandidates(force = false): Promise<void> {
 
 function toggleApplyMenu() {
   applyMenuOpen.value = !applyMenuOpen.value
-  // Opening is the only moment a fetch is actually needed; if the one fired on mount is
-  // still running or already done, this joins it instead of starting a second one.
-  if (applyMenuOpen.value && !applyLoaded.value) void fetchCandidates()
+  // 0406 T0017 "저장도 안되고 멘트도 이상하고" — 이 칸 바로 아래에 같은 문서의 계획
+  // 편집기가 있고, 계획을 고쳐 저장하면 그 문서의 리비전이 오른다. 그런데 예전엔 마운트 때 한 번
+  // 받아 둔 후보를 그대로 부었다. 그래서 (1) 방금 고친 전달멘트가 아니라 옛 리비전의 멘트가
+  // 부어지고, (2) 저장은 wp_changed 로 거절되며, (3) 그 안내대로 창을 닫고 다시 열어도 이
+  // 캐시는 그대로여서 같은 실패가 끝없이 반복됐다 — 문서 탭을 닫기 전에는 벗어날 길이 없었다.
+  // 차림표를 여는 것은 사람의 행동이므로 그때 다시 읽는다. 답이 올 때까지 지금 값을 그대로
+  // 두므로 버튼도, 열린 차림표도 비었다가 다시 차지 않는다(M0020).
+  if (applyMenuOpen.value) void fetchCandidates(true)
 }
 
 function closeApplyMenu() {
@@ -438,8 +443,15 @@ function closeApplyMenu() {
 
 // D0010 §3.3 — the promise this module is built on: choosing a mode opens the edit dialog in
 // that state and nothing else happens. The sequence changes when [저장] is pressed, there.
-function choosePourMode(mode: PourMode) {
+async function choosePourMode(mode: PourMode) {
+  // 0406 T0017 — 차림표를 열며 시작한 다시 읽기가 아직 끝나지 않았을 수 있다. 그 답을
+  // 기다렸다가 붓는다: 함께 받는 wp_revision_no 가 저장을 판정하는 근거이고, 줄에 실린
+  // 전달멘트도 그 리비전의 것이므로, 여기서 한 박자 기다리는 것과 낡은 계획을 부어
+  // 저장에서 거절당하는 것의 차이다.
+  if (applyFlight) await applyFlight
   const data = candidates.value[mode]
+  // 다시 읽었더니 이 갈래가 사라졌다면(계획이 비었거나 읽을 수 없다) 차림표를 열어 둔다 —
+  // 그 자리에 이유가 이미 적혀 있고, 조용히 닫으면 누른 사람은 아무 말도 듣지 못한다.
   if (!data) return
   applyMenuOpen.value = false
   pouredPayload.value = {

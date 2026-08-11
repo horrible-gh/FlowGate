@@ -107,6 +107,7 @@ def _new_row(
     is_auto: bool = False,
     auto_of_uid: Optional[int] = None,
     note: str = "",
+    note_source: Optional[str] = None,
     origin: str = "manual",
     plan_key: Optional[str] = None,
     source_doc_id: Optional[str] = None,
@@ -123,6 +124,7 @@ def _new_row(
         "is_auto": is_auto,
         "auto_of_uid": auto_of_uid,
         "note": note,
+        "note_source": note_source,
         "origin": origin,
         "plan_key": plan_key,
         "source_doc_id": source_doc_id,
@@ -201,6 +203,7 @@ def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]
         return
     if target["note"] == "":
         target["note"] = note
+        target["note_source"] = "pair"
     else:
         # 지시 줄에 사람이 적어 둔 말이 자동 줄의 말에 덮이는 편이 훨씬 나쁘다 (L0011 §2.3).
         dropped.append({
@@ -245,14 +248,24 @@ def plan_to_rows(
             _carry_note_to_pair(step, rows, dropped)
             continue
         uid += 1
+        step_note = normalize_note(step.get("note"))
         rows.append(_new_row(
             uid, code, locale,
-            note=normalize_note(step.get("note")),
+            note=step_note,
+            note_source="step" if step_note else None,
             origin="plan",
             plan_key=step.get("key"),
             source_doc_id=plan_doc_id,
             source_revision_no=plan_revision_no,
         ))
+
+    defaults = plan.get("defaults")
+    default_note = normalize_note(defaults.get("note")) if isinstance(defaults, dict) else ""
+    if default_note:
+        for row in rows:
+            if row["note"] == "":
+                row["note"] = default_note
+                row["note_source"] = "defaults"
     return rows, dropped, uid
 
 
@@ -439,6 +452,7 @@ def _public_row(row: dict) -> dict:
         "locked": bool(row.get("locked")),
         "poured": bool(row.get("poured")),
         "note": row.get("note") or "",
+        "note_source": row.get("note_source"),
         "origin": row.get("origin") or "manual",
         "plan_key": row.get("plan_key"),
         "source_doc_id": row.get("source_doc_id"),
