@@ -1081,9 +1081,13 @@ def request_sequence_edit(
     items = db_wfseq.get_sequence_items(seq["id"])
     sequence_items = [
         {
+            "item_seq": it.get("item_seq"),
             "type": it["type"],
             "label": _safe_label(it["label"], it["type"], locale),
             "status": it["status"],
+            "note": _normalized_sequence_note(it.get("note")),
+            "source_doc_id": it.get("source_doc_id"),
+            "source_revision_no": it.get("source_revision_no"),
         }
         for it in items
     ]
@@ -1272,7 +1276,7 @@ def get_workflow_sequence(doc_id: str) -> dict:
     Returns
     -------
     dict
-        sequence_id, items (includes id / type / label / sort_order / status per item)
+        doc_class, decided, sequence_id, and items including note/source provenance keys
 
     Raises
     ------
@@ -1292,6 +1296,8 @@ def get_workflow_sequence(doc_id: str) -> dict:
     items = db_wfseq.get_sequence_items(seq["id"])
     return {
         "doc_id": doc_id,
+        "doc_class": _resolve_doc_class(doc),
+        "decided": True,
         "sequence_id": seq["id"],
         "items": [
             {

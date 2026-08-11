@@ -148,6 +148,13 @@ def test_issue_builder_declares_ai_run_id_when_one_is_used(
         lambda **kw: {"token": "t", "token_id": "tok", "scratch_dir": "/s", "mention": "m",
                        "_kwargs": kw},
     )
+    # work_plan_fill joined _ALLOWED_SCOPES after this harvesting test was written. Keep the
+    # generic issuer-signature check isolated from its DB just like the four issuers above.
+    monkeypatch.setattr(
+        routes.work_plan_service, "request_work_plan_fill",
+        lambda **kw: {"raw_token": "t", "token_id": "tok", "scratch_dir": "/s", "mention": "m",
+                       "_kwargs": kw},
+    )
     # workflow_decide's continuous-new sibling, _issue_first_hop, calls advance_workflow.
     monkeypatch.setattr(
         wfd, "advance_workflow",

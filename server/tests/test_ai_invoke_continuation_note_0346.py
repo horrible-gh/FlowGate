@@ -312,8 +312,8 @@ class TestPromptInjectionEndToEnd:
         assert _read(outfile) == MENTION.encode("utf-8")
 
     def test_notes_ignored_on_a_single_run(self, note_env):
-        # Even if a caller mistakenly forwarded note fields on a single run, the injection
-        # branch is gated on mode == 'continuous' — a single run's prompt stays untouched.
+        # Client-supplied continuation fields remain ignored on single runs. With no stored head
+        # note this is byte-identical to the legacy prompt.
         cmd, outfile = _capture_cmd(note_env["tmp"])
         note_env["chain"]["providers"] = [_provider(cmd=cmd)]
         note_env["chain"]["registered_count"] = 1
@@ -329,6 +329,27 @@ class TestPromptInjectionEndToEnd:
         )
         _wait_finished(res["run_id"])
         assert _read(outfile) == MENTION.encode("utf-8")
+
+    def test_single_new_injects_the_stored_head_note_end_to_end(self, note_env):
+        note_env["wfseq"].items[2]["note"] = "단발 저장 전달멘트"
+        cmd, outfile = _capture_cmd(note_env["tmp"])
+        note_env["chain"]["providers"] = [_provider(cmd=cmd)]
+        note_env["chain"]["registered_count"] = 1
+        res = svc.start_run(
+            project_id="flowgate", module="default", group_id="flowgate.default.0346",
+            doc_ref=ROOT_DOC, action_scope="new", mode="single",
+            continuation_target_seq=None, continuation_review_mode=False,
+            continuation_instruction_mode=None, continuation_locale="ko",
+            issued_to="usr_admin", api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+            mention_builder=lambda raw, scratch: MENTION,
+        )
+        _wait_finished(res["run_id"])
+        expected = invoke_mention_service.prepend_messages_section(
+            MENTION, ["단발 저장 전달멘트"], "ko",
+        )
+        actual = _read(outfile).decode("utf-8")
+        assert actual == expected
+        print("SINGLE_NEW_PROMPT=" + repr({"before": MENTION, "after": actual}))
 
 
 class TestNoteInjectionFailureIsSwallowed:

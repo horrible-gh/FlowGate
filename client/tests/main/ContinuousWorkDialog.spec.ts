@@ -20,10 +20,9 @@ vi.mock('@shared/api', () => ({
   putRequest,
 }))
 
-// The LIVE /workflow/sequence is served by workflow_head_routes, whose shape is
-// { decided, sequence, head } — NOT the { items } shape of the shadowed decision_routes
-// handler. The dialog must read this shape (regression: it previously read only `items`,
-// which is never present live, so every open showed "워크플로 단계가 없습니다").
+// The live query-form /workflow/sequence is served only by workflow_decision_routes and it
+// returns `items` — 0406 T0013 migrated these fixtures to that shape and deleted the
+// consumer's `sequence` fallback, so a fixture can no longer describe a dead contract.
 // N done, NR done, T (head=pending), TR, TS, TSR — head is the 3rd item (item_seq 3).
 function seqResponse() {
   return {
@@ -31,7 +30,7 @@ function seqResponse() {
       doc_id: 'flowgate.default.0086.0001-R',
       doc_class: 'R',
       decided: true,
-      sequence: [
+      items: [
         { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
         { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
         { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending' },
@@ -216,7 +215,7 @@ describe('ContinuousWorkDialog', () => {
         doc_id: 'flowgate.default.0094.0001-R',
         doc_class: 'R',
         decided: true,
-        sequence: [
+        items: [
           { id: 1, item_seq: 1, type: 'T', label: '작업지시', status: 'done' },
           { id: 2, item_seq: 2, type: 'TR', label: '작업레포트', status: 'done' },
           { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'done' },
@@ -285,10 +284,12 @@ describe('ContinuousWorkDialog', () => {
     expect(payload.reviewMode).toBe(true)
   })
 
-  it('starts from the workflow decision when the live endpoint returns 200 decided:false (R0001 워크플로 결정부터)', async () => {
-    // head_routes returns 200 + decided:false (NOT a 400) for an undecided sequence. The
-    // dialog must NOT fall into error_empty ("워크플로 단계가 없습니다") here.
-    getRequest.mockResolvedValue({ data: { doc_id: 'flowgate.default.0086.0001-R', doc_class: 'R', decided: false, sequence: [], head: null } })
+  it('starts from the workflow decision when the canonical response carries no rows (R0001 워크플로 결정부터)', async () => {
+    // 0406 T0013: the duplicate head_routes GET that answered 200 + decided:false is gone —
+    // an undecided sequence is now the 400 covered by the next test. What still reaches this
+    // branch is a decided sequence whose rows were all deleted, and it must NOT fall into
+    // error_empty ("워크플로 단계가 없습니다") either.
+    getRequest.mockResolvedValue({ data: { doc_id: 'flowgate.default.0086.0001-R', doc_class: 'R', decided: true, sequence_id: 686, items: [] } })
     const wrapper = mountDialog()
     await flushPromises()
 
@@ -786,7 +787,7 @@ describe('ContinuousWorkDialog', () => {
           doc_id: 'flowgate.default.0086.0001-R',
           doc_class: 'R',
           decided: true,
-          sequence: [
+          items: [
             { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
             { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
             // T is auto-approved (server-handled) under the default instruction mode, so it

@@ -1,0 +1,144 @@
+"""0406 T0009 — defaults.note fallback and note-source priority."""
+from __future__ import annotations
+
+import pytest
+
+from modules.flow_gate.services import work_plan_sequence_service as wpseq
+
+WP_DOC_ID = "flowgate.default.0406.0004-WP"
+OWNER_DOC_ID = "flowgate.default.0406.0001-B"
+REVISION = 9
+
+
+def _rows(plan: dict):
+    return wpseq.plan_to_rows(plan, WP_DOC_ID, REVISION)
+
+
+@pytest.fixture
+def empty_workflow(monkeypatch):
+    monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_by_doc_id", lambda _doc_id: None)
+    monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_items", lambda _sequence_id: [])
+    monkeypatch.setattr(wpseq.db_wfseq, "get_item_by_result_doc_id", lambda _doc_id: None)
+
+
+def _candidate(plan: dict):
+    return wpseq.build_candidates(
+        doc={"doc_id": WP_DOC_ID, "target_id": OWNER_DOC_ID, "revision_no": REVISION},
+        plan=plan,
+        mode="append",
+    )
+
+
+def test_defaults_only_fills_every_placeable_plan_row_with_normalized_shared_note():
+    plan = {
+        "defaults": {"note": "  Shared\x00 note\n  "},
+        "steps": [
+            {"key": "D#1", "type": "D", "note": ""},
+            {"key": "L#1", "type": "L", "note": "   "},
+            {"key": "T#1", "type": "T", "note": None},
+        ],
+    }
+    rows, dropped, _ = _rows(plan)
+
+    assert dropped == []
+    assert len(rows) == 3
+    assert {row["note"] for row in rows} == {"Shared note"}
+    assert {row["note_source"] for row in rows} == {"defaults"}
+    assert {row["origin"] for row in rows} == {"plan"}
+    assert {row["source_doc_id"] for row in rows} == {WP_DOC_ID}
+    assert {row["source_revision_no"] for row in rows} == {REVISION}
+
+
+def test_step_note_has_priority_over_defaults_note():
+    rows, _, _ = _rows({
+        "defaults": {"note": "shared"},
+        "steps": [{"key": "D#1", "type": "D", "note": "specific"}],
+    })
+
+    assert [(row["note"], row["note_source"]) for row in rows] == [("specific", "step")]
+
+
+def test_pair_note_has_priority_over_defaults_without_a_drop_notification():
+    rows, dropped, _ = _rows({
+        "defaults": {"note": "shared"},
+        "steps": [
+            {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": ""},
+            {"key": "TR#1", "type": "TR", "pair_key": "T#1", "note": "paired"},
+        ],
+    })
+
+    assert [(row["note"], row["note_source"]) for row in rows] == [("paired", "pair")]
+    assert "paired_note_dropped" not in {item["reason"] for item in dropped}
+
+
+def test_step_note_beats_pair_and_defaults_and_keeps_the_existing_drop_notification():
+    rows, dropped, _ = _rows({
+        "defaults": {"note": "shared"},
+        "steps": [
+            {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": "specific"},
+            {"key": "TR#1", "type": "TR", "pair_key": "T#1", "note": "paired"},
+        ],
+    })
+
+    assert [(row["note"], row["note_source"]) for row in rows] == [("specific", "step")]
+    assert [item["reason"] for item in dropped] == ["paired_note_dropped"]
+
+
+def test_attached_auto_row_stays_empty_and_server_assembled_note_is_still_dropped():
+    rows, dropped, uid = _rows({
+        "defaults": {"note": "shared"},
+        "steps": [
+            {"key": "T#1", "type": "T", "note": ""},
+            {"key": "TSR#1", "type": "TSR", "note": "server-only"},
+        ],
+    })
+    attached, _ = wpseq.attach_auto_rows(rows, next_uid=uid)
+
+    assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
+        ("T", "shared", "defaults"),
+        ("TR", "", None),
+    ]
+    assert [item["reason"] for item in dropped] == ["server_assembled_note"]
+
+
+@pytest.mark.parametrize("defaults", [None, "not-a-dict", {"note": " \t\n "}])
+def test_missing_invalid_or_blank_defaults_preserves_empty_note_and_note_missing(
+    empty_workflow, defaults,
+):
+    plan = {"steps": [{"key": "D#1", "type": "D", "note": ""}]}
+    if defaults is not None:
+        plan["defaults"] = defaults
+
+    rows, _, _ = _rows(plan)
+    result = _candidate(plan)
+
+    assert rows[0]["note"] == ""
+    assert rows[0]["note_source"] is None
+    assert "note_missing" in {item["code"] for item in result["notifications"]}
+
+
+def test_shared_note_reuses_normalization_limit_and_control_character_removal():
+    rows, _, _ = _rows({
+        "defaults": {"note": " \x00" + ("가" * (wpseq.NOTE_MAX_CHARS + 50)) + "\n"},
+        "steps": [{"key": "D#1", "type": "D", "note": ""}],
+    })
+
+    assert len(rows[0]["note"]) == wpseq.NOTE_MAX_CHARS
+    assert rows[0]["note"] == "가" * wpseq.NOTE_MAX_CHARS
+    assert rows[0]["note_source"] == "defaults"
+
+
+def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_missing(empty_workflow):
+    result = _candidate({
+        "defaults": {"note": "shared"},
+        "steps": [{"key": "D#1", "type": "D", "note": ""}],
+    })
+    row = result["rows"][0]
+
+    assert "note_missing" not in {item["code"] for item in result["notifications"]}
+    assert row["note"] == "shared"
+    assert row["note_source"] == "defaults"
+    assert set(row) == {
+        "type", "label", "status", "locked", "poured", "note", "note_source",
+        "origin", "plan_key", "source_doc_id", "source_revision_no",
+    }

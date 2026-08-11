@@ -20,6 +20,19 @@
               <span class="aiv-target-label">{{ t('main.ai_invoke_dialog.target_doc') }}</span>
               <span class="aiv-target-id">{{ docRef }}</span>
             </div>
+            <div v-if="singleStepNoteActive" class="aiv-step-note" data-test="single-step-note">
+              <div class="aiv-step-note-label">{{ t('main.ai_invoke_dialog.step_note_label') }}</div>
+              <div v-if="singleStepNoteLoading" class="aiv-step-note-empty">
+                {{ t('main.ai_invoke_dialog.step_note_loading') }}
+              </div>
+              <template v-else-if="singleStepNote">
+                <div class="aiv-step-note-value">{{ singleStepNote }}</div>
+                <div class="aiv-step-note-hint">{{ t('main.ai_invoke_dialog.step_note_auto') }}</div>
+              </template>
+              <div v-else class="aiv-step-note-empty">
+                {{ t('main.ai_invoke_dialog.step_note_empty') }}
+              </div>
+            </div>
             <!-- 0234 B0001 RC2: confirm/change which provider this run uses, at the
                  invocation point itself (not only the global header dropdown). -->
             <div class="aiv-provider-row">
@@ -95,7 +108,8 @@ import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
-import type { WorkflowStepPickerState } from '../types/workflowStepPicker'
+import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
+import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
 
 const props = defineProps<{
   visible: boolean
@@ -152,6 +166,8 @@ const aiInvokeStore = useAiInvokeRunsStore()
 const mode = ref<'single' | 'continuous'>('single')
 const starting = ref(false)
 const startError = ref('')
+const singleStepNote = ref('')
+const singleStepNoteLoading = ref(false)
 // 0401 NR0003 §3 원인 4 / T0004 작업 6: a group whose 409 named a dead run_id -- the lease's
 // group id, so the inline [잠금 해제] button below has something to release.
 const lockedGroupId = ref<string | null>(null)
@@ -180,6 +196,30 @@ const pickerActive = computed(() =>
   props.actionScope !== 'workflow_decide' &&
   !props.autoStart,
 )
+
+const singleStepNoteActive = computed(() =>
+  mode.value === 'single' &&
+  ['new', 'next_step_message', 'design_handoff'].includes(props.actionScope),
+)
+
+async function loadSingleStepNote() {
+  singleStepNoteLoading.value = true
+  singleStepNote.value = ''
+  try {
+    const res = await getRequest<any>('/api/v1/workflow/sequence', {
+      doc_id: props.sequenceDocRef || props.docRef,
+    })
+    const items = (res.data?.items ?? []) as WorkflowStepItem[]
+    const headIndex = findSequenceHeadIndex(items)
+    if (headIndex < items.length) singleStepNote.value = String(items[headIndex].note ?? '').trim()
+  } catch {
+    // Display-only enrichment follows the server's best-effort contract: a lookup problem is
+    // rendered as the explicit empty state and never blocks the single run.
+    singleStepNote.value = ''
+  } finally {
+    singleStepNoteLoading.value = false
+  }
+}
 
 // 0337 R0001-1: this dialog starts its chain with the same instruction mode the request carries
 // (auto_approved unless told otherwise), so its picker must exclude the same server-approved
@@ -360,6 +400,14 @@ function close() {
 }
 
 watch(
+  [() => props.visible, singleStepNoteActive, () => props.sequenceDocRef, () => props.docRef],
+  ([visible, active]) => {
+    if (visible && active) void loadSingleStepNote()
+  },
+  { immediate: true },
+)
+
+watch(
   () => props.visible,
   (val) => {
     if (val) {
@@ -401,6 +449,16 @@ watch(
 }
 .aiv-target-label { color: var(--text-m); }
 .aiv-target-id { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+.aiv-step-note {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-h);
+  padding: 10px 12px;
+}
+.aiv-step-note-label { font-size: .72rem; font-weight: 700; color: var(--text-m); margin-bottom: 5px; }
+.aiv-step-note-value { white-space: pre-wrap; font-size: .82rem; color: var(--text); }
+.aiv-step-note-hint, .aiv-step-note-empty { font-size: .74rem; color: var(--text-m); line-height: 1.4; }
+.aiv-step-note-hint { margin-top: 5px; }
 .aiv-provider-row { display: flex; }
 .aiv-provider-row > * { flex: 1; min-width: 0; }
 .aiv-mode {

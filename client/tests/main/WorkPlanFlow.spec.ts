@@ -97,7 +97,7 @@ const APPLY = {
 const SEQUENCE = {
   data: {
     doc_id: ROOT_ID, doc_class: 'R', decided: true,
-    sequence: [
+    items: [
       { id: 1, item_seq: 1, type: 'T', label: '작업지시', status: 'pending' },
       { id: 2, item_seq: 2, type: 'TR', label: '작업레포트', status: 'pending' },
     ],

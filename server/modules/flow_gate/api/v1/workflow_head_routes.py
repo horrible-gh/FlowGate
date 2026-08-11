@@ -3,6 +3,7 @@
 Endpoints:
   GET  /api/v1/workflow/{doc_id}/head      Retrieve sequence head step
   GET  /api/v1/workflow/{doc_id}/sequence  Retrieve entire sequence + head (P002 §6)
+  Query-form GET /workflow/sequence is canonical in workflow_decision_routes.
 
 Auth: Authorization: Bearer <token>  (auth_outbound.verify_bearer)
 
@@ -85,9 +86,6 @@ def get_workflow_head_rpc(doc_id: str = Query(...), request: Request = None):
     return get_workflow_head(doc_id, request)
 
 
-@router.get("/workflow/sequence")
-def get_workflow_sequence_rpc(doc_id: str = Query(...), request: Request = None):
-    return get_workflow_sequence(doc_id, request)
 
 
 # ── GET /workflow/{doc_id}/head ───────────────────────────────────────────────

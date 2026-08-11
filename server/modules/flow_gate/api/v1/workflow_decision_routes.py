@@ -718,7 +718,7 @@ def get_workflow_sequence_endpoint(
 ):
     """Retrieve workflow sequence + item statuses (for entering edit mode).
 
-    Response: { doc_id, sequence_id, items: [{ id, type, label, sort_order, status }] }
+    Response: { doc_id, doc_class, decided, sequence_id, items: [{ ..., note, source_doc_id, source_revision_no }] }
     - status: pending | in_progress | done
     """
     auth = verify_bearer(request)

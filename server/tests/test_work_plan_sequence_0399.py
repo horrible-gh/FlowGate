@@ -181,7 +181,7 @@ def test_append_carries_plan_notes_and_their_origin(wired):
     # step made it.
     assert poured[-1] == {
         "type": "TR", "label": poured[-1]["label"], "status": "pending", "locked": False,
-        "poured": True, "note": "", "origin": "auto", "plan_key": None,
+        "poured": True, "note": "", "note_source": None, "origin": "auto", "plan_key": None,
         "source_doc_id": None, "source_revision_no": None,
     }
 

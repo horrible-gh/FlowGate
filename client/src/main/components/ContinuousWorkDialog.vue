@@ -369,6 +369,7 @@ const editedSeqs = ref(new Set<number>())
 // `filledSeqs` so the "계획에서 옴" badge never bleeds onto the 프로바이더 tab, which this
 // prefill does not touch.
 const noteFilledSeqs = ref(new Set<number>())
+const prefilledMessageSeqs = ref(new Set<number>())
 const presetRefreshMessage = ref('')
 let initializingPreset = false
 const presetUnsetCount = computed(() => (
@@ -467,6 +468,7 @@ function applySequenceNotePrefill(steps: WorkflowStepItem[]) {
   }
   messageOverrides.value = next
   noteFilledSeqs.value = filled
+  prefilledMessageSeqs.value = new Set(filled)
 }
 
 function revertSequenceNotes() {
@@ -519,8 +521,12 @@ function onStepMessageChange(itemSeq: number, value: string) {
   markPresetEdited(itemSeq)
   markNoteEdited(itemSeq)
   const next = { ...messageOverrides.value }
-  if (!value.trim()) delete next[itemSeq]
-  else next[itemSeq] = value
+  if (!value.trim()) {
+    if (prefilledMessageSeqs.value.has(itemSeq)) next[itemSeq] = ''
+    else delete next[itemSeq]
+  } else {
+    next[itemSeq] = value
+  }
   messageOverrides.value = next
 }
 
@@ -614,7 +620,10 @@ function onProceed() {
   }
   const messageOverridesOut: Record<number, string> = {}
   for (const [seq, note] of Object.entries(messageOverrides.value)) {
-    if (note && note.trim() && inRun.has(Number(seq))) messageOverridesOut[Number(seq)] = note
+    const itemSeq = Number(seq)
+    if (!inRun.has(itemSeq)) continue
+    if (note && note.trim()) messageOverridesOut[itemSeq] = note
+    else if (prefilledMessageSeqs.value.has(itemSeq)) messageOverridesOut[itemSeq] = ''
   }
   const validAutoApprove = inRangeAutoApproveCandidates.value
   const autoApproveOut = autoApproveItemSeqs.value.filter(seq => validAutoApprove.has(seq))
@@ -645,6 +654,7 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   presetRefreshMessage.value = ''
   editedSeqs.value = new Set()
   noteFilledSeqs.value = new Set()
+  prefilledMessageSeqs.value = new Set()
   if (value) {
     presetActive.value = true
     instructionMode.value = value.instructionMode
@@ -652,6 +662,11 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
     overrides.value = { ...value.providerOverrides }
     defaultMessage.value = value.defaultMessage
     messageOverrides.value = { ...value.messageOverrides }
+    prefilledMessageSeqs.value = new Set(
+      Object.entries(value.messageOverrides)
+        .filter(([, note]) => !!note.trim())
+        .map(([seq]) => Number(seq)),
+    )
     filledSeqs.value = new Set(value.filledSeqs)
   } else {
     presetActive.value = false

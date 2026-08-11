@@ -52,14 +52,14 @@ function continuousWork(locale: (typeof LOCALES)[keyof typeof LOCALES]): Record<
   return (locale as any).main.continuous_work as Record<string, unknown>
 }
 
-// Same shape workflow_head_routes serves: N/NR done, T is the head, TR/TS/TSR pending.
+// Same shape the canonical query-form handler serves: N/NR done, T is the head, TR/TS/TSR pending.
 function seqResponse() {
   return {
     data: {
       doc_id: 'flowgate.default.0346.0001-R',
       doc_class: 'R',
       decided: true,
-      sequence: [
+      items: [
         { id: 1, item_seq: 1, type: 'N', label: '조사지시', status: 'done' },
         { id: 2, item_seq: 2, type: 'NR', label: '조사레포트', status: 'done' },
         { id: 3, item_seq: 3, type: 'T', label: '작업지시', status: 'pending' },
