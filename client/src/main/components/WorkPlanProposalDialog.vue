@@ -54,6 +54,14 @@
                 <span class="wpp-count-pill" :class="{ zero: selectedTypes.size === 0 }">
                   {{ selectedTypes.size }} / {{ countableTypes.length }}
                 </span>
+                <div class="wpp-sec-acts">
+                  <button type="button" class="wpp-mini-btn" data-test="wpp-select-all-types" @click="selectAllTypes">
+                    {{ t('main.work_plan_proposal_dialog.select_all') }}
+                  </button>
+                  <button type="button" class="wpp-mini-btn" data-test="wpp-clear-all-types" @click="clearAllTypes">
+                    {{ t('main.work_plan_proposal_dialog.clear_all') }}
+                  </button>
+                </div>
               </div>
               <div v-if="typesError" class="wpp-load-error">
                 {{ t('main.work_plan_proposal_dialog.types_load_failed') }}
@@ -88,6 +96,14 @@
                 <span class="wpp-count-pill" :class="{ zero: selectedProviders.size === 0 }">
                   {{ selectedProviders.size }} / {{ providersLoaded.length }}
                 </span>
+                <div class="wpp-sec-acts">
+                  <button type="button" class="wpp-mini-btn" data-test="wpp-select-all-providers" @click="selectAllProviders">
+                    {{ t('main.work_plan_proposal_dialog.select_all') }}
+                  </button>
+                  <button type="button" class="wpp-mini-btn" data-test="wpp-clear-all-providers" @click="clearAllProviders">
+                    {{ t('main.work_plan_proposal_dialog.clear_all') }}
+                  </button>
+                </div>
               </div>
               <div v-if="providersError" class="wpp-load-error">
                 {{ t('main.work_plan_proposal_dialog.providers_load_failed') }}
@@ -336,11 +352,23 @@ function toggleType(code: string) {
   else next.add(code)
   selectedTypes.value = next
 }
+function selectAllTypes() {
+  selectedTypes.value = new Set(countableTypes.value.map(item => item.code))
+}
+function clearAllTypes() {
+  selectedTypes.value = new Set()
+}
 function toggleProvider(id: string) {
   const next = new Set(selectedProviders.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
   selectedProviders.value = next
+}
+function selectAllProviders() {
+  selectedProviders.value = new Set(providersLoaded.value.map(p => p.id))
+}
+function clearAllProviders() {
+  selectedProviders.value = new Set()
 }
 
 async function loadTypes() {
@@ -476,6 +504,7 @@ function onInvokeAi() {
   background: var(--primary-l, #eff6ff); color: var(--primary, #2563eb); font-variant-numeric: tabular-nums;
 }
 .wpp-count-pill.zero { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
+.wpp-sec-acts { margin-left: auto; display: inline-flex; gap: 4px; }
 .wpp-mini-btn {
   padding: 2px 9px; font-size: .68rem; border: 1px solid var(--border, #e2e8f0);
   border-radius: var(--r-sm, 4px); background: #fff; color: var(--text-m, #64748b); cursor: pointer;

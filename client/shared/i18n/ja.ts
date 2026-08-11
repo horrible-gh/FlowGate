@@ -1010,6 +1010,8 @@ export default {
       types_load_failed: '枚数を選べません — 文書タイプ一覧を読み込めませんでした。',
       providers_load_failed: 'プロバイダーを選べません — プロバイダー一覧を読み込めませんでした。',
       retry: '再試行',
+      select_all: '全て',
+      clear_all: '解除',
       providers_hint: '[AI 呼び出し] は選んだプロバイダーの先頭で実行します。',
       summary: '設計 {design}種 · 作業 {work}種 · プロバイダー {providers}',
       // 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만

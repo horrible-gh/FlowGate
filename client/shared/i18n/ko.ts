@@ -1010,6 +1010,8 @@ export default {
       types_load_failed: '장수를 고를 수 없습니다 — 문서 타입 목록을 읽지 못했습니다.',
       providers_load_failed: '공급자를 고를 수 없습니다 — 공급자 목록을 읽지 못했습니다.',
       retry: '다시 시도',
+      select_all: '전체',
+      clear_all: '해제',
       providers_hint: '[AI 호출]은 고른 공급자 중 첫 번째로 실행합니다.',
       summary: '설계 {design}종 · 작업 {work}종 · 공급자 {providers}',
       // 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
