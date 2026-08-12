@@ -170,6 +170,8 @@ class EditSequenceItem(BaseModel):
     note: Optional[str] = None
     source_doc_id: Optional[str] = None
     source_revision_no: Optional[int] = None
+    provider_id: Optional[str] = None
+    provider_display_name: Optional[str] = None
 
 
 class EditSequenceBodyRequest(BaseModel):

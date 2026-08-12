@@ -227,7 +227,7 @@ def test_work_plan_seed_contract_is_equivalent_in_all_dialects(dialect, idempote
     """Keep 078 semantically aligned; live engines are exercised by T0017 regression."""
     migration = (
         Path(__file__).resolve().parents[1]
-        / "sql" / "migrations" / dialect / "078_seed_work_plan_doctype.sql"
+        / "sql" / "migrations" / dialect / "078b_seed_work_plan_doctype.sql"
     )
     sql = migration.read_text(encoding="utf-8")
     assert idempotent_marker in sql

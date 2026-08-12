@@ -1,4 +1,4 @@
--- 078_seed_work_plan_doctype.sql
+-- 078b_seed_work_plan_doctype.sql
 -- flowgate.default.0395 T0011 / D0007 §2.2 · §7, NR0005 §3.2: register the work plan
 -- (WP) document type as a GLOBAL system type.
 --

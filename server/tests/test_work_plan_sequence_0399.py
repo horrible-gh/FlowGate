@@ -74,7 +74,7 @@ def test_the_registered_queries_carry_the_three_columns_both_ways():
     for column in ("note", "source_doc_id", "source_revision_no"):
         assert column in queries["insert_sequence_item"]
         assert f"wsi.{column}" in queries["get_sequence_items"]
-    assert queries["insert_sequence_item"].count("?") == 9
+    assert queries["insert_sequence_item"].count("?") == 11
 
 from modules.flow_gate.services import work_plan_apply_service as wpa
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
@@ -173,30 +173,29 @@ def test_append_carries_plan_notes_and_their_origin(wired):
         ("P#1", "레거시 API 호환 확인"),
         ("L#1", ""),
         ("T#1", "테스트 포함 구현"),
-        (None, ""),                       # the attached report row
+        (None, "완료 후 확인"),            # the attached report row — TR#1's own note
     ]
     assert {r["source_doc_id"] for r in poured if r["origin"] == "plan"} == {WP_DOC_ID}
     assert {r["source_revision_no"] for r in poured if r["origin"] == "plan"} == {1}
-    # 자동 줄은 멘트를 갖지 않는다 (L0011 §2.4) — and it names no plan, because no plan
-    # step made it.
+    # 0408 M0019 재반려 2: the automatic row carries the note the plan wrote for TR#1 — the
+    # step it IS. It still names no plan step of its own, because no plan step made the row.
     assert poured[-1] == {
         "type": "TR", "label": poured[-1]["label"], "status": "pending", "locked": False,
-        "poured": True, "note": "", "note_source": None, "origin": "auto", "plan_key": None,
-        "source_doc_id": None, "source_revision_no": None,
+        "poured": True, "note": "완료 후 확인", "note_source": "step", "origin": "auto",
+        "plan_key": None, "source_doc_id": None, "source_revision_no": None,
+        "provider_id": None, "provider_display_name": None, "provider_registered": None,
     }
 
 
 def test_append_notifications_match_the_protocol(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="append")
 
-    assert codes(out) == ["type_overlap", "note_missing", "paired_note_dropped"]
+    # 0408 M0019 재반려 2: nothing is dropped any more — TR#1's note reached TR#1's row.
+    assert codes(out) == ["type_overlap", "note_missing"]
     # A P row survived from before and a P#1 row came in — that is the overlap. TR is an
     # automatic row and never counts (L0011 §2.9).
     assert notification(out, "type_overlap")["types"] == ["P"]
     assert notification(out, "note_missing")["row_indexes"] == [4, 7]
-    assert notification(out, "paired_note_dropped")["items"] == [
-        {"plan_key": "TR#1", "note": "완료 후 확인"},
-    ]
 
 
 def test_locked_rows_are_not_counted_as_missing_a_note(wired):
@@ -227,7 +226,7 @@ def test_replace_after_cuts_the_whole_editable_list(wired):
 def test_replace_after_reports_only_deleted_rows_that_had_a_note(wired):
     out = wpseq.build_candidates(doc=WP_DOC, plan=PLAN, mode="replace_after")
 
-    assert codes(out) == ["notes_discarded", "note_missing", "paired_note_dropped"]
+    assert codes(out) == ["notes_discarded", "note_missing"]
     # Both row 5 (P, no note) and row 6 (N, "공급자 이슈 확인") were deleted; only the one
     # that actually lost something written on it is reported.
     assert notification(out, "notes_discarded")["items"] == [
@@ -303,19 +302,31 @@ def test_normalize_note_strips_control_characters_and_cuts_at_the_limit():
     assert len(wpseq.normalize_note("가" * 400)) == wpseq.NOTE_MAX_CHARS
 
 
-def test_a_result_step_note_fills_an_empty_instruction_and_never_overwrites_one():
+def test_a_result_step_note_lands_on_its_own_row_and_never_touches_the_instruction():
+    """0408 M0019 재반려 2 — 두 줄은 서로 다른 말을 갖는다.
+
+    앞선 규칙은 결과 단계의 멘트를 지시 줄로 옮기고, 지시 줄에 이미 말이 있으면 그것을
+    버렸다. [자동 승인]에서 AI 워커가 도는 줄은 결과 줄(NR/TR)이므로, 그 규칙 아래에서는
+    사람이 결과 단계에 적은 말이 한 글자도 전달되지 않거나 남의 말로 바뀌었다.
+    """
     plan = {"steps": [
         {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": ""},
         {"key": "TR#1", "type": "TR", "pair_key": "T#1", "note": "완료 후 확인"},
     ]}
-    rows, dropped, _ = wpseq.plan_to_rows(plan, WP_DOC_ID, 1)
-    assert [r["note"] for r in rows] == ["완료 후 확인"]
+    rows, dropped, uid = wpseq.plan_to_rows(plan, WP_DOC_ID, 1)
+    assert [r["note"] for r in rows] == [""]
     assert dropped == []
+    attached, _ = wpseq.attach_auto_rows(rows, "ko", uid)
+    assert [(r["type"], r["note"]) for r in attached] == [("T", ""), ("TR", "완료 후 확인")]
 
     plan["steps"][0]["note"] = "사람이 적어 둔 말"
-    rows, dropped, _ = wpseq.plan_to_rows(plan, WP_DOC_ID, 1)
+    rows, dropped, uid = wpseq.plan_to_rows(plan, WP_DOC_ID, 1)
     assert [r["note"] for r in rows] == ["사람이 적어 둔 말"]
-    assert [d["reason"] for d in dropped] == ["paired_note_dropped"]
+    assert dropped == []
+    attached, _ = wpseq.attach_auto_rows(rows, "ko", uid)
+    assert [(r["type"], r["note"]) for r in attached] == [
+        ("T", "사람이 적어 둔 말"), ("TR", "완료 후 확인"),
+    ]
 
 
 def test_attaching_report_rows_twice_changes_nothing():

@@ -80,7 +80,7 @@ beforeEach(() => {
 })
 
 describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
-  it('renders fallback notes, provenance titles, non-empty styling, and no auto-row input', async () => {
+  it('renders fallback notes, provenance titles, non-empty styling, and an auto-row input', async () => {
     const wrapper = mountModal()
     await flushPromises()
 
@@ -91,7 +91,9 @@ describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
     const expectedTitle = i18n.global.t('main.work_plan_pour.defaults_note_title')
 
     expect(rows).toHaveLength(4)
-    expect(inputs).toHaveLength(3)
+    // 0408 M0019 재반려 2: the report row carries its own mention, so it has an input like any
+    // other row — under [자동 승인] its note is the one an AI worker is handed.
+    expect(inputs).toHaveLength(4)
     expect(badges).toHaveLength(3)
     for (const index of [0, 1]) {
       expect(badges[index].text()).toBe(expectedBadge)
@@ -102,7 +104,8 @@ describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
       expect(badges[index].attributes('title')).toBe(expectedTitle)
     }
     expect(badges[2].attributes('title')).toBeUndefined()
-    expect(rows[3].find('.wdm-note-input').exists()).toBe(false)
+    expect(rows[3].find('.wdm-note-input').exists()).toBe(true)
+    expect(inputs[3].element.value).toBe('')
 
     console.log('DEFAULTS_NOTE_UI=' + JSON.stringify({
       badgeText: badges[0].text(),
@@ -113,7 +116,7 @@ describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
     }))
   })
 
-  it('clears defaults provenance on typing and keeps note_source out of the five-key PATCH rows', async () => {
+  it('clears defaults provenance on typing and keeps note_source out of the seven-key PATCH rows', async () => {
     const wrapper = mountModal()
     await flushPromises()
 
@@ -126,7 +129,7 @@ describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
 
     expect(patchRequest).toHaveBeenCalledTimes(1)
     const body = patchRequest.mock.calls[0][1]
-    const keys = ['label', 'note', 'source_doc_id', 'source_revision_no', 'type']
+    const keys = ['label', 'note', 'provider_display_name', 'provider_id', 'source_doc_id', 'source_revision_no', 'type']
     for (const item of body.items) {
       expect(Object.keys(item).sort()).toEqual(keys)
       expect(item).not.toHaveProperty('note_source')
@@ -134,18 +137,22 @@ describe('WorkflowDecisionModal shared plan note fallback (0406 T0009)', () => {
     expect(body.items[0]).toEqual({
       type: 'D', label: 'Design', note: 'Edited shared note',
       source_doc_id: WP_DOC_ID, source_revision_no: 9,
+      provider_id: null, provider_display_name: null,
     })
     expect(body.items[1]).toEqual({
       type: 'L', label: 'Logic', note: SHARED_NOTE,
       source_doc_id: WP_DOC_ID, source_revision_no: 9,
+      provider_id: null, provider_display_name: null,
     })
     expect(body.items[2]).toEqual({
       type: 'T', label: 'Task', note: 'Step-specific note',
       source_doc_id: WP_DOC_ID, source_revision_no: 9,
+      provider_id: null, provider_display_name: null,
     })
     expect(body.items[3]).toEqual({
       type: 'TR', label: 'Task report', note: '',
       source_doc_id: null, source_revision_no: null,
+      provider_id: null, provider_display_name: null,
     })
     console.log('DEFAULTS_NOTE_PATCH=' + JSON.stringify(body.items))
   })

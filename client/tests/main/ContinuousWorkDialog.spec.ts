@@ -392,6 +392,7 @@ describe('ContinuousWorkDialog', () => {
       ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
       await flushPromises()
       expect(document.querySelectorAll('.cwd-override-row')).toHaveLength(3)
+      expect(document.querySelectorAll('.cwd-override-select')).toHaveLength(3)
 
       // Check the T@3 toggle.
       const checkbox = document.querySelector('.wsp-step-auto-toggle input') as HTMLInputElement
@@ -399,8 +400,12 @@ describe('ContinuousWorkDialog', () => {
       checkbox.dispatchEvent(new Event('change'))
       await flushPromises()
 
-      // T@3 drops out of the provider table — same exclusion effect auto_approved gives it.
+      // 0408 TR0021 재반려 2: T@3's row drops out of the table entirely once checked — the same
+      // "no worker, no row" treatment auto_approved gives an N/T row. Its provider still names
+      // itself on the step list's own tag (checked a few lines below).
       expect(document.querySelectorAll('.cwd-override-row')).toHaveLength(2)
+      expect(document.querySelectorAll('.cwd-override-select')).toHaveLength(2)
+      expect(document.querySelector('.cwd-override-readonly')).toBeNull()
       // ...and the step list marks it read-only / auto, like an auto_approved N/T row.
       const steps = document.querySelectorAll('.wsp-step')
       expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
@@ -557,11 +562,13 @@ describe('ContinuousWorkDialog', () => {
 
     // 0317 T0015: no per-step disclosure toggle — the step rows are shown directly.
     expect(document.querySelector('.cwd-disclosure-btn')).toBeNull()
-    // 0337 R0001-1: one row per step an AI worker actually runs. The 2 done steps (N, NR) and
-    // the auto-approved T are excluded. 0388 NR0003: the default target also stops at TS (one
-    // step short of the paired TSR report) → TR, TS = 2.
+    // 0337 R0001-1 / 0408 TR0021 재반려 2: one row per step this run actually hands to a
+    // worker — the 2 done steps (N, NR) are out, and the auto-approved T no longer gets a row at
+    // all (TR0018 rev1's read-only row was the thing the rejection called clutter). 0388 NR0003:
+    // the default target also stops at TS (one step short of the paired TSR report) → TR, TS.
     const rows = document.querySelectorAll('.cwd-override-row')
     expect(rows).toHaveLength(2)
+    expect(document.querySelector('.cwd-override-readonly')).toBeNull()
     const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     // 0317 T0015: each step is pre-selected to the header default provider (not a blank option).
     expect(selects[0].value).toBe('aip_fable')
@@ -626,8 +633,10 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
     selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     expect(selects).toHaveLength(2)
-    // ...and the step-6 provider tag is gone from the step list too.
-    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(2)
+    // ...and the step-6 provider tag is gone from the step list too. The remaining tags are
+    // T, TR, TS: 0408 TR0018 rev1 keeps the tag on the auto-approved T as well, so that a
+    // step's provider no longer appears and disappears with the 실행 방식 radio.
+    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(3)
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
     next.click()
@@ -810,7 +819,7 @@ describe('ContinuousWorkDialog', () => {
       }
     }
 
-    it('pre-fills the message tab from the sequence\'s own stored notes and tags them from-plan', async () => {
+    it('pre-fills the message tab from the sequence\'s own stored notes', async () => {
       getRequest.mockResolvedValue(seqResponseWithNotes())
       const wrapper = mountDialog()
       await flushPromises()
@@ -819,20 +828,19 @@ describe('ContinuousWorkDialog', () => {
       ;(tabs[2] as HTMLButtonElement).click()
       await flushPromises()
 
-      // T@3 is auto-approved (server-handled) → execution rows are TR@4, TS@5.
+      // 0408 M0019 재반려 1: T@3 is auto-approved, so no worker reads a mention for it and
+      // it gets no row here — the execution rows are TR@4, TS@5. 재반려 2: TR shows its OWN
+      // stored note and never borrows T's.
       const rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
       expect(rowInputs).toHaveLength(2)
       expect(rowInputs[0].value).toBe('결제 실패 케이스도 문서화해줘')
       expect(rowInputs[1].value).toBe('')
 
-      // Only the row whose stored note came from a plan gets the badge.
-      expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(1)
-
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
-      expect(payload.messageOverrides).toEqual({ 4: '결제 실패 케이스도 문서화해줘' })
+      expect(payload.messageOverrides).toEqual({})
 
       wrapper.unmount()
     })
@@ -860,7 +868,7 @@ describe('ContinuousWorkDialog', () => {
       wrapper.unmount()
     })
 
-    it('lets the user edit a pre-filled mention, dropping its from-plan badge', async () => {
+    it('lets the user edit a pre-filled mention', async () => {
       getRequest.mockResolvedValue(seqResponseWithNotes())
       const wrapper = mountDialog()
       await flushPromises()
@@ -871,8 +879,6 @@ describe('ContinuousWorkDialog', () => {
       rowInputs[0].value = '직접 고친 멘트'
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
-
-      expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()
@@ -923,7 +929,6 @@ describe('ContinuousWorkDialog', () => {
     expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(document.querySelectorAll('.wsp-step')[5])
     ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
     await flushPromises()
-    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(2)
     const selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     expect(selects).toHaveLength(3)
     expect(selects[0].value).toBe('aip_opus')

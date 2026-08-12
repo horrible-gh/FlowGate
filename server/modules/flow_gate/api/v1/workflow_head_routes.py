@@ -20,6 +20,10 @@ from fastapi.responses import JSONResponse
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.services.workflow_decision_service import (
+    provider_view_of,
+    resolve_row_provider,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["WorkflowHead"])
 
@@ -154,6 +158,7 @@ def get_workflow_sequence(doc_id: str, request: Request):
         })
 
     items = db_wfseq.get_sequence_items(seq["id"])
+    provider_view = provider_view_of(doc.get("project_id"))
     head = db_wfseq.get_effective_head(seq["id"])
 
     head_out = None
@@ -173,7 +178,7 @@ def get_workflow_sequence(doc_id: str, request: Request):
         "doc_id":   doc_id,
         "doc_class": doc_class,
         "decided":  True,
-        "sequence": [_serialize_item(i) for i in items],
+        "sequence": [_serialize_item(i, provider_view) for i in items],
         "head":     head_out,
     })
 
@@ -193,7 +198,7 @@ def _resolve_doc_class(doc: dict) -> str:
     return "R"
 
 
-def _serialize_item(item: dict) -> dict:
+def _serialize_item(item: dict, provider_view: Optional[dict] = None) -> dict:
     return {
         "id":        item.get("id"),
         "item_seq":  item.get("item_seq"),
@@ -208,4 +213,12 @@ def _serialize_item(item: dict) -> dict:
         # slot; result_seq = that document's documents.seq, i.e. the reopen target_seq.
         "result_doc_id": item.get("result_doc_id"),
         "result_seq":    item.get("result_seq"),
+        "note": item.get("note") or "",
+        "source_doc_id": item.get("source_doc_id"),
+        "source_revision_no": item.get("source_revision_no"),
+        **resolve_row_provider(
+            item.get("provider_id"),
+            item.get("provider_display_name"),
+            provider_view or {"readable": False, "providers": {}},
+        ),
     }

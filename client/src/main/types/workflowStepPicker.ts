@@ -15,6 +15,9 @@ export interface WorkflowStepItem {
   note?: string
   source_doc_id?: string | null
   source_revision_no?: number | null
+  provider_id?: string | null
+  provider_display_name?: string | null
+  provider_registered?: boolean | null
 }
 
 /** A runnable target the user picked. Absent (null) whenever nothing is runnable. */

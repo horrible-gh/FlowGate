@@ -145,11 +145,42 @@ def build_workflow_tag(sequence: Optional[dict], items: Iterable[dict]) -> str:
     return f"seq{sequence.get('id')}-r{digest % WORKFLOW_TAG_DIGEST_MOD}-i{len(ordered)}"
 
 
+def _poured_block(items: Iterable[dict], plan_doc_id: Optional[str]) -> Optional[list[dict]]:
+    """The rows this very plan put in the sequence, reports included.
+
+    0408 M0019 재반려 3: L0010 §2.5 counts "the Nth row of type X" over the WHOLE sequence,
+    which predates the provenance columns 0399 added. A sequence that already finished an
+    N/NR pair before the plan poured its own therefore matched the plan's N#1 onto the old
+    finished row, and the plan's mention for that step reached nothing. A row poured by this
+    plan says so (``source_doc_id``); its automatic report row follows it and says nothing,
+    so it is taken along. Returns None when this plan has never been poured here — then the
+    positional rule below is all there is to go on, and it stays exactly as it was.
+    """
+    if not plan_doc_id:
+        return None
+    report_types = set(AUTO_REPORT_MAP.values())
+    block: list[dict] = []
+    inside = False
+    for item in _ordered(items):
+        own = str(item.get("source_doc_id") or "") == str(plan_doc_id)
+        attached = inside and str(item.get("type") or "").upper() in report_types
+        if own or attached:
+            block.append(item)
+            inside = True
+        else:
+            inside = False
+    return block or None
+
+
 # L0010 §2.5
-def build_step_map(plan_steps: Iterable[dict], items: Iterable[dict]) -> list[dict]:
+def build_step_map(plan_steps: Iterable[dict], items: Iterable[dict],
+                   plan_doc_id: Optional[str] = None) -> list[dict]:
     slots: dict[tuple[str, int], dict] = {}
     seen: dict[str, int] = {}
-    for item in _ordered(items):
+    pool = _poured_block(items, plan_doc_id)
+    if pool is None:
+        pool = _ordered(items)
+    for item in pool:
         code = str(item.get("type") or "").upper()
         seen[code] = seen.get(code, 0) + 1
         slots[(code, seen[code])] = item
@@ -456,7 +487,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     sequence, current = _sequence(owner)
     steps = list(plan.get("steps") or [])
     added, unplaceable = _missing_items(steps, current, locale)
-    current_mapping = build_step_map(steps, current)
+    current_mapping = build_step_map(steps, current, doc.get("doc_id"))
     current_projection = project(steps, current_mapping, current, mode, providers)
     current_target_seq = suggest_target_seq(
         steps, current_mapping, current_projection["folded"], providers,
@@ -468,7 +499,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
         has_unmatched_steps=bool(added),
     )
     projected_items = current + added
-    mapping = build_step_map(steps, projected_items)
+    mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
     projection = project(steps, mapping, projected_items, mode, providers)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
     change_blocker = _preview_apply_blocker(
@@ -592,7 +623,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
                 )
             added = proposed
         sequence, current = _sequence(owner_id)
-    mapping = build_step_map(steps, current)
+    mapping = build_step_map(steps, current, doc.get("doc_id"))
     projection = project(steps, mapping, current, mode, providers)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
     unmatched = [str(x.get("key")) for x in mapping if not x.get("matched")] if not change_workflow else []

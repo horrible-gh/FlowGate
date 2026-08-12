@@ -161,11 +161,22 @@ def test_the_rename_ledger_matches_what_is_on_disk():
             assert (directory / new).is_file(), f"{dialect}/{new} 이 없다"
 
 
-def test_the_rename_ledger_maps_one_to_one():
+def test_the_rename_ledger_maps_old_names_unambiguously():
+    """`old` 하나는 정확히 하나의 `new` 로만 간다 — 그 반대는 아니다.
+
+    flowgate.default.0408 TR0018: 078/079 는 두 그룹이 서로 다른 시점에 같은 순번
+    충돌을 독립적으로 풀어, 같은 최종 이름으로 수렴하는 옛 이름이 둘 생겼다
+    (예: `078_seed_work_plan_doctype.sql` 과 `078a_seed_work_plan_doctype.sql`
+    모두 `078b_seed_work_plan_doctype.sql` 로 수렴). 어느 DB 도 두 이력을 동시에
+    갖지는 않으므로(둘 중 하나만 실제로 적용됐다) `new` 쪽 중복은 안전하다 —
+    `apply_migration_renames` 의 "둘 다 있으면 옛 것을 지운다" 분기가 정확히 이
+    경우를 처리한다. 위험한 것은 `old` 쪽 중복(어느 new 로 가는지 모호해짐)과
+    `old`/`new` 가 겹치는 경우(한 패스 안에서 순서에 따라 결과가 갈릴 수 있음)
+    뿐이라 그 둘만 고정한다.
+    """
     olds = [old for old, _ in RENAMES]
     news = [new for _, new in RENAMES]
     assert len(set(olds)) == len(olds), "장부에 같은 옛 이름이 두 번 있다"
-    assert len(set(news)) == len(news), "장부에 같은 새 이름이 두 번 있다"
     assert set(olds).isdisjoint(news), "옛 이름과 새 이름이 겹친다"
 
 
@@ -273,9 +284,11 @@ class TestFilenameCarryOver:
         assert self._names(path) == {new}
 
     def test_a_db_that_never_saw_the_old_names_is_untouched(self, tmp_path):
-        # 새 이름으로 처음부터 적용된 DB.
-        news = [new for _, new in RENAMES]
+        # 새 이름으로 처음부터 적용된 DB. `news`는 중복될 수 있다(수렴 항목) —
+        # 파일 하나에 행 하나이므로 집합으로 정리해서 만든다.
+        news = sorted({new for _, new in RENAMES})
         path = self._make_db(tmp_path, news)
 
         assert apply_migration_renames("sqlite3", sqlite_path=path) == 0
         assert self._names(path) == set(news)
+

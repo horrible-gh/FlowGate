@@ -105,6 +105,14 @@
                   <span class="wem-seq-num">{{ idx + 1 }}</span>
                   <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
                   <span class="wem-locked-label">{{ docTypeStore.getLabel(item.type) }}</span>
+                  <span
+                    v-if="item.provider_id"
+                    class="wdm-provider-chip"
+                    :class="{ 'is-unavailable': item.provider_registered === false }"
+                  >
+                    <template v-if="item.provider_registered === false">⚠ {{ t('main.workflow_edit_modal.provider_unavailable', { name: item.provider_display_name || item.provider_id }) }}</template>
+                    <template v-else>🤖 {{ item.provider_display_name || item.provider_id }}</template>
+                  </span>
                   <span class="wem-status-badge" :class="`status-${item.status}`">
                     <AppIcon :name="item.status === 'done' ? 'check-circle' : 'radio-button'" />
                     {{ item.status === 'done'
@@ -197,6 +205,11 @@
                 </div>
               </div>
 
+              <div v-if="mode === 'edit'" class="wdm-note wdm-provider-rule">
+                <AppIcon name="info" />
+                <div>{{ t('main.workflow_edit_modal.provider_readonly_rule') }}</div>
+              </div>
+
               <!-- 0399 D0010 §6.2 — the rule for the notes, stated where the rows are made.
                    It is here and not in the banner because it answers a question the person
                    only has while editing: what happens to the note if I move this row. -->
@@ -269,13 +282,13 @@
                   >
                     <option v-for="opt in SELECTABLE_TYPES" :key="opt" :value="opt">{{ opt }}</option>
                   </select>
-                  <!-- 0399 D0010 §3.4 — the note travels with the row. It is rendered ON the
+              <!-- 0399 D0010 §3.4 — the note travels with the row. It is rendered ON the
                        row for exactly that reason: move the row and the note moves with it,
                        delete the row and the note goes too, with nothing to keep in sync. -->
                   <span class="wdm-seq-main">
                     <span class="wdm-seq-label">{{ docTypeStore.getLabel(item.type) }}</span>
                     <span
-                      v-if="!item.isAuto && mode === 'edit'"
+                      v-if="isNoteEditable(item) && mode === 'edit'"
                       class="wdm-seq-msg"
                       :class="{ 'wdm-seq-msg--empty': !item.note }"
                     >
@@ -298,6 +311,14 @@
                   </span>
                   <span v-else-if="item.typeChanged" class="wdm-changed-badge">
                     {{ t('main.work_plan_pour.type_changed_badge') }}
+                  </span>
+                  <span
+                    v-if="item.providerId"
+                    class="wdm-provider-chip"
+                    :class="{ 'is-unavailable': item.providerRegistered === false }"
+                  >
+                    <template v-if="item.providerRegistered === false">⚠ {{ t('main.workflow_edit_modal.provider_unavailable', { name: item.providerDisplayName || item.providerId }) }}</template>
+                    <template v-else>🤖 {{ item.providerDisplayName || item.providerId }}</template>
                   </span>
                   <span v-if="item.isAuto" class="wdm-auto-badge">
                     <AppIcon name="lightning" style="font-size:.58rem;" />
@@ -488,6 +509,9 @@ export interface SequenceItem {
   planKey: string | null
   sourceDocId: string | null
   sourceRevisionNo: number | null
+  providerId: string | null
+  providerDisplayName: string | null
+  providerRegistered: boolean | null
   // 0399 T0016 / D0010 §3.4: "줄의 문서 종류를 다른 것으로 바꾸면 그 멘트는 더 이상 그
   // 단계 이야기가 아니므로 비운다." — set the moment changeRowType() runs, never reset.
   typeChanged: boolean
@@ -506,6 +530,9 @@ export interface PourRow {
   plan_key: string | null
   source_doc_id: string | null
   source_revision_no: number | null
+  provider_id: string | null
+  provider_display_name: string | null
+  provider_registered: boolean | null
 }
 
 export interface PourNotification {
@@ -656,6 +683,9 @@ interface ServerItem {
   note?: string
   source_doc_id?: string | null
   source_revision_no?: number | null
+  provider_id?: string | null
+  provider_display_name?: string | null
+  provider_registered?: boolean | null
 }
 
 const loading = ref(false)
@@ -679,6 +709,11 @@ const pourNotifications = computed(() =>
 const pourBaselineIds = ref<Set<number>>(new Set())
 
 const pourManualRows = computed(() => sequence.value.filter(s => !s.isAuto))
+// 0408 M0019 재반려 2: every row carries its own mention except TSR, which the server
+// assembles ("TSR 단계에는 공급자와 멘트를 적지 않습니다" — work_plan_service).
+function isNoteEditable(item: SequenceItem): boolean {
+  return item.type !== 'TSR'
+}
 
 const pourEditsText = computed(() => {
   if (!pourSession.value) return ''
@@ -778,18 +813,27 @@ function findBlockEnd(startIdx: number): number {
 
 // 0399 L0011 §2.7: a row a person adds here starts with an empty note and no plan behind
 // it. There is nowhere else it could come from — this row was not in any plan.
-function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'typeChanged'> {
-  return { note: '', noteSource: null, origin: 'manual', planKey: null, sourceDocId: null, sourceRevisionNo: null, typeChanged: false }
+function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'providerId' | 'providerDisplayName' | 'providerRegistered' | 'typeChanged'> {
+  return {
+    note: '', noteSource: null, origin: 'manual', planKey: null,
+    sourceDocId: null, sourceRevisionNo: null,
+    providerId: null, providerDisplayName: null, providerRegistered: null,
+    typeChanged: false,
+  }
 }
 
-// 자동 줄은 멘트를 갖지 않는다 (L0011 §2.4): it never appears in the note list the
-// continuous-run dialog shows, so a value stored here could not be edited or seen.
-function buildAutoEntries(manualId: number, type: string): SequenceItem[] {
+// 0408 M0019 재반려 2: a report row a person creates here starts with an empty note (there is
+// no plan behind it yet) but it is a note-carrying row like any other — under [자동 승인] this
+// is the row an AI worker runs, so its mention is the one that gets delivered.
+function buildAutoEntries(manualId: number, type: string, parent?: SequenceItem): SequenceItem[] {
   const autos = AUTO_MAP[type]
   if (!autos) return []
   return autos.map(autoType => ({
     id: ++idCounter.value, type: autoType, label: docTypeStore.getLabel(autoType),
     isAuto: true, autoOfId: manualId, ...blankRowFields(), origin: 'auto' as const,
+    providerId: autoType === 'TSR' ? null : (parent?.providerId ?? null),
+    providerDisplayName: autoType === 'TSR' ? null : (parent?.providerDisplayName ?? null),
+    providerRegistered: autoType === 'TSR' ? null : (parent?.providerRegistered ?? null),
   }))
 }
 
@@ -818,7 +862,7 @@ function changeRowType(item: SequenceItem, newType: string) {
   item.typeChanged = true
   const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
   const idx = seq.findIndex(s => s.id === item.id)
-  if (idx >= 0) seq.splice(idx + 1, 0, ...buildAutoEntries(item.id, newType))
+  if (idx >= 0) seq.splice(idx + 1, 0, ...buildAutoEntries(item.id, newType, item))
   sequence.value = seq
 }
 
@@ -1040,12 +1084,18 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
       planKey: null,
       sourceDocId: it.source_doc_id ?? null,
       sourceRevisionNo: it.source_revision_no ?? null,
+      providerId: it.provider_id ?? null,
+      providerDisplayName: it.provider_display_name ?? null,
+      providerRegistered: it.provider_registered ?? null,
       typeChanged: false,
     }
     if (AUTO_TYPES.has(it.type)) {
+      // 0408 M0019 재반려 2·3: the report row keeps the note stored ON it. Blanking it here
+      // meant a save that changed nothing still erased whatever the plan had written for
+      // NR/TR — and [자동 승인] delivers exactly that row's note to its worker.
       result.push({
         id, type: it.type, label: it.label || docTypeStore.getLabel(it.type),
-        isAuto: true, autoOfId: lastManualId, ...carried, note: '', origin: 'auto',
+        isAuto: true, autoOfId: lastManualId, ...carried, origin: 'auto',
       })
     } else {
       lastManualId = id
@@ -1080,7 +1130,7 @@ async function loadSequence() {
     lockedItems.value = items.filter(it => it.status !== 'pending')
     const pendingItems = items.filter(it => it.status === 'pending')
     metaContractMissing.value = legacyShape || pendingItems.some(row =>
-      !['note', 'source_doc_id', 'source_revision_no'].every(key =>
+      !['note', 'source_doc_id', 'source_revision_no', 'provider_id', 'provider_display_name'].every(key =>
         Object.prototype.hasOwnProperty.call(row, key),
       ),
     )
@@ -1113,6 +1163,9 @@ function applyPour(payload: PourPayload) {
       note: row.note,
       source_doc_id: row.source_doc_id,
       source_revision_no: row.source_revision_no,
+      provider_id: row.provider_id,
+      provider_display_name: row.provider_display_name,
+      provider_registered: row.provider_registered,
     }))
   sequence.value = payload.rows
     .filter(row => !row.locked)
@@ -1122,12 +1175,15 @@ function applyPour(payload: PourPayload) {
       label: row.label || docTypeStore.getLabel(row.type),
       isAuto: row.origin === 'auto',
       autoOfId: null,
-      note: row.origin === 'auto' ? '' : row.note,
+      note: row.note,
       noteSource: row.note_source ?? null,
       origin: row.origin,
       planKey: row.plan_key,
       sourceDocId: row.source_doc_id,
       sourceRevisionNo: row.source_revision_no,
+      providerId: row.provider_id ?? null,
+      providerDisplayName: row.provider_display_name ?? null,
+      providerRegistered: row.provider_registered ?? null,
       typeChanged: false,
     }))
   // The report rows arrive from the server already paired; relink each to the row above it
@@ -1178,6 +1234,8 @@ async function save() {
         note: it.note,
         source_doc_id: it.sourceDocId,
         source_revision_no: it.sourceRevisionNo,
+        provider_id: it.providerId,
+        provider_display_name: it.providerDisplayName,
       })),
       // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
       // snapshot to be stale against, and demanding one would break every other caller.
@@ -1995,4 +2053,10 @@ watch(
 /* ── Edit mode: Preview locked items ── */
 .wem-prev-locked { opacity: .65; }
 .wem-prev-locked .doc-tag { filter: grayscale(.3); }
+.wdm-provider-chip {
+  display:inline-flex; align-items:center; max-width:180px; padding:2px 7px;
+  border-radius:999px; background:var(--surface-h); color:var(--text-m);
+  font-size:.67rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.wdm-provider-chip.is-unavailable { color:#b45309; background:#fff7ed; }
 </style>

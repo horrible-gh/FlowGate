@@ -1019,10 +1019,24 @@ def start_run(
             continuation_instruction_mode=continuation_instruction_mode,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
+
+    stored_provider_id = None
+    stored_provider_name = None
+    stored_provider_item_seq = None
+    if mode == "continuous" and not step_override_provider:
+        stored_provider_id, stored_provider_name, stored_provider_item_seq = stored_hop_provider(
+            doc_ref,
+            continuation_instruction_mode=continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        )
+    stored_provider_active = bool(
+        stored_provider_id
+        and any(provider.get("id") == stored_provider_id for provider in chain)
+    )
+
     if step_override_provider:
-        # 0379 T0004: startup failures follow the same strict schedule as the
-        # no-output path: individual -> the same individual -> common. Build the
-        # three slots from the enabled source chain and leave no fallback tail.
+        # 0379 T0004: session overrides retain their strict individual -> individual ->
+        # common startup schedule. A disabled override is treated as absent above.
         providers_by_id = {provider.get("id"): provider for provider in chain}
         startup_chain = []
         individual = providers_by_id.get(step_override_provider)
@@ -1032,6 +1046,10 @@ def start_run(
         if common:
             startup_chain.append(common)
         chain = startup_chain or _prioritize_chain(chain, step_override_provider)
+    elif stored_provider_active:
+        # Persisted row assignment outranks the dialog header default in continuous mode,
+        # while keeping the normal provider fallback tail.
+        chain = _prioritize_chain(chain, stored_provider_id)
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
@@ -1039,18 +1057,8 @@ def start_run(
                 422, "provider_unavailable",
                 "The selected AI provider is not enabled for this project.",
             )
-        # An explicit UI selection pins a SINGLE run: the human said "run it on this one",
-        # so fallback order does not apply. 0359 L0007 §2.1.1: a CONTINUOUS hop's provider_id
-        # is a different thing wearing the same name — it is the header DEFAULT that
-        # _spawn_auto_resume carries hop to hop (0317 T0013 결함 ③), not a per-hop pin.
-        # Collapsing the chain on it left that hop with no fallback tail at all, so the
-        # no-output retry below had zero candidates to switch to: the 11 providers that sat
-        # untouched while the chain died (NR0003 §3-가). Re-order for continuous, pin for single.
         chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
     elif mode == "continuous":
-        # 0317 D0004: no explicit pin on a continuous hop — consult the per-document-type
-        # 배정 규칙. The assigned provider (if any, and if enabled) leads the chain; the rest
-        # stay as the fallback tail so a startup failure still degrades gracefully (§3).
         hop_provider = _resolve_continuation_hop_provider(
             project_id,
             doc_ref,
@@ -1059,6 +1067,16 @@ def start_run(
         )
         if hop_provider:
             chain = _prioritize_chain(chain, hop_provider)
+
+    if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
+        logger.warning(
+            "continuation hop provider fallback: %s not active for %s item_seq %s, "
+            "falling back to %s",
+            stored_provider_id,
+            doc_ref,
+            stored_provider_item_seq,
+            chain[0].get("id"),
+        )
     if not chain:
         # 0292 T0003: "no provider was ever registered" used to be indistinguishable
         # from "the registered ones are all switched off" — both read as
@@ -1559,8 +1577,12 @@ def _inject_hop_notes(
 ) -> Optional[str]:
     """Prepend the common note plus the effective step note for continuous and single runs.
 
-    A present override key wins even when its value normalizes to empty: that empty string is
-    the user's tombstone and must suppress the stored sequence note. Only an absent key falls
+    The note is read from the row the AI worker actually fills, and from that row ONLY.
+    0408 M0019 재반려 ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): a pair fallback made an
+    auto-approved NR hop speak the sentence written for N. Each row carries its own note now
+    (work_plan_sequence_service.attach_auto_rows), so the fold picks the row and the row picks
+    the note. A present override key wins even when its value normalizes to empty: that empty
+    string is the user's tombstone and suppresses the stored note. Only an absent key falls
     back to the note stored on the row. Continuous hops use the mode-aware N/T -> NR/TR fold;
     a single new hop writes the current head directly and therefore does not fold.
     """
@@ -1700,6 +1722,29 @@ def _resolve_continuation_hop_provider(
         return None
 
 
+def _paired_report_row(items: list[dict], head: dict) -> Optional[dict]:
+    """Return the first paired worker report after an N/T head.
+
+    TSR is server-assembled and never has a provider, so TS intentionally has no provider
+    fallback candidate here.
+    """
+    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+
+    head_item_seq = head.get("item_seq")
+    report_type = AUTO_REPORT_MAP.get((head.get("type") or "").upper())
+    if head_item_seq is None or not report_type or report_type == "TSR":
+        return None
+    return next(
+        (
+            item
+            for item in sorted(items or [], key=lambda i: i.get("item_seq") or 0)
+            if (item.get("item_seq") or -1) > head_item_seq
+            and (item.get("type") or "").upper() == report_type
+        ),
+        None,
+    )
+
+
 def _hop_worker_item_seq(
     seq_id: int,
     head: dict,
@@ -1728,19 +1773,70 @@ def _hop_worker_item_seq(
         instruction_mode=continuation_instruction_mode,
         auto_approve_item_seqs=continuation_auto_approve_item_seqs,
     )
-    report_type = AUTO_REPORT_MAP.get(head_type)
-    if not fold_to_report or not report_type or head_item_seq is None:
+    if not fold_to_report or head_item_seq is None:
         return head_item_seq
-    for item in sorted(
-        db_wfseq.get_sequence_items(seq_id) or [],
-        key=lambda i: i.get("item_seq") or 0,
-    ):
-        if (
-            (item.get("item_seq") or -1) > head_item_seq
-            and (item.get("type") or "").upper() == report_type
-        ):
-            return item.get("item_seq")
-    return head_item_seq
+    report = _paired_report_row(db_wfseq.get_sequence_items(seq_id) or [], head)
+    return report.get("item_seq") if report is not None else head_item_seq
+
+
+def _hop_worker_rows(
+    seq_id: int,
+    head: dict,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+    continuation_auto_approve_item_seqs: Optional[list] = None,
+) -> list[dict]:
+    """Return provider/note candidates in worker-row then paired-row priority order."""
+    worker_item_seq = _hop_worker_item_seq(
+        seq_id,
+        head,
+        continuation_instruction_mode=continuation_instruction_mode,
+        continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+    )
+    rows = db_wfseq.get_sequence_items(seq_id) or []
+    worker = next((row for row in rows if row.get("item_seq") == worker_item_seq), None)
+    candidates = [worker] if worker is not None else []
+    if head.get("item_seq") != worker_item_seq:
+        candidates.append(head)
+    else:
+        report = _paired_report_row(rows, head)
+        if report is not None:
+            candidates.append(report)
+    return candidates
+
+
+def stored_hop_provider(
+    doc_ref: str,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+    continuation_auto_approve_item_seqs: Optional[list] = None,
+) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    """Return the provider stored on the worker row, falling back to the head row."""
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None, None, None
+        head = db_wfseq.get_effective_head(seq["id"])
+        if not head:
+            return None, None, None
+        candidates = _hop_worker_rows(
+            seq["id"],
+            head,
+            continuation_instruction_mode=continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        )
+        for row in candidates:
+            if row and row.get("provider_id"):
+                return (
+                    row.get("provider_id"),
+                    row.get("provider_display_name"),
+                    row.get("item_seq"),
+                )
+        return None, None, None
+    except Exception:  # noqa: BLE001 — stored preference resolution must never stall a hop
+        logger.warning("stored continuation hop provider resolution failed for %s", doc_ref,
+                       exc_info=True)
+        return None, None, None
 
 
 def _resolve_continuation_hop_override(

@@ -58,8 +58,9 @@ def test_step_note_has_priority_over_defaults_note():
     assert [(row["note"], row["note_source"]) for row in rows] == [("specific", "step")]
 
 
-def test_pair_note_has_priority_over_defaults_without_a_drop_notification():
-    rows, dropped, _ = _rows({
+def test_pair_note_goes_to_the_result_row_and_defaults_still_fill_the_instruction():
+    """0408 M0019 재반려 2 — 결과 단계의 멘트는 결과 줄에 남고, 지시 줄은 공통 멘트를 받는다."""
+    rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
             {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": ""},
@@ -67,12 +68,17 @@ def test_pair_note_has_priority_over_defaults_without_a_drop_notification():
         ],
     })
 
-    assert [(row["note"], row["note_source"]) for row in rows] == [("paired", "pair")]
+    assert [(row["note"], row["note_source"]) for row in rows] == [("shared", "defaults")]
     assert "paired_note_dropped" not in {item["reason"] for item in dropped}
+    attached, _ = wpseq.attach_auto_rows(rows, next_uid=uid)
+    assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
+        ("T", "shared", "defaults"),
+        ("TR", "paired", "step"),
+    ]
 
 
-def test_step_note_beats_pair_and_defaults_and_keeps_the_existing_drop_notification():
-    rows, dropped, _ = _rows({
+def test_both_steps_of_a_pair_keep_their_own_note_and_nothing_is_dropped():
+    rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
             {"key": "T#1", "type": "T", "pair_key": "TR#1", "note": "specific"},
@@ -81,10 +87,16 @@ def test_step_note_beats_pair_and_defaults_and_keeps_the_existing_drop_notificat
     })
 
     assert [(row["note"], row["note_source"]) for row in rows] == [("specific", "step")]
-    assert [item["reason"] for item in dropped] == ["paired_note_dropped"]
+    assert dropped == []
+    attached, _ = wpseq.attach_auto_rows(rows, next_uid=uid)
+    assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
+        ("T", "specific", "step"),
+        ("TR", "paired", "step"),
+    ]
 
 
-def test_attached_auto_row_stays_empty_and_server_assembled_note_is_still_dropped():
+def test_attached_auto_row_takes_the_common_note_and_server_assembled_note_is_still_dropped():
+    """The common note reaches the report row too — under [자동 승인] that is the running row."""
     rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
@@ -96,7 +108,7 @@ def test_attached_auto_row_stays_empty_and_server_assembled_note_is_still_droppe
 
     assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
         ("T", "shared", "defaults"),
-        ("TR", "", None),
+        ("TR", "shared", "defaults"),
     ]
     assert [item["reason"] for item in dropped] == ["server_assembled_note"]
 
@@ -141,4 +153,5 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
     assert set(row) == {
         "type", "label", "status", "locked", "poured", "note", "note_source",
         "origin", "plan_key", "source_doc_id", "source_revision_no",
+        "provider_id", "provider_display_name", "provider_registered",
     }

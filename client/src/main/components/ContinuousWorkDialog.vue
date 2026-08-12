@@ -164,27 +164,37 @@
                   <!-- 0317 T0015: each execution step is shown directly (no "단계별로 다르게
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
-                       want to differ.
-                       0337 R0001: the rows are the steps an AI worker will ACTUALLY run in this
-                       run — head through the chosen target, minus the instructions the server
-                       auto-approves. A step past the target, or one with no worker, gets no
-                       select because its value could never be used. -->
+                       want to differ. -->
                   <div v-if="excludedNote" class="cwd-scope-note">
                     <AppIcon name="info" /> {{ excludedNote }}
                   </div>
+                  <!-- 0408 TR0021 재반려 2 ("왜 프로바이더는 안고치냐? 자동승인 상태면 N/T
+                       빼야지... 이번 실행 미사용 이것떄문에 스크롤 생기니까 다 빼라 필요없는건
+                       대체 왜넣은거야?"): reverts TR0018 rev1's "show every in-range row, read
+                       only, with a badge" design — that row nobody can act on and no worker will
+                       ever read was exactly the clutter the rejection means. This table now draws
+                       exactly `executionSteps`, the same rows [전달멘트] draws below. A step this
+                       run auto-approves keeps its stored provider visible on the picker's own tag
+                       instead (`stepProviderTag`, gated on `inRangeSteps`, not this table). -->
                   <div class="cwd-override-table">
-                    <div v-for="(item, idx) in executionSteps" :key="item.item_seq" class="cwd-override-row">
-                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: idx + 1 }) }}</span>
-                      <span class="doc-tag cwd-override-badge" :class="`c-${item.type}`">{{ item.type }}</span>
-                      <span class="cwd-override-label">{{ item.label }}</span>
+                    <div v-for="row in providerRows" :key="row.item.item_seq" class="cwd-override-row">
+                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
+                      <span class="doc-tag cwd-override-badge" :class="`c-${row.item.type}`">{{ row.item.type }}</span>
+                      <span class="cwd-override-label">{{ row.item.label }}</span>
                       <AiProviderSelect
                         class="cwd-override-select"
                         :providers="providers"
-                        :model-value="stepProviderValue(item.item_seq)"
+                        :model-value="stepProviderValue(row.item)"
                         hide-label
-                        @update:model-value="(v) => onStepProviderChange(item.item_seq, v)"
+                        @update:model-value="(v) => onStepProviderChange(row.item, v)"
                       />
-                      <span v-if="filledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
+                      <span
+                        v-if="providerBadgeKey(row.item)"
+                        class="cwd-filled-badge"
+                        :class="{ 'cwd-stored-provider--unavailable': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_unavailable' }"
+                      >
+                        {{ t(providerBadgeKey(row.item)) }}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -208,19 +218,26 @@
                   <div v-if="excludedNote" class="cwd-scope-note">
                     <AppIcon name="info" /> {{ excludedNote }}
                   </div>
+                  <!-- 0408 M0019 재반려 1 ("[자동승인] 인데 왜 N/T가 표시되게 했지?") + TR0021
+                       재반려 2 ("프로바이더는 안고치냐... 다 빼라"): the mention AND provider
+                       rows are now both exactly the steps an AI WORKER runs in this mode. Under
+                       [자동 승인] the server writes and approves N/T with no worker at all, so
+                       neither a mention nor a provider CHOICE typed there could ever be
+                       delivered — a row that carries no choice is not offered one. A step's
+                       stored provider stays visible on the picker's own tag either way
+                       (`stepProviderTag`), just not as a dead row in this table. -->
                   <div class="cwd-override-table">
-                    <div v-for="(item, idx) in executionSteps" :key="item.item_seq" class="cwd-override-row">
-                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: idx + 1 }) }}</span>
-                      <span class="doc-tag cwd-override-badge" :class="`c-${item.type}`">{{ item.type }}</span>
-                      <span class="cwd-override-label">{{ item.label }}</span>
+                    <div v-for="row in messageRows" :key="row.item.item_seq" class="cwd-override-row">
+                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
+                      <span class="doc-tag cwd-override-badge" :class="`c-${row.item.type}`">{{ row.item.type }}</span>
+                      <span class="cwd-override-label">{{ row.item.label }}</span>
                       <input
-                        :value="messageOverrides[item.item_seq] ?? ''"
+                        :value="stepMessageValue(row.item)"
                         type="text"
                         class="cwd-message-input cwd-override-message-input"
                         :placeholder="t('main.continuous_work.message_step_placeholder')"
-                        @input="onStepMessageChange(item.item_seq, ($event.target as HTMLInputElement).value)"
+                        @input="onStepMessageChange(row.item, ($event.target as HTMLInputElement).value)"
                       />
-                      <span v-if="filledSeqs.has(item.item_seq) || noteFilledSeqs.has(item.item_seq)" class="cwd-filled-badge">{{ t('main.continuous_work.preset_filled_badge') }}</span>
                     </div>
                   </div>
                 </div>
@@ -362,14 +379,22 @@ const messageOverrides = ref<Record<number, string>>({})
 const autoApproveItemSeqs = ref<number[]>([])
 const presetActive = ref(false)
 const presetTargetSeq = ref<number | null>(null)
-const filledSeqs = ref(new Set<number>())
 const editedSeqs = ref(new Set<number>())
-// 0399 T0018: item_seqs whose [전달멘트] value came from the sequence's OWN stored note
-// (TR0015/TR0017 pour-and-save), not from the legacy preset flow above. Kept separate from
-// `filledSeqs` so the "계획에서 옴" badge never bleeds onto the 프로바이더 tab, which this
-// prefill does not touch.
-const noteFilledSeqs = ref(new Set<number>())
 const prefilledMessageSeqs = ref(new Set<number>())
+// 0408 M0019 재반려 3 ("문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"):
+// the sequence rows are a SNAPSHOT of the work plan, taken when somebody last poured it. The
+// plan kept moving afterwards, so the dialog was showing sentences and providers the person
+// had already replaced in the document. These hold the plan's values as they are right now.
+const planFill = ref<{
+  wpDocId: string
+  wpRevisionNo: number | null
+  notes: Record<number, string>
+  providers: Record<number, string>
+} | null>(null)
+// Steps the person edited by hand in THIS dialog. A later plan read never overwrites them —
+// the newest word about a step is the one its owner just typed.
+const touchedSeqs = ref(new Set<number>())
+let planFillToken = 0
 const presetRefreshMessage = ref('')
 let initializingPreset = false
 const presetUnsetCount = computed(() => (
@@ -418,20 +443,43 @@ const executionSteps = computed<WorkflowStepItem[]>(() => {
   )
 })
 
+// 0408 TR0021 재반려 2 ("자동승인 상태면 N/T 빼야지... 스크롤 생기니까 다 빼라"): reverts
+// TR0018 rev1's "show every in-range row" table design. The rows an AI worker actually runs
+// THIS SESSION — identical to `executionSteps`, and identical to the [전달멘트] table below —
+// are the only ones either tab draws now. A step this run auto-approves keeps its stored
+// provider visible on the picker's own tag (`stepProviderTag`, gated on `inRangeSteps`), never
+// as a dead row here.
+const providerRows = computed<{ item: WorkflowStepItem; stepNo: number }[]>(
+  () => executionSteps.value.map((item, idx) => ({ item, stepNo: idx + 1 })),
+)
+
+// Every step inside the chosen range, regardless of whether this run's mode auto-approves it —
+// wider than `executionSteps`/`providerRows`/`messageRows` on purpose. Used only to keep
+// state alive across a radio toggle (the picker's provider tag, a mention typed for a step that
+// just became auto-approved): never to decide what a table renders.
+const inRangeSteps = computed<WorkflowStepItem[]>(() => {
+  const sel = picker.value.selection
+  if (!sel || sel.fromDecision) return []
+  return runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
+})
+
+// 0408 M0019 재반려 1: the [전달멘트] 표. Same rows as `executionSteps` — the steps this run
+// hands to an AI worker — because the mention is delivered to that worker and to nobody else.
+// They are all numbered: every one of them runs.
+// 0408 TR0021 재반려 2: identical to `providerRows` now (both tabs draw the same run rows) —
+// kept as a separate name for readability at each call site.
+const messageRows = providerRows
+
 /** Why the provider list is shorter than the step list — stated, not left to be guessed. */
 const excludedNote = computed(() => {
   const sel = picker.value.selection
   if (!sel || sel.fromDecision) return ''
-  const autoHandled = new Set(autoHandledTypes.value)
   const inRange = runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
-  const autoCount = inRange.filter(
-    s => autoHandled.has(String(s.type ?? '').toUpperCase()) || autoApproveItemSeqSet.value.has(s.item_seq),
-  ).length
   const beyondCount = runnableSteps.value.length - inRange.length
-  if (autoCount > 0 && beyondCount > 0) {
-    return t('main.continuous_work.provider_scope_note_both', { auto: autoCount, beyond: beyondCount })
-  }
-  if (autoCount > 0) return t('main.continuous_work.provider_scope_note_auto', { auto: autoCount })
+  // 0408 TR0021 재반려 2: auto-approved steps are excluded again (they no longer draw a row
+  // of their own to explain themselves with) but this note still only counts steps past the
+  // target — a step auto-approved WITHIN range still shows its stored provider on the picker's
+  // tag, so nothing about it is actually unexplained.
   if (beyondCount > 0) return t('main.continuous_work.provider_scope_note_beyond', { beyond: beyondCount })
   return ''
 })
@@ -440,8 +488,8 @@ const excludedNote = computed(() => {
 // The normal "AI 호출" entry has no `preset` (that prop is only the legacy, pre-save work-plan
 // apply-preview flow). But the sequence itself may already carry per-step notes saved via the
 // [시퀀스 수정] window (TR0015 note/source_doc_id columns, TR0017 direct-edit + type-change).
-// D0010 §3.6: the mention field reads that stored value back in, tags it "계획에서 옴" when it
-// followed a plan in, and counts (without blocking) the steps that still have none.
+// D0010 §3.6: the mention field reads that stored value back in and counts (without blocking)
+// the steps that still have none.
 const sequenceSourceDocId = computed<string | null>(() => {
   for (const item of picker.value.steps ?? []) {
     if (item.source_doc_id) return item.source_doc_id
@@ -449,7 +497,7 @@ const sequenceSourceDocId = computed<string | null>(() => {
   return null
 })
 const noteUnsetCount = computed(
-  () => executionSteps.value.filter(item => !(messageOverrides.value[item.item_seq] ?? '').trim()).length,
+  () => messageRows.value.filter(row => !stepMessageValue(row.item).trim()).length,
 )
 // Gated on an actual plan origin — a plain, hand-built sequence (never poured from a plan) has
 // nothing to name here, and would otherwise show an empty-mention count on every open even
@@ -458,29 +506,82 @@ const showSequenceOriginBanner = computed(() => !presetActive.value && !!sequenc
 
 function applySequenceNotePrefill(steps: WorkflowStepItem[]) {
   if (presetActive.value) return
-  const next: Record<number, string> = {}
   const filled = new Set<number>()
   for (const item of steps) {
-    if (item.note && item.note.trim()) {
-      next[item.item_seq] = item.note
-      filled.add(item.item_seq)
+    if (item.note && item.note.trim()) filled.add(item.item_seq)
+  }
+  // Sequence values are stored fallbacks, not request overrides. The input derives its visible
+  // value from the row (or its pair); only a real edit below creates an override entry.
+  messageOverrides.value = {}
+  prefilledMessageSeqs.value = new Set(filled)
+}
+
+// 0405 L0010 §2.6 `project()` already answers exactly this question on the server — which
+// plan step's provider/mention belongs to which sequence row, folded the way the chosen
+// 실행 방식 folds it (N/T -> NR/TR under [자동 승인], own value wins over the folded one). It is
+// the same call the work-plan apply preview makes; this reads it for a sequence that was
+// poured earlier, so the document stays the thing a person edits and the dialog stops
+// showing a stale copy of it.
+async function loadPlanFill() {
+  const wpDocId = sequenceSourceDocId.value
+  if (presetActive.value || !wpDocId) {
+    planFill.value = null
+    return
+  }
+  const token = ++planFillToken
+  try {
+    const res = await postRequest<any>(
+      '/api/v1/documents/' + encodeURIComponent(wpDocId) + '/work-plan/apply/preview',
+      { instruction_mode: instructionMode.value },
+    )
+    if (token !== planFillToken) return
+    const fill = res.data?.fill_preview ?? {}
+    planFill.value = {
+      wpDocId,
+      wpRevisionNo: res.data?.wp_revision_no ?? null,
+      notes: Object.fromEntries(
+        Object.entries(fill.note_overrides ?? {}).map(([seq, note]) => [Number(seq), String(note)]),
+      ),
+      providers: Object.fromEntries(
+        Object.entries(fill.provider_overrides ?? {}).map(([seq, id]) => [Number(seq), String(id)]),
+      ),
+    }
+    applyPlanFill()
+  } catch {
+    // Best effort: an unreadable plan leaves every stored value exactly where it was. The
+    // dialog must still open and still be usable without it.
+    if (token === planFillToken) {
+      planFill.value = null
     }
   }
-  messageOverrides.value = next
-  noteFilledSeqs.value = filled
-  prefilledMessageSeqs.value = new Set(filled)
+}
+
+/** Write the plan's current values in, for every step the person has not typed into. */
+function applyPlanFill() {
+  const fill = planFill.value
+  if (!fill || presetActive.value) return
+  const steps = picker.value.steps ?? []
+  const nextNotes = { ...messageOverrides.value }
+  const nextProviders = { ...overrides.value }
+  for (const item of steps) {
+    const seq = item.item_seq
+    if (touchedSeqs.value.has(seq)) continue
+    const planNote = fill.notes[seq]
+    if (planNote !== undefined && planNote !== ownStoredMessage(item)) {
+      nextNotes[seq] = planNote
+    }
+    const planProvider = fill.providers[seq]
+    if (planProvider !== undefined && planProvider !== (item.provider_id ?? '')) {
+      nextProviders[seq] = planProvider
+    }
+  }
+  messageOverrides.value = nextNotes
+  overrides.value = nextProviders
 }
 
 function revertSequenceNotes() {
   if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
   applySequenceNotePrefill(picker.value.steps ?? [])
-}
-
-function markNoteEdited(itemSeq: number) {
-  if (!noteFilledSeqs.value.has(itemSeq)) return
-  const next = new Set(noteFilledSeqs.value)
-  next.delete(itemSeq)
-  noteFilledSeqs.value = next
 }
 
 function onToggleAutoApprove(itemSeq: number, checked: boolean) {
@@ -494,35 +595,86 @@ function onToggleAutoApprove(itemSeq: number, checked: boolean) {
 // blank "use default" option. `overrides` still stores ONLY genuine per-step overrides (a step
 // that differs from the default), so the step tag's default/override distinction and the
 // confirm payload stay unchanged — the default just becomes visible instead of an empty slot.
-function stepProviderValue(itemSeq: number): string {
-  return overrides.value[itemSeq] ?? props.selectedProvider ?? ''
+const PAIRED_REPORT_TYPES: Record<string, string> = { N: 'NR', T: 'TR' }
+
+function pairedReportProviderItem(item: WorkflowStepItem): WorkflowStepItem | null {
+  if (item.provider_id) return null
+  const reportType = PAIRED_REPORT_TYPES[String(item.type ?? '').toUpperCase()]
+  if (!reportType) return null
+  return [...(picker.value.steps ?? [])]
+    .filter(candidate => candidate.item_seq > item.item_seq)
+    .sort((a, b) => a.item_seq - b.item_seq)
+    .find(candidate => String(candidate.type ?? '').toUpperCase() === reportType) ?? null
+}
+
+// 0408 M0019 재반려 2 ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): a row shows its OWN
+// note and never its partner's. The plan writes N/NR and T/TR as two separate sentences and
+// the pour keeps them on two separate rows (work_plan_sequence_service.attach_auto_rows), so
+// borrowing here would put a sentence in front of a worker it was not written for.
+function ownStoredMessage(item: WorkflowStepItem): string {
+  return String(item.note ?? '').trim()
+}
+
+function storedStepMessage(item: WorkflowStepItem): string {
+  return ownStoredMessage(item)
+}
+
+function stepMessageValue(item: WorkflowStepItem): string {
+  return messageOverrides.value[item.item_seq] ?? ownStoredMessage(item)
+}
+
+function storedProviderItem(item: WorkflowStepItem): WorkflowStepItem | null {
+  if (item.provider_id) return item.provider_registered !== false ? item : null
+  const paired = pairedReportProviderItem(item)
+  if (!paired?.provider_id || paired.provider_registered === false) return null
+  return paired
+}
+
+function storedProviderValue(item: WorkflowStepItem): string {
+  return storedProviderItem(item)?.provider_id ?? props.selectedProvider ?? ''
+}
+
+function providerBadgeKey(item: WorkflowStepItem): string {
+  if (overrides.value[item.item_seq] !== undefined) return ''
+  if (item.provider_id) {
+    return item.provider_registered === false
+      ? 'main.continuous_work.sequence_provider_unavailable'
+      : ''
+  }
+  return storedProviderItem(item)
+    ? 'main.continuous_work.sequence_provider_inherited'
+    : ''
+}
+
+function stepProviderValue(item: WorkflowStepItem): string {
+  return overrides.value[item.item_seq] ?? storedProviderValue(item)
 }
 
 function markPresetEdited(itemSeq: number) {
   if (!presetActive.value) return
   editedSeqs.value = new Set([...editedSeqs.value, itemSeq])
-  const nextFilled = new Set(filledSeqs.value)
-  nextFilled.delete(itemSeq)
-  filledSeqs.value = nextFilled
 }
 
-function onStepProviderChange(itemSeq: number, value: string) {
-  markPresetEdited(itemSeq)
+function onStepProviderChange(item: WorkflowStepItem, value: string) {
+  markPresetEdited(item.item_seq)
+  touchedSeqs.value = new Set([...touchedSeqs.value, item.item_seq])
   const next = { ...overrides.value }
-  // Selecting the header default (or nothing) folds back to "follow default" — no override row.
-  if (!value || value === props.selectedProvider) delete next[itemSeq]
-  else next[itemSeq] = value
+  if (!value || value === storedProviderValue(item)) delete next[item.item_seq]
+  else next[item.item_seq] = value
   overrides.value = next
 }
-
 // 0346 T0005 §2-1 항목 4: blank (or whitespace-only) input is the same as "no individual note
 // for this step" — mirrors onStepProviderChange's "같으면 삭제" rule with a "비면 삭제" rule.
-function onStepMessageChange(itemSeq: number, value: string) {
+function onStepMessageChange(item: WorkflowStepItem, value: string) {
+  const itemSeq = item.item_seq
   markPresetEdited(itemSeq)
-  markNoteEdited(itemSeq)
+  touchedSeqs.value = new Set([...touchedSeqs.value, itemSeq])
   const next = { ...messageOverrides.value }
-  if (!value.trim()) {
-    if (prefilledMessageSeqs.value.has(itemSeq)) next[itemSeq] = ''
+  const stored = storedStepMessage(item)
+  if (value === stored) {
+    delete next[itemSeq]
+  } else if (!value.trim()) {
+    if (stored || prefilledMessageSeqs.value.has(itemSeq)) next[itemSeq] = ''
     else delete next[itemSeq]
   } else {
     next[itemSeq] = value
@@ -535,23 +687,30 @@ function providerName(id: string | undefined | null): string | null {
   return props.providers?.find(p => p.id === id)?.name ?? null
 }
 
+// 0408 TR0018 rev1: an auto-approved N/T row used to lose its provider tag here too, so the
+// same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
+// In-range steps all get the tag (gated on `inRangeSteps`, wider than the now execution-only
+// `providerRows`); a step past the target still gets none (it never runs).
 function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean } | null {
-  // 0337 R0001: only a step that this run will actually hand to a provider gets a provider
-  // tag. Steps past the target and server-auto-approved instructions get none — the picker
-  // labels the latter "자동 승인" instead.
+  if (!inRangeSteps.value.some(s => s.item_seq === item.item_seq)) return null
   const stepNo = executionSteps.value.findIndex(s => s.item_seq === item.item_seq)
-  if (stepNo < 0) return null
   const overrideId = overrides.value[item.item_seq]
-  if (overrideId) {
+  // A row outside executionSteps has no run step number. It also gets no select, so it cannot
+  // carry an override today — but never print "실행단계0" if that ever changes.
+  if (overrideId && stepNo >= 0) {
     const name = providerName(overrideId)
     if (!name) return null
     return { text: t('main.continuous_work.provider_tag_override', { step: stepNo + 1, name }), override: true }
+  }
+  const stored = storedProviderItem(item)
+  if (stored) {
+    const name = stored.provider_display_name || stored.provider_id || ''
+    return { text: t('main.continuous_work.provider_tag_stored', { name }), override: false }
   }
   const name = providerName(props.selectedProvider)
   if (!name) return null
   return { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
 }
-
 function onPickerChange(state: WorkflowStepPickerState) {
   picker.value = state
 }
@@ -580,9 +739,11 @@ watch(executionSteps, (steps) => {
   if (kept.length !== Object.keys(overrides.value).length) {
     overrides.value = Object.fromEntries(kept)
   }
-  // 0346 T0005: the [전달멘트] per-step notes follow the exact same rule — a step that leaves
-  // the run must not leave a stale note behind it.
-  const keptMessages = Object.entries(messageOverrides.value).filter(([seq]) => inRun.has(Number(seq)))
+  // Mentions stay attached to every row inside the chosen range regardless of mode (gated on
+  // `inRangeSteps`, not the now execution-only `providerRows`). Changing only the execution
+  // mode must not erase N/T values; shrinking the target still removes rows that leave the range.
+  const inMessageRange = new Set(inRangeSteps.value.map(s => s.item_seq))
+  const keptMessages = Object.entries(messageOverrides.value).filter(([seq]) => inMessageRange.has(Number(seq)))
   if (keptMessages.length !== Object.keys(messageOverrides.value).length) {
     messageOverrides.value = Object.fromEntries(keptMessages)
   }
@@ -618,12 +779,15 @@ function onProceed() {
   for (const [seq, providerId] of Object.entries(overrides.value)) {
     if (providerId && inRun.has(Number(seq))) providerOverrides[Number(seq)] = providerId
   }
+  // A mention only rides the request for a step this run hands to a worker. Values typed for
+  // a step the mode currently auto-approves stay in `messageOverrides` (the radio may go back)
+  // but are never sent, because no hop would read them.
   const messageOverridesOut: Record<number, string> = {}
   for (const [seq, note] of Object.entries(messageOverrides.value)) {
     const itemSeq = Number(seq)
     if (!inRun.has(itemSeq)) continue
     if (note && note.trim()) messageOverridesOut[itemSeq] = note
-    else if (prefilledMessageSeqs.value.has(itemSeq)) messageOverridesOut[itemSeq] = ''
+    else messageOverridesOut[itemSeq] = ''
   }
   const validAutoApprove = inRangeAutoApproveCandidates.value
   const autoApproveOut = autoApproveItemSeqs.value.filter(seq => validAutoApprove.has(seq))
@@ -653,8 +817,10 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''
   editedSeqs.value = new Set()
-  noteFilledSeqs.value = new Set()
   prefilledMessageSeqs.value = new Set()
+  touchedSeqs.value = new Set()
+  planFill.value = null
+  planFillToken += 1
   if (value) {
     presetActive.value = true
     instructionMode.value = value.instructionMode
@@ -667,7 +833,6 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
         .filter(([, note]) => !!note.trim())
         .map(([seq]) => Number(seq)),
     )
-    filledSeqs.value = new Set(value.filledSeqs)
   } else {
     presetActive.value = false
     presetTargetSeq.value = null
@@ -675,7 +840,6 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
     overrides.value = {}
     defaultMessage.value = ''
     messageOverrides.value = {}
-    filledSeqs.value = new Set()
   }
   setTimeout(() => { initializingPreset = false }, 0)
 }
@@ -702,12 +866,6 @@ async function refreshPresetForMode() {
     overrides.value = incomingProviders
     messageOverrides.value = incomingMessages
     presetTargetSeq.value = fill.target_seq ?? presetTargetSeq.value
-    const refreshed = new Set<number>([
-      ...Object.keys(incomingProviders).map(Number),
-      ...Object.keys(incomingMessages).map(Number),
-    ])
-    for (const seq of keepEdited) refreshed.delete(seq)
-    filledSeqs.value = refreshed
     presetRefreshMessage.value = t('main.continuous_work.preset_mode_refreshed', { n: keepEdited.size })
   } catch (e: any) {
     presetRefreshMessage.value = e?.response?.data?.message || t('main.continuous_work.preset_mode_failed')
@@ -737,7 +895,11 @@ watch(
   },
 )
 watch(instructionMode, (value, previous) => {
-  if (!initializingPreset && presetActive.value && value !== previous) void refreshPresetForMode()
+  if (initializingPreset || value === previous) return
+  // 0405 L0010 §2.6: which row a plan step lands on depends on the mode (auto-approved folds
+  // N/T onto NR/TR), so the projection is read again rather than re-keyed here.
+  if (presetActive.value) void refreshPresetForMode()
+  else void loadPlanFill()
 })
 
 // 0399 T0018: re-seed from the sequence's own stored notes each time a fresh /workflow/sequence
@@ -749,6 +911,7 @@ watch(
   (steps, prevSteps) => {
     if (!steps || steps === prevSteps) return
     applySequenceNotePrefill(steps)
+    void loadPlanFill()
   },
 )
 // Reverting an unsaved preset (installPreset(null)) hands the field back to the sequence's own
@@ -767,6 +930,7 @@ watch(presetActive, (active) => {
 .cwd-preset-banner span { color:var(--text-m); }
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
+.cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
 /* 0399 T0018: 멘트 없는 단계 안내 — informational, never blocks (D0010 §3.5). */
 .cwd-note-unset-flag { color:#b45309; font-weight:700; }
 .modal-cwd {
