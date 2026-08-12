@@ -263,7 +263,7 @@
       :busy="aiSuggesting"
       :countable-types="docTypeStore.countableTypes.map((item) => ({ code: item.code, label: item.label }))"
       :steps="scopeSteps"
-      :candidates="plan?.provider_candidates ?? []"
+      :candidates="scopeProviderOptions"
       @close="aiScopeOpen = false"
       @project-map="fetchSuggestion"
       @ai="startAiFill"
@@ -282,10 +282,12 @@ import type { WorkPlanScope } from './WorkPlanAiScopeDialog.vue'
 import { useContentLayoutTier } from '../composables/useContentLayoutTier'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
+import { useAiProviderStore } from '../stores/aiProvider'
 import { copyToClipboard } from '../utils/clipboard'
 
 // ── Canonical shape (mirrors flowgate.default.0395 P0009 §2 / L0010 §1-2) ────
 interface WPCandidate { provider_id: string; display_name: string | null; group_label: string | null }
+interface WPRegisteredProvider { id: string; name: string | null; group_label: string | null }
 interface WPProviderStatus { provider_id: string; registered: boolean; current_name: string | null; snapshot_name: string | null; name_changed: boolean }
 interface WPAssignmentSummary { provider_id: string; display_name: string; step_count: number }
 interface WPQuantity { unit: 'sheet' | 'set'; count: number }
@@ -325,6 +327,7 @@ const props = defineProps<{
 const { t } = useI18n()
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
+const aiProviderStore = useAiProviderStore()
 
 const rootRef = ref<HTMLElement | null>(null)
 const loading = ref(true)
@@ -335,6 +338,8 @@ const aiRunId = ref<string | null>(null)
 const rawViewOpen = ref(false)
 
 const plan = ref<WPBody | null>(null)
+const serverRegisteredProviders = ref<WPRegisteredProvider[]>([])
+const serverRegisteredProvidersKnown = ref(false)
 const providerStatuses = ref<WPProviderStatus[]>([])
 const assignmentSummary = ref<WPAssignmentSummary[]>([])
 const unassignedStepCount = ref(0)
@@ -503,9 +508,19 @@ async function fetchPlan() {
   topLevelErrors.value = []
   stepErrors.value = {}
   restoreBuffer.clear()
+  serverRegisteredProviders.value = []
+  serverRegisteredProvidersKnown.value = false
   try {
-    if (!docTypeStore.loaded) await docTypeStore.loadLabels()
+    const providerLoad = props.projectId
+      ? aiProviderStore.ensureLoaded(props.projectId)
+      : Promise.resolve()
+    if (!docTypeStore.loaded) await Promise.all([docTypeStore.loadLabels(), providerLoad])
+    else await providerLoad
     const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
+    serverRegisteredProvidersKnown.value = Array.isArray(res.data.registered_providers)
+    serverRegisteredProviders.value = serverRegisteredProvidersKnown.value
+      ? res.data.registered_providers
+      : []
     plan.value = res.data.body as WPBody
     const allCodes = typeOrder(Array.from(new Set([
       ...plan.value.counted_types,
@@ -603,16 +618,61 @@ function setDefaultNote(note: string) {
 
 // ── Step editing ──────────────────────────────────────────────────────────
 
+/**
+ * 0411 T0004: the server response is the atomic source for the registered set.
+ * The project store covers old responses and project transitions; frozen candidates are only
+ * a final compatibility fallback for old tests/servers that expose neither source.
+ */
+const liveProviderRowsKnown = computed(() =>
+  serverRegisteredProvidersKnown.value
+  || (!!props.projectId
+    && aiProviderStore.loadedProjectId === props.projectId
+    && !aiProviderStore.error),
+)
+
+const liveProviderRows = computed<WPRegisteredProvider[]>(() => {
+  if (serverRegisteredProvidersKnown.value) return serverRegisteredProviders.value
+  if (liveProviderRowsKnown.value) {
+    return aiProviderStore.providers.map((provider) => ({
+      id: provider.id,
+      name: provider.name,
+      group_label: null,
+    }))
+  }
+  return (plan.value?.provider_candidates ?? []).map((candidate) => ({
+    id: candidate.provider_id,
+    name: candidate.display_name,
+    group_label: candidate.group_label,
+  }))
+})
+
+const liveProviderById = computed(() =>
+  new Map(liveProviderRows.value.map((provider) => [provider.id, provider])),
+)
+
+const scopeProviderOptions = computed<WPCandidate[]>(() =>
+  liveProviderRows.value.map((provider) => ({
+    provider_id: provider.id,
+    display_name: provider.name,
+    group_label: provider.group_label,
+  })),
+)
+
 function candidateStillRegistered(providerId: string): boolean {
-  const live = providerStatuses.value.find((item) => item.provider_id === providerId)
-  if (live) return live.registered
-  // Older/mocked responses may omit provider_status; preserve their snapshot behavior.
-  return !!plan.value?.provider_candidates.some((c) => c.provider_id === providerId)
+  if (serverRegisteredProvidersKnown.value) return liveProviderById.value.has(providerId)
+  // An old server may omit registered_providers but still return an authoritative status row.
+  const status = providerStatuses.value.find((item) => item.provider_id === providerId)
+  if (status) return status.registered
+  if (liveProviderRowsKnown.value) return liveProviderById.value.has(providerId)
+  // Older/mocked responses may omit both registered_providers and provider_status.
+  return !!plan.value?.provider_candidates.some((candidate) => candidate.provider_id === providerId)
 }
 
 function providerDisplayName(providerId: string | null): string | null {
   if (!providerId || !plan.value) return null
-  return plan.value.provider_candidates.find((c) => c.provider_id === providerId)?.display_name ?? providerId
+  return liveProviderById.value.get(providerId)?.name
+    ?? plan.value.provider_candidates.find((candidate) => candidate.provider_id === providerId)?.display_name
+    ?? providerId
 }
 
 function setStepProvider(key: string, providerId: string | null) {
@@ -634,16 +694,27 @@ function setStepNote(key: string, note: string) {
 }
 
 const providerOptionsWithUnassigned = computed(() => {
-  const candidates = (plan.value?.provider_candidates ?? []).map((c) => {
-    const name = c.display_name ?? c.provider_id
-    return {
-      id: c.provider_id,
-      name: candidateStillRegistered(c.provider_id)
+  const options: { id: string; name: string }[] = []
+  const seen = new Set<string>()
+  const append = (providerId: string) => {
+    if (!providerId || seen.has(providerId)) return
+    seen.add(providerId)
+    const name = providerDisplayName(providerId) ?? providerId
+    options.push({
+      id: providerId,
+      name: candidateStillRegistered(providerId)
         ? name
         : `${name} (${t('main.work_plan.unavailable_provider')})`,
-    }
-  })
-  return [{ id: '', name: t('main.work_plan.unassigned') }, ...candidates]
+    })
+  }
+
+  // Manual assignment is registered-all, independent from the frozen AI candidate scope.
+  liveProviderRows.value.forEach((provider) => append(provider.id))
+  // Keep deleted providers visible only when the body actually uses them.
+  append(plan.value?.defaults.provider_id ?? '')
+  ;(plan.value?.steps ?? []).forEach((step) => append(step.provider_id ?? ''))
+
+  return [{ id: '', name: t('main.work_plan.unassigned') }, ...options]
 })
 
 function isFirstOfType(step: WPStep, idx: number): boolean {

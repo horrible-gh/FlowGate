@@ -238,10 +238,12 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "en": "A locked step must have origin=system.",
         "ja": "ロックされた段階の origin は system でなければなりません。",
     },
+    # 0411 T0004: 코드 이름은 그대로 두되(화면·시험이 이 코드를 고정한다) 문구는 새 규칙을
+    # 말한다 — 후보이거나 이 프로젝트에 등록된 공급자면 고를 수 있다.
     "provider_not_candidate": {
-        "ko": "{value} 는 이 작업계획의 공급자 후보에 없습니다.",
-        "en": "{value} is not among this work plan's provider candidates.",
-        "ja": "{value} はこの作業計画の提供者候補にありません。",
+        "ko": "{value} 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.",
+        "en": "{value} is neither one of this work plan's provider candidates nor a provider registered in this project.",
+        "ja": "{value} はこの作業計画の提供者候補でも、このプロジェクトに登録された提供者でもありません。",
     },
     "provider_id_format_invalid": {
         "ko": "공급자 식별자 서식이 올바르지 않습니다: {value}",
@@ -713,6 +715,27 @@ def _effective_chain(project_id: Optional[str]) -> dict:
         return {}
 
 
+def _registered_providers(project_id: Optional[str]) -> list[dict]:
+    """이 프로젝트에 지금 등록돼 있는 공급자들. 읽을 수 없으면 빈 목록."""
+    return [
+        provider for provider in (_effective_chain(project_id).get("providers") or [])
+        if provider.get("id")
+    ]
+
+
+def _registered_provider_ids(project_id: Optional[str]) -> set[str]:
+    """0411 T0004 (B0001 "각 프로바이더는 전체 프로바이더에서 바꿀수 있게").
+
+    사람이 손으로 고를 수 있는 범위는 계획에 얼어붙은 provider_candidates 가 아니라
+    "후보 ∪ 이 프로젝트에 현재 등록된 공급자"다. provider_candidates 는 원래 역할
+    (AI 에게 맡길 범위 + 표시 이름 스냅샷)만 갖는다 — 제거가 아니라 역할 분리다.
+
+    project_id 를 모르거나 설정을 읽지 못하면 빈 집합이 되고, 규칙은 예전(후보만)으로
+    좁아진다. 설정을 못 읽었다는 이유로 저장이 열리는 일은 없다.
+    """
+    return {str(provider["id"]) for provider in _registered_providers(project_id)}
+
+
 def _assigned_provider(project_id: Optional[str], type_code: str) -> Optional[str]:
     """문서종류별 배정표(0317 D0004)가 이 타입에 정해 둔 공급자. 없으면 None."""
     if not project_id:
@@ -856,16 +879,23 @@ def _candidate_ids(candidates: Any) -> set[str]:
     }
 
 
-def _check_defaults(defaults: Any, candidates: Any) -> list[dict]:
+def _check_defaults(
+    defaults: Any,
+    candidates: Any,
+    registered_ids: Optional[set[str]] = None,
+    enforce_scope: bool = True,
+) -> list[dict]:
     if not isinstance(defaults, dict):
         return [_error("type_invalid", "defaults", field="defaults")]
     errors = _unknown_fields(defaults, DEFAULTS_FIELD_ORDER, "defaults")
     provider_id = defaults.get("provider_id")
     if provider_id is not None:
+        # 0411 T0004: 후보이거나 지금 등록된 공급자면 된다 (NR0003 §6 안 B).
+        allowed_ids = _candidate_ids(candidates) | (registered_ids or set())
         if not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id):
             errors.append(_error("provider_id_format_invalid", "defaults.provider_id",
                                  value=provider_id))
-        elif provider_id not in _candidate_ids(candidates):
+        elif enforce_scope and provider_id not in allowed_ids:
             errors.append(_error("provider_not_candidate", "defaults.provider_id",
                                  value=provider_id))
     note = defaults.get("note", "")
@@ -916,13 +946,24 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
     return errors
 
 
-def validate(body: Any, *, project_id: Optional[str] = None, action: str = "save") -> dict:
+def validate(
+    body: Any,
+    *,
+    project_id: Optional[str] = None,
+    action: str = "save",
+    enforce_provider_scope: bool = True,
+) -> dict:
     """Run every layer of L0010 §2.3 and return the canonical body.
 
     Raises WorkPlanValidationError carrying all errors of the first failing layer.
     Layers are not merged on purpose (L0010 §2.3 결정 5): reporting "the count is out
     of range" together with "the steps do not match the counts" would show two places
     to fix where there is only one.
+
+    0411 T0004: enforce_provider_scope=False 는 *이미 디스크에 있는* 계획을 읽을 때만
+    쓴다(load_body). 쓰는 시점에는 검증을 통과했는데 그 뒤 공급자가 프로젝트에서
+    삭제됐다는 이유로 계획 파일이 통째로 안 열리면 안 된다 — 사라진 공급자는 편집기가
+    회색 이름(unavailable_provider)으로 이미 다루고 있다. 서식 검사는 그대로 돈다.
     """
     def fail(errors: list[dict]):
         raise WorkPlanValidationError(errors, action=action)
@@ -995,8 +1036,13 @@ def validate(body: Any, *, project_id: Optional[str] = None, action: str = "save
         fail(errors)
 
     # ── layer 4: providers ──────────────────────────────────────────────────
+    # 0411 T0004: 등록 목록은 이 검증 한 번에 한 번만 읽는다. 후보 목록 자체는 여기서
+    # 넓히지 않는다 — 후보는 "AI 에게 맡길 범위", 등록 목록은 "사람이 고를 수 있는 범위".
+    registered_ids = _registered_provider_ids(project_id) if enforce_provider_scope else set()
     errors.extend(_check_provider_candidates(body["provider_candidates"]))
-    errors.extend(_check_defaults(body["defaults"], body["provider_candidates"]))
+    errors.extend(_check_defaults(
+        body["defaults"], body["provider_candidates"], registered_ids, enforce_provider_scope,
+    ))
     if errors:
         fail(errors)
 
@@ -1027,7 +1073,8 @@ def validate(body: Any, *, project_id: Optional[str] = None, action: str = "save
         fail(errors)
 
     # ── layer 7: what the values mean ───────────────────────────────────────
-    candidate_ids = _candidate_ids(body["provider_candidates"])
+    # 0411 T0004 (B0001): 비잠금 단계의 공급자는 후보이거나 지금 등록된 것이면 된다.
+    selectable_ids = _candidate_ids(body["provider_candidates"]) | registered_ids
     for index, step in enumerate(steps):
         loc = f"steps[{index}]"
         expected = expected_steps[index]
@@ -1052,7 +1099,7 @@ def validate(body: Any, *, project_id: Optional[str] = None, action: str = "save
             if step.get("origin") != "system":
                 errors.append(_error("origin_not_allowed", f"{loc}.origin", key))
         elif step.get("provider_id") is not None:
-            if step["provider_id"] not in candidate_ids:
+            if enforce_provider_scope and step["provider_id"] not in selectable_ids:
                 errors.append(_error("provider_not_candidate", f"{loc}.provider_id", key,
                                      value=step["provider_id"]))
     if errors:
@@ -1173,7 +1220,9 @@ def load_body(path) -> dict:
             "wp_version_unsupported", f"wp_version={version}", raw=raw
         )
     try:
-        return validate(parsed)
+        # 0411 T0004: 읽기는 공급자 범위를 다시 묻지 않는다. 저장 때 이미 물었고, 그 뒤
+        # 공급자가 삭제됐다고 계획이 안 열리면 "사라진 공급자" 표기를 볼 방법이 없어진다.
+        return validate(parsed, enforce_provider_scope=False)
     except WorkPlanValidationError as exc:
         first = render_errors(exc.errors, FALLBACK_LOCALE)[0]
         raise WorkPlanUnreadable(
@@ -1233,7 +1282,12 @@ def unassigned_step_count(body: dict) -> int:
 
 
 def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
-    """Per-provider step counts, named with the CURRENT display name when known."""
+    """Per-provider step counts, named with the CURRENT display name when known.
+
+    0411 T0004: 후보 밖(등록만 된) 공급자가 단계에 배정될 수 있게 됐다. 이름 해석 순서가
+    등록 목록 → 후보 스냅샷 → id 이므로 그런 공급자도 raw id 가 아니라 현재 이름으로
+    세어진다 — 이 함수는 원래부터 후보 목록을 순회하지 않고 steps 를 센다.
+    """
     current = {p["id"]: p.get("name") for p in (providers or [])}
     snapshot = {
         entry.get("provider_id"): entry.get("display_name")
@@ -1258,22 +1312,53 @@ def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> li
     ]
 
 
+def _used_provider_ids(body: dict) -> list[str]:
+    """본문이 실제로 쓰고 있는 공급자 id — 기본값 다음 단계 순서, 중복 없이."""
+    used: list[str] = []
+    seen: set[str] = set()
+    candidates = [(body.get("defaults") or {}).get("provider_id")]
+    candidates += [step.get("provider_id") for step in (body.get("steps") or [])]
+    for provider_id in candidates:
+        if not isinstance(provider_id, str) or not provider_id or provider_id in seen:
+            continue
+        seen.add(provider_id)
+        used.append(provider_id)
+    return used
+
+
 def provider_status(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
-    """P0009 §4.4: is each candidate still registered, and did its name change."""
+    """P0009 §4.4: is each candidate still registered, and did its name change.
+
+    0411 T0004 (B0001): 단계 공급자는 이제 후보 밖 — 이 프로젝트에 등록만 된 공급자 — 일
+    수 있다. 편집기는 이 목록에 물어 "지금도 등록돼 있는가"를 판정하므로, 본문이 실제로
+    쓰고 있는 id 는 후보가 아니어도 한 줄을 갖는다. 없으면 멀쩡히 등록된 공급자에
+    "(사용할 수 없는 프로바이더)" 딱지가 붙는다. 후보가 아닌 줄에는 스냅샷 이름이 없다
+    (얼려 둔 적이 없다) — 그래서 name_changed 는 언제나 거짓이다.
+    """
     current = {p["id"]: p.get("name") for p in (providers or [])}
-    status = []
-    for entry in body.get("provider_candidates") or []:
-        provider_id = entry.get("provider_id")
-        snapshot_name = entry.get("display_name")
+
+    def row(provider_id: Any, snapshot_name: Any) -> dict:
         registered = provider_id in current
         current_name = current.get(provider_id)
-        status.append({
+        return {
             "provider_id": provider_id,
             "registered": registered,
             "current_name": current_name,
             "snapshot_name": snapshot_name,
             "name_changed": bool(registered and snapshot_name and current_name != snapshot_name),
-        })
+        }
+
+    status = []
+    seen: set[Any] = set()
+    for entry in body.get("provider_candidates") or []:
+        provider_id = entry.get("provider_id")
+        seen.add(provider_id)
+        status.append(row(provider_id, entry.get("display_name")))
+    for provider_id in _used_provider_ids(body):
+        if provider_id in seen:
+            continue
+        seen.add(provider_id)
+        status.append(row(provider_id, None))
     return status
 
 
@@ -1387,7 +1472,7 @@ TEMPLATE_RULES = {
         "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
         "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시이며 TSR 외 모든 단계에 200자 이내로 채웁니다. 줄바꿈과 탭은 쓰지 않습니다.",
         "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다.",
-        "steps[].provider_id 는 provider_candidates 안의 값이어야 하며 후보가 비어 있으면 비워 둡니다.",
+        "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
         "TSR 단계에는 공급자와 멘트를 적지 않습니다.",
         "item_seq(실제 단계 번호)는 적지 않습니다.",
         "binding 은 항상 advisory 입니다.",
@@ -1399,7 +1484,7 @@ TEMPLATE_RULES = {
         "steps must equal the list expanded from quantities, in the same order.",
         "steps[].note is a one-line instruction for the AI assigned to that step; fill it for every non-TSR step, within 200 characters and without newlines or tabs.",
         "defaults.note is the one-line instruction shared by every step.",
-        "steps[].provider_id must be present in provider_candidates; leave it empty when there are no candidates.",
+        "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
         "A TSR step carries no provider and no note.",
         "Never write item_seq (the real workflow step number).",
         "binding is always advisory.",
@@ -1411,7 +1496,7 @@ TEMPLATE_RULES = {
         "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
         "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の全段階に200文字以内、改行・タブなしで記入します。",
         "defaults.note は全段階に共通する一行指示です。",
-        "steps[].provider_id は provider_candidates 内の値に限り、候補が空なら空欄にします。",
+        "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",
         "TSR 段階には提供者と一行メモを書きません。",
         "item_seq(実際の段階番号)は書きません。",
         "binding は常に advisory です。",

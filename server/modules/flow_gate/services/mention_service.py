@@ -2251,6 +2251,20 @@ def build_work_plan_fill_mention(
         str(provider.get("provider_id")): provider
         for provider in body.get("provider_candidates") or []
     }
+    # 0411 T0004 (B0001): 단계 공급자는 이제 후보 밖 — 이 프로젝트에 등록만 된 공급자 —
+    # 일 수 있다. 후보 스냅샷에만 이름을 물으면 그런 id 가 워커 멘트에 raw id 로 나가
+    # 작업자가 누구를 고르라는 것인지 알 수 없다. 스냅샷(고를 때 얼린 이름) → 등록 목록
+    # (현재 이름) → id 순으로 찾는다. 설정을 못 읽으면 예전처럼 id 로 떨어진다.
+    registered_names: dict[str, str] = {}
+    try:
+        from modules.flow_gate.settings import ai_settings_service
+
+        effective = ai_settings_service.resolve_effective(target_doc.get("project_id") or "")
+        for provider in (effective or {}).get("providers") or []:
+            if provider.get("id"):
+                registered_names[str(provider["id"])] = str(provider.get("name") or "")
+    except Exception:  # noqa: BLE001 — an unreadable provider list must not break the prompt
+        registered_names = {}
     quantities = body.get("quantities") or {}
     unit_copy = {
         "ko": {"sheet": "장", "set": "세트"},
@@ -2274,8 +2288,12 @@ def build_work_plan_fill_mention(
 
     quantity_lines = scope.get("quantity_type_codes") or []
     step_lines = [step_label(key) for key in (scope.get("step_keys") or [])]
+    def provider_name(provider_id: str) -> str:
+        snapshot = (provider_by_id.get(provider_id) or {}).get("display_name")
+        return snapshot or registered_names.get(provider_id) or provider_id
+
     provider_lines = [
-        f"{provider_id} · {(provider_by_id.get(provider_id) or {}).get('display_name') or provider_id}"
+        f"{provider_id} · {provider_name(provider_id)}"
         for provider_id in scope.get("provider_ids") or []
     ]
     def bullets(items: list[str]) -> str:
