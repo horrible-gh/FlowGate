@@ -1,11 +1,10 @@
 // flowgate.default.0406 T0022 — 새 계약을 못으로 박는다.
-//
-// 사용자 반려 원문: "연속 작업 (무인) 에 멘트가 똑바로 안들어간다고 / N/T/TS NR/TR
-// 계열말야 안들어간다고". NR0021 이 실측으로 확정한 원인은 auto_approved 에서 N·T 는
-// 서버가 고정 템플릿으로 만들고 승인해 AI 워커도 워커 멘트도 아예 없다는 것이었다.
-// 여기서 고정하는 것은 그 수정의 화면 쪽 계약 넷이다.
-//   1) 새 연속 실행의 기본 작성 주체는 AI(ai_direct)다 — N·T 도 워커 단계다.
-//   2) 조용한 auto_approved 폴백이 없다 — 창은 받은 모드를 그대로 요청에 싣는다.
+// 0409 B0001 반려로 1) 이 뒤집혔다: 사용자 지시 "원래 [자동승인] 이 기본 선택이였는데 왜
+// 지시서 작성으로 선택되어있는거야" 에 따라 기본 작성 주체는 다시 서버(auto_approved)다.
+// 나머지 셋은 그대로다.
+// 여기서 고정하는 것은 그 화면 쪽 계약 넷이다.
+//   1) 새 연속 실행의 기본 작성 주체는 서버(auto_approved)다 — [자동승인] 이 기본 선택이다.
+//   2) 조용한 폴백이 없다 — 창은 받은 모드를 그대로 요청에 싣는다.
 //   3) 서버가 대신 처리할 N/T 행은 이유가 보이는 배지를 단다.
 //   4) 한줄 멘트는 서버가 말한 상한(1000)까지 쓰이고, 넘으면 막는 대신 알린다.
 import { flushPromises, mount } from '@vue/test-utils'
@@ -57,21 +56,23 @@ beforeEach(() => {
 afterEach(() => { document.body.innerHTML = '' })
 
 describe('연속 실행의 N/T 작성 주체 (0406 T0022 작업 1·2·3)', () => {
-  it('기본값은 한 곳에서 온다 — ai_direct', () => {
-    expect(DEFAULT_INSTRUCTION_MODE).toBe('ai_direct')
+  it('기본값은 한 곳에서 온다 — auto_approved', () => {
+    expect(DEFAULT_INSTRUCTION_MODE).toBe('auto_approved')
   })
 
-  it('연속 작업 창은 기본 ai_direct 로 확정을 내보낸다', async () => {
+  it('연속 작업 창은 기본 auto_approved 로 확정을 내보낸다 — [자동승인] 이 기본 선택', async () => {
     getRequest.mockResolvedValue(seqResponse())
     const wrapper = mount(ContinuousWorkDialog, {
       props: { visible: true, docRef: ROOT }, global: { plugins: [i18n] },
     })
     await flushPromises()
+    // 창이 열리자마자 [자동승인] 라디오가 골라져 있어야 한다.
+    expect((document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement).checked).toBe(true)
     ;([...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement).click()
     await flushPromises()
 
     const payload = wrapper.emitted('confirm')![0][0] as Record<string, unknown>
-    expect(payload.instructionMode).toBe('ai_direct')
+    expect(payload.instructionMode).toBe('auto_approved')
     wrapper.unmount()
   })
 
@@ -81,18 +82,17 @@ describe('연속 실행의 N/T 작성 주체 (0406 T0022 작업 1·2·3)', () =>
       props: { visible: true, docRef: ROOT }, global: { plugins: [i18n] },
     })
     await flushPromises()
-    // ai_direct 에서는 T 가 평범한 워커 단계다 — 배지도 없고 고를 수도 있다.
-    expect(document.querySelector('.wsp-step-tag--auto')).toBeNull()
-
-    const autoRadio = document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement
-    autoRadio.checked = true
-    autoRadio.dispatchEvent(new Event('change'))
-    await flushPromises()
-
-    // 명시적으로 고른 뒤에는, 그 행이 왜 사라졌는지가 글로 적혀 있어야 한다.
+    // 기본값 auto_approved 에서는 그 행이 왜 사라졌는지가 글로 적혀 있어야 한다.
     const tag = document.querySelectorAll('.wsp-step')[2].querySelector('.wsp-step-tag--auto')
     expect(tag!.textContent).toContain(i18n.global.t('main.continuous_work.auto_step_tag'))
-    expect(i18n.global.t('main.continuous_work.auto_step_tag')).toContain('AI 멘트 없음')
+
+    const aiRadio = document.querySelectorAll('.cwd-mode input')[1] as HTMLInputElement
+    aiRadio.checked = true
+    aiRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // ai_direct 를 고르면 T 가 평범한 워커 단계로 돌아온다 — 배지도 없고 고를 수도 있다.
+    expect(document.querySelector('.wsp-step-tag--auto')).toBeNull()
     wrapper.unmount()
   })
 
