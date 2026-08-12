@@ -104,11 +104,11 @@ describe('continuous tombstone and sequence-edit identity (0406 T0011)', () => {
     ;(document.querySelectorAll('.cwd-tab')[2] as HTMLButtonElement).click()
     await flushPromises()
     const inputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-    expect(inputs).toHaveLength(3)
-    // ai_direct is the default now (0406 T0022 작업 1), so the pending T row has an input too
-    // and the stored-prefill row (item_seq 2) is the second one.
-    inputs[1].value = ''
-    inputs[1].dispatchEvent(new Event('input'))
+    // 0409 B0001: auto_approved 가 다시 기본값이라 머리 T 행은 서버가 처리한다 — 멘트 행은
+    // TR@2, TS@3 둘뿐이고 저장된 프리필 행(item_seq 2)이 첫 번째다.
+    expect(inputs).toHaveLength(2)
+    inputs[0].value = ''
+    inputs[0].dispatchEvent(new Event('input'))
     await flushPromises()
     ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
     await flushPromises()

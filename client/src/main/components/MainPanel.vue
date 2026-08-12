@@ -1722,7 +1722,7 @@ const continuousTargetSeq = ref<number | null>(null)
 const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
-// 0406 T0022 작업 1: 무인 연속 체인의 N/T 도 AI 가 쓰는 것이 기본이다 (DEFAULT_INSTRUCTION_MODE).
+// 0409 B0001 반려: 무인 연속 체인의 기본 선택은 [자동승인] 이다 (DEFAULT_INSTRUCTION_MODE).
 const continuousInstructionMode = ref<ContinuationInstructionMode>(DEFAULT_INSTRUCTION_MODE)
 // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
 // through the consent gate to the start request (session-scoped, never persisted).
