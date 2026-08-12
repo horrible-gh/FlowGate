@@ -33,6 +33,25 @@ Three cases, all of which have to be safe because this runs on every boot:
 
 Adding to RENAMES is safe for the same reason; entries never expire, and an old
 name that no database has is simply not found.
+
+flowgate.default.0408 TR0018 §0 adds a second failure mode: this file only ever
+described *one* rename per collision, but 078/079 turned out to have **two
+independent already-applied histories** for the same content. Group 0408's own
+checkout carried 078_continuation_auto_approve.sql / 078_seed_work_plan_doctype.sql
+/ 079_ai_invoke_step_timeout.sql / 079_workflow_sequence_note_source.sql under
+their original bare numbers, while a sibling group's checkout (surfaced through
+the shared dev preview, `FlowGate-dev/server/storage/flowgate.db`) had already
+renamed the same four files to 078a_continuation_auto_approve.sql /
+078b_seed_work_plan_doctype.sql / 079a_ai_invoke_step_timeout.sql /
+079a_workflow_sequence_note_source.sql — a *different* letter assignment, chosen
+independently before this file's RENAMES entry existed for that ordinal. Any
+single database only ever has ONE of the two histories (never both at once), so
+RENAMES may now list more than one `old` name converging on the same final
+`new` name — one entry per distinct already-observed history. `old` values must
+still be pairwise distinct (that is what makes each entry unambiguous); only the
+one-`new`-per-`old` constraint is dropped. See `apply_migration_renames`'s "both
+rows present" branch: it already deletes the disqualified duplicate instead of
+raising, which is exactly what makes convergence safe.
 """
 
 from __future__ import annotations
@@ -57,10 +76,18 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("074_document_type_descriptions.sql", "074b_document_type_descriptions.sql"),
     ("076_ai_invoke_paused_provider.sql", "076a_ai_invoke_paused_provider.sql"),
     ("076_ai_invoke_runs.sql", "076b_ai_invoke_runs.sql"),
+    # 078/079: two independent already-applied histories converge on each final
+    # name (module docstring above). continuation_auto_approve and
+    # ai_invoke_step_timeout happen to already match the sibling history's
+    # letter, so only this branch's own bare-number history needs an entry;
+    # seed_work_plan_doctype and workflow_sequence_note_source were assigned
+    # different letters on each side and need one entry per side.
     ("078_continuation_auto_approve.sql", "078a_continuation_auto_approve.sql"),
     ("078_seed_work_plan_doctype.sql", "078b_seed_work_plan_doctype.sql"),
+    ("078a_seed_work_plan_doctype.sql", "078b_seed_work_plan_doctype.sql"),
     ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
     ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
+    ("079a_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
 )
 
 
@@ -163,8 +190,11 @@ def apply_migration_renames(
                 continue
             if new in applied:
                 # Both rows present: the new file was applied by hand (or a
-                # previous boot was interrupted between the two statements).
-                # Drop the orphan so the table keeps one row per file.
+                # previous boot was interrupted between the two statements), OR —
+                # 0408 TR0018 — an earlier entry in THIS pass already carried a
+                # convergent old name over to `new` (module docstring: two
+                # histories, one final name). Either way, drop the orphan so the
+                # table keeps one row per file.
                 dbb.execute(
                     conn, resolved, "DELETE FROM migrations WHERE filename = ?", (old,)
                 )
@@ -175,6 +205,14 @@ def apply_migration_renames(
                     "UPDATE migrations SET filename = ? WHERE filename = ?",
                     (new, old),
                 )
+            # `applied` must reflect this write immediately, not just the
+            # snapshot taken before the loop started: a convergent second entry
+            # (different `old`, same `new`) checks `new in applied` right above,
+            # and must see the row the first entry just created — otherwise it
+            # would try to UPDATE into a filename that already exists and hit a
+            # UNIQUE-constraint error instead of taking the "both present" branch.
+            applied.discard(old)
+            applied.add(new)
             changed += 1
         if changed:
             conn.commit()
@@ -184,3 +222,4 @@ def apply_migration_renames(
             conn.close()
         except Exception:
             pass
+

@@ -58,7 +58,7 @@ const canonicalItems = [
     source_doc_id: 'flowgate.default.0406.0003-WP',
     source_revision_no: 0,
   },
-]
+].map(item => ({ ...item, provider_id: null, provider_display_name: null, provider_registered: null }))
 
 const legacyItem = {
   id: 4061,

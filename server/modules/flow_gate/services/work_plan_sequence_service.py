@@ -14,18 +14,25 @@ Everything numeric or set-valued here is L0011 §1; the algorithms are L0011 §2
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Iterable, Optional
 
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
-from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+from modules.flow_gate.services.workflow_decision_service import (
+    AUTO_REPORT_MAP,
+    provider_view_of,
+    resolve_row_provider,
+)
+from modules.flow_gate.services.work_plan_service import PROVIDER_ID_PATTERN
 
 # ── L0011 §1.1 — numeric parameters ──────────────────────────────────────────
 # 0406 T0022 작업 6: 값은 documents.constants 의 정본을 읽는다. 이름은 그대로 두어
 # 기존 호출부(시험 포함)가 wpseq.NOTE_MAX_CHARS 로 계속 물어볼 수 있게 한다.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
+PROVIDER_NAME_MAX_CHARS = 191
 POUR_ROWS_MAX = 100
 UNDO_DEPTH = 1
 PLACEABLE_MIN = 1
@@ -43,6 +50,7 @@ SERVER_ASSEMBLED_TYPES = frozenset({"TSR"})
 MODES = ("append", "replace_after")
 
 _CONTROL_CHARS = {chr(code) for code in range(0x20)} | {chr(0x7F)}
+_log = logging.getLogger(__name__)
 
 # L0011 §2.10 / P0013 ① — one envelope per code; the order below is the order the dialog
 # reads them in, so it is fixed here rather than left to the caller.
@@ -124,6 +132,37 @@ def normalize_note(raw: Any, *, strict: bool = False) -> str:
     return text
 
 
+def normalize_provider(raw_id: Any, raw_name: Any) -> tuple[Optional[str], Optional[str]]:
+    """Normalize a provider pair read from a plan or an existing sequence row."""
+    provider_id = None
+    if isinstance(raw_id, str):
+        provider_id = "".join(ch for ch in raw_id if ch not in _CONTROL_CHARS).strip() or None
+    provider_name = None
+    if isinstance(raw_name, str):
+        provider_name = "".join(ch for ch in raw_name if ch not in _CONTROL_CHARS).strip() or None
+        if provider_name:
+            provider_name = provider_name[:PROVIDER_NAME_MAX_CHARS]
+    if provider_id is None:
+        if provider_name:
+            _log.warning("dropping workflow sequence provider name without an id")
+        return None, None
+    if not PROVIDER_ID_PATTERN.fullmatch(provider_id):
+        _log.warning("dropping malformed workflow sequence provider id: %r", raw_id)
+        return None, None
+    return provider_id, provider_name
+
+
+def resolve_step_provider(step: dict, plan: dict) -> tuple[Optional[str], Optional[str]]:
+    provider_id = step.get("provider_id")
+    provider_name = step.get("provider_display_name")
+    if provider_id and not provider_name:
+        for candidate in plan.get("provider_candidates") or []:
+            if candidate.get("provider_id") == provider_id:
+                provider_name = candidate.get("display_name")
+                break
+    return normalize_provider(provider_id, provider_name)
+
+
 # ── L0011 §2.1 — a row inside the edit dialog ────────────────────────────────
 
 def _new_row(
@@ -139,6 +178,12 @@ def _new_row(
     plan_key: Optional[str] = None,
     source_doc_id: Optional[str] = None,
     source_revision_no: Optional[int] = None,
+    provider_id: Optional[str] = None,
+    provider_display_name: Optional[str] = None,
+    pair_provider_id: Optional[str] = None,
+    pair_provider_display_name: Optional[str] = None,
+    pair_note: str = "",
+    pair_note_source: Optional[str] = None,
     item_seq_before: Optional[int] = None,
     label: Optional[str] = None,
     status: str = "pending",
@@ -156,6 +201,15 @@ def _new_row(
         "plan_key": plan_key,
         "source_doc_id": source_doc_id,
         "source_revision_no": source_revision_no,
+        "provider_id": provider_id,
+        "provider_display_name": provider_display_name,
+        "pair_provider_id": pair_provider_id,
+        "pair_provider_display_name": pair_provider_display_name,
+        # 0408 TR0021 rev1: the note the plan wrote on the RESULT step, held on the
+        # instruction row only until attach_auto_rows builds that result row (§2.4). It is
+        # never this row's own note — the two steps carry two different sentences.
+        "pair_note": pair_note,
+        "pair_note_source": pair_note_source,
         "item_seq_before": item_seq_before,
         "status": status,
         "locked": locked,
@@ -195,6 +249,9 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
         code = str(item.get("type") or "").upper()
         is_locked = item.get("result_doc_id") is not None or item.get("status") != "pending"
         origin = origin_of_loaded_row(item, previous)
+        provider_id, provider_name = normalize_provider(
+            item.get("provider_id"), item.get("provider_display_name")
+        )
         row = _new_row(
             uid,
             code,
@@ -204,6 +261,8 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
             origin=origin,
             source_doc_id=item.get("source_doc_id"),
             source_revision_no=_int(item.get("source_revision_no")),
+            provider_id=provider_id,
+            provider_display_name=provider_name,
             item_seq_before=_int(item.get("item_seq")),
             label=item.get("label") or None,
             status=str(item.get("status") or "pending"),
@@ -217,6 +276,15 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
 # ── L0011 §2.3 — the conversion itself ───────────────────────────────────────
 
 def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]) -> None:
+    """Hold the result step's note for the automatic row that will carry it (§2.4).
+
+    0408 M0019 재반려 ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): this used to move the
+    note onto the INSTRUCTION row — and, if that row already had one, throw it away
+    (paired_note_dropped). Both outcomes made the row that actually runs under [자동 승인]
+    (NR/TR) show a sentence somebody wrote for a different step, or none at all. The note now
+    travels to its own row exactly the way pair_provider_id already does, so N/NR and T/TR
+    keep two independent notes and neither can overwrite the other.
+    """
     note = normalize_note(result_step.get("note"))
     if note == "":
         return
@@ -228,16 +296,24 @@ def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]
     if target is None:
         dropped.append({"plan_key": result_step.get("key"), "reason": "pair_not_found"})
         return
-    if target["note"] == "":
-        target["note"] = note
-        target["note_source"] = "pair"
-    else:
-        # 지시 줄에 사람이 적어 둔 말이 자동 줄의 말에 덮이는 편이 훨씬 나쁘다 (L0011 §2.3).
-        dropped.append({
-            "plan_key": result_step.get("key"),
-            "reason": "paired_note_dropped",
-            "note": note,
-        })
+    target["pair_note"] = note
+    target["pair_note_source"] = "step"
+
+
+def _carry_provider_to_pair(result_step: dict, rows: list[dict], plan: dict) -> None:
+    provider_id, provider_name = resolve_step_provider(result_step, plan)
+    if provider_id is None:
+        return
+    pair_key = result_step.get("pair_key")
+    target = None
+    for row in rows:
+        if row.get("plan_key") == pair_key:
+            target = row
+    if target is None:
+        _log.warning("workflow plan provider pair not found for %s", result_step.get("key"))
+        return
+    target["pair_provider_id"] = provider_id
+    target["pair_provider_display_name"] = provider_name
 
 
 def plan_to_rows(
@@ -273,9 +349,11 @@ def plan_to_rows(
             continue
         if code in AUTO_ROW_TYPES:
             _carry_note_to_pair(step, rows, dropped)
+            _carry_provider_to_pair(step, rows, plan)
             continue
         uid += 1
         step_note = normalize_note(step.get("note"))
+        provider_id, provider_name = resolve_step_provider(step, plan)
         rows.append(_new_row(
             uid, code, locale,
             note=step_note,
@@ -284,15 +362,33 @@ def plan_to_rows(
             plan_key=step.get("key"),
             source_doc_id=plan_doc_id,
             source_revision_no=plan_revision_no,
+            provider_id=provider_id,
+            provider_display_name=provider_name,
         ))
 
     defaults = plan.get("defaults")
     default_note = normalize_note(defaults.get("note")) if isinstance(defaults, dict) else ""
-    if default_note:
-        for row in rows:
-            if row["note"] == "":
-                row["note"] = default_note
-                row["note_source"] = "defaults"
+    default_provider_id, default_provider_name = (
+        resolve_step_provider({"provider_id": defaults.get("provider_id")}, plan)
+        if isinstance(defaults, dict)
+        else (None, None)
+    )
+    for row in rows:
+        if row["provider_id"] is None:
+            if row["type"] in INSTRUCTION_TYPES and row.get("pair_provider_id"):
+                row["provider_id"] = row.get("pair_provider_id")
+                row["provider_display_name"] = row.get("pair_provider_display_name")
+            elif default_provider_id is not None:
+                row["provider_id"] = default_provider_id
+                row["provider_display_name"] = default_provider_name
+        if default_note and row["note"] == "":
+            row["note"] = default_note
+            row["note_source"] = "defaults"
+        # The automatic row is a step of its own (and the only one an auto-approved run hands
+        # to a worker), so the plan's common note reaches it on the same terms.
+        if default_note and row["type"] in INSTRUCTION_TYPES and not row.get("pair_note"):
+            row["pair_note"] = default_note
+            row["pair_note_source"] = "defaults"
     return rows, dropped, uid
 
 
@@ -325,12 +421,28 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             uid += 1
             auto_uid = uid
             status, locked, item_seq_before = "pending", False, None
+        # TSR is assembled by the server: no provider and no note may be written for it.
+        pair_note = "" if want == "TSR" else (row.get("pair_note") or "")
+        pair_note_source = row.get("pair_note_source") if pair_note else None
+        if want == "TSR":
+            provider_id, provider_name = None, None
+        elif row.get("pair_provider_id"):
+            provider_id = row.get("pair_provider_id")
+            provider_name = row.get("pair_provider_display_name")
+        else:
+            provider_id = row.get("provider_id")
+            provider_name = row.get("provider_display_name")
         out.append(_new_row(
             auto_uid, want, locale,
             is_auto=True,
             auto_of_uid=row["uid"],
-            note="",              # 자동 줄은 멘트를 갖지 않는다 (L0011 §2.4)
+            # 0408 TR0021 rev1: 자동 줄도 자기 멘트를 갖는다. [자동 승인]에서 AI 워커가
+            # 도는 줄이 바로 이 줄이므로, 계획이 이 단계에 적어 준 말은 여기 말고 실릴 데가 없다.
+            note=pair_note,
+            note_source=pair_note_source,
             origin="auto",
+            provider_id=provider_id,
+            provider_display_name=provider_name,
             status=status,
             locked=locked,
             item_seq_before=item_seq_before,
@@ -469,7 +581,7 @@ def build_notifications(
 
 # ── P0013 ① — the whole response ─────────────────────────────────────────────
 
-def _public_row(row: dict) -> dict:
+def _public_row(row: dict, provider_view: dict) -> dict:
     """The row shape the dialog receives. ``item_seq`` is deliberately absent: the save
     renumbers every row, and the note rides on the row itself (L0011 §2.11)."""
     return {
@@ -484,6 +596,9 @@ def _public_row(row: dict) -> dict:
         "plan_key": row.get("plan_key"),
         "source_doc_id": row.get("source_doc_id"),
         "source_revision_no": row.get("source_revision_no"),
+        **resolve_row_provider(
+            row.get("provider_id"), row.get("provider_display_name"), provider_view
+        ),
     }
 
 
@@ -532,6 +647,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         next_rows, deleted_rows = pour_replace_after(pending_before, pour_rows, wp_item_seq)
 
     all_rows = locked_rows + next_rows
+    provider_view = provider_view_of(doc.get("project_id"))
     before_uids = {row["uid"] for row in pending_before}
     poured_uids = {row["uid"] for row in pour_rows if not row.get("is_auto")}
     poured_type_of = {row["uid"]: row["type"] for row in pour_rows if not row.get("is_auto")}
@@ -545,7 +661,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         "workflow_doc_id": owner_doc_id,
         "mode": mode,
         "plan_step_count": plan_step_count,
-        "rows": [_public_row(row) for row in all_rows],
+        "rows": [_public_row(row, provider_view) for row in all_rows],
         "row_count_change": row_count_change(
             mode, locked_rows, pending_before, pour_rows, wp_item_seq,
         ),

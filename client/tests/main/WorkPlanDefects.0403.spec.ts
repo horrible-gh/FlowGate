@@ -315,6 +315,7 @@ describe('붓기 저장이 보내는 것 (NR0004 F2)', () => {
           id: 1, item_seq: 5, type: 'P', label: '프로토콜설계', doc_class: 'R',
           sort_order: 0, status: 'pending', note: '남아 있던 멘트',
           source_doc_id: WP_DOC_ID, source_revision_no: 1,
+          provider_id: null, provider_display_name: null, provider_registered: null,
         }],
       },
     })

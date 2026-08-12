@@ -113,6 +113,8 @@ def insert_sequence_item(
     note: str = "",
     source_doc_id: Optional[str] = None,
     source_revision_no: Optional[int] = None,
+    provider_id: Optional[str] = None,
+    provider_display_name: Optional[str] = None,
 ) -> None:
     """Insert a sequence item.
 
@@ -126,7 +128,7 @@ def insert_sequence_item(
     sql = _sql(store, "workflow_sequences.insert_sequence_item")
     store._execute(sql, [
         sequence_id, item_seq, type_, label, doc_class, sort_order,
-        note or "", source_doc_id, source_revision_no,
+        note or "", source_doc_id, source_revision_no, provider_id, provider_display_name,
     ])
 
 

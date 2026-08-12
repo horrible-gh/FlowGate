@@ -61,6 +61,49 @@ class PlanRevisionChanged(Exception):
 
 _log = logging.getLogger(__name__)
 
+
+def provider_view_of(project_id: Optional[str]) -> dict:
+    """Read the active provider view once; unreadable is distinct from an empty view."""
+    if not project_id:
+        return {"readable": False, "providers": {}}
+    try:
+        from modules.flow_gate.settings import ai_settings_service
+
+        effective = ai_settings_service.resolve_effective(project_id) or {}
+        providers = {
+            str(row.get("id")): row
+            for row in (effective.get("providers") or [])
+            if row.get("id")
+        }
+        return {"readable": True, "providers": providers}
+    except Exception:  # noqa: BLE001 — a transient settings failure must not mark rows unavailable
+        _log.warning("workflow sequence provider view failed for %s", project_id, exc_info=True)
+        return {"readable": False, "providers": {}}
+
+
+def resolve_row_provider(
+    provider_id: Optional[str], snapshot_name: Optional[str], view: dict
+) -> dict:
+    """Resolve the shared GET/pour response contract for one stored provider pair."""
+    if not provider_id:
+        return {
+            "provider_id": None,
+            "provider_display_name": None,
+            "provider_registered": None,
+        }
+    current = (view.get("providers") or {}).get(provider_id)
+    if current is not None:
+        display_name = current.get("name") or snapshot_name or provider_id
+        registered: Optional[bool] = True
+    else:
+        display_name = snapshot_name or provider_id
+        registered = False if view.get("readable") is True else None
+    return {
+        "provider_id": provider_id,
+        "provider_display_name": display_name,
+        "provider_registered": registered,
+    }
+
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
 # Instruction-series steps ("무엇을 하라": N/T) are fillable from a fixed server template
 # and carry no AI deliverable — only their paired report (NR/TR) does. In the unmanned
@@ -350,7 +393,14 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
         nxt = sequence[idx + 1] if idx + 1 < len(sequence) else None
         if nxt is not None and (nxt.get("type") or "").upper() == report_type:
             continue  # report already attached (e.g. client modal) — don't duplicate
-        expanded.append({"type": report_type, "label": get_type_name(report_type, locale)})
+        expanded.append({
+            "type": report_type,
+            "label": get_type_name(report_type, locale),
+            "provider_id": item.get("provider_id") if report_type != "TSR" else None,
+            "provider_display_name": (
+                item.get("provider_display_name") if report_type != "TSR" else None
+            ),
+        })
     for new_id, item in enumerate(expanded, start=1):
         item["id"] = new_id
     return expanded
@@ -1390,6 +1440,7 @@ def get_workflow_sequence(doc_id: str) -> dict:
     from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 
     items = db_wfseq.get_sequence_items(seq["id"])
+    provider_view = provider_view_of(doc.get("project_id"))
     return {
         "doc_id": doc_id,
         "doc_class": _resolve_doc_class(doc),
@@ -1417,6 +1468,9 @@ def get_workflow_sequence(doc_id: str) -> dict:
                 "note": it.get("note") or "",
                 "source_doc_id": it.get("source_doc_id"),
                 "source_revision_no": it.get("source_revision_no"),
+                **resolve_row_provider(
+                    it.get("provider_id"), it.get("provider_display_name"), provider_view
+                ),
             }
             for it in items
         ],
@@ -1469,6 +1523,40 @@ def assert_sequence_item_sources(new_items: list[dict]) -> None:
     for index, item in enumerate(new_items or []):
         if item.get("source_revision_no") is not None and not item.get("source_doc_id"):
             raise ValueError(f"invalid_sequence_item:{index}:source_revision_no requires source_doc_id")
+
+
+def assert_sequence_item_providers(new_items: list[dict]) -> None:
+    """Normalize provider pairs and reject malformed PATCH rows before report expansion."""
+    from modules.flow_gate.services.work_plan_service import PROVIDER_ID_PATTERN
+
+    controls = {chr(code) for code in range(0x20)} | {chr(0x7F)}
+    for index, item in enumerate(new_items or []):
+        raw_id = item.get("provider_id")
+        if raw_id is None:
+            provider_id = None
+        elif isinstance(raw_id, str):
+            provider_id = "".join(ch for ch in raw_id if ch not in controls).strip() or None
+        else:
+            provider_id = ""
+
+        raw_name = item.get("provider_display_name")
+        if raw_name is None:
+            provider_name = None
+        elif isinstance(raw_name, str):
+            provider_name = "".join(ch for ch in raw_name if ch not in controls).strip() or None
+        else:
+            provider_name = str(raw_name).strip() or None
+
+        if provider_id is not None and not PROVIDER_ID_PATTERN.fullmatch(provider_id):
+            raise ValueError(f"invalid_sequence_item:{index}:provider_id_format_invalid")
+        if provider_name is not None and provider_id is None:
+            raise ValueError(
+                f"invalid_sequence_item:{index}:provider_display_name requires provider_id"
+            )
+        if provider_name is not None and len(provider_name) > 191:
+            raise ValueError(f"invalid_sequence_item:{index}:provider_display_name_too_long")
+        item["provider_id"] = provider_id
+        item["provider_display_name"] = provider_name
 
 
 def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
@@ -1646,6 +1734,7 @@ def edit_workflow_pending(
     # 0406 T0022 작업 6: 길이 초과는 여기서 거절한다. 옛 저장 경로는 200 자 뒤를 말없이
     # 잘라 넣고 "저장됨"이라고 답했다 — 사용자가 M0019 에서 신고한 바로 그 손실이다.
     assert_sequence_notes_fit(new_items)
+    assert_sequence_item_providers(new_items)
 
     locked = [it for it in existing if it.get("result_doc_id") is not None]
     locked_count = len(locked)
@@ -1709,6 +1798,8 @@ def edit_workflow_pending(
                 note=_normalized_sequence_note(item.get("note"), strict=True),
                 source_doc_id=item.get("source_doc_id"),
                 source_revision_no=item.get("source_revision_no"),
+                provider_id=item.get("provider_id"),
+                provider_display_name=item.get("provider_display_name"),
             )
 
     # Sync documents.workflow_steps

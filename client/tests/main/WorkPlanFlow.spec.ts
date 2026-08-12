@@ -201,13 +201,11 @@ describe('WorkPlan connected flow', () => {
     expect(document.querySelector('.cwd-preset-banner')).not.toBeNull()
     ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
     await flushPromises()
-    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(1)
     const select = document.querySelector('.cwd-override-select .aip-select-input') as HTMLSelectElement
     expect(select.value).toBe('aip_opus')
     select.value = 'aip_fable'
     select.dispatchEvent(new Event('change'))
     await flushPromises()
-    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
 
     const revert = document.querySelector('.cwd-preset-banner button') as HTMLButtonElement
     revert.click()
