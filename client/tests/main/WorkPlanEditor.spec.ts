@@ -44,6 +44,12 @@ const EIGHT_COUNTABLE_TYPES = [
   { code: 'TSR', label: '테스트레포트', category: 'work', countable: false, sort_order: 10 },
 ]
 
+const REGISTERED_PROVIDERS = [
+  { id: 'aip_opus', name: 'Claude Opus', group_label: 'Claude · CLI' },
+  { id: 'aip_sonnet', name: 'Claude Sonnet', group_label: 'Claude · CLI' },
+  { id: 'aip_gemini', name: 'Gemini Pro', group_label: 'Gemini · API' },
+]
+
 const PLAN_BODY = {
   wp_version: 1,
   binding: 'advisory',
@@ -79,6 +85,7 @@ const READ_RESPONSE = {
   updated_by: 'sjm',
   updated_at: '2026-08-08T15:02:44+09:00',
   body: PLAN_BODY,
+  registered_providers: REGISTERED_PROVIDERS,
   provider_status: [],
   assignment_summary: [{ provider_id: 'aip_opus', display_name: 'Claude Opus', step_count: 1 }],
   unassigned_step_count: 2,
@@ -119,6 +126,9 @@ const APPLY_PREVIEW = {
 function routeGet() {
   getRequest.mockImplementation((url: string) => {
     if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+    if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+      data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+    })
     if (url.includes('/work-plan')) return Promise.resolve({ data: structuredClone(READ_RESPONSE) })
     return Promise.reject(new Error(`unexpected url: ${url}`))
   })
@@ -288,6 +298,56 @@ describe('WorkPlanEditor', () => {
     const wrapper = mountEditor()
     await flushPromises()
     expect(wrapper.text()).toContain('서버 자동조립')
+  })
+
+  it('offers every registered provider without widening candidates and saves an outside-candidate assignment', async () => {
+    const response = structuredClone(READ_RESPONSE)
+    response.body.provider_candidates = [
+      { provider_id: 'aip_opus', display_name: 'Claude Opus', group_label: 'Claude · CLI' },
+      { provider_id: 'aip_sonnet', display_name: 'Claude Sonnet', group_label: 'Claude · CLI' },
+    ]
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: response })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+    putRequest.mockResolvedValue({
+      data: {
+        revision_no: 4,
+        totals: response.totals,
+        assignment_summary: [],
+        unassigned_step_count: 1,
+      },
+    })
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const stepSelects = wrapper.findAll('.wp-step-row .aip-select-input')
+    const stepProviderOptions = stepSelects[0].findAll('option').map((option) => option.text())
+    expect(stepProviderOptions).toEqual([
+      '미지정', 'Claude Opus', 'Claude Sonnet', 'Gemini Pro',
+    ])
+    await stepSelects[1].setValue('aip_gemini')
+
+    const saveBtn = wrapper.findAll('button').find((button) => button.text().includes('저장') && !button.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const savedBody = putRequest.mock.calls[0][1].body
+    expect(savedBody.steps.find((step: any) => step.key === 'T#1').provider_id).toBe('aip_gemini')
+    expect(savedBody.steps.find((step: any) => step.key === 'T#1').provider_display_name).toBe('Gemini Pro')
+    expect(savedBody.provider_candidates).toEqual(response.body.provider_candidates)
+
+    // The AI scope's [all] domain is the same registered-all set, not the two candidates.
+    const aiButton = wrapper.findAll('.wp-toolbar button').find((button) => button.text().includes('AI 제안'))!
+    await aiButton.trigger('click')
+    const aiScopeText = wrapper.get('.wp-ai-scope').text()
+    expect(aiScopeText).toContain('Gemini Pro')
+    console.info(`WORK_PLAN_PROVIDER_DOM=${JSON.stringify({ stepProviderOptions, aiScopeText })}`)
   })
 
   it('saves the canonical body unchanged when nothing was edited (JSON round-trip preservation)', async () => {

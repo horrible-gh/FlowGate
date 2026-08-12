@@ -714,6 +714,70 @@ def test_human_create_rejects_assignment_outside_provider_candidates(seed):
     assert any(error["code"] == "provider_not_candidate" for error in resp.json()["errors"])
 
 
+def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown(seed):
+    """0411 T0004: manual assignment is candidate ∪ currently registered, never arbitrary."""
+    client = _client()
+    effective = {
+        "providers": [
+            {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli"},
+            {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli"},
+        ],
+    }
+    with (
+        patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0994-WP",
+        ),
+        patch(
+            "modules.flow_gate.settings.ai_settings_service.resolve_effective",
+            return_value=effective,
+        ),
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+        })
+        assert created.status_code == 201, created.text
+        doc_id = created.json()["doc_id"]
+
+        view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert view.status_code == 200, view.text
+        assert [provider["id"] for provider in view.json()["registered_providers"]] == [
+            "aip_opus", "aip_sonnet",
+        ]
+        body = view.json()["body"]
+        assert [item["provider_id"] for item in body["provider_candidates"]] == ["aip_opus"]
+
+        body["steps"][0]["provider_id"] = "aip_sonnet"
+        body["steps"][0]["provider_display_name"] = "Claude Sonnet"
+        saved = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 0, "body": body},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["revision_no"] == 1
+
+        saved_view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert saved_view.status_code == 200, saved_view.text
+        saved_body = saved_view.json()["body"]
+        assert saved_body["steps"][0]["provider_id"] == "aip_sonnet"
+        assert [item["provider_id"] for item in saved_body["provider_candidates"]] == [
+            "aip_opus",
+        ]
+
+        invalid_body = saved_body
+        invalid_body["steps"][0]["provider_id"] = "aip_never_registered"
+        invalid = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 1, "body": invalid_body},
+        )
+        assert invalid.status_code == 422, invalid.text
+        assert any(
+            error["code"] == "provider_not_candidate" for error in invalid.json()["errors"]
+        )
+
+
 def test_human_create_legacy_request_keeps_all_one_and_unassigned(seed):
     client = _client()
     with patch(

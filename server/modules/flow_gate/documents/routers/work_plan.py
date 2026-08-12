@@ -292,6 +292,19 @@ def _read_view(doc: dict, body: dict) -> dict:
         "updated_by": _last_editor(doc),
         "updated_at": doc.get("updated_at"),
         "body": body,
+        # 0411 T0004 (B0001 "각 프로바이더는 전체 프로바이더에서 바꿀수 있게"): 255행에서
+        # 이미 읽어 둔 등록 목록을 응답에 싣는다. 없으면 편집기는 계획에 얼어붙은 후보
+        # 스냅샷 말고는 고를 것을 알지 못하고, 후보 밖 공급자의 이름도 못 그린다.
+        # 계획 본문과 같은 시점에 읽힌 목록이라 화면에서 두 값이 어긋날 자리가 없다.
+        "registered_providers": [
+            {
+                "id": provider.get("id"),
+                "name": provider.get("name"),
+                "group_label": wp.provider_group_label(provider),
+            }
+            for provider in providers
+            if provider.get("id")
+        ],
         "provider_status": wp.provider_status(body, providers),
         "assignment_summary": wp.assignment_summary(body, providers),
         "unassigned_step_count": wp.unassigned_step_count(body),
@@ -340,6 +353,10 @@ def create_work_plan(
     # 고를 방법 자체가 없으므로 빈 후보를 받는다 — 그런 프로젝트에서만이다. 고를 수 있는데
     # 비워 보내면 지금까지대로 반려한다. 후보가 비어도 되는 것은 정본 규칙과도 어긋나지
     # 않는다 (work_plan_service: "후보가 비어 있으면 steps[].provider_id 를 비워 둡니다").
+    # 0411 T0004: 후보의 뜻이 "AI 에게 맡길 때 고를 수 있는 범위"로 좁아졌지만 이 판정은
+    # 그대로 둔다. 사람이 단계마다 고르는 것은 이제 등록 목록 전체에서 자유롭고, 여기서
+    # 묻는 것은 "AI 에게 맡길 범위를 하나도 안 골랐는가"다 — 고를 수 있는데 비워 보내면
+    # 그 계획은 AI 위임 창의 [전체]가 아무도 고르지 않는 계획이 된다.
     registered_providers = _providers(parent.get("project_id"))
     if not body.provider_candidates and registered_providers:
         errors.append(wp.empty_selection_error("provider_candidates"))
@@ -774,6 +791,10 @@ def suggest_work_plan(
         str(entry.get("provider_id")) for entry in (plan.get("provider_candidates") or [])
         if entry.get("provider_id")
     }
+    # 0411 T0004 (NR0003 §6 안 B-2): AI 범위 대화상자가 이제 등록된 공급자 전체를 보여
+    # 주므로, 이 게이트도 같은 집합으로 넓힌다. 좁은 채로 두면 화면의 [전체] 단추가 고른
+    # 값이 그대로 422 로 되돌아온다 — "전체인데 전체가 아닌 [전체]"가 남는다.
+    selectable_ids = candidate_ids | {str(provider_id) for provider_id in providers}
     steps = plan.get("steps") or []
     step_by_key = {str(step.get("key")): step for step in steps}
     counted_types = set(plan.get("counted_types") or [])
@@ -785,7 +806,7 @@ def suggest_work_plan(
             str(step.get("key")) for step in steps
             if not step.get("locked") and not step.get("provider_id")
         ]
-        provider_ids = set(candidate_ids)
+        provider_ids = set(selectable_ids)
     else:
         quantity_codes = list(scope.get("quantity_type_codes") or [])
         step_keys = list(scope.get("step_keys") or [])
@@ -793,7 +814,7 @@ def suggest_work_plan(
         invalid = (
             [code for code in quantity_codes if code not in counted_types]
             + [key for key in step_keys if key not in step_by_key or step_by_key[key].get("locked")]
-            + [provider_id for provider_id in provider_ids if provider_id not in candidate_ids]
+            + [provider_id for provider_id in provider_ids if provider_id not in selectable_ids]
         )
         if invalid:
             messages = {
