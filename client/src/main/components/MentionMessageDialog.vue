@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="modal-bg" @click.self="cancel">
+    <div v-if="visible" class="modal-bg">
       <div class="modal-box mm-box">
         <!-- Header -->
         <div class="modal-hd">

@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="modal-bg" @click.self="close">
+    <div v-if="visible" class="modal-bg">
       <div class="modal-box modal-cwarn">
         <div class="modal-hd">
           <span class="modal-title">

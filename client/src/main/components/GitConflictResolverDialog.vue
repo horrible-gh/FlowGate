@@ -6,7 +6,7 @@
        recommendation, common-block folding and font-size controls. The host
        component owns fetching, submission and abort; this dialog owns only
        view-state and in-place chunk choices on the shared file objects. -->
-  <div class="git-conflict-overlay" @click.self="emit('close')" @keydown="onResolverKeydown">
+  <div class="git-conflict-overlay" @keydown="onResolverKeydown">
     <div class="git-conflict-dialog" role="dialog" aria-modal="true">
       <div class="git-conflict-dialog-hd">
         <div>

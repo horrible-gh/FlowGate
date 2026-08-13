@@ -5,7 +5,6 @@
       class="modal-bg"
       tabindex="-1"
       @keydown.escape.prevent="onClose"
-      @click.self="onClose"
     >
       <div class="modal-box modal-rhd" role="dialog" aria-modal="true" aria-labelledby="rhd-title">
         <!-- Header -->

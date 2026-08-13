@@ -5,7 +5,7 @@
        off the guard opens this dialog; picking commit-then-merge or revert-then-
        merge clears the base and the caller retries the original finalize once. -->
   <teleport to="body">
-    <div v-if="open" class="modal-bg" @click.self="onBackdrop">
+    <div v-if="open" class="modal-bg">
       <div class="modal-box gbd-box">
         <div class="modal-hd">
           <span class="modal-title">
@@ -146,10 +146,6 @@ function cancel() {
   if (busy.value) return
   settle('cancel')
 }
-function onBackdrop() {
-  if (!busy.value) settle('cancel')
-}
-
 async function choose(mode: 'commit' | 'revert') {
   if (busy.value || !projectId) return
   if (mode === 'revert' && !files.value.length) return

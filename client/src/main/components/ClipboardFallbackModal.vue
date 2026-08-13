@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="state.visible" class="modal-bg" @click.self="close">
+    <div v-if="state.visible" class="modal-bg">
       <div class="modal-box cfb-box">
         <div class="modal-hd">
           <span class="modal-title">

@@ -6,7 +6,6 @@
       class="modal-bg"
       tabindex="-1"
       @keydown.escape.prevent="onClose"
-      @click.self="onClose"
     >
       <div
         class="modal-box modal-wpp"

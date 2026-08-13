@@ -5,7 +5,6 @@
       class="modal-bg"
       tabindex="-1"
       @keydown.escape.prevent="onClose"
-      @click.self="onClose"
     >
       <div class="modal-box modal-qhd" role="dialog" aria-modal="true" aria-labelledby="qhd-title">
         <!-- Header -->

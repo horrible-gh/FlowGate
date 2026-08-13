@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="modal-bg" @click.self="onBackdrop">
+    <div v-if="visible" class="modal-bg">
       <div class="modal-box modal-aiv">
         <!-- ── Header ── -->
         <div class="modal-hd">
@@ -389,10 +389,6 @@ async function start() {
   } finally {
     starting.value = false
   }
-}
-
-function onBackdrop() {
-  close()
 }
 
 function close() {
