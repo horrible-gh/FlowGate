@@ -1172,7 +1172,6 @@
       <div
         v-if="gitArchiveVisible"
         class="modal-bg git-archive-overlay"
-        @click.self="closeGitArchive"
       >
         <div class="modal-box modal-lg git-archive-modal" role="dialog" aria-modal="true">
           <div class="modal-hd">
@@ -1264,7 +1263,7 @@
       </div>
     </Teleport>
     <!-- Quick Open Dialog -->
-    <div v-if="showQuickOpen" class="modal-overlay" @click.self="showQuickOpen = false">
+    <div v-if="showQuickOpen" class="modal-overlay">
       <div class="modal" style="max-width:480px;">
         <div class="modal-hd">
           <span>{{ t('main.quick_open.placeholder') }}</span>

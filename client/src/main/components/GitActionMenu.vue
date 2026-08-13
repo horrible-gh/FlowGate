@@ -61,7 +61,7 @@
 
     <!-- "관제소" — the project Git status panel, reached from the safety-net menu. -->
     <teleport to="body">
-      <div v-if="panelOpen" class="modal-bg" @click.self="panelOpen = false">
+      <div v-if="panelOpen" class="modal-bg">
         <div class="modal-box git-panel-modal">
           <div class="modal-hd">
             <span class="modal-title">

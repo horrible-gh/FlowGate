@@ -6,7 +6,7 @@
        ways outcomes, so — same as base_dirty — the operator always chooses; the
        caller retries the original finalize once the blocked paths are gone. -->
   <teleport to="body">
-    <div v-if="open" class="modal-bg" @click.self="onBackdrop">
+    <div v-if="open" class="modal-bg">
       <div class="modal-box guc-box">
         <div class="modal-hd">
           <span class="modal-title">
@@ -131,10 +131,6 @@ function cancel() {
   if (busy.value) return
   settle('cancel')
 }
-function onBackdrop() {
-  if (!busy.value) settle('cancel')
-}
-
 async function choose(mode: 'commit' | 'remove') {
   if (busy.value || !projectId || !files.value.length) return
   busy.value = true

@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="modal-bg" @click.self="close">
+    <div v-if="visible" class="modal-bg">
       <div class="modal-box" style="width:620px;max-width:94vw;">
         <div class="modal-hd">
           <span class="modal-title gti-title">

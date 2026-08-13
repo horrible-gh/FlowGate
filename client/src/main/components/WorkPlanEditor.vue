@@ -241,7 +241,7 @@
     </div>
 
     <!-- Raw view overlay (read-only) — P0009 §3.4 / D0007 §6.5 -->
-    <div v-if="rawViewOpen" class="wp-raw-overlay" @click.self="rawViewOpen = false" @keydown.escape="rawViewOpen = false">
+    <div v-if="rawViewOpen" class="wp-raw-overlay" @keydown.escape="rawViewOpen = false">
       <div class="wp-raw-box">
         <div class="wp-raw-hd">
           <span>{{ t('main.work_plan.raw_view_title') }}</span>
