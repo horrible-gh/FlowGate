@@ -31,6 +31,11 @@
               <span class="doc-tag" :class="`c-${d.typeCode}`">{{ d.typeCode }}</span>
               <span class="gi-doc-id">{{ d.shortId }}</span>
               <span class="gi-doc-name">{{ d.title }}</span>
+              <span
+                class="gi-doc-ai"
+                :class="{ 'is-unknown': isAiUnknown(d) }"
+                :title="aiBadgeTitle(d)"
+              >{{ aiBadgeLabel(d) }}</span>
             </div>
           </div>
           <p v-else class="gi-empty">{{ t('main.group_actions.info_empty') }}</p>
@@ -58,6 +63,8 @@ export interface GroupInfoDoc {
   typeCode: string
   shortId: string
   title: string
+  originProviderName?: string | null
+  originAiRunId?: string | null
 }
 
 defineProps<{
@@ -76,6 +83,27 @@ const { t } = useI18n()
 
 function close() {
   emit('update:visible', false)
+}
+
+// origin_provider_name is a nullable snapshot taken at document-creation time (NR0003 /
+// WP0005) — it is never re-looked-up, so an empty/whitespace-only value is treated the
+// same as null: an incomplete row must not be guessed into a provider name.
+function isAiUnknown(d: GroupInfoDoc): boolean {
+  return !(d.originProviderName ?? '').trim()
+}
+
+function aiBadgeLabel(d: GroupInfoDoc): string {
+  const name = (d.originProviderName ?? '').trim()
+  return name
+    ? t('main.group_actions.info_doc_author_ai', { provider: name })
+    : t('main.group_actions.info_doc_author_unknown')
+}
+
+// The run id rides along in the accessible title even on an otherwise-unknown row
+// (provider name missing but run id present), instead of being dropped.
+function aiBadgeTitle(d: GroupInfoDoc): string | undefined {
+  const runId = (d.originAiRunId ?? '').trim()
+  return runId ? t('main.group_actions.info_doc_author_run_id', { runId }) : undefined
 }
 </script>
 
@@ -144,10 +172,31 @@ function close() {
 }
 .gi-doc-name {
   flex: 1;
+  min-width: 0;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.gi-doc-ai {
+  flex-shrink: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 700;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  background: var(--surface-h);
+}
+.gi-doc-ai.is-unknown {
+  border: 1px dashed var(--border-d);
+  color: var(--text-m);
+  background: transparent;
+  font-weight: 500;
 }
 .gi-empty {
   margin: 0;

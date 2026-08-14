@@ -113,7 +113,16 @@
       </div>
       <div class="doc-meta-item">
         <label>{{ t('main.doc_header.label_author') }}</label>
-        <span>{{ ownerName || doc.owner_id || '—' }}</span>
+        <!-- 0410 TR0009 rev2 — 이 칸은 등록 계정 이름만 보여 줘서, AI 가 쓴 문서도
+             사람 계정 이름 하나로만 보였다("작성자가 계속 test라고 나오는데?").
+             documents 에 저장된 작성 시점 스냅샷이 있으면 그 AI 를 작성자로 보여 준다.
+             스냅샷을 다시 조회하지 않으며, 없으면 예전처럼 계정 이름을 보여 준다. -->
+        <span
+          v-if="originProviderName"
+          class="doc-author-ai"
+          :title="authorAiTitle"
+        >{{ t('main.doc_header.author_ai', { provider: originProviderName }) }}</span>
+        <span v-else>{{ ownerName || doc.owner_id || '—' }}</span>
       </div>
       <div class="doc-meta-item">
         <label>{{ t('main.doc_header.label_group') }}</label>
@@ -278,6 +287,10 @@ interface DocDetail {
   type_code?: string | null
   created_at?: string | null
   owner_id?: string | null
+  // 081_document_origin_snapshot.sql — 문서를 만든 AI 공급자 이름과 그 실행 ID 의
+  // 생성 시점 스냅샷. 사람이 만든 문서와 기능 도입 이전 문서는 둘 다 null 이다.
+  origin_provider_name?: string | null
+  origin_ai_run_id?: string | null
   group_id?: string | null
   project_id?: string | null
   module?: string | null
@@ -422,6 +435,28 @@ const createdDate = computed(() => {
   const raw = doc.value?.created_at
   if (!raw) return null
   return raw.slice(0, 10)
+})
+
+// ── 작성자 = 이 문서를 만든 AI (0410 T0008 / TR0009 rev2) ───────────────
+// origin_provider_name 은 문서 생성 시점에 한 번 찍힌 스냅샷이다(081 마이그레이션).
+// 공백뿐인 값은 null 과 같게 다뤄 이름을 추측하지 않는다 — GroupInfoModal 배지와 같은 규칙.
+const originProviderName = computed(() => {
+  const name = (doc.value?.origin_provider_name ?? '').trim()
+  return name || null
+})
+
+// 실행 ID 와 등록 계정은 헤더 행 높이를 늘리지 않도록 접근 가능한 설명(title)에만 싣는다.
+// 계정 이름을 버리지 않는 것은 일부러다: 화면에서는 AI 가 작성자지만, 그 실행을
+// 발급받은 계정은 감사에 필요하다.
+const authorAiTitle = computed(() => {
+  const parts: string[] = []
+  const provider = originProviderName.value
+  if (provider) parts.push(t('main.doc_header.author_ai_title', { provider }))
+  const runId = (doc.value?.origin_ai_run_id ?? '').trim()
+  if (runId) parts.push(t('main.doc_header.author_ai_run', { runId }))
+  const account = ownerName.value || doc.value?.owner_id || ''
+  if (account) parts.push(t('main.doc_header.author_account', { account }))
+  return parts.join('\n')
 })
 
 const fileName = computed(() => {
@@ -898,7 +933,14 @@ async function loadGroupContext() {
       .map((n) => {
         const tc = n.type_code ?? ''
         const seq = (n.number ?? '').split('-')[0]
-        return { id: n.id, typeCode: tc, shortId: `${tc}${seq}`, title: _cleanTitle(n.label) }
+        return {
+          id: n.id,
+          typeCode: tc,
+          shortId: `${tc}${seq}`,
+          title: _cleanTitle(n.label),
+          originProviderName: n.origin_provider_name ?? null,
+          originAiRunId: n.origin_ai_run_id ?? null,
+        }
       })
   } catch {
     // Tree fetch failed — keep any name we already have so the menu actions still work.
@@ -1564,6 +1606,22 @@ const statusLabel = computed(() => {
 }
 .doc-header.collapsed .doc-mg {
   display: none;
+}
+/* 작성자 칸의 AI 알약 배지 (0410 TR0009 rev2). 긴 공급자 이름은 한 줄에서
+   말줄임하고 전체 이름은 title 로 확인한다 — 메타 행이 밀리거나 가로로 늘어나지 않게. */
+.doc-author-ai {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 8px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: var(--surface-h);
+  color: var(--primary);
+  font-weight: 700;
 }
 @media (prefers-reduced-motion: reduce) {
   .doc-hdr-caret {

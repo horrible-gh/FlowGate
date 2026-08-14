@@ -338,6 +338,8 @@ def list_documents(
                 "triggered_by": r.get("triggered_by"),
                 "created_at": r.get("created_at"),
                 "updated_at": r.get("updated_at"),
+                "origin_provider_name": r.get("origin_provider_name"),
+                "origin_ai_run_id": r.get("origin_ai_run_id"),
             }
             for r in rows
         ]
@@ -379,6 +381,8 @@ def list_documents(
             "triggered_by": r.get("triggered_by"),
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
+            "origin_provider_name": r.get("origin_provider_name"),
+            "origin_ai_run_id": r.get("origin_ai_run_id"),
         }
         for r in rows
     ]

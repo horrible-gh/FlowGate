@@ -90,6 +90,7 @@ def create(data: dict[str, Any]) -> dict:
         "target_id", "triggered_by", "superseded_by",
         "previous_tv", "previous_t", "previous_ds",
         "created_at", "meta", "updated_at", "commit_message",
+        "origin_provider_name", "origin_ai_run_id",
     ]
     fp = data.get("file_path")
     derived_filename = data.get("filename") or (os.path.basename(fp) if fp else None)
@@ -105,6 +106,7 @@ def create(data: dict[str, Any]) -> dict:
         data.get("previous_tv"), data.get("previous_t"), data.get("previous_ds"),
         data.get("created_at", now), data.get("meta"), data.get("updated_at", now),
         data.get("commit_message"),
+        data.get("origin_provider_name"), data.get("origin_ai_run_id"),
     ]
     placeholders = ", ".join(["?"] * len(cols))
     store._execute(
@@ -739,7 +741,8 @@ def get_docs_for_tree_by_group(group_id: str) -> list[dict]:
 # all of them for every document in the project on each tree load.
 TREE_DOC_COLUMNS = (
     "doc_id, project_id, group_id, module, type_code, title,"
-    " file_path, direction, doc_review_status"
+    " file_path, direction, doc_review_status,"
+    " origin_provider_name, origin_ai_run_id"
 )
 
 

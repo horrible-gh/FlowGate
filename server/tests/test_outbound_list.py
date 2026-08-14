@@ -179,6 +179,21 @@ def seed_data(tmp_db):
         "owner_id": "usr_test_001",
         "status": "open",
     })
+    # 0410 T0008: a second document with an AI-provider snapshot, alongside the
+    # legacy null R0001 above, so list responses can be asserted for both states.
+    db_docs.create({
+        "doc_id": "T0002",
+        "project_id": "testprj",
+        "type_code": "T",
+        "seq": 2,
+        "title": "AI-authored step",
+        "group_id": "testprj-__ALL__-0001",
+        "module": "__ALL__",
+        "owner_id": "usr_test_001",
+        "status": "open",
+        "origin_provider_name": "Claude Sonnet 5",
+        "origin_ai_run_id": "run_abc123",
+    })
     yield
 
 
@@ -343,6 +358,45 @@ def test_list_documents_bad_sort_400(seed_data, tmp_path):
     resp = client.get("/api/v1/list/groups/testprj-__ALL__-0001/documents?sort=invalid", headers={"Authorization": f"Bearer {raw}"})
 
     assert resp.status_code == 400
+
+
+def test_list_documents_offset_includes_origin_snapshot(seed_data, tmp_path):
+    """0410 T0008: offset branch carries origin_provider_name/origin_ai_run_id,
+    explicit null (not omitted) for the legacy R0001 row."""
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/list/groups/testprj-__ALL__-0001/documents",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    items = {item["doc_id"]: item for item in resp.json()["items"]}
+    assert items["T0002"]["origin_provider_name"] == "Claude Sonnet 5"
+    assert items["T0002"]["origin_ai_run_id"] == "run_abc123"
+    assert "origin_provider_name" in items["R0001"]
+    assert items["R0001"]["origin_provider_name"] is None
+    assert "origin_ai_run_id" in items["R0001"]
+    assert items["R0001"]["origin_ai_run_id"] is None
+
+
+def test_list_documents_before_includes_origin_snapshot(seed_data, tmp_path):
+    """0410 T0008: the before-cursor branch carries the same two keys as offset."""
+    client = _build_client()
+    raw = _issue_bearer(tmp_path)
+
+    resp = client.get(
+        "/api/v1/list/groups/testprj-__ALL__-0001/documents?before=T0002",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+
+    assert resp.status_code == 200
+    items = {item["doc_id"]: item for item in resp.json()["items"]}
+    assert items["T0002"]["origin_provider_name"] == "Claude Sonnet 5"
+    assert items["T0002"]["origin_ai_run_id"] == "run_abc123"
+    assert "origin_provider_name" in items["R0001"]
+    assert items["R0001"]["origin_provider_name"] is None
 
 
 def test_list_doc_types_success(seed_data, tmp_path):

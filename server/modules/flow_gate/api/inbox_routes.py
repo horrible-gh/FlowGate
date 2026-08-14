@@ -1661,6 +1661,42 @@ def _tr_scope_meta(result: dict) -> dict:
     }
 
 
+def _resolve_origin_provider_name(run_id: Optional[str]) -> Optional[str]:
+    """Snapshot the provider name for an AI run at document-creation time.
+
+    ``documents.origin_provider_name`` (081_document_origin_snapshot.sql) is a
+    point-in-time capture, not a live join to ``ai_providers`` — the same
+    freeze-at-finalize contract ``ai_invoke_runs.provider_name`` already uses
+    (076b), so a later provider rename/delete cannot change what a document
+    reports it was written by. A run this process still tracks answers from
+    memory (:func:`ai_invoke_service.get_run_record`); a run that finished in
+    an earlier process falls back to the persisted ``ai_invoke_runs`` row —
+    the same memory-then-DB order :func:`ai_invoke_service.get_run_detail`
+    uses. Never raises: an unresolved name must not fail document creation.
+    """
+    if not run_id:
+        return None
+    try:
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+
+        run = _ai_invoke.get_run_record(run_id)
+        if run is not None:
+            provider = run.get("provider") or {}
+            name = provider.get("name")
+            if name:
+                return name
+        from modules.flow_gate.db import ai_invoke_runs as _db_ai_invoke_runs
+
+        row = _db_ai_invoke_runs.get(run_id)
+        if row:
+            return row.get("provider_name")
+    except Exception:
+        import LogAssist.log as logger
+
+        logger.warning(f"[inbox] origin provider name lookup failed for run {run_id}")
+    return None
+
+
 def _prior_tr_declared(group_id: str, exclude_doc_id: Optional[str] = None) -> list[str]:
     """Return the union of paths already reported by earlier mutating-type docs in this group.
 
@@ -3081,6 +3117,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "origin_run_id": token_rec.get("ai_run_id"),
         }
     meta_value = json.dumps(meta_payload) if meta_payload else None
+    # NR0003/081: freeze who authored this document at creation time. token_rec.ai_run_id
+    # is only ever set on tokens issued to an AI run (0075) — an unmanned/manual token
+    # leaves it unset, so origin_ai_run_id/origin_provider_name stay null rather than
+    # guessing "human" or a provider (TS0010 TC-7).
+    _origin_run_id = token_rec.get("ai_run_id")
+    _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
     try:
         db_docs.create({
             "doc_id": canonical_doc_id,
@@ -3099,6 +3141,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "updated_at": now,
             "meta": meta_value,
             "commit_message": commit_message_draft,
+            "origin_provider_name": _origin_provider_name,
+            "origin_ai_run_id": _origin_run_id,
         })
         # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
         # worker attaches low-confidence points as queries on that document
