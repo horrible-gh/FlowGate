@@ -1007,6 +1007,11 @@ export default {
       intro: 'The main task of this window is creating the work-plan document. Choose how much to delegate in the two panes; the three buttons below carry that same scope — [Call AI] is the default.',
       section_types: 'Types to count',
       section_providers: 'Candidate providers',
+      // flowgate.default.0416 TR0005 — label for the box that picks the provider this run
+      // executes with. Distinct from section_providers (the step-assignment candidates).
+      provider_label: 'Execution provider',
+      // flowgate.default.0416 T0004 — label for the planner note shared by every step.
+      note_label: 'Delivery note',
       types_load_failed: 'Cannot choose types — the document type list could not be read.',
       providers_load_failed: 'Cannot choose providers — the provider list could not be read.',
       retry: 'Retry',
@@ -1025,6 +1030,7 @@ export default {
       block_types: 'No type to count has been chosen.',
       block_providers: 'No provider has been chosen.',
       block_ai_active: 'Another AI run is in progress for this group.',
+      block_note_too_long: 'The delivery note is over the character limit.',
       busy_create: 'Creating…',
       busy_copy: 'Issuing a token…',
       busy_ai: 'Issuing…',

@@ -37,6 +37,13 @@ SCOPE = {
     "provider_ids": ["aip_opus", "aip_sonnet"],
 }
 EMPTY_SCOPE = {"quantity_type_codes": [], "provider_ids": []}
+# 0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가 없는거지?"): 화면에 새로 생긴
+# 플래너 멘트 입력. 기존 SCOPE/EMPTY_SCOPE 는 note 없이 그대로 두어 그 두 상수를 쓰는
+# 기존 시험이 전부 회귀 없이 통과하게 한다.
+SCOPE_WITH_NOTE = {**SCOPE, "note": "기존 코드 스타일을 따르고 테스트를 함께 작성하십시오."}
+# flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에 새로
+# 생긴 실행 프로바이더 단일 선택. provider_ids(후보 다중선택)와는 별개 필드다.
+SCOPE_WITH_PROVIDER = {**SCOPE, "provider_id": "aip_opus"}
 
 SCOPE_HEADER = "## 작업계획 맡길 범위"
 INSTRUCTION_HEADER = "## Instruction to include next document header"
@@ -114,6 +121,179 @@ def test_scope_section_localises_without_a_steps_line(seed):
     assert "Laying the steps out is delegated to you" in en
     assert "任せる段階" not in ja
     assert "段階の割り当てはあなたに任せます" in ja
+
+
+def test_scope_section_includes_the_planner_note_when_present(seed):
+    """T0004 발견 1: 화면에서 입력한 멘트가 '전달 멘트' 라벨 줄로 그대로 실린다."""
+    from modules.flow_gate.services import mention_service
+
+    section = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ko")
+    assert "전달 멘트: 기존 코드 스타일을 따르고 테스트를 함께 작성하십시오." in section
+
+
+def test_scope_section_note_defaults_to_none_when_absent(seed):
+    """note 를 아예 보내지 않은 옛 화면·빈 문자열 둘 다 '(없음)'으로 적힌다."""
+    from modules.flow_gate.services import mention_service
+
+    without_key = mention_service._work_plan_scope_section(SCOPE, PROJECT, "ko")
+    assert "전달 멘트: (없음)" in without_key
+
+    blank = mention_service._work_plan_scope_section({**SCOPE, "note": "  "}, PROJECT, "ko")
+    assert "전달 멘트: (없음)" in blank
+
+
+def test_scope_section_note_label_localises(seed):
+    from modules.flow_gate.services import mention_service
+
+    en = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "en")
+    ja = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ja")
+    assert "Delivery note: 기존 코드 스타일을 따르고 테스트를 함께 작성하십시오." in en
+    assert "伝達メモ: 기존 코드 스타일을 따르고 테스트를 함께 작성하십시오." in ja
+    assert "Delivery note: (none)" in mention_service._work_plan_scope_section(
+        EMPTY_SCOPE, PROJECT, "en")
+    assert "伝達メモ: (なし)" in mention_service._work_plan_scope_section(
+        EMPTY_SCOPE, PROJECT, "ja")
+
+
+# flowgate.default.0416 TR0005 반려 대응 ("[실행 프로바이더] 이거 어디갔냐고"): 화면에 새로
+# 생긴 실행 프로바이더 단일 선택이 절에 별도 줄로 실린다. provider_ids(후보 다중선택)와는
+# 독립적인 값이다.
+
+def test_scope_section_includes_the_default_provider_when_present(seed):
+    from modules.flow_gate.services import mention_service
+
+    section = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "ko")
+    assert "실행 프로바이더: aip_opus · aip_opus" in section
+
+
+def test_scope_section_default_provider_defaults_to_none_when_absent(seed):
+    from modules.flow_gate.services import mention_service
+
+    without_key = mention_service._work_plan_scope_section(SCOPE, PROJECT, "ko")
+    assert "실행 프로바이더: (없음)" in without_key
+
+    blank = mention_service._work_plan_scope_section(
+        {**SCOPE, "provider_id": "  "}, PROJECT, "ko")
+    assert "실행 프로바이더: (없음)" in blank
+
+
+def test_scope_section_default_provider_label_localises(seed):
+    from modules.flow_gate.services import mention_service
+
+    en = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "en")
+    ja = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "ja")
+    assert "Execution provider: aip_opus · aip_opus" in en
+    assert "実行プロバイダー: aip_opus · aip_opus" in ja
+    assert "Execution provider: (none)" in mention_service._work_plan_scope_section(
+        EMPTY_SCOPE, PROJECT, "en")
+    assert "実行プロバイダー: (なし)" in mention_service._work_plan_scope_section(
+        EMPTY_SCOPE, PROJECT, "ja")
+
+
+def test_default_provider_uses_registered_display_name(seed, monkeypatch):
+    from modules.flow_gate.services import mention_service
+    from modules.flow_gate.settings import ai_settings_service
+
+    monkeypatch.setattr(
+        ai_settings_service, "resolve_effective",
+        lambda _project: {"providers": [{"id": "aip_opus", "name": "Claude Opus 5"}]},
+    )
+    section = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "ko")
+    assert "실행 프로바이더: aip_opus · Claude Opus 5" in section
+
+
+def test_default_provider_renders_even_without_candidate_providers(seed):
+    """실행 프로바이더는 후보 다중선택(provider_ids)과 독립적이다 — 후보가 비어도 실린다."""
+    from modules.flow_gate.services import mention_service
+
+    scope = {"quantity_type_codes": ["DS"], "provider_ids": [], "provider_id": "aip_opus"}
+    section = mention_service._work_plan_scope_section(scope, PROJECT, "ko")
+    assert "실행 프로바이더: aip_opus · aip_opus" in section
+    assert "후보 공급자: (없음)" in section
+
+
+# flowgate.default.0416 TR0005 rev2 (검토 반려 "지적한거 셀프 수정해라" — 발견 3·4):
+# rev1 의 절은 두 값을 "적어 주기만" 했다. 워커에게 그 값을 어디에 쓰라고 말하는 문장이
+# 없으면 (1) 전달 멘트가 AI 가 만든 작업계획의 defaults.note 에 남는다는 보장이 없고
+# (2) 후보 밖 실행 프로바이더가 실린 절은 tail 의 "후보에 없는 공급자를 적지 마십시오"와
+# 정면으로 부딪힌다. 아래 시험들이 그 두 문장을 절에 못 박는다.
+
+def test_scope_section_tells_the_worker_to_copy_the_note_into_defaults_note(seed):
+    from modules.flow_gate.services import mention_service
+
+    section = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ko")
+    assert "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오." in section
+    # 빈 값이어도 지시는 사라지지 않는다 — 그때 defaults.note 가 무엇인지까지 말한다.
+    empty = mention_service._work_plan_scope_section(EMPTY_SCOPE, PROJECT, "ko")
+    assert "(없음)이면 defaults.note 는 빈 문자열입니다." in empty
+
+
+def test_note_carry_instruction_localises(seed):
+    from modules.flow_gate.services import mention_service
+
+    en = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "en")
+    ja = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ja")
+    assert "Copy the Delivery note above into the work plan's defaults.note verbatim." in en
+    assert "「伝達メモ」を最終的な作業計画の defaults.note にそのまま書き写して" in ja
+
+
+def test_execution_provider_rule_resolves_the_candidate_contradiction(seed):
+    """실행 프로바이더는 후보 밖 값일 수 있다 — 그 절에서 어느 쪽을 따라야 하는지 말한다."""
+    from modules.flow_gate.services import mention_service
+
+    outside = {**SCOPE, "provider_id": "aip_outside"}
+    section = mention_service._work_plan_scope_section(outside, PROJECT, "ko")
+    # 세 문장이 한 절에 함께 실린다: 후보 밖 실행 프로바이더 / 후보 제한 / 그 둘의 관계.
+    assert "실행 프로바이더: aip_outside" in section
+    assert "후보에 없는 공급자를 steps[].provider_id 에 적지 마십시오." in section
+    assert "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 아닙니다" in section
+    assert "steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 있는 값만 적으십시오." in section
+
+
+def test_execution_provider_rule_is_absent_without_an_execution_provider(seed):
+    """고른 실행 프로바이더가 없으면 그 줄에 대한 설명도 싣지 않는다(멘트를 늘리지 않는다)."""
+    from modules.flow_gate.services import mention_service
+
+    section = mention_service._work_plan_scope_section(SCOPE, PROJECT, "ko")
+    assert "단계 배정 후보가 아닙니다" not in section
+    # 전달 멘트 지시는 실행 프로바이더 유무와 무관하게 언제나 실린다.
+    assert "defaults.note 에 그대로 옮겨 적으십시오." in section
+
+
+def test_execution_provider_rule_localises(seed):
+    from modules.flow_gate.services import mention_service
+
+    en = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "en")
+    ja = mention_service._work_plan_scope_section(SCOPE_WITH_PROVIDER, PROJECT, "ja")
+    assert "not a step-assignment candidate" in en
+    assert "段階割り当ての候補ではありません" in ja
+
+
+def test_template_rules_say_where_the_two_values_go(seed):
+    """T0004 완료 기준 2번이 워커에게 닿는 두 번째 통로 — WP 정본 서식의 규칙 목록.
+
+    rev1 에는 defaults.provider_id 규칙 자체가 없었고, defaults.note 규칙은 "모든 단계에
+    공통으로 붙일 한 줄"이라는 뜻풀이라 '전달 멘트를 옮겨 적으라'는 지시가 아니었다.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    ko = "\n".join(wp.TEMPLATE_RULES["ko"])
+    assert "'전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다" in ko
+    assert "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다" in ko
+    for locale in ("ko", "en", "ja"):
+        rules = "\n".join(wp.TEMPLATE_RULES[locale])
+        assert "defaults.provider_id" in rules
+        assert "defaults.note" in rules
+
+
+def test_the_template_pointer_delivers_those_rules_to_the_worker(seed):
+    """규칙은 멘트가 가리키는 design_template/WP 응답으로 실제 배달된다."""
+    from modules.flow_gate.services import help_catalog
+
+    payload = help_catalog.build_child("design_template", "WP", _wp_help_ctx())
+    rules = "\n".join(payload["content"]["rules"])
+    assert "defaults.provider_id" in rules
+    assert "'전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다" in rules
 
 
 def test_provider_lines_use_registered_display_names(seed, monkeypatch):
@@ -281,6 +461,58 @@ def test_create_accepts_zero_for_unselected_types(seed, storage_root):
     assert [step["key"] for step in body["steps"]] == ["DS#1", "T#1", "TR#1"]
 
 
+def test_create_passes_the_planner_note_through_to_defaults(seed, storage_root):
+    """T0004 완료 기준: 화면에서 입력한 멘트가 defaults.note 로 그대로 저장된다."""
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers",
+        return_value=[{"id": "aip_opus", "name": "Claude Opus", "kind": "claude",
+                       "exec_type": "cli", "enabled": True}],
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0407-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0416 플래너 멘트가 실린 작업계획",
+            "counted_types": ["DS", "T"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"DS": 1, "T": 1},
+            "defaults": {"provider_id": None, "note": "기존 코드 스타일을 따를 것"},
+            "type_providers": {},
+        })
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["body"]["defaults"]["note"] == "기존 코드 스타일을 따를 것"
+
+
+def test_create_still_accepts_an_empty_planner_note(seed, storage_root):
+    """빈 멘트도 계속 허용된다 — T0004 는 입력을 요구하지 않는다."""
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers",
+        return_value=[{"id": "aip_opus", "name": "Claude Opus", "kind": "claude",
+                       "exec_type": "cli", "enabled": True}],
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0408-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0416 빈 멘트",
+            "counted_types": ["DS"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"DS": 1},
+            "defaults": {"provider_id": None, "note": ""},
+            "type_providers": {},
+        })
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["body"]["defaults"]["note"] == ""
+
+
 def test_create_still_rejects_a_negative_quantity(seed, storage_root):
     from unittest.mock import patch as mock_patch
 
@@ -401,6 +633,105 @@ def test_the_submit_pointer_states_the_work_plan_body_format(seed):
     assert payload["content_format"]["template_url"].endswith("/help/items/design_template/WP")
 
 
+def test_issued_wp_mention_carries_the_planner_note(seed, storage_root):
+    """T0004 — 화면에서 입력한 멘트가 실제로 발급되는 멘트 전문에 실린다.
+
+    공유 issued_wp_mention 픽스처는 note 없는 SCOPE 로 모듈 범위에 고정돼 있으므로(다른
+    시험들이 그 값에 기대고 있다), 여기서는 SCOPE_WITH_NOTE 로 별도 advance 를 호출한다.
+    """
+    from modules.flow_gate.api.v1 import workflow_decision_routes as wdr
+    from modules.flow_gate.db.connection import FlowGateStore, get_store
+    from modules.flow_gate.services import workflow_decision_service as wds
+
+    store = get_store()
+    store._sql = FlowGateStore._sql.__get__(store, type(store))
+
+    try:
+        wds.decide_workflow(
+            doc_id=ROOT_DOC, doc_class="R",
+            sequence=[{"id": 1, "type": "WP", "label": "작업계획"}],
+        )
+    except ValueError as exc:
+        # 모듈 안의 다른 시험이 issued_wp_mention 픽스처를 먼저 태워 같은 ROOT_DOC 의
+        # 시퀀스를 이미 결정해 두었을 수 있다 — 이 시험은 그 결정을 그대로 재사용한다.
+        if "already_decided" not in str(exc):
+            raise
+
+    original_verify = wdr.verify_bearer
+    # issued_wp_mention 픽스처와 같은 usr_wp_001 을 쓴다 — seed 가 실제로 만들어 둔
+    # 사용자라 토큰 발급의 외래키 제약을 통과한다.
+    wdr.verify_bearer = lambda _r: {"issued_to": "usr_wp_001"}
+    try:
+        resp = wdr.post_workflow_advance_rpc(
+            wdr.AdvanceBodyRequest(
+                doc_id=ROOT_DOC,
+                ref_doc_ids=[ROOT_DOC],
+                work_plan_scope={**SCOPE_WITH_NOTE, "provider_id": "aip_opus"},
+            ),
+            _FakeRequest(),
+        )
+    finally:
+        wdr.verify_bearer = original_verify
+    assert resp.status_code == 201, resp.body
+    mention = json.loads(resp.body)["mention"]
+    assert "전달 멘트: 기존 코드 스타일을 따르고 테스트를 함께 작성하십시오." in mention
+    # flowgate.default.0416 TR0005 rev2 (발견 3·4): 값과 함께 그 값을 어디에 쓰라는 지시도
+    # 실제 발급물에 실린다 — 단위 시험만으로는 절이 멘트에 끼워지는 자리를 확인하지 못한다.
+    assert "실행 프로바이더: aip_opus" in mention
+    assert "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오." in mention
+    assert "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 아닙니다" in mention
+
+
+def test_create_leaves_every_step_unassigned_when_defaults_provider_is_null(seed):
+    """flowgate.default.0416 TR0005 rev2 (검토 발견 2): defaults.provider_id 는 만들어지는
+    모든 단계의 provider_id 로 그대로 번진다. 화면이 실행 프로바이더를 여기에 실으면 사람이
+    고르지 않은 배정이 조용히 일어나고, "배정하지 않음"을 고를 수단도 없어진다 — T0004
+    작업 3 은 단계/기본 공급자 배정을 생성 후 WorkPlanEditor.vue 의 책임으로 남겼다.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    candidates = wp.snapshot_candidates(
+        ["aip_opus"],
+        [{"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli"}],
+    )
+    body = wp.initial_body(
+        ["DS", "T"], candidates, PROJECT,
+        quantities={"DS": 1, "T": 1},
+        defaults={"provider_id": None, "note": "한 줄 지시"},
+        type_providers={},
+    )
+    assert body["defaults"] == {"provider_id": None, "note": "한 줄 지시"}
+    assert [step["key"] for step in body["steps"]] == ["DS#1", "T#1", "TR#1"]
+    assert {step["provider_id"] for step in body["steps"]} == {None}
+
+    # 대조군: 같은 호출에 실행 프로바이더를 실으면 세 단계가 전부 그 값으로 배정된다.
+    assigned = wp.initial_body(
+        ["DS", "T"], candidates, PROJECT,
+        quantities={"DS": 1, "T": 1},
+        defaults={"provider_id": "aip_opus", "note": "한 줄 지시"},
+        type_providers={},
+    )
+    assert {step["provider_id"] for step in assigned["steps"]} == {"aip_opus"}
+
+
+def test_ai_authored_wp_body_preserves_defaults_note(seed):
+    """T0004 — AI 가 작성해 인박스로 등록하는 WP 본문도 같은 validate() 를 타므로
+    defaults.note 가 검증 과정에서 사라지지 않는다(inbox_routes._handle_new 와 동일한 호출).
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    plan = wp.initial_body(
+        ["DS", "T"],
+        [{"provider_id": "aip_opus", "display_name": "Claude Opus"}],
+        PROJECT,
+        quantities={"DS": 1, "T": 1},
+        defaults={"provider_id": None, "note": "AI 가 받은 멘트를 그대로 담아야 한다"},
+        type_providers={},
+    )
+    validated = wp.validate(plan, project_id=PROJECT, action="create")
+    assert validated["defaults"]["note"] == "AI 가 받은 멘트를 그대로 담아야 한다"
+
+
 def test_issued_token_is_a_new_scope_token(issued_wp_mention):
     assert issued_wp_mention["action_scope"] == "new"
     assert issued_wp_mention["token"]

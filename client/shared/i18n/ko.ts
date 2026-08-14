@@ -1007,6 +1007,12 @@ export default {
       intro: '이 창의 메인 작업은 작업계획 문서를 만드는 일입니다. 어디까지 맡길지 두 칸에서 고르면, 아래 세 버튼이 같은 범위를 그대로 나릅니다 — 기본은 [AI 호출]입니다.',
       section_types: '장수를 셀 타입',
       section_providers: '후보 공급자',
+      // flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고") — 이번
+      // 실행에 쓸 프로바이더를 고르는 박스의 라벨. 후보 다중선택(section_providers)과는
+      // 다른 값이다.
+      provider_label: '실행 프로바이더',
+      // flowgate.default.0416 T0004 — 모든 단계에 공통으로 붙는 플래너 멘트 입력의 라벨.
+      note_label: '전달 멘트',
       types_load_failed: '장수를 고를 수 없습니다 — 문서 타입 목록을 읽지 못했습니다.',
       providers_load_failed: '공급자를 고를 수 없습니다 — 공급자 목록을 읽지 못했습니다.',
       retry: '다시 시도',
@@ -1025,6 +1031,7 @@ export default {
       block_types: '장수를 하나도 고르지 않았습니다.',
       block_providers: '공급자를 하나도 고르지 않았습니다.',
       block_ai_active: '이 그룹에서 다른 AI 실행이 돌고 있습니다.',
+      block_note_too_long: '전달 멘트가 글자 수 제한을 초과했습니다.',
       busy_create: '만드는 중입니다…',
       busy_copy: '토큰을 발급하는 중입니다…',
       busy_ai: '발급하는 중입니다…',

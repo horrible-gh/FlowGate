@@ -725,7 +725,18 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "header": "작업계획 맡길 범위",
         "lead": "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오.",
         "quantities": "장수를 셀 타입",
+        # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
+        # 프로바이더 — 후보 다중선택(providers)과는 다른 값이다. rev2 (검토 발견 2): 이 값은
+        # 작업계획의 defaults.provider_id 로 옮기는 값이 아니다. 그렇게 하면 만들어지는 모든
+        # 단계가 사람 몰래 그 공급자로 배정된다 — 단계 배정은 생성 후 편집기의 몫이다.
+        # 이 줄은 "지금 이 멘트를 실행 중인 공급자"를 워커에게 알려 줄 뿐이고, 그 사실은
+        # 아래 default_provider_rule 이 워커에게 직접 말한다.
+        "default_provider": "실행 프로바이더",
         "providers": "후보 공급자",
+        # 0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가 없는거지?"): 화면에서
+        # 입력한 플래너 멘트를 별도 라벨 줄로 적는다. 이 값은 작업계획의 defaults.note 로
+        # 그대로 보존되어야 하는 것과 같은 값이다(work_plan_service.py 의 정본 규칙).
+        "note": "전달 멘트",
         "none": "(없음)",
         "tail": (
             "고른 타입의 수량은 각각 1입니다. 후보에 없는 공급자를 steps[].provider_id 에 "
@@ -737,12 +748,34 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
+        # 0416 TR0005 rev2 (검토 발견 4): 실행 프로바이더는 후보 다중선택과 독립된 값이라
+        # 후보 밖 공급자가 올 수 있다. 그 값이 실린 절에 tail 의 "후보에 없는 공급자를
+        # steps[].provider_id 에 적지 마십시오"만 함께 있으면, 워커는 서로 부딪히는 두 지시를
+        # 한 절에서 읽고 어느 쪽을 따라야 하는지 알 수 없다. 두 값이 각각 무엇을 위한 것인지
+        # 한 줄로 못 박아 그 모순을 없앤다.
+        "default_provider_rule": (
+            "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 "
+            "아닙니다 — steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 "
+            "있는 값만 적으십시오."
+        ),
+        # 0416 TR0005 rev2 (검토 발견 3): 값을 적어 주기만 하고 그것을 어디에 보존하라는
+        # 지시가 없으면, AI 제안 경로에서 전달 멘트가 최종 작업계획에 남는다는 보장이 없다.
+        # T0004 완료 기준 2번("AI 가 제안해 생성한 작업계획도 defaults.note 에 입력값을
+        # 보존")이 워커에게 실제로 전달되는 문장은 이 한 줄뿐이다.
+        "note_rule": (
+            "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오. "
+            "(없음)이면 defaults.note 는 빈 문자열입니다."
+        ),
     },
     "en": {
         "header": "Work plan scope to delegate",
         "lead": "A person chose the scope below on screen. Write the work plan to this scope.",
         "quantities": "Types to count",
+        # flowgate.default.0416 TR0005 — the provider the person picked for this run,
+        # distinct from the candidate multi-select (providers).
+        "default_provider": "Execution provider",
         "providers": "Candidate providers",
+        "note": "Delivery note",
         "none": "(none)",
         "tail": (
             "Every chosen type has a quantity of 1. Do not write a provider outside these "
@@ -756,12 +789,25 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
         ),
+        "default_provider_rule": (
+            "The Execution provider is the provider running this mention right now, not a "
+            "step-assignment candidate — write only values listed under Candidate providers "
+            "into steps[].provider_id and defaults.provider_id."
+        ),
+        "note_rule": (
+            "Copy the Delivery note above into the work plan's defaults.note verbatim. "
+            "When it reads (none), defaults.note is an empty string."
+        ),
     },
     "ja": {
         "header": "作業計画を任せる範囲",
         "lead": "以下の範囲は人が画面で選んだものです。この範囲どおりに作業計画を作成してください。",
         "quantities": "枚数を数えるタイプ",
+        # flowgate.default.0416 TR0005 — 画面で選んだ今回実行のプロバイダー。候補複数選択
+        # (providers)とは別の値。
+        "default_provider": "実行プロバイダー",
         "providers": "候補プロバイダー",
+        "note": "伝達メモ",
         "none": "(なし)",
         "tail": (
             "選んだタイプの数量はそれぞれ 1 です。候補にないプロバイダーを "
@@ -772,6 +818,15 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "選んだタイプの数量はそれぞれ 1 です。このプロジェクトには登録済みの AI "
             "プロバイダーがないため、steps[].provider_id は空欄にしてください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
+        ),
+        "default_provider_rule": (
+            "「実行プロバイダー」はこのメモを受け取って今実行しているプロバイダーであり、"
+            "段階割り当ての候補ではありません — steps[].provider_id と defaults.provider_id "
+            "には上の「候補プロバイダー」にある値だけを書いてください。"
+        ),
+        "note_rule": (
+            "上の「伝達メモ」を最終的な作業計画の defaults.note にそのまま書き写して"
+            "ください。(なし)の場合、defaults.note は空文字列です。"
         ),
     },
 }
@@ -811,6 +866,9 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
 
     type_codes = [code.upper() for code in _work_plan_scope_lines(scope.get("quantity_type_codes"))]
     provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
+    # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
+    # 프로바이더. provider_ids(후보 다중선택)와는 다른 값이라 별도 줄로 적는다.
+    default_provider_id = str(scope.get("provider_id") or "").strip()
 
     quantity_text = " / ".join(
         f"{code} {get_type_name(code, loc) or code}" for code in type_codes
@@ -821,17 +879,35 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
             return f"{caption}: {copy['none']}"
         return caption + ":\n" + "\n".join(f"- {item}" for item in items)
 
-    names = _work_plan_provider_names(project_id) if provider_ids else {}
+    names = _work_plan_provider_names(project_id) if (provider_ids or default_provider_id) else {}
+    default_provider_text = (
+        f"{default_provider_id} · {names.get(default_provider_id, default_provider_id)}"
+        if default_provider_id else copy["none"]
+    )
     # 0405 T0011 rev2: 후보가 비어 있을 때 "후보에 없는 공급자를 적지 마십시오"는 워커에게
     # 아무것도 말해 주지 않는다. 그 자리에 "공급자가 없으니 비워 두라"를 대신 적는다.
     tail = copy["tail"] if provider_ids else copy["tail_no_providers"]
+    # 0416 T0004 -- 화면에서 입력한 플래너 멘트. 빈 값도 절이 사라지지 않는 것과 같은 이유로
+    # (없음)을 적는다. 이 값은 작업계획의 defaults.note 로 그대로 보존되어야 한다 — 그
+    # 지시는 아래 note_rule 로 워커에게 실제로 전달된다(주석은 워커가 읽지 못한다).
+    note_text = str(scope.get("note") or "").strip()
+    # 0416 TR0005 rev2 (검토 발견 3·4): 값을 적어 주는 것만으로는 워커에게 아무 지시도 되지
+    # 않는다. 실행 프로바이더가 실린 절에는 그 값이 단계 배정용이 아니라는 사실을, 모든 절에는
+    # 전달 멘트를 defaults.note 로 옮겨 적으라는 지시를 tail 뒤에 함께 싣는다.
+    rules = []
+    if default_provider_id:
+        rules.append(copy["default_provider_rule"])
+    rules.append(copy["note_rule"])
     body = "\n".join([
         copy["lead"],
         "",
         f"{copy['quantities']}: {quantity_text}",
+        f"{copy['default_provider']}: {default_provider_text}",
         _block(copy["providers"], [f"{pid} · {names.get(pid, pid)}" for pid in provider_ids]),
+        f"{copy['note']}: {note_text or copy['none']}",
         "",
         tail,
+        *rules,
     ])
     return _section(copy["header"], body)
 
