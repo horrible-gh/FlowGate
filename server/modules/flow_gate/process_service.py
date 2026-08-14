@@ -5500,6 +5500,8 @@ def get_group_tree(project_id: str) -> dict:
             "label": f"[{doc_type_label}]: {title}",
             "has_md": bool(memo_file),
             "md_path": _md_path,
+            "origin_provider_name": doc.get("origin_provider_name"),
+            "origin_ai_run_id": doc.get("origin_ai_run_id"),
         }
 
     nodes.append({

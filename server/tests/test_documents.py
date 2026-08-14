@@ -174,6 +174,52 @@ class TestDocumentCRUD:
         assert doc["doc_id"] == "DOCTEST-T-0001"
         assert doc["status"] == "draft"
 
+    def test_create_document_persists_origin_snapshot(self, seed_project_user):
+        """0410 T0008: the two nullable AI-origin snapshot fields survive
+        create() -> get() without being silently dropped by the cols whitelist
+        (the exact failure mode NR0003/WP0005 flagged for db/documents.py:create)."""
+        from modules.flow_gate.documents import document_service
+
+        doc = document_service.create_document(
+            {
+                "doc_id": "DOCTEST-T-ORIGIN",
+                "project_id": "DOCTEST",
+                "type_code": "T",
+                "seq": 2,
+                "title": "AI-authored work order",
+                "origin_provider_name": "Claude Sonnet 5",
+                "origin_ai_run_id": "run_xyz789",
+            },
+            actor_user_id="usr_doc_001",
+        )
+        assert doc["origin_provider_name"] == "Claude Sonnet 5"
+        assert doc["origin_ai_run_id"] == "run_xyz789"
+
+        fetched = document_service.get_document("DOCTEST-T-ORIGIN")
+        assert fetched["origin_provider_name"] == "Claude Sonnet 5"
+        assert fetched["origin_ai_run_id"] == "run_xyz789"
+
+    def test_create_document_without_origin_snapshot_is_explicit_none(self, seed_project_user):
+        """A document created without the two fields reads back with the keys
+        present and set to None — the legacy row the group list renders as 미상."""
+        from modules.flow_gate.documents import document_service
+
+        document_service.create_document(
+            {
+                "doc_id": "DOCTEST-T-LEGACY",
+                "project_id": "DOCTEST",
+                "type_code": "T",
+                "seq": 3,
+                "title": "Legacy work order",
+            },
+            actor_user_id="usr_doc_001",
+        )
+        doc = document_service.get_document("DOCTEST-T-LEGACY")
+        assert "origin_provider_name" in doc
+        assert doc["origin_provider_name"] is None
+        assert "origin_ai_run_id" in doc
+        assert doc["origin_ai_run_id"] is None
+
     def test_get_document(self, seed_project_user):
         from modules.flow_gate.documents import document_service
 

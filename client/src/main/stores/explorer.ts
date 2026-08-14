@@ -144,6 +144,8 @@ export interface GroupNode {
   md_path: string | null
   is_final_approved?: boolean
   is_discarded?: boolean
+  origin_provider_name?: string | null
+  origin_ai_run_id?: string | null
 }
 
 const isMockMode = (): boolean => {
