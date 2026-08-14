@@ -1007,6 +1007,11 @@ export default {
       intro: 'この画面のメイン作業は作業計画文書を作ることです。どこまで任せるかを二つの欄で選ぶと、下の三つのボタンが同じ範囲をそのまま運びます — 既定は [AI 呼び出し] です。',
       section_types: '枚数を数えるタイプ',
       section_providers: '候補プロバイダー',
+      // flowgate.default.0416 TR0005 — 今回の実行に使うプロバイダーを選ぶ箱のラベル。
+      // 候補複数選択(section_providers)とは別の値。
+      provider_label: '実行プロバイダー',
+      // flowgate.default.0416 T0004 — 全ての段階に共通で付くプランナーメモ入力のラベル。
+      note_label: '伝達メモ',
       types_load_failed: '枚数を選べません — 文書タイプ一覧を読み込めませんでした。',
       providers_load_failed: 'プロバイダーを選べません — プロバイダー一覧を読み込めませんでした。',
       retry: '再試行',
@@ -1025,6 +1030,7 @@ export default {
       block_types: '枚数を一つも選んでいません。',
       block_providers: 'プロバイダーを一つも選んでいません。',
       block_ai_active: 'このグループで別の AI 実行が動いています。',
+      block_note_too_long: '伝達メモが文字数の上限を超えています。',
       busy_create: '作成中です…',
       busy_copy: 'トークンを発行中です…',
       busy_ai: '発行中です…',

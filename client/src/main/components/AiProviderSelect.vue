@@ -10,7 +10,7 @@
         class="aip-select-input"
         :value="modelValue"
         :aria-label="t('main.ai_provider.run_label')"
-        :disabled="loading || providers.length === 0"
+        :disabled="loading || disabled || providers.length === 0"
         @change="onChange"
       >
         <option v-if="loading" value="">{{ t('main.ai_provider.loading') }}</option>
@@ -39,6 +39,11 @@ const props = withDefaults(
     providers?: ProviderOption[]
     modelValue?: string
     loading?: boolean
+    /** flowgate.default.0416 TR0005 rev2 — lock the picker while the owner is running a
+     *  request, the same way its sibling inputs use :disabled. Without this a caller can
+     *  only ignore the change event, which leaves the DOM showing a value the payload
+     *  never used. */
+    disabled?: boolean
     errored?: boolean
     hideLabel?: boolean
     hideIcon?: boolean
@@ -48,6 +53,7 @@ const props = withDefaults(
     providers: () => [],
     modelValue: '',
     loading: false,
+    disabled: false,
     errored: false,
     hideLabel: false,
     hideIcon: false,

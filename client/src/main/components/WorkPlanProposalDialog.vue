@@ -127,6 +127,65 @@
             </section>
           </div>
 
+          <!-- flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고" /
+               "\"전달멘트\" 랑 박스 높낮이는 하나도 안맞고"): 이번 실행에 쓸 프로바이더를 고르는
+               박스. rev2 에서 계약을 다른 다이얼로그와 글자 그대로 같게 맞췄다 — 이 창은 값을
+               따로 들고 있지 않고 AiInvokeDialog.vue:41,44 / AppHeader.vue:170 /
+               ContinuousWarningDialog.vue:150 / WorkflowDecisionModal.vue:430 처럼
+               aiProviderStore.selectedProviderId 를 읽고 aiProviderStore.selectProvider 로
+               되쓴다. rev1 은 로컬 ref 를 providersLoaded[0] 으로 채웠던 탓에, 프로젝트 기본
+               공급자나 헤더에서 고른 값이 A 인데 이 창만 B 를 보여 주고 B 로 실행할 수 있었고,
+               창을 닫으면 고른 값도 사라졌다. 후보 다중선택(② 칸)과는 여전히 다른 값이다.
+               플래너 멘트와 한 행에 나란히 두고 두 입력의 높이를 맞춰서
+               (.wpp-provider-select/.wpp-note-input 모두 30px) 나란한 두 박스가 서로 다른
+               높이로 어긋나 보이지 않게 한다. 실행 중에는 옆 입력과 똑같이 :disabled 로
+               잠근다 — 이벤트만 무시하면 화면의 값과 실제로 쓰는 값이 갈라진다. -->
+          <div class="wpp-note-row">
+            <span v-if="!noProviders" class="wpp-field-block wpp-provider-block">
+              <span class="wpp-note-label">{{ t('main.work_plan_proposal_dialog.provider_label') }}</span>
+              <AiProviderSelect
+                class="wpp-provider-select"
+                :providers="providersLoaded"
+                :model-value="aiProviderStore.selectedProviderId"
+                :errored="!!aiProviderStore.error"
+                :disabled="creating || !!busyAction"
+                hide-label
+                hide-icon
+                data-test="wpp-default-provider"
+                @update:model-value="aiProviderStore.selectProvider"
+              />
+            </span>
+            <!-- flowgate.default.0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가
+                 없는거지?"): 작업계획 전체 단계에 공통으로 붙는 플래너 멘트. WorkPlanEditor.vue
+                 의 plan.defaults.note 입력과 같은 계약(placeholder·글자 수 표시·초과 상태)을
+                 재사용한다. 문서생성·멘트복사·AI호출 세 경로가 이 값을 scope.note 로 그대로
+                 나른다. -->
+            <span class="wpp-field-block wpp-note-block">
+              <span class="wpp-note-label">{{ t('main.work_plan_proposal_dialog.note_label') }}</span>
+              <span class="wpp-note-field">
+                <input
+                  :value="note"
+                  type="text"
+                  class="wpp-note-input"
+                  :class="{ 'is-over-limit': noteOverLimit }"
+                  :placeholder="t('main.work_plan.defaults_note_placeholder')"
+                  :disabled="creating || !!busyAction"
+                  data-test="wpp-note"
+                  @input="(e) => { note = (e.target as HTMLInputElement).value }"
+                />
+                <small
+                  class="wpp-note-count"
+                  :class="{ 'is-over-limit': noteOverLimit }"
+                  data-test="wpp-note-count"
+                >
+                  {{ noteOverLimit
+                    ? t('main.work_plan.note_char_over', { current: note.length, max: noteMaxChars })
+                    : t('main.work_plan.note_char_count', { current: note.length, max: noteMaxChars }) }}
+                </small>
+              </span>
+            </span>
+          </div>
+
           <!-- P0004 [비활성 사유]: this line always occupies its slot — a reason when there is
                one, the chosen summary otherwise. Never changes the button row's height. -->
           <div class="wpp-notice" :class="{ warn: !!blockReason }" data-test="wpp-notice">
@@ -226,17 +285,26 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import AiProviderSelect from './AiProviderSelect.vue'
 import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
 
 /** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
  *  step_keys 를 뺐다(사람이 단계를 고르는 칸이 없어졌다). rev2 에서 provider_ids 는
- *  등록된 공급자가 없는 프로젝트에서 빈 배열로 나간다. */
+ *  등록된 공급자가 없는 프로젝트에서 빈 배열로 나간다. 0416 T0004 에서 note 를 더했다
+ *  — 모든 단계에 공통으로 붙는 플래너 멘트, 문서생성·멘트복사·AI호출 세 갈래 모두 같은 값. */
 export interface WorkPlanScope {
   quantity_type_codes: string[]
   provider_ids: string[]
+  /** flowgate.default.0416 T0004 — the one-line planner note common to every step. */
+  note: string
+  /** flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고") — the provider
+   *  this run actually executes with, i.e. the app-wide selection every other dialog
+   *  shows (aiProviderStore.selectedProviderId). Distinct from provider_ids, which are
+   *  the step-assignment candidates. Empty string when the project has no provider. */
+  provider_id: string
 }
 
 const props = withDefaults(defineProps<{
@@ -272,6 +340,18 @@ const selectedTypes = ref<Set<string>>(new Set())
 const selectedProviders = ref<Set<string>>(new Set())
 const creating = ref(false)
 const createError = ref('')
+/** flowgate.default.0416 T0004 — shared with WorkPlanEditor.vue's plan.defaults.note. */
+const note = ref('')
+/** 0406 T0022 계약: 한 줄 멘트의 상한은 서버가 정본이다. WorkPlanEditor.vue:541 과
+ *  WorkflowDecisionModal.vue:1132 가 이미 서버가 준 값을 읽고 있고, 이 창만 1000 을 베껴
+ *  들고 있으면 서버 상수가 바뀌는 순간 여기만 조용히 어긋난다(초과 입력을 통과시켜 422 를
+ *  맞거나, 통과할 입력을 막는다). 답이 오기 전과 못 읽은 경우의 값만 상수로 남긴다. */
+const noteMaxChars = ref(1000)
+/** flowgate.default.0416 TR0005 rev2 — 이 창은 실행 프로바이더 값을 따로 들고 있지 않는다.
+ *  앱 공통 선택(사용자가 저장한 선택 → 서버의 default_provider_id → 목록 첫 값 순으로
+ *  aiProviderStore 가 정한다)이 정본이고, 헤더·AI 호출 창·연속 작업 창이 모두 같은 값을
+ *  본다. rev1 의 로컬 ref 는 이 창에서만 다른 공급자를 보이게 하는 원인이었다. */
+const defaultProviderId = computed(() => aiProviderStore.selectedProviderId)
 
 const countableTypes = computed<DocTypeItem[]>(() => docTypeStore.countableTypes)
 const providersLoaded = computed(() => aiProviderStore.providers)
@@ -290,11 +370,18 @@ const scope = computed<WorkPlanScope>(() => ({
     .filter((item) => selectedTypes.value.has(item.code)).map((item) => item.code),
   provider_ids: providersLoaded.value
     .filter((p) => selectedProviders.value.has(p.id)).map((p) => p.id),
+  note: note.value,
+  provider_id: defaultProviderId.value,
 }))
+
+/** T0004 — 서버 NOTE_MAX_CHARS(work_plan_service.py)와 같은 상한. 초과 입력은 세 실행
+ *  경로 모두 막는다(서버도 defaults.note 검증에서 같은 상한으로 거절한다). */
+const noteOverLimit = computed(() => note.value.length > noteMaxChars.value)
 
 const hasContext = computed(() => !!props.projectId && !!props.groupId && !!props.parentDocId)
 const canRun = computed(() =>
   hasContext.value
+  && !noteOverLimit.value
   && scope.value.quantity_type_codes.length > 0
   // 공급자가 없는 프로젝트에서는 ① 칸만으로 만든다.
   && (noProviders.value || scope.value.provider_ids.length > 0),
@@ -308,6 +395,7 @@ const blockReason = computed<string>(() => {
   if (creating.value) return t('main.work_plan_proposal_dialog.busy_create')
   if (props.busyAction === 'copy') return t('main.work_plan_proposal_dialog.busy_copy')
   if (props.busyAction === 'ai') return t('main.work_plan_proposal_dialog.busy_ai')
+  if (noteOverLimit.value) return t('main.work_plan_proposal_dialog.block_note_too_long')
   if (scope.value.quantity_type_codes.length === 0) return t('main.work_plan_proposal_dialog.block_types')
   if (!noProviders.value && scope.value.provider_ids.length === 0) {
     return t('main.work_plan_proposal_dialog.block_providers')
@@ -380,6 +468,9 @@ async function loadTypes() {
   }
 }
 
+/** flowgate.default.0416 TR0005 rev2 — 실행 프로바이더를 채우는 코드는 이 창에 없다.
+ *  loadForProject 가 저장된 선택 → 서버 기본 공급자 → 목록 첫 값 순으로 이미 정하고,
+ *  이 창은 그 값을 읽기만 한다(다른 다이얼로그와 같은 계약). */
 async function loadProviders() {
   providersError.value = false
   try {
@@ -392,13 +483,32 @@ async function loadProviders() {
   }
 }
 
+/** 0406 T0022 — 상한은 서버가 말해 준다. 이 창에는 아직 작업계획 문서가 없으므로
+ *  WorkPlanEditor.vue 가 쓰는 GET /work-plan 대신, 부모 문서의 진행 순서 응답이 싣고 있는
+ *  같은 값(STEP_NOTE_MAX_CHARS)을 WorkflowDecisionModal.vue:1132 와 똑같이 읽는다.
+ *  못 읽으면 조용히 기본값 1000 으로 남는다 — 창이 열리지 못할 이유는 아니다. */
+async function loadNoteLimit() {
+  if (!props.parentDocId) return
+  try {
+    const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.parentDocId })
+    noteMaxChars.value = Number((res.data as any)?.note_max_chars) || 1000
+  } catch {
+    noteMaxChars.value = 1000
+  }
+}
+
 watch(
   () => props.visible,
   (val) => {
     if (!val) return
     // P0004 [취소]: 다시 열면 칸은 모두 초기 상태(아무것도 고르지 않음)로 돌아간다.
+    // T0004: 플래너 멘트도 선택값과 함께 초기화한다.
     selectedTypes.value = new Set()
     selectedProviders.value = new Set()
+    note.value = ''
+    // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 여기서 초기화하지 않는다. 그 값은
+    // 이 창의 것이 아니라 앱 공통 선택이고, 헤더·AI 호출 창에서 고른 값이 다시 열었다고
+    // 사라지면 그 창들과 다시 어긋난다.
     createError.value = ''
     creating.value = false
     providersError.value = false
@@ -408,6 +518,7 @@ watch(
       && !aiProviderStore.error
     void loadTypes()
     void loadProviders()
+    void loadNoteLimit()
     setTimeout(() => overlayRef.value?.focus(), 50)
   },
   { immediate: true },
@@ -439,7 +550,14 @@ async function onCreateEmpty() {
         quantities: Object.fromEntries(
           allCodes.map((code) => [code, selectedTypes.value.has(code) ? 1 : 0]),
         ),
-        defaults: { provider_id: null, note: '' },
+        // flowgate.default.0416 TR0005 rev2: defaults.provider_id 는 다시 null 이다.
+        // 이 값은 initial_body 에서 만들어지는 모든 단계의 provider_id 로 그대로 번지는데,
+        // T0004 작업 3 은 "개별 단계/기본 공급자 배정은 생성 후 WorkPlanEditor.vue 의 기존
+        // 책임으로 남긴다"고 못 박았다. rev1 처럼 실행 프로바이더를 여기에 실으면 (1) 그
+        // 배정이 사람 몰래 일어나고 (2) 박스에 빈 옵션이 없어 "배정하지 않음"을 고를 수단이
+        // 없으며 (3) 후보 밖 공급자면 표시 이름 없는 단계가 조용히 만들어진다. 실행
+        // 프로바이더는 AI 를 실제로 돌리는 두 경로([AI 호출]·[멘트복사])가 나른다.
+        defaults: { provider_id: null, note: note.value },
         type_providers: {},
       },
     )
@@ -461,7 +579,12 @@ function onCopyMention() {
 
 function onInvokeAi() {
   if (!canRun.value || props.busyAction || props.aiActive || noProviders.value) return
-  emit('invoke-ai', { scope: scope.value, providerId: scope.value.provider_ids[0] })
+  // flowgate.default.0416 TR0005: 이번 실행에 쓸 프로바이더는 새로 생긴 실행 프로바이더
+  // 박스의 값이다. 목록이 비어 값이 아직 못 채워진 드문 경우에만 후보 첫 값으로 물러선다.
+  emit('invoke-ai', {
+    scope: scope.value,
+    providerId: defaultProviderId.value || scope.value.provider_ids[0],
+  })
 }
 </script>
 
@@ -537,6 +660,27 @@ function onInvokeAi() {
 .wpp-hint { margin: 6px 0 0; font-size: .7rem; line-height: 1.5; color: var(--text-m, #64748b); }
 .wpp-empty-hint { font-size: .74rem; color: var(--text-m); font-style: italic; margin: 4px 0; }
 .wpp-load-error { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--danger, #dc2626); }
+/* flowgate.default.0416 TR0005 (반려 "박스 높낮이는 하나도 안맞고"): 실행 프로바이더 박스와
+   전달 멘트 입력을 한 행에 나란히 두고, 두 컨트롤(select/입력창)의 높이를 30px 로 못박아
+   맞춘다 — 라벨이 같은 높이·폰트라 정렬점도 같다(align-items: flex-start). */
+.wpp-note-row { display: flex; align-items: flex-start; gap: 20px; }
+.wpp-field-block { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wpp-provider-block { flex: 0 0 220px; }
+.wpp-note-block { flex: 1; min-width: 0; }
+.wpp-note-label { font-size: .7rem; font-weight: 700; color: var(--text-m, #64748b); white-space: nowrap; }
+.wpp-provider-select { width: 100%; }
+.wpp-provider-select :deep(.aip-select-input) {
+  height: 30px; box-sizing: border-box; font-size: .78rem;
+}
+.wpp-note-field { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.wpp-note-input {
+  width: 100%; min-width: 0; height: 30px; box-sizing: border-box;
+  padding: 0 9px; font-size: .78rem; border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--r-sm, 4px);
+}
+.wpp-note-input.is-over-limit { border-color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 6%, #fff); }
+.wpp-note-count { color: var(--text-m, #94a3b8); font-size: .62rem; line-height: 1.15; text-align: right; }
+.wpp-note-count.is-over-limit { color: var(--danger, #dc2626); font-weight: 700; }
 .wpp-notice {
   display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; min-height: 38px;
   font-size: .77rem; line-height: 1.55; box-sizing: border-box;

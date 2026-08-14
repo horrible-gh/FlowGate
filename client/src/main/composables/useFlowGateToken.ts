@@ -59,10 +59,16 @@ export type TokenIssueParams = TokenIssueBaseParams & (
 
 /** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
  *  step_keys 를 뺐다(제안 창에 단계를 고르는 칸이 없어졌다). 작업계획 편집 화면의
- *  범위 고르기(WorkPlanAiScopeDialog)는 단계를 계속 고르므로 그쪽 서식은 그대로다. */
+ *  범위 고르기(WorkPlanAiScopeDialog)는 단계를 계속 고르므로 그쪽 서식은 그대로다.
+ *  0416 T0004 — note 를 더했다(모든 단계에 공통으로 붙는 플래너 멘트).
+ *  0416 TR0005 — provider_id 를 더했다(이번 실행에 쓸 단일 프로바이더, provider_ids
+ *  후보 다중선택과는 다른 값). WorkPlanProposalDialog.vue 의 같은 이름 인터페이스와
+ *  독립적으로 선언돼 있으므로(memory: 두 곳 모두 갱신 필요) 반드시 짝을 맞춘다. */
 export interface WorkPlanScope {
   quantity_type_codes: string[]
   provider_ids: string[]
+  note: string
+  provider_id: string
 }
 
 /** A meaningful /workflow/advance refusal (409) the WP proposal dialog must show, not swallow. */

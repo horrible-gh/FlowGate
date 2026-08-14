@@ -77,6 +77,10 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     i18n.global.locale.value = 'ko'
+    // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 aiProviderStore 의 값이고, 그
+    // store 는 고른 값을 localStorage 에 저장한다(앱과 같은 계약). 지우지 않으면 앞 시험이
+    // 고른 값이 다음 시험의 기본값을 이긴다.
+    localStorage.clear()
     postRequest.mockReset()
     getRequest.mockReset()
     getRequest.mockResolvedValue({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
@@ -187,7 +191,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(scope.provider_ids).toEqual(['aip_opus', 'aip_sonnet'])
   })
 
-  it('[AI 호출]은 같은 범위와 첫 번째 공급자를 함께 올린다', async () => {
+  it('[AI 호출]은 같은 범위와 실행 프로바이더 박스의 값을 함께 올린다', async () => {
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 1)
@@ -195,7 +199,11 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     await wrapper.find('[data-test="wpp-invoke-ai"]').trigger('click')
 
     const payload = wrapper.emitted('invoke-ai')![0][0] as any
+    // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 앱 공통 선택(aiProviderStore)의
+    // 값이다 — 여기서는 서버가 준 default_provider_id 가 그 값이고, 후보(② 칸) 선택
+    // 순서와는 무관하다.
     expect(payload.providerId).toBe('aip_opus')
+    expect(payload.scope.provider_id).toBe('aip_opus')
     expect(payload.scope.quantity_type_codes).toEqual(['DS'])
   })
 
@@ -281,6 +289,195 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(rows(wrapper, 'type').filter((row: any) => row.classes('on')).length).toBe(0)
     expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(0)
   })
+
+  // flowgate.default.0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가 없는거지?"):
+  // 작업계획 전체 단계에 공통으로 붙는 플래너 멘트 입력. 문서생성·멘트복사·AI호출 세
+  // 경로가 같은 값을 나른다.
+  describe('플래너 멘트', () => {
+    it('처음엔 비어 있고, 다시 열면 초기화된다', async () => {
+      const wrapper = await mountDialog()
+      const input = wrapper.get('[data-test="wpp-note"]')
+      expect((input.element as HTMLInputElement).value).toBe('')
+
+      await input.setValue('기존 스타일을 따를 것')
+      expect((wrapper.get('[data-test="wpp-note"]').element as HTMLInputElement).value)
+        .toBe('기존 스타일을 따를 것')
+
+      await wrapper.setProps({ visible: false })
+      await wrapper.setProps({ visible: true })
+      await flushPromises()
+      expect((wrapper.get('[data-test="wpp-note"]').element as HTMLInputElement).value).toBe('')
+    })
+
+    it('[문서생성]이 입력한 멘트를 defaults.note 로 그대로 보낸다', async () => {
+      postRequest.mockResolvedValue({
+        data: { ok: true, doc_id: 'flowgate.default.0405.0009-WP', title: '작업계획', body: {} },
+      })
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-note"]').setValue('한 줄 지시')
+      await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+      await flushPromises()
+
+      const [, body] = postRequest.mock.calls[0]
+      // flowgate.default.0416 TR0005 rev2: defaults.provider_id 는 null 로 남는다. 이 값은
+      // 서버에서 만들어지는 모든 단계의 provider_id 로 그대로 번지는데, 단계 배정은 T0004
+      // 작업 3 이 생성 후 WorkPlanEditor.vue 의 책임으로 못 박은 일이다.
+      expect(body.defaults).toEqual({ provider_id: null, note: '한 줄 지시' })
+    })
+
+    it('[멘트복사]와 [AI 호출]이 같은 scope.note 를 올린다', async () => {
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-note"]').setValue('공통 지시')
+
+      await wrapper.find('[data-test="wpp-copy-mention"]').trigger('click')
+      expect((wrapper.emitted('copy-mention')![0][0] as any).note).toBe('공통 지시')
+
+      await wrapper.find('[data-test="wpp-invoke-ai"]').trigger('click')
+      expect((wrapper.emitted('invoke-ai')![0][0] as any).scope.note).toBe('공통 지시')
+    })
+
+    it('상한을 넘긴 멘트는 세 버튼을 모두 막고 사유를 보여준다', async () => {
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-note"]').setValue('가'.repeat(1001))
+
+      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('전달 멘트가 글자 수 제한을 초과했습니다.')
+      expect(wrapper.get('[data-test="wpp-note"]').classes()).toContain('is-over-limit')
+    })
+  })
+
+  // flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고" /
+  // "\"전달멘트\" 랑 박스 높낮이는 하나도 안맞고"): 이번 실행에 쓸 프로바이더를 고르는 박스.
+  // 후보 다중선택(② 칸)과는 독립된 값이고, 전달 멘트와 한 행에 나란히 그려진다.
+  //
+  // rev2 (검토 발견 1): 이 박스의 값은 이 창의 것이 아니라 앱 공통 선택(aiProviderStore)이다.
+  // rev1 은 로컬 ref 를 providersLoaded[0] 으로 채웠던 탓에, 헤더·AI 호출 창이 A 를 보여
+  // 주는데 이 창만 B 를 보여 주고 B 로 실행할 수 있었다. 아래 시험들이 그 공유를 못 박는다.
+  describe('실행 프로바이더', () => {
+    it('앱 공통 선택(aiProviderStore)의 값을 그대로 보여준다 — 목록 첫 값이 아니다', async () => {
+      // 서버가 정한 기본 공급자가 목록의 첫 값과 다른 상황. rev1 은 여기서 첫 값(opus)을
+      // 보여 주며 헤더·AI 호출 창과 어긋났다.
+      getRequest.mockResolvedValue({ data: { providers: PROVIDERS, default_provider_id: 'aip_sonnet' } })
+      const wrapper = await mountDialog()
+      const select = wrapper.get('[data-test="wpp-default-provider"] select')
+      expect((select.element as HTMLSelectElement).value).toBe('aip_sonnet')
+      expect(useAiProviderStore().selectedProviderId).toBe('aip_sonnet')
+    })
+
+    it('여기서 고른 값이 앱 공통 선택에 그대로 되쓰인다', async () => {
+      const wrapper = await mountDialog()
+      await wrapper.get('[data-test="wpp-default-provider"] select').setValue('aip_sonnet')
+      // 다른 다이얼로그(AiInvokeDialog.vue:44)와 같은 계약 — store 가 정본이다.
+      expect(useAiProviderStore().selectedProviderId).toBe('aip_sonnet')
+    })
+
+    it('전달 멘트 입력과 한 행(.wpp-note-row)에 나란히 있다', async () => {
+      const wrapper = await mountDialog()
+      const row = wrapper.get('.wpp-note-row')
+      expect(row.find('[data-test="wpp-default-provider"]').exists()).toBe(true)
+      expect(row.find('[data-test="wpp-note"]').exists()).toBe(true)
+    })
+
+    it('다시 고르면 [멘트복사]·[AI 호출]이 새 값을 나르고, [문서생성]은 단계를 배정하지 않는다', async () => {
+      postRequest.mockResolvedValue({
+        data: { ok: true, doc_id: 'flowgate.default.0416.0012-WP', title: '작업계획', body: {} },
+      })
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-default-provider"] select').setValue('aip_sonnet')
+
+      await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+      expect((wrapper.emitted('copy-mention')![0][0] as any).provider_id).toBe('aip_sonnet')
+
+      await wrapper.get('[data-test="wpp-invoke-ai"]').trigger('click')
+      const aiPayload = wrapper.emitted('invoke-ai')![0][0] as any
+      expect(aiPayload.providerId).toBe('aip_sonnet')
+      expect(aiPayload.scope.provider_id).toBe('aip_sonnet')
+
+      await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+      await flushPromises()
+      const [, body] = postRequest.mock.calls[0]
+      // 발견 2: 이 값이 defaults.provider_id 로 나가면 만들어지는 모든 단계가 사람 몰래
+      // 그 공급자로 배정된다. 실행 프로바이더는 AI 를 실제로 돌리는 두 경로만 나른다.
+      expect(body.defaults.provider_id).toBeNull()
+    })
+
+    it('다시 열어도 고른 값이 남는다 — 창의 값이 아니라 앱 공통 선택이기 때문이다', async () => {
+      const wrapper = await mountDialog()
+      await wrapper.get('[data-test="wpp-default-provider"] select').setValue('aip_sonnet')
+      expect((wrapper.get('[data-test="wpp-default-provider"] select').element as HTMLSelectElement).value)
+        .toBe('aip_sonnet')
+
+      await wrapper.setProps({ visible: false })
+      await wrapper.setProps({ visible: true })
+      await flushPromises()
+      expect((wrapper.get('[data-test="wpp-default-provider"] select').element as HTMLSelectElement).value)
+        .toBe('aip_sonnet')
+    })
+
+    // 발견 5: 옆의 전달 멘트 입력은 :disabled 로 잠그는데 이 박스만 이벤트를 무시했다.
+    // 그러면 실행 중에 고른 값이 화면에는 남고 페이로드에는 안 들어가 둘이 갈라진다.
+    it('실행 중에는 옆 입력과 똑같이 잠긴다', async () => {
+      const wrapper = await mountDialog({ busyAction: 'ai' })
+      expect(wrapper.get('[data-test="wpp-default-provider"] select').attributes('disabled'))
+        .toBeDefined()
+      expect(wrapper.get('[data-test="wpp-note"]').attributes('disabled')).toBeDefined()
+    })
+
+    it('후보 다중선택(② 칸)과는 독립적이다 — 후보를 안 골라도 값이 있다', async () => {
+      const wrapper = await mountDialog()
+      expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(0)
+      expect((wrapper.get('[data-test="wpp-default-provider"] select').element as HTMLSelectElement).value)
+        .toBe('aip_opus')
+    })
+  })
+
+  // flowgate.default.0416 TR0005 rev2 (검토 발견 6): 멘트 글자 수 상한은 서버가 정본이다
+  // (0406 T0022). WorkPlanEditor.vue:541 / WorkflowDecisionModal.vue:1132 와 같은 값을 읽고,
+  // 못 읽으면 기존 기본값 1000 으로 남는다.
+  describe('멘트 글자 수 상한', () => {
+    it('서버가 준 note_max_chars 를 쓴다 — 하드코딩된 1000 이 아니다', async () => {
+      getRequest.mockImplementation((url: string) => {
+        if (url === '/api/v1/workflow/sequence') {
+          return Promise.resolve({ data: { note_max_chars: 12, items: [] } })
+        }
+        return Promise.resolve({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+      })
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-note"]').setValue('가'.repeat(13))
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="wpp-note-count"]').text()).toContain('12')
+      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('[data-test="wpp-notice"]').text())
+        .toContain('전달 멘트가 글자 수 제한을 초과했습니다.')
+    })
+
+    it('상한을 못 읽으면 기존 기본값 1000 으로 남는다', async () => {
+      getRequest.mockImplementation((url: string) => {
+        if (url === '/api/v1/workflow/sequence') return Promise.reject(new Error('boom'))
+        return Promise.resolve({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+      })
+      const wrapper = await mountDialog()
+      await pick(wrapper, 'type', 0)
+      await pick(wrapper, 'provider', 0)
+      await wrapper.get('[data-test="wpp-note"]').setValue('가'.repeat(1000))
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+    })
+  })
 })
 
 // 0405 T0011 rev2 — 반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
@@ -290,6 +487,7 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
   beforeEach(() => {
     setActivePinia(createPinia())
     i18n.global.locale.value = 'ko'
+    localStorage.clear()
     postRequest.mockReset()
     getRequest.mockReset()
     getRequest.mockResolvedValue({ data: { providers: [], default_provider_id: null } })
@@ -409,6 +607,31 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     expect(wrapper.find('[data-test="wpp-sec-providers"]').exists()).toBe(true)
     expect(wrapper.find('.wpp-load-error').exists()).toBe(true)
     expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('공급자가 없어도 플래너 멘트 입력은 그대로 있고 [문서생성]에 실린다', async () => {
+    postRequest.mockResolvedValue({
+      data: { ok: true, doc_id: 'flowgate.default.0405.0011-WP', title: '작업계획', body: {} },
+    })
+    const wrapper = await mountNoProviders()
+    expect(wrapper.find('[data-test="wpp-note"]').exists()).toBe(true)
+    await pick(wrapper, 'type', 0)
+    await wrapper.get('[data-test="wpp-note"]').setValue('공급자 없는 프로젝트의 지시')
+    await wrapper.get('[data-test="wpp-create-empty"]').trigger('click')
+    await flushPromises()
+
+    const [, body] = postRequest.mock.calls[0]
+    expect(body.defaults.note).toBe('공급자 없는 프로젝트의 지시')
+    wrapper.unmount()
+  })
+
+  // flowgate.default.0416 TR0005 — 고를 공급자가 없으면 ② 칸과 함께 실행 프로바이더 박스도
+  // 그리지 않는다(고를 것이 없다). 전달 멘트 입력은 그대로 남는다.
+  it('실행 프로바이더 박스도 그리지 않는다', async () => {
+    const wrapper = await mountNoProviders()
+    expect(wrapper.find('[data-test="wpp-default-provider"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="wpp-note"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })
