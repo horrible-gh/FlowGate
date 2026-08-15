@@ -22,12 +22,14 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from modules.flow_gate import db
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
+from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service
 from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES, WORK_PLAN_TYPE
 from modules.flow_gate.numbering import numbering_service
@@ -2293,12 +2295,45 @@ def transition_document_rpc(
 
 @router.post("/attachments", status_code=201)
 async def upload_attachment_rpc(
+    request: Request,
     doc_id: str = Form(...),
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Attach a file to a document (RPC style — form field doc_id)."""
-    return await upload_attachment(doc_id, file, current_user)
+):
+    """Attach a file to a document (RPC style — form field doc_id).
+
+    Compatibility wrapper kept alive for the existing header upload modal (P0011 §1-1). Two
+    things changed in flowgate.default.0060 T0016 §3-3:
+
+    * It no longer calls the REST *route function*. NR0015 §2-3 measured that coupling and
+      required it be cut — the RPC turns its single part into a one-element list and calls
+      the same shared upload service the REST route calls, so the two entry points cannot
+      drift apart (D0010 §6-6).
+    * The response `path` is storage-relative, not the old absolute `str(dest)` (NR0003 G4 /
+      P0011 §9). The response body keeps its flat single-object shape so the modal's
+      existing success handling is untouched, and the `Deprecation` / `Link` headers point
+      new callers at the canonical URL.
+    """
+    try:
+        data = await attachments.upload_attachments(
+            doc_id, [file], current_user, request.headers.get("content-length")
+        )
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:upload_rpc", doc_id=doc_id).response()
+
+    items = data.get("attachments") or []
+    return JSONResponse(
+        status_code=201,
+        content={"data": items[0] if items else {}},
+        headers={
+            "Deprecation": "true",
+            "Link": f'</api/v1/documents/{doc_id}/attachments>; rel="successor-version"',
+        },
+    )
 
 
 def _shape_review(row: dict) -> dict:
@@ -2737,49 +2772,164 @@ def delete_document_type(
     document_types.delete_type(type_id)
 
 
-# ── Attachment upload ──────────────────────────────────────────────────────────
+# ── Attachments ────────────────────────────────────────────────────────────────
+#
+# flowgate.default.0060 T0016 §3·§4 — P0011 §1-1 is the canonical contract:
+#
+#   POST   /documents/{doc_id}/attachments             upload (repeat `file` for many)
+#   GET    /documents/{doc_id}/attachments             list
+#   GET    /documents/{doc_id}/attachments/{name}      download
+#   DELETE /documents/{doc_id}/attachments/{name}      delete
+#   GET    /documents/{doc_id}/attachments/{name}/read read
+#   POST   /documents/{doc_id}/attachments/{name}/copy copy into the source tree
+#
+# Everything below is a thin shell: parse, delegate to the attachment service, turn an
+# AttachmentError into the P0011 §1-4 envelope. All judgement lives in the service, which is
+# what lets the compatibility RPC and the canonical REST route share one body instead of one
+# route function calling the other (NR0015 §2-3).
 
 @router.post("/{doc_id}/attachments", status_code=201)
 async def upload_attachment(
     doc_id: str,
-    file: UploadFile = File(...),
+    request: Request,
+    file: list[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
-) -> dict:
-    """Attach a file to a document."""
-    from pathlib import Path
-    import time
+):
+    """Upload one or more attachments to a document (P0011 §2).
 
-    doc = document_service.get_document(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
-    _reject_if_group_disposed(doc)
-    _reject_if_group_ai_running(doc)
+    Replaces the pre-0060 body wholesale. What went away, and why (L0012 §6 "의도적으로
+    따르지 않는 기존 동작"): `Path(name).name` sanitizing (lets a backslash path through on
+    Linux), the single-shot epoch dedupe (two same-named parts in one request overwrote each
+    other), `await file.read()` of the whole body into memory, the legacy
+    `projects/*/attachments/{doc_id}` location, and the absolute `str(dest)` in the response
+    (NR0003 G4).
+    """
+    try:
+        data = await attachments.upload_attachments(
+            doc_id,
+            list(file or []),
+            current_user,
+            request.headers.get("content-length"),
+        )
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — logged, then answered as the P0011 envelope
+        return attachments.unexpected(exc, operation="route:upload", doc_id=doc_id).response()
+    return JSONResponse(status_code=201, content={"data": data})
 
-    project_id = doc.get("project_id") or doc.get("data", {}).get("project_id")
-    if not project_id:
-        raise HTTPException(status_code=400, detail=f"Project information missing for: {doc_id}")
 
-    storage_root = get_storage_root(project_id)
-    attach_dir = storage_root / "projects" / storage_paths.project_dir_name(project_id) / "attachments" / doc_id
-    attach_dir.mkdir(parents=True, exist_ok=True)
+@router.get("/{doc_id}/attachments")
+async def list_attachments(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """List a document's attachments (P0011 §3).
 
-    original_name = file.filename or "upload"
-    safe_name = Path(original_name).name
-    dest = attach_dir / safe_name
+    A document with no attachments answers 200 and an empty array — not 404. The card draws
+    its empty state from that answer.
+    """
+    try:
+        data = await attachments.alist_attachments(doc_id)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:list", doc_id=doc_id).response()
+    return JSONResponse(status_code=200, content={"data": data})
 
-    if dest.exists():
-        stem = Path(safe_name).stem
-        suffix = Path(safe_name).suffix
-        safe_name = f"{stem}_{int(time.time())}{suffix}"
-        dest = attach_dir / safe_name
 
-    content = await file.read()
-    dest.write_bytes(content)
+@router.get("/{doc_id}/attachments/{name}")
+async def download_attachment(
+    doc_id: str,
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Download one attachment (P0011 §4).
 
-    return {
-        "data": {
-            "filename": safe_name,
-            "size": len(content),
-            "path": str(dest),
-        }
-    }
+    A read path, so a disposed group or a running AI run does not block it — D0010 §6-1 keeps
+    the list and the download alive while the document is read-only.
+    """
+    try:
+        path, meta = await attachments.aresolve_download(doc_id, name)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:download", doc_id=doc_id).response()
+    return FileResponse(
+        path=str(path), media_type=meta["media_type"], headers=meta["headers"]
+    )
+
+
+@router.delete("/{doc_id}/attachments/{name}")
+async def delete_attachment(
+    doc_id: str,
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete one attachment — file first, then the row (P0011 §5, L0012 §2-8)."""
+    try:
+        data = await attachments.adelete_attachment(doc_id, name, current_user)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:delete", doc_id=doc_id).response()
+    return JSONResponse(status_code=200, content={"data": data})
+
+
+@router.get("/{doc_id}/attachments/{name}/read")
+async def read_attachment(
+    doc_id: str,
+    name: str,
+    mode: str = Query("auto"),
+    encoding: str = Query("utf-8"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Read an attachment's content instead of downloading it (P0011 §6)."""
+    try:
+        data = await attachments.aread_attachment(doc_id, name, mode, encoding)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:read", doc_id=doc_id).response()
+    return JSONResponse(status_code=200, content={"data": data})
+
+
+class AttachmentCopyRequest(BaseModel):
+    """P0011 §7 body. `group_id: null` means the base checkout, explicitly."""
+
+    target_path: Optional[str] = None
+    group_id: Optional[str] = None
+
+
+@router.post("/{doc_id}/attachments/{name}/copy", status_code=201)
+async def copy_attachment_to_source(
+    doc_id: str,
+    name: str,
+    body: AttachmentCopyRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Copy an attachment into the project source tree (P0011 §7).
+
+    Called by whoever works on the source, never by the attachment card — the approved deck
+    has no copy button and D0010 §6-7 refuses to invent one.
+    """
+    try:
+        data = await attachments.acopy_to_source(
+            doc_id, name, body.target_path, body.group_id, current_user
+        )
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(exc, operation="route:copy", doc_id=doc_id).response()
+    return JSONResponse(status_code=201, content={"data": data})

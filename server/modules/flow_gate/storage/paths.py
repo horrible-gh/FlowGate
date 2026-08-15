@@ -432,6 +432,17 @@ def _within_allowed_roots(path: Path, project_id: Optional[str] = None) -> bool:
     )
 
 
+def within_allowed_roots(path: Path, project_id: Optional[str] = None) -> bool:
+    """Public wrapper over ``_within_allowed_roots`` — the storage filesystem jail.
+
+    flowgate.default.0060 NR0015 §7 확정 지침 5: the predicate itself is private, and the
+    document-attachment paths (L0012 §2-1, §2-6 J4) need exactly this judgement. Importing a
+    private name across modules would make the reuse boundary invisible, so the boundary is
+    named here instead. Same behaviour, no second copy of the rule.
+    """
+    return _within_allowed_roots(path, project_id)
+
+
 def to_storage_relative(abs_path, project_id: Optional[str] = None) -> str:
     """Write helper → storage-root-relative POSIX path for DB persistence.
 
