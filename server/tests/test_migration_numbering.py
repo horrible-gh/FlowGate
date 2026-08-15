@@ -1,6 +1,6 @@
 """Global guards for the migration file set (flowgate.default.0394 T0004, 권고 2).
 
-NR0003 §5.3 의 지적이 이 파일의 존재 이유다. 마이그레이션 번호 중복은 8묶음이었는데
+NR0003 §5.3 의 지적이 이 파일의 존재 이유다. 마이그레이션 번호 중복은 10묶음이었는데
 빨간불은 1건뿐이었다 — 076 을 검사하는 가드가 `test_chat_settings_0362` 안에
 **076 만 보도록** 쓰여 있었기 때문이다. 앞선 7묶음은 검사하는 테스트가 아예 없어서
 결함이 있는 채로 계속 초록이었다.
@@ -48,6 +48,12 @@ from modules.flow_gate.db.migration_renames import (  # noqa: E402
 
 MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations"
 DIALECTS = ("sqlite", "postgres", "mysql")
+REQUIRED_COLLISION_RENAMES = {
+    ("078_continuation_auto_approve.sql", "078a_continuation_auto_approve.sql"),
+    ("078_seed_work_plan_doctype.sql", "078b_seed_work_plan_doctype.sql"),
+    ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
+    ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
+}
 
 # NNN, optionally followed by one lowercase letter. The letter is how a file that
 # arrived second on the same number keeps its position in sort order without
@@ -161,11 +167,29 @@ def test_the_rename_ledger_matches_what_is_on_disk():
             assert (directory / new).is_file(), f"{dialect}/{new} 이 없다"
 
 
-def test_the_rename_ledger_maps_one_to_one():
+def test_the_latest_collision_renames_are_in_the_ledger():
+    assert REQUIRED_COLLISION_RENAMES <= set(RENAMES), (
+        "078/079 번호 충돌을 고치면서 적용 장부 이관을 빠뜨리면 이미 적용된 DB가 "
+        "079b를 새 마이그레이션으로 오인해 note 열을 다시 추가한다."
+    )
+
+
+def test_the_rename_ledger_maps_old_names_unambiguously():
+    """`old` 하나는 정확히 하나의 `new` 로만 간다 — 그 반대는 아니다.
+
+    flowgate.default.0408 TR0018: 078/079 는 두 그룹이 서로 다른 시점에 같은 순번
+    충돌을 독립적으로 풀어, 같은 최종 이름으로 수렴하는 옛 이름이 둘 생겼다
+    (예: `078_seed_work_plan_doctype.sql` 과 `078a_seed_work_plan_doctype.sql`
+    모두 `078b_seed_work_plan_doctype.sql` 로 수렴). 어느 DB 도 두 이력을 동시에
+    갖지는 않으므로(둘 중 하나만 실제로 적용됐다) `new` 쪽 중복은 안전하다 —
+    `apply_migration_renames` 의 "둘 다 있으면 옛 것을 지운다" 분기가 정확히 이
+    경우를 처리한다. 위험한 것은 `old` 쪽 중복(어느 new 로 가는지 모호해짐)과
+    `old`/`new` 가 겹치는 경우(한 패스 안에서 순서에 따라 결과가 갈릴 수 있음)
+    뿐이라 그 둘만 고정한다.
+    """
     olds = [old for old, _ in RENAMES]
     news = [new for _, new in RENAMES]
     assert len(set(olds)) == len(olds), "장부에 같은 옛 이름이 두 번 있다"
-    assert len(set(news)) == len(news), "장부에 같은 새 이름이 두 번 있다"
     assert set(olds).isdisjoint(news), "옛 이름과 새 이름이 겹친다"
 
 
@@ -273,9 +297,62 @@ class TestFilenameCarryOver:
         assert self._names(path) == {new}
 
     def test_a_db_that_never_saw_the_old_names_is_untouched(self, tmp_path):
-        # 새 이름으로 처음부터 적용된 DB.
-        news = [new for _, new in RENAMES]
+        # 새 이름으로 처음부터 적용된 DB. `news`는 중복될 수 있다(수렴 항목) —
+        # 파일 하나에 행 하나이므로 집합으로 정리해서 만든다.
+        news = sorted({new for _, new in RENAMES})
         path = self._make_db(tmp_path, news)
 
         assert apply_migration_renames("sqlite3", sqlite_path=path) == 0
         assert self._names(path) == set(news)
+
+    def test_real_migrator_reboot_after_carryover_adds_no_duplicate_column(self, tmp_path):
+        """End-to-end proof, not a hand-rolled bookkeeping check.
+
+        The previous revision only exercised `apply_migration_renames()` against a
+        `migrations` table with no real schema behind it — so it could show the
+        *ledger* rows move, but never proved that the real `sqloader.DatabaseMigrator`
+        actually skips re-applying `079b_workflow_sequence_note_source.sql` afterwards.
+        That is the exact gap the rejection's `duplicate column name: note` sits in:
+        a ledger-only test cannot catch a migrator that still tries to re-run an
+        ADD COLUMN against a column that is already there.
+
+        This test runs the real pipeline in the same order `config.py`
+        `instance_init()` does: fresh install -> simulate an already-migrated
+        pre-rename database by rewriting the ledger back to the OLD filenames
+        (exactly what any database migrated before this cleanup looks like right
+        now) -> `apply_migration_renames()` -> construct a brand new
+        `DatabaseMigrator` against the *same* on-disk `sql/migrations/sqlite`
+        directory again. If the carry-over did not work, this second construction
+        raises `Exception("Failed to apply migration 079b_workflow_sequence_note_source.sql: ...")`
+        exactly like `sqloader.init.database_init()` does at real boot.
+        """
+        from sqloader import SQLiteWrapper, DatabaseMigrator
+
+        db_path = str(tmp_path / "real_reboot.db")
+
+        db = SQLiteWrapper(db_name=db_path)
+        DatabaseMigrator(db, str(MIGRATIONS_DIR / "sqlite"), True)
+
+        # 0408 TR0018: 장부에는 최종 이름 하나당 행이 하나뿐이고, 같은 최종 이름으로
+        # 수렴하는 옛 이름이 둘인 항목(078b/079b)도 어느 DB 에서나 둘 중 하나만 실제로
+        # 적용돼 있다. 아래 UPDATE 는 RENAMES 순서상 첫 번째 옛 이름 하나만 되돌리므로
+        # 정확히 그 실제 DB 모양을 만든다 — 그래서 되돌아가는 행 수는 len(RENAMES) 가
+        # 아니라 서로 다른 최종 이름의 개수다.
+        conn = sqlite3.connect(db_path)
+        try:
+            for old, new in RENAMES:
+                conn.execute(
+                    "UPDATE migrations SET filename = ? WHERE filename = ?", (old, new)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        carried = apply_migration_renames("sqlite3", sqlite_path=db_path)
+        assert carried == len({new for _, new in RENAMES})
+
+        db2 = SQLiteWrapper(db_name=db_path)
+        try:
+            DatabaseMigrator(db2, str(MIGRATIONS_DIR / "sqlite"), True)
+        except Exception as exc:  # pragma: no cover - failure path is the point
+            pytest.fail(f"real migrator re-boot after carry-over failed: {exc}")

@@ -104,6 +104,19 @@
             @open-archive="openGitArchive"
             @archived="onGitArchived"
           />
+          <!-- 0060 R0001 / D0010 6-1 — 첨부 파일 카드. 본문 열의 카드 순서는
+               [문서 헤더 → 워크플로 → 첨부 파일 → 문서 미리보기] 이고, 이 자리가 아래로 이어지는
+               미리보기 카드 계열(AC / DC / CH / WP / md / text / diff v-if 사슬)의 **바로 위**다.
+               반려("맨 밑에 쳐박혀 있으니까 안보이잖아 문서 미리보기 위로 올려")가 가리킨 문제가
+               이 위치로 해소된다 — 승인 시안 wdkcvrmk 에서 첨부 카드는 스크롤 없이 첫 화면에
+               통째로 들어온다(TR0006 실측: 첨부 top 427px, 문서 미리보기 674px).
+               사슬 자체에는 넣을 수 없다. v-if / v-else-if 사이에 형제를 끼우면 사슬이 끊긴다.
+               AI 실행 중에는 읽기 전용으로 내려간다(올리기·지우기 없음, 목록·내려받기만). -->
+          <AttachmentCard
+            v-if="tab.typeCode"
+            :doc-id="tab.id"
+            :read-only="aiRunDocumentLocked"
+          />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
                the tree the tab type resolves to 'unsupported' (no md), which would
@@ -1306,6 +1319,7 @@ import TestFailStrip from './TestFailStrip.vue'
 import TestRunStrip from './TestRunStrip.vue'
 import DocWorkflow from './DocWorkflow.vue'
 import GitFinalizePanel from './GitFinalizePanel.vue'
+import AttachmentCard from './AttachmentCard.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
 import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
