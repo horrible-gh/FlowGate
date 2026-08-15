@@ -77,20 +77,22 @@ describe('DocInfoPanel source-change summary (0325 R0001)', () => {
 
     expect(wrapper.find('.dip-chg-headline').exists()).toBe(true)
     expect(wrapper.text()).toContain('Source Changes')
-    // N0004 §3: 이 세 섹션은 최종 승인 시점에 자리를 내준다.
+    // N0004 §3: 이 세 섹션은 최종 승인 시점에 자리를 내준다. 0311 T0004 rev1 로 반려는
+    // AI 검수와 한 섹션(「AI Review / Rejection」)이 됐고 질의는 독립 섹션이지만,
+    // AC 에서 셋 다 감춰지는 것은 그대로다.
     expect(wrapper.text()).not.toContain('Q&A')
     expect(wrapper.text()).not.toContain('AI Review')
-    expect(wrapper.text()).not.toContain('Rejection Reason')
     expect(wrapper.text()).not.toContain('이전 단계의 반려 사유')
   })
 
-  it('keeps the three sections and omits the summary on a non-AC document', async () => {
+  it('keeps the 질의 + AI검수·반려 sections and omits the summary on a non-AC document', async () => {
     const wrapper = mountPanel('TR')
     await flushPromises()
 
     expect(wrapper.find('.dip-chg-headline').exists()).toBe(false)
     expect(wrapper.text()).toContain('Q&A')
-    expect(wrapper.text()).toContain('Rejection Reason')
+    expect(wrapper.text()).toContain('AI Review / Rejection')
+    expect(wrapper.text()).toContain('이전 단계의 반려 사유')
   })
 
   it('totals files and +/- lines, skipping unknown (binary) counts', async () => {

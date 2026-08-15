@@ -58,14 +58,28 @@ describe('DocInfoPanel section accordion (R0001 group 0126 C안)', () => {
   it('renders a caret toggle on every section, bodies expanded by default', async () => {
     const wrapper = mountPanel()
     await flushPromises()
-    // status · Q&A · AI review · rejection are all present for a rejected T doc
+    // 0311 T0004 rev1: status · 질의 · AI검수·반려 for a rejected T doc — three headers
+    // where the pre-0311 panel had four (status · 질의 · AI검수 · 반려). That is the
+    // section-header saving NR0003 §5-4 costed at ≥ ~54px (padding 28 + title row ~26).
     const toggles = wrapper.findAll('.dip-sec-toggle')
-    expect(toggles.length).toBe(4)
-    expect(wrapper.findAll('.dip-acc-caret').length).toBe(4)
+    expect(toggles.length).toBe(3)
+    expect(wrapper.findAll('.dip-acc-caret').length).toBe(3)
     // none collapsed initially
     expect(wrapper.findAll('.dip-section.collapsed').length).toBe(0)
-    // the rejection body is visible while expanded
-    expect(wrapper.text()).toContain('반려 사유 본문')
+    // 질의 and AI검수·반려 are two DIFFERENT sections now — the rejection card lives in
+    // the merged one, and the queries never mix into it.
+    const sections = wrapper.findAll('.dip-section')
+    const qaSection = sections.find((s) => s.find('.dip-qa-headline').exists())!
+    // rev3: the merged section has no wrapper class of its own — it is found by its
+    // title, and its cards are the panel's existing .dip-reject-quote / .dip-ai-entry.
+    const mergedSection = sections.find((s) => s.find('.dip-sec-toggle').exists()
+      && s.find('.dip-sec-toggle').text().includes(i18n.global.t('main.doc_info_panel.section_review_reject')))!
+    expect(qaSection.exists()).toBe(true)
+    expect(mergedSection.exists()).toBe(true)
+    expect(qaSection.element).not.toBe(mergedSection.element)
+    expect(mergedSection.text()).toContain('반려 사유 본문')
+    expect(mergedSection.find('.dip-reject-quote').exists()).toBe(true)
+    expect(qaSection.text()).not.toContain('반려 사유 본문')
   })
 
   it('folds and unfolds an individual section without touching the others', async () => {

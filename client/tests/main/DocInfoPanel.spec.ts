@@ -139,7 +139,12 @@ describe('DocInfoPanel orphan recovery (flowgate.default.0374)', () => {
   })
 })
 
-describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
+// 0311 T0004 rev1: 질의 is a standalone section again (reject moved to the AI검수
+// merge), but it keeps rev0's capped-card layout — cards in `.dip-qa-card`, headline
+// actions in `.dip-qa-act` (`.dip-qa-fullview` / `.dip-qa-add`), the unanswered pill
+// in `.dip-qa-count`, and the full-view dialog is QaHistoryDialog. TR0005 rev6 반려
+// §3 ("질의는 빼라") split it back out of the merged dialog into its own again.
+describe('DocInfoPanel 질의 panel (group 0022 §3.1, 0311 T0004 rev1)', () => {
   const baseProps = {
     docId: 'p.none.0001.0001-D',
     typeCode: 'D' as string | null,
@@ -154,20 +159,23 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     return mount(DocInfoPanel, { props: { ...baseProps }, global: { plugins: [i18n] } })
   }
 
-  it('renders the 질의 응답 section header and fetches the container', async () => {
+  it('renders the 질의 section header and fetches the qa container', async () => {
     const wrapper = mountPanel()
     await flushPromises()
     expect(getRequest).toHaveBeenCalledWith('/api/v1/q/p.none.0001.0001-D')
     expect(wrapper.text()).toContain(i18n.global.t('main.doc_info_panel.section_qa'))
+    // and it is NOT the merged AI검수·반려 section
+    expect(wrapper.text()).toContain(i18n.global.t('main.doc_info_panel.section_review_reject'))
   })
 
   it('shows empty state when there are no queries', async () => {
     const wrapper = mountPanel()
     await flushPromises()
-    expect(wrapper.find('.dip-reject-empty').exists()).toBe(true)
+    const qaSection = wrapper.findAll('.dip-section').find((s) => s.find('.dip-qa-headline').exists())!
+    expect(qaSection.find('.dip-reject-empty').exists()).toBe(true)
   })
 
-  it('renders question cards; answered card carries the answered-card accent (group 0126 / C안)', async () => {
+  it('renders question cards; answered card carries the answered accent (group 0126 / C안)', async () => {
     getRequest.mockResolvedValue({
       data: { qa: { items: [
         { id: 1, seq: 1, title: 'Palette', body: 'A or B?', asker_kind: 'human', answer_count: 1,
@@ -179,13 +187,18 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     await flushPromises()
     const cards = wrapper.findAll('.dip-qa-card')
     expect(cards.length).toBe(2)
-    expect(cards[0].classes()).toContain('answered-card') // has an answer
-    expect(cards[1].classes()).not.toContain('answered-card') // still unanswered
+    // newest-first by seq: id 2 (unanswered) leads, id 1 (answered) follows
+    // rev3: the card is the panel's existing amber .dip-qa-card again — an answered one
+    // dims via .answered-card and STILL carries its [답변] mini-action, as it always did.
+    expect(cards[0].classes()).not.toContain('answered-card')
+    expect(cards[0].findAll('.dip-qa-card-actions .mini-action').length).toBe(1)
+    expect(cards[1].classes()).toContain('answered-card') // has an answer
+    expect(cards[1].findAll('.dip-qa-card-actions .mini-action').length).toBe(1)
     // headline unanswered-count badge reflects the single open query
     expect(wrapper.find('.dip-qa-count').text()).toContain('1')
   })
 
-  it('card exposes only [답변], which opens the full-view dialog focused on that query', async () => {
+  it('an unanswered card exposes only [답변], which opens the full-view dialog focused on that query', async () => {
     getRequest.mockResolvedValue({
       data: { qa: { items: [
         { id: 5, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
@@ -203,21 +216,6 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
     await buttons[0].trigger('click')
     expect(dialog.props('visible')).toBe(true)
     expect(dialog.props('focusId')).toBe(5)
-    expect(dialog.props('startAnswer')).toBe(true)
-  })
-
-  it('card [답변] opens the full-view dialog with the answer form requested', async () => {
-    getRequest.mockResolvedValue({
-      data: { qa: { items: [
-        { id: 6, seq: 1, title: 'Q', body: 'b', asker_kind: 'human', answer_count: 0, answers: [] },
-      ] } },
-    })
-    const wrapper = mountPanel()
-    await flushPromises()
-    const dialog = wrapper.findComponent({ name: 'QaHistoryDialog' })
-    await wrapper.find('.dip-qa-card-actions .mini-action.primary').trigger('click')
-    expect(dialog.props('visible')).toBe(true)
-    expect(dialog.props('focusId')).toBe(6)
     expect(dialog.props('startAnswer')).toBe(true)
   })
 
@@ -285,8 +283,8 @@ describe('DocInfoPanel 질의 응답 panel (group 0022 §3.1)', () => {
   })
 
   // group 0126 / C안: answering moved out of the panel into the full-view dialog
-  // (QaHistoryDialog), so this asserts the panel hands the dialog working actions rather
-  // than clicking panel buttons that no longer exist.
+  // (now QaHistoryDialog, 0311 T0004), so this asserts the panel hands the
+  // dialog working actions rather than clicking panel buttons that no longer exist.
   //
   // 0248 B0001 / NR0003 "테스트 공백": this was left as it.skip against the pre-0126 DOM,
   // so the ONE test that would have exercised the real ai-request POST never ran — the

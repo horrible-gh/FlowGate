@@ -26,8 +26,10 @@ const TARGET_FILES = [
   'MainPanel.vue',
   'MentionMessageDialog.vue',
   'NextActionModal.vue',
+  // 0311 T0004: QaHistoryDialog.vue + ReviewHistoryDialog.vue merged into one dialog.
+  // TR0005 rev6 반려 §3 ("질의는 빼라") split QaHistoryDialog.vue back out.
   'QaHistoryDialog.vue',
-  'ReviewHistoryDialog.vue',
+  'QaReviewHistoryDialog.vue',
   'WorkPlanEditor.vue',
   'WorkPlanProposalDialog.vue',
 ]

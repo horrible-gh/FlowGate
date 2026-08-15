@@ -7,9 +7,11 @@ import i18n from '@shared/i18n'
 // (so background UI stays unreachable) but must no longer close/cancel the dialog or
 // reset its state on a self-click. This spec drives an actual click event at the
 // overlay element itself for a state-holding dialog (ContinuousWorkDialog,
-// GitConflictResolverDialog, NextActionModal) and two view-only dialogs (QaHistoryDialog,
-// ReviewHistoryDialog), and confirms the existing explicit close paths (X button,
-// Escape where it was already supported) still work unchanged.
+// GitConflictResolverDialog, NextActionModal) and two view-only dialogs
+// (QaHistoryDialog, QaReviewHistoryDialog — 0311 T0004 merged QaHistoryDialog +
+// ReviewHistoryDialog into one component; TR0005 rev6 반려 §3 split QaHistoryDialog
+// back out as the 질의-only full view), and confirms the existing explicit close
+// paths (X button, Escape where it was already supported) still work unchanged.
 
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-i18n')>()
@@ -32,7 +34,7 @@ import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 import GitConflictResolverDialog from '@main/components/GitConflictResolverDialog.vue'
 import NextActionModal from '@main/components/NextActionModal.vue'
 import QaHistoryDialog from '@main/components/QaHistoryDialog.vue'
-import ReviewHistoryDialog from '@main/components/ReviewHistoryDialog.vue'
+import QaReviewHistoryDialog from '@main/components/QaReviewHistoryDialog.vue'
 import { parseConflictFile, type ConflictFileState } from '@main/composables/useConflictChunks'
 
 beforeEach(() => {
@@ -245,8 +247,11 @@ describe('NextActionModal — overlay click no longer closes it (0412)', () => {
   })
 })
 
-describe('QaHistoryDialog / ReviewHistoryDialog — overlay click no longer closes them (0412)', () => {
-  it('QaHistoryDialog: overlay click does not close it, but X and Escape still do', async () => {
+// 0311 T0004 merged QaHistoryDialog + ReviewHistoryDialog into QaReviewHistoryDialog.
+// TR0005 rev6 반려 §3 ("질의는 빼라") split QaHistoryDialog back out as its own
+// 질의-only full view; QaReviewHistoryDialog stays as the 검수·반려-only dialog.
+describe('QaHistoryDialog — overlay click no longer closes it (0412)', () => {
+  it('overlay click does not close it, but X and Escape still do', async () => {
     const wrapper = mount(QaHistoryDialog, {
       props: {
         visible: true,
@@ -278,9 +283,11 @@ describe('QaHistoryDialog / ReviewHistoryDialog — overlay click no longer clos
     expect(wrapper2.emitted('update:visible')![0]).toEqual([false])
     wrapper2.unmount()
   })
+})
 
-  it('ReviewHistoryDialog: overlay click does not close it, but X and Escape still do', async () => {
-    const wrapper = mount(ReviewHistoryDialog, {
+describe('QaReviewHistoryDialog — overlay click no longer closes it (0412, merged 0311 T0004)', () => {
+  it('overlay click does not close it, but X and Escape still do', async () => {
+    const wrapper = mount(QaReviewHistoryDialog, {
       props: { visible: true, reviews: [], rejections: [] },
       global: { plugins: [i18n], stubs: { teleport: true } },
     })
@@ -295,7 +302,7 @@ describe('QaHistoryDialog / ReviewHistoryDialog — overlay click no longer clos
 
     wrapper.unmount()
 
-    const wrapper2 = mount(ReviewHistoryDialog, {
+    const wrapper2 = mount(QaReviewHistoryDialog, {
       props: { visible: true, reviews: [], rejections: [] },
       global: { plugins: [i18n], stubs: { teleport: true } },
     })

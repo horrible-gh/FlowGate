@@ -43,7 +43,7 @@
                 </span>
               </div>
               <!-- Full content, no inner scroll: the dialog body is the single scroll
-                   surface (mirrors ReviewHistoryDialog's full-content view). -->
+                   surface (mirrors QaReviewHistoryDialog's full-content view). -->
               <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_question') }}</div>
               <p class="qhd-box">{{ item.body }}</p>
               <!-- group 0243 R0001: an answered query shows its options read-only, marking
@@ -326,7 +326,7 @@ function onClose() {
 .qhd-blabel { font-size: .62rem; font-weight: 700; color: #6b7280; margin: 8px 0 3px; }
 /* Full text takes its natural height — the dialog body (.qhd-body, max-height 80vh)
    is the single scroll surface, so a long question/answer scrolls the dialog rather
-   than being clipped (mirrors ReviewHistoryDialog's .rhd-comment). */
+   than being clipped (mirrors QaReviewHistoryDialog's .rhd-comment). */
 .qhd-box {
   font-size: .8rem; color: var(--text); white-space: pre-wrap; line-height: 1.55;
   margin: 0; overflow-wrap: anywhere;
@@ -368,7 +368,7 @@ function onClose() {
 }
 .qhd-opt-read.picked { border-color: #86efac; background: #f0fdf4; color: #15803d; font-weight: 600; }
 
-/* Theme the single scroll surface to match ReviewHistoryDialog (14px, tinted). */
+/* Theme the single scroll surface to match QaReviewHistoryDialog (14px, tinted). */
 .qhd-body { scrollbar-width: thin; scrollbar-color: #b8c4d6 #eef2f8; }
 @supports selector(::-webkit-scrollbar) {
   .qhd-body { scrollbar-width: auto; scrollbar-color: auto; }
