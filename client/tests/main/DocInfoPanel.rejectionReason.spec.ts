@@ -1,6 +1,10 @@
-// (A) 유지 — 0394 T0016 / NR0003 §6.3.
-// 마지막 케이스만 shared/app.css를 읽는다. 두 줄 미리보기(-webkit-line-clamp)와 펼친 뒤의
-// 스크롤 상한은 CSS 선언 그 자체이고, jsdom은 레이아웃을 계산하지 않아 마운트로 관찰할 수 없다.
+// 0311 T0004 rev1: the rejection reason lives in the merged 「AI 검수·반려」 section
+// (rev0 had wrongly merged it with 질의 instead). rev3 반려("현재 적용되어있는 스타일을
+// 전혀 사용하지 않는다 / 반려·대응이 그렇게 되어있던가"): merging did not change how a
+// rejection is drawn — it is still the .dip-reject-quote box with its author/date toggle
+// head and a 2-line clamped .dip-reject-reason, exactly as the standalone section had it.
+// The clamp itself lives in shared/app.css, so the last case reads that file (jsdom does
+// not compute layout, so -webkit-line-clamp can't be observed by mounting).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
@@ -42,54 +46,71 @@ function mountPanel() {
   })
 }
 
+function mergedSection(wrapper: ReturnType<typeof mountPanel>) {
+  return wrapper.findAll('.dip-section')
+    .find((s) => s.find('.dip-sec-toggle').exists() && s.find('.dip-sec-toggle').text().includes(i18n.global.t('main.doc_info_panel.section_review_reject')))!
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('DocInfoPanel rejection reason height', () => {
-  it('renders the latest multiline reason in a collapsed quote card', () => {
+describe('DocInfoPanel rejection reason height (0311 T0004 rev1 merged AI검수·반려)', () => {
+  it('renders rejection quotes inside the merged section, newest first, clamped', () => {
     const wrapper = mountPanel()
-    const reason = wrapper.find('.dip-reject-reason')
-    const toggle = wrapper.find('.dip-reject-quote-toggle')
+    const section = mergedSection(wrapper)
+    const quotes = section.findAll('.dip-reject-quote')
 
+    expect(quotes.length).toBe(2)
+    // sorted by the REAL timestamp, newest first (20:47:12 before 20:43:00)
+    const reason = quotes[0].find('.dip-reject-quote-body .dip-reject-reason')
     expect(reason.text()).toContain('세로길이 테스트')
+    // the full multiline text is present in the DOM — the clamp is CSS-only, not truncation
     expect(reason.text()).toBe(LONG_REJECTION_REASON)
-    expect(wrapper.find('.dip-reject-quote').exists()).toBe(true)
-    expect(toggle.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.find('.dip-ai-history-link').exists()).toBe(true)
+    expect(quotes[1].find('.dip-reject-reason').text()).toBe('최소 한글자 이상 넣을것')
+    // the quote keeps its own in-place fold control — merging did not take it away
+    expect(quotes[0].find('.dip-reject-quote-toggle').exists()).toBe(true)
+    expect(quotes[0].find('.dip-reject-date').text()).toContain('06-12')
+    // and rev0's invented card family is gone
+    expect(section.findAll('.dip-mix-card').length).toBe(0)
   })
 
-  it('expands the quote card on demand', async () => {
+  it('does not leak the rejection into the 질의 section', () => {
     const wrapper = mountPanel()
-    const toggle = wrapper.find('.dip-reject-quote-toggle')
-
-    await toggle.trigger('click')
-
-    expect(wrapper.find('.dip-reject-quote').classes()).toContain('open')
-    expect(toggle.attributes('aria-expanded')).toBe('true')
+    const qaSection = wrapper.findAll('.dip-section').find((s) => s.find('.dip-qa-headline').exists())!
+    expect(qaSection.exists()).toBe(true)
+    expect(qaSection.text()).not.toContain('세로길이 테스트')
+    expect(qaSection.findAll('.dip-reject-quote').length).toBe(0)
   })
 
-  it('uses a two-line preview and scrolls long content only when expanded', () => {
+  it('[전체 보기] opens the merged dialog where the full reason is also shown', async () => {
+    const wrapper = mountPanel()
+    await mergedSection(wrapper).find('.dip-rr-fullview').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const modalReason = document.body.querySelector('.rhd-item--reject .rhd-reject-reason')
+    expect(modalReason?.textContent).toContain('세로길이 테스트')
+    wrapper.unmount()
+  })
+
+  it('uses a two-line preview on the panel card (CSS clamp)', () => {
+    // .dip-reject-reason is a shared style (shared/app.css) — the merged section reuses it
+    // rather than declaring a clamp of its own.
     const css = readFileSync(join(process.cwd(), 'shared/app.css'), 'utf-8')
     const block = css.match(/\.dip-reject-reason\s*\{([^}]*)\}/)?.[1] ?? ''
-    const openBlock = css.match(/\.dip-reject-quote\.open \.dip-reject-reason\s*\{([^}]*)\}/)?.[1] ?? ''
-    const webkitOpenBlock = css.match(
-      /@supports selector\(::-webkit-scrollbar\)\s*\{\s*\.dip-reject-quote\.open \.dip-reject-reason\s*\{([^}]*)\}/,
-    )?.[1] ?? ''
-    const scrollbar = css.match(/\.dip-reject-quote\.open \.dip-reject-reason::\-webkit-scrollbar\s*\{([^}]*)\}/)?.[1] ?? ''
-    const scrollbarTrack = css.match(/\.dip-reject-quote\.open \.dip-reject-reason::\-webkit-scrollbar-track\s*\{([^}]*)\}/)?.[1] ?? ''
-    const scrollbarThumb = css.match(/\.dip-reject-quote\.open \.dip-reject-reason::\-webkit-scrollbar-thumb\s*\{([^}]*)\}/)?.[1] ?? ''
-
-    expect(block).toMatch(/overflow-wrap\s*:\s*anywhere/)
     expect(block).toMatch(/-webkit-line-clamp\s*:\s*2/)
-    expect(openBlock).toMatch(/max-height\s*:\s*8rem/)
-    expect(openBlock).toMatch(/overflow-y\s*:\s*auto/)
-    expect(openBlock).toMatch(/scrollbar-color\s*:\s*#f87171 #fff1f2/)
-    expect(openBlock).toMatch(/scrollbar-width\s*:\s*thin/)
-    expect(webkitOpenBlock).toMatch(/scrollbar-color\s*:\s*auto/)
-    expect(webkitOpenBlock).toMatch(/scrollbar-width\s*:\s*auto/)
-    expect(scrollbar).toMatch(/width\s*:\s*14px/)
-    expect(scrollbarTrack).toMatch(/background\s*:\s*#fff1f2/)
-    expect(scrollbarThumb).toMatch(/background\s*:\s*#f87171/)
+    expect(block).toMatch(/overflow-y\s*:\s*hidden/)
+  })
+
+  it('clamps the OPEN reason too — ellipsis, not a scroll box (rev5 §4)', () => {
+    // 반려 §4: "문자열이 너무 길면 ... 을 넣어라 어차피 전체보기에서 볼테니까". Opening a
+    // rejection used to swap the clamp for an 8rem scroll box; it now just clamps wider,
+    // so the text always ends in an ellipsis and the panel cannot grow past ~6 lines.
+    const css = readFileSync(join(process.cwd(), 'shared/app.css'), 'utf-8')
+    const open = css.match(/\.dip-reject-quote\.open \.dip-reject-reason\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(open).toMatch(/-webkit-line-clamp\s*:\s*6/)
+    expect(open).not.toMatch(/overflow-y\s*:\s*auto/)
+    // and nothing re-enables the scrollbar further down the file
+    expect(css).not.toMatch(/\.dip-reject-quote\.open \.dip-reject-reason::-webkit-scrollbar/)
   })
 })

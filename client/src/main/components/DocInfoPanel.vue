@@ -113,11 +113,15 @@
         </div>
       </div>
 
-      <!-- Section 2: Q&A (group 0126). The side panel keeps each query compact and only
-           exposes the answer action per card; the full text/answer form opens in the
-           dialog so long queries never stretch the panel.
-           0325 N0004 §3: hidden at the final-approval step — by then every query is
-           settled, and the space belongs to the source-change summary above. -->
+      <!-- Section 2: 질의 (0311 T0004 rev1 §1 — 반려와 다시 분리한 독립 섹션).
+           rev0 이 지시했던 qa+reject 병합은 "합칠 대상이 잘못됐다"는 반려로 되돌렸다.
+           rev3 반려("현재 적용되어있는 스타일을 전혀 사용하지 않는다"): 이 섹션의 마크업과
+           클래스는 지금 화면에 실제로 적용되어 있는 것 그대로다 — .dip-qa-card(앰버 카드)
+           · .dip-qa-card-title/-body · .dip-qa-opt-list(선택지 미리보기) · mini-action
+           primary [답변] · answered-card. 새로 만든 것은 없다.
+           NR0003 §5-3 이 권한 "최신 N건 + 나머지는 전체보기로" 상한선만 얹었고, 그 링크도
+           이 파일이 이미 쓰던 .dip-ai-history-link 관용구를 그대로 쓴다.
+           표시 조건은 원래대로 canShowQaSection — AC 문서에서만 감춘다. -->
       <div v-if="canShowQaSection" class="dip-section" :class="{ collapsed: sectionCollapsed.qa }">
         <div class="dip-qa-headline">
           <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.qa" @click="toggleSection('qa')">
@@ -179,12 +183,12 @@
         <div v-if="qaLoading" class="dip-qa-hint">{{ t('common.loading') }}</div>
         <div v-else-if="qaError" class="dip-qa-error">{{ qaError }}</div>
         <template v-else>
-          <div v-if="qaItems.length === 0" class="dip-reject-empty">
+          <div v-if="qaFeed.length === 0" class="dip-reject-empty">
             <AppIcon name="question" />
             <span>{{ t('main.doc_info_panel.qa_empty') }}</span>
           </div>
           <div
-            v-for="item in qaItems"
+            v-for="item in qaFeedVisible"
             :key="item.id"
             class="dip-qa-card"
             :class="{ 'answered-card': itemAnswered(item) }"
@@ -203,78 +207,133 @@
               </button>
             </div>
           </div>
+          <!-- rev5 반려 §3: "이전 항목 N건 더 — 전체보기에서 확인" 줄은 없앴다. 넘친
+               항목으로 나가는 문은 머리줄 오른쪽의 [전체보기] 하나뿐이다. -->
         </template>
         </div>
       </div>
 
-      <!-- Section 2.5: AI review feedback (latest review plus full history) -->
-      <div v-if="canShowReviewSection" class="dip-section" :class="{ collapsed: sectionCollapsed.ai_review }">
-        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.ai_review" @click="toggleSection('ai_review')">
-          <AppIcon name="caret-down" class="dip-acc-caret" />
-          <AppIcon name="robot" />
-          {{ t('main.doc_info_panel.section_ai_review') }}
-        </button>
+      <!-- Section 2.5: AI 검수·반려 (0311 T0004 rev1 §2 — 이번에 실제로 합칠 한 쌍).
+           두 섹션은 표시 조건이 글자 하나 다르지 않게 같았고(canShowRejectSection ≡
+           canShowReviewSection), 원래부터 같은 "최신 1건 + 이력 링크" 패턴을 썼으며, 둘 다
+           진짜 시각 컬럼(rejected_at · reviewed_at/created_at)을 갖고 있어 순서를 지어낼
+           필요가 없다 — 그래서 하나의 시간순 피드로 합친다.
+
+           rev3 반려("현재 적용되어있는 스타일을 전혀 사용하지 않는다 / 반려·대응이 그렇게
+           되어있던가 / 작업검수가 이중박스로 되어있던가"): 합친 뒤에도 카드 한 장 한 장은
+           지금 화면에 적용되어 있는 그 마크업 그대로다. 반려 = .dip-reject-quote(작성자·
+           날짜 머리줄을 누르면 접히는 인용 상자) + 그 아래 형제로 붙는 .dip-ai-response
+           스레드, AI 검수 = .dip-ai-entry. 카드를 감싸는 새 상자(rev0 의 .dip-mix-card)는
+           없앴다 — 그것이 AI 검수를 이중박스로 만든 장본인이었다. 합치기 위해 새로 넣은
+           스타일은 항목 사이 간격 규칙(.dip-rr-entry) 하나뿐이다.
+
+           rev4 반려: ① AI 검수 항목의 머리줄(.dip-ai-entry-head/.dip-ai-meta)·판정 배지
+           (.dip-ai-verdict)·지적 목록(.dip-ai-findings)은 패널에서 뺐다 — 남는 것은
+           .dip-ai-comment 하나다. ② 반려 카드의 이름 자리는 「반려」, 그 .dip-ai-comment 는
+           「검수 의견」(i18n 값만 바꿨다). ③ 본문 아래 "이전 항목 N건 더" 줄 대신 제목 오른쪽
+           [전체보기]. ④ 최대 3건, 긴 문자열은 접었든 펼쳤든 말줄임. -->
+      <div v-if="canShowReviewRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.ai_review }">
+        <!-- rev5 반려 §3: [전체보기] 를 제목 오른쪽에 둔다. 머리줄 자체는 바로 위 질의
+             섹션이 이미 쓰고 있는 .dip-qa-headline / .dip-qa-head-actions / .dip-qa-act
+             그대로이고, 이 섹션의 단추에는 자기 훅 클래스(.dip-rr-fullview)만 더 붙였다.
+             rev6 반려 §1·§3: 이 [전체보기] 는 질의 섹션과 다른 다이얼로그(검수·반려
+             전용 QaReviewHistoryDialog)를 연다 — openReviewRejectFull 참고. -->
+        <div class="dip-qa-headline">
+          <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.ai_review" @click="toggleSection('ai_review')">
+            <AppIcon name="caret-down" class="dip-acc-caret" />
+            <AppIcon name="robot" />
+            {{ t('main.doc_info_panel.section_review_reject') }}
+          </button>
+          <div class="dip-qa-head-actions">
+            <button v-if="reviewRejectHasHistory" class="dip-qa-act dip-rr-fullview" type="button" @click="openReviewRejectFull" :title="t('main.doc_info_panel.qa_view_full')">
+              <AppIcon name="corners-out" />
+              {{ t('main.doc_info_panel.qa_view_full') }}
+            </button>
+          </div>
+        </div>
         <div class="dip-sec-body">
-        <template v-if="aiReview">
-          <div class="dip-ai-entry">
-            <div class="dip-ai-entry-head">
-              <span class="dip-ai-meta">{{ formatRejectionDate(aiReview.reviewed_at ?? aiReview.created_at ?? '') }} · {{ aiReview.reviewer_name || t('main.doc_info_panel.ai_review_author') }}</span>
-              <!-- Findings collapse under the verdict badge (toggle); plain badge when there are none. -->
-              <button
-                v-if="aiFindings.length"
-                type="button"
-                class="dip-ai-verdict dip-ai-verdict--toggle"
-                :class="aiVerdictClass(aiReview.verdict)"
-                :aria-expanded="findingsExpanded"
-                @click="toggleFindings"
-              >
-                {{ aiVerdictLabel(aiReview) }}
-                <AppIcon name="caret-down" class="dip-ai-chevron" :class="{ open: findingsExpanded }" />
-              </button>
-              <span v-else class="dip-ai-verdict" :class="aiVerdictClass(aiReview.verdict)">{{ aiVerdictLabel(aiReview) }}</span>
-            </div>
-            <ol v-if="aiFindings.length && findingsExpanded" class="dip-ai-findings">
-              <li v-for="(f, i) in aiFindings" :key="i" class="dip-ai-finding">
-                <span v-if="f.locus" class="dip-ai-finding-locus">{{ f.locus }}</span>
-                <span class="dip-ai-finding-note">{{ f.note }}</span>
-              </li>
-            </ol>
-            <!-- R0001 (rev1): the comment fold now uses the SAME control idiom as the
-                 rejection reason and the AI response — a clickable header row carrying a
-                 label + chevron (no separate "expand/collapse" text button), with the body
-                 clamped to two lines and expanding to a height-capped scroll. Only the
-                 accent colour stays amber to match this box's verdict tone. -->
-            <div v-if="aiReview.comment" class="dip-ai-comment" :class="{ open: commentExpanded }">
-              <button
-                type="button"
-                class="dip-ai-comment-toggle"
-                :aria-expanded="commentExpanded"
-                :title="t(commentExpanded ? 'main.doc_info_panel.ai_comment_collapse' : 'main.doc_info_panel.ai_comment_expand')"
-                @click="commentExpanded = !commentExpanded"
-              >
-                <span class="dip-ai-comment-label">
-                  <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_comment_label') }}
-                </span>
-                <AppIcon name="caret-down" class="dip-ai-comment-chevron" />
-              </button>
-              <div class="dip-ai-comment-body">{{ aiReview.comment }}</div>
+        <template v-if="reviewRejectFeed.length > 0">
+          <div v-for="entry in reviewRejectFeedVisible" :key="entry.key" class="dip-rr-entry">
+            <!-- 반려 — 기존 반려 사유 섹션의 마크업 그대로 -->
+            <template v-if="entry.kind === 'reject'">
+              <div class="dip-reject-quote" :class="{ open: foldOpen.reason[entry.key] }">
+                <button
+                  class="dip-reject-quote-toggle"
+                  type="button"
+                  :aria-expanded="!!foldOpen.reason[entry.key]"
+                  :title="t(foldOpen.reason[entry.key] ? 'main.doc_info_panel.rejection_collapse' : 'main.doc_info_panel.rejection_expand')"
+                  @click="toggleFold('reason', entry.key)"
+                >
+                  <span class="dip-reject-quote-author">
+                    <AppIcon name="user-gear" />
+                    <strong>{{ rejectedByDisplay(entry.reject!.rejected_by) || t('main.doc_info_panel.rejection_review_author') }}</strong>
+                  </span>
+                  <span v-if="entry.reject!.rejected_at" class="dip-reject-date">{{ formatRejectionDate(entry.reject!.rejected_at) }}</span>
+                  <AppIcon name="caret-down" class="dip-reject-chevron" />
+                </button>
+                <div class="dip-reject-quote-body">
+                  <span class="dip-reject-reason">{{ entry.reject!.reason }}</span>
+                </div>
+              </div>
+
+              <!-- P0005/T0006: the AI's response to THIS rejection, threaded as a reply
+                   directly under the quote (a sibling, not nested inside it) — the same
+                   placement the standalone rejection section already used. -->
+              <div v-if="entry.reject!.ai_response" class="dip-ai-response" :class="{ open: foldOpen.response[entry.key] }">
+                <button
+                  type="button"
+                  class="dip-ai-response-head"
+                  :aria-expanded="!!foldOpen.response[entry.key]"
+                  :title="t(foldOpen.response[entry.key] ? 'main.doc_info_panel.rejection_collapse' : 'main.doc_info_panel.rejection_expand')"
+                  @click="toggleFold('response', entry.key)"
+                >
+                  <span class="dip-ai-response-label">
+                    <AppIcon name="arrow-bend-up-left" class="dip-ai-response-thread" />
+                    <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_response_label') }}
+                  </span>
+                  <span v-if="entry.reject!.responded_at" class="dip-ai-response-date">{{ formatRejectionDate(entry.reject!.responded_at) }}</span>
+                  <AppIcon name="caret-down" class="dip-ai-response-chevron" />
+                </button>
+                <div class="dip-ai-response-body">{{ entry.reject!.ai_response }}</div>
+              </div>
+            </template>
+
+            <!-- AI 검수 — 기존 AI 검수 섹션의 .dip-ai-entry 그대로 (감싸는 상자 없음).
+                 rev5 반려 §1: 머리줄(시각 · AI)·판정 배지("지적 N건")·지적 목록은 패널에
+                 그리지 않는다. 패널에 남는 것은 아래 [검수 의견] 접힘 하나뿐이고, 시각·판정·
+                 지적은 [전체보기] 창에서 그대로 볼 수 있다. -->
+            <div v-else class="dip-ai-entry">
+              <!-- R0001 (rev1): the comment fold uses the SAME control idiom as the
+                   rejection reason and the AI response — a clickable header row carrying a
+                   label + chevron over a clamped body. rev5 반려 §4: opening widens the
+                   clamp from 2 lines to 6 instead of turning it into a scroll box, so a
+                   long 검수 의견 always ends in an ellipsis. Accent colour stays amber. -->
+              <div v-if="entry.review!.comment" class="dip-ai-comment" :class="{ open: foldOpen.comment[entry.key] }">
+                <button
+                  type="button"
+                  class="dip-ai-comment-toggle"
+                  :aria-expanded="!!foldOpen.comment[entry.key]"
+                  :title="t(foldOpen.comment[entry.key] ? 'main.doc_info_panel.ai_comment_collapse' : 'main.doc_info_panel.ai_comment_expand')"
+                  @click="toggleFold('comment', entry.key)"
+                >
+                  <span class="dip-ai-comment-label">
+                    <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_comment_label') }}
+                  </span>
+                  <AppIcon name="caret-down" class="dip-ai-comment-chevron" />
+                </button>
+                <div class="dip-ai-comment-body">{{ entry.review!.comment }}</div>
+              </div>
             </div>
           </div>
-          <!-- R0001: a "show-all" entry is always offered when there is any review on
-               record (not only when prior reviews exist), so the most common single-review
-               case can still reach the full-content history view. -->
-          <button v-if="(aiReviewHistory?.length ?? 0) > 0" class="dip-ai-history-link" type="button" @click="emit('open-review-history')">
-            <AppIcon name="clock-counter-clockwise" />
-            {{ priorReviewCount > 0
-                ? t('main.doc_info_panel.ai_review_view_history_count', { n: priorReviewCount })
-                : t('main.doc_info_panel.view_full') }}
-          </button>
+
+          <!-- rev5 반려 §3: 본문 아래의 "이전 항목 N건 더 / 전체 보기" 링크는 없앴다.
+               전체 이력으로 나가는 문은 머리줄 오른쪽의 [전체보기] 다. -->
         </template>
         <template v-else>
           <div class="dip-reject-empty">
             <AppIcon name="chat-circle-dots" />
-            <span>{{ t('main.doc_info_panel.ai_review_empty') }}</span>
-            <span class="dip-reject-hint">{{ t('main.doc_info_panel.ai_review_hint') }}</span>
+            <span>{{ t('main.doc_info_panel.review_reject_empty') }}</span>
+            <span class="dip-reject-hint">{{ t('main.doc_info_panel.review_reject_hint') }}</span>
           </div>
         </template>
         </div>
@@ -352,81 +411,11 @@
           </div>
         </div>
       </div>
-
-      <!-- Section 3: rejection reason -->
-      <div v-if="canShowRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.reject }">
-        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.reject" @click="toggleSection('reject')">
-          <AppIcon name="caret-down" class="dip-acc-caret" />
-          <AppIcon name="chat-slash" />
-          {{ t('main.doc_info_panel.section_reject') }}
-        </button>
-        <div class="dip-sec-body">
-        <template v-if="rejectionDisplayReason">
-          <div class="dip-reject-quote" :class="{ open: rejectionExpanded }">
-            <button
-              class="dip-reject-quote-toggle"
-              type="button"
-              :aria-expanded="rejectionExpanded"
-              :title="t(rejectionExpanded ? 'main.doc_info_panel.rejection_collapse' : 'main.doc_info_panel.rejection_expand')"
-              @click="rejectionExpanded = !rejectionExpanded"
-            >
-              <span class="dip-reject-quote-author">
-                <AppIcon name="user-gear" />
-                <strong>{{ rejectionAuthorLabel }}</strong>
-              </span>
-              <span v-if="latestRejection" class="dip-reject-date">{{ formatRejectionDate(latestRejection.rejected_at) }}</span>
-              <AppIcon name="caret-down" class="dip-reject-chevron" />
-            </button>
-            <div class="dip-reject-quote-body">
-              <span class="dip-reject-reason">{{ rejectionDisplayReason }}</span>
-
-              <!-- R0001: as with the AI review, offer "show-all" whenever there is a
-                   rejection on record so a single rejection still has a full-view entry. -->
-              <button v-if="rejectionHistoryList.length > 0" class="dip-ai-history-link" type="button" @click="emit('open-review-history')">
-                <AppIcon name="clock-counter-clockwise" />
-                {{ priorRejectionCount > 0
-                    ? t('main.doc_info_panel.rejection_view_history_count', { n: priorRejectionCount })
-                    : t('main.doc_info_panel.view_full') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- P0005/T0006: the AI's response to this rejection, threaded as a reply
-               directly UNDER the quote (a sibling, not nested inside it). Collapsible
-               like the rejection quote (folded by default); the body is height-capped
-               so a long response scrolls instead of stretching the whole panel. -->
-          <div v-if="latestRejection?.ai_response" class="dip-ai-response" :class="{ open: aiResponseExpanded }">
-            <button
-              type="button"
-              class="dip-ai-response-head"
-              :aria-expanded="aiResponseExpanded"
-              :title="t(aiResponseExpanded ? 'main.doc_info_panel.rejection_collapse' : 'main.doc_info_panel.rejection_expand')"
-              @click="aiResponseExpanded = !aiResponseExpanded"
-            >
-              <span class="dip-ai-response-label">
-                <AppIcon name="arrow-bend-up-left" class="dip-ai-response-thread" />
-                <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_response_label') }}
-              </span>
-              <span v-if="latestRejection.responded_at" class="dip-ai-response-date">{{ formatRejectionDate(latestRejection.responded_at) }}</span>
-              <AppIcon name="caret-down" class="dip-ai-response-chevron" />
-            </button>
-            <div class="dip-ai-response-body">{{ latestRejection.ai_response }}</div>
-          </div>
-        </template>
-        <template v-else>
-          <div class="dip-reject-empty">
-            <AppIcon name="chat-circle-dots" />
-            <span>{{ t('main.doc_info_panel.reject_empty') }}</span>
-            <span class="dip-reject-hint">{{ t('main.doc_info_panel.reject_hint') }}</span>
-          </div>
-        </template>
-        </div>
-      </div>
     </div>
 
-    <!-- R0001 (AC3): show-all modal for the full query/answer text. Owned here since
-         the QA data already lives in this panel (the AI review history modal lives in
-         MainPanel because its data lives in DocHeader). -->
+    <!-- 0311 T0004 / TR0005 rev6 반려 §3 ("질의는 빼라"): 질의 전체보기는 다시 자기
+         전용 다이얼로그(QaHistoryDialog)를 쓴다. 질의 헤드라인의 [전체보기]와 각 카드의
+         [답변]이 이 다이얼로그를 doc-id 컨텍스트로 연다. -->
     <QaHistoryDialog
       v-model:visible="qaHistoryVisible"
       :items="qaItems"
@@ -443,6 +432,14 @@
       :select-provider="aiProviderStore.selectProvider"
       :copy-answer-mention="copyAnswerMention"
       :ai-run-item-id="aiRunItemId"
+    />
+
+    <!-- 검수·반려 전용 "전체보기" — AI검수·반려 섹션의 [전체보기]만 연다. -->
+    <QaReviewHistoryDialog
+      v-model:visible="reviewRejectHistoryVisible"
+      :reviews="props.aiReviewHistory ?? []"
+      :rejections="props.rejectionHistory ?? []"
+      :rejected-by-display="rejectedByDisplay"
     />
 
     <!-- 0325 TR0007 rev1 — what [변경사항 열기] opens: the file list + unified/split
@@ -467,15 +464,16 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
+import QaReviewHistoryDialog from './QaReviewHistoryDialog.vue'
 import GroupChangesDialog from './GroupChangesDialog.vue'
-import { useQaAnswers } from '../composables/useQaAnswers'
+import { useQaAnswers, type QaItem } from '../composables/useQaAnswers'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useExplorerStore, type GroupChangeData } from '../stores/explorer'
 import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
-import type { AiReview, AiReviewFinding } from '../types/aiReview'
+import type { AiReview } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopePathSlice, TrScopeVerdict } from '../types/trScope'
 
@@ -508,23 +506,24 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggle: []
   'next-action': []
-  'open-review-history': []
   'orphan-recovered': []
 }>()
 
 // ── R0001 (group 0126 / C안): section-level accordion ──────────────────────────
-// Each info-panel section (status · Q&A · AI review · rejection) folds independently
-// under its own title caret — the same caret idiom as the left file-tree. This is
-// separate from the whole-panel collapse (the `dip-panel-close` chevron / `toggle`
-// emit) so the two controls don't fight. Sections start expanded.
-type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'reject' | 'tr_scope' | 'changes'
+// Each info-panel section (status · 질의 · AI검수·반려) folds independently under its
+// own title caret — the same caret idiom as the left file-tree. This is separate from
+// the whole-panel collapse (the `dip-panel-close` chevron / `toggle` emit) so the two
+// controls don't fight. Sections start expanded.
+// 0311 T0004 rev1 §2: 'ai_review' is now the MERGED AI검수·반려 section's key. The old
+// standalone 'reject' key is dropped — a repo-wide grep found no other reference to it
+// (it had already been left dangling with no section of its own).
+type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   // 시안 xc32frrg 화면 1 은 이 칸을 펼친 채로 그린다.
   wp_assignments: false,
   qa: false,
   ai_review: false,
-  reject: false,
   // 통과이고 사유가 없으면 접어 둔다 (D0004 §6). 아래 watch 가 판정을 보고 연다.
   tr_scope: true,
   // 0325 T0006: AC 에서만 뜨는 섹션이고, 뜨는 이유 자체가 "지금 보라"이므로 펼친 채 시작한다.
@@ -615,16 +614,12 @@ function formatRejectionDate(iso: string): string {
   }
 }
 
+// Newest first. The merged AI검수·반려 feed re-sorts by real timestamp anyway, but this
+// keeps the pre-sort deterministic when several rejections share a timestamp.
 const rejectionHistoryList = computed(() => [...(props.rejectionHistory ?? [])].reverse())
-const latestRejection = computed(() => rejectionHistoryList.value[0] ?? null)
-const priorRejectionCount = computed(() => Math.max(0, rejectionHistoryList.value.length - 1))
-const rejectionDisplayReason = computed(() => latestRejection.value?.reason ?? props.rejectReason ?? '')
-const rejectionExpanded = ref(false)
-// The AI response folds independently of the rejection quote (reviewer: "let the response be collapsible too").
-const aiResponseExpanded = ref(false)
 
 // rejected_by is a user UUID; resolve it to a display name (same /api/v1/users/{id}
-// pattern as DocHeader.fetchOwner) so the rejection line never shows a raw UUID.
+// pattern as DocHeader.fetchOwner) so a rejection line never shows a raw UUID.
 // An empty cache entry means "resolved but unknown" -> show nothing rather than the UUID.
 const rejectedByNames = ref<Record<string, string>>({})
 
@@ -646,19 +641,12 @@ function rejectedByDisplay(userId: string | null | undefined): string {
   return rejectedByNames.value[userId] || ''
 }
 
-const rejectionAuthorLabel = computed(() => (
-  rejectedByDisplay(latestRejection.value?.rejected_by)
-  || t('main.doc_info_panel.rejection_review_author')
-))
-
+// 0311 T0004: the merged full-history dialog lists EVERY rejection, not just the
+// latest, so every distinct rejected_by across the whole history needs resolving
+// (the old single-fold panel only ever needed the latest one).
 watch(
-  () => latestRejection.value?.rejected_by,
-  (id) => { if (id) resolveRejectedBy(id) },
-  { immediate: true },
-)
-watch(
-  () => `${latestRejection.value?.rejected_at ?? ''}:${rejectionDisplayReason.value}`,
-  () => { rejectionExpanded.value = false; aiResponseExpanded.value = false },
+  () => rejectionHistoryList.value.map((r) => r.rejected_by),
+  (ids) => { for (const id of ids) if (id) void resolveRejectedBy(id) },
   { immediate: true },
 )
 
@@ -741,36 +729,38 @@ const isQDone = computed(() => props.qStatus === 'done')
 // 감추고 그 자리에 소스 변경 요약을 띄운다. 세 섹션 모두 그 시점에는 이미 끝난
 // 얘기라 스크롤만 늘린다.
 const isAcDoc = computed(() => props.typeCode === 'AC')
+// 0311 T0004 rev1 §1: qa is its own section again — the merge partner was wrong.
+// Its show condition never matched reject/ai_review's in the first place (R/B/Q/M
+// docs show queries but never a rejection), which is one of the reasons the pairing
+// was wrong; only AC hides it.
 const canShowQaSection = computed(() => !isAcDoc.value)
+
+// ── AI검수·반려 (0311 T0004 rev1 §2: the pair that actually belongs together) ──
+// These two conditions are character-for-character identical today, but they are kept
+// as two named computeds and OR'd explicitly so the merged section keeps rendering if
+// they ever diverge.
 const canShowRejectSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
-
-// ── AI review feedback (variant C: latest item plus "view full history") ──
 const canShowReviewSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
-const priorReviewCount = computed(() => Math.max(0, (props.aiReviewHistory?.length ?? 0) - 1))
+const canShowReviewRejectSection = computed(() => canShowRejectSection.value || canShowReviewSection.value)
 
-// Accordion: collapse the findings list under the verdict badge so the side panel
-// stays scannable. Default to collapsed (count visible on the badge); reset to
-// collapsed whenever the latest review changes.
-const aiFindings = computed<AiReviewFinding[]>(() => props.aiReview?.findings ?? [])
-const findingsExpanded = ref(false)
-// The comment folds independently of the findings (same idiom as the rejection reason).
-const commentExpanded = ref(false)
-watch(
-  () => props.aiReview?.id ?? props.aiReview?.reviewed_at ?? null,
-  () => { findingsExpanded.value = false; commentExpanded.value = false },
-  { immediate: true },
-)
-function toggleFindings() {
-  findingsExpanded.value = !findingsExpanded.value
+// Per-entry folds. The panel used to render exactly ONE review and ONE rejection, so a
+// single ref each was enough; the merged feed renders several cards, so each card's
+// comment / AI-response / reason fold is tracked under that card's own feed key.
+// rev5 반려 §1: the findings fold is gone — the panel no longer draws the verdict badge
+// or the findings list at all, so there is nothing left to open there.
+// All three reset when the document changes (see the props.docId watch below).
+const foldOpen = reactive<Record<'comment' | 'response' | 'reason', Record<string, boolean>>>({
+  comment: {},
+  response: {},
+  reason: {},
+})
+function toggleFold(kind: 'comment' | 'response' | 'reason', key: string) {
+  foldOpen[kind][key] = !foldOpen[kind][key]
 }
 
-function aiVerdictClass(verdict?: string | null): string {
-  return verdict === 'pass' ? 'pass' : 'warn'
-}
-function aiVerdictLabel(r: AiReview): string {
-  if (r.verdict === 'pass') return t('main.doc_info_panel.ai_verdict_pass')
-  if (r.verdict === 'hold') return t('main.doc_info_panel.ai_verdict_hold')
-  return t('main.doc_info_panel.ai_verdict_issues', { n: r.finding_count ?? 0 })
+// A review's real time column, in the order the server fills them.
+function reviewWhen(r: AiReview): string {
+  return r.reviewed_at ?? r.created_at ?? ''
 }
 const isBehindWorkflowHead = computed(() =>
   !['R', 'B'].includes(props.typeCode ?? '') &&
@@ -987,9 +977,94 @@ function removeQOption(idx: number) {
 // prototype's "미응답 N" pill — and the same count the header counter would show).
 const qaUnansweredCount = computed(() => qaItems.value.filter((it) => !itemAnswered(it)).length)
 
-// group 0126 / C안 + T0013: full Q&A modal (show-all / 전체보기). The headline
-// [전체보기] opens it unfocused; each card's [답변] opens it focused on that query
-// with the answer form started (cards expose only [답변] per T0013).
+// ── 0311 T0004 rev1: the two capped feeds ───────────────────────────────────────
+// Both sections cap the panel at FEED_VISIBLE cards (NR0003 §5-3's actual
+// recommendation). rev5 반려 §3·§4: the cap is now hard — the overflow is not announced
+// with a "이전 항목 N건 더" line any more, it is simply not drawn, and each section's
+// 머리줄 [전체보기] is the one door to the rest. Every preview text is clamped with an
+// ellipsis so a long string cannot stretch the panel either (§4).
+const FEED_VISIBLE = 3
+
+// 질의: newest-registered first. question_items has no created_at column (server
+// schema — server/sql/queries/queries.json "get_question_items" is seq ASC only), so
+// seq is the only ordering on record. That is fine here precisely because qa is no
+// longer interleaved with anything that has a real clock.
+const qaFeed = computed<QaItem[]>(() => [...qaItems.value].reverse())
+const qaFeedVisible = computed(() => qaFeed.value.slice(0, FEED_VISIBLE))
+
+// AI검수·반려: sorted by REAL time — rejections carry rejected_at and reviews carry
+// reviewed_at ?? created_at, so nothing has to be invented to interleave them (this is
+// exactly what the qa+reject merge could not do).
+// An entry with no parseable timestamp sorts newest: the only way to get one is the
+// legacy single-reason path (rejectReason with no rejectionHistory) or a review the
+// server has not stamped yet, and in both cases it IS the state just handed to us.
+interface ReviewRejectEntry {
+  kind: 'reject' | 'review'
+  key: string
+  when: number
+  reject?: RejectionHistoryItem
+  review?: AiReview
+}
+function whenMs(iso: string | null | undefined): number {
+  if (!iso) return Number.POSITIVE_INFINITY
+  const ms = Date.parse(iso)
+  return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms
+}
+const reviewRejectFeed = computed<ReviewRejectEntry[]>(() => {
+  const out: ReviewRejectEntry[] = []
+  if (canShowRejectSection.value) {
+    if (rejectionHistoryList.value.length > 0) {
+      rejectionHistoryList.value.forEach((r, i) => out.push({
+        kind: 'reject',
+        key: `reject:${r.rejection_id ?? r.rejected_at ?? i}`,
+        when: whenMs(r.rejected_at),
+        reject: r,
+      }))
+    } else if (props.rejectReason) {
+      // Pre-history documents deliver only the current reason, with no history array.
+      out.push({
+        kind: 'reject',
+        key: 'reject:legacy',
+        when: whenMs(null),
+        reject: { reason: props.rejectReason, rejected_at: '', rejected_by: null },
+      })
+    }
+  }
+  if (canShowReviewSection.value) {
+    // Same fallback shape as the rejection above: prefer the full history, fall back to
+    // the single latest review when only that prop was handed in.
+    // rev5 반려 §1: with the meta head, the verdict badge and the findings list gone, a
+    // review whose comment is empty has nothing left to draw in the panel — it would be
+    // an empty row. It stays in [전체보기] (the dialog gets props.aiReviewHistory whole),
+    // it just does not take a card here.
+    const reviews = ((props.aiReviewHistory?.length ?? 0) > 0
+      ? [...(props.aiReviewHistory ?? [])]
+      : (props.aiReview ? [props.aiReview] : [])
+    ).filter((r) => !!r.comment)
+    reviews.forEach((r, i) => out.push({
+      kind: 'review',
+      key: `review:${r.id ?? r.reviewed_at ?? r.created_at ?? i}`,
+      when: whenMs(reviewWhen(r)),
+      review: r,
+    }))
+  }
+  // Not `b.when - a.when`: two unstamped entries would both be Infinity and yield NaN.
+  return out.sort((a, b) => (a.when === b.when ? 0 : a.when > b.when ? -1 : 1))
+})
+const reviewRejectFeedVisible = computed(() => reviewRejectFeed.value.slice(0, FEED_VISIBLE))
+// The 머리줄 [전체보기] must stay reachable even when the panel feed itself is empty —
+// a comment-less review draws no card here but is still in the dialog.
+const reviewRejectHasHistory = computed(() =>
+  reviewRejectFeed.value.length > 0
+  || (props.aiReviewHistory?.length ?? 0) > 0
+  || !!props.aiReview
+  || rejectionHistoryList.value.length > 0
+  || !!props.rejectReason)
+
+// group 0126 / C안 + T0013 + 0311 T0004: qa full-history modal. TR0005 rev6 반려 §3
+// ("질의는 빼라") split the once-merged dialog back in two — this ref only opens
+// QaHistoryDialog now. The 질의 headline's [전체보기] opens it unfocused; each qa
+// card's [답변] opens it focused on that query with the answer form started.
 const qaHistoryVisible = ref(false)
 const qaFocusId = ref<number | null>(null)
 const qaStartAnswer = ref(false)
@@ -997,6 +1072,12 @@ function openQaFull(focusId: number | null = null, startAnswer = false) {
   qaFocusId.value = focusId
   qaStartAnswer.value = startAnswer
   qaHistoryVisible.value = true
+}
+
+// AI검수·반려 섹션의 [전체보기] — 검수·반려 전용 QaReviewHistoryDialog 를 연다.
+const reviewRejectHistoryVisible = ref(false)
+function openReviewRejectFull() {
+  reviewRejectHistoryVisible.value = true
 }
 
 function toggleNewQ() {
@@ -1012,7 +1093,16 @@ async function submitNewQ() {
 
 watch(
   () => props.docId,
-  () => { newQOpen.value = false; qaHistoryVisible.value = false; fetchQa() },
+  () => {
+    newQOpen.value = false
+    qaHistoryVisible.value = false
+    reviewRejectHistoryVisible.value = false
+    // Feed keys are per-document; carrying folds across would open an unrelated card.
+    foldOpen.comment = {}
+    foldOpen.response = {}
+    foldOpen.reason = {}
+    fetchQa()
+  },
   { immediate: true },
 )
 
@@ -1124,6 +1214,9 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-qa-opt {
   font-size: .7rem; color: #6b7280;
   padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px; background: #f8fafc;
+  /* rev5 반려 §4: a long option label used to wrap over several lines inside a card that
+     is only a preview — clamp it to one line with an ellipsis. */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* group 0126: prototype card layout for the Q&A section. The headline carries a
@@ -1261,84 +1354,12 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   margin-left: 6px;
   font-weight: 400;
 }
-/* AI review feedback section */
-.dip-ai-entry-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-.dip-ai-meta {
-  font-size: .6rem;
-  color: #59606a;
-}
-.dip-ai-verdict {
-  margin-left: auto;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: .62rem;
-  font-weight: 700;
-}
-.dip-ai-verdict.warn { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
-.dip-ai-verdict.pass { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-.dip-ai-verdict--toggle {
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: inherit;
-  line-height: 1.2;
-}
-.dip-ai-verdict--toggle:hover { filter: brightness(0.97); }
-.dip-ai-chevron {
-  font-size: .55rem;
-  transition: transform .15s;
-}
-.dip-ai-chevron.open { transform: rotate(180deg); }
-.dip-ai-findings {
-  list-style: decimal;
-  margin: 0 0 6px;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  /* R0043: cap a long findings list so it scrolls instead of stretching the panel,
-     mirroring the rejection-reason idiom; amber 14px scrollbar to keep the tone. */
-  max-height: 9rem;
-  overflow-y: auto;
-  scrollbar-width: auto;
-  scrollbar-color: #f59e0b #fef3c7;
-}
-@supports selector(::-webkit-scrollbar) {
-  .dip-ai-findings::-webkit-scrollbar { width: 14px; }
-  .dip-ai-findings::-webkit-scrollbar-track { border-radius: 999px; background: #fef3c7; }
-  .dip-ai-findings::-webkit-scrollbar-thumb {
-    border: 3px solid #fef3c7;
-    border-radius: 999px;
-    background: #f59e0b;
-  }
-  .dip-ai-findings::-webkit-scrollbar-thumb:hover { background: #d97706; }
-}
-.dip-ai-finding {
-  font-size: .76rem;
-  color: #1e293b;
-  line-height: 1.5;
-}
-.dip-ai-finding-locus {
-  display: inline-block;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .68rem;
-  font-weight: 700;
-  color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 4px;
-  padding: 0 5px;
-  margin-right: 5px;
-}
-.dip-ai-finding-note {
-  white-space: pre-wrap;
-}
+/* AI review feedback section.
+   rev5 반려 §1: the entry head (.dip-ai-entry-head / .dip-ai-meta), the verdict badge
+   (.dip-ai-verdict*) and the findings list (.dip-ai-findings / .dip-ai-finding*) are no
+   longer drawn in the panel, so their rules are gone with the markup. The same
+   information is still rendered by the [전체보기] dialog, which carries its own
+   .rhd-verdict / .rhd-findings styles. */
 /* R0001 (rev1): the comment box now shares the rejection-reason / AI-response control
    idiom exactly — a clickable header row (label + chevron, no "expand/collapse" text button)
    sitting above a body that is clamped to two lines and expands to a height-capped,
@@ -1392,23 +1413,13 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   white-space: pre-wrap;
   line-height: 1.65;
 }
+/* rev5 반려 §4 ("문자열이 너무 길면 ... 을 넣어라 어차피 전체보기에서 볼테니까"):
+   opening no longer turns the body into a scroll box. It stays a clamped box — 2 lines
+   closed, 6 lines open — so a long comment always ends in an ellipsis and the panel
+   never grows past ~6 lines. The uncut text is in [전체보기]. */
 .dip-ai-comment.open .dip-ai-comment-body {
-  display: block;
-  max-height: 8rem;
-  overflow-y: auto;
-  -webkit-line-clamp: initial;
-  scrollbar-width: auto;
-  scrollbar-color: #f59e0b #fef3c7;
-}
-@supports selector(::-webkit-scrollbar) {
-  .dip-ai-comment.open .dip-ai-comment-body::-webkit-scrollbar { width: 14px; }
-  .dip-ai-comment.open .dip-ai-comment-body::-webkit-scrollbar-track { border-radius: 999px; background: #fef3c7; }
-  .dip-ai-comment.open .dip-ai-comment-body::-webkit-scrollbar-thumb {
-    border: 3px solid #fef3c7;
-    border-radius: 999px;
-    background: #f59e0b;
-  }
-  .dip-ai-comment.open .dip-ai-comment-body::-webkit-scrollbar-thumb:hover { background: #d97706; }
+  max-height: 10em;
+  -webkit-line-clamp: 6;
 }
 .dip-ai-history-link {
   margin-top: 6px;
@@ -1583,25 +1594,11 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   white-space: pre-wrap;
   line-height: 1.65;
 }
+/* rev5 반려 §4: same as the comment box — open means 6 clamped lines with an
+   ellipsis, not a scroll box. */
 .dip-ai-response.open .dip-ai-response-body {
-  display: block;
-  max-height: 8rem;
-  overflow-y: auto;
-  -webkit-line-clamp: initial;
-  /* Reviewer #6: the scrollbar read as gray and didn't match — give it the box's
-     own blue tone and bump it to 14px (was a washed-out #93b4e6 at 10px). */
-  scrollbar-width: auto;
-  scrollbar-color: #5b8fd6 #e7f1ff;
-}
-@supports selector(::-webkit-scrollbar) {
-  .dip-ai-response.open .dip-ai-response-body::-webkit-scrollbar { width: 14px; }
-  .dip-ai-response.open .dip-ai-response-body::-webkit-scrollbar-track { border-radius: 999px; background: #e7f1ff; }
-  .dip-ai-response.open .dip-ai-response-body::-webkit-scrollbar-thumb {
-    border: 3px solid #e7f1ff;
-    border-radius: 999px;
-    background: #5b8fd6;
-  }
-  .dip-ai-response.open .dip-ai-response-body::-webkit-scrollbar-thumb:hover { background: #3b73c4; }
+  max-height: 10em;
+  -webkit-line-clamp: 6;
 }
 
 /* 시안 xc32frrg 화면 1 — 프로바이더 배정 (단계 기준) */
@@ -1610,4 +1607,9 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-wp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary, #2563eb); flex-shrink: 0; }
 .dip-wp-prov { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dip-wp-assignments strong { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* 0311 T0004 rev1 §2 — 합쳐진 AI 검수·반려 피드에서 항목 사이의 간격. 이번 병합에서
+   새로 넣은 유일한 스타일이다: 카드 자체는 위의 .dip-reject-quote / .dip-ai-entry 를
+   그대로 쓰고, 여러 장이 세로로 이어질 때의 간격만 여기서 준다(감싸는 상자 없음). */
+.dip-rr-entry + .dip-rr-entry { margin-top: 10px; }
 </style>

@@ -1252,31 +1252,14 @@ hr, .divider { height: 1px; background: var(--border); border: none; margin: 16p
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+/* 0311 TR0005 rev5 반려 §4 ("문자열이 너무 길면 ... 을 넣어라 어차피 전체보기에서
+   볼테니까"): opening a rejection no longer turns the reason into a scroll box. It stays
+   a clamped box — 2 lines closed, 6 lines open — so a long reason always ends in an
+   ellipsis and the panel cannot grow past ~6 lines. The uncut reason is in [전체보기]
+   (.rhd-reject-reason), which clamps nothing. */
 .dip-reject-quote.open .dip-reject-reason {
-  display: block;
-  max-height: 8rem;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  scrollbar-color: #f87171 #fff1f2;
-  scrollbar-width: thin;
-  -webkit-line-clamp: initial;
-}
-@supports selector(::-webkit-scrollbar) {
-  .dip-reject-quote.open .dip-reject-reason {
-    scrollbar-color: auto;
-    scrollbar-width: auto;
-  }
-  .dip-reject-quote.open .dip-reject-reason::-webkit-scrollbar { width: 14px; }
-  .dip-reject-quote.open .dip-reject-reason::-webkit-scrollbar-track {
-    border-radius: 999px;
-    background: #fff1f2;
-  }
-  .dip-reject-quote.open .dip-reject-reason::-webkit-scrollbar-thumb {
-    border: 3px solid #fff1f2;
-    border-radius: 999px;
-    background: #f87171;
-  }
-  .dip-reject-quote.open .dip-reject-reason::-webkit-scrollbar-thumb:hover { background: #dc2626; }
+  max-height: 10em;
+  -webkit-line-clamp: 6;
 }
 /* R0001 (rev1): the rejection "전체 보기" link must look IDENTICAL to the AI-review
    one. It previously carried a red colour override (#b91c1c) while the AI-review copy

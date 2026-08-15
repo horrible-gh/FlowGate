@@ -398,7 +398,6 @@
             :collapsed="docInfoCollapsed"
             @toggle="docInfoCollapsed = !docInfoCollapsed"
             @next-action="onProceedNextStep(tab.id)"
-            @open-review-history="openReviewHistory(tab.id)"
             @orphan-recovered="onOrphanRecovered(tab.id)"
           />
           </div><!-- doc-with-panel -->
@@ -1106,13 +1105,6 @@
       @cancel="pendingReturn = null"
     />
 
-    <ReviewHistoryDialog
-      :visible="reviewHistoryVisible"
-      :reviews="reviewHistoryReviews"
-      :rejections="reviewHistoryRejections"
-      @update:visible="(v: boolean) => { reviewHistoryVisible = v }"
-    />
-
     <NextEmptyDocModal
       v-model:visible="nextEmptyDocModalVisible"
       :project-id="nextEmptyDocProjectId"
@@ -1324,12 +1316,10 @@ import GitFinalizePanel from './GitFinalizePanel.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
 import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'
-import ReviewHistoryDialog from './ReviewHistoryDialog.vue'
 import DesignHandoffDialog from './DesignHandoffDialog.vue'
-import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
+import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
 import WorkPlanProposalDialog, { type WorkPlanScope } from './WorkPlanProposalDialog.vue'
 import WorkPlanEditor from './WorkPlanEditor.vue'
-import type { AiReview } from '../types/aiReview'
 import {
   DEFAULT_INSTRUCTION_MODE,
   type ContinuationInstructionMode,
@@ -1942,16 +1932,6 @@ interface ReturnPointInfo {
   destination_default: number | null
   destination_min: number | null
 }
-// Full AI review/rejection history modal (variant C), opened from "view full history" in the right panel.
-const reviewHistoryVisible = ref(false)
-const reviewHistoryReviews = ref<AiReview[]>([])
-const reviewHistoryRejections = ref<RejectionHistoryItem[]>([])
-function openReviewHistory(tabId: string) {
-  reviewHistoryReviews.value = exposedValue(docHeaderRefs[tabId]?.aiReviewHistory) ?? []
-  reviewHistoryRejections.value = exposedValue(docHeaderRefs[tabId]?.rejectionHistory) ?? []
-  reviewHistoryVisible.value = true
-}
-
 const timeMachineVisible = ref(false)
 const timeMachineDocId = ref('')
 const timeMachineSteps = ref<TimeMachineStep[]>([])
