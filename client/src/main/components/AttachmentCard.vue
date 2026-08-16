@@ -143,7 +143,7 @@ const { showToast } = useToast()
 const ATTACH_MAX_UPLOAD_BYTES = 20971520
 
 const attachments = ref<AttachmentItem[]>([])
-const collapsed = ref(false)      // 기본값은 펼침 (D0010 6-3)
+const collapsed = ref(true)       // 문서 생성 시 초기값은 접힘 (0420 R0001) — D0010 6-3의 펼침 기본값을 대체한다
 const dragging = ref(false)
 const removing = ref<Set<string>>(new Set())
 // 서버가 이미 지웠고 전환이 끝나기만 기다리는 줄. `removing`과 나눠 두는 이유: 거절당해
@@ -500,11 +500,15 @@ defineExpose({ fetchList, attachments, collapsed })
   cursor: pointer;
 }
 .attach-item-del:hover { color: var(--danger); background: var(--danger-l); }
+/* R0001 재반려: 드롭존 바로 밑에 4px 여백만 두고 바닥에 붙어 있던 것을, 구분선을 그은
+   푸터 밴드로 바꿔 위아래 여백을 주고 그 안에서 가운데 정렬한다. 시안 empty.html이
+   이 안내문 자체를 이미 명시하고 있어(위 테스트 참조) 지우지 않고 자리만 고친다. */
 .attach-empty-note {
-  margin: 0;
+  margin: 8px 0 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
   color: var(--text-m);
   font-size: .72rem;
   text-align: center;
-  padding: 4px 0 0;
 }
 </style>

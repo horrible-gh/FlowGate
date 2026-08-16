@@ -217,17 +217,8 @@ describe('시안 wdkcvrmk ③ 삭제 진행 중 (deleting.html)', () => {
 })
 
 describe('시안 wdkcvrmk ④ 접힘 (collapsed.html)', () => {
-  it('기본값은 펼침이다', async () => {
+  it('기본값은 접힘이다 (0420 R0001)', async () => {
     const wrapper = await mountCard(THREE)
-    expect(wrapper.find('.attach-card').classes()).not.toContain('collapsed')
-    expect(wrapper.find('.card-hd-toggle').attributes('aria-expanded')).toBe('true')
-  })
-
-  it('제목 줄을 누르면 접히고, 배지와 요약은 남는다', async () => {
-    const wrapper = await mountCard(THREE)
-
-    await wrapper.find('.card-hd-toggle').trigger('click')
-
     expect(wrapper.find('.attach-card').classes()).toContain('collapsed')
     expect(wrapper.find('.card-hd-toggle').attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('.card-hd-caret').exists()).toBe(true)   // 회전은 .collapsed 가 건다
@@ -235,9 +226,17 @@ describe('시안 wdkcvrmk ④ 접힘 (collapsed.html)', () => {
     expect(wrapper.find('.attach-fold-summary').text()).toBe('· 요구사항_정리.xlsx 외 2개')
   })
 
+  it('제목 줄을 누르면 펼쳐진다', async () => {
+    const wrapper = await mountCard(THREE)
+
+    await wrapper.find('.card-hd-toggle').trigger('click')
+
+    expect(wrapper.find('.attach-card').classes()).not.toContain('collapsed')
+    expect(wrapper.find('.card-hd-toggle').attributes('aria-expanded')).toBe('true')
+  })
+
   it('접힌 채로 파일을 카드 위로 끌면 자동으로 펼쳐진다', async () => {
     const wrapper = await mountCard(THREE)
-    await wrapper.find('.card-hd-toggle').trigger('click')
     expect(wrapper.find('.attach-card').classes()).toContain('collapsed')
 
     await wrapper.find('.attach-card').trigger('dragenter')
