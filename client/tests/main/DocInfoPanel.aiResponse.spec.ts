@@ -189,18 +189,21 @@ describe('DocInfoPanel merged AI검수·반려 feed (0311 T0004 rev1 §2)', () =
     expect(wrapper.find('.dip-mix-feed').exists()).toBe(false)
   })
 
-  it('leaves the AI검수 card with the 「검수 의견」 fold ONLY (rev5 §1·§2)', async () => {
+  it('leaves the AI검수 card with the verdict badge inside the 「검수 의견」 toggle (rev5 §1·§2 / 0422 TR0003 rev2)', async () => {
     const wrapper = mountPanel([], [REVIEW])
     const card = wrapper.find('.dip-ai-entry')
     expect(card.exists()).toBe(true)
 
-    // 반려 §1: the head line (시각 · AI), the verdict badge ("지적 N건") and the findings
-    // list do not appear in the panel any more — they live in [전체보기].
+    // 반려 §1: the head line (시각 · AI) and the findings list do not appear in the panel
+    // any more — they live in [전체보기]. 0422 TR0003 rev2 places the verdict badge in
+    // the surviving 검수의견 toggle header itself.
     expect(card.find('.dip-ai-meta').exists()).toBe(false)
-    expect(card.find('.dip-ai-verdict').exists()).toBe(false)
     expect(card.find('.dip-ai-findings').exists()).toBe(false)
     expect(card.text()).not.toContain('검수봇')
     expect(card.text()).not.toContain('널 검사가 없다')
+    expect(card.find('.dip-ai-comment-toggle .dip-ai-verdict').exists()).toBe(true)
+    expect(card.find('.dip-ai-comment-toggle .dip-ai-verdict').text()).toBe(i18n.global.t('main.doc_info_panel.ai_verdict_issues', { n: 1 }))
+    expect(Array.from(card.element.children).some((el) => el.classList.contains('dip-ai-verdict'))).toBe(false)
 
     // what remains is the comment fold, labelled 「검수 의견」 (§2), folded by default
     const comment = wrapper.find('.dip-ai-comment')

@@ -9,11 +9,10 @@ import type { AiReview } from '@main/types/aiReview'
 // comment stretched the right panel and pushed the rejection section below it out of
 // view. The comment folds — clamped by default, opening to a still-clamped body.
 //
-// 0311 TR0005 rev5 반려: (§1) the panel no longer draws the entry head (시각 · AI), the
-// verdict badge or the findings list — the comment fold is ALL that is left of a review
-// in the panel, and it is labelled 「검수 의견」 now (§2). (§4) opening it no longer turns
-// it into a scroll box: it goes from 2 clamped lines to 6, so a long comment always ends
-// in an ellipsis and the full text is read in [전체보기].
+// 0311 TR0005 rev5 반려: (§1) the panel no longer draws the entry head (시각 · AI) or the
+// findings list; the comment fold is the surviving review UI and is labelled 「검수 의견」
+// (§2). 0422 TR0003 rev2 adds the verdict badge to that fold's toggle header. (§4) opening
+// still goes from 2 clamped lines to 6, so full text remains in [전체보기].
 
 function mountPanel(aiReview: AiReview) {
   return mount(DocInfoPanel, {
@@ -66,9 +65,9 @@ describe('DocInfoPanel AI review comment (R0043)', () => {
     expect(wrapper.find('.dip-ai-comment-toggle').attributes('aria-expanded')).toBe('true')
   })
 
-  it('draws no review card at all when the review has no comment (rev5 §1)', () => {
-    // With the head, the badge and the findings gone there is nothing left to draw, so
-    // the review takes no row in the panel. It is still listed in [전체보기].
+  it('draws no panel row when the review has no comment (0422 TR0003 rev2)', () => {
+    // The badge belongs to .dip-ai-comment-toggle, so a review without a 검수의견 remains
+    // available in [전체보기] without creating an empty sidebar row.
     const wrapper = mountPanel({
       verdict: 'pass',
       finding_count: 0,
@@ -77,9 +76,10 @@ describe('DocInfoPanel AI review comment (R0043)', () => {
     })
     expect(wrapper.find('.dip-ai-comment').exists()).toBe(false)
     expect(wrapper.find('.dip-ai-entry').exists()).toBe(false)
+    expect(wrapper.find('.dip-ai-verdict').exists()).toBe(false)
   })
 
-  it('draws no entry head, verdict badge or findings list in the panel (rev5 §1)', () => {
+  it('draws the verdict badge inside the comment toggle, without restoring the old head or findings (rev5 §1 / 0422 TR0003 rev2)', () => {
     const wrapper = mountPanel({
       verdict: 'issues',
       finding_count: 2,
@@ -90,16 +90,19 @@ describe('DocInfoPanel AI review comment (R0043)', () => {
       comment: '코멘트',
       reviewed_at: '2026-06-13T13:00:00+09:00',
     })
-    // the card exists, and the comment fold is the whole of it
+    // the card exists, with the verdict badge inside the comment fold header
     expect(wrapper.find('.dip-ai-entry').exists()).toBe(true)
     expect(wrapper.find('.dip-ai-comment').exists()).toBe(true)
-    // 반려 §1: none of this appears any more
+    // 반려 §1: the meta head and findings list still do not appear
     expect(wrapper.find('.dip-ai-entry-head').exists()).toBe(false)
     expect(wrapper.find('.dip-ai-meta').exists()).toBe(false)
-    expect(wrapper.find('.dip-ai-verdict').exists()).toBe(false)
-    expect(wrapper.find('.dip-ai-verdict--toggle').exists()).toBe(false)
     expect(wrapper.find('.dip-ai-findings').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('지적1')
+    // 0422 TR0003 rev2: the verdict is part of the clickable 검수의견 header
+    const toggle = wrapper.find('.dip-ai-comment-toggle')
+    expect(toggle.find('.dip-ai-verdict').exists()).toBe(true)
+    expect(toggle.find('.dip-ai-verdict').text()).toBe(i18n.global.t('main.doc_info_panel.ai_verdict_issues', { n: 2 }))
+    expect(wrapper.find('.dip-ai-entry > .dip-ai-verdict').exists()).toBe(false)
   })
 
   it('labels the fold 「검수 의견」 (rev5 §2)', () => {
