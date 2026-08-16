@@ -397,4 +397,154 @@ describe('WorkPlanEditor', () => {
     const restoredNote = restoredRows[0].find('.wp-step-msg').element as HTMLInputElement
     expect(restoredNote.value).toBe('문서 화면 설계')
   })
+
+  // flowgate.default.0425 T0004 / NR0003 — the server already returns a per-step
+  // reason (errors[].{key,msg}) on a 422 save failure; stepErrors[step.key] held the
+  // string but nothing rendered it, so only the row border changed color.
+  it('shows the server reason on its row and keeps the headline banner for a single keyed error', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보도 아니고 등록된 공급자도 아닙니다.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.wp-error-banner').text()).toContain('1개 항목이 규칙에 맞지 않습니다')
+
+    const rows = wrapper.findAll('.wp-step-row')
+    const errorBox = rows[0].get('.wp-step-errors')
+    expect(errorBox.attributes('role')).toBe('alert')
+    expect(errorBox.text()).toContain('지정한 공급자는 후보도 아니고 등록된 공급자도 아닙니다.')
+    expect(rows[1].find('.wp-step-errors').exists()).toBe(false)
+    expect(rows[2].find('.wp-step-errors').exists()).toBe(false)
+  })
+
+  it('groups every reason under its own row, in response order, when several steps and multiple reasons per row fail', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 3개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps.0', key: 'D#1', code: 'note_too_long', msg: '한줄 멘트가 너무 깁니다.' },
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보가 아닙니다.' },
+            { loc: 'steps.1', key: 'T#1', code: 'provider_id_format_invalid', msg: '공급자 식별자 형식이 잘못됐습니다.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const rows = wrapper.findAll('.wp-step-row')
+    expect(rows[0].findAll('.wp-step-error-msg').map((n) => n.text())).toEqual([
+      '한줄 멘트가 너무 깁니다.',
+      '지정한 공급자는 후보가 아닙니다.',
+    ])
+    expect(rows[1].findAll('.wp-step-error-msg').map((n) => n.text())).toEqual([
+      '공급자 식별자 형식이 잘못됐습니다.',
+    ])
+    expect(rows[2].find('.wp-step-errors').exists()).toBe(false)
+  })
+
+  it('keeps key-less errors in the existing top banner instead of attaching them to a row', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps', key: null, code: 'steps_quantity_mismatch', msg: '스텝 수량이 수량 절과 맞지 않습니다.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.wp-error-banner').text()).toContain('스텝 수량이 수량 절과 맞지 않습니다.')
+    expect(wrapper.findAll('.wp-step-errors')).toHaveLength(0)
+  })
+
+  it('clears the previous step reasons once the next save attempt starts', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보가 아닙니다.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.wp-step-row')[0].find('.wp-step-errors').exists()).toBe(true)
+
+    putRequest.mockResolvedValueOnce({
+      data: {
+        ok: true,
+        doc_id: 'flowgate.default.0402.0002-WP',
+        revision_no: 4,
+        updated_at: '2026-08-08T15:20:31+09:00',
+        updated_by: 'sjm',
+        doc_review_status: 'pending_review',
+        unassigned_step_count: 2,
+        assignment_summary: [],
+        totals: { design_sheets: 1, work_sets: 1, steps: 3 },
+      },
+    })
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.wp-error-banner').exists()).toBe(false)
+    expect(wrapper.findAll('.wp-step-errors')).toHaveLength(0)
+  })
+
+  it('displays a server-provided non-Korean reason unchanged, without a client-side locale key', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: 'Provider is neither a candidate nor a registered provider.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.wp-step-row')[0].get('.wp-step-error-msg').text())
+      .toBe('Provider is neither a candidate nor a registered provider.')
+  })
 })

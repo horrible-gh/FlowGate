@@ -209,6 +209,9 @@
                     : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
                 </small>
               </span>
+              <div v-if="stepErrors[step.key]?.length" class="wp-step-errors" role="alert">
+                <span v-for="(msg, i) in stepErrors[step.key]" :key="i" class="wp-step-error-msg">{{ msg }}</span>
+              </div>
             </div>
           </div>
 
@@ -1037,6 +1040,8 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-step-msg.is-ai { border-color:#ddd6fe; background:#faf5ff; }
 .step-empty { padding:16px; border:1px dashed var(--border-d); border-radius:var(--r); color:var(--text-m); background:var(--surface-h); }
 .wp-row-error { border-color:var(--danger,#dc2626); }
+.wp-step-errors { grid-column: 1 / -1; display:flex; flex-direction:column; gap:2px; padding:2px 2px 4px; }
+.wp-step-error-msg { font-size:.7rem; line-height:1.4; color:var(--danger,#dc2626); white-space:normal; word-break:break-word; }
 .wp-layout-narrow .wp-step-head,.wp-layout-narrow .wp-step-row { grid-template-columns:48px 36px 0 minmax(130px,1fr) minmax(160px,1.2fr); }
 .wp-layout-narrow .wp-step-label { visibility:hidden; }
 .wp-step-legend {
