@@ -1257,6 +1257,10 @@ export default {
       err_src_missing: 'プロジェクトのソースミラーがないため、テストを実行できません。',
       err_no_cases: 'この文書に実行可能なテストケースが見つかりませんでした。',
       err_failed: 'テストの実行を開始できませんでした。',
+      cancel: '中止',
+      cancelling: 'キャンセル中…',
+      cancelled: '中止済み',
+      cancel_failed: 'テスト実行を中止できませんでした。',
     },
     final_approval: {
       panel_title: '最終承認',

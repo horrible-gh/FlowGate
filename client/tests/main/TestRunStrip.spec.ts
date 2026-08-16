@@ -112,7 +112,7 @@ describe('TestRunStrip', () => {
     expect(wrapper.find('.run-strip').exists()).toBe(false)
   })
 
-  it('shows a running indicator without action buttons while a run is in progress', () => {
+  it('shows a running indicator with a cancel control (no start/delegate buttons) while a run is in progress', () => {
     const wrapper = mountStrip({
       reviewStatus: 'pending_review',
       testRun: { run_id: 'trun_2', status: 'running' },
@@ -120,6 +120,79 @@ describe('TestRunStrip', () => {
     expect(wrapper.find('.run-strip').exists()).toBe(true)
     expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.running'))
     expect(wrapper.find('.run-strip-btn').exists()).toBe(false)
+    expect(wrapper.find('.run-strip-cancel').exists()).toBe(true)
+    expect(wrapper.find('.run-strip-cancel').attributes('disabled')).toBeUndefined()
+  })
+
+  // flowgate.default.0358 T0004: replaces the old "no action buttons while running"
+  // assertion — the stop control now lives in this same always-mounted strip.
+  describe('cancel (0358 T0004)', () => {
+    it('click POSTs the cancel route and disables the button immediately', async () => {
+      postRequest.mockResolvedValue({ data: { ok: true, run_id: 'trun_2', status: 'cancelling' } })
+      const wrapper = mountStrip({
+        reviewStatus: 'pending_review',
+        testRun: { run_id: 'trun_2', status: 'running' },
+      })
+      const btn = wrapper.find('.run-strip-cancel')
+      await btn.trigger('click')
+      expect(postRequest).toHaveBeenCalledWith(
+        '/api/v1/documents/test-run/trun_2/cancel',
+        {},
+      )
+      // Local flag flips synchronously on click, before the POST resolves.
+      expect(wrapper.find('.run-strip-cancel').attributes('disabled')).toBeDefined()
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.cancelling'))
+      await flushPromises()
+    })
+
+    it('stays disabled with the cancelling label while the server reports status=cancelling', () => {
+      const wrapper = mountStrip({
+        reviewStatus: 'pending_review',
+        testRun: { run_id: 'trun_2', status: 'cancelling' },
+      })
+      expect(wrapper.find('.run-strip-cancel').exists()).toBe(true)
+      expect(wrapper.find('.run-strip-cancel').attributes('disabled')).toBeDefined()
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.cancelling'))
+    })
+
+    it('a double click only fires one cancel POST', async () => {
+      postRequest.mockResolvedValue({ data: { ok: true, run_id: 'trun_2', status: 'cancelling' } })
+      const wrapper = mountStrip({
+        reviewStatus: 'pending_review',
+        testRun: { run_id: 'trun_2', status: 'running' },
+      })
+      const btn = wrapper.find('.run-strip-cancel')
+      await btn.trigger('click')
+      await btn.trigger('click')
+      await flushPromises()
+      expect(postRequest).toHaveBeenCalledTimes(1)
+    })
+
+    it('cancel failure re-enables the button and toasts cancel_failed', async () => {
+      postRequest.mockRejectedValue({ response: { data: { error: 'internal_error' } } })
+      const wrapper = mountStrip({
+        reviewStatus: 'pending_review',
+        testRun: { run_id: 'trun_2', status: 'running' },
+      })
+      await wrapper.find('.run-strip-cancel').trigger('click')
+      await flushPromises()
+      expect(showToast).toHaveBeenCalledWith(
+        i18n.global.t('main.test_run_strip.cancel_failed'),
+        'error',
+      )
+      expect(wrapper.find('.run-strip-cancel').attributes('disabled')).toBeUndefined()
+    })
+
+    it('the final cancelled embed shows the cancelled label and a re-run action, not the cancel button', () => {
+      const wrapper = mountStrip({
+        reviewStatus: 'pending_review',
+        testRun: { run_id: 'trun_2', status: 'cancelled' },
+      })
+      expect(wrapper.find('.run-strip').exists()).toBe(true)
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.cancelled'))
+      expect(wrapper.find('.run-strip-cancel').exists()).toBe(false)
+      expect(wrapper.text()).toContain(i18n.global.t('main.test_run_strip.rerun'))
+    })
   })
 
   it('POSTs /documents/test-run on run click, toasts, and emits run-started', async () => {

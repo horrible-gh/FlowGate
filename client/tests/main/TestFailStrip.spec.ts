@@ -78,4 +78,56 @@ describe('TestFailStrip', () => {
     expect(wrapper.find('.fail-strip-fresh-badge').text()).toContain('Finished')
     expect(wrapper.text()).toContain('run 42')
   })
+
+  // flowgate.default.0358 T0004 §8: the rerun POST's run_id must be kept (was:
+  // discarded at :202-209) and the optimistic window must not be ended by the fixed
+  // timer alone — it must wait for the real embed to carry that same run_id.
+  describe('cancel control across the optimistic rerun window (0358 T0004)', () => {
+    it('keeps the optimistic indicator with an active cancel control past the fixed timer until the real running embed catches up', async () => {
+      vi.mocked(postRequest).mockResolvedValue({ data: { run_id: '99' } } as any)
+      const wrapper = mount(TestFailStrip, {
+        props: {
+          docId: 'flowgate.default.0183.0004-TS',
+          testRun: failedRun({ run_id: '41' }),
+        },
+        global: { plugins: [i18n] },
+      })
+
+      await wrapper.find('.fail-strip-btn--rerun').trigger('click')
+      await flushPromises()
+
+      // The fixed 1.5s window elapses, but no fresh embed (run_id 99) has arrived yet —
+      // must NOT silently drop back to the stale rerun/log buttons with no cancel option.
+      vi.advanceTimersByTime(1500)
+      await flushPromises()
+      expect(wrapper.find('.fail-strip').classes()).toContain('fail-strip--running')
+      expect(wrapper.find('.fail-strip-cancel').exists()).toBe(true)
+
+      // The real running embed for THIS rerun (run_id 99) now lands — hand off.
+      await wrapper.setProps({ testRun: failedRun({ run_id: '99', status: 'running' }) })
+      await flushPromises()
+      // status is 'running', not 'failed' -> the whole strip hides; TestRunStrip owns it.
+      expect(wrapper.find('.fail-strip').exists()).toBe(false)
+    })
+
+    it('cancel click during the optimistic window POSTs the pending run_id', async () => {
+      vi.mocked(postRequest).mockResolvedValue({ data: { run_id: '99' } } as any)
+      const wrapper = mount(TestFailStrip, {
+        props: {
+          docId: 'flowgate.default.0183.0004-TS',
+          testRun: failedRun({ run_id: '41' }),
+        },
+        global: { plugins: [i18n] },
+      })
+
+      await wrapper.find('.fail-strip-btn--rerun').trigger('click')
+      await flushPromises()
+
+      vi.mocked(postRequest).mockClear()
+      await wrapper.find('.fail-strip-cancel').trigger('click')
+      await flushPromises()
+
+      expect(postRequest).toHaveBeenCalledWith('/api/v1/documents/test-run/99/cancel', {})
+    })
+  })
 })

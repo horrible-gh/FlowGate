@@ -300,7 +300,7 @@ def exec_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "_execute_setup", lambda *_a, **_kw: (False, None))
     monkeypatch.setattr(svc, "_execute_case", lambda *_a, **_kw: None)
     monkeypatch.setattr(svc, "_execute_teardown", lambda *_a, **_kw: None)
-    monkeypatch.setattr(svc, "_finalize_services", lambda _services: None)
+    monkeypatch.setattr(svc, "_finalize_services", lambda _services, _active=None: None)
     monkeypatch.setattr(svc, "_remove_scratch", lambda _path: None)
     monkeypatch.setattr(svc, "_emit_finished", lambda *_a, **_kw: None)
     monkeypatch.setattr(svc.process_service, "is_group_disposed", lambda _g: False)

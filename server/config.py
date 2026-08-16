@@ -3,6 +3,8 @@ from pydantic import field_validator, model_validator
 from typing import Optional
 from enum import Enum
 from sqloader.init import database_init
+from sqloader.migrator import DatabaseMigrator
+from migration_rename_repair import reconcile_renamed_migrations
 from auth2fa import TwoFactorAuth, Auth2FAAdapter
 import os
 import re
@@ -105,6 +107,17 @@ class Settings(BaseSettings):
     FLOWGATE_TOTP_ENCRYPT_KEY: str | None = None
     FLOWGATE_TOTP_ENCRYPT_KEY_PREV: str | None = None
 
+    # AI provider API-key encryption (0371 NR0007 §3) — base64-encoded 32-byte
+    # AES key for ai_providers.api_key. Its own key, not the git/TOTP one, so
+    # the three secret stores rotate independently. Blank is safe: a key file
+    # is generated once under the storage root, exactly like the git key.
+    # _PREV enables rotation-time decryption. Declared here for the same
+    # extra_forbidden reason as the TOTP/git keys above — an operator .env
+    # provisioned for a merged sibling group (0371) crashed boot on this branch
+    # without the field declared.
+    FLOWGATE_AI_ENCRYPT_KEY: str | None = None
+    FLOWGATE_AI_ENCRYPT_KEY_PREV: str | None = None
+
     # Listen address (0273 NR0003 P1-2). stg.py — the entry point the systemd
     # unit runs — had port 8089 hardcoded, so a Linux install could not move off
     # a busy port without editing the source. Declared here for the same
@@ -203,6 +216,8 @@ for _env_key in (
     "FLOWGATE_TOTP_ENCRYPT_KEY_PREV",
     "FLOWGATE_GIT_ENCRYPT_KEY",
     "FLOWGATE_GIT_ENCRYPT_KEY_PREV",
+    "FLOWGATE_AI_ENCRYPT_KEY",
+    "FLOWGATE_AI_ENCRYPT_KEY_PREV",
 ):
     _env_val = getattr(settings, _env_key, None)
     if _env_val and not os.environ.get(_env_key):
@@ -358,7 +373,14 @@ class DatabaseSetting:
         logger.debug("config", self.config)
 
         try:
-            self.db_instance, self.sqloader, self.migrator = database_init(self.config)
+            # 0358 R0001 4번째 반려: sqloader applies pending migrations inside
+            # database_init(), which leaves no seam to fix the migrations table
+            # before files run. Take the connection config without the migration
+            # block, then drive the migrator here — repair renamed filenames
+            # first, apply only what is genuinely pending second.
+            boot_config = {k: v for k, v in self.config.items() if k != "migration"}
+            self.db_instance, self.sqloader, _ = database_init(boot_config)
+            self.run_migrations(self.config.get("migration") or {})
             logger.debug(f"✅ DB initialized - type: {type(self.db_instance).__name__}, db_type: {getattr(self.db_instance, 'db_type', 'N/A')}")
         except Exception as e:
             import traceback
@@ -391,6 +413,42 @@ class DatabaseSetting:
             logger.error(f"❌ 2FA initialization failed: {e}")
             logger.error(traceback.format_exc())
             raise
+
+    def run_migrations(self, migration_config):
+        """Apply pending migrations, after repairing renamed-file bookkeeping.
+
+        Mirrors the migration block sqloader.init.database_init would have run —
+        same console lines, same exit status on failure — with one step inserted
+        ahead of it: sqloader recognises an applied migration only by its exact
+        filename, so a file that was applied under an older name looks pending
+        and gets executed a second time. See migration_rename_repair for what
+        that did to the dev deployment (0358 R0001 4번째 반려).
+        """
+        migration_path = (migration_config or {}).get("migration_path")
+        if not migration_path:
+            return
+
+        print(migration_config)
+        print("Starting Database Migrator")
+        try:
+            # auto_run=False: this creates the migrations table (and nothing
+            # else), which the repair below needs to read and write.
+            self.migrator = DatabaseMigrator(self.db_instance, migration_path, False)
+            for applied_as, filename in reconcile_renamed_migrations(
+                self.db_instance, migration_path
+            ):
+                message = (
+                    f"Migration {filename} already applied as {applied_as}; "
+                    f"recorded under its current name instead of re-applying it."
+                )
+                print(message)
+                logger.warning(message)
+            if migration_config.get("auto_migration", False):
+                self.migrator.apply_migrations()
+            print("Database Migration Successfully")
+        except Exception as e:
+            print(f"Database Migration Failed.{e}")
+            raise SystemExit(1)
 
     def get_db_instance(self):
         return self.db_instance

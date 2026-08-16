@@ -289,6 +289,61 @@ def test_chain_auto_approve_tsr_requires_continuation_token(monkeypatch):
     assert approve_calls[0]["doc_id"] == "flowgate.default.0150.0006-TSR"
 
 
+def test_cancelled_chain_run_never_triggers_auto_approve_repair_notify_or_next_token(monkeypatch, tmp_path):
+    """flowgate.default.0358 T0004 완료 기준 / 위험 1: a cancelled run inside an
+    unmanned chain must not silently resurrect the chain. _maybe_chain_auto_approve_tsr
+    (the only path to the next chain token, via advance_workflow's TSR-head wiring) is
+    reachable only from assemble_tsr's own tail call (:1679) — this pins that a
+    cancelled run never reaches assemble_tsr, so auto-approve/repair/failure-notify/the
+    next token are all transitively unreachable, not just individually unasserted."""
+    from modules.flow_gate.services import test_run_service as svc
+
+    doc = {
+        "doc_id": "flowgate.default.0150.9200-TS",
+        "project_id": "flowgate",
+        "branch": "main",
+        "group_id": "flowgate.default.0150",
+    }
+    run = {"run_id": "trun_chain_cancel", "doc_id": doc["doc_id"], "revision_no": 1}
+
+    monkeypatch.setattr(svc.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(svc.db_test_runs, "cas_cancelling_to_cancelled", lambda _rid, **_k: None)
+    monkeypatch.setattr(
+        svc.db_test_runs, "get_run",
+        lambda _rid: {**run, "status": "cancelled", "error": "cancelled_by_user"},
+    )
+    monkeypatch.setattr(
+        svc.storage_paths, "resolve_project_src_root", lambda *a, **k: tmp_path
+    )
+    monkeypatch.setattr(svc, "_emit_finished", lambda *_a, **_k: None)
+
+    assemble_calls = []
+    monkeypatch.setattr(svc, "assemble_tsr", lambda *a, **k: assemble_calls.append(1))
+    auto_approve_calls = []
+    monkeypatch.setattr(
+        svc, "_maybe_chain_auto_approve_tsr", lambda *a, **k: auto_approve_calls.append(1)
+    )
+    recovery_calls = []
+    monkeypatch.setattr(
+        svc.engine_recipe_service, "handle_run_failure", lambda *a, **k: recovery_calls.append(1)
+    )
+    notify_calls = []
+    monkeypatch.setattr(svc, "_maybe_notify_chain_failure", lambda *a, **k: notify_calls.append(1))
+
+    # Pre-register the cancel, as request_cancel does before the worker picks up.
+    entry = svc._register_active_run(run["run_id"])
+    entry.cancel_event.set()
+    try:
+        svc._execute_run_inner(run)
+    finally:
+        svc._active_runs.pop(run["run_id"], None)
+
+    assert assemble_calls == []
+    assert auto_approve_calls == []  # unreachable: only called from inside assemble_tsr
+    assert recovery_calls == []
+    assert notify_calls == []
+
+
 def test_advance_workflow_tsr_head_mints_test_run_token(monkeypatch):
     from modules.flow_gate.services import workflow_decision_service as wds
     from modules.flow_gate.services import test_run_service

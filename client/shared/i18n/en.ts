@@ -1258,6 +1258,10 @@ export default {
       err_src_missing: 'The project source mirror is missing; tests cannot be run.',
       err_no_cases: 'No runnable test cases were found in this document.',
       err_failed: 'Failed to start the test run.',
+      cancel: 'Stop',
+      cancelling: 'Cancelling…',
+      cancelled: 'Cancelled',
+      cancel_failed: 'Failed to cancel the test run.',
     },
     final_approval: {
       panel_title: 'Final Approval',

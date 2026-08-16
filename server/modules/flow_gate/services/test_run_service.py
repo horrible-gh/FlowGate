@@ -39,6 +39,11 @@ RUNNER_POLL_SEC = 5
 CASE_EXIT_PASS = 0
 SETUP_STEP_TIMEOUT_SEC = 600
 TEARDOWN_STEP_TIMEOUT_SEC = 600
+# flowgate.default.0358 T0004: once a cancel is accepted, teardown still runs
+# best-effort (it may undo setup side effects) but must not hold the run in
+# 'cancelling' for the full normal budget — that would defeat "즉시 취소".
+CANCEL_TEARDOWN_STEP_TIMEOUT_SEC = 30
+CANCEL_TEARDOWN_BUDGET_SEC = 60
 WAIT_TIMEOUT_SEC = 60
 WAIT_POLL_SEC = 0.5
 MAX_SETUP_STEPS = 20
@@ -47,6 +52,111 @@ MAX_SERVICES = 5
 TSR_CASE_EXCERPT_CHARS = 1000
 
 _admission_lock = threading.Lock()
+
+
+class _ActiveRun:
+    """In-memory handle for a run currently executing (flowgate.default.0358 T0004).
+
+    Nothing outside this module reaches into these fields directly; process_runner's
+    kill_process_tree is always called through the module helpers below so cancel and
+    the executing worker never race on ``proc``/``service_procs`` without the per-entry
+    lock held.
+    """
+
+    __slots__ = ("run_id", "cancel_event", "lock", "proc", "service_procs")
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        self.cancel_event = threading.Event()
+        self.lock = threading.Lock()
+        self.proc: Optional[subprocess.Popen] = None
+        self.service_procs: set = set()
+
+
+_active_runs: dict[str, _ActiveRun] = {}
+_active_runs_meta_lock = threading.Lock()
+
+# Per-run_id lock serializing "decide the terminal status, then write it" between a
+# cancel request and the worker's own natural-completion commit (0358 T0004 위험 2).
+# FlowGateStore._execute reports no affected-row count, so a bare
+# UPDATE ... WHERE status=? cannot tell a CAS winner from a loser on its own — this
+# lock is what makes the DB CAS calls in this module actually exclusive, the same
+# idiom numbering_service._get_lock uses for document numbering.
+_run_locks: dict[str, threading.Lock] = {}
+_run_locks_meta_lock = threading.Lock()
+
+
+def _get_run_lock(run_id: str) -> threading.Lock:
+    with _run_locks_meta_lock:
+        lock = _run_locks.get(run_id)
+        if lock is None:
+            lock = threading.Lock()
+            _run_locks[run_id] = lock
+        return lock
+
+
+def _register_active_run(run_id: str) -> _ActiveRun:
+    """Get-or-create so a cancel arriving before the worker registers (and vice
+    versa) both land on the same entry instead of one clobbering the other."""
+    with _active_runs_meta_lock:
+        entry = _active_runs.get(run_id)
+        if entry is None:
+            entry = _ActiveRun(run_id)
+            _active_runs[run_id] = entry
+        return entry
+
+
+def _unregister_active_run(run_id: str) -> None:
+    with _active_runs_meta_lock:
+        _active_runs.pop(run_id, None)
+
+
+def _get_active_run(run_id: str) -> Optional[_ActiveRun]:
+    with _active_runs_meta_lock:
+        return _active_runs.get(run_id)
+
+
+def _set_current_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
+    """Attach the just-spawned proc as the one a cancel should kill.
+
+    If cancel already fired before this call (registration-vs-cancel race, T item 1),
+    kill the proc we just created immediately instead of leaving it live and untracked.
+    """
+    with active.lock:
+        if active.cancel_event.is_set():
+            should_kill = True
+        else:
+            active.proc = proc
+            should_kill = False
+    if should_kill:
+        _kill_process_tree(proc)
+
+
+def _clear_current_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
+    with active.lock:
+        if active.proc is proc:
+            active.proc = None
+
+
+def _add_service_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
+    with active.lock:
+        if active.cancel_event.is_set():
+            should_kill = True
+        else:
+            active.service_procs.add(proc)
+            should_kill = False
+    if should_kill:
+        _kill_process_tree(proc)
+
+
+def _remove_service_proc(active: _ActiveRun, proc: subprocess.Popen) -> None:
+    with active.lock:
+        active.service_procs.discard(proc)
+
+
+def is_cancel_requested(run_id: str) -> bool:
+    entry = _get_active_run(run_id)
+    return bool(entry and entry.cancel_event.is_set())
 
 
 class TestCaseParseError(ValueError):
@@ -381,6 +491,59 @@ def _run_response(run: dict) -> dict:
     }
 
 
+def request_cancel(run_id: str) -> dict:
+    """Accept a user cancel for run_id (flowgate.default.0358 T0004 / NR0003 계약).
+
+    Returns {"run_id", "status"} where status is one of:
+      - 'cancelled'  — either a not-yet-picked-up run terminated immediately, or the
+        run had already reached a terminal state (idempotent replay).
+      - 'cancelling' — a worker-owned run's kill was dispatched; final DB row lands
+        once the executing worker reaches its own cancellation checkpoint.
+
+    Never raises for an already-finished run (idempotent, matches the AI-invoke
+    cancel_run contract at ai_invoke_service.py:2045). Raises 404 only when the
+    run_id itself is unknown.
+    """
+    run = db_test_runs.get_run(run_id)
+    if run is None:
+        raise _http_error(404, "run_not_found", run_id=run_id)
+
+    lock = _get_run_lock(run_id)
+    with lock:
+        run = db_test_runs.get_run(run_id) or run
+        status = run.get("status")
+        if status in {"passed", "failed", "cancelled"}:
+            return {"run_id": run_id, "status": status}
+        if status == "cancelling":
+            return {"run_id": run_id, "status": "cancelling"}
+
+        # status == "running": accept the cancel. CAS first so a racing worker that
+        # is mid-pickup sees the row leave 'running' before it can act on it.
+        db_test_runs.cas_running_to_cancelling(run_id)
+        entry = _register_active_run(run_id)
+        entry.cancel_event.set()
+        with entry.lock:
+            proc = entry.proc
+            service_procs = list(entry.service_procs)
+        for target in [proc, *service_procs]:
+            if target is not None:
+                _kill_process_tree(target)
+
+        if run.get("picked_at") is None:
+            # No worker owns this row — there is no process to wait on, so finalize
+            # now instead of leaving it in 'cancelling' for a pickup that, since the
+            # worker's SELECT only matches status='running', will never come.
+            db_test_runs.cas_cancelling_to_cancelled(run_id, error="cancelled_by_user")
+            finished = db_test_runs.get_run(run_id) or run
+            doc = db_docs.get_by_id(finished.get("doc_id"))
+            if doc is not None:
+                _emit_finished(doc, finished, None)
+            _unregister_active_run(run_id)
+            return {"run_id": run_id, "status": "cancelled"}
+
+        return {"run_id": run_id, "status": "cancelling"}
+
+
 def issue_test_run_request(
     *,
     doc_id: str,
@@ -570,174 +733,235 @@ def execute_run(run: dict) -> None:
         raise
 
 
+def _finalize_cancelled(run_id: str, doc: Optional[dict]) -> bool:
+    """CAS 'cancelling'→'cancelled' and emit the shared completion event.
+
+    Caller must hold ``_get_run_lock(run_id)``. Idempotent: a second call (e.g. the
+    early-bail check racing the cancel route's own "not yet picked up" finalize) finds
+    the row already 'cancelled' and the CAS is a no-op.
+    """
+    db_test_runs.cas_cancelling_to_cancelled(run_id, error="cancelled_by_user")
+    finished = db_test_runs.get_run(run_id)
+    if doc is not None and finished is not None:
+        _emit_finished(doc, finished, None)
+    return True
+
+
+def _bail_if_cancelled(run_id: str, doc: Optional[dict], active: _ActiveRun) -> bool:
+    """Early-exit hook for the checkpoints before any process has been spawned yet.
+
+    A cancel arriving before/while the worker is still resolving doc/src_root (i.e.
+    before _register_active_run's own registration-vs-cancel race matters) sets
+    active.cancel_event under request_cancel's run lock, which already moved the DB
+    row to 'cancelling' — this only needs to finish the CAS to 'cancelled'.
+    """
+    if not active.cancel_event.is_set():
+        return False
+    with _get_run_lock(run_id):
+        _finalize_cancelled(run_id, doc)
+    return True
+
+
 def _execute_run_inner(run: dict) -> None:
-    doc = db_docs.get_by_id(run["doc_id"])
-    if doc is None:
-        db_test_runs.finish_run(
-            run_id=run["run_id"], status="failed", error="doc_not_found"
-        )
-        return
-
-    # B0001 (0190): resolve the group's worktree (work branch), not base(main).
-    # group_id is the switch in resolve_project_src_root that selects the git
-    # worktree via git_service.effective_src_root; without it a git-integrated
-    # group runs its test commands in base(main), so TS cases that reference
-    # files created on the work branch fail with a fast exit-1 (file-not-found)
-    # even though CRUD/document views (which do pass group_id) show them present.
-    root = storage_paths.resolve_project_src_root(
-        doc.get("project_id"),
-        doc.get("branch") or "main",
-        group_id=doc.get("group_id"),
-    )
-    if root is None or not root.is_dir():
-        logger.warning(
-            "test-run %s: src_root missing (project_id=%s resolved=%s)",
-            run["run_id"],
-            doc.get("project_id"),
-            root,
-        )
-        db_test_runs.finish_run(
-            run_id=run["run_id"],
-            status="failed",
-            error="src_root_missing",
-        )
-        _emit_finished(doc, db_test_runs.get_run(run["run_id"]) or run, None)
-        return
-
-    _record_source_root(doc, run, root)
-
-    port = _allocate_port()
-    scratch = _scratch_dir(doc, run["run_id"])
-    scratch.mkdir(parents=True, exist_ok=True)
-    db_test_runs.set_run_port(run["run_id"], port)
-    run = db_test_runs.get_run(run["run_id"]) or {**run, "port": port}
-
-    all_items = db_test_runs.list_cases(run["run_id"])
-    setup_steps = [item for item in all_items if (item.get("kind") or "case") in {"setup", "service", "wait"}]
-    cases = [item for item in all_items if (item.get("kind") or "case") == "case"]
-    teardown_steps = [item for item in all_items if (item.get("kind") or "case") == "teardown"]
-    run_started = time.monotonic()
-    services: list[dict] = []
-    env = _execution_env(port, scratch)
-    setup_failed = False
-    setup_error = None
-
+    run_id = run["run_id"]
+    active = _register_active_run(run_id)
     try:
-        setup_failed, setup_error = _execute_setup(
-            doc, run, setup_steps, root, port, scratch, env, services, run_started
-        )
-
-        if not setup_failed:
-            for idx, case in enumerate(cases, start=1):
-                if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
-                    db_test_runs.mark_case_finished(
-                        case_id=case["id"],
-                        result="timeout",
-                        exit_code=None,
-                        duration_ms=0,
-                        output_tail="[run timeout: not executed]",
-                    )
-                    refreshed = {
-                        **case,
-                        "result": "timeout",
-                        "exit_code": None,
-                        "duration_ms": 0,
-                    }
-                    _emit_case_finished(doc, run, refreshed, idx, len(cases))
-                    continue
-                _execute_case(doc, run, case, idx, len(cases), root, port, scratch, env)
-
-        _execute_teardown(doc, run, teardown_steps, root, port, scratch, env, run_started)
-    finally:
-        _finalize_services(services)
-        _remove_scratch(scratch)
-
-    final_cases = [
-        item
-        for item in db_test_runs.list_cases(run["run_id"])
-        if (item.get("kind") or "case") == "case"
-    ]
-    if setup_failed:
-        db_test_runs.finish_run(
-            run_id=run["run_id"],
-            status="failed",
-            case_passed=0,
-            case_failed=0,
-            error=setup_error or "setup_failed",
-        )
-        finished_run = db_test_runs.get_run(run["run_id"]) or run
-        _emit_finished(doc, finished_run, None)
-        # flowgate.default.0157: a setup failure is the canonical INFRA case — try the auto-recovery loop
-        # first. If it re-fires (or escalates at the cap) it owns the signal, so suppress the generic
-        # "chain failed" alarm; otherwise fall through to it. Best-effort; never affects the verdict.
-        recovery = engine_recipe_service.handle_run_failure(
-            doc, finished_run, db_test_runs.list_cases(run["run_id"])
-        )
-        if recovery not in ("repair", "escalated"):
-            # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
-            _maybe_notify_chain_failure(doc, finished_run)
-        return
-
-    passed = sum(1 for case in final_cases if case.get("result") == "pass")
-    failed = sum(1 for case in final_cases if case.get("result") in {"fail", "timeout"})
-    status = "passed" if failed == 0 else "failed"
-    tsr_doc_id = None
-    report_error = None
-    if status == "passed" and not process_service.is_group_disposed(doc.get("group_id")):
-        try:
-            all_final_items = db_test_runs.list_cases(run["run_id"])
-            tsr_doc_id = assemble_tsr(doc, db_test_runs.get_run(run["run_id"]) or run, all_final_items)
-        except Exception as exc:
-            # 0257 NR0003 §2: a passed run with no report is not a success — record it as a
-            # distinct terminal error rather than leaving a green run whose TSR never existed.
-            logger.warning("TSR assembly failed for %s: %s", run["run_id"], exc, exc_info=True)
-            status = "failed"
-            report_error = "report_assembly_failed"
-        # flowgate.default.0152: reflect this passed run's setup/case commands into the project's
-        # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
-        # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
-        # Still reflected on report_assembly_failed by intent: every case passed, so the commands
-        # are verified — only the report write failed, which says nothing about the commands.
-        try:
-            passed_items = db_test_runs.list_cases(run["run_id"])
-            test_command_service.reflect_from_passed_run(doc, passed_items)
-            # flowgate.default.0157: also reflect this run's setup/run command into the GLOBAL engine
-            # recipe (auto-learn, L §2-4). Self-isolating like the 0152 reflect — never affects verdict.
-            engine_recipe_service.reflect_from_passed_run(
-                doc, db_test_runs.get_run(run["run_id"]) or run, passed_items
+        doc = db_docs.get_by_id(run["doc_id"])
+        if doc is None:
+            db_test_runs.finish_run(
+                run_id=run_id, status="failed", error="doc_not_found"
             )
-        except Exception as exc:
+            return
+
+        if _bail_if_cancelled(run_id, doc, active):
+            return
+
+        # B0001 (0190): resolve the group's worktree (work branch), not base(main).
+        # group_id is the switch in resolve_project_src_root that selects the git
+        # worktree via git_service.effective_src_root; without it a git-integrated
+        # group runs its test commands in base(main), so TS cases that reference
+        # files created on the work branch fail with a fast exit-1 (file-not-found)
+        # even though CRUD/document views (which do pass group_id) show them present.
+        root = storage_paths.resolve_project_src_root(
+            doc.get("project_id"),
+            doc.get("branch") or "main",
+            group_id=doc.get("group_id"),
+        )
+        if root is None or not root.is_dir():
             logger.warning(
-                "test-command reflect failed for %s: %s", run["run_id"], exc, exc_info=True
+                "test-run %s: src_root missing (project_id=%s resolved=%s)",
+                run_id,
+                doc.get("project_id"),
+                root,
+            )
+            db_test_runs.finish_run(
+                run_id=run_id,
+                status="failed",
+                error="src_root_missing",
+            )
+            _emit_finished(doc, db_test_runs.get_run(run_id) or run, None)
+            return
+
+        _record_source_root(doc, run, root)
+
+        if _bail_if_cancelled(run_id, doc, active):
+            return
+
+        port = _allocate_port()
+        scratch = _scratch_dir(doc, run_id)
+        scratch.mkdir(parents=True, exist_ok=True)
+        db_test_runs.set_run_port(run_id, port)
+        run = db_test_runs.get_run(run_id) or {**run, "port": port}
+
+        all_items = db_test_runs.list_cases(run_id)
+        setup_steps = [item for item in all_items if (item.get("kind") or "case") in {"setup", "service", "wait"}]
+        cases = [item for item in all_items if (item.get("kind") or "case") == "case"]
+        teardown_steps = [item for item in all_items if (item.get("kind") or "case") == "teardown"]
+        run_started = time.monotonic()
+        services: list[dict] = []
+        env = _execution_env(port, scratch)
+        setup_failed = False
+        setup_error = None
+
+        try:
+            setup_failed, setup_error = _execute_setup(
+                doc, run, setup_steps, root, port, scratch, env, services, run_started, active
             )
 
-    db_test_runs.finish_run(
-        run_id=run["run_id"],
-        status=status,
-        case_passed=passed,
-        case_failed=failed,
-        tsr_doc_id=tsr_doc_id,
-        error=report_error,
-    )
-    finished_run = db_test_runs.get_run(run["run_id"]) or run
-    _emit_finished(doc, finished_run, tsr_doc_id)
-    if report_error is not None:
-        # 0257 NR0003 §2: terminal, so it must NOT enter the 0157 recovery loop below — every
-        # case passed, so there is no INFRA fault to repair and re-firing green tests cannot
-        # produce the missing report. Surface it once and stop.
-        _maybe_notify_chain_failure(doc, finished_run)
-    elif status == "failed":
-        # flowgate.default.0157: route the failure through the auto-recovery loop first. An INFRA
-        # failure (env/tooling) is re-fired or escalated and owns its own signal; a real RED (CODE)
-        # returns "code" and falls through to the chain-failed alarm + existing rework chain.
-        recovery = engine_recipe_service.handle_run_failure(
-            doc, finished_run, db_test_runs.list_cases(run["run_id"])
-        )
-        if recovery not in ("repair", "escalated"):
-            # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
-            # hand on — surface it once so the unmanned chain no longer goes silent (was: only an
-            # ephemeral SSE broadcast). Best-effort; never affects the verdict.
+            if not setup_failed:
+                for idx, case in enumerate(cases, start=1):
+                    if active.cancel_event.is_set():
+                        # NR0003 계약: 남은 케이스는 실행하지 않는다 — leave them NULL,
+                        # not timeout (그건 "실행했으나 초과"라는 거짓 통계가 된다).
+                        break
+                    if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
+                        db_test_runs.mark_case_finished(
+                            case_id=case["id"],
+                            result="timeout",
+                            exit_code=None,
+                            duration_ms=0,
+                            output_tail="[run timeout: not executed]",
+                        )
+                        refreshed = {
+                            **case,
+                            "result": "timeout",
+                            "exit_code": None,
+                            "duration_ms": 0,
+                        }
+                        _emit_case_finished(doc, run, refreshed, idx, len(cases))
+                        continue
+                    _execute_case(doc, run, case, idx, len(cases), root, port, scratch, env, active)
+
+            _execute_teardown(doc, run, teardown_steps, root, port, scratch, env, run_started, active)
+        finally:
+            _finalize_services(services, active)
+            _remove_scratch(scratch)
+
+        with _get_run_lock(run_id):
+            if active.cancel_event.is_set():
+                _finalize_cancelled(run_id, doc)
+                cancelled = True
+            else:
+                cancelled = False
+                final_cases = [
+                    item
+                    for item in db_test_runs.list_cases(run_id)
+                    if (item.get("kind") or "case") == "case"
+                ]
+                if setup_failed:
+                    db_test_runs.finish_run(
+                        run_id=run_id,
+                        status="failed",
+                        case_passed=0,
+                        case_failed=0,
+                        error=setup_error or "setup_failed",
+                    )
+                    status = "failed"
+                    tsr_doc_id = None
+                    report_error = None
+                else:
+                    passed = sum(1 for case in final_cases if case.get("result") == "pass")
+                    failed = sum(1 for case in final_cases if case.get("result") in {"fail", "timeout"})
+                    status = "passed" if failed == 0 else "failed"
+                    tsr_doc_id = None
+                    report_error = None
+                    if status == "passed" and not process_service.is_group_disposed(doc.get("group_id")):
+                        try:
+                            all_final_items = db_test_runs.list_cases(run_id)
+                            tsr_doc_id = assemble_tsr(doc, db_test_runs.get_run(run_id) or run, all_final_items)
+                        except Exception as exc:
+                            # 0257 NR0003 §2: a passed run with no report is not a success — record it as a
+                            # distinct terminal error rather than leaving a green run whose TSR never existed.
+                            logger.warning("TSR assembly failed for %s: %s", run_id, exc, exc_info=True)
+                            status = "failed"
+                            report_error = "report_assembly_failed"
+                        # flowgate.default.0152: reflect this passed run's setup/case commands into the project's
+                        # verified test-command registry (L §2-4). Must never affect the run verdict (L §5) — the
+                        # reflect call swallows its own errors; this guard mirrors the TSR disposed/passed gate.
+                        # Still reflected on report_assembly_failed by intent: every case passed, so the commands
+                        # are verified — only the report write failed, which says nothing about the commands.
+                        try:
+                            passed_items = db_test_runs.list_cases(run_id)
+                            test_command_service.reflect_from_passed_run(doc, passed_items)
+                            # flowgate.default.0157: also reflect this run's setup/run command into the GLOBAL engine
+                            # recipe (auto-learn, L §2-4). Self-isolating like the 0152 reflect — never affects verdict.
+                            engine_recipe_service.reflect_from_passed_run(
+                                doc, db_test_runs.get_run(run_id) or run, passed_items
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "test-command reflect failed for %s: %s", run_id, exc, exc_info=True
+                            )
+
+                    db_test_runs.finish_run(
+                        run_id=run_id,
+                        status=status,
+                        case_passed=passed,
+                        case_failed=failed,
+                        tsr_doc_id=tsr_doc_id,
+                        error=report_error,
+                    )
+            finished_run = db_test_runs.get_run(run_id) or run
+
+        if cancelled:
+            # 0358 T0004 위험 1/4/5: cancelled runs must never reach TSR assembly,
+            # auto-recovery, or the chain-failure alarm — reuse the existing
+            # test_run_finished/group_view_refresh broadcast only.
+            _emit_finished(doc, finished_run, None)
+            return
+
+        _emit_finished(doc, finished_run, tsr_doc_id)
+        if setup_failed:
+            # flowgate.default.0157: a setup failure is the canonical INFRA case — try the auto-recovery loop
+            # first. If it re-fires (or escalates at the cap) it owns the signal, so suppress the generic
+            # "chain failed" alarm; otherwise fall through to it. Best-effort; never affects the verdict.
+            recovery = engine_recipe_service.handle_run_failure(
+                doc, finished_run, db_test_runs.list_cases(run_id)
+            )
+            if recovery not in ("repair", "escalated"):
+                # R0001 group 0154 / NR0004 Gap A: surface the silent stop (best-effort).
+                _maybe_notify_chain_failure(doc, finished_run)
+            return
+
+        if report_error is not None:
+            # 0257 NR0003 §2: terminal, so it must NOT enter the 0157 recovery loop below — every
+            # case passed, so there is no INFRA fault to repair and re-firing green tests cannot
+            # produce the missing report. Surface it once and stop.
             _maybe_notify_chain_failure(doc, finished_run)
+        elif status == "failed":
+            # flowgate.default.0157: route the failure through the auto-recovery loop first. An INFRA
+            # failure (env/tooling) is re-fired or escalated and owns its own signal; a real RED (CODE)
+            # returns "code" and falls through to the chain-failed alarm + existing rework chain.
+            recovery = engine_recipe_service.handle_run_failure(
+                doc, finished_run, db_test_runs.list_cases(run_id)
+            )
+            if recovery not in ("repair", "escalated"):
+                # R0001 group 0154 / NR0004 Gap A: a RED chain run assembles no TSR and stops with nothing to
+                # hand on — surface it once so the unmanned chain no longer goes silent (was: only an
+                # ephemeral SSE broadcast). Best-effort; never affects the verdict.
+                _maybe_notify_chain_failure(doc, finished_run)
+    finally:
+        _unregister_active_run(run_id)
 
 
 def _record_source_root(doc: dict, run: dict, root: Path) -> None:
@@ -775,12 +999,15 @@ def _execute_setup(
     env: dict[str, str],
     services: list[dict],
     run_started: float,
+    active: Optional[_ActiveRun] = None,
 ) -> tuple[bool, Optional[str]]:
     if not steps:
         return False, None
     stage_started = time.monotonic()
     failed_step = None
     for step in steps:
+        if active is not None and active.cancel_event.is_set():
+            break
         if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
             _mark_step_timeout(step, "[run timeout during setup]")
             failed_step = step.get("case_no")
@@ -788,14 +1015,16 @@ def _execute_setup(
         kind = step.get("kind")
         if kind == "setup":
             result = _execute_step_command(
-                step, root, port, scratch, env, SETUP_STEP_TIMEOUT_SEC
+                step, root, port, scratch, env, SETUP_STEP_TIMEOUT_SEC, active
             )
         elif kind == "service":
-            result = _start_service_step(step, root, port, scratch, env, services)
+            result = _start_service_step(step, root, port, scratch, env, services, active)
         elif kind == "wait":
-            result = _execute_wait_step(step, port)
+            result = _execute_wait_step(step, port, active)
         else:
             result = "fail"
+        if result == "cancelled":
+            break
         if result in {"fail", "timeout"}:
             failed_step = step.get("case_no")
             break
@@ -829,15 +1058,27 @@ def _execute_teardown(
     scratch: Path,
     env: dict[str, str],
     run_started: float,
+    active: Optional[_ActiveRun] = None,
 ) -> None:
     if not steps:
         return
     stage_started = time.monotonic()
+    # 0358 T0004 §2: teardown still runs best-effort after a cancel (it may undo
+    # setup side effects), but a cancelled run gets a short overall budget instead of
+    # the normal 600s-per-step timeout — otherwise "즉시 취소" could stay stuck in
+    # 'cancelling' for up to 10 minutes.
+    cancel_deadline: Optional[float] = None
     for step in steps:
+        is_cancelled = active is not None and active.cancel_event.is_set()
+        if is_cancelled and cancel_deadline is None:
+            cancel_deadline = time.monotonic() + CANCEL_TEARDOWN_BUDGET_SEC
+        if cancel_deadline is not None and time.monotonic() > cancel_deadline:
+            break
         if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
             _mark_step_timeout(step, "[run timeout during teardown]")
             continue
-        _execute_step_command(step, root, port, scratch, env, TEARDOWN_STEP_TIMEOUT_SEC)
+        step_timeout = CANCEL_TEARDOWN_STEP_TIMEOUT_SEC if is_cancelled else TEARDOWN_STEP_TIMEOUT_SEC
+        _execute_step_command(step, root, port, scratch, env, step_timeout, active)
     failed_count = len(
         [
             step
@@ -867,14 +1108,23 @@ def _execute_case(
     port: int,
     scratch: Path,
     env: dict[str, str],
+    active: Optional[_ActiveRun] = None,
 ) -> None:
+    if active is not None and active.cancel_event.is_set():
+        return  # cancelled before this case started — leave it NULL, not a result
     started = time.monotonic()
     result, exit_code, output = _run_shell_command(
         _replace_placeholders(case["cmd"], port, scratch),
         root,
         CASE_TIMEOUT_SEC,
         env,
+        active,
     )
+    if active is not None and active.cancel_event.is_set():
+        # Cancelled while the command was in flight (checked right after communicate()
+        # returns, per T0004 §2) — the process was already killed; do not record a
+        # pass/fail/timeout result for a command that never ran to completion.
+        return
     duration_ms = int((time.monotonic() - started) * 1000)
     output_tail = output[-OUTPUT_TAIL_CHARS:]
     db_test_runs.mark_case_finished(
@@ -900,14 +1150,20 @@ def _execute_step_command(
     scratch: Path,
     env: dict[str, str],
     timeout: int,
+    active: Optional[_ActiveRun] = None,
 ) -> str:
+    if active is not None and active.cancel_event.is_set():
+        return "cancelled"
     started = time.monotonic()
     result, exit_code, output = _run_shell_command(
         _replace_placeholders(step["cmd"], port, scratch),
         root,
         timeout,
         env,
+        active,
     )
+    if active is not None and active.cancel_event.is_set():
+        return "cancelled"
     db_test_runs.mark_case_finished(
         case_id=step["id"],
         result=result,
@@ -925,7 +1181,10 @@ def _start_service_step(
     scratch: Path,
     env: dict[str, str],
     services: list[dict],
+    active: Optional[_ActiveRun] = None,
 ) -> Optional[str]:
+    if active is not None and active.cancel_event.is_set():
+        return "cancelled"
     started = time.monotonic()
     cmd = _replace_placeholders(step["cmd"], port, scratch)
     log_path = scratch / f"{step['case_no'].lower()}-service.log"
@@ -947,6 +1206,10 @@ def _start_service_step(
             output_tail=str(exc)[-OUTPUT_TAIL_CHARS:],
         )
         return "fail"
+    if active is not None:
+        # T item 1: registration-vs-cancel race — if cancel already fired between the
+        # is_set() check above and Popen returning, kill this proc immediately.
+        _add_service_proc(active, proc)
     services.append(
         {
             "step": step,
@@ -965,17 +1228,23 @@ def _start_service_step(
     return None
 
 
-def _execute_wait_step(step: dict, port: int) -> str:
+def _execute_wait_step(step: dict, port: int, active: Optional[_ActiveRun] = None) -> str:
     started = time.monotonic()
     deadline = started + WAIT_TIMEOUT_SEC
     result = "timeout"
+    cancelled = False
     while time.monotonic() < deadline:
+        if active is not None and active.cancel_event.is_set():
+            cancelled = True
+            break
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=WAIT_POLL_SEC):
                 result = "pass"
                 break
         except OSError:
             time.sleep(WAIT_POLL_SEC)
+    if cancelled:
+        return "cancelled"
     db_test_runs.mark_case_finished(
         case_id=step["id"],
         result=result,
@@ -1005,6 +1274,7 @@ def _run_shell_command(
     root: Path,
     timeout: int,
     env: Optional[dict[str, str]],
+    active: Optional[_ActiveRun] = None,
 ) -> tuple[str, Optional[int], str]:
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = {
@@ -1016,21 +1286,30 @@ def _run_shell_command(
     kwargs["cwd"] = eff_cwd
 
     proc = subprocess.Popen(eff_cmd, **kwargs)
+    if active is not None:
+        # T item 1: if cancel already fired between the caller's is_set() check and
+        # Popen returning here, this kills the proc immediately instead of leaving it
+        # live and untracked.
+        _set_current_proc(active, proc)
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        _kill_process_tree(proc)
         try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except Exception:
-            stdout = getattr(exc, "output", None)
-            stderr = getattr(exc, "stderr", None)
-        output = _safe_decode(stdout) + _safe_decode(stderr)
-        return "timeout", None, output
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _kill_process_tree(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except Exception:
+                stdout = getattr(exc, "output", None)
+                stderr = getattr(exc, "stderr", None)
+            output = _safe_decode(stdout) + _safe_decode(stderr)
+            return "timeout", None, output
 
-    result = "pass" if proc.returncode == CASE_EXIT_PASS else "fail"
-    output = _safe_decode(stdout) + _safe_decode(stderr)
-    return result, proc.returncode, output
+        result = "pass" if proc.returncode == CASE_EXIT_PASS else "fail"
+        output = _safe_decode(stdout) + _safe_decode(stderr)
+        return result, proc.returncode, output
+    finally:
+        if active is not None:
+            _clear_current_proc(active, proc)
 
 
 def _popen_kwargs(
@@ -1081,7 +1360,7 @@ def _replace_placeholders(value: str, port: int, scratch: Path) -> str:
     return value.replace("{PORT}", str(port)).replace("{SCRATCH}", str(scratch))
 
 
-def _finalize_services(services: list[dict]) -> None:
+def _finalize_services(services: list[dict], active: Optional[_ActiveRun] = None) -> None:
     for service in services:
         proc = service["proc"]
         log_handle = service["log_handle"]
@@ -1095,6 +1374,8 @@ def _finalize_services(services: list[dict]) -> None:
             duration_ms = int((time.monotonic() - service["started"]) * 1000)
         else:
             _kill_process_tree(proc)
+        if active is not None:
+            _remove_service_proc(active, proc)
         try:
             log_handle.close()
         except Exception:

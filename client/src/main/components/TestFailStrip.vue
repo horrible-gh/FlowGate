@@ -32,6 +32,24 @@
       </span>
       <span v-if="!optimisticRunning && finishedText" class="fail-strip-fresh-badge">{{ finishedText }}</span>
       <span v-if="!optimisticRunning && subText" class="fail-strip-sub">{{ subText }}</span>
+      <!-- flowgate.default.0358 T0004 §8: while the real 'running' embed hasn't caught up
+           to the rerun POST's own run_id yet, keep a cancel control in this same spot
+           instead of leaving a gap with no way to stop the run that was just launched. -->
+      <span v-if="optimisticRunning && rerunPendingRunId" class="fail-strip-actions" @click.stop>
+        <button
+          type="button"
+          class="fail-strip-cancel"
+          :disabled="cancelling"
+          @click="onCancelPending"
+        >
+          <AppIcon
+            :name="cancelling ? 'spinner' : 'prohibit'"
+            :spin="cancelling"
+            aria-hidden="true"
+          />
+          {{ cancelling ? t('main.test_run_strip.cancelling') : t('main.test_run_strip.cancel') }}
+        </button>
+      </span>
       <span v-if="!optimisticRunning" class="fail-strip-actions" @click.stop>
         <button type="button" class="fail-strip-btn" @click="toggleExpanded">
           <AppIcon name="file-text" aria-hidden="true" />
@@ -102,9 +120,16 @@ const { showToast } = useToast()
 
 const expanded = ref(false)
 const rerunning = ref(false)
+const cancelling = ref(false)
 const optimisticRunning = ref(false)
 const optimisticSourceRunId = ref<TestRun['run_id'] | null>(null)
+// flowgate.default.0358 T0004 §8: the rerun POST's own run_id, captured instead of
+// discarded (was: dropped at :202-209). Used both to offer a cancel target during the
+// optimistic window and to tell "the real embed for THIS run has caught up" apart from
+// a stale embed that merely still carries the old failed run's id/status.
+const rerunPendingRunId = ref<TestRun['run_id'] | null>(null)
 let optimisticRunningTimer: ReturnType<typeof setTimeout> | null = null
+let minWindowElapsed = false
 const OPTIMISTIC_RUNNING_MS = 1500
 
 // Only a failed run surfaces the strip. Any other status (passed/running/absent) → null render,
@@ -131,17 +156,35 @@ function stopOptimisticRunning() {
   }
   optimisticRunning.value = false
   optimisticSourceRunId.value = null
+  rerunPendingRunId.value = null
+  minWindowElapsed = false
 }
 
-function startOptimisticRunning() {
+function startOptimisticRunning(newRunId: TestRun['run_id'] | null) {
   if (optimisticRunningTimer !== null) clearTimeout(optimisticRunningTimer)
   optimisticSourceRunId.value = props.testRun?.run_id ?? null
+  rerunPendingRunId.value = newRunId
   optimisticRunning.value = true
+  minWindowElapsed = false
   optimisticRunningTimer = setTimeout(() => {
-    optimisticRunning.value = false
-    optimisticSourceRunId.value = null
     optimisticRunningTimer = null
+    minWindowElapsed = true
+    tryHandOff()
   }, OPTIMISTIC_RUNNING_MS)
+}
+
+// flowgate.default.0358 T0004 §8: the fixed timer alone used to end the optimistic
+// window (was: :103-108,:136-144) — if the real embed hadn't caught up yet, that left
+// a gap with no cancel control at all. Now the timer only sets a minimum display
+// window; the optimistic/cancel state actually ends once the parent's testRun prop
+// reflects THIS rerun's run_id (handed off to TestRunStrip/a fresh failure banner).
+// Without a captured run_id (defensive — the server always returns one on success),
+// fall back to the old timer-only behavior rather than getting stuck forever.
+function tryHandOff() {
+  if (!optimisticRunning.value || !minWindowElapsed) return
+  if (rerunPendingRunId.value == null || props.testRun?.run_id === rerunPendingRunId.value) {
+    stopOptimisticRunning()
+  }
 }
 
 function toggleExpanded() {
@@ -151,19 +194,20 @@ function toggleExpanded() {
 
 watch(
   () => [props.testRun?.status ?? null, props.testRun?.run_id ?? null] as const,
-  ([status, runId]) => {
-    if (!optimisticRunning.value) return
-    if (status === 'passed') {
-      stopOptimisticRunning()
-      return
-    }
-    if (status === 'running' && runId !== optimisticSourceRunId.value) {
-      // The server-side running embed has arrived; keep the short local indicator
-      // visible for its minimum window, then let TestRunStrip own the live state.
-      return
-    }
-  },
+  () => tryHandOff(),
 )
+
+async function onCancelPending() {
+  if (cancelling.value || !rerunPendingRunId.value) return
+  cancelling.value = true
+  try {
+    await postRequest(`/api/v1/documents/test-run/${rerunPendingRunId.value}/cancel`, {})
+  } catch (e: unknown) {
+    showToast(t('main.test_run_strip.cancel_failed'), 'error')
+  } finally {
+    cancelling.value = false
+  }
+}
 
 onBeforeUnmount(stopOptimisticRunning)
 function formatRunTime(date: Date): string {
@@ -203,8 +247,10 @@ async function onRerun() {
   if (rerunning.value || !props.docId) return
   rerunning.value = true
   try {
-    await postRequest('/api/v1/documents/test-run', { doc_id: props.docId })
-    startOptimisticRunning()
+    const res = await postRequest<{ run_id?: string }>('/api/v1/documents/test-run', {
+      doc_id: props.docId,
+    })
+    startOptimisticRunning(res.data?.run_id ?? null)
     showToast(t('main.test_fail_strip.rerun_started'), 'info')
     emit('run-started')
   } catch (e: unknown) {
@@ -324,6 +370,27 @@ async function onRerun() {
 .fail-strip-btn--rerun:hover:not(:disabled) {
   background: var(--danger, #dc2626);
   filter: brightness(0.92);
+}
+.fail-strip-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: var(--r-sm, 4px);
+  background: var(--surface, #fff);
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  transition: background var(--tr, 150ms ease);
+}
+.fail-strip-cancel:hover:not(:disabled) {
+  background: var(--primary-l, #dbeafe);
+}
+.fail-strip-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .fail-strip-caret {
   flex-shrink: 0;

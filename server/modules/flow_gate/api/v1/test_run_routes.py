@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.services import test_run_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
@@ -63,6 +64,43 @@ def post_test_run(body: TestRunBody, request: Request):
             return _err(exc)
         raise
     return JSONResponse(status_code=202, content=result)
+
+
+@router.post("/documents/test-run/{run_id}/cancel")
+def post_test_run_cancel(run_id: str, request: Request):
+    """Immediate cancel for a running/cancelling test run (flowgate.default.0358 T0004).
+
+    Plain `def`, like the two routes above: FastAPI runs it in the threadpool, so the
+    synchronous DB/process work below never blocks the event loop
+    (test_event_loop_blocking_0279.py only flags `async def` handlers).
+
+    Same permission gate as starting a run (admin or perm_test_run) rather than
+    start-author-only — NR0003 §권한: another operator must be able to reclaim a
+    runaway execution, and start-author-only would be inconsistent with the admin
+    bypass that already exists. Worker tokens (test_run/repair_token scopes) are not
+    accepted here; consumed automation tokens are not widened into a cancel grant.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    run = db_test_runs.get_run(run_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"error": "run_not_found", "run_id": run_id})
+    doc = db_docs.get_by_id(run.get("doc_id"))
+    project_id = (doc or {}).get("project_id") or ""
+    if not test_run_service.user_can_run_tests(
+        auth["issued_to"], project_id, bool(auth.get("is_admin"))
+    ):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    try:
+        result = test_run_service.request_cancel(run_id)
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    return JSONResponse(status_code=200, content={"ok": True, **result})
 
 
 @router.post("/documents/test-run-request")

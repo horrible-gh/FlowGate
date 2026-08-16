@@ -115,28 +115,41 @@
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
           </button>
           <div v-else-if="isNextTestReportPending" class="ab-split-wrap">
-            <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false" @click="onRunTestClick">
-              <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
+            <!-- flowgate.default.0358 T0004 §9: while a run is in flight, this stays a
+                 status indicator (not clickable) instead of falling back to the generic
+                 next-step menu. TestRunStrip owns the actual stop/cancel control. -->
+            <button
+              v-if="isTestRunActive"
+              class="btn btn-primary btn-sm ab-split-main ab-split-main--status"
+              type="button"
+              disabled
+            >
+              <AppIcon name="spinner" spin /> {{ testRunStatusLabel }}
             </button>
-            <button class="btn btn-primary btn-sm ab-split-caret" type="button" @click.stop="toggleDropdown">
-              <AppIcon name="caret-up" />
-            </button>
-            <div v-if="dropdownOpen" class="ab-split-dd">
-              <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
-              <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
-                <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+            <template v-else>
+              <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false" @click="onRunTestClick">
+                <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
               </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
-              <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
-                <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+              <button class="btn btn-primary btn-sm ab-split-caret" type="button" @click.stop="toggleDropdown">
+                <AppIcon name="caret-up" />
               </button>
-              <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
-                <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
-              </button>
-              <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
-                <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
-              </button>
-            </div>
+              <div v-if="dropdownOpen" class="ab-split-dd">
+                <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
+                <button class="ab-split-item" type="button" @click="onNextMentionCopyClick">
+                  <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
+                </button>
+                <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+                <button class="ab-split-item" type="button" @click="onNextInvokeAiClick">
+                  <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
+                </button>
+                <button class="ab-split-item" type="button" :disabled="canNextAction === false" @click="onNextProceedClick">
+                  <AppIcon name="arrow-right" /> {{ t('main.review_action_bar.btn_proceed_next') }}
+                </button>
+                <button class="ab-split-item ab-split-item--continuous" type="button" @click="onContinuousWorkClick">
+                  <AppIcon name="fast-forward" /> {{ t('main.review_action_bar.btn_continuous_work') }}
+                </button>
+              </div>
+            </template>
           </div>
           <div v-else class="ab-dd-wrap">
             <!-- R0001 ③-a (rework): one button + trailing chevron that toggles a drop-up,
@@ -636,10 +649,28 @@ const isNextFinalApproval = computed(() =>
   (props.nextStepCode ?? '').toUpperCase() === 'AC',
 )
 
+// flowgate.default.0358 T0004 §9 (NR0003): before this fix, isNextTestReportPending
+// only matched testRunStatus == null, so the instant a run left that state the split
+// button collapsed to the generic "다음 단계" dropdown — the exact spot the user just
+// started a run from turning into an unrelated document-creation menu. running/
+// cancelling now stay inside the same TS→TSR branch (rendered as a status indicator,
+// not the generic menu); the real cancel affordance itself lives in TestRunStrip.
 const isNextTestReportPending = computed(() =>
   (props.docType ?? '').toUpperCase() === 'TS' &&
   (props.nextStepCode ?? '').toUpperCase() === 'TSR' &&
-  props.testRunStatus == null,
+  (props.testRunStatus == null ||
+    props.testRunStatus === 'running' ||
+    props.testRunStatus === 'cancelling'),
+)
+
+const isTestRunActive = computed(
+  () => props.testRunStatus === 'running' || props.testRunStatus === 'cancelling',
+)
+
+const testRunStatusLabel = computed(() =>
+  props.testRunStatus === 'cancelling'
+    ? t('main.test_run_strip.cancelling')
+    : t('main.test_run_strip.running'),
 )
 
 function onNextCreateEmptyClick() {

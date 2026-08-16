@@ -1257,6 +1257,10 @@ export default {
       err_src_missing: '프로젝트 소스 미러가 없어 테스트를 실행할 수 없습니다.',
       err_no_cases: '이 문서에서 실행할 테스트 케이스를 찾지 못했습니다.',
       err_failed: '테스트 실행을 시작하지 못했습니다.',
+      cancel: '중지',
+      cancelling: '취소 중…',
+      cancelled: '중지됨',
+      cancel_failed: '테스트 실행을 취소하지 못했습니다.',
     },
     final_approval: {
       panel_title: '최종 승인',
