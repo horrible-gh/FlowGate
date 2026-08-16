@@ -283,7 +283,7 @@
             @abort="abortInline(p)"
             @submit="submitResolveInline(p)"
             @retry="openResolve(p.group_id)"
-            @ai-invoke="invokeConflictAi(p)"
+            @ai-invoke="invokeConflictAi(p, $event)"
             @copy-mention="copyConflictMention(p)"
             @update:provider="aiProviderStore.selectProvider"
           />
@@ -1042,7 +1042,7 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(ta)
 }
 
-async function invokeConflictAi(p: Pending) {
+async function invokeConflictAi(p: Pending, message: string) {
   if (p.merge_id == null || busy.value) return
   busy.value = true
   try {
@@ -1056,6 +1056,7 @@ async function invokeConflictAi(p: Pending) {
       merge_id: p.merge_id,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    if (message) body.messages = [message]
     await postRequest('/api/v1/ai-invoke/start', body)
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {

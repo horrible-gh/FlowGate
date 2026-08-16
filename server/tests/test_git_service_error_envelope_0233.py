@@ -121,7 +121,7 @@ def test_token_issue_open_session_still_returns_mention(monkeypatch):
 
 # ── /ai-invoke/start (AI invoke) ─────────────────────────────────────────────
 
-def _ai_client(monkeypatch, *, list_conflicts) -> TestClient:
+def _ai_client(monkeypatch, *, list_conflicts, captured_mentions: list[str] | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(ai_invoke_routes.router)
     _install_git_error_handler(app)
@@ -137,7 +137,9 @@ def _ai_client(monkeypatch, *, list_conflicts) -> TestClient:
     # there must propagate exactly as it does in production (start_run's except only
     # catches HTTPException/LookupError/ValueError — never GitServiceError).
     def fake_start_run(**kw):
-        kw["mention_builder"]("RAW", "/tmp/scratch")
+        mention = kw["mention_builder"]("RAW", "/tmp/scratch")
+        if captured_mentions is not None:
+            captured_mentions.append(mention)
         return {"run_id": "aiv_1", "status": "running"}
 
     monkeypatch.setattr(ai_invoke_routes.ai_invoke_service, "start_run", fake_start_run)
@@ -170,3 +172,30 @@ def test_ai_invoke_open_session_starts(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["run_id"] == "aiv_1"
+
+
+def test_ai_invoke_prepends_conflict_delivery_message(monkeypatch):
+    captured_mentions: list[str] = []
+    client = _ai_client(
+        monkeypatch,
+        list_conflicts=lambda *a, **k: dict(_OPEN_CONFLICTS),
+        captured_mentions=captured_mentions,
+    )
+    body = {
+        **_start_body(),
+        "messages": ["현재 소스를 과거 버전으로 되돌리지 말고 변경을 보존해 주세요."],
+    }
+
+    resp = client.post(
+        "/api/v1/ai-invoke/start",
+        json=body,
+        headers={"Authorization": "Bearer tok", "x-locale": "ko"},
+    )
+
+    assert resp.status_code == 200
+    assert len(captured_mentions) == 1
+    assert captured_mentions[0].startswith(
+        "## 사용자 메세지\n---\n"
+        "현재 소스를 과거 버전으로 되돌리지 말고 변경을 보존해 주세요."
+    )
+    assert "Git conflict auto-resolve task" in captured_mentions[0]

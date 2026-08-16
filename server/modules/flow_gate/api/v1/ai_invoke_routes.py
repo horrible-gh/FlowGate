@@ -65,7 +65,7 @@ class AiInvokeStartRequest(BaseModel):
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
     selected_docs: Optional[list[str]] = None      # next_step_message reference docs
-    messages: Optional[list[str]] = None           # next_step_message user messages
+    messages: Optional[list[str]] = None           # next_step_message / resolve_conflict user messages
     reject_reason: Optional[str] = None            # rework: live (possibly unsaved) reason
     design_types: Optional[list[str]] = None       # design_handoff selected types
     design_mode: Optional[str] = None              # design_handoff "batch" | "single"
@@ -350,6 +350,13 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             if not base:
                 return None
             return (prompt + invoke_mention_service.SECTION_SEPARATOR + base) if prompt else base
+        if body.action_scope == "resolve_conflict":
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            return invoke_mention_service.prepend_messages_section(
+                base, body.messages or [], locale,
+            )
         if body.action_scope == "next_step_message":
             base = _standard_mention(raw_token, scratch_dir, ref_doc_ids=body.selected_docs)
             if not base:

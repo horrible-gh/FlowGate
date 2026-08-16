@@ -485,7 +485,7 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(ta)
 }
 
-async function invokeConflictAi() {
+async function invokeConflictAi(message: string) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
@@ -500,6 +500,7 @@ async function invokeConflictAi() {
       merge_id: mergeId,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    if (message) body.messages = [message]
     await postRequest('/api/v1/ai-invoke/start', body)
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {

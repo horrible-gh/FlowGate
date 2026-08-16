@@ -213,6 +213,23 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     wrapper.unmount()
   })
 
+  it('emits the trimmed delivery message with the AI invocation', async () => {
+    const { wrapper } = mountDialog()
+
+    const message = wrapper.get('[data-test="conflict-ai-message"]')
+    await message.setValue('  Preserve the current source and resolve only the markers.  ')
+    const invoke = wrapper.findAll('.git-conflict-footer-actions .btn-secondary')
+      .find(button => button.text().includes('Call AI'))
+    expect(invoke).toBeTruthy()
+    await invoke!.trigger('click')
+
+    expect(wrapper.emitted('ai-invoke')).toEqual([
+      ['Preserve the current source and resolve only the markers.'],
+    ])
+
+    wrapper.unmount()
+  })
+
   it('emits close/abort/retry to the host', async () => {
     const { wrapper } = mountDialog({ loadStatus: 'error', errorMessage: 'boom' })
 

@@ -2454,6 +2454,8 @@ export default {
       quick_recommended: 'Quick suggestion',
       copy_conflict_mention: 'Copy mention',
       invoke_conflict_ai: 'Call AI',
+      conflict_ai_message_label: 'Message',
+      conflict_ai_message_placeholder: 'Add instructions for resolving the conflict while preserving the current changes.',
       conflict_ai_started: 'AI conflict resolution started',
       conflict_mention_copied: 'Conflict resolution mention copied',
       remaining_chunks: '{remaining}/{total} unresolved',
