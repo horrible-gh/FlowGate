@@ -1004,7 +1004,7 @@ export default {
     work_plan_proposal_dialog: {
       title: 'Create work plan',
       main_task: 'Main task',
-      intro: 'The main task of this window is creating the work-plan document. Choose how much to delegate in the two panes; the three buttons below carry that same scope — [Call AI] is the default.',
+      intro: 'The main task of this window is creating the work-plan document. Choose how much to delegate in the two panes; the three buttons below carry that same scope. [Create document] builds a draft without calling AI and keeps the delivery note you typed as-is; [Call AI] uses that delivery note as input to author new work-plan notes — [Call AI] is the default.',
       section_types: 'Types to count',
       section_providers: 'Candidate providers',
       // flowgate.default.0416 TR0005 — label for the box that picks the provider this run
@@ -1012,6 +1012,10 @@ export default {
       provider_label: 'Execution provider',
       // flowgate.default.0416 T0004 — label for the planner note shared by every step.
       note_label: 'Delivery note',
+      // flowgate.default.0421 NR0003 §3 — shown only while the sequence head row's note has
+      // been auto-filled. Does not share wording with AiInvokeDialog's read-only
+      // step_note_auto — this field is an editable outbound field, a different role.
+      note_auto_filled: 'Filled in automatically from the delivery note on the prior sequence step. Typing here replaces it with what you enter.',
       types_load_failed: 'Cannot choose types — the document type list could not be read.',
       providers_load_failed: 'Cannot choose providers — the provider list could not be read.',
       retry: 'Retry',

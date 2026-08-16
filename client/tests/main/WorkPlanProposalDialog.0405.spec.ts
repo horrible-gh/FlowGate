@@ -478,6 +478,69 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
     })
   })
+
+  // flowgate.default.0421 NR0003/T0005 — 서버(get_workflow_sequence)는 이미 시퀀스 머리 행의
+  // note를 싣고 있다. 이 창은 그 값을 꺼내 쓰지 않고 버려 왔다 — 저장이 아니라 표시가
+  // 문제였다는 것을 값 있는 프리필로 못 박는다.
+  describe('전달 멘트 프리필', () => {
+    it('시퀀스 머리 행에 note가 있으면 열자마자 채워지고 자동 채움 안내가 뜬다', async () => {
+      getRequest.mockImplementation((url: string) => {
+        if (url === '/api/v1/workflow/sequence') {
+          return Promise.resolve({
+            data: {
+              note_max_chars: 1000,
+              items: [{ status: 'todo', type: 'WP', note: '이전 시퀀스 멘트' }],
+            },
+          })
+        }
+        return Promise.resolve({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+      })
+      const wrapper = await mountDialog()
+
+      expect((wrapper.get('[data-test="wpp-note"]').element as HTMLInputElement).value)
+        .toBe('이전 시퀀스 멘트')
+      expect(wrapper.find('[data-test="wpp-note-auto"]').exists()).toBe(true)
+    })
+
+    it('사용자가 먼저 입력하면 늦게 도착한 프리필이 그 값을 덮지 않는다', async () => {
+      let release: (value: any) => void = () => {}
+      getRequest.mockImplementation((url: string) => {
+        if (url === '/api/v1/workflow/sequence') {
+          return new Promise((resolve) => { release = resolve })
+        }
+        return Promise.resolve({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+      })
+      const wrapper = await mountDialog()
+      await wrapper.get('[data-test="wpp-note"]').setValue('사용자가 먼저 적은 값')
+
+      release({
+        data: {
+          note_max_chars: 1000,
+          items: [{ status: 'todo', type: 'WP', note: '이전 시퀀스 멘트' }],
+        },
+      })
+      await flushPromises()
+
+      expect((wrapper.get('[data-test="wpp-note"]').element as HTMLInputElement).value)
+        .toBe('사용자가 먼저 적은 값')
+      expect(wrapper.find('[data-test="wpp-note-auto"]').exists()).toBe(false)
+    })
+
+    it('머리 행 note가 빈 문자열이면 칸도 비어 있고 안내도 뜨지 않는다', async () => {
+      getRequest.mockImplementation((url: string) => {
+        if (url === '/api/v1/workflow/sequence') {
+          return Promise.resolve({
+            data: { note_max_chars: 1000, items: [{ status: 'todo', type: 'WP', note: '' }] },
+          })
+        }
+        return Promise.resolve({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+      })
+      const wrapper = await mountDialog()
+
+      expect((wrapper.get('[data-test="wpp-note"]').element as HTMLInputElement).value).toBe('')
+      expect(wrapper.find('[data-test="wpp-note-auto"]').exists()).toBe(false)
+    })
+  })
 })
 
 // 0405 T0011 rev2 — 반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
@@ -633,5 +696,26 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     expect(wrapper.find('[data-test="wpp-default-provider"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="wpp-note"]').exists()).toBe(true)
     wrapper.unmount()
+  })
+})
+
+// flowgate.default.0421 T0005 작업 B-3 — 화면 문안이 [문서생성]을 AI 생성으로 오해시키지
+// 않는지 확인한다. [문서생성]=AI 미호출 보존, [AI 호출]=전달 멘트를 참고한 새 작성이라는
+// 구분을 이미 있는 intro 줄에서 읽을 수 있어야 한다(새 카드·새 섹션을 만들지 않는다).
+describe('WorkPlanProposalDialog — 버튼 역할 문안', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    i18n.global.locale.value = 'ko'
+    localStorage.clear()
+    postRequest.mockReset()
+    getRequest.mockReset()
+    getRequest.mockResolvedValue({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
+  })
+
+  it('intro가 [문서생성]=AI 미호출 보존과 [AI 호출]=새 작성을 구분해 보여준다', async () => {
+    const wrapper = await mountDialog()
+    const intro = wrapper.get('[data-test="wpp-intro"]').text()
+    expect(intro).toContain('AI를 부르지 않고')
+    expect(intro).toContain('새로 작성')
   })
 })

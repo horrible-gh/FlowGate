@@ -763,8 +763,10 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         # T0004 완료 기준 2번("AI 가 제안해 생성한 작업계획도 defaults.note 에 입력값을
         # 보존")이 워커에게 실제로 전달되는 문장은 이 한 줄뿐이다.
         "note_rule": (
-            "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오. "
-            "(없음)이면 defaults.note 는 빈 문자열입니다."
+            "위 '전달 멘트'는 작업계획을 쓸 때 참고할 입력 요구사항입니다. 참조 문서와 함께 "
+            "읽고, 모든 단계에 공통으로 붙는 defaults.note 와 각 단계의 steps[].note 를 새로 "
+            "작성하십시오. (없음)이면 참고할 전달 멘트가 없다는 뜻이므로, 범위와 참조 문서만으로 "
+            "공통 멘트를 작성하십시오."
         ),
     },
     "en": {
@@ -795,8 +797,11 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "into steps[].provider_id and defaults.provider_id."
         ),
         "note_rule": (
-            "Copy the Delivery note above into the work plan's defaults.note verbatim. "
-            "When it reads (none), defaults.note is an empty string."
+            "The Delivery note above is an input requirement to consult while writing the work "
+            "plan. Read it together with the reference documents and author new text for "
+            "defaults.note (the instruction common to every step) and each step's steps[].note. "
+            "When it reads (none), there is no delivery note to consult -- author the common "
+            "note from the scope and reference documents alone."
         ),
     },
     "ja": {
@@ -825,8 +830,10 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "には上の「候補プロバイダー」にある値だけを書いてください。"
         ),
         "note_rule": (
-            "上の「伝達メモ」を最終的な作業計画の defaults.note にそのまま書き写して"
-            "ください。(なし)の場合、defaults.note は空文字列です。"
+            "上の「伝達メモ」は作業計画を書く際に参考にする入力要件です。参照文書と合わせて読み、"
+            "全ての段階に共通で付く defaults.note と各段階の steps[].note を新しく書いてください。"
+            "(なし)の場合は参考にする伝達メモがないという意味なので、範囲と参照文書だけで共通メモを"
+            "書いてください。"
         ),
     },
 }
