@@ -12,8 +12,8 @@ def remote_mode(monkeypatch):
 
 
 @pytest.mark.parametrize("action_scope", ["new", "edit"])
-@pytest.mark.parametrize("step_type", ["T", "TR", "TSR"])
-def test_kind_read_write_for_new_or_edit_t_tr_tsr(monkeypatch, action_scope, step_type):
+@pytest.mark.parametrize("step_type", ["TR", "TSR"])
+def test_kind_read_write_for_new_or_edit_tr_tsr(monkeypatch, action_scope, step_type):
     monkeypatch.setattr(
         remote_tool_service,
         "_worker_token_step_type_result",
@@ -27,6 +27,23 @@ def test_kind_read_write_for_new_or_edit_t_tr_tsr(monkeypatch, action_scope, ste
     assert [item["name"] for item in result["tools"]] == [
         "read", "grep", "glob", "stat", "write", "patch", "remove"
     ]
+
+
+@pytest.mark.parametrize("action_scope", ["new", "edit"])
+def test_kind_read_only_for_t_after_write_recall(monkeypatch, action_scope):
+    """0427 T0004: T lost write/patch/remove -- it now advertises the same
+    read-only catalog as an investigation-only step (N/NR/D/DS/...)."""
+    monkeypatch.setattr(
+        remote_tool_service,
+        "_worker_token_step_type_result",
+        lambda _rec: ("T", False),
+    )
+    result = tool_registry.resolve_registry(
+        {"action_scope": action_scope, "doc_ref": "d1"}, "flowgate", "ko"
+    )
+    assert result["kind"] == "read"
+    assert result["reason"] is None
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
 
 
 @pytest.mark.parametrize("action_scope", ["review", "workflow_decide"])
