@@ -2460,6 +2460,8 @@ export default {
       quick_recommended: '빠른 추천',
       copy_conflict_mention: '멘트 복사',
       invoke_conflict_ai: 'AI 호출',
+      conflict_ai_message_label: '전달 멘트',
+      conflict_ai_message_placeholder: 'AI가 현재 변경을 보존하며 충돌을 해소하도록 전달할 내용을 입력하세요.',
       conflict_ai_started: 'AI 충돌 해소를 시작했습니다',
       conflict_mention_copied: '충돌 해소 멘션을 복사했습니다',
       remaining_chunks: '미해소 {remaining}/{total}',

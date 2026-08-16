@@ -2457,6 +2457,8 @@ export default {
       quick_recommended: 'クイック提案',
       copy_conflict_mention: 'メンションをコピー',
       invoke_conflict_ai: 'AI呼び出し',
+      conflict_ai_message_label: '伝達メッセージ',
+      conflict_ai_message_placeholder: '現在の変更を保持しながら競合を解消するための指示を入力してください。',
       conflict_ai_started: 'AI競合解消を開始しました',
       conflict_mention_copied: '競合解消メンションをコピーしました',
       remaining_chunks: '未解消 {remaining}/{total}',

@@ -154,6 +154,18 @@
           </section>
         </div>
 
+        <div class="git-conflict-message-bar">
+          <label for="git-conflict-ai-message">{{ t('main.git_finalize.conflict_ai_message_label') }}</label>
+          <textarea
+            id="git-conflict-ai-message"
+            v-model="conflictMessage"
+            rows="2"
+            :disabled="busy"
+            :placeholder="t('main.git_finalize.conflict_ai_message_placeholder')"
+            data-test="conflict-ai-message"
+          ></textarea>
+        </div>
+
         <div class="git-conflict-dialog-ft">
           <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }">
             <AppIcon :name="allConflictsResolved ? 'check-circle' : 'warning'" />
@@ -175,7 +187,7 @@
               hide-label
               @update:model-value="(v) => emit('update:provider', v)"
             />
-            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke')">
+            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke', conflictMessage.trim())">
               <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
             </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
@@ -231,7 +243,7 @@ const props = defineProps<{
   providerLoading?: boolean
   providerErrored?: boolean
 }>()
-const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': []; 'copy-mention': []; 'update:provider': [value: string] }>()
+const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': [message: string]; 'copy-mention': []; 'update:provider': [value: string] }>()
 
 const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()
@@ -240,6 +252,7 @@ const selectedConflictIndex = ref(0)
 const currentChunkSegment = ref(-1)
 const collapsedCommon = ref<Record<string, boolean>>({})
 const codeFontRem = ref(0.86)
+const conflictMessage = ref('')
 const COMMON_COLLAPSE_LINES = 12
 
 const selectedConflictFile = computed(() => props.files[selectedConflictIndex.value] || null)
@@ -479,6 +492,42 @@ watch(
 .git-conflict-dialog-ft {
   border-top: 1px solid var(--border, #e2e8f0);
   border-bottom: none;
+}
+.git-conflict-message-bar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+}
+.git-conflict-message-bar label {
+  color: var(--text-s, #475569);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.git-conflict-message-bar textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text, #0f172a);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  resize: none;
+}
+.git-conflict-message-bar textarea:focus {
+  border-color: var(--primary, #2563eb);
+  outline: 2px solid color-mix(in srgb, var(--primary, #2563eb) 18%, transparent);
+}
+.git-conflict-message-bar textarea:disabled {
+  opacity: 0.65;
 }
 .git-conflict-dialog-hd h2 {
   margin: 0;
@@ -966,6 +1015,10 @@ watch(
   .git-conflict-workspace-hd {
     align-items: stretch;
     flex-direction: column;
+  }
+  .git-conflict-message-bar {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
   .git-conflict-footer-actions {
     justify-content: flex-end;
