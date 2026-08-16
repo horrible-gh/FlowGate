@@ -228,8 +228,9 @@
            스타일은 항목 사이 간격 규칙(.dip-rr-entry) 하나뿐이다.
 
            rev4 반려: ① AI 검수 항목의 머리줄(.dip-ai-entry-head/.dip-ai-meta)·판정 배지
-           (.dip-ai-verdict)·지적 목록(.dip-ai-findings)은 패널에서 뺐다 — 남는 것은
-           .dip-ai-comment 하나다. ② 반려 카드의 이름 자리는 「반려」, 그 .dip-ai-comment 는
+           (.dip-ai-verdict)·지적 목록(.dip-ai-findings)은 당시 패널에서 뺐다. 이후 0422
+           TR0003 rev2에서 판정 배지만 .dip-ai-comment-toggle 안에 복원했다. ② 반려 카드의
+           이름 자리는 「반려」, 그 .dip-ai-comment 는
            「검수 의견」(i18n 값만 바꿨다). ③ 본문 아래 "이전 항목 N건 더" 줄 대신 제목 오른쪽
            [전체보기]. ④ 최대 3건, 긴 문자열은 접었든 펼쳤든 말줄임. -->
       <div v-if="canShowReviewRejectSection" class="dip-section" :class="{ collapsed: sectionCollapsed.ai_review }">
@@ -299,9 +300,12 @@
             </template>
 
             <!-- AI 검수 — 기존 AI 검수 섹션의 .dip-ai-entry 그대로 (감싸는 상자 없음).
-                 rev5 반려 §1: 머리줄(시각 · AI)·판정 배지("지적 N건")·지적 목록은 패널에
-                 그리지 않는다. 패널에 남는 것은 아래 [검수 의견] 접힘 하나뿐이고, 시각·판정·
-                 지적은 [전체보기] 창에서 그대로 볼 수 있다. -->
+                 rev5 반려 §1: 머리줄(시각 · AI)·지적 목록은 패널에 그리지 않는다 — 시각·
+                 지적 상세는 [전체보기] 창에서 그대로 볼 수 있다.
+                 0422 TR0003 rev2 반려("dip-ai-comment-toggle 여기"): R0001 이 요청한 배지는
+                 섹션 헤드라인이나 카드 바깥이 아니라 각 검수의견 토글 머리줄 안에 둔다.
+                 [전체보기] 다이얼로그(QaReviewHistoryDialog)의 .rhd-verdict 와 같은 값
+                 (verdict/finding_count)을 각 .dip-ai-comment-toggle 안에서 그린다. -->
             <div v-else class="dip-ai-entry">
               <!-- R0001 (rev1): the comment fold uses the SAME control idiom as the
                    rejection reason and the AI response — a clickable header row carrying a
@@ -318,6 +322,9 @@
                 >
                   <span class="dip-ai-comment-label">
                     <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_comment_label') }}
+                  </span>
+                  <span class="dip-ai-verdict" :class="reviewVerdictClass(entry.review!)">
+                    {{ reviewVerdictLabel(entry.review!) }}
                   </span>
                   <AppIcon name="caret-down" class="dip-ai-comment-chevron" />
                 </button>
@@ -1032,15 +1039,13 @@ const reviewRejectFeed = computed<ReviewRejectEntry[]>(() => {
   }
   if (canShowReviewSection.value) {
     // Same fallback shape as the rejection above: prefer the full history, fall back to
-    // the single latest review when only that prop was handed in.
-    // rev5 반려 §1: with the meta head, the verdict badge and the findings list gone, a
-    // review whose comment is empty has nothing left to draw in the panel — it would be
-    // an empty row. It stays in [전체보기] (the dialog gets props.aiReviewHistory whole),
-    // it just does not take a card here.
+    // the single latest review when only that prop was handed in. The panel card is a
+    // 검수의견 fold, so reviews without a comment remain available in [전체보기] but do
+    // not create an empty feed row here.
     const reviews = ((props.aiReviewHistory?.length ?? 0) > 0
       ? [...(props.aiReviewHistory ?? [])]
-      : (props.aiReview ? [props.aiReview] : [])
-    ).filter((r) => !!r.comment)
+      : (props.aiReview ? [props.aiReview] : []))
+      .filter((r) => !!r.comment)
     reviews.forEach((r, i) => out.push({
       kind: 'review',
       key: `review:${r.id ?? r.reviewed_at ?? r.created_at ?? i}`,
@@ -1052,14 +1057,24 @@ const reviewRejectFeed = computed<ReviewRejectEntry[]>(() => {
   return out.sort((a, b) => (a.when === b.when ? 0 : a.when > b.when ? -1 : 1))
 })
 const reviewRejectFeedVisible = computed(() => reviewRejectFeed.value.slice(0, FEED_VISIBLE))
-// The 머리줄 [전체보기] must stay reachable even when the panel feed itself is empty —
-// a comment-less review draws no card here but is still in the dialog.
+// The 머리줄 [전체보기] must stay reachable even when the panel feed itself is empty, and
+// even when the feed has more entries than FEED_VISIBLE shows.
 const reviewRejectHasHistory = computed(() =>
   reviewRejectFeed.value.length > 0
   || (props.aiReviewHistory?.length ?? 0) > 0
   || !!props.aiReview
   || rejectionHistoryList.value.length > 0
   || !!props.rejectReason)
+// 0422 TR0003 rev2 반려: 각 검수의견 토글 머리줄 안의 배지는 [전체보기]
+// 다이얼로그의 verdictClass/verdictLabel과 같은 매핑을 그대로 따른다.
+function reviewVerdictClass(r: AiReview): string {
+  return r.verdict === 'pass' ? 'pass' : 'warn'
+}
+function reviewVerdictLabel(r: AiReview): string {
+  if (r.verdict === 'pass') return t('main.doc_info_panel.ai_verdict_pass')
+  if (r.verdict === 'hold') return t('main.doc_info_panel.ai_verdict_hold')
+  return t('main.doc_info_panel.ai_verdict_issues', { n: r.finding_count ?? 0 })
+}
 
 // group 0126 / C안 + T0013 + 0311 T0004: qa full-history modal. TR0005 rev6 반려 §3
 // ("질의는 빼라") split the once-merged dialog back in two — this ref only opens
@@ -1355,11 +1370,22 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   font-weight: 400;
 }
 /* AI review feedback section.
-   rev5 반려 §1: the entry head (.dip-ai-entry-head / .dip-ai-meta), the verdict badge
-   (.dip-ai-verdict*) and the findings list (.dip-ai-findings / .dip-ai-finding*) are no
-   longer drawn in the panel, so their rules are gone with the markup. The same
-   information is still rendered by the [전체보기] dialog, which carries its own
-   .rhd-verdict / .rhd-findings styles. */
+   rev5 반려 §1: the entry head (.dip-ai-entry-head / .dip-ai-meta) and the findings list
+   (.dip-ai-findings / .dip-ai-finding*) stay out of the panel — those stay in the
+   [전체보기] dialog (.rhd-findings).
+   0422 TR0003 rev2 반려("dip-ai-comment-toggle 여기"): each verdict badge lives inside
+   its 검수의견 toggle header — same colours/shape as the dialog's .rhd-verdict. */
+.dip-ai-verdict {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-size: .62rem;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-left: auto;
+}
+.dip-ai-verdict.pass { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.dip-ai-verdict.warn { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
 /* R0001 (rev1): the comment box now shares the rejection-reason / AI-response control
    idiom exactly — a clickable header row (label + chevron, no "expand/collapse" text button)
    sitting above a body that is clamped to two lines and expands to a height-capped,
@@ -1394,7 +1420,7 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   gap: 5px;
 }
 .dip-ai-comment-chevron {
-  margin-left: auto;
+  margin-left: 0;
   color: #d08a2c;
   font-size: .6rem;
   transition: transform .18s ease;
