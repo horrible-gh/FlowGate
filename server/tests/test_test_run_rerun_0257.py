@@ -148,3 +148,150 @@ def test_pending_review_rerun_still_rejects_concurrent_start(monkeypatch, tmp_pa
         assert exc.detail["run_id"] == "trun_active"
     else:
         raise AssertionError("expected 409 run_in_progress")
+
+
+def test_cancelling_run_still_rejects_concurrent_start(monkeypatch, tmp_path):
+    """flowgate.default.0358 T0004 완료 기준: a 'cancelling' row (cleanup not landed
+    yet) is still active — a second start must 409, exactly like 'running'. This is
+    what db/test_runs.get_running_by_doc's IN ('running', 'cancelling') covers; this
+    test pins the admission-gate consumer of it, not just the DB helper."""
+    from fastapi import HTTPException
+    from modules.flow_gate.services import test_run_service
+
+    src_root = tmp_path / "src"
+    src_root.mkdir()
+    doc = {
+        "doc_id": "flowgate.default.0257.0099-TS",
+        "project_id": "flowgate",
+        "branch": "main",
+        "group_id": "flowgate.default.0257",
+        "type_code": "TS",
+        "doc_review_status": "pending_review",
+        "revision_no": 3,
+    }
+
+    monkeypatch.setattr(test_run_service.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(
+        test_run_service.process_service, "is_group_disposed", lambda _group_id: False
+    )
+    monkeypatch.setattr(
+        test_run_service.db_test_runs,
+        "list_by_doc",
+        lambda _doc_id: [{"run_id": "trun_passed", "status": "passed"}],
+    )
+    monkeypatch.setattr(
+        test_run_service.storage_paths,
+        "resolve_project_src_root",
+        lambda *_args, **_kwargs: src_root,
+    )
+    monkeypatch.setattr(
+        test_run_service,
+        "_read_doc_content",
+        lambda _doc: "\n".join(
+            [
+                "## 테스트 케이스",
+                "### TC-1: smoke",
+                "- cmd: python --version",
+                "- 기대: exits 0",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        test_run_service.db_test_runs,
+        "get_running_by_doc",
+        lambda _doc_id: {"run_id": "trun_cancelling", "status": "cancelling"},
+    )
+
+    try:
+        test_run_service.validate_and_create_run(
+            doc_id=doc["doc_id"], runner_id="reviewer", triggered_via="ui"
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert exc.detail["error"] == "run_in_progress"
+        assert exc.detail["run_id"] == "trun_cancelling"
+    else:
+        raise AssertionError("expected 409 run_in_progress for a cancelling row")
+
+
+def test_cancelled_run_allows_immediate_rerun(monkeypatch, tmp_path):
+    """flowgate.default.0358 T0004 완료 기준: once cancellation reaches its terminal
+    'cancelled' state, get_running_by_doc no longer sees it as active (052/0358 074
+    CHECK only counts running/cancelling) and a fresh run is admitted immediately,
+    same as the existing prior-passed-run reopen case above."""
+    from modules.flow_gate.services import test_run_service
+
+    src_root = tmp_path / "src"
+    src_root.mkdir()
+    doc = {
+        "doc_id": "flowgate.default.0257.0099-TS",
+        "project_id": "flowgate",
+        "branch": "main",
+        "group_id": "flowgate.default.0257",
+        "type_code": "TS",
+        "doc_review_status": "pending_review",
+        "revision_no": 3,
+    }
+    prior_cancelled = {
+        "run_id": "trun_cancelled_before_rerun",
+        "doc_id": doc["doc_id"],
+        "status": "cancelled",
+        "error": "cancelled_by_user",
+    }
+
+    monkeypatch.setattr(test_run_service.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(
+        test_run_service.process_service, "is_group_disposed", lambda _group_id: False
+    )
+    monkeypatch.setattr(
+        test_run_service.db_test_runs, "list_by_doc", lambda _doc_id: [prior_cancelled]
+    )
+    monkeypatch.setattr(
+        test_run_service.storage_paths,
+        "resolve_project_src_root",
+        lambda *_args, **_kwargs: src_root,
+    )
+    monkeypatch.setattr(
+        test_run_service,
+        "_read_doc_content",
+        lambda _doc: "\n".join(
+            [
+                "## 테스트 케이스",
+                "",
+                "### TC-1: rerun after cancel",
+                "- cmd: python --version",
+                "- 기대: exits 0",
+            ]
+        ),
+    )
+    # Terminal 'cancelled' is not active -> admission gate sees no in-progress run.
+    monkeypatch.setattr(
+        test_run_service.db_test_runs, "get_running_by_doc", lambda _doc_id: None
+    )
+
+    inserted = {}
+
+    def insert_run(**kwargs):
+        inserted.update(kwargs)
+        return {
+            "run_id": "trun_after_cancel_rerun",
+            "doc_id": kwargs["doc_id"],
+            "revision_no": kwargs["revision_no"],
+            "status": "running",
+            "case_total": len(kwargs["cases"]),
+            "setup_total": len(kwargs["setup"]),
+            "teardown_total": len(kwargs["teardown"]),
+            "started_at": "2026-08-16T05:30:00+09:00",
+        }
+
+    monkeypatch.setattr(test_run_service.db_test_runs, "insert_run", insert_run)
+    monkeypatch.setattr(test_run_service, "_emit_started", lambda *_args, **_kwargs: None)
+
+    result = test_run_service.validate_and_create_run(
+        doc_id=doc["doc_id"], runner_id="reviewer", triggered_via="ui"
+    )
+
+    assert result["ok"] is True
+    assert result["run_id"] == "trun_after_cancel_rerun"
+    assert result["status"] == "running"
+    assert inserted["doc_id"] == doc["doc_id"]

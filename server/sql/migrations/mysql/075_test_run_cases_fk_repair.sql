@@ -1,0 +1,14 @@
+-- 075_test_run_cases_fk_repair.sql
+-- flowgate.default.0358 T0004 follow-up — intentionally a no-op on MySQL/MariaDB.
+--
+-- The SQLite counterpart repairs test_run_cases.run_id, whose REFERENCES clause was
+-- rewritten to the throwaway backup table name by the table rename in the first revision
+-- of 074_test_run_cancel_status.sql. MySQL cannot be in that state: 052 declares
+-- test_run_cases.run_id with an inline column-level REFERENCES clause, which MySQL parses
+-- and ignores, so no actual foreign key on test_runs exists to be rewritten or left
+-- dangling. 074 has nevertheless been rewritten to the same drop-and-rename-into-place
+-- order as SQLite so the hazard cannot reappear if a real table-level FOREIGN KEY is ever
+-- declared on that column.
+--
+-- This file exists so the three dialect directories keep identical migration filenames
+-- and the next group picking a free number sees 075 taken in all three.

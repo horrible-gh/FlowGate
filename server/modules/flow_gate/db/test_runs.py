@@ -25,8 +25,12 @@ def get_run(run_id: str) -> Optional[dict]:
 
 
 def get_running_by_doc(doc_id: str) -> Optional[dict]:
+    # 0358 T0004 §4: 'cancelling' is still an active row (the kill/cleanup hasn't
+    # landed yet) — the concurrent-run gate must keep 409-ing until the terminal
+    # 'cancelled' row appears. Only 'cancelled' — not 'running'/'cancelling' — allows
+    # a fresh admission.
     return get_store()._fetch_one(
-        "SELECT * FROM test_runs WHERE doc_id = ? AND status = 'running' "
+        "SELECT * FROM test_runs WHERE doc_id = ? AND status IN ('running', 'cancelling') "
         "ORDER BY created_at DESC LIMIT 1",
         [doc_id],
     )
@@ -166,14 +170,48 @@ def finish_run(
     tsr_doc_id: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
+    """Terminal write for a natural completion (setup_failed/passed/failed).
+
+    Gated to rows still 'running' (0358 T0004 위험 2): once a cancel has moved a run to
+    'cancelling'/'cancelled', a racing natural completion must not resurrect it as
+    passed/failed. This WHERE clause is a real guard at the SQL level regardless of
+    FlowGateStore._execute's missing affected-row count — it just does not by itself
+    tell the caller which side won a race. Callers that need to branch on the outcome
+    must serialize with test_run_service._get_run_lock(run_id) around this call.
+    """
     get_store()._execute(
         "UPDATE test_runs SET status = ?, case_passed = ?, case_failed = ?, "
-        "tsr_doc_id = ?, error = ?, finished_at = ? WHERE run_id = ?",
+        "tsr_doc_id = ?, error = ?, finished_at = ? WHERE run_id = ? AND status = 'running'",
         [status, case_passed, case_failed, tsr_doc_id, error, now_iso(), run_id],
     )
 
 
+def cas_running_to_cancelling(run_id: str) -> None:
+    """Conditional 'running'→'cancelling' write. Caller must hold the per-run lock
+    (test_run_service._get_run_lock) to use this as a true CAS — see finish_run."""
+    get_store()._execute(
+        "UPDATE test_runs SET status = 'cancelling' WHERE run_id = ? AND status = 'running'",
+        [run_id],
+    )
+
+
+def cas_cancelling_to_cancelled(run_id: str, *, error: str = "cancelled_by_user") -> None:
+    """Conditional 'cancelling'→'cancelled' terminal write. Same locking caveat as
+    cas_running_to_cancelling; safe to call twice (second call is a no-op)."""
+    get_store()._execute(
+        "UPDATE test_runs SET status = 'cancelled', error = ?, finished_at = ? "
+        "WHERE run_id = ? AND status = 'cancelling'",
+        [error, now_iso(), run_id],
+    )
+
+
 def mark_orphaned_running() -> int:
+    """Startup reap (0358 T0004 §4): 'running' rows the crashed process never
+    finished become failed/orphaned_by_restart as before; 'cancelling' rows — a
+    cancel was accepted but cleanup never landed before the restart — become
+    cancelled/cancelled_by_restart rather than being left stuck mid-cancel forever.
+    Runs single-threaded at startup before the worker starts, so no lock is needed.
+    """
     rows = get_store()._fetch_all(
         "SELECT run_id FROM test_runs WHERE status = 'running'"
     )
@@ -185,4 +223,9 @@ def mark_orphaned_running() -> int:
             case_failed=0,
             error="orphaned_by_restart",
         )
-    return len(rows)
+    cancelling_rows = get_store()._fetch_all(
+        "SELECT run_id FROM test_runs WHERE status = 'cancelling'"
+    )
+    for row in cancelling_rows:
+        cas_cancelling_to_cancelled(row["run_id"], error="cancelled_by_restart")
+    return len(rows) + len(cancelling_rows)

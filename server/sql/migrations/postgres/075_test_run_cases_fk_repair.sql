@@ -1,0 +1,12 @@
+-- 075_test_run_cases_fk_repair.sql
+-- flowgate.default.0358 T0004 follow-up — intentionally a no-op on PostgreSQL.
+--
+-- The SQLite counterpart repairs test_run_cases.run_id, whose REFERENCES clause was
+-- rewritten to the throwaway backup table name by the table rename in the first revision
+-- of 074_test_run_cancel_status.sql (SQLite rewrites REFERENCES clauses on ALTER TABLE
+-- ... RENAME TO). PostgreSQL's 074 never renames anything — it only drops and re-adds
+-- test_runs_status_check — so no PostgreSQL database can be in that state and there is
+-- nothing to repair here.
+--
+-- This file exists so the three dialect directories keep identical migration filenames
+-- and the next group picking a free number sees 075 taken in all three.

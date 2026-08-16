@@ -6,16 +6,36 @@
        whose state would pass the backend admission gate (validate_and_create_run):
        approved, or pending_review/revised with a prior run bound (the 0163/0169 re-run relaxation).
        The failed state stays owned by TestFailStrip to avoid a duplicate re-run button. -->
-  <div v-if="visible" class="run-strip" :class="{ 'run-strip--running': isRunning }">
+  <div v-if="visible" class="run-strip" :class="{ 'run-strip--running': isRunning, 'run-strip--cancelling': isCancellingUi }">
     <AppIcon
       class="run-strip-ic"
-      :name="isRunning ? 'spinner' : 'flask'"
-      :spin="isRunning"
+      :name="isRunning || isCancellingUi ? 'spinner' : 'flask'"
+      :spin="isRunning || isCancellingUi"
       aria-hidden="true"
     />
     <span class="run-strip-label">{{ label }}</span>
     <span v-if="subText" class="run-strip-sub">{{ subText }}</span>
-    <span v-if="!isRunning" class="run-strip-actions">
+    <!-- flowgate.default.0358 T0004: the stop control lives in this always-mounted strip
+         (not a new card) and stays in the same spot from click through the final embed —
+         disabled + spinner while cancelling, "중지됨" + re-run once the SSE-delivered
+         'cancelled' embed lands. Its own .run-strip-cancel class keeps it out of the
+         .run-strip-btn findAll() index the ready/passed bundle below relies on. -->
+    <span v-if="isRunning || isServerCancelling" class="run-strip-actions">
+      <button
+        type="button"
+        class="run-strip-cancel"
+        :disabled="isCancellingUi"
+        @click="onCancel"
+      >
+        <AppIcon
+          :name="isCancellingUi ? 'spinner' : 'prohibit'"
+          :spin="isCancellingUi"
+          aria-hidden="true"
+        />
+        {{ isCancellingUi ? t('main.test_run_strip.cancelling') : t('main.test_run_strip.cancel') }}
+      </button>
+    </span>
+    <span v-else class="run-strip-actions">
       <!-- 0268 B0001: this button was labelled "AI에게 위임" with a robot icon while only
            writing the clipboard — the label itself is what hid the missing in-app call.
            It now says what it does, and the real AI 호출 sits next to it (병행, not 택일). -->
@@ -65,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
@@ -97,26 +117,35 @@ const delegating = ref(false)
 const invoking = ref(false)
 const busy = computed(() => launching.value || delegating.value || invoking.value)
 
-const isRunning = computed(() => props.testRun?.status === 'running')
+const status = computed(() => props.testRun?.status ?? null)
+const isRunning = computed(() => status.value === 'running')
+const isServerCancelling = computed(() => status.value === 'cancelling')
+// flowgate.default.0358 T0004: flips true on click, before the server round-trip
+// resolves, so the button never has a frame where it looks clickable again while a
+// cancel is in flight (client + server are both idempotent, but this is belt+suspenders).
+const cancelRequested = ref(false)
+const isCancellingUi = computed(() => cancelRequested.value || isServerCancelling.value)
 const hasRunHistory = computed(() => props.testRun != null)
 
 // Mirror of the backend admission gate (test_run_service.validate_and_create_run):
-// TS + approved, or TS + pending_review/revised with a run already bound (0163/0169). A running run
-// keeps the strip visible as launch feedback regardless of review status; a failed run
-// hides it because TestFailStrip already renders the re-run affordance for that state.
+// TS + approved, or TS + pending_review/revised with a run already bound (0163/0169). A running
+// or cancelling run keeps the strip visible as launch/cancel feedback regardless of review
+// status; a cancelled run stays visible too (중지됨 + re-run) — only a failed run hides it,
+// because TestFailStrip already renders the re-run affordance for that state.
 const visible = computed(() => {
   if (!props.docLoaded || props.groupDisposed) return false
   if ((props.typeCode ?? '') !== 'TS') return false
-  const status = props.testRun?.status ?? null
-  if (status === 'failed') return false
-  if (status === 'running') return true
+  if (status.value === 'failed') return false
+  if (status.value === 'running' || status.value === 'cancelling' || status.value === 'cancelled') return true
   if (props.reviewStatus === 'approved') return true
   return (props.reviewStatus === 'pending_review' || props.reviewStatus === 'revised') && props.testRun != null
 })
 
 const label = computed(() => {
+  if (isCancellingUi.value) return t('main.test_run_strip.cancelling')
   if (isRunning.value) return t('main.test_run_strip.running')
-  if (props.testRun?.status === 'passed') {
+  if (status.value === 'cancelled') return t('main.test_run_strip.cancelled')
+  if (status.value === 'passed') {
     return t('main.test_run_strip.last_passed', {
       passed: props.testRun?.case_passed ?? 0,
       total: props.testRun?.case_total ?? 0,
@@ -125,9 +154,18 @@ const label = computed(() => {
   return t('main.test_run_strip.ready')
 })
 
+// The server row and the local optimistic flip both settle on a terminal status; once
+// the SSE-delivered embed confirms it, release the local flag so a later fresh run's
+// click is not silently swallowed by a stale cancelRequested from a previous run.
+watch(status, (value) => {
+  if (value === 'cancelled' || value === 'passed' || value === 'failed' || value == null) {
+    cancelRequested.value = false
+  }
+})
+
 const subText = computed(() => props.testRun?.run_id ?? '')
 
-function runErrorMessage(e: unknown): string {
+function runErrorMessage(e: unknown, fallbackKey = 'err_failed'): string {
   const code = (e as { response?: { data?: { error?: string } } })?.response?.data?.error
   switch (code) {
     case 'permission_denied':
@@ -143,7 +181,7 @@ function runErrorMessage(e: unknown): string {
     case 'no_test_cases':
       return t('main.test_run_strip.err_no_cases')
     default:
-      return t('main.test_run_strip.err_failed')
+      return t(`main.test_run_strip.${fallbackKey}`)
   }
 }
 
@@ -158,6 +196,22 @@ async function onRun() {
     showToast(runErrorMessage(e), 'error')
   } finally {
     launching.value = false
+  }
+}
+
+// flowgate.default.0358 T0004: click flips the local flag immediately (button never
+// re-enables while the POST is in flight) and stays flipped until `status` settles
+// on a terminal value (see the watch() above) — the server side is idempotent too,
+// but this keeps a slow double-click from firing a second POST.
+async function onCancel() {
+  const runId = props.testRun?.run_id
+  if (isCancellingUi.value || !runId) return
+  cancelRequested.value = true
+  try {
+    await postRequest(`/api/v1/documents/test-run/${runId}/cancel`, {})
+  } catch (e: unknown) {
+    cancelRequested.value = false
+    showToast(runErrorMessage(e, 'cancel_failed'), 'error')
   }
 }
 
@@ -303,6 +357,27 @@ async function onInvokeAi() {
 }
 .run-strip--running .run-strip-ic {
   color: var(--primary, #2563eb);
+}
+.run-strip-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  border: 1px solid var(--danger, #dc2626);
+  border-radius: var(--r-sm, 4px);
+  background: var(--surface, #fff);
+  color: var(--danger, #dc2626);
+  cursor: pointer;
+  transition: background var(--tr, 150ms ease);
+}
+.run-strip-cancel:hover:not(:disabled) {
+  background: var(--danger-l, #fef2f2);
+}
+.run-strip-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 @media (max-width: 1279px) {

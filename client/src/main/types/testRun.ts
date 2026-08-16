@@ -19,7 +19,7 @@ export interface TestRunCase {
 export interface TestRun {
   run_id?: string | null
   revision_no?: number | null
-  status?: 'passed' | 'failed' | 'running' | string | null
+  status?: 'passed' | 'failed' | 'running' | 'cancelling' | 'cancelled' | string | null
   triggered_via?: string | null
   runner_id?: string | null
   case_total?: number | null
