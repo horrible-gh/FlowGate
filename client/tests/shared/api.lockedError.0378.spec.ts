@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import i18n from '../../shared/i18n'
-import { localizeApiError } from '../../shared/api'
+import { extractApiErrorMessage, localizeApiError } from '../../shared/api'
 
 describe('AI-running 423 API error localization (0378)', () => {
+  it('extracts detail, structured error message, then fallback in order', () => {
+    expect(extractApiErrorMessage(
+      { response: { data: { detail: 'detail', error: { message: 'nested' } } } },
+      'fallback',
+    )).toBe('detail')
+    expect(extractApiErrorMessage(
+      { response: { data: { error: { message: 'nested' } } } },
+      'fallback',
+    )).toBe('nested')
+    expect(extractApiErrorMessage(new Error('boom'), 'fallback')).toBe('fallback')
+  })
+
   it('localizes both legacy detail and the structured lease error', () => {
     i18n.global.locale.value = 'ko'
     const error = {

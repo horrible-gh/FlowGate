@@ -132,6 +132,78 @@ def test_middleware_allows_owner_worker(monkeypatch):
     assert side_effects == [GROUP]
 
 
+def test_work_plan_and_workflow_routes_are_locked_without_side_effects(monkeypatch):
+    """0424 T0004: exercise all five public HTTP paths against one active lease."""
+    from modules.flow_gate import process_service
+    from modules.flow_gate.api.v1 import workflow_decision_routes as workflow_routes
+    from modules.flow_gate.auth.middleware import get_current_user
+    from modules.flow_gate.documents.routers import work_plan as work_plan_routes
+
+    root_doc = f"{GROUP}.0001-R"
+    work_plan_doc = f"{GROUP}.0002-WP"
+    lease = {**LEASE, "group_id": GROUP}
+    effects: list[str] = []
+    state = {"workflow_tag": "before", "items": ["R"]}
+
+    def fake_doc(doc_id: str):
+        return {
+            "doc_id": doc_id,
+            "project_id": "flowgate",
+            "group_id": GROUP,
+            "type_code": "WP" if doc_id == work_plan_doc else "R",
+            "status": "in_progress",
+        }
+
+    monkeypatch.setattr(policy.db_leases, "get_active", lambda gid: dict(lease) if gid == GROUP else None)
+    monkeypatch.setattr(process_service, "is_group_disposed", lambda _gid: False)
+    monkeypatch.setattr(work_plan_routes.db_docs, "get_by_id", fake_doc)
+    monkeypatch.setattr(workflow_routes._db_documents, "get_by_id", fake_doc)
+    monkeypatch.setattr(
+        workflow_routes,
+        "verify_bearer",
+        lambda _request: {"_is_user_jwt": True, "user_id": "usr_pm", "issued_to": "usr_pm"},
+    )
+    monkeypatch.setattr(work_plan_routes, "_apply_sync", lambda *_a, **_k: effects.append("apply"))
+    monkeypatch.setattr(workflow_routes, "advance_workflow", lambda **_k: effects.append("advance"))
+    monkeypatch.setattr(workflow_routes, "edit_workflow_pending", lambda **_k: effects.append("sequence"))
+
+    app = FastAPI()
+    app.include_router(work_plan_routes.router, prefix="/api/v1")
+    app.include_router(workflow_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_pm"}
+
+    @app.exception_handler(policy.MutationPolicyError)
+    async def mutation_error_handler(_request, exc):
+        return policy.mutation_error_response(exc)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    before = {"workflow_tag": state["workflow_tag"], "items": list(state["items"])}
+    requests = [
+        client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": root_doc,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+        }),
+        client.put(f"/api/v1/documents/{work_plan_doc}/work-plan", json={
+            "base_revision_no": 0,
+            "body": {},
+        }),
+        client.post(f"/api/v1/documents/{work_plan_doc}/work-plan/apply", json={
+            "instruction_mode": "auto_approved",
+            "change_workflow": False,
+            "workflow_tag": "before",
+            "wp_revision_no": 0,
+        }),
+        client.post("/api/v1/workflow/advance", json={"doc_id": root_doc}),
+        client.patch("/api/v1/workflow/sequence", json={"doc_id": root_doc, "items": []}),
+    ]
+
+    assert [response.status_code for response in requests] == [423] * 5
+    assert all(response.json()["error"]["code"] == "GROUP_AI_RUN_LOCKED" for response in requests)
+    assert effects == []
+    assert state == before
+
+
 def test_ai_start_acquires_lease_before_issuing_any_token():
     source = inspect.getsource(ai_invoke_service.start_run)
     acquire = source.index("db_group_ai_leases.acquire")

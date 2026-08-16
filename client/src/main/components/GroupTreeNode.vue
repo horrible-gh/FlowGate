@@ -51,17 +51,34 @@
         {{ t('main.group_tree_node.text_27') }}
       </ContextMenuItem>
       <template v-if="node.node_type === 'group'">
-        <ContextMenuItem v-if="isEmptyGroup" icon="file-plus" @click="openCreateRequirement">
+        <ContextMenuItem
+          v-if="isEmptyGroup"
+          icon="file-plus"
+          :disabled="groupBusy"
+          :title="groupBusy ? busyHint : undefined"
+          @click="openCreateRequirement"
+        >
           {{ t('main.group_tree_node.new_requirement') }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canIssueToken" icon="key" @click="openIssueToken">
           {{ t('main.group_tree_node.issue_token') }}
         </ContextMenuItem>
-        <ContextMenuItem icon="pencil-simple" @click="openEditGroup">
+        <ContextMenuItem
+          icon="pencil-simple"
+          :disabled="groupBusy"
+          :title="groupBusy ? busyHint : undefined"
+          @click="openEditGroup"
+        >
           {{ t('main.group_tree_node.edit_group') }}
         </ContextMenuItem>
         <div class="ctx-separator" role="separator"></div>
-        <ContextMenuItem icon="trash" :danger="true" @click="openDisposeConfirm">
+        <ContextMenuItem
+          icon="trash"
+          :danger="true"
+          :disabled="groupBusy"
+          :title="groupBusy ? busyHint : undefined"
+          @click="openDisposeConfirm"
+        >
           {{ t('main.group_tree_node.dispose_group') }}
         </ContextMenuItem>
       </template>
@@ -110,12 +127,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { hasDocumentReadPermission } from '@shared/auth'
 import { type GroupNode } from '../stores/explorer'
 import { useExplorerStore } from '../stores/explorer'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import CreateEditGroupModal from './CreateEditGroupModal.vue'
 import GroupDiscardModal from './GroupDiscardModal.vue'
 import GroupTokenIssueModal from './GroupTokenIssueModal.vue'
@@ -140,6 +158,18 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { showToast } = useToast()
 const explorerStore = useExplorerStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+const groupBusy = computed(() => props.node.node_type === 'group' && (
+  aiInvokeRunsStore.isGroupRunning(props.node.id)
+  || aiInvokeRunsStore.isGroupInlineVisible(props.node.id)
+))
+const busyHint = computed(() => t('main.review_action_bar.ai_running_hint'))
+watch(groupBusy, (busy) => {
+  if (busy) {
+    showCreateEditModal.value = false
+    showDisposeConfirm.value = false
+  }
+})
 
 const isSelected = computed(() =>
   props.node.node_type === 'document' && explorerStore.selectedGroupNodeId === props.node.id,

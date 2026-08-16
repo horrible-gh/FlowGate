@@ -5,6 +5,7 @@ import i18n from '@shared/i18n'
 import FileExplorer from '@main/components/FileExplorer.vue'
 import FileTreeNode from '@main/components/FileTreeNode.vue'
 import { useLayoutStore } from '@main/stores/layout'
+import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 // flowgate.default.0327 T0004 (B0001 / NR0003) — "브랜치를 변경하면 우측 마우스 버튼이
 // 거의 동작을 안한다 / 폴더·파일 생성이나 업로드 같은게 안된다".
@@ -129,6 +130,25 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     expect(labels).toContain('New File')
     expect(labels).toContain('Upload Files')
     expect(labels).toContain('Refresh')
+  })
+
+  it('locks a writable group immediately when its AI run becomes active', async () => {
+    const wrapper = await mountExplorer({ group: GROUP, writable: true })
+    useAiInvokeRunsStore().trackStarted({
+      run_id: 'aiv_0424',
+      group_id: GROUP,
+      doc_ref: `${GROUP}.0001-R`,
+      status: 'running',
+    })
+    await flushPromises()
+    await rootRow(wrapper).trigger('contextmenu')
+    await flushPromises()
+
+    const labels = menuLabels(wrapper)
+    expect(labels).toContain('Refresh')
+    expect(labels).not.toContain('New Folder')
+    expect(labels).not.toContain('Upload Files')
+    expect(wrapper.text()).toContain('AI run')
   })
 
   it('still opens the root menu on a worktree-less group, but only with the read-only entries', async () => {

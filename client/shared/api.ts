@@ -389,6 +389,17 @@ export const ensureValidAccessToken = async (): Promise<boolean> => {
   return true
 }
 
+export const extractApiErrorMessage = (error: unknown, fallback: string): string => {
+  const data = (error as { response?: { data?: unknown } })?.response?.data
+  if (!data || typeof data !== 'object') return fallback
+  const record = data as Record<string, any>
+  if (typeof record.detail === 'string' && record.detail) return record.detail
+  if (typeof record.error?.message === 'string' && record.error.message) {
+    return record.error.message
+  }
+  return fallback
+}
+
 export const localizeApiError = (error: AxiosError): AxiosError => {
   const data = error.response?.data
   const record = data && typeof data === 'object' ? data as Record<string, any> : null

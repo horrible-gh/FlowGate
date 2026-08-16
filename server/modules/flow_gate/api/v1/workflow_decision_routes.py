@@ -460,9 +460,13 @@ def post_workflow_advance(
     # 0405 P0004: forwarded as-is. advance_workflow only reads it when the head type is WP.
     work_plan_scope = body.work_plan_scope if body else None
 
-    _disposed = _disposed_group_response(doc_id, _db_documents.get_by_id(doc_id))
+    _pre_doc = _db_documents.get_by_id(doc_id)
+    _disposed = _disposed_group_response(doc_id, _pre_doc)
     if _disposed is not None:
         return _disposed
+    _active_run = _active_ai_run_response_for_user(_pre_doc, auth)
+    if _active_run is not None:
+        return _active_run
 
     # 0352 T0004 §2/§3.4: this is a FRESH client request naming the selection, so the full
     # 422 validation (including "already done") runs here — not inside advance_workflow,
