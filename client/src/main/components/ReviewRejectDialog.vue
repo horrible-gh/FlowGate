@@ -60,8 +60,10 @@
             </template>
           </button>
 
-          <!-- Reject ▼ dropdown -->
-          <div class="rrd-split-wrap">
+          <!-- Reject ▼ dropdown — 0419 T0006: edit mode only corrects existing
+               wording, it doesn't re-copy a mention or re-invoke AI (that stays
+               scoped to the original reject action; NR0003 §risk 5). -->
+          <div v-if="!editMode" class="rrd-split-wrap">
             <button
               type="button"
               class="btn btn-secondary btn-sm rrd-split-caret"
@@ -117,6 +119,10 @@ const props = defineProps<{
   docName?: string
   docType?: string | null
   existingReason?: string | null
+  // 0419 T0006: correct the latest rejection's wording instead of filing a new
+  // rejection. The dialog itself doesn't call any API — this only changes what
+  // it shows (no reject-dropdown); the parent decides which endpoint save-reason maps to.
+  editMode?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -243,7 +249,14 @@ defineExpose({ notifySaved, notifySaveFailed })
 }
 
 .modal-rrd {
-  width: 480px;
+  /* 0419 T0006 (NR0003 후속 T 권고 1 / TR0005 rev2 시안): 480px 고정폭은 장문
+     반려 사유를 담기엔 너무 좁았다. .modal-box 자체는 이미 고정 height 없이
+     내용 기준이므로, 여기서는 폭을 넓히고 뷰포트 상한만 함께 걸어 둔다 —
+     WorkflowDecisionModal.vue의 height:85vh 고정 관용구는 반려 사유 길이와
+     무관하게 항상 최대치로 보여 "태평양" 반려를 낳았으므로 재사용하지 않았다. */
+  width: 620px;
+  max-width: 96vw;
+  max-height: 78vh;
 }
 
 .modal-hd {
@@ -328,7 +341,7 @@ defineExpose({ notifySaved, notifySaveFailed })
   color: var(--text, #1e293b);
   background: var(--bg-input, #fff);
   resize: vertical;
-  min-height: 100px;
+  min-height: 180px;
   box-sizing: border-box;
   transition: border-color 0.15s;
   font-family: inherit;

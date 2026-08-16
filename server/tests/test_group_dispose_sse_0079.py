@@ -406,28 +406,48 @@ def test_qa_register_guard_rejects_disposed_group(real_store):
 def test_rejection_reason_guard_rejects_disposed_group(real_store, monkeypatch):
     """PATCH /documents/{id}/rejection_reason is rejected once the group is disposed."""
     import asyncio
+    import json
     from fastapi import HTTPException
     from modules.flow_gate import process_service
+    from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.workflow.routers import workflow as wf
 
     gid = "flowgate.default.0079"
     root_id = "flowgate.default.0079.0001-R"
     _seed_group_with_root(gid, root_id)
 
+    # 0419 T0006: PATCH now CORRECTS an existing rejection, so the doc must already
+    # be rejected (with a history entry) before it has anything to correct.
+    db_docs.update(root_id, {
+        "doc_review_status": "rejected",
+        "rejection_reason": "originally wrong",
+        "rejection_history": json.dumps([{
+            "rejection_id": "rej_seed",
+            "reason": "originally wrong",
+            "rejected_at": "2026-01-01T00:00:00",
+            "rejected_by": "u-x",
+            "ai_response": None,
+            "responded_at": None,
+            "response_recorded_by": None,
+            "response_revision_no": None,
+        }]),
+    })
+
     monkeypatch.setattr(wf, "_get_user_permissions", lambda u: {"document.reject"})
     body = wf.RejectionReasonRequest(reason="still wrong")
     user = {"user_id": "u-x"}
 
-    # Live group: saving a rejection reason succeeds and appends history.
-    res = wf.update_rejection_reason_endpoint(root_id, body, user)
+    # Live group: correcting the rejection reason succeeds and updates the entry in place.
+    res = asyncio.run(wf.update_rejection_reason_endpoint(root_id, body, user))
     assert res["document"]["doc_id"] == root_id
+    assert res["document"]["rejection_reason"] == "still wrong"
 
     assert process_service.dispose_group(gid, reason_detail="obsolete")["status"] == "success"
 
-    # Disposed group: the same write — a rejection record on a discarded group's
-    # document — is now rejected at the server with 409 before any DB write.
+    # Disposed group: the same write — correcting a rejection record on a discarded
+    # group's document — is now rejected at the server with 409 before any DB write.
     with pytest.raises(HTTPException) as exc:
-        wf.update_rejection_reason_endpoint(root_id, body, user)
+        asyncio.run(wf.update_rejection_reason_endpoint(root_id, body, user))
     assert exc.value.status_code == 409
     assert "group_disposed" in str(exc.value.detail)
 

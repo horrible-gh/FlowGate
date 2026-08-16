@@ -412,6 +412,7 @@
             @toggle="docInfoCollapsed = !docInfoCollapsed"
             @next-action="onProceedNextStep(tab.id)"
             @orphan-recovered="onOrphanRecovered(tab.id)"
+            @edit-rejection="onEditRejectionRequested(tab.id)"
           />
           </div><!-- doc-with-panel -->
         </div>
@@ -1092,6 +1093,7 @@
       :doc-name="rejectDialogDocName"
       :doc-type="tabs.find(t => t.id === rejectDialogTabId)?.typeCode ?? null"
       :existing-reason="rejectDialogExistingReason"
+      :edit-mode="rejectDialogEditMode"
       @save-reason="onRejectDialogSaveReason"
       @copy-mention="onRejectDialogCopyMention"
       @invoke-ai="onRejectDialogInvokeAi"
@@ -1922,6 +1924,10 @@ const rejectDialogVisible = ref(false)
 const rejectDialogDocId = ref('')
 const rejectDialogDocName = ref('')
 const rejectDialogTabId = ref('')
+// 0419 T0006: true when the dialog was opened from the sidebar [수정] entry point to
+// correct the latest rejection's wording (PATCH), false for the ordinary new-reject
+// flow (POST review_transitions/reject) — see onEditRejectionRequested / onReviewRejected.
+const rejectDialogEditMode = ref(false)
 
 const rejectDialogExistingReason = computed<string | null>(() => {
   const tabId = rejectDialogTabId.value
@@ -2668,6 +2674,20 @@ function onReviewRejected(tabId: string) {
   rejectDialogDocId.value = tabId
   rejectDialogDocName.value = tab?.title ?? tabId
   rejectDialogTabId.value = tabId
+  rejectDialogEditMode.value = false
+  rejectDialogVisible.value = true
+}
+
+// 0419 T0006 (NR0003 후속 T 권고 2/3): sidebar [수정] entry point — open the SAME
+// dialog, but in edit mode, to correct the current rejection's wording instead of
+// filing a new one. onRejectDialogSaveReason branches on rejectDialogEditMode to
+// call the PATCH-correction endpoint instead of the reject-transition POST.
+function onEditRejectionRequested(tabId: string) {
+  const tab = tabs.value.find(t => t.id === tabId)
+  rejectDialogDocId.value = tabId
+  rejectDialogDocName.value = tab?.title ?? tabId
+  rejectDialogTabId.value = tabId
+  rejectDialogEditMode.value = true
   rejectDialogVisible.value = true
 }
 
@@ -2894,21 +2914,22 @@ async function onRejectDialogSaveReason(reason: string) {
   const tabId = rejectDialogTabId.value
   if (!tabId) return
   try {
-    const res = await postRequest<any>(
-      `/api/v1/documents/review_transitions/reject`,
-      { doc_id: tabId, comment: reason },
-    )
-    // Gap D (NR0003 §2/§6 item 2): optimistic flip to the confirmed 'rejected' status +
-    // silent retrying backfill, not the bare non-silent fetchDoc that could blank the
-    // header on a slow idle-window GET and leave only this toast showing.
+    // 0419 T0006: edit mode corrects the latest rejection's wording (PATCH) instead
+    // of filing a new rejection (POST review_transitions/reject).
+    const res = rejectDialogEditMode.value
+      ? await patchRequest<any>(`/api/v1/documents/${encodeURIComponent(tabId)}/rejection_reason`, { reason })
+      : await postRequest<any>(`/api/v1/documents/review_transitions/reject`, { doc_id: tabId, comment: reason })
+    // Gap D (NR0003 §2/§6 item 2): optimistic flip to the confirmed status + silent
+    // retrying backfill, not the bare non-silent fetchDoc that could blank the header
+    // on a slow idle-window GET and leave only this toast showing.
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
     await docHeaderRefs[tabId]?.applyReviewTransition?.(updated?.doc_review_status ?? 'rejected')
-    showToast(t('main.main_panel.toast_rejected'), 'danger')
-    rejectDialogRef.value?.notifySaved()
+    if (!rejectDialogEditMode.value) showToast(t('main.main_panel.toast_rejected'), 'danger')
+    rejectDialogRef.value?.notifySaved?.()
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
     showToast(t('main.main_panel.toast_reject_failed', { detail }), 'danger')
-    rejectDialogRef.value?.notifySaveFailed()
+    rejectDialogRef.value?.notifySaveFailed?.()
     throw e
   }
 }
