@@ -1004,7 +1004,7 @@ export default {
     work_plan_proposal_dialog: {
       title: '작업계획 생성',
       main_task: '메인작업',
-      intro: '이 창의 메인 작업은 작업계획 문서를 만드는 일입니다. 어디까지 맡길지 두 칸에서 고르면, 아래 세 버튼이 같은 범위를 그대로 나릅니다 — 기본은 [AI 호출]입니다.',
+      intro: '이 창의 메인 작업은 작업계획 문서를 만드는 일입니다. 어디까지 맡길지 두 칸에서 고르면, 아래 세 버튼이 같은 범위를 그대로 나릅니다. [문서생성]은 AI를 부르지 않고 입력한 전달 멘트를 그대로 보존한 초안을 만들고, [AI 호출]은 그 전달 멘트를 참고해 작업계획 멘트를 새로 작성합니다 — 기본은 [AI 호출]입니다.',
       section_types: '장수를 셀 타입',
       section_providers: '후보 공급자',
       // flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고") — 이번
@@ -1013,6 +1013,10 @@ export default {
       provider_label: '실행 프로바이더',
       // flowgate.default.0416 T0004 — 모든 단계에 공통으로 붙는 플래너 멘트 입력의 라벨.
       note_label: '전달 멘트',
+      // flowgate.default.0421 NR0003 §3 — 시퀀스 머리 행의 note가 자동으로 채워졌을 때만
+      // 뜨는 안내. AiInvokeDialog의 읽기 전용 step_note_auto와 문구를 공유하지 않는다 —
+      // 이 칸은 편집 가능한 전송 칸이라 역할이 다르다.
+      note_auto_filled: '이전 시퀀스에 적힌 전달 멘트를 불러와 채웠습니다. 직접 고치면 입력한 내용이 대신 쓰입니다.',
       types_load_failed: '장수를 고를 수 없습니다 — 문서 타입 목록을 읽지 못했습니다.',
       providers_load_failed: '공급자를 고를 수 없습니다 — 공급자 목록을 읽지 못했습니다.',
       retry: '다시 시도',

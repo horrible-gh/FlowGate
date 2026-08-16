@@ -171,7 +171,7 @@
                   :placeholder="t('main.work_plan.defaults_note_placeholder')"
                   :disabled="creating || !!busyAction"
                   data-test="wpp-note"
-                  @input="(e) => { note = (e.target as HTMLInputElement).value }"
+                  @input="(e) => { note = (e.target as HTMLInputElement).value; noteTouched = true }"
                 />
                 <small
                   class="wpp-note-count"
@@ -181,6 +181,16 @@
                   {{ noteOverLimit
                     ? t('main.work_plan.note_char_over', { current: note.length, max: noteMaxChars })
                     : t('main.work_plan.note_char_count', { current: note.length, max: noteMaxChars }) }}
+                </small>
+                <!-- flowgate.default.0421 NR0003 §3 — 값이 자동으로 채워졌을 때만 뜨는 안내.
+                     사용자가 칸을 직접 고치면(noteTouched) 사라진다. 전용 data-test와 자기
+                     CSS 클래스를 쓴다 — 공용 클래스 재사용은 findAll 단언을 흔든다. -->
+                <small
+                  v-if="showNoteAutoFilled"
+                  class="wpp-note-auto"
+                  data-test="wpp-note-auto"
+                >
+                  {{ t('main.work_plan_proposal_dialog.note_auto_filled') }}
                 </small>
               </span>
             </span>
@@ -290,6 +300,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
 
 /** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
  *  step_keys 를 뺐다(사람이 단계를 고르는 칸이 없어졌다). rev2 에서 provider_ids 는
@@ -342,6 +353,12 @@ const creating = ref(false)
 const createError = ref('')
 /** flowgate.default.0416 T0004 — shared with WorkPlanEditor.vue's plan.defaults.note. */
 const note = ref('')
+/** flowgate.default.0421 NR0003 §1 — 시퀀스 머리 행의 note가 도착하기 전에 사용자가 이미
+ *  입력했는지를 지킨다. true가 되면 늦게 오는 프리필 응답이 값을 덮지 않는다
+ *  (선례: ContinuousWorkDialog.vue의 touchedSeqs). */
+const noteTouched = ref(false)
+/** 이번 열림에서 시퀀스 note로 자동 채워졌는가 — 안내 문구를 보일지에만 쓴다. */
+const noteAutoFilled = ref(false)
 /** 0406 T0022 계약: 한 줄 멘트의 상한은 서버가 정본이다. WorkPlanEditor.vue:541 과
  *  WorkflowDecisionModal.vue:1132 가 이미 서버가 준 값을 읽고 있고, 이 창만 1000 을 베껴
  *  들고 있으면 서버 상수가 바뀌는 순간 여기만 조용히 어긋난다(초과 입력을 통과시켜 422 를
@@ -377,6 +394,9 @@ const scope = computed<WorkPlanScope>(() => ({
 /** T0004 — 서버 NOTE_MAX_CHARS(work_plan_service.py)와 같은 상한. 초과 입력은 세 실행
  *  경로 모두 막는다(서버도 defaults.note 검증에서 같은 상한으로 거절한다). */
 const noteOverLimit = computed(() => note.value.length > noteMaxChars.value)
+/** flowgate.default.0421 NR0003 §3 — 자동 채움 안내는 값이 자동으로 채워졌고 사용자가
+ *  아직 직접 고치지 않았을 때만 보인다. */
+const showNoteAutoFilled = computed(() => noteAutoFilled.value && !noteTouched.value)
 
 const hasContext = computed(() => !!props.projectId && !!props.groupId && !!props.parentDocId)
 const canRun = computed(() =>
@@ -492,6 +512,18 @@ async function loadNoteLimit() {
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.parentDocId })
     noteMaxChars.value = Number((res.data as any)?.note_max_chars) || 1000
+    // flowgate.default.0421 NR0003 §1 — 같은 응답이 이미 모든 행의 note를 싣는다
+    // (workflow_decision_service.py get_workflow_sequence). 새 GET을 추가하지 않고 머리 행의
+    // note만 꺼내 쓴다. AiInvokeDialog.vue:loadSingleStepNote와 같은 추출 패턴이다.
+    const items = ((res.data as any)?.items ?? []) as { status?: string | null; note?: string | null }[]
+    const headIndex = findSequenceHeadIndex(items)
+    const fetchedNote = headIndex < items.length ? String(items[headIndex]?.note ?? '').trim() : ''
+    // 빈 문자열이면 덮을 것이 없으므로 항상 안전하고, 사용자가 이미 손댔다면 늦게 온 값이
+    // 그 입력을 덮지 않는다.
+    if (fetchedNote && !noteTouched.value) {
+      note.value = fetchedNote
+      noteAutoFilled.value = true
+    }
   } catch {
     noteMaxChars.value = 1000
   }
@@ -506,6 +538,8 @@ watch(
     selectedTypes.value = new Set()
     selectedProviders.value = new Set()
     note.value = ''
+    noteTouched.value = false
+    noteAutoFilled.value = false
     // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 여기서 초기화하지 않는다. 그 값은
     // 이 창의 것이 아니라 앱 공통 선택이고, 헤더·AI 호출 창에서 고른 값이 다시 열었다고
     // 사라지면 그 창들과 다시 어긋난다.
@@ -681,6 +715,7 @@ function onInvokeAi() {
 .wpp-note-input.is-over-limit { border-color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 6%, #fff); }
 .wpp-note-count { color: var(--text-m, #94a3b8); font-size: .62rem; line-height: 1.15; text-align: right; }
 .wpp-note-count.is-over-limit { color: var(--danger, #dc2626); font-weight: 700; }
+.wpp-note-auto { margin: 0; color: var(--primary, #2563eb); font-size: .62rem; line-height: 1.15; text-align: right; }
 .wpp-notice {
   display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; min-height: 38px;
   font-size: .77rem; line-height: 1.55; box-sizing: border-box;

@@ -218,23 +218,31 @@ def test_default_provider_renders_even_without_candidate_providers(seed):
 # (2) 후보 밖 실행 프로바이더가 실린 절은 tail 의 "후보에 없는 공급자를 적지 마십시오"와
 # 정면으로 부딪힌다. 아래 시험들이 그 두 문장을 절에 못 박는다.
 
-def test_scope_section_tells_the_worker_to_copy_the_note_into_defaults_note(seed):
+def test_scope_section_tells_the_worker_to_author_defaults_note_from_the_delivery_note(seed):
+    """flowgate.default.0421 NR0003/T0005 — verbatim 복사 지시를 없애고 새 작성 지시로 바꾼다."""
     from modules.flow_gate.services import mention_service
 
     section = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ko")
-    assert "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오." in section
-    # 빈 값이어도 지시는 사라지지 않는다 — 그때 defaults.note 가 무엇인지까지 말한다.
+    assert "그대로 옮겨 적으십시오" not in section
+    assert "defaults.note" in section
+    assert "steps[].note" in section
+    assert "새로 작성하십시오" in section
+    # 빈 값이어도 지시는 사라지지 않는다 — 참고할 전달 멘트가 없다는 뜻으로 정리된다.
     empty = mention_service._work_plan_scope_section(EMPTY_SCOPE, PROJECT, "ko")
-    assert "(없음)이면 defaults.note 는 빈 문자열입니다." in empty
+    assert "그대로 옮겨 적으십시오" not in empty
+    assert "참고할 전달 멘트가 없다는 뜻" in empty
 
 
-def test_note_carry_instruction_localises(seed):
+def test_note_authoring_instruction_localises(seed):
+    """flowgate.default.0421 NR0003/T0005 — en/ja 모두 verbatim 복사 지시가 없어야 한다."""
     from modules.flow_gate.services import mention_service
 
     en = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "en")
     ja = mention_service._work_plan_scope_section(SCOPE_WITH_NOTE, PROJECT, "ja")
-    assert "Copy the Delivery note above into the work plan's defaults.note verbatim." in en
-    assert "「伝達メモ」を最終的な作業計画の defaults.note にそのまま書き写して" in ja
+    assert "verbatim" not in en
+    assert "author new text for defaults.note" in en
+    assert "そのまま書き写して" not in ja
+    assert "新しく書いてください" in ja
 
 
 def test_execution_provider_rule_resolves_the_candidate_contradiction(seed):
@@ -256,8 +264,9 @@ def test_execution_provider_rule_is_absent_without_an_execution_provider(seed):
 
     section = mention_service._work_plan_scope_section(SCOPE, PROJECT, "ko")
     assert "단계 배정 후보가 아닙니다" not in section
-    # 전달 멘트 지시는 실행 프로바이더 유무와 무관하게 언제나 실린다.
-    assert "defaults.note 에 그대로 옮겨 적으십시오." in section
+    # 전달 멘트 새 작성 지시는 실행 프로바이더 유무와 무관하게 언제나 실린다.
+    assert "defaults.note" in section
+    assert "새로 작성하십시오" in section
 
 
 def test_execution_provider_rule_localises(seed):
@@ -278,7 +287,8 @@ def test_template_rules_say_where_the_two_values_go(seed):
     from modules.flow_gate.services import work_plan_service as wp
 
     ko = "\n".join(wp.TEMPLATE_RULES["ko"])
-    assert "'전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다" in ko
+    assert "그대로 옮겨 적습니다" not in ko
+    assert "'전달 멘트'가 있으면 그것을 입력 삼아 이 한 줄을 새로 작성합니다" in ko
     assert "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다" in ko
     for locale in ("ko", "en", "ja"):
         rules = "\n".join(wp.TEMPLATE_RULES[locale])
@@ -293,7 +303,7 @@ def test_the_template_pointer_delivers_those_rules_to_the_worker(seed):
     payload = help_catalog.build_child("design_template", "WP", _wp_help_ctx())
     rules = "\n".join(payload["content"]["rules"])
     assert "defaults.provider_id" in rules
-    assert "'전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다" in rules
+    assert "'전달 멘트'가 있으면 그것을 입력 삼아 이 한 줄을 새로 작성합니다" in rules
 
 
 def test_provider_lines_use_registered_display_names(seed, monkeypatch):
@@ -461,8 +471,10 @@ def test_create_accepts_zero_for_unselected_types(seed, storage_root):
     assert [step["key"] for step in body["steps"]] == ["DS#1", "T#1", "TR#1"]
 
 
-def test_create_passes_the_planner_note_through_to_defaults(seed, storage_root):
-    """T0004 완료 기준: 화면에서 입력한 멘트가 defaults.note 로 그대로 저장된다."""
+def test_non_ai_create_preserves_the_planner_note_verbatim_in_defaults(seed, storage_root):
+    """flowgate.default.0421 T0005 — [문서생성](비-AI 초안 생성)은 입력한 공통 멘트를 그대로
+    보존하는 계약이다. AI 가 새로 작성하는 계약(mention_service.note_rule /
+    work_plan_service.TEMPLATE_RULES)과는 다른 경로이니 혼동하지 않는다."""
     from unittest.mock import patch as mock_patch
 
     client = _client()
@@ -678,7 +690,10 @@ def test_issued_wp_mention_carries_the_planner_note(seed, storage_root):
     # flowgate.default.0416 TR0005 rev2 (발견 3·4): 값과 함께 그 값을 어디에 쓰라는 지시도
     # 실제 발급물에 실린다 — 단위 시험만으로는 절이 멘트에 끼워지는 자리를 확인하지 못한다.
     assert "실행 프로바이더: aip_opus" in mention
-    assert "위 '전달 멘트'는 최종 작업계획의 defaults.note 에 그대로 옮겨 적으십시오." in mention
+    assert "그대로 옮겨 적으십시오" not in mention
+    assert "defaults.note" in mention
+    assert "steps[].note" in mention
+    assert "새로 작성하십시오" in mention
     assert "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 아닙니다" in mention
 
 
