@@ -665,6 +665,8 @@ def test_unevaluated_verdict_is_only_for_mutating_types():
     # 비대상 타입은 예전처럼 영역을 감춘다 — 검증을 받을 일이 없는 종류다.
     assert trs.unevaluated_verdict("NR", _TS_BODY_WITH_SECTION) is None
     assert trs.unevaluated_verdict("R", _TS_BODY_WITH_SECTION) is None
+    # 0427 T0004: T 는 write/patch/remove 를 회수당해 더 이상 대상 타입이 아니다.
+    assert trs.unevaluated_verdict("T", "작업지시 가 승인되었습니다.") is None
     # '없음' 한 줄은 신고 절이 있는 것이므로 0건짜리 판정이 나온다.
     none_verdict = trs.unevaluated_verdict("TR", "## 변경 파일\n\n없음\n")
     assert none_verdict is not None and none_verdict["reported"]["count"] == 0
@@ -681,7 +683,6 @@ def test_unevaluated_verdict_still_shows_a_card_when_the_body_has_no_section():
     """
     for type_code, body in (
         ("TS", _TS_BODY_NO_SECTION),          # 반려자가 실제로 열어 본 TS 문서의 본문 모양
-        ("T", "작업지시 가 승인되었습니다."),   # 한 줄짜리 T 승인 문서
         ("TS", None),                          # 본문 파일을 읽을 수 없을 때
         ("TSR", ""),
     ):

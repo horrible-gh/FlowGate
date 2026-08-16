@@ -103,7 +103,8 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 # ── D-3 / D-1: advertised set per step and scope ─────────────────────────────
 
 @pytest.mark.parametrize("head_type,expected", [
-    ("T", "read, grep, glob, stat, write, patch, remove"),
+    # T (0427 T0004): write/patch/remove recalled -- investigation-only now.
+    ("T", "read, grep, glob, stat"),
     ("TR", "read, grep, glob, stat, write, patch, remove"),
     # TSR: the test-report step really does edit test code, and TR-1 already gave its
     # token write scope. TS (group 0390 R0001): the test-scenario step now writes too, so
