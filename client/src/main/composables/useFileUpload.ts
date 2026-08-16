@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postFormRequest } from '@shared/api'
+import { extractApiErrorMessage, postFormRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
 
 interface UploadResult {
@@ -104,7 +104,10 @@ export function useFileUpload() {
         // into the base checkout. Say so instead of a generic failure.
         showToast(t('main.file_tree_node.toast_upload_no_worktree'), 'danger')
       } else {
-        showToast(t('main.file_tree_node.toast_upload_failed'), 'danger')
+        showToast(
+          extractApiErrorMessage(e, t('main.file_tree_node.toast_upload_failed')),
+          'danger',
+        )
       }
     } finally {
       uploading.value = false

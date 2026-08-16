@@ -295,7 +295,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
@@ -401,6 +401,7 @@ const showNoteAutoFilled = computed(() => noteAutoFilled.value && !noteTouched.v
 const hasContext = computed(() => !!props.projectId && !!props.groupId && !!props.parentDocId)
 const canRun = computed(() =>
   hasContext.value
+  && !props.aiActive
   && !noteOverLimit.value
   && scope.value.quantity_type_codes.length > 0
   // 공급자가 없는 프로젝트에서는 ① 칸만으로 만든다.
@@ -410,6 +411,7 @@ const canRun = computed(() =>
 /** P0004 [비활성 사유] 표 — 위에서부터 처음 걸리는 한 줄만 적는다. */
 const blockReason = computed<string>(() => {
   if (!hasContext.value) return t('main.work_plan_proposal_dialog.block_context')
+  if (props.aiActive) return t('main.work_plan_proposal_dialog.block_ai_active')
   if (createError.value) return createError.value
   if (props.externalNotice) return props.externalNotice
   if (creating.value) return t('main.work_plan_proposal_dialog.busy_create')
@@ -420,8 +422,6 @@ const blockReason = computed<string>(() => {
   if (!noProviders.value && scope.value.provider_ids.length === 0) {
     return t('main.work_plan_proposal_dialog.block_providers')
   }
-  // [AI 호출]이 없는 창에서는 그 버튼의 사유도 적지 않는다.
-  if (props.aiActive && !noProviders.value) return t('main.work_plan_proposal_dialog.block_ai_active')
   return ''
 })
 
@@ -569,7 +569,7 @@ function onClose() {
  * 프로젝트에서는 provider_candidates 가 빈 배열로 나간다(서버도 그때만 빈 배열을 받는다).
  */
 async function onCreateEmpty() {
-  if (!canRun.value || creating.value) return
+  if (!canRun.value || creating.value || props.aiActive) return
   creating.value = true
   createError.value = ''
   try {
@@ -600,14 +600,14 @@ async function onCreateEmpty() {
     emit('update:visible', false)
   } catch (e: any) {
     const detail = e?.response?.data
-    createError.value = detail?.message || detail?.detail || String(e)
+    createError.value = extractApiErrorMessage(e, detail?.message || String(e))
   } finally {
     creating.value = false
   }
 }
 
 function onCopyMention() {
-  if (!canRun.value || props.busyAction) return
+  if (!canRun.value || props.busyAction || props.aiActive) return
   emit('copy-mention', scope.value)
 }
 

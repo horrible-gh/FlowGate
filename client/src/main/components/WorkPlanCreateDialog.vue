@@ -216,7 +216,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { extractApiErrorMessage, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
@@ -457,7 +457,7 @@ async function onCreate() {
     emit('update:visible', false)
   } catch (e: any) {
     const detail = e?.response?.data
-    createError.value = detail?.message || detail?.detail || String(e)
+    createError.value = extractApiErrorMessage(e, detail?.message || String(e))
   } finally {
     creating.value = false
   }

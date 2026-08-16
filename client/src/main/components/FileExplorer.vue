@@ -59,6 +59,10 @@
         >{{ t('main.explorer.git_ahead', { n: groupGitState.ahead_count })
           }}<template v-if="groupGitState.status === 'awaiting_choice'"> · {{ t('main.explorer.git_awaiting') }}</template></span>
       </div>
+      <div v-if="selectedGroupBusy" class="fx-readonly-badge">
+        <AppIcon name="lock" />
+        <span>{{ t('main.review_action_bar.ai_running_hint') }}</span>
+      </div>
       <div class="sdb-scroll">
         <div v-if="loading" class="sdb-state">⏳ ...</div>
         <div v-else-if="error" class="sdb-state sdb-state--error">
@@ -145,6 +149,7 @@ import { useExplorerStore, type FileNode } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useLayoutStore } from '../stores/layout'
 import { useTabsStore } from '../stores/tabs'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useFileUpload } from '../composables/useFileUpload'
 import api from '@shared/api'
 import FileTreeNode from './FileTreeNode.vue'
@@ -159,6 +164,7 @@ const explorerStore = useExplorerStore()
 const layoutStore = useLayoutStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
 const { collectDropFiles, uploadFiles } = useFileUpload()
 
 const nodes = ref<FileNode[]>([])
@@ -203,9 +209,25 @@ const groupWritable = computed(() =>
   && groupSlots.value.some((s) => s.group_id === selectedGroup.value && s.writable === true),
 )
 
+const selectedGroupBusy = computed(() => {
+  const groupId = selectedGroup.value
+  return !!groupId && (
+    aiInvokeRunsStore.isGroupRunning(groupId)
+    || aiInvokeRunsStore.isGroupInlineVisible(groupId)
+  )
+})
+
 // The single gate for the structural mutations (new folder / new file / upload).
-// Delete is deliberately NOT covered here — it stays base-only (권고 4).
-const canMutate = computed(() => !selectedGroup.value || groupWritable.value)
+const canMutate = computed(() =>
+  (!selectedGroup.value || groupWritable.value) && !selectedGroupBusy.value,
+)
+
+watch(selectedGroupBusy, (busy) => {
+  if (busy) {
+    showModal.value = false
+    rootDragOver.value = false
+  }
+})
 
 function groupLabel(s: { group_id: string; status: string }): string {
   const n = shortGroup(s.group_id)

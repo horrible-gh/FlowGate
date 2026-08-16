@@ -20,6 +20,8 @@ vi.mock('@shared/api', () => ({
   getRequest,
   postRequest,
   patchRequest: vi.fn(),
+  extractApiErrorMessage: (error: any, fallback: string) =>
+    error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
 }))
 
 const TYPES = [

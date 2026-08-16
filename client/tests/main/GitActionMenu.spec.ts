@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import GitActionMenu from '@main/components/GitActionMenu.vue'
 import { useProjectStore } from '@main/stores/project'
+import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -74,6 +75,24 @@ describe('GitActionMenu approval-result events', () => {
 
     expect(getRequest).toHaveBeenCalledTimes(2)
     expect((wrapper.vm as any).panelOpen).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('disables finalize for a group with an active AI run', async () => {
+    const wrapper = mountMenu()
+    await flushPromises()
+    await wrapper.get('.git-menu-btn').trigger('click')
+    useAiInvokeRunsStore().trackStarted({
+      run_id: 'aiv_0424',
+      group_id: 'flowgate.default.0170',
+      doc_ref: 'flowgate.default.0170.0001-R',
+      status: 'running',
+    })
+    await flushPromises()
+
+    const execute = wrapper.get('.git-menu-row .btn-primary')
+    expect(execute.attributes('disabled')).toBeDefined()
+    expect(execute.attributes('title')).toContain('AI run')
     wrapper.unmount()
   })
 

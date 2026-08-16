@@ -23,6 +23,8 @@ vi.mock('@shared/api', () => ({
   getRequest: (...args: any[]) => getRequest(...args),
   postRequest: (...args: any[]) => postRequest(...args),
   patchRequest: vi.fn(),
+  extractApiErrorMessage: (error: any, fallback: string) =>
+    error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
 }))
 
 const TYPES = [
@@ -250,14 +252,15 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(notice.classes('warn')).toBe(false)
   })
 
-  it('다른 AI 실행이 돌고 있으면 [AI 호출]만 비활성이다', async () => {
+  it('다른 AI 실행이 돌고 있으면 변경 버튼 세 개가 모두 비활성이다', async () => {
     const wrapper = await mountDialog({ aiActive: true })
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 0)
     expect(wrapper.find('[data-test="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="wpp-cancel"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain('다른 AI 실행')
   })
 
   it('부모가 도는 동안에도 버튼은 자리를 지키고 사유만 바뀐다', async () => {
@@ -654,13 +657,12 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     wrapper.unmount()
   })
 
-  it('다른 AI 실행이 돌고 있어도 사유 줄에 그 말이 나오지 않는다', async () => {
+  it('공급자가 없어도 다른 AI 실행 중에는 문서 생성을 잠근다', async () => {
     const wrapper = await mountNoProviders()
     await wrapper.setProps({ aiActive: true })
     await pick(wrapper, 'type', 0)
-    // [AI 호출]이 없는 창이다 — 그 버튼의 사유는 이 창의 일이 아니다.
-    expect(wrapper.get('[data-test="wpp-notice"]').text()).not.toContain('다른 AI 실행')
-    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('다른 AI 실행')
+    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 

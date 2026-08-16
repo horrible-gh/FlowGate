@@ -64,7 +64,13 @@
       />
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
-      <ContextMenuItem v-if="isDeleted" icon="arrow-counter-clockwise" @click="restoreFile">
+      <ContextMenuItem
+        v-if="isDeleted"
+        icon="arrow-counter-clockwise"
+        :disabled="groupBusy"
+        :title="groupBusy ? busyHint : undefined"
+        @click="restoreFile"
+      >
         {{ t('main.file_tree_node.restore_file') }}
       </ContextMenuItem>
       <ContextMenuItem v-if="node.type === 'file' && !isDeleted" icon="arrow-up-right" @click="openFile">
@@ -85,10 +91,20 @@
           {{ t('main.file_tree_node.open') }}
         </ContextMenuItem>
         <template v-if="!readonly">
-          <ContextMenuItem icon="folder-simple-plus" @click="openCreateFolder">
+          <ContextMenuItem
+            icon="folder-simple-plus"
+            :disabled="groupBusy"
+            :title="groupBusy ? busyHint : undefined"
+            @click="openCreateFolder"
+          >
             {{ t('main.file_tree_node.new_folder') }}
           </ContextMenuItem>
-          <ContextMenuItem icon="file-plus" @click="openCreateFile">
+          <ContextMenuItem
+            icon="file-plus"
+            :disabled="groupBusy"
+            :title="groupBusy ? busyHint : undefined"
+            @click="openCreateFile"
+          >
             {{ t('main.file_tree_node.new_file') }}
           </ContextMenuItem>
         </template>
@@ -96,10 +112,20 @@
           {{ t('main.file_tree_node.refresh') }}
         </ContextMenuItem>
         <template v-if="!readonly">
-          <ContextMenuItem icon="upload-simple" @click="openUploadFiles">
+          <ContextMenuItem
+            icon="upload-simple"
+            :disabled="groupBusy"
+            :title="groupBusy ? busyHint : undefined"
+            @click="openUploadFiles"
+          >
             {{ t('main.file_tree_node.upload_files') }}
           </ContextMenuItem>
-          <ContextMenuItem icon="upload-simple" @click="openUploadFolder">
+          <ContextMenuItem
+            icon="upload-simple"
+            :disabled="groupBusy"
+            :title="groupBusy ? busyHint : undefined"
+            @click="openUploadFolder"
+          >
             {{ t('main.file_tree_node.upload_folder') }}
           </ContextMenuItem>
         </template>
@@ -112,7 +138,14 @@
       <ContextMenuItem v-if="!isDeleted" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
-      <ContextMenuItem v-if="canDelete" icon="trash" :danger="true" @click="deleteNode">
+      <ContextMenuItem
+        v-if="canDelete"
+        icon="trash"
+        :danger="true"
+        :disabled="groupBusy"
+        :title="groupBusy ? busyHint : undefined"
+        @click="deleteNode"
+      >
         {{ t('common.delete') }}
       </ContextMenuItem>
     </ContextMenu>
@@ -149,9 +182,10 @@ import { useTabsStore } from '../stores/tabs'
 import { useToast } from './common/useToast'
 import ConfirmModal from './ConfirmModal.vue'
 import { useFileUpload } from '../composables/useFileUpload'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { copyToClipboard } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
-import api, { downloadBlobRequest } from '@shared/api'
+import api, { downloadBlobRequest, extractApiErrorMessage } from '@shared/api'
 import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
@@ -182,6 +216,19 @@ const explorerStore = useExplorerStore()
 const tabsStore = useTabsStore()
 const { showToast } = useToast()
 const { collectDropFiles, uploadFiles } = useFileUpload()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+const groupBusy = computed(() => !!props.groupId && (
+  aiInvokeRunsStore.isGroupRunning(props.groupId)
+  || aiInvokeRunsStore.isGroupInlineVisible(props.groupId)
+))
+const busyHint = computed(() => t('main.review_action_bar.ai_running_hint'))
+watch(groupBusy, (busy) => {
+  if (busy) {
+    showModal.value = false
+    showDeleteConfirm.value = false
+    nodeDragOver.value = false
+  }
+})
 // 0245 R0001 / NR0003 §1 — expansion is owned by the store so that a folder opened
 // by "expand all" cascades into children that mount only at that moment. Still
 // session-scoped: the file tree has never persisted its open folders.
@@ -331,6 +378,10 @@ async function copyLink() {
 
 async function restoreFile() {
   if (!props.projectId || !props.groupId || !isDeleted.value || restoring.value) return
+  if (groupBusy.value) {
+    showToast(busyHint.value, 'danger')
+    return
+  }
   showCtx.value = false
   restoring.value = true
   try {
@@ -349,7 +400,10 @@ async function restoreFile() {
     } else if (status === 403) {
       showToast(t('main.file_tree_node.restore_forbidden'), 'danger')
     } else {
-      showToast(t('main.file_tree_node.restore_failed'), 'danger')
+      showToast(
+        extractApiErrorMessage(e, t('main.file_tree_node.restore_failed')),
+        'danger',
+      )
     }
   } finally {
     restoring.value = false
@@ -453,7 +507,7 @@ function deleteErrorMessage(e: any): string {
   }
   if (status === 403) return t('main.file_tree_node.delete_forbidden')
   if (status === 404) return t('main.file_tree_node.delete_not_found')
-  return t('main.file_tree_node.delete_failed')
+  return extractApiErrorMessage(e, t('main.file_tree_node.delete_failed'))
 }
 
 // NR0003 권장 7: after a successful delete, close open editor tabs and clear selection for
@@ -524,7 +578,7 @@ function onCreated(payload: { name: string; type: 'file' | 'folder' }) {
 
 // ── Drag and drop (folder nodes only as drop target) ─────────────────────────
 function onNodeDragOver(e: DragEvent) {
-  if (props.node.type !== 'folder') return
+  if (props.node.type !== 'folder' || groupBusy.value) return
   e.stopPropagation()
   nodeDragOver.value = true
 }
@@ -538,7 +592,7 @@ function onNodeDragLeave(e: DragEvent) {
 }
 
 async function onNodeDrop(e: DragEvent) {
-  if (props.node.type !== 'folder' || props.readonly) return
+  if (props.node.type !== 'folder' || props.readonly || groupBusy.value) return
   e.stopPropagation()
   nodeDragOver.value = false
   if (!e.dataTransfer?.items) return

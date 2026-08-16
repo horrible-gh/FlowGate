@@ -82,8 +82,8 @@
           <button
             class="btn btn-outline btn-sm"
             type="button"
-            :disabled="loading || !!unreadable || aiSuggesting || dirty"
-            :title="dirty ? t('main.work_plan.ai_needs_save') : undefined"
+            :disabled="loading || !!unreadable || aiSuggesting || dirty || isLocked"
+            :title="aiRunLocked ? lockedHint : (dirty ? t('main.work_plan.ai_needs_save') : undefined)"
             @click="aiScopeOpen = true"
           >
             <AppIcon name="robot" /> {{ aiSuggesting ? t('main.work_plan.ai_filling') : t('main.work_plan.ai_suggest') }}
@@ -176,7 +176,7 @@
 
           <div class="wp-defaults-row">
             <span class="wp-defaults-label">{{ t('main.work_plan.defaults_label') }}</span>
-            <AiProviderSelect :providers="providerOptionsWithUnassigned" :model-value="plan.defaults.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => setDefaultProvider(v || null)" />
+            <AiProviderSelect :providers="providerOptionsWithUnassigned" :model-value="plan.defaults.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setDefaultProvider(v || null)" />
             <span class="wp-note-field">
               <input :value="plan.defaults.note" type="text" class="wp-defaults-note" :class="{ 'is-over-limit': plan.defaults.note.length > noteMaxChars }" :placeholder="t('main.work_plan.defaults_note_placeholder')" :disabled="isLocked" @input="(e) => setDefaultNote((e.target as HTMLInputElement).value)" />
               <small class="wp-note-count" :class="{ 'is-over-limit': plan.defaults.note.length > noteMaxChars }">
@@ -200,9 +200,9 @@
               <span class="doc-tag" :class="`c-${step.type}`">{{ step.type }}</span>
               <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
               <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
-              <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
+              <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
               <span class="wp-note-field">
-                <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
+                <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked || isLocked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
                 <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
                   {{ (step.note ?? '').length > noteMaxChars
                     ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
@@ -286,6 +286,7 @@ import { useContentLayoutTier } from '../composables/useContentLayoutTier'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { groupIdFromDocId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { copyToClipboard } from '../utils/clipboard'
 
 // ── Canonical shape (mirrors flowgate.default.0395 P0009 §2 / L0010 §1-2) ────
@@ -326,6 +327,12 @@ const noteMaxChars = ref(1000)
 const props = defineProps<{
   docId: string
   projectId: string | null
+  /** 0424 TR0005 rev2 — the document panel's AI-run lock, passed down exactly like
+   *  DocHeader / AttachmentCard / MdViewer already receive it. Until now this editor
+   *  was the one card in the column that took no lock at all, so every control on the
+   *  work plan (저장 · 수량 스테퍼 · 공급자 · 멘트 · 모두 적용 · AI 제안) stayed clickable
+   *  through an AI run and only answered with a 423 toast. */
+  readOnly?: boolean
 }>()
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -368,13 +375,50 @@ const unreadable = ref<{ message: string; detail: string; raw: string | null; re
 // recoverable by its logical key until the plan is actually saved.
 const restoreBuffer = new Map<string, WPStep>()
 
-const isLocked = computed(() => !editable.value)
+// 0424 B0001 / TR0005 rev2 — "AI실행중에 버튼들이 안눌리게 하던가 없애야지 토스트 띄우면
+// 다인가?". This group's own [AI 제안 불러오기] starts a run against this very WP document
+// (action_scope 'work_plan_fill'), and every mutating work-plan route is behind the group's
+// AI lease, so from that moment the server answers 423 GROUP_AI_RUN_LOCKED. The editor has
+// to already read as locked instead of letting the click through to a toast. Same predicate
+// the explorers use (GroupTreeNode / FileExplorer): the run registry OR a live lease.
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+const wpGroupId = computed(() => groupIdFromDocId(props.docId))
+const groupBusy = computed(() => {
+  const groupId = wpGroupId.value
+  return !!groupId && (
+    aiInvokeRunsStore.isGroupRunning(groupId)
+    || aiInvokeRunsStore.isGroupInlineVisible(groupId)
+  )
+})
+// A lease can outlive this tab's own view of the run (0401 NR0003 SS3), so ask the lease
+// endpoint too. Single-flight + generation-guarded inside the store, and it only ever adds
+// a lock, so it cannot make a control flicker back to enabled. This tab is long-lived and
+// never remounts around a run, so the phase is watched as well: without it a lease read as
+// live at mount would keep the editor locked after the run had already ended.
+watch(
+  () => [wpGroupId.value, aiInvokeRunsStore.runsByGroup[wpGroupId.value ?? '']?.phase] as const,
+  ([groupId]) => {
+    if (groupId) void aiInvokeRunsStore.refreshGroupLease(groupId)
+  },
+  { immediate: true },
+)
+
+const aiRunLocked = computed(() => props.readOnly === true || groupBusy.value)
+const isLocked = computed(() => !editable.value || aiRunLocked.value)
 
 const lockedHint = computed(() =>
-  editLockedReason.value === 'final_approved'
-    ? t('main.work_plan.locked_after_final_approval')
-    : t('main.work_plan.locked_by_status'),
+  aiRunLocked.value
+    ? t('main.review_action_bar.ai_running_hint')
+    : editLockedReason.value === 'final_approved'
+      ? t('main.work_plan.locked_after_final_approval')
+      : t('main.work_plan.locked_by_status'),
 )
+
+// The scope dialog is a write surface too — a run that starts while it is open must not
+// leave [프로젝트 지도로 채우기] / [AI 로 채우기] sitting there ready to fire.
+watch(aiRunLocked, (locked) => {
+  if (locked) aiScopeOpen.value = false
+})
 
 function markDirty() {
   dirty.value = true
@@ -679,6 +723,7 @@ function providerDisplayName(providerId: string | null): string | null {
 }
 
 function setStepProvider(key: string, providerId: string | null) {
+  if (isLocked.value) return
   const step = plan.value?.steps.find((s) => s.key === key)
   if (!step || step.locked) return
   step.provider_id = providerId
@@ -689,6 +734,7 @@ function setStepProvider(key: string, providerId: string | null) {
 }
 
 function setStepNote(key: string, note: string) {
+  if (isLocked.value) return
   const step = plan.value?.steps.find((s) => s.key === key)
   if (!step || step.locked) return
   step.note = note
@@ -752,7 +798,7 @@ function stepDocQuantity(step: WPStep): string {
 }
 
 function applyDefaults() {
-  if (!plan.value) return
+  if (!plan.value || isLocked.value) return
   for (const step of plan.value.steps) {
     if (step.locked) continue
     step.provider_id = plan.value.defaults.provider_id
@@ -776,7 +822,7 @@ const scopeSteps = computed(() => (plan.value?.steps ?? []).map((step) => ({
 })))
 
 async function fetchSuggestion(scope: WorkPlanScope) {
-  if (!plan.value) return
+  if (!plan.value || isLocked.value) return
   aiSuggesting.value = true
   try {
     const res = await postRequest<any>(
@@ -814,7 +860,7 @@ async function fetchSuggestion(scope: WorkPlanScope) {
 }
 
 async function startAiFill(scope: WorkPlanScope) {
-  if (!plan.value || !props.projectId) return
+  if (!plan.value || !props.projectId || isLocked.value) return
   aiSuggesting.value = true
   try {
     const parts = props.docId.split('.')
@@ -870,7 +916,7 @@ async function copyRaw() {
 }
 
 async function save() {
-  if (!plan.value || saving.value) return
+  if (!plan.value || saving.value || isLocked.value) return
   saving.value = true
   conflict.value = null
   topLevelErrors.value = []

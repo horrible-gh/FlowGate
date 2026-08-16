@@ -240,6 +240,7 @@
             v-else-if="tab.typeCode === 'WP'"
             :doc-id="tab.id"
             :project-id="tab.projectId ?? null"
+            :read-only="aiRunDocumentLocked"
           />
           <div v-else-if="tab.type === 'qtui'" class="card md-preview-card">
             <div class="card-hd">
@@ -1714,7 +1715,13 @@ const workPlanCreateGroupId = ref('')
 const workPlanProposalVisible = ref(false)
 const workPlanProposalBusy = ref<'' | 'copy' | 'ai'>('')
 const workPlanProposalNotice = ref('')
-const workPlanProposalAiActive = ref(false)
+const workPlanProposalAiActive = computed(() => {
+  const groupId = workPlanCreateGroupId.value
+  return !!groupId && (
+    aiInvokeRunsStore.isGroupRunning(groupId)
+    || aiInvokeRunsStore.isGroupInlineVisible(groupId)
+  )
+})
 // Continuous work (R0001 group 0086): sequence selection feeds a consent gate that offers
 // either an in-app provider run or the external-AI continuous mention path.
 const continuousDialogVisible = ref(false)
@@ -1880,6 +1887,10 @@ watch(activeGroupRunActive, async (running, wasRunning) => {
     if (fullViewVisible.value) await closeFullView()
     aiInvokeVisible.value = false
     nextActionModalVisible.value = false
+    workPlanCreateVisible.value = false
+    workPlanProposalVisible.value = false
+    workPlanProposalBusy.value = ''
+    workPlanProposalNotice.value = ''
     continuousDialogVisible.value = false
     continuousWarnVisible.value = false
     designHandoffVisible.value = false
@@ -2056,6 +2067,7 @@ function canDirectEditSource(tab: Tab): boolean {
     isFileTab(tab)
     && !!tab.projectId
     && !!getTabSourcePath(tab)
+    && !tab.gitGroupId
     && (tab.type === 'md' || tab.type === 'text')
   )
 }
@@ -2069,19 +2081,8 @@ function sourceContentUrl(tab: Tab): string {
     : base
 }
 
-// A selected group remains structurally read-only in FileExplorer (create/delete/upload
-// stay blocked), but its existing text content is editable. Clear the legacy tab-level
-// read-only marker so StatusBar does not claim the whole file is read-only.
-watch(
-  () => tabs.value.map((tab) => `${tab.id}:${tab.gitGroupId ?? ''}:${tab.readonly ? '1' : '0'}`).join('|'),
-  () => {
-    for (const tab of tabs.value) {
-      if (isFileTab(tab) && tab.gitGroupId && tab.readonly) tab.readonly = false
-    }
-  },
-  { immediate: true },
-)
-
+// Group file tabs stay read-only. src-content resolves only the BASE checkout, so
+// enabling direct editing for a group tab would write the wrong tree.
 function isDeletedGroupFileTab(tab: Tab | null): boolean {
   return !!tab
     && isFileTab(tab)
@@ -3627,19 +3628,8 @@ function openWorkPlanProposalIfWp(): boolean {
   workPlanCreateGroupId.value = nextActionModalGroupId.value
   workPlanProposalBusy.value = ''
   workPlanProposalNotice.value = ''
-  workPlanProposalAiActive.value = false
+
   workPlanProposalVisible.value = true
-  // P0004 [제안 창 열기]: the active probe only decides the [AI 호출] reason line. It never
-  // moves or removes a button, so the row is drawn before the answer arrives.
-  const groupId = workPlanCreateGroupId.value
-  if (groupId) {
-    void getRequest<any>('/api/v1/ai-invoke/active', { group_id: groupId })
-      .then((res) => {
-        const payload = res.data ?? {}
-        workPlanProposalAiActive.value = !!payload.active && payload.status !== 'finished'
-      })
-      .catch(() => { /* best effort — a real 409 on start still reports it */ })
-  }
   return true
 }
 
@@ -3716,11 +3706,12 @@ async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; provi
   } catch (e: any) {
     const data = e?.response?.data ?? {}
     // 409 run_in_progress 의 서버 메시지는 영어다. 이 사유는 화면이 이미 자기 말로
-    // 가지고 있으므로(blockReason 의 block_ai_active) aiActive 만 세우고 사유 문자열은
+    // 가지고 있으므로 반응형 store 상태를 사용하고 사유 문자열은
     // 비워 둔다 — 한국어 화면에 영어 한 줄이 끼어들지 않게 한다.
     if (data.code === 'run_in_progress') {
-      workPlanProposalAiActive.value = true
+
       workPlanProposalNotice.value = ''
+      workPlanProposalVisible.value = false
       return
     }
     workPlanProposalNotice.value = data.message

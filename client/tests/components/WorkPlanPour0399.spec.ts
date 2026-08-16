@@ -22,6 +22,8 @@ vi.mock('@shared/api', () => ({
   patchRequest: (...a: unknown[]) => patchRequest(...a),
   putRequest: (...a: unknown[]) => postRequest(...a),
   deleteRequest: (...a: unknown[]) => postRequest(...a),
+  extractApiErrorMessage: (error: any, fallback: string) =>
+    error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
 }))
 
 import DocWorkflow from '@main/components/DocWorkflow.vue'

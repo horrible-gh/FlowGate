@@ -31,9 +31,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 
-const { getRequest, postRequest } = vi.hoisted(() => ({
+const { getRequest, postRequest, workflowNextStepCode } = vi.hoisted(() => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
+  workflowNextStepCode: { value: null as string | null },
 }))
 
 vi.mock('@shared/api', () => ({
@@ -76,7 +77,7 @@ vi.mock('@main/workflow/workflowViewState', async (importOriginal) => {
       canNextAction: false,
       currentStepCode: null,
       highlightStepCode: null,
-      nextStepCode: null,
+      nextStepCode: workflowNextStepCode.value,
       nextStepActive: false,
       headDocLabel: null,
       headDocId: null,
@@ -169,6 +170,7 @@ beforeEach(() => {
   fetchDoc.mockReset()
   getRequest.mockReset().mockResolvedValue({ data: { ok: true, runs: [], paused: [], questions: [] } })
   postRequest.mockReset().mockResolvedValue({ data: {} })
+  workflowNextStepCode.value = null
 })
 
 describe('MainPanel — what an AI run does to the document on screen', () => {
@@ -183,6 +185,22 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
     expect(workflowLocked(wrapper)).toBe(false)
     expect(runSurface(wrapper)).toBe(false)
     expect(bootstrapCard(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps a group file tab read-only and does not expose src-content editing', async () => {
+    const fileTab = {
+      id: 'file:flowgate:flowgate.default.0394:src/a.ts',
+      title: 'a.ts',
+      path: 'src/a.ts',
+      type: 'text' as const,
+      projectId: 'flowgate',
+      gitGroupId: GROUP_ID,
+      readonly: true,
+    }
+    const wrapper = await mountPanel([fileTab as any])
+    expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(false)
+    expect(wrapper.find('.doc-action-edit').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -205,6 +223,36 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
     // The surfaces that exist only to mutate the document do go.
     expect(infoPanel(wrapper)).toBe(false)
     expect(actionBar(wrapper)).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('closes an already-open work-plan proposal when the group run starts', async () => {
+    const wrapper = await mountPanel()
+    wrapper.findComponent(DocWorkflowStub).vm.$emit('create-work-plan', { docId: DOC_ID })
+    await nextTick()
+
+    const proposal = wrapper.findComponent({ name: 'WorkPlanProposalDialog' })
+    expect(proposal.props('visible')).toBe(true)
+
+    startRun(OTHER_DOC_ID)
+    await flushPromises()
+
+    expect(proposal.props('visible')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('closes an already-open work-plan create dialog when the group run starts', async () => {
+    const wrapper = await mountPanel()
+    ;(wrapper.vm as any).workPlanCreateVisible = true
+    await nextTick()
+
+    const createDialog = wrapper.findComponent({ name: 'WorkPlanCreateDialog' })
+    expect(createDialog.props('visible')).toBe(true)
+
+    startRun(OTHER_DOC_ID)
+    await flushPromises()
+
+    expect(createDialog.props('visible')).toBe(false)
     wrapper.unmount()
   })
 
@@ -291,6 +339,25 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
     expect(runSurface(wrapper)).toBe(true)
     expect(documentHeader(wrapper)).toBe(true)
     expect(documentLocked(wrapper)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('hands the lock to the work-plan editor, the card a WP tab renders instead of MdViewer', async () => {
+    // 0424 B0001 rev2. Every other card in the document column takes aiRunDocumentLocked;
+    // WorkPlanEditor took no lock at all, so a WP tab kept 저장 / 수량 / 공급자 / 멘트 /
+    // [AI 제안 불러오기] live through a run and answered the click with a 423 toast. That is
+    // the screen both rejections were written from — the two runs that preceded them were
+    // work_plan_fill runs whose doc_ref was the WP document itself.
+    const wpTab = { id: `${GROUP_ID}.0004-WP`, title: 'work plan', path: '', type: 'md' as const, typeCode: 'WP' }
+    const wrapper = await mountPanel([wpTab])
+    expect(wrapper.find('work-plan-editor-stub').exists()).toBe(true)
+    expect(wrapper.find('work-plan-editor-stub').attributes('readonly')).toBe('false')
+
+    startRun(wpTab.id)
+    await flushPromises()
+
+    expect(wrapper.find('work-plan-editor-stub').exists()).toBe(true)
+    expect(wrapper.find('work-plan-editor-stub').attributes('readonly')).toBe('true')
     wrapper.unmount()
   })
 

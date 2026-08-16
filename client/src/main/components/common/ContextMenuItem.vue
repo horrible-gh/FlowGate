@@ -1,5 +1,13 @@
 <template>
-  <button class="ctx-item" :class="{ 'ctx-item--danger': danger }" type="button" role="menuitem" @click="emit('click')">
+  <button
+    class="ctx-item"
+    :class="{ 'ctx-item--danger': danger }"
+    type="button"
+    role="menuitem"
+    :disabled="disabled"
+    :title="title"
+    @click="emit('click')"
+  >
     <AppIcon v-if="icon" :name="icon" class="ctx-item__icon" />
     <slot />
   </button>
@@ -11,6 +19,8 @@ import AppIcon from '@shared/AppIcon.vue'
 defineProps<{
   icon?: string
   danger?: boolean
+  disabled?: boolean
+  title?: string
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +46,10 @@ const emit = defineEmits<{
 }
 .ctx-item:hover {
   background: var(--surface-h);
+}
+.ctx-item:disabled {
+  cursor: not-allowed;
+  opacity: .5;
 }
 .ctx-item__icon {
   width: 14px;

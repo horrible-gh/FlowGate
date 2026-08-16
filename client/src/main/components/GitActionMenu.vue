@@ -44,7 +44,8 @@
         <button
           v-else
           class="btn btn-sm btn-primary"
-          :disabled="busy"
+          :disabled="busy || groupBusy(p.group_id)"
+          :title="groupBusy(p.group_id) ? busyHint : undefined"
           @click="execute(p)"
         >
           <AppIcon name="play" /> {{ t('main.git_finalize.execute') }}
@@ -100,6 +101,7 @@ import { postRequest } from '@shared/api'
 import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 import GitStatusPanel from './GitStatusPanel.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
@@ -110,6 +112,11 @@ const { showToast } = useToast()
 const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 const tabsStore = useTabsStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
+const busyHint = computed(() => t('main.review_action_bar.ai_running_hint'))
+const groupBusy = (groupId: string) =>
+  aiInvokeRunsStore.isGroupRunning(groupId)
+  || aiInvokeRunsStore.isGroupInlineVisible(groupId)
 
 interface Pending {
   group_id: string
@@ -197,7 +204,10 @@ function openGroup(groupId: string) {
 }
 
 async function execute(item: Pending) {
-  if (busy.value) return
+  if (busy.value || groupBusy(item.group_id)) {
+    if (groupBusy(item.group_id)) showToast(busyHint.value, 'danger')
+    return
+  }
   busy.value = true
   try {
     await runFinalize(item, false)

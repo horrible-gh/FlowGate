@@ -947,6 +947,14 @@ async def apply_work_plan(
     body: WorkPlanApply,
     current_user: dict = Depends(get_current_user),
 ):
+    doc = _load_doc(doc_id)
+    from modules.flow_gate.documents.routers.documents import (
+        _reject_if_group_ai_running,
+        _reject_if_group_disposed,
+    )
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+
     return await anyio.to_thread.run_sync(partial(
         _apply_sync,
         doc_id,

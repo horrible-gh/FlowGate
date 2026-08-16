@@ -86,8 +86,13 @@
 
             <div v-if="groupMode === 'existing'">
               <select v-model="form.groupId" class="form-ctrl">
-                <option v-for="group in groupOptions" :key="group.id" :value="group.id">
-                  {{ group.label }}
+                <option
+                  v-for="group in groupOptions"
+                  :key="group.id"
+                  :value="group.id"
+                  :disabled="group.busy"
+                >
+                  {{ group.busy ? `${group.label} — ${busyHint}` : group.label }}
                 </option>
               </select>
             </div>
@@ -174,7 +179,13 @@
         <button class="btn btn-secondary" type="button" @click="$emit('close')">
           {{ $t('common.cancel') }}
         </button>
-        <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="submitting || targetGroupBusy"
+          :title="targetGroupBusy ? busyHint : undefined"
+          @click="submit"
+        >
           <span v-if="submitting">
             <AppIcon name="spinner" spin />
             {{ $t('main.new_requirement_modal.registering') || 'Registering...' }}
@@ -193,9 +204,10 @@
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postUrlEncoded } from '@shared/api'
+import { extractApiErrorMessage, getRequest, postUrlEncoded } from '@shared/api'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 
 interface ModuleItem {
@@ -216,7 +228,16 @@ const emit = defineEmits<{ close: []; created: [payload: { docId: string; openAf
 const { t } = useI18n()
 const projectStore = useProjectStore()
 const explorerStore = useExplorerStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
 const { showToast } = useToast()
+
+// 0424 TR0005 rework — an existing group can have an active AI run; picking it (or
+// submitting after one starts mid-edit) must be blocked in the UI itself, not just
+// reported back as a toast once the server 423s.
+const busyHint = computed(() => t('main.review_action_bar.ai_running_hint'))
+function isGroupBusy(groupId: string): boolean {
+  return aiInvokeRunsStore.isGroupRunning(groupId) || aiInvokeRunsStore.isGroupInlineVisible(groupId)
+}
 
 const projects = ref<ProjectItem[]>([])
 const currentModules = ref<Array<{ id: string; label: string }>>([])
@@ -259,8 +280,13 @@ const groupOptions = computed(() => {
     // title field by the "use group name" button. NR0003 §3/§10.
     name: group.label,
     module: getGroupModule(group, nodes),
+    busy: isGroupBusy(group.id),
   }))
 })
+
+const targetGroupBusy = computed(() =>
+  groupMode.value === 'existing' && !!form.value.groupId && isGroupBusy(form.value.groupId),
+)
 
 // Group title to drop into the title field. Existing-group mode → the selected
 // group's pure title; new-group mode → the name the user is typing. '' hides the
@@ -374,6 +400,10 @@ function onProjectChange() {
 }
 
 async function submit() {
+  if (targetGroupBusy.value) {
+    showToast(busyHint.value, 'danger')
+    return
+  }
   if (!form.value.project) {
     flashOk.value = false
     flashMessage.value = t('main.requirement.create.select_project')
@@ -433,6 +463,7 @@ async function submit() {
       } else if (serverErr && typeof serverErr === 'object') {
         message = serverErr.message || serverErr.code || message
       }
+      message = extractApiErrorMessage(error, message)
       // surface server error via toast only — no inline .alert-danger in .modal-ft
       try {
         // show toast above modal (teleport ensures visibility)

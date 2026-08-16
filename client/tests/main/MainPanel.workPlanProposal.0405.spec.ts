@@ -198,7 +198,7 @@ describe('MainPanel — 다음 액션이 작업계획일 때', () => {
     expect(vm.workPlanProposalVisible).toBe(false)
   })
 
-  it('이미 다른 실행이 돌고 있으면 사유를 남기고 [AI 호출]만 막는다', async () => {
+  it('호출 경합으로 다른 실행을 확인하면 제안 창을 즉시 닫는다', async () => {
     const wrapper = mountPanel()
     const vm = wrapper.vm as any
     seedProposalContext(vm)
@@ -208,10 +208,8 @@ describe('MainPanel — 다음 액션이 작업계획일 때', () => {
 
     await vm.onWorkPlanProposalInvokeAi({ scope: SCOPE, providerId: 'aip_opus' })
 
-    // 서버가 돌려주는 문장은 영어다. 한국어 화면에 그 줄이 그대로 실리면 안 되므로
-    // 사유 문자열은 비우고, 창이 자기 말로 가진 [비활성 사유] 줄(block_ai_active)이 나오게 한다.
-    expect(vm.workPlanProposalVisible).toBe(true)
-    expect(vm.workPlanProposalAiActive).toBe(true)
+    // 반응형 store가 SSE를 받기 전의 경합도 fail-closed로 처리한다.
+    expect(vm.workPlanProposalVisible).toBe(false)
     expect(vm.workPlanProposalNotice).toBe('')
   })
 

@@ -493,7 +493,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, patchRequest, postRequest } from '@shared/api'
+import { extractApiErrorMessage, getRequest, patchRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
@@ -1273,7 +1273,10 @@ async function save() {
       // 나온 것이므로 덮어쓰지 않고, 다시 열어 최신 계획을 부으라고 말한다.
       showToast(t('main.work_plan_pour.error_wp_changed'), 'error')
     } else {
-      showToast(t('main.workflow_edit_modal.error_save'), 'error')
+      showToast(
+        extractApiErrorMessage(e, t('main.workflow_edit_modal.error_save')),
+        'error',
+      )
     }
   } finally {
     saving.value = false

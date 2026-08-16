@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { extractApiErrorMessage, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 
 const props = defineProps<{
@@ -107,7 +107,10 @@ async function submit() {
     emit('saved', { name: trimmed, type: props.type })
     emit('update:visible', false)
   } catch (e: any) {
-    errorMessage.value = e?.response?.data?.message || t('main.create_file_folder_modal.error_save_failed')
+    errorMessage.value = extractApiErrorMessage(
+      e,
+      e?.response?.data?.message || t('main.create_file_folder_modal.error_save_failed'),
+    )
   } finally {
     submitting.value = false
   }
