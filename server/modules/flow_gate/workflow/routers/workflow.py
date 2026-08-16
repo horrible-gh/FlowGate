@@ -481,11 +481,11 @@ def finalize_workflow_endpoint(
 
 
 @router.patch("/documents/rejection_reason")
-def update_rejection_reason_rpc(
+async def update_rejection_reason_rpc(
     body: RejectionReasonBodyRequest,
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    return update_rejection_reason_endpoint(
+    return await update_rejection_reason_endpoint(
         body.doc_id,
         RejectionReasonRequest(reason=body.reason),
         current_user,
@@ -759,52 +759,101 @@ async def document_review_transition_endpoint(
 
 
 @router.patch("/documents/{doc_id}/rejection_reason")
-def update_rejection_reason_endpoint(
+async def update_rejection_reason_endpoint(
     doc_id: str,
     body: RejectionReasonRequest,
     current_user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Store only the rejection reason (no transition).
+    """Correct the reason text of the document's most recent rejection.
 
-    M026 §6 — Message Save button: save immediately, without closing the dialog.
-    Update only the rejection_reason column without a doc_review_status transition.
+    0419 T0006 (NR0003 후속 T 권고 4): this is a CORRECTION of the latest
+    rejection_history entry's wording, not a new rejection — it overwrites that
+    entry's `reason` in place and appends to its `corrections` audit trail
+    (previous_reason/corrected_at/corrected_by) instead of appending a new
+    top-level history item, so "반려 N회" does not grow just because the
+    wording was fixed. Only reachable while the document is currently
+    'rejected'; a stale/disposed/AI-running document is rejected with 409.
     Permission: document.reject
     """
     user_permissions = _get_user_permissions(current_user)
     if "document.reject" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.reject permission required.")
 
-    doc = db_docs.get_by_id(doc_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason must not be empty")
 
-    # TR0079.0003 rework (6th pass): rejection_reason + rejection_history are document
-    # writes. A disposed (DC) group must not accept new rejection records — same class
-    # as the other write surfaces. _guard_group_not_disposed fails open for live groups.
-    _guard_group_not_disposed(doc, doc_id)
-    _guard_group_not_ai_running(doc, doc_id)
+    # 0419 T0006: the whole read-guard-write sequence is sync DB work, so it
+    # runs in the threadpool (event-loop-blocking guard) just like the sibling
+    # review-transition endpoint above; only the SSE broadcast needs the loop.
+    def _correct_sync() -> dict[str, Any]:
+        doc = db_docs.get_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
 
-    from modules.flow_gate.db.connection import now_iso as _now_iso
-    existing_history = _parse_rejection_history(doc.get("rejection_history"))
-    # P0005/T0006: this path also appends a history item, so it carries the same
-    # rejection_id + nullable response fields as the reject-transition path.
-    existing_history.append({
-        "rejection_id": new_rejection_id(),
-        "reason": body.reason.strip(),
-        "rejected_at": _now_iso(),
-        "rejected_by": current_user["user_id"],
-        "ai_response": None,
-        "responded_at": None,
-        "response_recorded_by": None,
-        "response_revision_no": None,
-    })
-    updated = db_docs.update(doc_id, {
-        "rejection_reason": body.reason.strip(),
-        "rejection_history": json.dumps(existing_history, ensure_ascii=False),
-        "updated_at": _now_iso(),
-    })
-    if not updated:
-        raise HTTPException(status_code=500, detail="Failed to save rejection reason")
+        _guard_group_not_disposed(doc, doc_id)
+        _guard_group_not_ai_running(doc, doc_id)
+
+        if doc.get("doc_review_status") != "rejected":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot correct rejection reason: {doc_id} is not currently rejected.",
+            )
+
+        from modules.flow_gate.db.connection import now_iso as _now_iso
+        history = _parse_rejection_history(doc.get("rejection_history"))
+        if not history:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot correct rejection reason: {doc_id} has no rejection history.",
+            )
+
+        latest = dict(history[-1])
+        corrections = latest.get("corrections")
+        corrections = list(corrections) if isinstance(corrections, list) else []
+        corrections.append({
+            "previous_reason": latest.get("reason"),
+            "corrected_at": _now_iso(),
+            "corrected_by": current_user["user_id"],
+        })
+        latest["reason"] = reason
+        latest["corrections"] = corrections
+        history = history[:-1] + [latest]
+
+        updated = db_docs.update(doc_id, {
+            "rejection_reason": reason,
+            "rejection_history": json.dumps(history, ensure_ascii=False),
+            "updated_at": _now_iso(),
+        })
+        if not updated:
+            raise HTTPException(status_code=500, detail="Failed to save rejection reason")
+        return updated
+
+    updated = await anyio.to_thread.run_sync(_correct_sync)
+
+    # SSE broadcast so other open tabs pick up the corrected reason/history without a
+    # manual refresh (NR0003 §2 risk 4). next_status is unchanged ('rejected'); the
+    # existing DocHeader listener applies rejection_reason/rejection_history from any
+    # DOC_REVIEW_STATUS_CHANGED event regardless of whether the status itself moved.
+    try:
+        from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
+        from modules.flow_gate.api.v1.events.event_types import EventType
+        await broadcast_event(FlowEvent(
+            event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
+            payload={
+                "doc_id": doc_id,
+                "prev_status": "rejected",
+                "next_status": updated.get("doc_review_status"),
+                "rejection_reason": reason,
+                "rejection_history": _parse_rejection_history(updated.get("rejection_history")),
+            },
+            audience="*",
+            doc_id=doc_id,
+            project=updated.get("project_id"),
+        ))
+    except Exception:
+        pass  # SSE emission failure does not affect the correction result
+
     return {"document": updated}
 
 

@@ -249,6 +249,14 @@
               <AppIcon name="corners-out" />
               {{ t('main.doc_info_panel.qa_view_full') }}
             </button>
+            <!-- 0419 T0006 (NR0003 후속 T 권고 2 / TR0005 rev1 반려): 반려 메시지
+                 재수정 진입점은 액션바가 아니라 이미 반려 사유를 보여주는 이
+                 사이드바 머리줄에 둔다. rejected 상태에서만 뜬다 — 재작업
+                 제출 이후(revised)는 과거 반려 사유를 소급 수정하지 않는다. -->
+            <button v-if="canEditRejection" class="dip-qa-act dip-rr-edit" type="button" @click="emit('edit-rejection')" :title="t('common.edit')">
+              <AppIcon name="pencil-simple" />
+              {{ t('common.edit') }}
+            </button>
           </div>
         </div>
         <div class="dip-sec-body">
@@ -507,6 +515,9 @@ const emit = defineEmits<{
   toggle: []
   'next-action': []
   'orphan-recovered': []
+  // 0419 T0006: sidebar [수정] entry point for correcting the latest rejection's
+  // wording. No payload — the parent already has this doc's id/existing reason.
+  'edit-rejection': []
 }>()
 
 // ── R0001 (group 0126 / C안): section-level accordion ──────────────────────────
@@ -742,6 +753,12 @@ const canShowQaSection = computed(() => !isAcDoc.value)
 const canShowRejectSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
 const canShowReviewSection = computed(() => !['R', 'B', 'Q', 'M', 'AC'].includes(props.typeCode ?? ''))
 const canShowReviewRejectSection = computed(() => canShowRejectSection.value || canShowReviewSection.value)
+// 0419 T0006 (NR0003 §"수정 허용 시점"): the [수정] entry point only appears while
+// the document is currently rejected — once a rework submission moves it past
+// 'rejected' (revised/pending_review/approved), the past rejection is history, not
+// something to keep correcting. Group-disposed / AI-running / permission checks are
+// authoritative on the server (update_rejection_reason_endpoint); this is UX-only.
+const canEditRejection = computed(() => props.reviewStatus === 'rejected')
 
 // Per-entry folds. The panel used to render exactly ONE review and ONE rejection, so a
 // single ref each was enough; the merged feed renders several cards, so each card's

@@ -3,7 +3,8 @@
 Coverage:
 - Append one entry to rejection_history on the first rejection
 - Accumulate history on two consecutive rejections (ascending time order)
-- Append history on single-item PATCH save as well
+- Correct the latest history entry's wording via single-item PATCH (0419 T0006: in
+  place, appending a corrections[] audit entry, no new history item)
 - Preserve the existing rejection_reason column value (compatibility)
 - Include the rejection_history field in GET responses
 - Include rejection_history in the SSE payload
@@ -11,6 +12,7 @@ Coverage:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -36,8 +38,14 @@ MIGRATION_037 = _MIGRATIONS / "037_rejection_id_backfill.sql"  # P0005/T0006
 
 @pytest.fixture
 def db_conn():
-    """In-memory SQLite — schema + review column + migration 031 applied."""
-    conn = sqlite3.connect(":memory:")
+    """In-memory SQLite — schema + review column + migration 031 applied.
+
+    0419 T0006: check_same_thread=False because the PATCH-correction tests drive
+    update_rejection_reason_endpoint (now async) via asyncio.run, and its DB work
+    runs inside anyio.to_thread.run_sync on a worker thread; the shared connection
+    is only ever touched sequentially (never concurrently), so this is safe.
+    """
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     conn.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
@@ -283,72 +291,111 @@ class TestTransitionDocumentReviewHistory:
 # ── PATCH endpoint: update_rejection_reason_endpoint ─────────────────────────
 
 class TestPatchRejectionReasonHistory:
-    def _patch_router(self, db_conn_fixture, monkeypatch):
-        import modules.flow_gate.db.documents as db_d
-        import modules.flow_gate.workflow.routers.workflow as wf
+    """0419 T0006: the PATCH endpoint now CORRECTS the latest rejection's wording in
+    place instead of appending a new rejection_history entry, so only a document that
+    is currently 'rejected' has anything to correct."""
 
-        store = _make_store(db_conn_fixture)
-        monkeypatch.setattr(db_d, "get_store", lambda: store)
-        monkeypatch.setattr(wf.db_docs, "get_store", lambda: store)
-        return store
+    def _reject_d001(self, reason="first rejection reason"):
+        return transition_document_review(
+            doc_id="D001",
+            action="reject",
+            actor_user_id="u001",
+            user_permissions=ADMIN_PERMS,
+            comment=reason,
+        )
 
-    def test_patch_appends_history(self, db_conn, monkeypatch):
-        """Append rejection_history on single-item PATCH save."""
-        import modules.flow_gate.db.documents as db_d
-        store = _make_store(db_conn)
-        monkeypatch.setattr(db_d, "get_store", lambda: store)
+    def test_patch_corrects_latest_entry_in_place(self, db_conn, monkeypatch):
+        """A PATCH save overwrites the latest entry's reason instead of appending."""
+        _patch_pipeline(db_conn, monkeypatch)
+        self._reject_d001()
 
         from modules.flow_gate.workflow.routers.workflow import (
             update_rejection_reason_endpoint,
             RejectionReasonRequest,
         )
 
-        class FakeUser:
-            def __getitem__(self, k):
-                return "u001" if k == "user_id" else None
-
-            def get(self, k, default=None):
-                return "u001" if k == "user_id" else default
-
-        result = update_rejection_reason_endpoint(
+        result = asyncio.run(update_rejection_reason_endpoint(
             doc_id="D001",
-            body=RejectionReasonRequest(reason="PATCH reason"),
+            body=RejectionReasonRequest(reason="corrected reason"),
             current_user={"user_id": "u001", "is_admin": True},
-        )
+        ))
 
         doc = result["document"]
-        assert doc["rejection_reason"] == "PATCH reason"
+        assert doc["rejection_reason"] == "corrected reason"
         history = json.loads(doc["rejection_history"])
         assert len(history) == 1
-        assert history[0]["reason"] == "PATCH reason"
+        assert history[0]["reason"] == "corrected reason"
         assert history[0]["rejected_by"] == "u001"
+        corrections = history[0]["corrections"]
+        assert len(corrections) == 1
+        assert corrections[0]["previous_reason"] == "first rejection reason"
+        assert corrections[0]["corrected_by"] == "u001"
 
-    def test_patch_accumulates_history(self, db_conn, monkeypatch):
-        """Two PATCH saves -> two history entries."""
-        import modules.flow_gate.db.documents as db_d
-        store = _make_store(db_conn)
-        monkeypatch.setattr(db_d, "get_store", lambda: store)
+    def test_patch_accumulates_corrections_not_history(self, db_conn, monkeypatch):
+        """Two PATCH saves -> history stays at one entry; corrections grows to two."""
+        _patch_pipeline(db_conn, monkeypatch)
+        self._reject_d001()
 
         from modules.flow_gate.workflow.routers.workflow import (
             update_rejection_reason_endpoint,
             RejectionReasonRequest,
         )
 
-        update_rejection_reason_endpoint(
+        asyncio.run(update_rejection_reason_endpoint(
             doc_id="D001",
-            body=RejectionReasonRequest(reason="first PATCH"),
+            body=RejectionReasonRequest(reason="first correction"),
             current_user={"user_id": "u001", "is_admin": True},
-        )
-        result2 = update_rejection_reason_endpoint(
+        ))
+        result2 = asyncio.run(update_rejection_reason_endpoint(
             doc_id="D001",
-            body=RejectionReasonRequest(reason="second PATCH"),
+            body=RejectionReasonRequest(reason="second correction"),
             current_user={"user_id": "u001", "is_admin": True},
-        )
+        ))
 
         history = json.loads(result2["document"]["rejection_history"])
-        assert len(history) == 2
-        assert history[0]["reason"] == "first PATCH"
-        assert history[1]["reason"] == "second PATCH"
+        assert len(history) == 1
+        assert history[0]["reason"] == "second correction"
+        corrections = history[0]["corrections"]
+        assert len(corrections) == 2
+        assert corrections[0]["previous_reason"] == "first rejection reason"
+        assert corrections[1]["previous_reason"] == "first correction"
+
+    def test_patch_rejected_when_document_not_currently_rejected(self, db_conn, monkeypatch):
+        """A document that was never rejected has no rejection to correct -> 409."""
+        _patch_pipeline(db_conn, monkeypatch)
+
+        from fastapi import HTTPException
+        from modules.flow_gate.workflow.routers.workflow import (
+            update_rejection_reason_endpoint,
+            RejectionReasonRequest,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(update_rejection_reason_endpoint(
+                doc_id="D001",
+                body=RejectionReasonRequest(reason="too early"),
+                current_user={"user_id": "u001", "is_admin": True},
+            ))
+        assert exc_info.value.status_code == 409
+
+    def test_patch_rejects_empty_reason(self, db_conn, monkeypatch):
+        """A blank correction is rejected outright instead of being stored as empty."""
+        _patch_pipeline(db_conn, monkeypatch)
+        self._reject_d001()
+
+        from fastapi import HTTPException
+        from modules.flow_gate.workflow.routers.workflow import (
+            update_rejection_reason_endpoint,
+            RejectionReasonRequest,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(update_rejection_reason_endpoint(
+                doc_id="D001",
+                body=RejectionReasonRequest(reason="   "),
+                current_user={"user_id": "u001", "is_admin": True},
+            ))
+        assert exc_info.value.status_code == 400
 
 
 # ── SSE payload ───────────────────────────────────────────────────────────────
