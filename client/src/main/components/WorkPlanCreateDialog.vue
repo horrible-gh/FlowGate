@@ -218,7 +218,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
-import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
+import { useDocTypeStore, type WorkPlanCountableType } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
 
 const props = defineProps<{
@@ -247,7 +247,7 @@ const selectedOnly = ref(false)
 const creating = ref(false)
 const createError = ref('')
 
-const typesLoaded = computed<DocTypeItem[]>(() => docTypeStore.countableTypes)
+const typesLoaded = computed<WorkPlanCountableType[]>(() => docTypeStore.countableTypes)
 const allCountableTypeCodes = computed(() => typesLoaded.value.map((item) => item.code))
 
 interface TypeRow { code: string; label: string; unit: 'sheet' | 'set'; pairCode?: string; setName: string }

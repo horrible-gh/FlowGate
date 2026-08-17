@@ -27,14 +27,27 @@ vi.mock('@shared/api', () => ({
     error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
 }))
 
+// 0429 T0004 (NR0003): `data`/`items` mirrors the real document-types order — design
+// series sorts before instruction, so D precedes DS, and DS's real series is
+// 'instruction' (not 'design'). This used to list DS first under a 'design' category,
+// quietly assuming the very ordering contract the bug broke.
 const TYPES = [
-  { id: 21, code: 'DS', label: '설계지시', category: 'design', countable: true, unit: 'sheet' },
   { id: 22, code: 'D', label: '기본설계', category: 'design', countable: true, unit: 'sheet' },
+  { id: 21, code: 'DS', label: '설계지시', category: 'instruction', countable: true, unit: 'sheet' },
   { id: 32, code: 'T', label: '작업지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TR' },
   { id: 33, code: 'TS', label: '시험지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TSR' },
   { id: 34, code: 'TR', label: '작업레포트', category: 'instruction', countable: false, unit: null },
   { id: 35, code: 'TSR', label: '시험결과', category: 'instruction', countable: false, unit: null },
   { id: 41, code: 'WP', label: '작업계획', category: 'plan', countable: false, unit: null },
+]
+
+// The work-plan registry's own canonical order (DS leads the design series) — the
+// additive `work_plan_countable_types` field, separate from the raw `items` order above.
+const TYPES_WP = [
+  { code: 'DS', label: '설계지시', category: 'instruction', unit: 'sheet' },
+  { code: 'D', label: '기본설계', category: 'design', unit: 'sheet' },
+  { code: 'T', label: '작업지시', category: 'instruction', unit: 'set', pair_code: 'TR' },
+  { code: 'TS', label: '시험지시', category: 'instruction', unit: 'set', pair_code: 'TSR' },
 ]
 
 const PROVIDERS = [
@@ -46,6 +59,11 @@ function seedStores() {
   const docTypeStore = useDocTypeStore()
   docTypeStore.items = TYPES as any
   docTypeStore.labelMap = Object.fromEntries(TYPES.map((item) => [item.code, item.label]))
+  // 0429 T0004: seed the work-plan canonical registry directly too, the same way this
+  // helper already seeds `items`/`labelMap` instead of mocking the HTTP response — this
+  // is what makes docTypeStore.countableTypes (and the scope this dialog builds from it)
+  // use the DS-leads server order rather than falling back to `items`' raw order.
+  docTypeStore.workPlanCountableTypes = TYPES_WP as any
   const providerStore = useAiProviderStore()
   providerStore.providers = PROVIDERS as any
   providerStore.loadedProjectId = 'flowgate'
@@ -564,6 +582,10 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     const docTypeStore = useDocTypeStore()
     docTypeStore.items = TYPES as any
     docTypeStore.labelMap = Object.fromEntries(TYPES.map((item) => [item.code, item.label]))
+    // 0429 T0004: this block seeds the store locally instead of calling the shared
+    // seedStores() above — needs the same canonical-registry seed so [type index 0/2]
+    // below still picks DS/T, not whatever order `items` happens to carry.
+    docTypeStore.workPlanCountableTypes = TYPES_WP as any
     return mount(WorkPlanProposalDialog, {
       props: {
         visible: true,

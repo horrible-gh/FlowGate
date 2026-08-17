@@ -595,7 +595,7 @@ def get_work_plan(
     locale = _locale(request)
     doc = _load_doc(doc_id)
     try:
-        body = wp.load_body(_plan_path(doc))
+        body = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
     except wp.WorkPlanUnreadable as exc:
         body = _heal_unwritten_plan(doc, exc, current_user["user_id"])
         if body is None:
@@ -781,7 +781,7 @@ def suggest_work_plan(
     if body.base_revision_no is not None and body.base_revision_no != current_revision:
         return _revision_conflict_response(doc, locale, body.base_revision_no, current_revision)
     try:
-        plan = wp.load_body(_plan_path(doc))
+        plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
     except wp.WorkPlanUnreadable as exc:
         return _unreadable_response(doc, exc, locale)
 
@@ -870,7 +870,7 @@ def suggest_work_plan(
 
 def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
     doc = _load_doc(doc_id)
-    plan = wp.load_body(_plan_path(doc))
+    plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
     return wpa.preview(
         doc=doc,
         plan=plan,
@@ -902,7 +902,7 @@ def _apply_sync(
 ) -> dict:
     doc = _load_doc(doc_id)
     plan_path = _plan_path(doc)
-    plan = wp.load_body(plan_path)
+    plan = wp.load_body(plan_path, project_id=doc.get("project_id"))
     owner_id = doc.get("target_id") or doc.get("triggered_by")
     owner_doc = db_docs.get_by_id(owner_id)
     if owner_doc is None:
@@ -984,7 +984,7 @@ def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, loc
     if str(doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
         return JSONResponse(status_code=422, content={"error": "not_a_work_plan", "doc_id": doc_id})
     try:
-        plan = wp.load_body(_plan_path(doc))
+        plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
     except wp.WorkPlanUnreadable as exc:
         # L0011 §4.1-2 "plan_unreadable": a plan nobody can open as a table is a different
         # problem from a plan with nothing in it, and the person's next move differs, so it
