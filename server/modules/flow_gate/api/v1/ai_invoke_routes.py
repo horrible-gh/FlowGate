@@ -61,6 +61,9 @@ class AiInvokeStartRequest(BaseModel):
     # out of range falls back to the engine's own default (ai_invoke_service.HOP_TIMEOUT_SEC).
     continuation_step_timeout_sec: Optional[int] = None
     provider_id: Optional[str] = None
+    # provider_id alone may be an auto-restored default. This explicit signal says the person
+    # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
+    provider_pinned: Optional[bool] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
@@ -560,6 +563,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             api_base_url=_token_routes._build_api_base(request),
             mention_builder=_mention_builder,
             provider_id=body.provider_id,
+            provider_pinned=body.provider_pinned,
             issue_builder=issue_builder,
             merge_id=body.merge_id,
             continuation_provider_overrides=body.continuation_provider_overrides,

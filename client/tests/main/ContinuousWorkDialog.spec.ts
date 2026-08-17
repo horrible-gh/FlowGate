@@ -43,9 +43,9 @@ function seqResponse() {
   }
 }
 
-function mountDialog() {
+function mountDialog(props: Record<string, unknown> = {}) {
   return mount(ContinuousWorkDialog, {
-    props: { visible: true, docRef: 'flowgate.default.0086.0001-R' },
+    props: { visible: true, docRef: 'flowgate.default.0086.0001-R', ...props },
     global: { plugins: [i18n] },
   })
 }
@@ -319,6 +319,15 @@ describe('ContinuousWorkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
+    await wrapper.setProps({
+      selectedProvider: 'aip_fable',
+      providers: [{ id: 'aip_fable', name: 'Fable' }],
+    })
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+    expect(document.querySelector('.cwd-provider-summary')?.textContent)
+      .toContain(i18n.global.t('main.continuous_work.provider_run_summary', { name: 'Fable' }))
+
     // Not blocked: the dialog offers to start FROM the workflow-decision step. The
     // pre-decision note is shown and there is exactly one (static) head step.
     expect(document.querySelector('.wsp-state--error')).toBeNull()

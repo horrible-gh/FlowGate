@@ -314,6 +314,7 @@ async function start() {
       mode: mode.value,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    if (aiProviderStore.pinned) body.provider_pinned = true
     if (props.module != null) body.module = props.module
     if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
     if (props.messages?.length) body.messages = props.messages

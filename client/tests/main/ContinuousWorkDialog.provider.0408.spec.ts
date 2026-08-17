@@ -52,11 +52,11 @@ function response(rows = items) {
   return { data: { doc_id: 'flowgate.default.0408.0001-B', doc_class: 'B', decided: true,
     items: JSON.parse(JSON.stringify(rows)), head: rows[0] } }
 }
-function mountDialog(selectedProvider = 'default', rows = items) {
+function mountDialog(selectedProvider = 'default', rows = items, providerPinned = false) {
   getRequest.mockResolvedValue(response(rows))
   return mount(ContinuousWorkDialog, {
     props: {
-      visible: true, docRef: 'flowgate.default.0408.0001-B', selectedProvider,
+      visible: true, docRef: 'flowgate.default.0408.0001-B', selectedProvider, providerPinned,
       providers: [
         { id: 'stored', name: 'Stored Provider' },
         { id: 'default', name: 'Default Provider' },
@@ -112,6 +112,27 @@ describe('ContinuousWorkDialog stored provider states (0408)', () => {
     expect(badges[0].classList.contains('cwd-stored-provider--unavailable')).toBe(true)
     expect((document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).disabled).toBe(false)
     expect((await confirm(wrapper)).providerOverrides).toEqual({})
+  })
+
+  it('shows a pinned provider on every row while keeping per-step overrides highest', async () => {
+    const wrapper = mountDialog('default', items, true)
+    await flushPromises()
+    await openProviders()
+
+    expect([...selects()].map(select => select.value)).toEqual(['default', 'default', 'default'])
+    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
+    expect(document.querySelector('.cwd-provider-summary')?.textContent)
+      .toContain(i18n.global.t('main.continuous_work.provider_run_summary', { name: 'Default Provider' }))
+    expect(document.querySelector('.cwd-provider-pin-badge')?.textContent)
+      .toContain(i18n.global.t('main.continuous_work.provider_pin_badge'))
+
+    selects()[0].value = 'other'
+    selects()[0].dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect((await confirm(wrapper)).providerOverrides).toEqual({ 1: 'other' })
+
+    ;(document.querySelector('.cwd-provider-pin-clear') as HTMLButtonElement).click()
+    expect(wrapper.emitted('clear-provider-pin')).toHaveLength(1)
   })
 
   it('sends only edits and restores untouched state when the stored value is reselected', async () => {

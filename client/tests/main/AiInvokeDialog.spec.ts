@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiInvokeDialog from '@main/components/AiInvokeDialog.vue'
+import { useAiProviderStore } from '@main/stores/aiProvider'
 
 // 0242 NR0003: the AI-invoke dialog's continuous mode used to ask for a raw `목표 seq`
 // (`item_seq`) in a <input type="number"> — a DB column name the user must guess a value for,
@@ -70,6 +71,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   getRequest.mockReset()
   postRequest.mockReset()
+  localStorage.clear()
   // aiProvider store's ensureLoaded + the picker both go through getRequest.
   getRequest.mockImplementation((url: string) =>
     url === '/api/v1/workflow/sequence'
@@ -261,6 +263,41 @@ describe('AiInvokeDialog continuous target', () => {
     expect(document.querySelector('.wsp-steps')).toBeNull()
     expect(startBody()).toMatchObject({ mode: 'continuous', continuation_target_seq: 3 })
 
+    wrapper.unmount()
+  })
+
+  it('forwards an explicit provider pin on the autoStart request', async () => {
+    getRequest.mockResolvedValueOnce({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'aip_two',
+        providers: [
+          { id: 'aip_one', name: 'One', exec_type: 'cli', kind: 'codex' },
+          { id: 'aip_two', name: 'Two', exec_type: 'cli', kind: 'codex' },
+        ],
+      },
+    })
+    const providerStore = useAiProviderStore()
+    await providerStore.loadForProject('flowgate')
+    providerStore.selectProvider('aip_one')
+    postRequest.mockClear()
+
+    const wrapper = mountDialog({
+      actionScope: 'new',
+      docRef: ROOT,
+      sequenceDocRef: ROOT,
+      initialMode: 'continuous',
+      initialTargetSeq: 4,
+      autoStart: true,
+    })
+    await flushPromises()
+
+    expect(startBody()).toMatchObject({
+      provider_id: 'aip_one',
+      provider_pinned: true,
+      mode: 'continuous',
+    })
     wrapper.unmount()
   })
 })

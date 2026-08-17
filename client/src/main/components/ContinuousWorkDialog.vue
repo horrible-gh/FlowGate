@@ -161,6 +161,18 @@
                       @update:model-value="(v) => emit('update:provider', v)"
                     />
                   </div>
+                  <div class="cwd-provider-summary">
+                    <span>{{ providerRunSummary }}</span>
+                    <span v-if="providerPinned" class="cwd-provider-pin-badge">
+                      {{ t('main.continuous_work.provider_pin_badge') }}
+                    </span>
+                    <button
+                      v-if="providerPinned"
+                      type="button"
+                      class="cwd-provider-pin-clear"
+                      @click="emit('clear-provider-pin')"
+                    >{{ t('main.continuous_work.provider_pin_clear') }}</button>
+                  </div>
                   <!-- 0317 T0015: each execution step is shown directly (no "단계별로 다르게
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
@@ -290,12 +302,14 @@ const props = defineProps<{
   selectedProvider?: string
   providerLoading?: boolean
   providerErrored?: boolean
+  providerPinned?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   // 0234 B0001 RC3: propagate a provider change back to the store-owning parent.
   'update:provider': [value: string]
+  'clear-provider-pin': []
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
   // workflow-decision step and targetSeq is the run-to-end sentinel (-1, R0001 "워크플로 결정부터").
@@ -639,7 +653,7 @@ function storedProviderValue(item: WorkflowStepItem): string {
 }
 
 function providerBadgeKey(item: WorkflowStepItem): string {
-  if (overrides.value[item.item_seq] !== undefined) return ''
+  if (overrides.value[item.item_seq] !== undefined || props.providerPinned) return ''
   if (item.provider_id) {
     return item.provider_registered === false
       ? 'main.continuous_work.sequence_provider_unavailable'
@@ -651,7 +665,7 @@ function providerBadgeKey(item: WorkflowStepItem): string {
 }
 
 function stepProviderValue(item: WorkflowStepItem): string {
-  return overrides.value[item.item_seq] ?? storedProviderValue(item)
+  return overrides.value[item.item_seq] ?? (props.providerPinned ? (props.selectedProvider ?? '') : storedProviderValue(item))
 }
 
 function markPresetEdited(itemSeq: number) {
@@ -663,7 +677,8 @@ function onStepProviderChange(item: WorkflowStepItem, value: string) {
   markPresetEdited(item.item_seq)
   touchedSeqs.value = new Set([...touchedSeqs.value, item.item_seq])
   const next = { ...overrides.value }
-  if (!value || value === storedProviderValue(item)) delete next[item.item_seq]
+  const inherited = props.providerPinned ? (props.selectedProvider ?? '') : storedProviderValue(item)
+  if (!value || value === inherited) delete next[item.item_seq]
   else next[item.item_seq] = value
   overrides.value = next
 }
@@ -691,6 +706,17 @@ function providerName(id: string | undefined | null): string | null {
   return props.providers?.find(p => p.id === id)?.name ?? null
 }
 
+const selectedProviderName = computed(() =>
+  providerName(props.selectedProvider) ?? props.selectedProvider ?? '',
+)
+
+const providerRunSummary = computed(() => {
+  if (props.providerPinned || picker.value.fromDecision) {
+    return t('main.continuous_work.provider_run_summary', { name: selectedProviderName.value })
+  }
+  return t('main.continuous_work.provider_follows_stored')
+})
+
 // 0408 TR0018 rev1: an auto-approved N/T row used to lose its provider tag here too, so the
 // same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
 // In-range steps all get the tag (gated on `inRangeSteps`, wider than the now execution-only
@@ -705,6 +731,12 @@ function stepProviderTag(item: WorkflowStepItem): { text: string; override: bool
     const name = providerName(overrideId)
     if (!name) return null
     return { text: t('main.continuous_work.provider_tag_override', { step: stepNo + 1, name }), override: true }
+  }
+  if (props.providerPinned) {
+    const name = selectedProviderName.value
+    return name
+      ? { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
+      : null
   }
   const stored = storedProviderItem(item)
   if (stored) {
@@ -1144,6 +1176,34 @@ watch(presetActive, (active) => {
 }
 .cwd-provider-label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
 .cwd-provider-select { flex: 1; min-width: 0; }
+.cwd-provider-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 0 4px;
+  color: var(--text-m);
+  font-size: .75rem;
+}
+.cwd-provider-summary > span:first-child { flex: 1; min-width: 0; }
+.cwd-provider-pin-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  font-weight: 700;
+}
+.cwd-provider-pin-clear {
+  flex-shrink: 0;
+  border: 0;
+  padding: 2px 4px;
+  color: var(--primary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
 /* 0337 R0001: sits between the default-provider row and the step list, outside the scroller —
    the reason the list is shorter than the sequence must stay visible while the list scrolls. */
 .cwd-scope-note {
