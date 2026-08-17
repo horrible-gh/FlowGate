@@ -445,8 +445,14 @@ async function onCreate() {
         provider_candidates: Array.from(selectedProviders.value),
         // The dialog only picks what to count and who is a candidate; sheet and
         // set counts are decided in the document table (mockup xc32frrg screen 2).
+        // flowgate.default.0423 T0005 item 10: a checked type is no longer hardcoded to
+        // 1 -- it is simply left out of this map, so the server fills it from the
+        // group's workflow_type_counts derivation when one exists, or 0 otherwise
+        // (work_plan.py create_work_plan). An unchecked type still forces an explicit 0.
         quantities: Object.fromEntries(
-          allCountableTypeCodes.value.map((code) => [code, selectedTypes.value.has(code) ? 1 : 0]),
+          allCountableTypeCodes.value
+            .filter((code) => !selectedTypes.value.has(code))
+            .map((code) => [code, 0]),
         ),
         defaults: { provider_id: null, note: '' },
         type_providers: {},

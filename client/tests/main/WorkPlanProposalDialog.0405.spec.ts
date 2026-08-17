@@ -207,7 +207,11 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(payload.scope.quantity_type_codes).toEqual(['DS'])
   })
 
-  it('[문서생성]은 고른 타입만 1, 나머지는 0 으로 보낸다', async () => {
+  it('[문서생성]은 고른 타입을 quantities 에서 빼고, 나머지만 0 으로 보낸다', async () => {
+    // flowgate.default.0423 T0005 item 11: a checked type used to be hardcoded to 1.
+    // Now it is simply absent from quantities, so the server fills it from the
+    // group's workflow_type_counts derivation (or 0 when there is none) instead of a
+    // guessed 1 — only an unchecked type still forces an explicit 0.
     postRequest.mockResolvedValue({
       data: { ok: true, doc_id: 'flowgate.default.0405.0008-WP', title: '작업계획', body: {} },
     })
@@ -221,7 +225,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     const [url, body] = postRequest.mock.calls[0]
     expect(url).toBe('/api/v1/documents/work-plan')
     expect(body.counted_types).toEqual(['DS', 'D', 'T', 'TS'])
-    expect(body.quantities).toEqual({ DS: 1, D: 0, T: 1, TS: 0 })
+    expect(body.quantities).toEqual({ D: 0, TS: 0 })
     expect(body.provider_candidates).toEqual(['aip_opus'])
     expect(body.step_keys).toBeUndefined()
     expect(wrapper.emitted('created')).toBeTruthy()
@@ -587,7 +591,9 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
 
     const [, body] = postRequest.mock.calls[0]
     expect(body.provider_candidates).toEqual([])
-    expect(body.quantities).toEqual({ DS: 1, D: 0, T: 1, TS: 0 })
+    // flowgate.default.0423 T0005 item 11: checked types (DS, T) are left out of
+    // quantities for the server to derive; only unchecked types force an explicit 0.
+    expect(body.quantities).toEqual({ D: 0, TS: 0 })
     wrapper.unmount()
   })
 

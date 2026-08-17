@@ -36,7 +36,11 @@ describe('0395 작업계획 재작업 회귀 가드', () => {
   it('생성 대화상자는 전체 셀 수 있는 타입을 정본에 보낸다', () => {
     const text = source('src/main/components/WorkPlanCreateDialog.vue')
     expect(text).toContain('allCountableTypeCodes')
-    expect(text).toContain('selectedTypes.value.has(code) ? 1 : 0')
+    // flowgate.default.0423 T0005 item 10: a checked type is no longer hardcoded to 1
+    // — it is left out of the request so the server can derive it (or fall back to 0).
+    // Only an unchecked type still forces an explicit 0.
+    expect(text).not.toContain('selectedTypes.value.has(code) ? 1 : 0')
+    expect(text).toContain('.filter((code) => !selectedTypes.value.has(code))')
   })
 
   it('AI 범위 대화상자를 제공한다', () => {

@@ -82,10 +82,17 @@ def test_scope_section_body_follows_p0004(seed):
     assert lines[1] == "---"
     assert lines[2] == "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오."
     assert "장수를 셀 타입: DS " in section
+    # flowgate.default.0423 T0005 item 8/15: the workflow_type_counts derivation this
+    # section shows for the worker to use as evidence (empty here — no parent_doc_id).
+    assert "workflow_type_counts 제시값: (없음)" in section
     assert "후보 공급자:" in section
     # 0405 T0011 rev1: '맡길 단계'는 화면에서도 멘트에서도 사라졌다.
     assert "맡길 단계" not in section
-    assert "고른 타입의 수량은 각각 1입니다." in section
+    # flowgate.default.0423 T0005 item 1/15: NR0003 §8 phrasing replaces the old
+    # "각각 1" command — this is no longer the story the mention tells the worker.
+    assert "고른 타입의 수량은 각각 1입니다." not in section
+    assert "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다." in section
+    assert "근거가 없는 수량을 1로 추측하지 말고 0으로 두며" in section
     assert "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오." in section
 
 
@@ -284,6 +291,9 @@ def test_template_rules_say_where_the_two_values_go(seed):
         rules = "\n".join(wp.TEMPLATE_RULES[locale])
         assert "defaults.provider_id" in rules
         assert "defaults.note" in rules
+        # flowgate.default.0423 T0005 item 3/15: the quantity-basis rule (evidence
+        # first, workflow_type_counts as backup, never guess 1) must also be there.
+        assert "workflow_type_counts" in rules
 
 
 def test_the_template_pointer_delivers_those_rules_to_the_worker(seed):

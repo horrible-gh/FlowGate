@@ -579,12 +579,17 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
             "title": "0402 작업계획",
             "counted_types": ["DS", "D", "P", "L", "N", "T", "TS"],
             "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: this roundtrip test needs real steps
+            # to exercise save/conflict/reject below, so it sends explicit quantities —
+            # a request that omits them now defaults to 0, not 1 (see
+            # test_human_create_legacy_request_defaults_unspecified_types_to_zero).
+            "quantities": {code: 1 for code in ["DS", "D", "P", "L", "N", "T", "TS"]},
         })
     assert resp.status_code == 201, resp.text
     created = resp.json()
     doc_id = created["doc_id"]
 
-    # 결정 2: everything chosen starts at 1 — not the sample deck's numbers.
+    # 결정 2: an explicit quantity in the request is honored as-is.
     assert created["body"]["quantities"]["D"]["count"] == 1
     assert created["body"]["binding"] == "advisory"
     # 결정 2 (P0009 §2.6): the canonical body is a .json file, never .md.
@@ -690,6 +695,9 @@ def test_human_create_assigns_work_provider_to_report_pair_but_not_locked_tsr(se
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["T", "TS"],
             "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: an omitted quantity now defaults to 0,
+            # so this test (about provider assignment, not the default) states its own.
+            "quantities": {"T": 1, "TS": 1},
             "type_providers": {"T": "aip_opus", "TS": "aip_opus"},
         })
     assert resp.status_code == 201, resp.text
@@ -708,6 +716,9 @@ def test_human_create_rejects_assignment_outside_provider_candidates(seed):
         "parent_doc_id": ROOT_DOC,
         "counted_types": ["D"],
         "provider_candidates": ["aip_opus"],
+        # flowgate.default.0423 T0005 item 15: a D step must actually exist for the
+        # provider-candidate rejection below to have anything to reject.
+        "quantities": {"D": 1},
         "type_providers": {"D": "aip_not_a_candidate"},
     })
     assert resp.status_code == 422, resp.text
@@ -737,6 +748,9 @@ def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["D"],
             "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: the save-time provider check below
+            # needs an actual D step; an omitted quantity now defaults to 0.
+            "quantities": {"D": 1},
         })
         assert created.status_code == 201, created.text
         doc_id = created.json()["doc_id"]
@@ -778,7 +792,11 @@ def test_save_accepts_registered_provider_outside_candidates_but_rejects_unknown
         )
 
 
-def test_human_create_legacy_request_keeps_all_one_and_unassigned(seed):
+def test_human_create_legacy_request_defaults_unspecified_types_to_zero(seed):
+    """flowgate.default.0423 T0005 item 5/15: a legacy request that omits ``quantities``
+    entirely used to fill every counted type with 1 (NR0003's all-1 defect). It now
+    falls back to the group's workflow_type_counts derivation, or 0 when the group has
+    no sequence yet (this fixture's ROOT_DOC) — never a guessed 1."""
     client = _client()
     with patch(
         "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
@@ -793,9 +811,57 @@ def test_human_create_legacy_request_keeps_all_one_and_unassigned(seed):
     created = resp.json()
     plan = created["body"]
     assert created["title"] == created["doc_id"]
-    assert {code: item["count"] for code, item in plan["quantities"].items()} == {"D": 1, "T": 1}
+    assert {code: item["count"] for code, item in plan["quantities"].items()} == {"D": 0, "T": 0}
     assert plan["defaults"] == {"provider_id": None, "note": ""}
-    assert all(step["provider_id"] is None for step in plan["steps"] if not step["locked"])
+    assert plan["steps"] == []
+
+
+def test_human_create_uses_workflow_type_counts_when_quantities_omitted(seed, storage_root):
+    """flowgate.default.0423 T0005 item 6/7/16: an omitted quantity prefers the group's
+    workflow_type_counts derivation over the bare 0 fallback, when the group's sequence
+    already has decided items to derive from. An explicit request value still wins, and
+    a type with neither an explicit value nor a derivation still lands at 0."""
+    from modules.flow_gate.db import documents as db_docs
+
+    # A group_id of its own, not the shared GROUP: get_pending_head_by_group scopes by
+    # group_id alone, and this sequence deliberately stays pending forever (it never
+    # includes "WP"), so sharing GROUP would make it shadow the pending head other
+    # GROUP-scoped slot-filling tests expect (module-scoped seed/tmp_db fixtures share
+    # one DB across this whole file).
+    from modules.flow_gate.db import groups as db_groups
+
+    derivation_group = f"{GROUP}-derivation"
+    root = f"{derivation_group}-R0901"
+    db_groups.create({
+        "group_id": derivation_group, "project_id": PROJECT, "module": "__ALL__",
+        "title": "Derivation Group",
+    })
+    db_docs.create({
+        "doc_id": root, "project_id": PROJECT, "type_code": "R", "seq": 901,
+        "title": "Derivation Root", "group_id": derivation_group, "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+    })
+    with _sequence_sql():
+        _decide_sequence(root, ["D", "D", "T"])
+
+        client = _client()
+        with patch(
+            "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+            return_value="0995-WP",
+        ):
+            resp = client.post("/api/v1/documents/work-plan", json={
+                "parent_doc_id": root,
+                "counted_types": ["D", "T", "P"],
+                "provider_candidates": ["aip_opus"],
+                "quantities": {"T": 3},
+            })
+        assert resp.status_code == 201, resp.text
+        plan = resp.json()["body"]
+        assert {code: item["count"] for code, item in plan["quantities"].items()} == {
+            "D": 2,  # derived from the sequence — the request never mentioned D
+            "T": 3,  # explicit request value wins over the sequence's derived 1
+            "P": 0,  # neither an explicit value nor a derivation exists
+        }
 
 
 def test_suggest_returns_the_documented_shape(seed, storage_root):
@@ -1462,11 +1528,19 @@ def test_template_includes_real_candidates_and_note_rules(monkeypatch):
         "display_name": "Provider A",
         "group_label": "Openai · API",
     }]
+    # flowgate.default.0423 T0005 item 4/16: the template example is a format sample,
+    # never the all-1 shape NR0003 flagged — every countable type renders at 0.
+    assert {code: item["count"] for code, item in body["quantities"].items()} == {
+        code: 0 for code in body["counted_types"]
+    }
     for locale in ("ko", "en", "ja"):
         rules = "\n".join(wp.TEMPLATE_RULES[locale])
         assert "steps[].note" in rules
         assert "defaults.note" in rules
         assert "provider_candidates" in rules
+        # flowgate.default.0423 T0005 item 3/16: a quantity-basis rule that points to
+        # workflow_type_counts as evidence (and forbids guessing 1) must be present.
+        assert "workflow_type_counts" in rules
 
 
 def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monkeypatch):

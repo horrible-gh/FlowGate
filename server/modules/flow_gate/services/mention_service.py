@@ -724,7 +724,10 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
     "ko": {
         "header": "작업계획 맡길 범위",
         "lead": "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오.",
-        "quantities": "장수를 셀 타입",
+        "quantities": "장수를 셀 타입",
+        # flowgate.default.0423 T0005 item 8: §8 tail 문구가 "workflow_type_counts 제시값"을
+        # 우선 근거로 쓰라고 말하면서도 그 값을 실제로 보여 주지 않던 간극을 채운다.
+        "type_counts": "workflow_type_counts 제시값",
         # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
         # 프로바이더 — 후보 다중선택(providers)과는 다른 값이다. rev2 (검토 발견 2): 이 값은
         # 작업계획의 defaults.provider_id 로 옮기는 값이 아니다. 그렇게 하면 만들어지는 모든
@@ -739,12 +742,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "전달 멘트",
         "none": "(없음)",
         "tail": (
-            "고른 타입의 수량은 각각 1입니다. 후보에 없는 공급자를 steps[].provider_id 에 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 후보에 없는 공급자를 steps[].provider_id 에 "
             "적지 마십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
         "tail_no_providers": (
-            "고른 타입의 수량은 각각 1입니다. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
+            "선택된 타입은 수량을 결정해도 되는 범위이지 수량 1이라는 뜻이 아닙니다. 먼저 Reference documents의 부모 R/B와 선택 문서 본문을 읽고, 도움말의 group_documents 및 제공된 워크플로 시퀀스를 확인하십시오. 명시된 산출물 수와 독립 작업 단위를 타입별 수량으로 환산하고, 서버가 제시한 workflow_type_counts 값이 있으면 이를 우선 근거로 사용하십시오. 사용하지 않는 타입은 counted_types와 quantities에 남겨 count 0으로 표시하고 steps에는 펼치지 마십시오. 근거가 없는 수량을 1로 추측하지 말고 0으로 두며, 수량 근거를 각 단계 note 또는 제출 요약에서 짧게 밝히십시오. 이 프로젝트에는 등록된 AI 공급자가 없으므로 "
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
@@ -770,7 +773,11 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
     "en": {
         "header": "Work plan scope to delegate",
         "lead": "A person chose the scope below on screen. Write the work plan to this scope.",
-        "quantities": "Types to count",
+        "quantities": "Types to count",
+        # flowgate.default.0423 T0005 item 8: fills the gap where the §8 tail wording
+        # tells the worker to prefer a supplied workflow_type_counts value, without the
+        # mention ever showing that value.
+        "type_counts": "Supplied workflow_type_counts",
         # flowgate.default.0416 TR0005 — the provider the person picked for this run,
         # distinct from the candidate multi-select (providers).
         "default_provider": "Execution provider",
@@ -778,13 +785,13 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "Delivery note",
         "none": "(none)",
         "tail": (
-            "Every chosen type has a quantity of 1. Do not write a provider outside these "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. Do not write a provider outside these "
             "candidates into steps[].provider_id.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
         ),
         "tail_no_providers": (
-            "Every chosen type has a quantity of 1. This project has no registered AI "
+            "Selected types are the scope whose quantities may be decided; they do not imply a quantity of 1. Read the parent R/B and selected documents under Reference documents, then inspect group_documents and any supplied workflow sequence. Convert explicit deliverable counts and independent work units into quantities by type, preferring a supplied workflow_type_counts value when available. Keep unused types in counted_types and quantities with count 0 and do not expand them into steps. Do not guess 1 when there is no basis; leave the count at 0 and briefly state the basis for each non-zero quantity in the step note or submission summary. This project has no registered AI "
             "provider, so leave steps[].provider_id empty.\n"
             "Laying the steps out is delegated to you — expand them from the types and "
             "quantities above."
@@ -802,7 +809,10 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
     "ja": {
         "header": "作業計画を任せる範囲",
         "lead": "以下の範囲は人が画面で選んだものです。この範囲どおりに作業計画を作成してください。",
-        "quantities": "枚数を数えるタイプ",
+        "quantities": "枚数を数えるタイプ",
+        # flowgate.default.0423 T0005 item 8: §8 の tail 文言が workflow_type_counts の
+        # 提示値を優先根拠にせよと言いながら、その値自体を示していなかった間隙を埋める。
+        "type_counts": "提示された workflow_type_counts",
         # flowgate.default.0416 TR0005 — 画面で選んだ今回実行のプロバイダー。候補複数選択
         # (providers)とは別の値。
         "default_provider": "実行プロバイダー",
@@ -810,12 +820,12 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
         "note": "伝達メモ",
         "none": "(なし)",
         "tail": (
-            "選んだタイプの数量はそれぞれ 1 です。候補にないプロバイダーを "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。候補にないプロバイダーを "
             "steps[].provider_id に書かないでください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
         "tail_no_providers": (
-            "選んだタイプの数量はそれぞれ 1 です。このプロジェクトには登録済みの AI "
+            "選択されたタイプは数量を決めてもよい範囲であり、数量 1 を意味しません。まず Reference documents の親 R/B と選択文書の本文を読み、group_documents と提示されたワークフローシーケンスを確認してください。明示された成果物数と独立した作業単位をタイプ別数量に換算し、workflow_type_counts の提示値があれば優先根拠として使用してください。使用しないタイプは counted_types と quantities に残して count 0 とし、steps には展開しないでください。根拠がない数量を 1 と推測せず 0 のままにし、0 より大きい各数量の根拠を step note または提出要約に短く記してください。このプロジェクトには登録済みの AI "
             "プロバイダーがないため、steps[].provider_id は空欄にしてください。\n"
             "段階の割り当てはあなたに任せます — 上のタイプと数量どおりに展開してください。"
         ),
@@ -858,14 +868,38 @@ def _work_plan_provider_names(project_id: str) -> dict:
         return {}
 
 
-def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
+def _work_plan_type_counts(parent_doc_id: str) -> dict:
+    """이 그룹 워크플로 시퀀스의 workflow_type_counts 유도값 (T0005 item 8).
+
+    Tail 문구가 우선 근거로 쓰라고 말하는 값을 실제로 계산한다. 시퀀스를 못 읽으면
+    빈 dict -- 멘트 생성이 이 때문에 멈추면 안 된다.
+    """
+    if not parent_doc_id:
+        return {}
+    try:
+        from modules.flow_gate.db import workflow_sequences as db_wfseq
+        from modules.flow_gate.services import work_plan_service
+
+        seq = db_wfseq.get_sequence_by_doc_id(parent_doc_id)
+        if seq is None:
+            return {}
+        items = db_wfseq.get_sequence_items(seq["id"])
+        return work_plan_service.workflow_type_counts(items)
+    except Exception:  # noqa: BLE001 -- an unreadable sequence must not abort the mention
+        logger.warning("work-plan scope: workflow_type_counts unavailable for parent=%s", parent_doc_id, exc_info=True)
+        return {}
+
+
+def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_doc_id: str = "") -> str:
     """Render the P0004 '## 작업계획 맡길 범위' section from the screen's scope payload."""
     loc = template_provision.normalize_locale(locale)
     copy = _WORK_PLAN_SCOPE_COPY[loc]
     scope = scope if isinstance(scope, dict) else {}
 
     type_codes = [code.upper() for code in _work_plan_scope_lines(scope.get("quantity_type_codes"))]
-    provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
+    provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
+    type_counts = _work_plan_type_counts(parent_doc_id)
+    type_counts_text = " / ".join(f"{code} {type_counts[code]}" for code in sorted(type_counts))
     # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
     # 프로바이더. provider_ids(후보 다중선택)와는 다른 값이라 별도 줄로 적는다.
     default_provider_id = str(scope.get("provider_id") or "").strip()
@@ -901,7 +935,8 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
     body = "\n".join([
         copy["lead"],
         "",
-        f"{copy['quantities']}: {quantity_text}",
+        f"{copy['quantities']}: {quantity_text}",
+        f"{copy['type_counts']}: {type_counts_text or copy['none']}",
         f"{copy['default_provider']}: {default_provider_text}",
         _block(copy["providers"], [f"{pid} · {names.get(pid, pid)}" for pid in provider_ids]),
         f"{copy['note']}: {note_text or copy['none']}",
@@ -1682,7 +1717,7 @@ def build_mention(
         and str(head_type or "").upper() == _WORK_PLAN_SCOPE_HEAD_TYPE
     ):
         try:
-            sections.append(_work_plan_scope_section(work_plan_scope, project, locale))
+            sections.append(_work_plan_scope_section(work_plan_scope, project, locale, parent_doc_id))
         except Exception:  # a scope section must never abort mention generation
             logger.warning("work-plan scope section failed", exc_info=True)
     if scope_section:
@@ -2295,6 +2330,7 @@ def build_work_plan_fill_mention(
             "title": "작업계획 범위 채우기",
             "canonical": "본문은 Markdown이 아니라 아래 정본 JSON 전체입니다.",
             "quantity": "수량을 정해도 되는 타입",
+            "quantity_basis": "범위 안 타입도 수량을 1로 추측해 올리지 마십시오. 이 문서·참조 문서·workflow_type_counts에서 근거를 찾아 정하고, 근거가 없으면 지금 값을 유지하거나 0으로 두십시오.",
             "steps": "프로바이더와 한줄 멘트를 정해도 되는 단계",
             "providers": "고를 수 있는 프로바이더",
             "outside": "범위 밖 값은 지금 값 그대로 두십시오.",
@@ -2305,6 +2341,7 @@ def build_work_plan_fill_mention(
             "title": "Fill a bounded work-plan scope",
             "canonical": "The body is the complete canonical JSON below, not Markdown.",
             "quantity": "Types whose quantities may change",
+            "quantity_basis": "Even for types inside this scope, do not bump the quantity to 1 by guesswork. Decide it from this document, the referenced documents, or a supplied workflow_type_counts value; when there is no basis, keep the current value or leave it at 0.",
             "steps": "Steps whose provider and one-line note may change",
             "providers": "Providers that may be chosen",
             "outside": "Keep every value outside this scope exactly as it is.",
@@ -2315,6 +2352,7 @@ def build_work_plan_fill_mention(
             "title": "作業計画の指定範囲を入力",
             "canonical": "本文はMarkdownではなく、以下の正本JSON全体です。",
             "quantity": "数量を変更できるタイプ",
+            "quantity_basis": "範囲内のタイプでも、数量を根拠なく 1 に引き上げないでください。この文書・参照文書・workflow_type_counts の根拠から数量を決め、根拠がなければ現在の値を維持するか 0 のままにしてください。",
             "steps": "プロバイダーと一行メモを変更できる段階",
             "providers": "選択できるプロバイダー",
             "outside": "範囲外の値は現在のまま変更しないでください。",
@@ -2386,6 +2424,7 @@ def build_work_plan_fill_mention(
         f"{copy['canonical']}\n\n"
         f"```json\n{json.dumps(body, ensure_ascii=False, indent=2)}\n```\n\n"
         f"### {copy['quantity']}\n\n{bullets(quantity_lines)}\n\n"
+        f"{copy['quantity_basis']}\n\n"
         f"### {copy['steps']}\n\n{bullets(step_lines)}\n\n"
         f"### {copy['providers']}\n\n{bullets(provider_lines)}\n\n"
         f"{copy['outside']}\n\n{copy['notes']}\n\n{copy['submit']}\n"

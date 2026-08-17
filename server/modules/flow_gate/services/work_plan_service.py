@@ -593,13 +593,17 @@ def initial_body(
     defaults: Optional[dict] = None,
     type_providers: Optional[dict[str, str]] = None,
 ) -> dict:
-    """Build a creation-time plan while preserving the legacy all-1/unassigned defaults."""
+    """Build a creation-time plan. Types absent from ``quantities`` fall back to count 0
+    (flowgate.default.0423 T0005 item 5) — never guessed as 1. Callers that have a
+    workflow_type_counts-derived value should merge it into ``quantities`` themselves
+    before calling this, so an explicit request value still wins over the derivation.
+    """
     ordered = type_order(counted_types, project_id)
     requested_quantities = quantities or {}
     canonical_quantities = {
         code: {
             "unit": WORK_PLAN_TYPE_UNITS.get(code, "sheet"),
-            "count": requested_quantities.get(code, 1),
+            "count": requested_quantities.get(code, 0),
         }
         for code in ordered
     }
@@ -1454,7 +1458,12 @@ def change_summary(after: dict, before: Optional[dict] = None) -> dict:
 # ── Template served to AI workers (P0009 §6) ─────────────────────────────────
 
 def template_body(project_id: Optional[str] = None) -> str:
-    """A minimal valid body with the project's real provider candidates."""
+    """A minimal valid body with the project's real provider candidates.
+
+    All countable types render at count 0 here — this is a JSON *format* example, not a
+    recommended quantity (flowgate.default.0423 T0005 item 4). The worker still has to
+    derive real counts from evidence per TEMPLATE_RULES; do not copy these zeros either.
+    """
     providers = [
         provider for provider in (_effective_chain(project_id).get("providers") or [])
         if provider.get("id")
@@ -1471,6 +1480,7 @@ TEMPLATE_RULES = {
         "steps 의 key 는 <타입코드>#<회차> 서식이며 문서 안에서 유일해야 합니다.",
         "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
         "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시이며 TSR 외 모든 단계에 200자 이내로 채웁니다. 줄바꿈과 탭은 쓰지 않습니다.",
+        "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
         "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다.",
         "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
         "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다. 요청 멘트의 '실행 프로바이더'는 그 멘트를 실행 중인 공급자일 뿐이므로 여기에 옮겨 적지 않습니다.",
@@ -1484,6 +1494,7 @@ TEMPLATE_RULES = {
         "Each steps[].key is <TYPE>#<ordinal> and must be unique in the document.",
         "steps must equal the list expanded from quantities, in the same order.",
         "steps[].note is a one-line instruction for the AI assigned to that step; fill it for every non-TSR step, within 200 characters and without newlines or tabs.",
+        "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
         "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, copy that value verbatim.",
         "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
         "defaults.provider_id is one of provider_candidates or null. The mention's Execution provider is merely the provider running that mention, so never copy it here.",
@@ -1497,6 +1508,7 @@ TEMPLATE_RULES = {
         "steps の key は <タイプコード>#<回次> の書式で、文書内で一意でなければなりません。",
         "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
         "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の全段階に200文字以内、改行・タブなしで記入します。",
+        "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
         "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、その値をそのまま書き写します。",
         "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",
         "defaults.provider_id は provider_candidates 内の値または null です。要求メモの「実行プロバイダー」はそのメモを実行中の提供者にすぎないため、ここに書き写しません。",
