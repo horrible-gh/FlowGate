@@ -1744,6 +1744,29 @@ def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONR
     return None
 
 
+def _conversation_full_body_edit_fail(doc: Optional[dict]) -> Optional[JSONResponse]:
+    """Return a 409 _fail when doc is an already-migrated conversation (CH), else None.
+
+    0344 TR0008 후속. 대화의 정본은 ``conversation_turns`` 표로 옮겨졌는데(0432.0003-NR §3)
+    본문을 통째로 덮어쓰는 옛 인박스 edit 경로가 남아 있었다. 0344.0008-TR 이 그 마무리를
+    시도했다가 "신고한 파일과 실제 변경 파일 불일치"로 반려된 뒤 후속이 없어 방치돼 있었다
+    (NR §4·§7-1). 판정과 문구는 0344.0005-L §2-16 원문 그대로이고, 봉투는 이 계열의 현행
+    워커 봉투(``_fail``)다 — 0344.0004-P §0-5 가 계열별 현행 형식을 그대로 쓰라고 못박았다.
+
+    이관되지 않은 대화(``pending`` / ``in_progress`` / ``failed``)에는 걸지 않는다: 아직
+    파일이 정본이다. 판정은 읽기만 하므로 ``dry_run`` 으로 물어도 같은 409 가 나온다.
+    """
+    # 3953행의 기존 지연 import 와 같은 방식 — 라우터 임포트 시점의 순환을 피한다.
+    from modules.flow_gate.services import conversation_turn_service
+
+    doc_id = str((doc or {}).get("doc_id") or "")
+    if not conversation_turn_service.is_full_body_edit_blocked(
+        (doc or {}).get("type_code"), doc_id
+    ):
+        return None
+    return _fail(409, conversation_turn_service.full_body_edit_message(doc_id))
+
+
 # ── Bearer token extraction ──────────────────────────────────────────────────────────
 
 def _extract_bearer(request: Request) -> Optional[str]:
@@ -3471,6 +3494,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     disposed = _disposed_group_fail(group["group_id"], "Modification")
     if disposed is not None:
         return disposed
+
+    # 0344 TR0008 후속 — 이관이 끝난 대화(CH)의 전체 본문 교체 차단 (0432.0003-NR §7-1,
+    # 0344.0005-L §2-16). 자리는 L §4-1 의 순서 원칙을 따른다: 그룹 차원의 사실(폐기)
+    # 다음, 본문을 들여다보는 검사(프론트매터 identity / 중복 본문 / 지문)보다 앞. 그래서
+    # 이관된 대화에 남의 프론트매터를 붙여 보낸 요청도 identity 오류가 아니라 이 409 를
+    # 받는다 — 워커에게는 "네 문서가 아니다"보다 "턴으로 보내라"가 실행 가능한 안내다.
+    # _maybe_dry_run 보다도 앞이므로 dry_run: true 로 물어도 같은 409 가 나온다.
+    conversation_blocked = _conversation_full_body_edit_fail(existing_doc)
+    if conversation_blocked is not None:
+        return conversation_blocked
 
     if doc_path is not None:
         scratch_dir = token_rec.get("scratch_dir") or _token_scratch_dir(

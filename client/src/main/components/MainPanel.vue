@@ -910,7 +910,10 @@
             </span>
             <div class="modal-hd-actions">
               <!-- CH has no [edit]: a chat is written through its composer, not by hand-editing
-                   the transcript, and its card offers no [edit] either. -->
+                   the transcript, and its card offers no [edit] either.
+                   0344 TR0008 후속: 위 문장은 쓰여 있었지만 조건에 CH 검사가 없어 실제로는
+                   여기 [편집]이 노출돼 있었다. 이제 canEditTab() 이 한 곳에서 막는다
+                   (0432.0003-NR §7-2). -->
               <button
                 v-if="canEditTab(fullViewTab)"
                 class="btn btn-outline btn-sm"
@@ -2441,8 +2444,20 @@ function canEditDoc(tabId: string): boolean {
   return exposedValue<boolean>(docHeaderRefs[tabId]?.canEditDocument) === true
 }
 
+// 0344 TR0008 후속 — 전체 본문을 손으로 고칠 수 없는 문서 타입 (0432.0003-NR §7-2).
+// 대화(CH)의 정본은 conversation_turns 표이고, 이관이 끝난 대화의 전체 본문 교체는 서버가
+// 409 로 막는다(0344.0005-L §2-16). 화면에도 그 문이 있으면 안 된다. 0344.0008-TR 이 이
+// 마무리를 시도했다가 반려된 뒤 후속이 없어 방치돼 있었다.
+const NON_EDITABLE_TYPE_CODES = ['CH']
+
 function canEditTab(tab: Tab): boolean {
-  return isFileTab(tab) ? canDirectEditSource(tab) : canEditDoc(tab.id)
+  if (isFileTab(tab)) return canDirectEditSource(tab)
+  // 전체보기 머리의 [편집] 조건에는 CH 검사가 없었다 — 바로 위 주석이 "CH has no [edit]"
+  // 이라고 적어 두었는데도 실제로는 노출돼 있었고, 그 문으로 들어가 저장하면 이관된 대화는
+  // 아무것도 바뀌지 않았다. 호출부(카드/텍스트/전체보기)마다 막으면 앞으로 늘어날 호출부가
+  // 같은 구멍을 다시 파므로 여기 한 곳에서 막는다.
+  if (NON_EDITABLE_TYPE_CODES.includes(getTabTypeCode(tab.id) ?? '')) return false
+  return canEditDoc(tab.id)
 }
 
 function getNextStepCode(tabId: string): string {

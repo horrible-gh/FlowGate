@@ -32,7 +32,46 @@ MIGRATION_BATCH_TURNS = 200
 MIGRATION_MAX_TURNS_PER_DOC = 5_000
 CONVERSATION_TYPE_CODES = {"CH"}
 
+# ── 전환기 가드: 낡은 전체 본문 제출 차단 (0344.0005-L §2-16) ────────────────────
+# 0344.0008-TR 이 이 마무리를 시도했다가 반려된 뒤 방치돼 있었다(0432.0003-NR §4·§7-1).
+# 두 진입점 — 워커 인박스 edit 과 세션 PATCH /documents/{doc_id}/content — 이 똑같은
+# 문장을 돌려줘야 하므로 문구는 여기 한 곳에만 둔다. 봉투 모양은 계열마다 다르다
+# (0344.0004-P §0-5: 세션은 HTTPException(detail), 워커는 _fail 의 error_message).
+FULL_BODY_EDIT_MESSAGE_TEMPLATE = (
+    "This conversation no longer accepts a full-body edit. "
+    "Append one turn: POST /api/v1/conversation/{doc_id}/turn"
+)
+
 _log = logging.getLogger(__name__)
+
+
+def full_body_edit_message(doc_id: str) -> str:
+    """L §2-16 안내 문구. ``{doc_id}`` 는 실제 문서 ID 로 채운다 — 워커가 응답에서
+    그대로 복사해 호출할 수 있는 주소여야 한다."""
+    return FULL_BODY_EDIT_MESSAGE_TEMPLATE.format(doc_id=doc_id)
+
+
+def is_full_body_edit_blocked(doc_type_code: Optional[str], doc_id: str) -> bool:
+    """이관이 끝난 대화(CH)인가 — 전체 본문 교체를 거절해야 하는가.
+
+    L §2-16 그대로: 대화 타입이고 ``migration_state == "migrated"`` 일 때만 참이다.
+    이관되지 않은 대화(``pending`` / ``in_progress`` / ``failed``)에는 걸지 않는다 —
+    아직 파일이 정본이기 때문이다.
+
+    판정은 **읽기만** 한다. ``conversation_query_service._ensure_readable_rows()`` 같은
+    지연 이관 함수를 부르면 판정이 부작용을 낳고 dry-run 이 DB 를 바꾼다.
+    조회가 실패하면 열어 둔다(``_disposed_group_fail`` 과 같은 결) — 이 변경의 위험은
+    덜 막는 쪽이 아니라 지금 돌아가는 대화를 끊는 쪽이다.
+    """
+    if (doc_type_code or "").upper() not in CONVERSATION_TYPE_CODES:
+        return False
+    if not doc_id:
+        return False
+    try:
+        return turn_store.migration_state(doc_id) == "migrated"
+    except Exception:  # noqa: BLE001 — fail open, same as the disposed-group guard
+        _log.warning("migration_state lookup failed for %s; full-body edit allowed", doc_id)
+        return False
 
 
 @dataclass

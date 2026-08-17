@@ -44,10 +44,16 @@ const TR_TAB = {
 // The AI-run layer only mounts once a group is resolved, and MainPanel resolves it from
 // DocHeader's exposed groupId. A shallow stub exposes nothing, which would leave the layer
 // hidden for every tab and make the CH assertion below pass vacuously.
+//
+// 0432 T0005 §3-4: canEditDocument had the same vacuum. MainPanel's canEditDoc() reads it
+// off this stub, so a stub that omits it made `undefined !== true` -> no [Edit] on ANY
+// document, and 'offers no edit action in the chat full view' passed without the chat
+// having anything to do with it. Exposing `true` is the server saying "this document is
+// editable"; whether CH is exempt then has to be decided by the code under test.
 const DocHeaderStub = defineComponent({
   name: 'DocHeader',
   setup(_props, { expose }) {
-    expose({ groupId: ref(GROUP_ID) })
+    expose({ groupId: ref(GROUP_ID), canEditDocument: ref(true) })
     return () => h('div', { class: 'doc-header-stub' })
   },
 })
@@ -190,6 +196,13 @@ describe('MainPanel CH full view', () => {
 
   // The chat is not an editable transcript — it is written through its composer — so the
   // dialog's [Edit] stays off for CH, exactly as the card offers no [Edit].
+  //
+  // 0432 T0005 §3-3/§3-4: this assertion was live but vacuous until the DocHeader stub above
+  // started exposing canEditDocument. With it exposed, the button really did appear (the
+  // v-if was `canEditTab(fullViewTab)` with no type check, despite the template comment
+  // claiming "CH has no [edit]") and this case failed — which is the only reason the fix in
+  // canEditTab() counts as a fix. The TR control below is what keeps it from going vacuous
+  // again: if the stub or canEditDoc() ever stops producing a [Edit], that one fails first.
   it('offers no edit action in the chat full view', async () => {
     const wrapper = mountPanel()
     await flushPromises()
@@ -199,6 +212,20 @@ describe('MainPanel CH full view', () => {
 
     const buttons = [...document.body.querySelectorAll('.document-modal .modal-hd-actions button')]
     expect(buttons.some((b) => b.textContent!.includes('Edit'))).toBe(false)
+  })
+
+  // Positive control for the case above: an editable non-conversation document DOES offer
+  // [Edit] in its full view. Only CH loses it.
+  it('still offers the edit action in a non-chat full view', async () => {
+    seedTabs([TR_TAB])
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('.md-preview-card .card-actions .btn-secondary').trigger('click')
+    await flushPromises()
+
+    const buttons = [...document.body.querySelectorAll('.document-modal .modal-hd-actions button')]
+    expect(buttons.some((b) => b.textContent!.includes('Edit'))).toBe(true)
   })
 
   // 0251 B0001: the chat's own AI call is a group-scoped run, so the group's AI-run layer

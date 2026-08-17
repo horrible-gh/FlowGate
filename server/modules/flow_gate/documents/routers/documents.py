@@ -33,7 +33,11 @@ from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service
 from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES, WORK_PLAN_TYPE
 from modules.flow_gate.numbering import numbering_service
-from modules.flow_gate.services import conversation_markdown_service, conversation_query_service
+from modules.flow_gate.services import (
+    conversation_markdown_service,
+    conversation_query_service,
+    conversation_turn_service,
+)
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.storage.paths import get_storage_root
 
@@ -2526,6 +2530,19 @@ def update_document_content(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    # 0344 TR0008 후속 — 이관이 끝난 대화(CH)는 전체 본문 교체를 받지 않는다
+    # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR 이 이 마무리를 시도했다가
+    # 반려된 뒤 후속이 없어 방치돼 있었다. 화면의 [편집] 진입점을 지우는 것만으로는
+    # 옛 즐겨찾기와 직접 호출이 같은 일을 계속할 수 있다. 이관된 대화의 파일은 아무도
+    # 읽지 않는 껍데기라서(위 get_document_content 는 턴에서 만든 projection 을 준다)
+    # 여기를 열어 두면 "저장 성공" 응답을 받고도 대화는 하나도 바뀌지 않는다.
+    # 이관되지 않은 대화(pending/in_progress/failed)는 아직 파일이 정본이라 그대로 저장된다.
+    # 봉투는 세션 계열 HTTPException(detail) 그대로 — 0344.0004-P §0-5.
+    if conversation_turn_service.is_full_body_edit_blocked(doc.get("type_code"), doc_id):
+        raise HTTPException(
+            status_code=409,
+            detail=conversation_turn_service.full_body_edit_message(doc_id),
+        )
     final_approved = document_service.is_final_approved(doc)
     if not document_service.is_document_editable(doc, final_approved=final_approved):
         if final_approved:
