@@ -28,6 +28,7 @@ describe('runtime AI provider store', () => {
     const store = useAiProviderStore()
     await store.loadForProject('flowgate')
     expect(store.selectedProviderId).toBe('aip_two')
+    expect(store.pinned).toBe(false)
     expect(store.providers).toHaveLength(2)
   })
 
@@ -65,5 +66,54 @@ describe('runtime AI provider store', () => {
     const store = useAiProviderStore()
     await store.loadForProject('flowgate')
     expect(store.selectedProviderId).toBe('aip_one')
+    expect(store.pinned).toBe(false)
+  })
+
+  it('persists only an explicit selection as a provider pin', async () => {
+    const data = {
+      ok: true,
+      project: 'flowgate',
+      default_provider_id: 'aip_two',
+      providers: [
+        { id: 'aip_one', name: 'One', exec_type: 'cli', kind: 'codex' },
+        { id: 'aip_two', name: 'Two', exec_type: 'api', kind: 'openai' },
+      ],
+    }
+    getRequest.mockResolvedValueOnce({ data })
+    const store = useAiProviderStore()
+    await store.loadForProject('flowgate')
+    store.selectProvider('aip_one')
+
+    expect(store.pinned).toBe(true)
+    expect(localStorage.getItem('flowgate.user.guest.ai-provider-pin.flowgate')).toBe('1')
+
+    setActivePinia(createPinia())
+    getRequest.mockResolvedValueOnce({ data })
+    const restored = useAiProviderStore()
+    await restored.loadForProject('flowgate')
+    expect(restored.selectedProviderId).toBe('aip_one')
+    expect(restored.pinned).toBe(true)
+  })
+
+  it('clears the pin without discarding the selected provider', async () => {
+    getRequest.mockResolvedValueOnce({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'aip_two',
+        providers: [
+          { id: 'aip_one', name: 'One', exec_type: 'cli', kind: 'codex' },
+          { id: 'aip_two', name: 'Two', exec_type: 'api', kind: 'openai' },
+        ],
+      },
+    })
+    const store = useAiProviderStore()
+    await store.loadForProject('flowgate')
+    store.selectProvider('aip_one')
+    store.clearPin()
+
+    expect(store.selectedProviderId).toBe('aip_one')
+    expect(store.pinned).toBe(false)
+    expect(localStorage.getItem('flowgate.user.guest.ai-provider-pin.flowgate')).toBeNull()
   })
 })

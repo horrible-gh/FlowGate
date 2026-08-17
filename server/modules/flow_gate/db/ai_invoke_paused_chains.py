@@ -114,6 +114,7 @@ def upsert(
     # call that omits them wipes the stored selections and the resume falls back to the
     # project default chain again, which is the exact bug B0001 reported.
     continuation_base_provider_id: Optional[str] = None,
+    continuation_provider_pinned: Optional[bool] = None,
     continuation_provider_overrides=None,
     continuation_default_note: Optional[str] = None,
     continuation_note_overrides=None,
@@ -149,12 +150,13 @@ def upsert(
         " continuation_target_seq, docs_target, docs_reached,"
         " chain_id, chain_docs_target, chain_docs_reached,"
         " stop_kind, stop_code, stop_run_id, stop_last_message_excerpt,"
-        " continuation_base_provider_id, continuation_provider_overrides,"
+        " continuation_base_provider_id, continuation_provider_pinned,"
+        " continuation_provider_overrides,"
         " continuation_default_note, continuation_note_overrides,"
         " continuation_instruction_mode, continuation_auto_approve_item_seqs,"
         " continuation_step_timeout_sec,"
         " created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -170,6 +172,7 @@ def upsert(
         "stop_run_id = excluded.stop_run_id, "
         "stop_last_message_excerpt = excluded.stop_last_message_excerpt, "
         "continuation_base_provider_id = excluded.continuation_base_provider_id, "
+        "continuation_provider_pinned = excluded.continuation_provider_pinned, "
         "continuation_provider_overrides = excluded.continuation_provider_overrides, "
         "continuation_default_note = excluded.continuation_default_note, "
         "continuation_note_overrides = excluded.continuation_note_overrides, "
@@ -182,6 +185,7 @@ def upsert(
          chain_id, chain_docs_target, chain_docs_reached,
          stop_kind, stop_code, stop_run_id, stop_last_message_excerpt,
          _clean_text(continuation_base_provider_id),
+         1 if continuation_provider_pinned else 0,
          dump_json_map(continuation_provider_overrides),
          _clean_text(continuation_default_note),
          dump_json_map(continuation_note_overrides),

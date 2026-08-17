@@ -1044,10 +1044,12 @@
       :doc-ref="continuousDocRef"
       :providers="aiProviderStore.providers"
       :selected-provider="aiProviderStore.selectedProviderId"
+      :provider-pinned="aiProviderStore.pinned"
       :provider-loading="aiProviderStore.loading"
       :provider-errored="!!aiProviderStore.error"
       @confirm="onContinuousDialogConfirm"
       @update:provider="aiProviderStore.selectProvider"
+      @clear-provider-pin="aiProviderStore.clearPin"
     />
     <ContinuousWarningDialog
       v-model:visible="continuousWarnVisible"

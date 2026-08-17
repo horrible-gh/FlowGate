@@ -1,4 +1,4 @@
-"""0379 T0004: continuous per-step startup retry schedule regression."""
+"""0435 T0004: an explicit per-step provider owns startup without a fallback tail."""
 from __future__ import annotations
 
 from test_ai_invoke_0187 import _provider, _wait_finished, fake_env  # noqa: F401
@@ -6,10 +6,10 @@ from test_ai_invoke_0187 import _provider, _wait_finished, fake_env  # noqa: F40
 from modules.flow_gate.services import ai_invoke_service as svc
 
 
-def test_continuous_step_override_start_failures_retry_individual_then_common(
+def test_continuous_step_override_start_failure_does_not_substitute(
     fake_env, monkeypatch,
 ):
-    """Startup attempts are exactly individual, individual, common — then stop."""
+    """The explicit step override is attempted once; common/default providers never run."""
     fallback = _provider(name="Fable", exec_type="api", kind="openai", pid="aip_fable")
     common = _provider(name="Common", exec_type="api", kind="openai", pid="aip_common")
     individual = _provider(
@@ -48,12 +48,8 @@ def test_continuous_step_override_start_failures_retry_individual_then_common(
     assert result["provider"]["id"] == "aip_individual"
     assert run["end_reason"] == "all_providers_failed"
     assert run["provider_id"] is None
-    assert [item["provider_id"] for item in run["fallback_history"]] == [
-        "aip_individual",
-        "aip_individual",
-        "aip_common",
-    ]
-    assert [item["attempt_no"] for item in run["fallback_history"]] == [1, 2, 3]
+    assert [item["provider_id"] for item in run["fallback_history"]] == ["aip_individual"]
+    assert [item["attempt_no"] for item in run["fallback_history"]] == [1]
     assert all(item["reason"] == "spawn_failed" for item in run["fallback_history"])
 
     switches = [
@@ -61,10 +57,4 @@ def test_continuous_step_override_start_failures_retry_individual_then_common(
         for event_type, payload in fake_env["events"]
         if event_type == "ai_invoke_provider_switched"
     ]
-    assert [
-        (event["from_provider_id"], event["to_provider_id"], event["retry_kind"])
-        for event in switches
-    ] == [
-        ("aip_individual", "aip_individual", "spawn_failure"),
-        ("aip_individual", "aip_common", "spawn_failure"),
-    ]
+    assert switches == []

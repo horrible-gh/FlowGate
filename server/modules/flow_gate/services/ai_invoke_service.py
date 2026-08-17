@@ -77,7 +77,7 @@ HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled
 # the route (422); HOP_TIMEOUT_SEC above remains the fallback when no pick was made at all.
 STEP_TIMEOUT_MIN_SEC = 1800
 STEP_TIMEOUT_MAX_SEC = 14400
-NO_OUTPUT_MAX_ATTEMPTS = 3       # per hop: the first attempt + 2 no-output retries
+NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-output retry on the SAME provider
 RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open another attempt
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
 RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
@@ -989,6 +989,7 @@ def start_run(
     api_base_url: str,
     mention_builder: Callable[[str, str], Optional[str]],
     provider_id: Optional[str] = None,
+    provider_pinned: Optional[bool] = None,
     issue_builder: Optional[Callable[[], dict]] = None,
     merge_id: Optional[int] = None,
     completion_oracle: Optional[Callable[[], bool]] = None,
@@ -1048,10 +1049,9 @@ def start_run(
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
-    # 0317 T0010 rev4: a per-step override takes priority over everything else below —
-    # including an explicit UI pin — because it names this EXACT hop, not just "no explicit
-    # choice was made". 0379 T0004 narrows startup fallback for that override to the strict
-    # individual -> individual -> common schedule instead of the remaining provider tail.
+    # A per-step override names this exact hop and remains the highest tier. 0435 T0004
+    # deliberately removes every startup fallback tail from an explicit choice: a provider
+    # that cannot start fails visibly instead of silently switching to a more expensive one.
     step_override_provider = None
     if mode == "continuous" and continuation_provider_overrides:
         step_override_provider = _resolve_continuation_hop_override(
@@ -1065,7 +1065,11 @@ def start_run(
     stored_provider_id = None
     stored_provider_name = None
     stored_provider_item_seq = None
-    if mode == "continuous" and not step_override_provider:
+    if (
+        mode == "continuous"
+        and not step_override_provider
+        and not (provider_pinned and provider_id)
+    ):
         stored_provider_id, stored_provider_name, stored_provider_item_seq = stored_hop_provider(
             doc_ref,
             continuation_instruction_mode=continuation_instruction_mode,
@@ -1077,20 +1081,21 @@ def start_run(
     )
 
     if step_override_provider:
-        # 0379 T0004: session overrides retain their strict individual -> individual ->
-        # common startup schedule. A disabled override is treated as absent above.
-        providers_by_id = {provider.get("id"): provider for provider in chain}
-        startup_chain = []
-        individual = providers_by_id.get(step_override_provider)
-        common = providers_by_id.get(provider_id)
-        if individual:
-            startup_chain.extend([individual, individual])
-        if common:
-            startup_chain.append(common)
-        chain = startup_chain or _prioritize_chain(chain, step_override_provider)
+        selected = next(
+            (provider for provider in chain if provider.get("id") == step_override_provider),
+            None,
+        )
+        chain = [selected] if selected else []
+    elif mode == "continuous" and provider_pinned and provider_id:
+        selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
+        if selected is None:
+            raise _http_error(
+                422, "provider_unavailable",
+                "The selected AI provider is not enabled for this project.",
+            )
+        chain = [selected]
     elif stored_provider_active:
-        # Persisted row assignment outranks the dialog header default in continuous mode,
-        # while keeping the normal provider fallback tail.
+        # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
         chain = _prioritize_chain(chain, stored_provider_id)
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
@@ -1452,11 +1457,14 @@ def start_run(
         "continuation_provider_overrides": (
             continuation_provider_overrides if mode == "continuous" else None
         ),
-        # 0373 T0004: preserve the override resolved for THIS hop. The no-output retry
-        # schedule is individual -> individual -> common, so the raw map alone is not
-        # enough once the workflow head moves or is unavailable during a later lookup.
-        "continuation_step_provider_id": (
-            step_override_provider if mode == "continuous" else None
+        # 0435 T0004: retry code never replays the priority tiers. The finalized chain head is
+        # the single source of truth for this hop, regardless of whether it came from a step
+        # override, a human pin, a stored row, a header default, or a doc-type assignment.
+        "continuation_selected_provider_id": (
+            chain[0].get("id") if mode == "continuous" and chain else None
+        ),
+        "continuation_selected_provider_name": (
+            chain[0].get("name") if mode == "continuous" and chain else None
         ),
         # 0346 T0005: the [전달멘트] tab's note bundle rides the run forward the same way the
         # provider override map does, so a re-spawned hop (_maybe_auto_resume_hop ->
@@ -1480,6 +1488,9 @@ def start_run(
         # "기본: <이름>" tag every ContinuousWorkDialog row promises. Session-scoped like the
         # override map; never persisted on a token.
         "continuation_base_provider_id": (provider_id if mode == "continuous" else None),
+        "continuation_provider_pinned": (
+            bool(provider_pinned and provider_id) if mode == "continuous" else False
+        ),
         # 0252 L0009 §2.8: keep the requester on the record so the global active list
         # (active_all) can filter runs per user, and §2.1: the continuation target for
         # the paused-row snapshot (None = to-end, resolved again at resume time).
@@ -2371,38 +2382,29 @@ def _recheck_no_output(run: dict) -> bool:
 
 
 def _retry_provider_chain(run: dict) -> list[dict]:
-    """Choose the next no-output attempt's provider.
+    """Return the same selected provider for the hop's one no-output retry.
 
-    0373 T0004: an individual hop override is a strict three-attempt schedule:
-    individual, the same individual once more, then the user-selected common provider.
-    After the third attempt `_retry_eligible` closes the run as no_output_exhausted.
-    Runs without an individual override retain the configured-order fallback contract.
+    0435 T0004 replaces both older schedules — individual -> individual -> common and
+    configured-order fallback — with one contract for every origin tier. Attempt 1 may retry
+    exactly once on the finalized chain head; an unavailable provider or any later attempt
+    returns an empty chain, so `_execute_provider_chain` cannot switch providers.
     """
+    if int(run.get("attempts_used") or 0) != 1:
+        return []
+    selected_provider_id = run.get("continuation_selected_provider_id")
+    if not selected_provider_id:
+        return []
     try:
         effective = ai_settings_service.resolve_effective(run["project_id"])
         chain = effective.get("providers") or []
     except Exception:
         logger.warning("ai-invoke retry chain lookup failed for %s", run["run_id"], exc_info=True)
         return []
-
-    step_provider_id = run.get("continuation_step_provider_id")
-    if step_provider_id:
-        attempts_used = int(run.get("attempts_used") or 0)
-        if attempts_used == 1:
-            retry_provider_id = step_provider_id
-        elif attempts_used == 2:
-            retry_provider_id = run.get("continuation_base_provider_id")
-        else:
-            return []
-        selected = next(
-            (provider for provider in chain if provider.get("id") == retry_provider_id),
-            None,
-        )
-        return [selected] if selected else []
-
-    attempted = {entry.get("provider_id") for entry in run.get("fallback_history") or []}
-    attempted.add(run.get("provider_id"))
-    return [provider for provider in chain if provider.get("id") not in attempted]
+    selected = next(
+        (provider for provider in chain if provider.get("id") == selected_provider_id),
+        None,
+    )
+    return [selected] if selected else []
 
 
 def _token_reusable(row: dict) -> bool:
@@ -3473,8 +3475,10 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == "hop_handoff":
         return "This hop produced its document; the next hop starts in a new worker."
     if stop_code == "no_output_exhausted":
-        return (f"{int(run.get('attempts_used') or 0)} attempts on this hop ended without "
-                "producing a document. The chain stopped and can be resumed.")
+        provider_name = run.get("continuation_selected_provider_name") or run.get("continuation_selected_provider_id") or "Selected provider"
+        return (f'"{provider_name}" produced no document in '
+                f"{int(run.get('attempts_used') or 0)} attempts. "
+                "The chain stopped without switching to another provider.")
     if stop_code == "question_pending":
         return ("This hop registered a query and is waiting for a human answer. "
                 "The chain stopped and can be resumed once it is answered.")
@@ -3714,6 +3718,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     # a pause. Omitting the selections here would erase what pause_run
                     # just stored (0365 DB0004 §5-3 invariant I3).
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
+                    continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
                     continuation_default_note=run.get("continuation_default_note"),
                     continuation_note_overrides=run.get("continuation_note_overrides"),
@@ -3759,13 +3764,20 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             stop_code=run.get("stop_code"),
             stop_run_id=run.get("run_id"),
             stop_last_message_excerpt=excerpt(run.get("last_message")),
-            # 0365 DB0004's provider/note selection columns are deliberately NOT written
-            # here. This branch only ever creates a row where none existed (a user row
-            # outranks it and returns above), so nothing can be wiped — and a system stop
-            # resumes through the same doc-type/default resolution it does today. Carrying
-            # the run's provider/note selections onto system rows is a behaviour change,
-            # not a merge.
+            # 0365 DB0004's provider/note preference columns are deliberately NOT written
+            # here unless 0435's explicit provider pin is active. This branch only creates
+            # a row where none existed (a user row outranks it and returns above), so an
+            # unpinned system stop must resume through normal doc-type/default resolution.
             #
+            # The explicit pin is the narrow exception: it is execution policy, and a manual
+            # resume after no-output exhaustion must keep that provider instead of reviving
+            # the stored/default provider.
+            continuation_base_provider_id=(
+                run.get("continuation_base_provider_id")
+                if run.get("continuation_provider_pinned")
+                else None
+            ),
+            continuation_provider_pinned=run.get("continuation_provider_pinned"),
             # 0352 T0004 §3.6 deliberately widens this: unlike the provider/note *preference*
             # columns above, instruction_mode is not a "nice-to-have default" — it is the
             # policy the chain is actually running under. A system stop (e.g.
@@ -4139,6 +4151,7 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # into the row here — otherwise resume_chain has nothing to restore and falls
             # back to the project default chain's first entry (NR0003 §2-2).
             continuation_base_provider_id=run.get("continuation_base_provider_id"),
+            continuation_provider_pinned=run.get("continuation_provider_pinned"),
             continuation_provider_overrides=run.get("continuation_provider_overrides"),
             continuation_default_note=run.get("continuation_default_note"),
             continuation_note_overrides=run.get("continuation_note_overrides"),
@@ -4255,6 +4268,7 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
         "api_base_url": pending.get("api_base_url") or run.get("api_base_url"),
         "provider_overrides": run.get("continuation_provider_overrides"),
         "base_provider_id": run.get("continuation_base_provider_id"),
+        "provider_pinned": run.get("continuation_provider_pinned"),
         "note_overrides": run.get("continuation_note_overrides"),
         "default_note": run.get("continuation_default_note"),
         "step_timeout_sec": run.get("continuation_step_timeout_sec"),
@@ -4307,6 +4321,7 @@ def _write_handoff_row(
             stop_run_id=bundle.get("stop_run_id"),
             stop_last_message_excerpt=excerpt((run or {}).get("last_message")),
             continuation_base_provider_id=bundle.get("base_provider_id"),
+            continuation_provider_pinned=bundle.get("provider_pinned"),
             continuation_provider_overrides=bundle.get("provider_overrides"),
             continuation_default_note=bundle.get("default_note"),
             continuation_note_overrides=bundle.get("note_overrides"),
@@ -4437,6 +4452,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         **pending,
         "provider_overrides": run.get("continuation_provider_overrides"),
         "base_provider_id": run.get("continuation_base_provider_id"),
+        "provider_pinned": run.get("continuation_provider_pinned"),
         # 0346 T0005: carry the [전달멘트] note bundle forward the same way — the first-hop-only
         # gap is the exact regression shape this fix is guarding against (D0004 구현 시 반드시
         # 지켜야 할 제약 4).
@@ -4491,6 +4507,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     api_base_url = pending["api_base_url"]
     overrides = pending.get("provider_overrides")
     base_provider_id = pending.get("base_provider_id")
+    provider_pinned = bool(pending.get("provider_pinned"))
     note_overrides = pending.get("note_overrides")
     default_note = pending.get("default_note")
     step_timeout_sec = pending.get("step_timeout_sec")
@@ -4545,6 +4562,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         mention_builder=lambda _raw, _scratch: None,
         issue_builder=_issue_next,
         provider_id=base_provider_id,
+        provider_pinned=provider_pinned,
         continuation_provider_overrides=overrides,
         continuation_note_overrides=note_overrides,
         continuation_default_note=default_note,
@@ -4667,6 +4685,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     # Restoring the row means restoring it whole: a retry of this resume
                     # must still find the user's selections (0365 DB0004 §5-3 case 5).
                     continuation_base_provider_id=row.get("continuation_base_provider_id"),
+                    continuation_provider_pinned=row.get("continuation_provider_pinned"),
                     continuation_provider_overrides=row.get("continuation_provider_overrides"),
                     continuation_default_note=row.get("continuation_default_note"),
                     continuation_note_overrides=row.get("continuation_note_overrides"),
@@ -4752,8 +4771,11 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
         # nothing here is what made every resume fall through to the default chain's first
         # (most expensive) provider — the same loss the per-hop re-spawn path already fixed
         # for auto-resume in 0317 T0013 (NR0003 §2-5).
-        base_provider_id = _resumable_base_provider(
-            project_id, row.get("continuation_base_provider_id")
+        provider_pinned = bool(row.get("continuation_provider_pinned"))
+        base_provider_id = (
+            row.get("continuation_base_provider_id")
+            if provider_pinned
+            else _resumable_base_provider(project_id, row.get("continuation_base_provider_id"))
         )
         provider_overrides = db_paused.load_json_map(
             row.get("continuation_provider_overrides")
@@ -4778,6 +4800,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,
                 provider_id=base_provider_id,
+                provider_pinned=provider_pinned,
                 continuation_provider_overrides=provider_overrides,
                 continuation_default_note=default_note,
                 continuation_note_overrides=note_overrides,

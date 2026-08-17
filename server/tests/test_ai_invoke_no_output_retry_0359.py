@@ -64,9 +64,12 @@ class FakePausedStore:
                continuation_target_seq, docs_target, docs_reached,
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
-               # 0352 T0004 §3.6: unlike the provider/note preference columns (never sent
-               # on a SYSTEM row — see ai_invoke_service._apply_stop_row's own comment),
-               # the N/T authoring mode + its per-item_seq selection ARE sent on every
+               continuation_base_provider_id=None, continuation_provider_pinned=None,
+               continuation_provider_overrides=None, continuation_default_note=None,
+               continuation_note_overrides=None,
+               # 0352 T0004 §3.6: unlike provider/note preferences (not sent on a SYSTEM
+               # row unless 0435's explicit provider pin is active), the N/T authoring
+               # mode + its per-item_seq selection ARE sent on every
                # upsert call, system rows included — that is the pause->resume mode-loss
                # bug fix this group's TR ships.
                continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
@@ -79,6 +82,11 @@ class FakePausedStore:
             "docs_target": docs_target, "docs_reached": docs_reached,
             "stop_kind": stop_kind, "stop_code": stop_code, "stop_run_id": stop_run_id,
             "stop_last_message_excerpt": stop_last_message_excerpt,
+            "continuation_base_provider_id": continuation_base_provider_id,
+            "continuation_provider_pinned": bool(continuation_provider_pinned),
+            "continuation_provider_overrides": continuation_provider_overrides,
+            "continuation_default_note": continuation_default_note,
+            "continuation_note_overrides": continuation_note_overrides,
             "continuation_instruction_mode": continuation_instruction_mode,
             "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
             "continuation_step_timeout_sec": continuation_step_timeout_sec,
@@ -193,7 +201,8 @@ def env(monkeypatch, tmp_path):
             "signals": signals, "events": events, "tmp": tmp_path}
 
 
-def _start(env, *, target=2, provider_id=None, provider_overrides=None, review_mode=False):
+def _start(env, *, target=2, provider_id=None, provider_pinned=None,
+           provider_overrides=None, review_mode=False):
     return svc.start_run(
         project_id="flowgate",
         module="default",
@@ -209,6 +218,7 @@ def _start(env, *, target=2, provider_id=None, provider_overrides=None, review_m
         api_base_url="http://127.0.0.1:1/flowgate/api/v1",
         mention_builder=lambda raw, scratch: "## prompt\n",
         provider_id=provider_id,
+        provider_pinned=provider_pinned,
         continuation_provider_overrides=provider_overrides,
     )
 
@@ -250,7 +260,7 @@ def _scripted_worker(env, monkeypatch, script):
 # ── The fix: a wasted lap becomes another attempt (L0007 §2.1 / P0006 [핵심]) ──
 
 class TestNoOutputRetry:
-    def test_second_provider_gets_the_hop_and_saves_the_chain(self, env, monkeypatch):
+    def test_same_provider_retry_gets_the_hop_and_saves_the_chain(self, env, monkeypatch):
         launches = _scripted_worker(env, monkeypatch, [
             ("작업을 진행할 수 없는 실행환경 장애가 발생했습니다.", False),   # the incident
             ("NR0003 등록 완료.", True),                                      # the rescue
@@ -258,7 +268,7 @@ class TestNoOutputRetry:
         res = _start(env)
         run = _wait_finished(res["run_id"])
 
-        assert launches == ["aip_1", "aip_2"]      # 1 provider used to be the whole story
+        assert launches == ["aip_1", "aip_1"]      # the selected provider owns both attempts
         assert run["attempts_used"] == 2
         assert (run["outcome"], run["docs_reached"]) == ("complete", 1)
         # Same run, same identity — P0006 [핵심] 1: a retry must not look like a second run.
@@ -280,11 +290,10 @@ class TestNoOutputRetry:
         # A rescued hop is not a failure: nobody is woken up for it.
         assert env["signals"] == []
 
-    def test_individual_override_retries_same_then_uses_common_provider(self, env, monkeypatch):
+    def test_individual_override_retries_same_once_then_stops(self, env, monkeypatch):
         launches = _scripted_worker(env, monkeypatch, [
             ("개별 프로바이더 첫 시도 결과 없음", False),
             ("개별 프로바이더 두 번째 시도 결과 없음", False),
-            ("공통 프로바이더 세 번째 시도 결과 없음", False),
         ])
         res = _start(
             env,
@@ -293,8 +302,8 @@ class TestNoOutputRetry:
         )
         run = _wait_finished(res["run_id"])
 
-        assert launches == ["aip_2", "aip_2", "aip_3"]
-        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 3
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 2
         assert run["stop_code"] == "no_output_exhausted"
 
 
@@ -302,21 +311,21 @@ class TestNoOutputRetry:
         launches = _scripted_worker(env, monkeypatch, [
             ("- `CreateProcessAsUserW failed: 5 (Access denied)`\n- 재시도 4회 실패", False),
         ])
-        res = _start(env)
+        res = _start(env, provider_id="aip_1", provider_pinned=False)
         run = _wait_finished(res["run_id"])
 
-        assert launches == ["aip_1", "aip_2", "aip_3"]
-        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 3
+        assert launches == ["aip_1", "aip_1"]
+        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 2
         assert run["stop_code"] == "no_output_exhausted"
         assert run["resumable"] is True
-        assert "3 attempts" in run["stop_reason"]
+        assert '"OpenAI Codex CLI" produced no document in 2 attempts' in run["stop_reason"]
 
         # 1. it survives a server restart (NR0003 §4: nothing was persisted at all before)
         assert len(env["records"]) == 1
         record = env["records"][0]
         assert record["run_id"] == res["run_id"]
         assert (record["stop_code"], record["resumable"]) == ("no_output_exhausted", True)
-        assert record["attempts_used"] == 3
+        assert record["attempts_used"] == 2
         assert record["hop_item_seq"] == 2
         assert record["token_id"] == "tok_20260731_000001"
         assert "CreateProcessAsUserW" in record["last_message_excerpt"]
@@ -329,7 +338,7 @@ class TestNoOutputRetry:
         signal = env["signals"][0]
         assert signal["run_id"] == res["run_id"]
         assert signal["extra"]["stop_code"] == "no_output_exhausted"
-        assert signal["extra"]["attempts_used"] == 3
+        assert signal["extra"]["attempts_used"] == 2
         assert signal["extra"]["item_seq"] == 2
         assert "CreateProcessAsUserW" in signal["error"]
         # It lands on the last place the chain actually got to, never on nothing.
@@ -341,18 +350,19 @@ class TestNoOutputRetry:
         assert (row["stop_kind"], row["stop_code"]) == ("system", "no_output_exhausted")
         assert row["stop_run_id"] == res["run_id"]
         assert "CreateProcessAsUserW" in row["stop_last_message_excerpt"]
+        assert row["continuation_base_provider_id"] is None
+        assert row["continuation_provider_pinned"] is False
 
-    def test_single_provider_project_stops_after_one_attempt(self, env, monkeypatch):
+    def test_single_provider_project_retries_once_then_stops(self, env, monkeypatch):
         env["chain"]["providers"] = [P1]
         launches = _scripted_worker(env, monkeypatch, [("아무것도 못 했습니다.", False)])
         res = _start(env)
         run = _wait_finished(res["run_id"])
 
-        # Nothing left to switch to is a normal path, not an error — but it still stops
-        # loudly instead of silently (the difference this whole group is about).
-        assert launches == ["aip_1"]
-        assert run["attempts_used"] == 1
-        assert run["retry_block_reason"] == "providers_exhausted_for_retry"
+        # Even a one-provider project gets exactly the one same-provider retry promised by
+        # 0435 T0004, then stops loudly without inventing a fallback.
+        assert launches == ["aip_1", "aip_1"]
+        assert run["attempts_used"] == 2
         assert run["stop_code"] == "no_output_exhausted"
         assert len(env["signals"]) == 1
 
@@ -411,7 +421,7 @@ class TestRetryEligibility:
         ({"action_scope": "resolve_conflict"}, "not a document-producing hop"),
         ({"docs_target": 0}, "nothing was targeted"),
         ({"docs_reached": 1}, "partial output is still output"),
-        ({"attempts_used": 3}, "the cap"),
+        ({"attempts_used": 2}, "the cap"),
         ({"timeout_sec": 60}, "less budget left than a hop can use"),
     ])
     def test_blocked(self, over, why):
@@ -431,14 +441,19 @@ class TestRetryEligibility:
 
 
 class TestRetryProviderChain:
-    def test_excludes_every_provider_this_hop_already_touched(self, env):
-        run = {"project_id": "flowgate", "provider_id": "aip_2", "run_id": "aiv_x",
-               "fallback_history": [{"provider_id": "aip_1", "reason": "spawn_failed"}]}
-        assert [p["id"] for p in svc._retry_provider_chain(run)] == ["aip_3"]
+    def test_returns_only_the_selected_provider_on_attempt_one(self, env):
+        run = {"project_id": "flowgate", "run_id": "aiv_x", "attempts_used": 1,
+               "continuation_selected_provider_id": "aip_2"}
+        assert [p["id"] for p in svc._retry_provider_chain(run)] == ["aip_2"]
 
-    def test_empty_when_all_are_spent(self, env):
-        run = {"project_id": "flowgate", "provider_id": "aip_3", "run_id": "aiv_x",
-               "fallback_history": [{"provider_id": "aip_1"}, {"provider_id": "aip_2"}]}
+    def test_empty_after_the_single_retry(self, env):
+        run = {"project_id": "flowgate", "run_id": "aiv_x", "attempts_used": 2,
+               "continuation_selected_provider_id": "aip_2"}
+        assert svc._retry_provider_chain(run) == []
+
+    def test_does_not_substitute_when_selected_provider_is_inactive(self, env):
+        run = {"project_id": "flowgate", "run_id": "aiv_x", "attempts_used": 1,
+               "continuation_selected_provider_id": "aip_removed"}
         assert svc._retry_provider_chain(run) == []
 
 
@@ -519,9 +534,74 @@ class TestStopCode:
         assert svc.mark_chain_stop(GROUP, "head_slot_mismatch") is False
 
 
-# ── §2.1.1: a continuous pin re-orders, it does not collapse ─────────────────
+# ── flowgate.default.0435: a human pin wins; no-output never changes provider ─
 
-class TestContinuousPinKeepsTheFallbackTail:
+class TestSelectedProviderContract0435:
+    def test_pinned_provider_outranks_a_different_stored_provider(self, env, monkeypatch):
+        captured: dict = {}
+        done = threading.Event()
+        monkeypatch.setattr(
+            svc,
+            "stored_hop_provider",
+            lambda *a, **kw: ("aip_2", "Anthropic Claude Opus 5", 2),
+        )
+
+        def _fake_worker(run, chain, prompt):
+            captured["chain"] = chain
+            run["status"] = "finished"
+            done.set()
+
+        monkeypatch.setattr(svc, "_worker", _fake_worker)
+        _start(env, provider_id="aip_3", provider_pinned=True)
+        assert done.wait(10)
+        assert [provider["id"] for provider in captured["chain"]] == ["aip_3"]
+
+    def test_inactive_explicit_pin_fails_without_substitution(self, env):
+        with pytest.raises(Exception) as exc_info:
+            _start(env, provider_id="aip_removed", provider_pinned=True)
+
+        error = exc_info.value
+        assert getattr(error, "status_code", None) == 422
+        assert getattr(error, "detail", {}).get("code") == "provider_unavailable"
+
+    def test_stored_provider_no_output_retries_the_same_provider_once(self, env, monkeypatch):
+        monkeypatch.setattr(
+            svc,
+            "stored_hop_provider",
+            lambda *a, **kw: ("aip_2", "Anthropic Claude Opus 5", 2),
+        )
+        launches = _scripted_worker(env, monkeypatch, [
+            ("stored provider produced no document", False),
+            ("stored provider retry also produced no document", False),
+        ])
+        res = _start(env)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == 2
+        assert run["stop_code"] == "no_output_exhausted"
+
+    def test_second_no_output_stops_without_auto_resuming(self, env, monkeypatch):
+        spawned: list[tuple] = []
+        monkeypatch.setattr(svc, "_spawn_auto_resume", lambda *a, **kw: spawned.append((a, kw)))
+        launches = _scripted_worker(env, monkeypatch, [
+            ("selected provider produced no document", False),
+            ("selected provider retry also produced no document", False),
+        ])
+        res = _start(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1", "aip_1"]
+        assert run["stop_code"] == "no_output_exhausted"
+        assert spawned == []
+        row = env["paused"].rows[GROUP]
+        assert row["continuation_base_provider_id"] == "aip_1"
+        assert row["continuation_provider_pinned"] is True
+
+
+# ── §2.1.1: an unpinned continuous header default keeps the fallback tail ────
+
+class TestUnpinnedHeaderKeepsTheStartupTail:
     def _capture_chain(self, env, monkeypatch, **kw):
         captured: dict = {}
         done = threading.Event()
@@ -536,9 +616,9 @@ class TestContinuousPinKeepsTheFallbackTail:
         assert done.wait(10)
         return captured["chain"]
 
-    def test_continuous_pin_leads_the_chain_and_keeps_the_rest(self, env, monkeypatch):
+    def test_unpinned_header_default_leads_the_chain_and_keeps_the_rest(self, env, monkeypatch):
         chain = self._capture_chain(env, monkeypatch, provider_id="aip_2")
-        # Collapsing to [aip_2] is what left the dying hop with nothing to retry into.
+        # An unpinned header value keeps legacy startup ordering; retries still stay on aip_2.
         assert [p["id"] for p in chain] == ["aip_2", "aip_1", "aip_3"]
 
     def test_single_pin_still_collapses(self, env, monkeypatch):
