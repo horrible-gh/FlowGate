@@ -704,6 +704,35 @@ def test_path_subdir_scopes_glob_results(env):
     assert payload["paths"] == ["docs/readme.md"]
 
 
+# NR0003 §1-§2: pathlib's glob()/rglob() silently return nothing when `base` is a
+# file or a nonexistent path, so a wrong `path` used to be indistinguishable from a
+# genuine zero-match search (both `ok:true, total:0`). _exec_grep/_exec_glob now
+# reject both the same way _exec_read already rejects its mirror case.
+
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_is_a_file_404(env, operation, extra):
+    env.make_grant(["grep"])
+    status, payload = _call(operation, {**extra, "path": "app/main.py"})
+    assert status == 404
+    assert payload["error"]["code"] == "not_found"
+    assert env.oplogs()[0]["result"] == "not_found"
+
+
+@pytest.mark.parametrize("operation, extra", [
+    ("grep", {"pattern": "TODO"}),
+    ("glob", {"pattern": "**/*.py"}),
+])
+def test_path_does_not_exist_404(env, operation, extra):
+    env.make_grant(["grep"])
+    status, payload = _call(operation, {**extra, "path": "app/does_not_exist"})
+    assert status == 404
+    assert payload["error"]["code"] == "not_found"
+    assert env.oplogs()[0]["result"] == "not_found"
+
+
 @pytest.mark.parametrize("bad_path", ["/etc", "C:\\Windows", "..", 0])
 @pytest.mark.parametrize("operation, extra", [
     ("grep", {"pattern": "TODO"}),

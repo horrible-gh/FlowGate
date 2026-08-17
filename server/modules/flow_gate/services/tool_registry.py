@@ -141,14 +141,14 @@ ERRORS = {
         "en": [(404, "not_found", "The path does not exist or is not a regular file."), (413, "too_large", "max_bytes was omitted and the file exceeds the server limit."), (422, "invalid_request", "The path escapes the source root or has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
     },
     "grep": {
-        "ko": [(422, "invalid_request", "정규식이 잘못됐거나 path 가 소스 루트를 벗어난다."), (403, "forbidden", "이 토큰에 grep 스코프가 없다.")],
-        "ja": [(422, "invalid_request", "正規表現が不正か、pathがソースルート外である。"), (403, "forbidden", "このトークンにgrepスコープがない。")],
-        "en": [(422, "invalid_request", "The regular expression is invalid or path escapes the source root."), (403, "forbidden", "This token does not have the grep scope.")],
+        "ko": [(404, "not_found", "path 가 없거나 디렉터리가 아니다."), (422, "invalid_request", "정규식이 잘못됐거나 path 가 소스 루트를 벗어난다."), (403, "forbidden", "이 토큰에 grep 스코프가 없다.")],
+        "ja": [(404, "not_found", "pathが存在しないか、ディレクトリではない。"), (422, "invalid_request", "正規表現が不正か、pathがソースルート外である。"), (403, "forbidden", "このトークンにgrepスコープがない。")],
+        "en": [(404, "not_found", "The path does not exist or is not a directory."), (422, "invalid_request", "The regular expression is invalid or path escapes the source root."), (403, "forbidden", "This token does not have the grep scope.")],
     },
     "glob": {
-        "ko": [(422, "invalid_request", "path 가 소스 루트를 벗어난다."), (403, "forbidden", "이 토큰에 grep 스코프가 없다(glob 은 grep 스코프를 공유한다).")],
-        "ja": [(422, "invalid_request", "pathがソースルート外である。"), (403, "forbidden", "このトークンにgrepスコープがない(globはgrepスコープを共有する)。")],
-        "en": [(422, "invalid_request", "path escapes the source root."), (403, "forbidden", "This token does not have the grep scope (glob shares the grep scope).")],
+        "ko": [(404, "not_found", "path 가 없거나 디렉터리가 아니다."), (422, "invalid_request", "path 가 소스 루트를 벗어난다."), (403, "forbidden", "이 토큰에 grep 스코프가 없다(glob 은 grep 스코프를 공유한다).")],
+        "ja": [(404, "not_found", "pathが存在しないか、ディレクトリではない。"), (422, "invalid_request", "pathがソースルート外である。"), (403, "forbidden", "このトークンにgrepスコープがない(globはgrepスコープを共有する)。")],
+        "en": [(404, "not_found", "The path does not exist or is not a directory."), (422, "invalid_request", "path escapes the source root."), (403, "forbidden", "This token does not have the grep scope (glob shares the grep scope).")],
     },
     "stat": {
         "ko": [(422, "invalid_request", "경로가 소스 루트를 벗어나거나 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
