@@ -154,13 +154,16 @@ class TestConversationMentionLookupBlock:
     at a local directory and reported the guess as fact. The scopes were always
     there; the text was not.
 
-    0392 B0001/NR0003: the chat token itself never carries source scope — its
-    action_scope is "chat", which tool_registry.kind_for_step always demotes to
-    "none" (same judge /help/tools uses). The "Remote project source CRUD" block
-    is therefore always absent for a chat mention, remote mode or not; only the
-    document search/lookup rules below survive. Earlier revisions of this class
-    wrongly asserted the block WAS offered with read/grep tools, which is exactly
-    the mismatch B0001 hit as live 403s.
+    0392 B0001/NR0003 settled on chat=none: the chat token's action_scope is "chat",
+    and back then tool_registry.kind_for_step demoted every "chat" to "none" (same
+    judge /help/tools uses), so the "Remote project source CRUD" block was always
+    absent for a chat mention, remote mode or not.
+
+    0431 T0004/NR0003 reverses that policy: kind_for_step now returns "read" for
+    "chat" at the same early branch as "review"/"workflow_decide", so a chat token
+    really does resolve to ["read", "grep"] and the CRUD block advertises exactly
+    the four read-only tools (read/grep/glob/stat) in remote mode. Local mode still
+    drops the block entirely — that gate is untouched.
     """
 
     @staticmethod
@@ -182,14 +185,19 @@ class TestConversationMentionLookupBlock:
             api_base_url="http://h:1/api/v1",
         )
 
-    def test_source_crud_block_is_never_offered_to_chat(self, monkeypatch):
-        # 0392 B0001/NR0003: kind_for_step("chat", "CH") is always ("none", ...), so the
-        # CRUD block that other document types get in remote mode never appears here --
-        # this must match what /help/tools actually grants a chat token (also none).
+    def test_source_crud_block_offers_read_tools_to_chat_in_remote_mode(self, monkeypatch):
+        # 0431 T0004/NR0003: kind_for_step("chat", "CH") now returns ("read", None), so
+        # the CRUD block that other document types get in remote mode appears here too --
+        # this must match what /help/tools actually grants a chat token now
+        # (read/grep/glob/stat), never write/patch/remove.
         text = self._mention(monkeypatch, remote_mode=True)
-        assert "Remote project source CRUD" not in text
-        assert "help/tools" not in text
-        assert "Tools: read" not in text
+        assert "Remote project source CRUD" in text
+        block = text[text.index("Remote project source CRUD"):]
+        assert "help/tools" in block
+        assert "Tools: read, grep, glob, stat" in block
+        assert "write" not in block
+        assert "patch" not in block
+        assert "remove" not in block
 
     def test_document_search_is_pinned_to_the_token_project(self, monkeypatch):
         text = self._mention(monkeypatch)
@@ -219,9 +227,11 @@ class TestConversationMentionLookupBlock:
     @pytest.mark.parametrize("remote_mode", [True, False])
     def test_submission_json_remains_the_tail_of_the_mention(self, monkeypatch, remote_mode):
         # The new turn submission contract comes first; lookup guidance closes the mention
-        # with the warning that submission consumes the token. 0392 B0001/NR0003: chat never
-        # gets the CRUD block (source_crud_block_is_never_offered_to_chat), so search/documents
-        # is the anchor in both modes now, not help/tools.
+        # with the warning that submission consumes the token. 0431 T0004/NR0003: chat now
+        # gets the CRUD block in remote mode
+        # (source_crud_block_offers_read_tools_to_chat_in_remote_mode), so help/tools appears
+        # there too -- but search/documents stays the anchor because it is the one lookup
+        # line present in BOTH modes; local mode still drops the CRUD block entirely.
         text = self._mention(monkeypatch, remote_mode=remote_mode)
         assert text.index("Submit: POST") < text.index("search/documents")
         assert '"idempotency_key": "tok_20260729_000071"' in _submission_block(text)

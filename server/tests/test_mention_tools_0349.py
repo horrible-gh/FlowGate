@@ -219,10 +219,11 @@ def test_section_precedes_the_scope_guard_it_used_to_follow():
     ("workflow_decide", None, ["read", "grep"]),
     ("workflow_sequence_edit", None, []),
     ("test_run", None, []),
-    # 0392 B0001/NR0003: chat mention tokens carry action_scope "chat", which was never
-    # in this parametrize list -- the gap that let the CH mention default to "new" and
-    # advertise tools the token could not use go unnoticed.
-    ("chat", "CH", []),
+    # 0392 B0001/NR0003 added "chat" to this parametrize list so the CH mention could
+    # not default to "new" and advertise tools the token could not use. 0431 T0004
+    # flips the settled chat=none policy to chat=read: the chat worker token now gets
+    # real read/grep/glob/stat access, matching kind_for_step's read-only early return.
+    ("chat", "CH", ["read", "grep"]),
 ])
 def test_advertised_tools_equal_granted_scopes(monkeypatch, action_scope, step_type, expected_scopes):
     """The point of the change: no step may be told about a tool the server refuses."""

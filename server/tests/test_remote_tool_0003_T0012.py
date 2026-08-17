@@ -844,3 +844,99 @@ def test_test_run_token_still_gets_no_remote_grant(monkeypatch):
         "action_scope": "test_run",
         "doc_ref": "flowgate.default.0349.0001-R",
     }) == []
+
+
+# ── 0431 T0004/NR0003: chat=read policy end-to-end ──────────────────────────
+
+def test_existing_chat_worker_grant_with_empty_scopes_is_reconciled_to_read_grep(env):
+    """A chat worker grant persisted under the old chat=none policy has no scope
+    rows at all. The backing token is still valid, so the next authenticated call
+    must reconcile the stored scope set to exactly {read, grep} -- no separate
+    migration or grant-issuing code path is involved (NR0003 §2)."""
+    from modules.flow_gate.db import remote_tool_grants as db_grants
+    from modules.flow_gate.services import token_service
+
+    worker_token = "raw-chat-worker-token-stale-scopes-0431"
+    env.make_worker_token(worker_token, token_id="tok_chat_stale", action_scope="chat")
+
+    _pid, pepper = token_service._active_pepper()
+    token_hash = token_service._hash_token(worker_token, pepper)
+    db_grants.create(
+        {
+            "grant_id": "worker_tok_chat_stale",
+            "token_hash": token_hash,
+            "project": PROJECT_ID,
+            "module": "default",
+            "status": "active",
+        },
+        [],  # scope-less grant, as chat=none would have left it (or never created it)
+    )
+
+    status, payload = _call("read", {"path": "app/main.py"}, token=worker_token)
+
+    assert status == 200
+    assert payload["ok"] is True
+    scopes = {
+        row["scope"]
+        for row in env.store._fetch_all(
+            "SELECT scope FROM remote_tool_grant_scope WHERE grant_id = ?",
+            ["worker_tok_chat_stale"],
+        )
+    }
+    assert scopes == {"read", "grep"}
+
+
+def test_chat_worker_token_lazily_gets_read_grep_grant_on_first_call(env):
+    """A valid chat token with no grant row at all (never called a remote tool
+    before) must get a lazily-created grant scoped to exactly read/grep on its
+    first authenticated call, the same lazy path new/edit tokens already use."""
+    worker_token = "raw-chat-worker-token-lazy-0431"
+    env.make_worker_token(worker_token, token_id="tok_chat_lazy", action_scope="chat")
+
+    status, payload = _call("stat", {"path": "app/main.py"}, token=worker_token)
+
+    assert status == 200
+    assert payload["ok"] is True
+    grant = env.store._fetch_one(
+        "SELECT * FROM remote_tool_grant WHERE grant_id = ?",
+        ["worker_tok_chat_lazy"],
+    )
+    assert grant is not None
+    scopes = {
+        row["scope"]
+        for row in env.store._fetch_all(
+            "SELECT scope FROM remote_tool_grant_scope WHERE grant_id = ?",
+            ["worker_tok_chat_lazy"],
+        )
+    }
+    assert scopes == {"read", "grep"}
+
+
+@pytest.mark.parametrize("op,body,expected_status", [
+    ("read", {"path": "app/main.py"}, 200),
+    ("grep", {"pattern": "TODO"}, 200),
+    ("glob", {"pattern": "**/*.py"}, 200),
+    ("stat", {"path": "app/main.py"}, 200),
+    ("write", {"path": "docs/chat-should-not-write.md", "content": "no", "mode": "create"}, 403),
+    ("patch", {"path": "app/main.py", "old_string": "hi", "new_string": "bye"}, 403),
+    ("remove", {"path": "docs/readme.md"}, 403),
+])
+def test_chat_worker_token_gets_exactly_read_grep_glob_stat(env, op, body, expected_status):
+    """R0001's ask, pinned end to end: a chat token can call read/grep/glob/stat and
+    is refused write/patch/remove -- never the read_write kind, never a TR/TSR/TS
+    write grant inherited through any other path."""
+    worker_token = f"raw-chat-worker-token-boundary-{op}-0431"
+    env.make_worker_token(worker_token, token_id=f"tok_chat_boundary_{op}", action_scope="chat")
+
+    before = (env.src / "app" / "main.py").read_text(encoding="utf-8")
+
+    status, payload = _call(op, body, token=worker_token)
+
+    assert status == expected_status
+    if expected_status == 403:
+        assert payload["error"]["code"] == "forbidden"
+        assert not (env.src / "docs" / "chat-should-not-write.md").exists()
+        assert (env.src / "docs" / "readme.md").exists()
+        assert (env.src / "app" / "main.py").read_text(encoding="utf-8") == before
+    else:
+        assert payload["ok"] is True

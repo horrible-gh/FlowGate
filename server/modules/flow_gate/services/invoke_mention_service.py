@@ -91,11 +91,15 @@ def _chat_lookup_sections(
         # stays English-only by design — see its docstring); pin "en" explicitly rather
         # than falling through to the shared function's ko default.
         #
-        # action_scope must be "chat" (0392 B0001/NR0003): the default "new" made this
-        # judge "read" while the real chat token's action_scope is "chat", which
-        # kind_for_step always demotes to "none" — the mention advertised tools the
-        # server would 403/401 on. Passing the real scope makes this section empty,
-        # matching what /help/tools actually grants a chat token.
+        # action_scope must be "chat", not the default "new" (0392 B0001/NR0003): passing
+        # the real scope is what keeps this judge matching whatever remote_tool_service
+        # actually grants a chat token, instead of guessing from the step type alone.
+        # Under 0392's chat=none policy the two diverged — default "new" judged "read"
+        # while a real chat token got "none" — so this call used to render the section
+        # empty. 0431 T0004/NR0003 flips that policy: kind_for_step now returns "read"
+        # for "chat" at the same early branch as "review"/"workflow_decide", so the
+        # section renders the four read-only tools, still matching what the token can
+        # actually call.
         section = mention_service._remote_source_crud_section(
             base, raw_token, "CH", "en", action_scope="chat"
         )

@@ -46,13 +46,17 @@ def test_kind_read_only_for_t_after_write_recall(monkeypatch, action_scope):
     assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
 
 
-@pytest.mark.parametrize("action_scope", ["review", "workflow_decide"])
-def test_kind_read_for_review_and_workflow_decide_without_step_lookup(monkeypatch, action_scope):
+@pytest.mark.parametrize("action_scope", ["review", "workflow_decide", "chat"])
+def test_kind_read_for_review_workflow_decide_and_chat_without_step_lookup(monkeypatch, action_scope):
+    """0431 T0004: chat joins review/workflow_decide at the same immediate
+    read-only return -- none of the three look up a step type or reach the
+    TR/TSR/TS write-kind branch."""
     def unexpected(_rec):
         raise AssertionError("read-only scopes must not look up a workflow step")
     monkeypatch.setattr(remote_tool_service, "_worker_token_step_type_result", unexpected)
     result = tool_registry.resolve_registry({"action_scope": action_scope}, "flowgate", "ja")
     assert result["kind"] == "read"
+    assert result["reason"] is None
     assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
 
 
