@@ -1142,6 +1142,12 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     base = resolve_in_root(root, body.get("path") or "")
     if base is None:
         raise _OpError(422)
+    if not base.is_dir():
+        # NR0003 §2: pathlib's glob()/rglob() silently yield nothing for a file
+        # or a nonexistent path, so a wrong `path` used to look identical to a
+        # genuine zero-match search (both `ok:true, total:0`). Mirror _exec_read's
+        # precedent (a bad target collapses to 404, whether missing or wrong type).
+        raise _OpError(404)
     flags = re.IGNORECASE if body.get("ignore_case") else 0
     pattern = re.compile(body["pattern"], flags)
     max_results = body.get("max_results")
@@ -1189,6 +1195,9 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     base = resolve_in_root(root, body.get("path") or "")
     if base is None:
         raise _OpError(422)
+    if not base.is_dir():
+        # NR0003 §2/§3 — same silent-zero defect as _exec_grep, same fix.
+        raise _OpError(404)
     root_real = os.path.realpath(str(root))
     base_real = os.path.realpath(str(base))
     paths: list[str] = []
