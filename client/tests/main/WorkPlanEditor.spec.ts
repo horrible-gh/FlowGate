@@ -29,19 +29,43 @@ const TYPES = [
   { code: 'TR', label: '작업레포트', category: 'work', countable: false },
   { code: 'TSR', label: '테스트레포트', category: 'work', countable: false },
 ]
+// 0429 T0004: the work-plan-only sort/dedup registry (additive `work_plan_countable_types`
+// field), in server canonical order — kept separate from `TYPES` above, which stays in the
+// raw `series, sort_order, type_code` shape the document-types API actually returns.
+const TYPES_WP = [
+  { code: 'D', label: '기본설계', category: 'design', unit: 'sheet' },
+  { code: 'T', label: '작업지시', category: 'instruction', unit: 'set', pair_code: 'TR' },
+]
 
+// 0429 T0004 (NR0003): the real document_types table sorts by `series, sort_order,
+// type_code`, and 'design' < 'instruction' alphabetically — so D/P/L/DB precede DS here,
+// exactly like the live bug report. Do NOT reorder this to put DS first; that is the
+// mistake the fixture used to make and is the whole reason the bug went untested.
 const EIGHT_COUNTABLE_TYPES = [
-  { code: 'DS', label: '설계지시', category: 'design', countable: true, unit: 'sheet', sort_order: 0 },
   { code: 'D', label: '기본설계', category: 'design', countable: true, unit: 'sheet', sort_order: 1 },
   { code: 'P', label: '프로토콜', category: 'design', countable: true, unit: 'sheet', sort_order: 2 },
   { code: 'L', label: '로직', category: 'design', countable: true, unit: 'sheet', sort_order: 3 },
   { code: 'DB', label: '데이터베이스', category: 'design', countable: true, unit: 'sheet', sort_order: 4 },
+  { code: 'DS', label: '설계지시', category: 'instruction', countable: true, unit: 'sheet', sort_order: 0 },
   { code: 'N', label: '조사지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'NR', sort_order: 5 },
   { code: 'NR', label: '조사레포트', category: 'work', countable: false, sort_order: 6 },
   { code: 'T', label: '작업지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TR', sort_order: 7 },
   { code: 'TR', label: '작업레포트', category: 'work', countable: false, sort_order: 8 },
   { code: 'TS', label: '테스트지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TSR', sort_order: 9 },
   { code: 'TSR', label: '테스트레포트', category: 'work', countable: false, sort_order: 10 },
+]
+
+// The work-plan registry's own canonical order (DS leads the design series) — this is
+// the array `work_plan_countable_types` carries, distinct from EIGHT_COUNTABLE_TYPES above.
+const EIGHT_COUNTABLE_TYPES_WP = [
+  { code: 'DS', label: '설계지시', category: 'instruction', unit: 'sheet' },
+  { code: 'D', label: '기본설계', category: 'design', unit: 'sheet' },
+  { code: 'P', label: '프로토콜', category: 'design', unit: 'sheet' },
+  { code: 'L', label: '로직', category: 'design', unit: 'sheet' },
+  { code: 'DB', label: '데이터베이스', category: 'design', unit: 'sheet' },
+  { code: 'N', label: '조사지시', category: 'instruction', unit: 'set', pair_code: 'NR' },
+  { code: 'T', label: '작업지시', category: 'instruction', unit: 'set', pair_code: 'TR' },
+  { code: 'TS', label: '테스트지시', category: 'instruction', unit: 'set', pair_code: 'TSR' },
 ]
 
 const REGISTERED_PROVIDERS = [
@@ -125,7 +149,9 @@ const APPLY_PREVIEW = {
 
 function routeGet() {
   getRequest.mockImplementation((url: string) => {
-    if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+    if (url.includes('/document-types')) return Promise.resolve({
+      data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+    })
     if (url.includes('/ai-invoke/providers')) return Promise.resolve({
       data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
     })
@@ -203,7 +229,9 @@ describe('WorkPlanEditor', () => {
     complete.assignment_summary = [{ provider_id: 'aip_opus', display_name: 'Claude Opus', step_count: 3 }]
     complete.unassigned_step_count = 0
     getRequest.mockImplementation((url: string) => {
-      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
       if (url.includes('/work-plan')) return Promise.resolve({ data: complete })
       return Promise.reject(new Error(`unexpected url: ${url}`))
     })
@@ -215,7 +243,9 @@ describe('WorkPlanEditor', () => {
 
   it('restores all eight quantity cards from the registry and saves missing types as zero', async () => {
     getRequest.mockImplementation((url: string) => {
-      if (url.includes('/document-types')) return Promise.resolve({ data: { data: EIGHT_COUNTABLE_TYPES } })
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: EIGHT_COUNTABLE_TYPES, work_plan_countable_types: EIGHT_COUNTABLE_TYPES_WP },
+      })
       if (url.includes('/work-plan')) return Promise.resolve({ data: structuredClone(READ_RESPONSE) })
       return Promise.reject(new Error(`unexpected url: ${url}`))
     })
@@ -249,6 +279,62 @@ describe('WorkPlanEditor', () => {
       T: { unit: 'set', count: 1 },
       TS: { unit: 'set', count: 0 },
     })
+  })
+
+  // 0429 T0004 (NR0003): the client used to read the countable type order straight off
+  // `data` (raw series/sort_order/type_code order), which puts D ahead of DS — while the
+  // server expanded steps with DS leading. Saving a plan where both DS and D are counted
+  // hit steps_quantity_mismatch. work_plan_countable_types is now the single source both
+  // sides agree on; this pins the client half of that contract.
+  it('keeps DS#1 ahead of D#1 in the PUT body when DS and D are both counted and a quantity changes', async () => {
+    const dsAndD = structuredClone(READ_RESPONSE)
+    dsAndD.body.counted_types = ['D', 'DS']
+    dsAndD.body.quantities = {
+      D: { unit: 'sheet', count: 1 },
+      DS: { unit: 'sheet', count: 1 },
+    }
+    dsAndD.body.steps = [
+      { key: 'DS#1', type: 'DS', ordinal: 1, pair_key: null, pair_role: 'single', provider_id: null, provider_display_name: null, note: null, locked: false, locked_reason: null, origin: 'human' },
+      { key: 'D#1', type: 'D', ordinal: 1, pair_key: null, pair_role: 'single', provider_id: 'aip_opus', provider_display_name: 'Claude Opus', note: null, locked: false, locked_reason: null, origin: 'human' },
+    ]
+    dsAndD.totals = { design_sheets: 2, work_sets: 0, steps: 2 }
+    dsAndD.unassigned_step_count = 1
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: EIGHT_COUNTABLE_TYPES, work_plan_countable_types: EIGHT_COUNTABLE_TYPES_WP },
+      })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: dsAndD })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+    putRequest.mockResolvedValue({
+      data: {
+        revision_no: 4,
+        totals: { design_sheets: 3, work_sets: 0, steps: 3 },
+        assignment_summary: [],
+        unassigned_step_count: 2,
+      },
+    })
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    // Raise D's count — the editor re-expands every step from docTypeStore's canonical
+    // registry order (work_plan_countable_types), not the order the plan body happened
+    // to list counted_types in.
+    const dCard = wrapper.findAll('.wp-qty-card').find((card) => card.text().includes('기본설계'))!
+    await dCard.findAll('.wp-stepper-btn')[1].trigger('click')
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((button) => button.text().includes('저장') && !button.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(putRequest).toHaveBeenCalled()
+    const saved = putRequest.mock.calls[0][1].body
+    expect(saved.steps.map((s: any) => s.key)).toEqual(['DS#1', 'D#1', 'D#2'])
   })
 
   it('renders compact provider controls without the mockup-extraneous robot icon', async () => {
@@ -290,7 +376,9 @@ describe('WorkPlanEditor', () => {
     )
     withTsr.totals.steps = 5
     getRequest.mockImplementation((url: string) => {
-      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
       if (url.includes('/work-plan')) return Promise.resolve({ data: withTsr })
       return Promise.reject(new Error(`unexpected url: ${url}`))
     })
@@ -307,7 +395,9 @@ describe('WorkPlanEditor', () => {
       { provider_id: 'aip_sonnet', display_name: 'Claude Sonnet', group_label: 'Claude · CLI' },
     ]
     getRequest.mockImplementation((url: string) => {
-      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
       if (url.includes('/ai-invoke/providers')) return Promise.resolve({
         data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
       })

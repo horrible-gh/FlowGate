@@ -217,14 +217,43 @@ def _doc_type_to_view(row: dict) -> dict:
     return view
 
 
+def _work_plan_countable_view(entry: dict) -> dict:
+    """0429 T0004 작업 2: the work-plan-only sort/dedup registry, additive to `data`.
+
+    Field names mirror _doc_type_to_view (code/label/category/unit/pair_code) so the
+    client can read both shapes the same way, without hardcoding the type order itself.
+    """
+    view = {
+        "code": entry.get("code"),
+        "label": entry.get("name"),
+        "category": entry.get("series"),
+        "unit": entry.get("unit"),
+    }
+    if entry.get("pair_code"):
+        view["pair_code"] = entry["pair_code"]
+    if entry.get("pair_name"):
+        view["pair_name"] = entry["pair_name"]
+    return view
+
+
 @router.get("/projects/{project_id}/document-types")
 def list_doc_types(
     project_id: str,
     locale: str = Query("ko"),
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
+    from modules.flow_gate.services import work_plan_service
+
     types = list_document_types(project_id, locale=locale)
-    return {"data": [_doc_type_to_view(t) for t in types]}
+    # 0429 T0004 작업 2: additive — the existing `data` shape/order (series, sort_order,
+    # type_code) stays exactly as settings screens expect it. This second array is the
+    # sole work-plan-scope sort/dedup registry (list_countable_types), so the create
+    # dialog / editor / proposal dialog never re-derive it by hand from `data`.
+    countable_types = work_plan_service.list_countable_types(project_id, locale)
+    return {
+        "data": [_doc_type_to_view(t) for t in types],
+        "work_plan_countable_types": [_work_plan_countable_view(e) for e in countable_types],
+    }
 
 
 class DocTypeCreate(BaseModel):

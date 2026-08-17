@@ -410,6 +410,27 @@ def inbox_not_json_message(raw: str, exc: Optional[Exception], locale: str) -> s
 
 # ── Type registry (L0010 §2.1 결정 2: order comes from the table) ─────────────
 
+def _best_rows_by_code(rows: Iterable[dict]) -> dict[str, dict]:
+    """One row per countable code within a single project/global scope.
+
+    'L' exists twice (design 로직 / general 로그). Only the design one is a
+    countable design sheet; the series filter below drops the log row, and this guard
+    also covers a future duplicate design/instruction row sharing a code.
+    """
+    best: dict[str, dict] = {}
+    for row in rows:
+        code = str(row.get("type_code") or "").upper()
+        if code not in WORK_PLAN_TYPE_UNITS:
+            continue
+        series = str(row.get("series") or "")
+        if series not in ("design", "instruction"):
+            continue
+        if code in best and best[code].get("series") == "design":
+            continue
+        best[code] = row
+    return best
+
+
 def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -> list[dict]:
     """Countable types in the order a work plan lists them.
 
@@ -421,42 +442,50 @@ def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -
     leads the design series; within each group, the table's own sort_order decides.
     That reproduces DS · D · P · L · DB · N · T · TS from the current table without
     naming any of them here.
+
+    0429 T0004: project_id is no longer discarded. A project row overrides the global
+    row for the same code (display name, sort_order, active flag) — including turning it
+    off: an inactive project override drops the code from the registry rather than
+    falling back to the still-active global row. A code that is merely missing or
+    inactive after a successful DB read stays out of the registry; the
+    WORK_PLAN_COUNTABLE_ORDER fallback below only fires when the DB read itself failed,
+    so a plan can still be opened and read.
     """
+    db_ok = True
     try:
-        rows = db_templates.list_document_types(project_id=None, locale=locale)
+        rows = db_templates.list_document_types(project_id=project_id, locale=locale)
     except Exception:  # noqa: BLE001 — a registry outage must not crash the reader
         rows = []
+        db_ok = False
+
+    global_best = _best_rows_by_code(row for row in rows if row.get("project_id") is None)
+    project_best = (
+        _best_rows_by_code(row for row in rows if row.get("project_id") is not None)
+        if project_id else {}
+    )
 
     by_code: dict[str, dict] = {}
-    for row in rows:
-        code = str(row.get("type_code") or "").upper()
-        if code not in WORK_PLAN_TYPE_UNITS:
-            continue
+    for code in set(global_best) | set(project_best):
+        row = project_best.get(code) or global_best[code]
         if not row.get("is_active", 1):
-            continue
-        series = str(row.get("series") or "")
-        # 'L' exists twice (design 로직 / general 로그). Only the design one is a
-        # countable design sheet; ignore the log type with the same letter.
-        if series not in ("design", "instruction"):
-            continue
-        if code in by_code and by_code[code].get("series") == "design":
             continue
         by_code[code] = {
             "code": code,
             "name": row.get("type_name") or code,
-            "series": series,
+            "series": str(row.get("series") or ""),
             "sort_order": row.get("sort_order") or 0,
         }
 
     entries = list(by_code.values())
-    for code in WORK_PLAN_COUNTABLE_ORDER:
-        if code not in by_code:
-            entries.append({
-                "code": code,
-                "name": code,
-                "series": "design" if code in WORK_PLAN_SHEET_TYPES else "instruction",
-                "sort_order": WORK_PLAN_COUNTABLE_ORDER.index(code),
-            })
+    if not db_ok:
+        for code in WORK_PLAN_COUNTABLE_ORDER:
+            if code not in by_code:
+                entries.append({
+                    "code": code,
+                    "name": code,
+                    "series": "design" if code in WORK_PLAN_SHEET_TYPES else "instruction",
+                    "sort_order": WORK_PLAN_COUNTABLE_ORDER.index(code),
+                })
 
     def _rank(entry: dict) -> tuple:
         unit = WORK_PLAN_TYPE_UNITS[entry["code"]]
@@ -481,16 +510,24 @@ def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -
         pair = WORK_PLAN_PAIR_MAP.get(code)
         if pair:
             item["pair_code"] = pair
-            item["pair_name"] = _type_name(rows, pair, locale) or pair
+            item["pair_name"] = _type_name(rows, pair, locale, project_id) or pair
         result.append(item)
     return result
 
 
-def _type_name(rows: Iterable[dict], code: str, locale: str) -> Optional[str]:
+def _type_name(
+    rows: Iterable[dict], code: str, locale: str, project_id: Optional[str] = None,
+) -> Optional[str]:
+    project_match: Optional[str] = None
+    global_match: Optional[str] = None
     for row in rows:
-        if str(row.get("type_code") or "").upper() == code:
-            return row.get("type_name")
-    return None
+        if str(row.get("type_code") or "").upper() != code:
+            continue
+        if project_id and row.get("project_id") == project_id:
+            project_match = row.get("type_name")
+        elif row.get("project_id") is None:
+            global_match = row.get("type_name")
+    return project_match or global_match
 
 
 def annotate_types(rows: list[dict]) -> list[dict]:
@@ -532,10 +569,23 @@ def _order_codes(project_id: Optional[str] = None) -> list[str]:
 
 
 def type_order(counted_types: Iterable[str], project_id: Optional[str] = None) -> list[str]:
-    """L0010 §2.1 type_order: registry order first, then anything else by code."""
+    """L0010 §2.1 type_order: registry order first, then anything else by code.
+
+    0429 T0004: a stored plan can carry a code the active registry no longer lists (a
+    since-deactivated project override, say). That code still needs a deterministic
+    slot so read/save order never wobbles — WORK_PLAN_COUNTABLE_ORDER is the fallback
+    rank, the same table list_countable_types falls back to on a DB outage.
+    """
     wanted = list(counted_types)
     ordered = [code for code in _order_codes(project_id) if code in wanted]
-    remainder = sorted(set(wanted) - set(ordered))
+    remainder = sorted(
+        set(wanted) - set(ordered),
+        key=lambda code: (
+            WORK_PLAN_COUNTABLE_ORDER.index(code) if code in WORK_PLAN_COUNTABLE_ORDER
+            else len(WORK_PLAN_COUNTABLE_ORDER),
+            code,
+        ),
+    )
     return ordered + remainder
 
 
@@ -1202,8 +1252,13 @@ def plan_path_for_doc(doc: dict):
 
 # ── Reading a stored plan (P0009 §4.4 / §4.5) ────────────────────────────────
 
-def load_body(path) -> dict:
-    """Read + validate a canonical file. Raises WorkPlanUnreadable, never a 500."""
+def load_body(path, project_id: Optional[str] = None) -> dict:
+    """Read + validate a canonical file. Raises WorkPlanUnreadable, never a 500.
+
+    0429 T0004: project_id now reaches validate() so a project's own countable-type
+    registry (order, overrides) decides layer 6/7, not just the global one — every
+    caller of this function passes the document's own project_id.
+    """
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
@@ -1222,7 +1277,7 @@ def load_body(path) -> dict:
     try:
         # 0411 T0004: 읽기는 공급자 범위를 다시 묻지 않는다. 저장 때 이미 물었고, 그 뒤
         # 공급자가 삭제됐다고 계획이 안 열리면 "사라진 공급자" 표기를 볼 방법이 없어진다.
-        return validate(parsed, enforce_provider_scope=False)
+        return validate(parsed, project_id=project_id, enforce_provider_scope=False)
     except WorkPlanValidationError as exc:
         first = render_errors(exc.errors, FALLBACK_LOCALE)[0]
         raise WorkPlanUnreadable(
@@ -1552,7 +1607,7 @@ def request_work_plan_fill(
     )
     if path is None:
         raise ValueError(f"work_plan_body_not_found:{doc_id}")
-    body = load_body(path)
+    body = load_body(path, project_id=doc.get("project_id"))
     issued = token_service.issue(
         project=doc.get("project_id") or "",
         group_id=group_id,

@@ -24,12 +24,23 @@ vi.mock('@shared/api', () => ({
     error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
 }))
 
+// 0429 T0004 (NR0003): `data` mirrors the real document-types order — design series
+// sorts before instruction (alphabetically), so D precedes DS here. This used to list
+// DS first, which quietly assumed the very ordering contract the bug broke.
 const TYPES = [
-  { code: 'DS', label: '설계지시', category: 'instruction', countable: true, unit: 'sheet' },
   { code: 'D', label: '기본설계', category: 'design', countable: true, unit: 'sheet' },
+  { code: 'DS', label: '설계지시', category: 'instruction', countable: true, unit: 'sheet' },
   { code: 'T', label: '작업지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TR' },
   { code: 'TR', label: '작업레포트', category: 'work', countable: false, unit: null },
   { code: 'WP', label: '작업계획', category: 'general', countable: false, unit: null },
+]
+
+// The work-plan registry's own canonical order (DS leads) — the additive
+// `work_plan_countable_types` field, separate from the raw `data` order above.
+const TYPES_WP = [
+  { code: 'DS', label: '설계지시', category: 'instruction', unit: 'sheet' },
+  { code: 'D', label: '기본설계', category: 'design', unit: 'sheet' },
+  { code: 'T', label: '작업지시', category: 'instruction', unit: 'set', pair_code: 'TR' },
 ]
 
 const PROVIDERS = [
@@ -40,7 +51,9 @@ const PROVIDERS = [
 
 function routeGet() {
   getRequest.mockImplementation((url: string) => {
-    if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES } })
+    if (url.includes('/document-types')) {
+      return Promise.resolve({ data: { data: TYPES, work_plan_countable_types: TYPES_WP } })
+    }
     if (url.includes('/ai-invoke/providers')) {
       return Promise.resolve({ data: { ok: true, project: 'flowgate', providers: PROVIDERS, default_provider_id: null } })
     }

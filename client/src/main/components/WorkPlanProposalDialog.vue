@@ -298,7 +298,7 @@ import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
-import { useDocTypeStore, type DocTypeItem } from '../stores/docTypeStore'
+import { useDocTypeStore, type WorkPlanCountableType } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
 
@@ -370,7 +370,7 @@ const noteMaxChars = ref(1000)
  *  본다. rev1 의 로컬 ref 는 이 창에서만 다른 공급자를 보이게 하는 원인이었다. */
 const defaultProviderId = computed(() => aiProviderStore.selectedProviderId)
 
-const countableTypes = computed<DocTypeItem[]>(() => docTypeStore.countableTypes)
+const countableTypes = computed<WorkPlanCountableType[]>(() => docTypeStore.countableTypes)
 const providersLoaded = computed(() => aiProviderStore.providers)
 
 /**
