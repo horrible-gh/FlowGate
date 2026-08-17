@@ -385,11 +385,18 @@ def create_work_plan(
     module = parent.get("module") or "none"
 
     candidates = wp.snapshot_candidates(list(body.provider_candidates), registered_providers)
+    # flowgate.default.0423 T0005 items 6-7: an explicit request value still wins, but a
+    # type the request left out of `quantities` gets the group's workflow_type_counts
+    # derivation instead of initial_body's own 0 fallback, when one exists. This is the
+    # same derivation the WP editor's AI-scope suggestion already reuses (work_plan.py
+    # suggest_work_plan, work_plan_service.auto_plan_body) — not a new inference.
+    derived_quantities = wp.workflow_type_counts(_workflow_items(parent))
+    merged_quantities = {**derived_quantities, **dict(body.quantities)}
     plan = wp.initial_body(
         list(body.counted_types),
         candidates,
         project_id,
-        quantities=dict(body.quantities),
+        quantities=merged_quantities,
         defaults=dict(body.defaults),
         type_providers=dict(body.type_providers),
     )

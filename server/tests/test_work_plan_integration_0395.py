@@ -61,8 +61,12 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         read = read_response.json()
         body = read["body"]
         # NR0005 §6.4 rehearsal: two D sheets, four T/TR sets and one TS/TSR set.
+        # flowgate.default.0423 T0005 item 15: the create request above omitted
+        # quantities, so every count (including TS) now starts at 0 -- state all three
+        # explicitly instead of relying on the old all-1 default for TS.
         body["quantities"]["D"]["count"] = 2
         body["quantities"]["T"]["count"] = 4
+        body["quantities"]["TS"]["count"] = 1
         body["steps"] = wp.expand_steps(body["counted_types"], body["quantities"])
         for plan_step in body["steps"]:
             if plan_step["locked"]:
@@ -248,6 +252,9 @@ def test_unavailable_snapshot_provider_is_readable_and_warned(seed, storage_root
             "parent_doc_id": ROOT_DOC,
             "counted_types": ["T"],
             "provider_candidates": ["aip_opus"],
+            # flowgate.default.0423 T0005 item 15: this test needs a real T step to
+            # assign a provider to below; an omitted quantity now defaults to 0.
+            "quantities": {"T": 1},
         }).json()
         doc_id = created["doc_id"]
         body = created["body"]

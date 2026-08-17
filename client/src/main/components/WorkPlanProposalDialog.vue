@@ -563,8 +563,11 @@ function onClose() {
 }
 
 /**
- * [문서생성] — 기존 생성 경로를 그대로 쓴다. 범위의 타입 선택은 quantities 의 1/0 으로,
- * 공급자는 provider_candidates 로 옮긴다. 단계는 지금도 서버가 quantities 에서 만든다
+ * [문서생성] — 기존 생성 경로를 그대로 쓴다. 범위의 타입 선택은 quantities 에서 골라
+ * 넘긴다: 선택한 타입은 값을 아예 보내지 않아 서버가 workflow_type_counts 유도값(없으면
+ * 0)을 채우게 하고, 선택하지 않은 타입만 0 을 명시해 강제한다(flowgate.default.0423
+ * T0005 item 11 — 예전에는 선택=1/미선택=0 을 여기서 하드코딩했다). 공급자는
+ * provider_candidates 로 옮긴다. 단계는 지금도 서버가 quantities 에서 만든다
  * (P0004 옮기기 표) — 화면이 단계를 고르지 않으니 보낼 것도 없다. 등록된 공급자가 없는
  * 프로젝트에서는 provider_candidates 가 빈 배열로 나간다(서버도 그때만 빈 배열을 받는다).
  */
@@ -582,7 +585,7 @@ async function onCreateEmpty() {
         counted_types: allCodes,
         provider_candidates: scope.value.provider_ids,
         quantities: Object.fromEntries(
-          allCodes.map((code) => [code, selectedTypes.value.has(code) ? 1 : 0]),
+          allCodes.filter((code) => !selectedTypes.value.has(code)).map((code) => [code, 0]),
         ),
         // flowgate.default.0416 TR0005 rev2: defaults.provider_id 는 다시 null 이다.
         // 이 값은 initial_body 에서 만들어지는 모든 단계의 provider_id 로 그대로 번지는데,
