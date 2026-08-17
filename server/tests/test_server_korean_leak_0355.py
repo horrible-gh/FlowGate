@@ -360,3 +360,223 @@ def test_http_router_responses_recursively_have_zero_korean(
 def test_guard_rejects_one_korean_syllable():
     with pytest.raises(AssertionError, match="Korean syllable leak"):
         assert_no_korean_leak({"message": "English text 끝"})
+
+
+# ── Generalized local error-helper sink discovery (T0004 작업 9 / NR0003 권고 6) ──────
+# The scan above (_localized_literals) only ever looks INSIDE recognized locale-branch
+# shapes (an en/ja-keyed dict, or an if/elif on locale). It has no opinion about a file's
+# OTHER functions, so a locally-defined error-response helper with no locale parameter at
+# all (NR0003 발견 6: ai_invoke_service.py's _http_error) is invisible to it — nothing about
+# that call is a "locale branch" to find. This second scanner starts the other end: find
+# every function that structurally assembles a user-facing error response (whatever it is
+# named), then check ALL of its call sites for a raw, unbranched Korean literal — one that
+# reaches the sink without ever passing through a locale copy-dict or an if/elif on locale.
+
+
+def _dict_literal_has_false_ok_key(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Dict):
+        return False
+    for key, value in zip(node.keys, node.values):
+        if (
+            isinstance(key, ast.Constant) and key.value == "ok"
+            and isinstance(value, ast.Constant) and value.value is False
+        ):
+            return True
+    return False
+
+
+def _call_target_name(call: ast.Call):
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _constructs_error_response(func_node) -> bool:
+    """Structural test, not a name test: does this function's body assemble an
+    HTTPException, or a JSONResponse-style envelope carrying an "ok": False shape?
+    Matches both inbox_routes._fail (JSONResponse) and ai_invoke_service._http_error
+    (HTTPException) without depending on either spelling."""
+    for node in ast.walk(func_node):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_target_name(node)
+        if name == "HTTPException":
+            return True
+        if name == "JSONResponse":
+            for kw in node.keywords:
+                if kw.arg in ("content", None) and _dict_literal_has_false_ok_key(kw.value):
+                    return True
+            for arg in node.args:
+                if _dict_literal_has_false_ok_key(arg):
+                    return True
+    return False
+
+
+def _local_error_helpers(tree) -> set[str]:
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    helpers = {name for name, node in functions.items() if _constructs_error_response(node)}
+    # Fixed point: a thin wrapper that only forwards to an already-known helper is a
+    # helper too (e.g. a per-router _reject(msg) that returns _fail(422, msg)).
+    changed = True
+    while changed:
+        changed = False
+        for name, node in functions.items():
+            if name in helpers:
+                continue
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and _call_target_name(call) in helpers:
+                    helpers.add(name)
+                    changed = True
+                    break
+    return helpers
+
+
+def _build_parent_map(tree: ast.AST) -> dict:
+    parents: dict = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _inside_locale_branch(node: ast.AST, parents: dict, source: str) -> bool:
+    """True if some ancestor If/IfExp test already conditions on locale — the same
+    per-branch shape _localized_literals already recognizes (e.g. a plain
+    'if locale == "ko": return _fail(422, "...")' branch). A literal reached that way
+    is routed by locale even though it never passes through a dict."""
+    current = node
+    while current in parents:
+        parent = parents[current]
+        test = None
+        if isinstance(parent, ast.If):
+            test = parent.test
+        elif isinstance(parent, ast.IfExp):
+            test = parent.test
+        if test is not None:
+            test_source = ast.get_source_segment(source, test) or ""
+            if re.search(r"\blocale\b|continuation_locale|x_locale", test_source, re.I):
+                return True
+        current = parent
+    return False
+
+
+def _unbranched_korean_call_args(tree, helper_names: set[str], source: str):
+    """Every call to a discovered helper (or directly to HTTPException) whose argument
+    subtree contains a raw Korean string literal that was not routed through a locale
+    copy-dict (those never appear as an inline Constant at the call site — the Hangul
+    lives in the dict definition, scanned separately by _localized_literals) and is not
+    already inside an if/elif branch conditioned on locale."""
+    sinks = helper_names | {"HTTPException"}
+    parents = _build_parent_map(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_target_name(node) not in sinks:
+            continue
+        if _inside_locale_branch(node, parents, source):
+            continue
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            for literal in _constant_strings(arg):
+                if _HANGUL.search(literal.value):
+                    yield node.lineno, literal.value
+
+
+def test_static_error_sinks_reject_unbranched_korean_regardless_of_helper_name():
+    """0355 T0023's original scanner only ever recognized locale-branch SHAPES (an
+    en/ja dict, or an if/elif on locale) — it never asked "does this file have its own
+    error-response helper, and is every call site of THAT helper locale-safe?". NR0003
+    발견 6 slipped through exactly that gap: ai_invoke_service._http_error has no locale
+    parameter and no en/ja dict nearby, so nothing about it looked like a locale branch
+    to find. This walks every discovered locale-aware file, finds its own local
+    error-response helpers structurally (whatever they are named), and fails on any call
+    site whose message argument is a raw, unbranched Korean literal."""
+    offenders = []
+    for path in _discover_locale_files():
+        source = path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source, filename=str(path))
+        helpers = _local_error_helpers(tree)
+        for lineno, value in _unbranched_korean_call_args(tree, helpers, source):
+            offenders.append(f"{path.relative_to(_MODULE_ROOT).as_posix()}:{lineno}: {value!r}")
+    assert not offenders, (
+        "Unbranched Korean literal(s) reaching a local error-response sink:\n"
+        + "\n".join(offenders[:30])
+    )
+
+
+def test_local_error_helper_detection_generalizes_beyond_fail_and_http_error():
+    """AST fixture (T0004 작업 9): a helper named neither _fail nor _http_error must
+    still be found structurally, and an unbranched Korean literal reaching it must
+    fail the scan — while the same wording routed through a locale map must pass."""
+    bad_source = (
+        "from fastapi import HTTPException\n\n\n"
+        "def _reject_oddly_named(status_code, message, **extra):\n"
+        '    return HTTPException(status_code=status_code, detail={"message": message, **extra})\n\n\n'
+        "def handler():\n"
+        '    raise _reject_oddly_named(409, "이 메시지는 로케일 분기 없이 그대로 나갑니다")\n'
+    )
+    good_source = (
+        "from fastapi import HTTPException\n\n\n"
+        '_COPY = {"ko": "이 메시지는 로케일 맵을 통해서만 나갑니다", "en": "routed"}\n\n\n'
+        "def _reject_oddly_named(status_code, message, **extra):\n"
+        '    return HTTPException(status_code=status_code, detail={"message": message, **extra})\n\n\n'
+        "def handler(locale):\n"
+        "    raise _reject_oddly_named(409, _COPY[locale])\n"
+    )
+
+    bad_tree = ast.parse(bad_source)
+    helpers = _local_error_helpers(bad_tree)
+    assert "_reject_oddly_named" in helpers
+    bad_hits = list(_unbranched_korean_call_args(bad_tree, helpers, bad_source))
+    assert bad_hits, "the fixture's unbranched Korean literal must be caught"
+
+    good_tree = ast.parse(good_source)
+    good_helpers = _local_error_helpers(good_tree)
+    assert "_reject_oddly_named" in good_helpers
+    good_hits = list(_unbranched_korean_call_args(good_tree, good_helpers, good_source))
+    assert not good_hits, "a message routed through a locale map must not be flagged"
+
+
+def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
+    """False-positive fixture (T0004 작업 9): the generalized scan must stay quiet on the
+    two legitimate shapes NR0003 권고 6 calls out — a message chosen by an explicit ko
+    branch, and Korean prose that never reaches the sink (a docstring or comment sitting
+    in the same function). Only literals that actually flow into the error response
+    unbranched may fail the scan."""
+    source = (
+        "from fastapi import HTTPException\n\n\n"
+        "def _reject_oddly_named(status_code, message, **extra):\n"
+        '    return HTTPException(status_code=status_code, detail={"message": message, **extra})\n\n\n'
+        "def handler(locale):\n"
+        '    """이 독스트링은 한국어지만 응답으로 직렬화되지 않는다."""\n'
+        "    # 이 주석도 마찬가지로 sink 로 흐르지 않는다.\n"
+        '    if locale == "ko":\n'
+        '        raise _reject_oddly_named(409, "명시적 ko 분기로 선택된 문구입니다")\n'
+        '    raise _reject_oddly_named(409, "routed elsewhere")\n'
+    )
+
+    tree = ast.parse(source)
+    helpers = _local_error_helpers(tree)
+    assert "_reject_oddly_named" in helpers
+    hits = list(_unbranched_korean_call_args(tree, helpers, source))
+    assert not hits, f"legitimate ko branch / non-sink prose was flagged: {hits}"
+
+
+def test_ai_invoke_service_worktree_unavailable_is_localized():
+    """Regression pin for NR0003 발견 6 (T0004 작업 6): ai_invoke_service._http_error's
+    worktree_unavailable 409 used to be a fixed Korean f-string that the old narrowed
+    0355 scanner never saw (it matched none of the four fixed sink spellings). The
+    structural helper-detector must find _http_error on its own, and the call site's
+    message argument in ai_invoke_service.py must carry zero raw Korean now that T0004
+    routes it through _WORKTREE_UNAVAILABLE_COPY."""
+    path = _MODULE_ROOT / "services" / "ai_invoke_service.py"
+    source = path.read_text(encoding="utf-8-sig")
+    tree = ast.parse(source, filename=str(path))
+    helpers = _local_error_helpers(tree)
+    assert "_http_error" in helpers
+    hits = list(_unbranched_korean_call_args(tree, helpers, source))
+    assert not hits, f"worktree_unavailable regressed to an unbranched Korean literal: {hits}"

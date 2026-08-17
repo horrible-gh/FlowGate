@@ -47,6 +47,7 @@ from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate import template_provision
 from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, q_service, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
@@ -231,6 +232,38 @@ def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPExc
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
 
 
+# T0004 작업 6 / NR0003 발견 6: worktree_unavailable 409가 locale 분기 없이 항상 한국어로
+# 나갔다. remote_tool_service._ERROR_MESSAGES / _CUSTOM_ERROR_MESSAGES와 같은 로케일 딕셔너리
+# 패턴을 재사용한다.
+_WORKTREE_UNAVAILABLE_COPY = {
+    "ko": (
+        "이 그룹의 작업 폴더(워크트리)를 확인할 수 없어 AI 실행을 시작하지 않습니다 "
+        "(원인: {cause}). 워크트리 없이 실행하면 작업이 원본 체크아웃(main)에 "
+        "남습니다. 그룹 Git 상태를 복구한 뒤 다시 실행하십시오."
+    ),
+    "en": (
+        "AI execution was not started because this group's working folder (worktree) "
+        "could not be confirmed (cause: {cause}). Running without a worktree would leave "
+        "the work in the original checkout (main). Recover the group's Git state and "
+        "retry."
+    ),
+    "ja": (
+        "このグループの作業フォルダ(worktree)を確認できないため、AI実行を開始しません"
+        "(原因: {cause})。worktreeなしで実行すると、作業が元のチェックアウト(main)に"
+        "残ります。グループのGit状態を復旧してから再実行してください。"
+    ),
+}
+
+# T0004 검토 중 발견 (일반화된 정적 가드가 지목): 같은 _http_error 헬퍼를 쓰는
+# run_id_collision 409도 무분기 한글이었다. 같은 함수(start_run) 안에서 이미 받은
+# continuation_locale 을 그대로 재사용한다.
+_RUN_ID_COLLISION_COPY = {
+    "ko": "실행 번호 발급이 충돌했습니다. 다시 시도해 주세요.",
+    "en": "Run-id issuance collided. Please try again.",
+    "ja": "実行番号の発行が競合しました。もう一度お試しください。",
+}
+
+
 def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> bool:
     """Is *root* the group's OWN worktree, as opposed to the base project tree?
 
@@ -253,7 +286,9 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
         return False
 
 
-def _require_group_worktree(project_id: str, module: str, group_id: str, branch: str) -> None:
+def _require_group_worktree(
+    project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
+) -> None:
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
     This is the root cause R0001 describes: "간혹 AI들이 부여받은 브랜치에 안하고
@@ -308,11 +343,10 @@ def _require_group_worktree(project_id: str, module: str, group_id: str, branch:
         "ai_invoke blocked for group %s — no group worktree (cause=%s, resolved=%s)",
         group_id, cause, root,
     )
+    normalized_locale = template_provision.normalize_locale(locale)
     raise _http_error(
         409, "worktree_unavailable",
-        f"이 그룹의 작업 폴더(워크트리)를 확인할 수 없어 AI 실행을 시작하지 않습니다 "
-        f"(원인: {cause}). 워크트리 없이 실행하면 작업이 원본 체크아웃(main)에 "
-        f"남습니다. 그룹 Git 상태를 복구한 뒤 다시 실행하십시오.",
+        _WORKTREE_UNAVAILABLE_COPY[normalized_locale].format(cause=cause),
         group_id=group_id, cause=cause, provision_error=provision_error,
     )
 
@@ -1158,6 +1192,7 @@ def start_run(
     _require_group_worktree(
         project_id, module, group_id,
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
+        locale=template_provision.normalize_locale(continuation_locale),
     )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
@@ -1243,7 +1278,7 @@ def start_run(
         except db_group_ai_leases.RunIdCollision:
             raise _http_error(
                 409, "run_id_collision",
-                "실행 번호 발급이 충돌했습니다. 다시 시도해 주세요.",
+                _RUN_ID_COLLISION_COPY[template_provision.normalize_locale(continuation_locale)],
             )
     if lease is None:
         active = db_group_ai_leases.get_active(group_id) or {}

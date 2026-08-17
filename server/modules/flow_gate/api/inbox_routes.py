@@ -1517,6 +1517,71 @@ def _fail(status: int, message: str, help_url: str | None = None) -> JSONRespons
 #
 # force_encoding_reason is the one escape hatch shared by every path: any non-trivial
 # reason (>=10 non-whitespace chars) bypasses both layers unconditionally.
+# T0004 작업 1-3 / NR0003 발견 2-3: 로케일 분기 없이 항상 한국어로 나가던 두 안내문과,
+# 응답에 그대로 삽입되던 한글 필드 이름("본문", "title: 줄")을 로케일 중립 내부 키로
+# 분리한다. remote_tool_service._ERROR_MESSAGES 패턴을 재사용.
+_ENCODING_GUARD_COPY = {
+    "ko": {
+        "fingerprint_mismatch": (
+            "본문 지문이 어긋납니다: {mismatches}. 본문을 UTF-8 파일로 먼저 쓰고 그 "
+            "파일에서 글자 수와 해시를 구해 다시 보내세요. 정말 이대로 보내야 하면 "
+            "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+        ),
+        "sha256_mismatch": "sha256 기대={expected} 실제={actual}",
+        "chars_mismatch": "글자수 기대={expected} 실제={actual}",
+        "chars_invalid": "body_chars 형식 오류: {value}",
+        "corrupted": (
+            "{field} 항목이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 먼저 "
+            "쓰고, 그 파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 다음 다시 "
+            "보내세요. 정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 "
+            "10자 이상)를 적어 다시 보내세요."
+        ),
+    },
+    "en": {
+        "fingerprint_mismatch": (
+            "The body fingerprint does not match: {mismatches}. Write the body to a "
+            "UTF-8 file first and compute the character count and hash from that file, "
+            "then resend. If you must send it as-is, add a reason (at least 10 "
+            "non-whitespace characters) in force_encoding_reason and resend."
+        ),
+        "sha256_mismatch": "sha256 expected={expected} actual={actual}",
+        "chars_mismatch": "char count expected={expected} actual={actual}",
+        "chars_invalid": "invalid body_chars format: {value}",
+        "corrupted": (
+            "The {field} field looks like corrupted characters (e.g. ??????). Write "
+            "the body to a UTF-8 file first, compute the character count and hash "
+            "(body_chars/body_sha256) from that file, then resend. If you must send it "
+            "as-is, add a reason (at least 10 non-whitespace characters) in "
+            "force_encoding_reason and resend."
+        ),
+    },
+    "ja": {
+        "fingerprint_mismatch": (
+            "本文の指紋が一致しません: {mismatches}。本文を先にUTF-8ファイルとして書き出"
+            "し、そのファイルから文字数とハッシュを求めて再送してください。どうしても"
+            "このまま送る必要がある場合は、force_encoding_reasonに理由(空白を除いて10"
+            "文字以上)を記入して再送してください。"
+        ),
+        "sha256_mismatch": "sha256 期待値={expected} 実際値={actual}",
+        "chars_mismatch": "文字数 期待値={expected} 実際値={actual}",
+        "chars_invalid": "body_chars の形式が不正です: {value}",
+        "corrupted": (
+            "{field} 項目が文字化け(例: ??????)しているように見えます。本文を先にUTF-8"
+            "ファイルとして書き出し、そのファイルから文字数とハッシュ(body_chars/"
+            "body_sha256)を求めて再送してください。どうしてもこのまま送る必要がある場合"
+            "は、force_encoding_reasonに理由(空白を除いて10文字以上)を記入して再送して"
+            "ください。"
+        ),
+    },
+}
+
+_ENCODING_FIELD_LABELS = {
+    "ko": {"body": "본문", "title_line": "title: 줄"},
+    "en": {"body": "body", "title_line": "title: line"},
+    "ja": {"body": "本文", "title_line": "title: 行"},
+}
+
+
 def _encoding_guard(
     *,
     fields: dict[str, Optional[str]],
@@ -1524,12 +1589,17 @@ def _encoding_guard(
     body_sha256: Optional[str],
     body_chars,
     force_encoding_reason: Optional[str],
+    locale: str = "ko",
 ) -> Optional[JSONResponse]:
     reason = (force_encoding_reason or "").strip()
     if len(reason.replace(" ", "")) >= 10:
         return None
 
     from modules.flow_gate.services import workflow_decision_service as _wf_decision
+
+    normalized_locale = template_provision.normalize_locale(locale)
+    copy = _ENCODING_GUARD_COPY[normalized_locale]
+    labels = _ENCODING_FIELD_LABELS[normalized_locale]
 
     check_fields = dict(fields)
     if fingerprint_field and (body_sha256 or body_chars is not None):
@@ -1538,32 +1608,48 @@ def _encoding_guard(
         actual_chars = len(text)
         mismatches = []
         if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
-            mismatches.append(f"sha256 기대={body_sha256} 실제={actual_sha256}")
+            mismatches.append(copy["sha256_mismatch"].format(expected=body_sha256, actual=actual_sha256))
         if body_chars is not None:
             try:
                 if int(body_chars) != actual_chars:
-                    mismatches.append(f"글자수 기대={body_chars} 실제={actual_chars}")
+                    mismatches.append(copy["chars_mismatch"].format(expected=body_chars, actual=actual_chars))
             except (TypeError, ValueError):
-                mismatches.append(f"body_chars 형식 오류: {body_chars!r}")
+                mismatches.append(copy["chars_invalid"].format(value=repr(body_chars)))
         if mismatches:
-            return _fail(
-                422,
-                "본문 지문이 어긋납니다: " + "; ".join(mismatches) + ". 본문을 UTF-8 "
-                "파일로 먼저 쓰고 그 파일에서 글자 수와 해시를 구해 다시 보내세요. "
-                "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 "
-                "이상)를 적어 다시 보내세요.",
-            )
+            return _fail(422, copy["fingerprint_mismatch"].format(mismatches="; ".join(mismatches)))
 
     for name, value in check_fields.items():
         if _wf_decision._text_is_corrupted(value):
-            return _fail(
-                422,
-                f"{name} 항목이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 "
-                "먼저 쓰고, 그 파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 "
-                "다음 다시 보내세요. 정말 이대로 보내야 하면 force_encoding_reason에 "
-                "사유(공백 제외 10자 이상)를 적어 다시 보내세요.",
-            )
+            display_name = labels.get(name, name)
+            return _fail(422, copy["corrupted"].format(field=display_name))
     return None
+
+
+# T0004 작업 4-5 / NR0003 발견 4-5: 무분기 한글로 나가던 워크플로 헤드 타입 불일치
+# 409와 TR 작업범위 반려 notice 빈 값 폴백.
+_WORKFLOW_HEAD_MISMATCH_COPY = {
+    "ko": (
+        "이 그룹의 다음 단계는 {expected_head_type}입니다. 받은 타입 "
+        "{submitted_type}은 받을 수 없습니다. 문서는 등록되지 않았습니다. "
+        "doc_type을 {expected_head_type}로 바꿔 다시 제출하세요."
+    ),
+    "en": (
+        "This group's next step is {expected_head_type}. The submitted type "
+        "{submitted_type} cannot be accepted. The document was not registered. "
+        "Change doc_type to {expected_head_type} and resubmit."
+    ),
+    "ja": (
+        "このグループの次のステップは {expected_head_type} です。受け取ったタイプ "
+        "{submitted_type} は受け付けられません。文書は登録されていません。doc_type を "
+        "{expected_head_type} に変更して再提出してください。"
+    ),
+}
+
+_TR_SCOPE_FALLBACK_COPY = {
+    "ko": "TR 작업범위 검증 반려",
+    "en": "TR scope validation rejected",
+    "ja": "TR作業範囲検証却下",
+}
 
 
 _DESIGN_TEMPLATE_SUBMISSION_COPY = {
@@ -2094,6 +2180,11 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         return disposed
 
     # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-3/§6) ──
+    # T0004 작업 2: review 경로에는 new/edit 과 달리 로케일 변수가 없었다 — 토큰 검증
+    # (Step 2) 이후 같은 규칙으로 정규화해 전달한다.
+    _locale = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale")
+    )
     _review_encoding_fields: dict[str, Optional[str]] = {}
     if isinstance(comment, str) and comment:
         _review_encoding_fields["comment"] = comment
@@ -2109,6 +2200,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         body_sha256=body.get("body_sha256"),
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
+        locale=_locale,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
@@ -2895,22 +2987,20 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 검증 자체가 실패하면(예상 못 한 예외) 통과시킨다 — 위반 탐지 기능이 정상적인
     # 제출을 500 으로 떨구는 것이 원래 사고보다 나쁘다.
     tr_scope_result: Optional[dict] = None
+    # T0004 작업 1-5 / NR0003 발견 2,4,5: 이 지점부터 Step 5.9 까지 공유하는 정규화
+    # 로케일. 우선순위는 토큰의 continuation_locale(무인 작업자) > 요청의 x-locale
+    # 헤더 > ko (0355 L0007 §2-1과 같은 순서, group 0099 B0001과 같은 이유).
+    _locale = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale")
+    )
     if doc_type.upper() in tool_registry.MUTATING_STEP_TYPES:
         try:
-            from modules.flow_gate import template_provision as _template_provision
-
             scope_body = body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
-            # T2/TR2 (NR0003 §1-4): 반려 안내문의 언어. 통로는 이미 있다 — 토큰의
-            # continuation_locale(무인 작업자)이 헤더보다 앞선다(0355 L0007 §2-1과
-            # 같은 순서, group 0099 B0001 과 같은 이유).
-            scope_locale = _template_provision.normalize_locale(
-                token_rec.get("continuation_locale") or request.headers.get("x-locale")
-            )
             tr_scope_result = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
-                locale=scope_locale,
+                locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"]),
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 TR 접수를 막아선 안 된다
@@ -2947,7 +3037,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 })
             except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
                 pass
-            return _fail(422, tr_scope_result.get("notice") or "TR 작업범위 검증 반려")
+            return _fail(
+                422,
+                tr_scope_result.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
+            )
 
     # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
     # Compare before the shared dry-run branch and before numbering/storage so a
@@ -2972,20 +3065,21 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             if expected_head_type and expected_head_type != submitted_type:
                 return _fail(
                     409,
-                    f"이 그룹의 다음 단계는 {expected_head_type}입니다. "
-                    f"받은 타입 {submitted_type}은 받을 수 없습니다. 문서는 등록되지 "
-                    f"않았습니다. doc_type을 {expected_head_type}로 바꿔 다시 제출하세요.",
+                    _WORKFLOW_HEAD_MISMATCH_COPY[_locale].format(
+                        expected_head_type=expected_head_type,
+                        submitted_type=submitted_type,
+                    ),
                 )
 
     # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-1/§6) ──
     # 부작용(문서 번호 예약) 이전, dry-run 분기보다 앞이라 거부돼도 흔적이 안 남는다.
-    _encoding_fields: dict[str, Optional[str]] = {"본문": body_for_guards}
+    _encoding_fields: dict[str, Optional[str]] = {"body": body_for_guards}
     if title_override:
         _encoding_fields["title"] = title_override
     elif body_for_guards:
         _title_line = _extract_title_from_content(body_for_guards)
         if _title_line:
-            _encoding_fields["title: 줄"] = _title_line
+            _encoding_fields["title_line"] = _title_line
     for _qi, _q in enumerate(body.get("questions") or []):
         if isinstance(_q, dict):
             if _q.get("title"):
@@ -2994,10 +3088,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 _encoding_fields[f"questions[{_qi}].body"] = _q.get("body")
     _encoding_fail = _encoding_guard(
         fields=_encoding_fields,
-        fingerprint_field="본문",
+        fingerprint_field="body",
         body_sha256=body.get("body_sha256"),
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
+        locale=_locale,
     )
     if _encoding_fail is not None:
         return _encoding_fail
@@ -3609,20 +3704,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # 판정 시점이 다르므로 결과 기록도 다르다. edit 에는 이미 문서가 있으므로 통과·경고는
     # Step 7.1 에서 그 문서의 meta 에 갱신하고, 거부는 문서를 바꾸지 않은 채 반환한다.
     edit_tr_scope: Optional[dict] = None
+    # T0004 작업 1-5 / NR0003 발견 2,4,5: 이 지점부터 Step 5.9 까지 공유하는 정규화
+    # 로케일 — new 경로(위 Step 5.7)와 같은 규칙.
+    _locale = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale")
+    )
     if str(existing_doc.get("type_code") or "").upper() in tool_registry.MUTATING_STEP_TYPES:
         try:
-            from modules.flow_gate import template_provision as _template_provision
-
             scope_body = edit_body_for_guards
             if scope_body is None:
                 scope_body = _submission_text(doc_path, content)
-            # T2/TR2 (NR0003 §1-4): 반려 안내문의 언어 — new 경로(위 Step 5.7)와 같은 규칙.
-            scope_locale = _template_provision.normalize_locale(
-                token_rec.get("continuation_locale") or request.headers.get("x-locale")
-            )
             edit_tr_scope = tr_scope_service.evaluate(
                 project_id=project, group_id=group["group_id"], body=scope_body or "",
-                locale=scope_locale,
+                locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"], exclude_doc_id=doc_id),
             )
         except Exception:  # noqa: BLE001 — 검증 실패가 재제출을 막아선 안 된다
@@ -3655,20 +3749,24 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 })
             except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
                 pass
-            return _fail(422, edit_tr_scope.get("notice") or "TR 작업범위 검증 반려")
+            return _fail(
+                422,
+                edit_tr_scope.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
+            )
 
     # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-2/§6) ──
-    _edit_encoding_fields: dict[str, Optional[str]] = {"본문": edit_body_for_guards}
+    _edit_encoding_fields: dict[str, Optional[str]] = {"body": edit_body_for_guards}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
     if rejection_response:
         _edit_encoding_fields["rejection_response"] = rejection_response
     _edit_encoding_fail = _encoding_guard(
         fields=_edit_encoding_fields,
-        fingerprint_field="본문",
+        fingerprint_field="body",
         body_sha256=body.get("body_sha256"),
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
+        locale=_locale,
     )
     if _edit_encoding_fail is not None:
         return _edit_encoding_fail

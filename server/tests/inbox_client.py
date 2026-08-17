@@ -32,15 +32,17 @@ def inbox_app() -> FastAPI:
     return app
 
 
-def post_inbox(body: dict[str, Any], raw_token: str = "raw") -> Any:
+def post_inbox(body: dict[str, Any], raw_token: str = "raw", headers: dict[str, str] | None = None) -> Any:
     """POST `body` to /api/v1/inbox with a bearer token, returning the httpx Response.
 
     The token is whatever the test's `token_service.verify` patch expects to see; the
-    default matches the "raw" placeholder those tests already used.
+    default matches the "raw" placeholder those tests already used. `headers` (e.g.
+    {"x-locale": "en"}) are merged in alongside Authorization (T0004 locale regression
+    tests).
     """
     with TestClient(inbox_app()) as client:
         return client.post(
             "/api/v1/inbox",
             json=body,
-            headers={"Authorization": f"Bearer {raw_token}"},
+            headers={"Authorization": f"Bearer {raw_token}", **(headers or {})},
         )
