@@ -1251,6 +1251,15 @@ class TestInboxEditDuplicateBodyGuard:
     inbox edit (NR0003, group 0107) — most often on CH conversations the worker
     rewrites wholesale each turn. The guard must now also fire on edit, and an edited
     body must (re)persist its fingerprint so a grown body becomes a detectable twin.
+
+    0432 T0005 §2-5: every CH document below is LEGACY — ``_create_target_doc`` writes a
+    ``documents`` row and nothing else, so ``conversation_docs`` has no row and
+    ``migration_state`` is ``pending``. That is why the 200 expectations here survive the
+    migrated-conversation full-body block added in 0432 (0344.0005-L §2-16 explicitly does
+    not fire on LEGACY: the file is still the record of truth). The assertion inside
+    ``test_edit_accepts_matching_frontmatter_identity`` pins that premise, so adding a
+    ``conversation_docs`` row to this fixture breaks there rather than silently turning
+    these cases into a different test.
     """
 
     _BIG_BODY = "# Investigation Report\n\n" + ("Root cause analysis line. " * 120)
@@ -1297,6 +1306,7 @@ class TestInboxEditDuplicateBodyGuard:
         stored_path: Path,
         body: str = "# Original",
         target_id: str | None = None,
+        type_code: str = "CH",
     ) -> None:
         from modules.flow_gate.db import documents as db_docs
         stored_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1304,7 +1314,7 @@ class TestInboxEditDuplicateBodyGuard:
         db_docs.create({
             "doc_id": doc_id,
             "project_id": "testprj",
-            "type_code": "CH",
+            "type_code": type_code,
             "seq": 99,
             "title": doc_id,
             "group_id": "testprj-__ALL__-0001",
@@ -1484,6 +1494,193 @@ class TestInboxEditDuplicateBodyGuard:
         )
 
         resp = self._edit(tmp_path, doc_id, own_body)
+        assert resp.status_code == 200, resp.text
+        # 0432 T0005 §3-5: 이 200 은 "대화라서"가 아니라 "아직 이관되지 않은 대화라서"다.
+        # 픽스처에 conversation_docs 행이 생기면 이 문서는 migrated 가 되고 위 200 은
+        # 409 로 바뀐다 — 그 변화를 조용히 넘기지 않도록 전제를 여기서 못박는다.
+        from modules.flow_gate.db import conversation_turns
+        assert conversation_turns.migration_state(doc_id) != "migrated"
+
+
+# ── 8-2. 이관 완료 대화(CH)의 전체 본문 교체 차단 (0432.0003-NR §7-1) ────────
+
+class TestInboxEditConversationFullBodyGuard:
+    """0344 TR0008 후속. 대화의 정본은 ``conversation_turns`` 표로 옮겨졌는데 본문을
+    통째로 덮어쓰는 옛 인박스 edit 경로가 살아 있었다(0432.0003-NR §5). 0344.0008-TR 이
+    그 마무리를 시도했다가 반려된 뒤 그룹 0344 에는 후속이 없었다(NR §4).
+
+    판정과 문구는 0344.0005-L §2-16 원문, 봉투는 0344.0004-P §0-5 의 워커 계열이다.
+    문구는 상수를 import 하지 않고 여기 글자 그대로 적는다 — 상수와 시험이 같은 곳을
+    보면 문구가 틀려도 둘이 나란히 틀린다. 이것은 워커가 받는 전선 위의 계약이다.
+    """
+
+    _MESSAGE = (
+        "This conversation no longer accepts a full-body edit. "
+        "Append one turn: POST /api/v1/conversation/{doc_id}/turn"
+    )
+
+    def _expected_message(self, doc_id: str) -> str:
+        return self._MESSAGE.format(doc_id=doc_id)
+
+    def _create_doc(self, doc_id, stored_path, body="# Original", target_id=None, type_code="CH"):
+        TestInboxEditDuplicateBodyGuard()._create_target_doc(
+            doc_id, stored_path, body=body, target_id=target_id, type_code=type_code,
+        )
+
+    def _mark_migrated(self, doc_id: str) -> None:
+        """실제 이관 경로와 같은 함수로 migrated 상태를 만든다(손으로 INSERT 하지 않는다)."""
+        from modules.flow_gate.db import conversation_turns
+        assert conversation_turns.acquire_migration_lock(doc_id, "test-owner")
+        conversation_turns.mark_migrated(doc_id, "test-owner", "intro", 0)
+        assert conversation_turns.migration_state(doc_id) == "migrated"
+
+    def _edit(self, tmp_path, doc_id: str, content: str, dry_run: bool = False):
+        """``TestInboxEditDuplicateBodyGuard._edit`` 과 같은 요청에 dry_run 스위치만 더한 것.
+        토큰이 소모됐는지 확인해야 해서 raw 토큰을 함께 돌려준다."""
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.services import token_service
+        with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "s_edit"):
+            raw = token_service.issue(
+                project="testprj",
+                group_id="testprj-__ALL__-0001",
+                action_scope="edit",
+                doc_ref=doc_id,
+                issued_to="usr_test_001",
+            )["raw_token"]
+        payload = {
+            "project": "testprj", "module": "__ALL__", "group": "0001",
+            "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+            "content": content,
+        }
+        if dry_run:
+            payload["dry_run"] = True
+        with patch(
+            "modules.flow_gate.rbac.permission_service.has_permission", return_value=True,
+        ):
+            from starlette.testclient import TestClient
+            from fastapi import FastAPI
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            resp = TestClient(app).post(
+                "/api/v1/inbox", json=payload, headers={"Authorization": f"Bearer {raw}"},
+            )
+        return resp, raw
+
+    def test_migrated_conversation_rejects_full_body_edit(self, seed_data, tmp_path):
+        """이관이 끝난 대화 + 자기 문서가 맞는 본문 → 409, 문구 정확 일치, 파일 그대로."""
+        doc_id = "testprj-__ALL__-0001-CH7601"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(doc_id, stored_path, body="# Original conversation")
+        self._mark_migrated(doc_id)
+
+        resp, _raw = self._edit(tmp_path, doc_id, "# A wholesale rewrite of the transcript")
+
+        assert resp.status_code == 409, resp.text
+        payload = resp.json()
+        assert payload["error_message"] == self._expected_message(doc_id)
+        # 0344.0004-P §0-5 워커 봉투 — 세션 계열의 {"detail": ...} 가 섞이면 안 된다.
+        assert payload["ok"] is False
+        assert payload["http_status"] == 409
+        assert payload["help_url"]
+        assert "detail" not in payload
+        # 정본은 표에 있고 파일은 껍데기다. 거절이 그 껍데기조차 건드리지 않았음을 본다.
+        assert stored_path.read_text() == "# Original conversation"
+
+    def test_dry_run_gets_the_same_rejection_and_changes_nothing(self, seed_data, tmp_path):
+        """판정이 _maybe_dry_run 보다 앞이므로 dry_run 도 같은 409 다(부작용 없음)."""
+        from modules.flow_gate.db import documents as db_docs
+        from modules.flow_gate.services import token_service
+
+        doc_id = "testprj-__ALL__-0001-CH7602"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(doc_id, stored_path, body="# Original conversation")
+        self._mark_migrated(doc_id)
+        before = db_docs.get_by_id(doc_id)
+
+        resp, raw = self._edit(
+            tmp_path, doc_id, "# A wholesale rewrite of the transcript", dry_run=True,
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error_message"] == self._expected_message(doc_id)
+        assert stored_path.read_text() == "# Original conversation"
+        after = db_docs.get_by_id(doc_id)
+        assert after["revision_no"] == before["revision_no"]
+        # 토큰도 그대로 살아 있다 — verify 는 consumed_at 이 찍혀 있으면 401 로 막는다.
+        assert token_service.verify(raw)["doc_ref"] == doc_id
+
+    def test_foreign_frontmatter_gets_the_conversation_block_not_identity(
+        self, seed_data, tmp_path
+    ):
+        """이관된 대화에 남의 프론트매터를 붙여 보내도 identity 오류가 아니라 대화 차단이다.
+
+        L §4-1 의 순서 원칙(그룹 차원의 사실 → 본문을 들여다보는 검사) 때문이고, 그것이
+        의도다: 워커에게는 "네 문서가 아니다"보다 "턴으로 보내라"가 실행 가능한 안내다.
+        """
+        doc_id = "testprj-__ALL__-0001-CH7603"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(
+            doc_id, stored_path, body="# Original conversation",
+            target_id="testprj-__ALL__-0001-R0001",
+        )
+        self._mark_migrated(doc_id)
+        foreign_prefix = (
+            "---\n"
+            "project: mailanchor\n"
+            "module: ui\n"
+            "group_id: mailanchor.ui.0001\n"
+            "doc_number: 0004-CH\n"
+            "type: CH\n"
+            "target_id: mailanchor.ui.0001.0003-CH\n"
+            "title: Source conversation\n"
+            "---\n"
+            "short copied prefix\n"
+        )
+
+        resp, _raw = self._edit(tmp_path, doc_id, foreign_prefix)
+
+        assert resp.status_code == 409, resp.text
+        message = resp.json()["error_message"]
+        assert message == self._expected_message(doc_id)
+        assert "Frontmatter identity mismatch" not in message
+        assert stored_path.read_text() == "# Original conversation"
+
+    def test_legacy_conversation_still_accepts_full_body_edit(self, seed_data, tmp_path):
+        """conversation_docs 행이 없는 대화(LEGACY)는 아직 파일이 정본이라 그대로 저장된다
+        (L §2-16: "이관되지 않은 문서에는 이 분기를 걸지 않는다")."""
+        from modules.flow_gate.db import conversation_turns
+
+        doc_id = "testprj-__ALL__-0001-CH7604"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(doc_id, stored_path, body="# Original conversation")
+        assert conversation_turns.migration_state(doc_id) == "pending"
+
+        resp, _raw = self._edit(tmp_path, doc_id, "# A legacy conversation still edits fine")
+
+        assert resp.status_code == 200, resp.text
+
+    def test_in_progress_conversation_still_accepts_full_body_edit(self, seed_data, tmp_path):
+        """이관 중(in_progress)도 아직 migrated 가 아니다 — 걸지 않는다."""
+        from modules.flow_gate.db import conversation_turns
+
+        doc_id = "testprj-__ALL__-0001-CH7605"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(doc_id, stored_path, body="# Original conversation")
+        assert conversation_turns.acquire_migration_lock(doc_id, "test-owner")
+        assert conversation_turns.migration_state(doc_id) == "in_progress"
+
+        resp, _raw = self._edit(tmp_path, doc_id, "# Mid-migration edit still lands")
+
+        assert resp.status_code == 200, resp.text
+
+    def test_non_conversation_document_is_untouched(self, seed_data, tmp_path):
+        """대화가 아닌 문서에는 판정이 끼어들지 않는다(회귀)."""
+        doc_id = "testprj-__ALL__-0001-NR7606"
+        stored_path = tmp_path / "docs" / f"{doc_id}_document.md"
+        self._create_doc(doc_id, stored_path, body="# Original report", type_code="NR")
+
+        resp, _raw = self._edit(tmp_path, doc_id, "# An ordinary report edit")
+
         assert resp.status_code == 200, resp.text
 
 
