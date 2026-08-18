@@ -1,0 +1,1 @@
+2026-08-17 20:25:59,673[WARNING][inbox] continuous_work_ended signal failed (ignored): 'NoneType' object has no attribute 'execute'

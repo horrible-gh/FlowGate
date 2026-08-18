@@ -45,6 +45,10 @@ from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_scope_service
+from modules.flow_gate.services import conversation_query_service
+from modules.flow_gate.services.conversation_turn_service import turn_wire
+from modules.flow_gate.db import conversation_turns as turn_store
+from modules.flow_gate.documents import document_service
 # AUTO_REPORT_MAP is imported lazily at its use site to avoid a service import cycle.
 
 logger = logging.getLogger(__name__)
@@ -163,6 +167,67 @@ def _include_remote_source_crud(project: str) -> bool:
     except Exception:
         logger.warning("source mode resolution failed; falling back to remote mode", exc_info=True)
         return True
+
+
+# ── CH reference documents: inline turns instead of a bare GET link ──────
+# T0005 (rev3) work item 2. A '## Reference documents' entry naming a CH (chat)
+# document used to be the same bare `{doc_id}: GET {url}` line as every other
+# type. Fetching that URL returns only frontmatter — a CH document's real
+# content lives in the conversation_turns table, not the documents.content
+# column (0344), and the dedicated turn route (`GET /conversation/{doc_id}/
+# turns`) 403s for every token whose action_scope is not exactly "chat" bound
+# to that document. A continuous-hop worker (edit/new/review scope) therefore
+# had no way to ever see the chat content a mention pointed it at. The server
+# process itself is not scope-bound, so it reads the turns at mention-assembly
+# time and inlines them here instead of leaving the worker a link it cannot
+# follow. Non-CH references are unaffected — they keep the historical
+# single-line GET-link format.
+_CH_NO_TURNS_TEXT: dict[str, str] = {
+    "ko": "(이 CH 문서에는 아직 턴이 없습니다)",
+    "ja": "（このCH文書にはまだターンがありません）",
+    "en": "(this CH document has no turns yet)",
+}
+
+
+def _reference_doc_lines(doc_dot_dash_path: str, base: str, locale: str = "ko") -> list[str]:
+    """Lines for one '## Reference documents' entry.
+
+    Every non-CH type keeps the single-line `{doc_id}: GET {url}` format
+    unchanged. A CH-typed reference instead gets that same link line followed
+    by its conversation turns (or a "no turns yet" line), inlined so a worker
+    whose token scope cannot open `/conversation/{doc_id}/turns` still sees
+    the actual chat content.
+    """
+    doc_url = f"{base}/document/{doc_dot_dash_path}"
+    link_line = f"{doc_dot_dash_path}: GET {doc_url}"
+    try:
+        doc = document_service.get_document(doc_dot_dash_path)
+    except Exception:
+        logger.exception("reference doc lookup failed for %s", doc_dot_dash_path)
+        return [link_line]
+    if doc is None or (doc.get("type_code") or "").upper() != "CH":
+        return [link_line]
+
+    try:
+        conversation_query_service._ensure_readable_rows(doc_dot_dash_path)
+        turns = turn_store.list_turns(doc_dot_dash_path)
+    except Exception:
+        logger.exception(
+            "CH turn inline failed for %s; falling back to GET link", doc_dot_dash_path
+        )
+        return [link_line]
+
+    lines = [link_line]
+    if not turns:
+        loc = template_provision.normalize_locale(locale)
+        lines.append(_CH_NO_TURNS_TEXT.get(loc, _CH_NO_TURNS_TEXT["ko"]))
+        return lines
+    for row in turns:
+        wire = turn_wire(row)
+        speaker = wire.get("display_name") or wire.get("speaker") or "?"
+        lines.append(f"--- turn {wire['seq']} [{speaker}] {wire.get('created_at') or ''} ---")
+        lines.append(str(wire.get("body") or ""))
+    return lines
 
 
 def _document_lookup_lines(
@@ -396,6 +461,10 @@ _CONTINUOUS_TEXT = {
         "- 모든 권한이 당신에게 위임되었습니다 — 진행에 필요한 결정을 직접 내리십시오.\n"
         "- 작업을 중단하지 마십시오(do NOT stop). 한 단계를 마치면 응답에 동봉된 다음 토큰/멘트로 "
         "곧장 다음 단계를 진행하십시오.\n"
+        "- 장시간 검증(예: 전체 테스트 스위트)을 백그라운드(background)로 넘기고 완료 알림을 기다리며 "
+        "현재 프로세스/턴을 끝내지 마십시오. 이 시스템에서는 그런 백그라운드+알림 대기가 정당한 대기로 "
+        "인식되지 않고 무출력 재시도로 오판됩니다. 검증은 현재 프로세스 안에서 동기적으로(synchronously) "
+        "끝까지 실행해 결과(성공/실패)를 확인한 뒤에만 다음 단계로 진행하십시오.\n"
         "- 불명확한 점이 있어도 선택지를 제시하거나 질문으로 멈추지 말고, 가진 정보로 가장 합리적인 "
         "판단을 내려 자율적으로(autonomously) 진행하십시오.\n"
         "- 결과의 품질은 제공된 정보량에 의존합니다. 사용자는 이 점을 수락하고 연속 작업을 개시했습니다."
@@ -406,6 +475,10 @@ _CONTINUOUS_TEXT = {
         "- すべての権限があなたに委任されています — 進行に必要な判断は自分で下してください。\n"
         "- 作業を中断しないでください(do NOT stop)。1ステップを終えたら、応答に同梱された次のトークン/"
         "メンションでそのまま次のステップへ進んでください。\n"
+        "- 長時間の検証（例: 全体テストスイート）をバックグラウンド(background)に回し、完了通知を待って"
+        "現在のプロセス/ターンを終了しないでください。このシステムでは、そうしたバックグラウンド+通知待ちは"
+        "正当な待機と認識されず、無出力の再試行と誤判定されます。検証は現在のプロセス内で同期的に"
+        "(synchronously)最後まで実行し、結果（成功/失敗）を確認してから次のステップへ進んでください。\n"
         "- 不明な点があっても選択肢を提示したり質問で止まったりせず、手持ちの情報で最も合理的な判断を下し、"
         "自律的に(autonomously)進めてください。\n"
         "- 結果の品質は提供された情報量に依存します。ユーザーはこれを承諾して連続作業を開始しました。"
@@ -416,6 +489,12 @@ _CONTINUOUS_TEXT = {
         "- All authority is delegated to you — make the decisions needed to proceed.\n"
         "- Do NOT stop the work. When you finish a step, continue straight to the next one "
         "using the next token/mention enclosed in the response.\n"
+        "- Do NOT hand off long-running verification (e.g. the full test suite) to the "
+        "background and end the current process/turn while waiting for a completion "
+        "notification. This system does not recognize that kind of background-plus-notification "
+        "wait as legitimate — it is misjudged as a silent (no-output) retry. Run verification to "
+        "completion synchronously within the current process and confirm the result (pass/fail) "
+        "before proceeding to the next step.\n"
         "- If something is unclear, do NOT present choices or halt with a question; make the "
         "most reasonable call with the information you have and proceed autonomously.\n"
         "- Output quality depends on the amount of information provided. The user accepted "
@@ -1512,8 +1591,7 @@ def build_mention(
         if not doc_dot_dash_path or doc_dot_dash_path in seen_ref_ids:
             continue
         seen_ref_ids.add(doc_dot_dash_path)
-        doc_url = f"{base}/document/{doc_dot_dash_path}"
-        s3_lines.append(f"{doc_dot_dash_path}: GET {doc_url}")
+        s3_lines.extend(_reference_doc_lines(doc_dot_dash_path, base, locale))
     s3_body = f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n" + "\n".join(s3_lines)
 
     # ── Edit-only review feedback for the current document revision ─────────
@@ -2232,12 +2310,12 @@ def build_review_mention(
     )
 
     # ── Section 3: reference documents (target first, then extras) ───────────
-    s3_lines = [f"{canonical_id}: GET {base}/document/{canonical_id}"]
+    s3_lines = list(_reference_doc_lines(canonical_id, base, locale))
     if ref_doc_ids:
         for d in ref_doc_ids:
             if d == canonical_id:
                 continue
-            s3_lines.append(f"{d}: GET {base}/document/{d}")
+            s3_lines.extend(_reference_doc_lines(d, base, locale))
     s3_body = (
         f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n"
         + "\n".join(s3_lines)
