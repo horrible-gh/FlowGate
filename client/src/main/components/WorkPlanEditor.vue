@@ -616,6 +616,20 @@ async function reload() {
   await fetchPlan()
 }
 
+// Pouring/applying this plan into the workflow sequence happens in the sibling
+// DocWorkflow strip, not here. That save never touched this component, so
+// `lastApplication` (the [마지막 적용] line) and the rest of this view stayed on
+// whatever was loaded at mount/tab-switch until a manual reload. Exposed so
+// MainPanel can pull a refresh in on the same 'sequence-updated' signal it
+// already forwards to the doc header. Skipped while the table has unsaved
+// edits so a pour elsewhere cannot silently discard them.
+async function refreshAfterSequenceChange() {
+  if (dirty.value) return
+  await fetchPlan()
+}
+
+defineExpose({ fetchPlan: refreshAfterSequenceChange })
+
 // ── Quantity editing ─────────────────────────────────────────────────────
 
 function updateDerivedSummary() {
@@ -892,6 +906,27 @@ function onAiInvoke(event: Event) {
 
 onMounted(() => window.addEventListener('fg:ai_invoke', onAiInvoke))
 onBeforeUnmount(() => window.removeEventListener('fg:ai_invoke', onAiInvoke))
+
+// 0434 B0001("F5를 누르지 않으면 적용되지 않음") — 위 onAiInvoke 는 *이 화면에서 시작한*
+// AI 채우기(startAiFill)의 run_id 만 받는다. 그런데 실제로 작업계획을 다시 쓰는 것은 반려
+// 뒤 검토 막대에서 시작하는 그룹 워커이고, 그 run_id 는 aiRunId 에 들어오지 않는다. 그래서
+// 워커가 새 리비전을 등록해도 이 화면은 열 때 읽은 옛 계획(수량·단계·멘트)을 계속 그렸고,
+// 바뀐 계획은 F5 뒤에야 보였다 — 사람이 보기엔 "수정했다는데 적용이 안 된" 화면이다.
+// 다른 문서 타입의 본문은 이미 같은 이벤트로 다시 그린다(MdViewer, ConversationView).
+// 작업계획 편집기만 듣지 않고 있었다. 서버는 그대로다 — 인박스 edit 등록이 이미
+// document_explorer_refresh(operation='updated') 를 보내고 useFlowGateSse 가 그것을
+// fg:document_content_changed 로 바꿔 넣는다. 저장하지 않은 표 편집이 있으면 다시 읽지
+// 않는다: 남의 저장이 내가 치고 있던 값을 조용히 덮어쓰면 안 되고, 그 경우는 [저장] 때
+// 서버가 409 로 알려 주는 기존 충돌 띠가 처리한다.
+function onDocumentContentChanged(event: Event) {
+  const detail = (event as CustomEvent).detail as { doc_id?: string } | undefined
+  if (detail?.doc_id && detail.doc_id !== props.docId) return
+  if (dirty.value || saving.value) return
+  void fetchPlan()
+}
+
+onMounted(() => window.addEventListener('fg:document_content_changed', onDocumentContentChanged))
+onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', onDocumentContentChanged))
 
 // ── Save (P0009 §4.6 ~ §4.8) ─────────────────────────────────────────────
 

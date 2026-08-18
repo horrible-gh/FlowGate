@@ -608,6 +608,14 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
         })
     steps = list(plan.get("steps") or [])
     proposed, unplaceable = _missing_items(steps, current, locale)
+    if change_workflow:
+        for item in proposed:
+            item["source_doc_id"] = doc.get("doc_id")
+            item["source_revision_no"] = current_revision
+    projected_items = list(current) + (list(proposed) if change_workflow else [])
+    mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
+    projection = project(steps, mapping, projected_items, mode, providers)
+    provider_registry = _registry(providers)
     added = []
     if change_workflow and proposed:
         with get_store().transaction():
@@ -615,16 +623,27 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
                 db_wfseq.insert_sequence(owner_id)
                 sequence = db_wfseq.get_sequence_by_doc_id(owner_id)
             for item in proposed:
+                item_seq = _int(item.get("item_seq"))
+                provider_id = projection["provider_overrides"].get(str(item_seq))
+                provider = provider_registry.get(str(provider_id)) if provider_id else None
                 db_wfseq.insert_sequence_item(
-                    sequence_id=sequence["id"], item_seq=_int(item.get("item_seq")),
+                    sequence_id=sequence["id"], item_seq=item_seq,
                     type_=str(item.get("type") or ""), label=str(item.get("label") or ""),
                     doc_class=str(owner_doc.get("type_code") or "R"),
                     sort_order=_int(item.get("sort_order")),
+                    # 0434 T0004 F3: projection already decided these values. Persist that
+                    # decision on the same rows instead of reporting a fill that never landed.
+                    note=projection["note_overrides"].get(str(item_seq), ""),
+                    provider_id=provider_id,
+                    provider_display_name=(
+                        str(provider.get("display_name") or provider.get("name") or provider_id)
+                        if provider is not None else None
+                    ),
+                    source_doc_id=doc.get("doc_id"),
+                    source_revision_no=current_revision,
                 )
             added = proposed
         sequence, current = _sequence(owner_id)
-    mapping = build_step_map(steps, current, doc.get("doc_id"))
-    projection = project(steps, mapping, current, mode, providers)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
     unmatched = [str(x.get("key")) for x in mapping if not x.get("matched")] if not change_workflow else []
     warnings = build_warnings(

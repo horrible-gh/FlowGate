@@ -574,6 +574,22 @@ watch(
   { immediate: true },
 )
 
+// 0434 B0001 ("F5를 누르지 않으면 적용되지 않음") — 이 칸은 문서를 여는 순간 한 번 읽은
+// 값을 그대로 들고 있었다. 바로 옆 작업계획 표에서 공급자를 배정하거나 수량을 고치고
+// [저장]을 눌러도 이 칸은 이전 숫자를 그대로 그렸고, 바뀐 값은 F5 뒤에야 보였다 —
+// 사람이 보기엔 배정이 적용되지 않은 것이다. 서버는 계획 저장마다
+// document_explorer_refresh(operation='updated')를 보내고 useFlowGateSse가 그것을
+// fg:document_content_changed로 바꿔 넣어 준다. 아래 Q&A 칸이 fg:qa_refresh를 듣는 것과
+// 같은 얼개로 그 이벤트를 들으면, 내 저장이든 AI 워커의 채우기든 같은 경로로 다시 읽힌다.
+// 지금 보고 있는 문서의 것만 받는다.
+function _onWorkPlanDocChanged(e: Event) {
+  const detail = (e as CustomEvent).detail as { doc_id?: string } | undefined
+  if (detail?.doc_id && detail.doc_id !== props.docId) return
+  void fetchWpAssignments()
+}
+onMounted(() => window.addEventListener('fg:document_content_changed', _onWorkPlanDocChanged))
+onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', _onWorkPlanDocChanged))
+
 // 어긋난 항목 — 신고/감지 전체보다 먼저, 눈에 띄게 보여준다 (D0004 §6).
 const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
 

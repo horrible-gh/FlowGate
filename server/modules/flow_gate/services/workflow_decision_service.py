@@ -396,6 +396,11 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
         expanded.append({
             "type": report_type,
             "label": get_type_name(report_type, locale),
+            # 0434 T0004 F1: a worker omits automatic report rows from PATCH items.
+            # Rebuilding that row must not erase the instruction handoff the report runs with.
+            "note": _normalized_sequence_note(item.get("note")),
+            "source_doc_id": item.get("source_doc_id"),
+            "source_revision_no": item.get("source_revision_no"),
             "provider_id": item.get("provider_id") if report_type != "TSR" else None,
             "provider_display_name": (
                 item.get("provider_display_name") if report_type != "TSR" else None
@@ -1409,6 +1414,53 @@ def _resolve_doc_class(doc: dict) -> str:
 
 # ── Workflow sequence query ──────────────────────────────────────────────────────
 
+def _compare_plan_revision(
+    wp_doc_id: str,
+    source_revision_no: object,
+    *,
+    known_plan_doc: Optional[dict] = None,
+) -> tuple[Optional[dict], Optional[int], bool]:
+    """Compare a stored plan revision with the current document revision once.
+
+    The save-time stale-plan guard and the read-time freshness signal share this exact
+    comparison so they cannot disagree about whether a poured row is current.
+    """
+    plan_doc = (
+        known_plan_doc
+        if known_plan_doc is not None
+        and str(known_plan_doc.get("doc_id") or "") == wp_doc_id
+        else db_documents.get_by_id(wp_doc_id)
+    )
+    if plan_doc is None:
+        return None, None, False
+    current_no = int(plan_doc.get("revision_no") or 0)
+    try:
+        source_no = int(source_revision_no)
+    except (TypeError, ValueError):
+        return plan_doc, current_no, False
+    return plan_doc, current_no, source_no == current_no
+
+
+def plan_revision_freshness(
+    source_doc_id: object,
+    source_revision_no: object,
+    *,
+    known_plan_doc: Optional[dict] = None,
+) -> dict:
+    """Return the public freshness fields for one sequence row's plan provenance."""
+    if not source_doc_id or source_revision_no is None:
+        return {"source_freshness": None, "source_current_revision_no": None}
+    plan_doc, current_no, is_current = _compare_plan_revision(
+        str(source_doc_id), source_revision_no, known_plan_doc=known_plan_doc
+    )
+    if plan_doc is None:
+        return {"source_freshness": "missing", "source_current_revision_no": None}
+    return {
+        "source_freshness": "current" if is_current else "stale",
+        "source_current_revision_no": current_no,
+    }
+
+
 def get_workflow_sequence(doc_id: str) -> dict:
     """Fetch the current workflow sequence + item statuses (for entering edit mode).
 
@@ -1441,6 +1493,35 @@ def get_workflow_sequence(doc_id: str) -> dict:
 
     items = db_wfseq.get_sequence_items(seq["id"])
     provider_view = provider_view_of(doc.get("project_id"))
+    public_items = []
+    for it in items:
+        public_items.append({
+            "id": it["id"],
+            "item_seq": it["item_seq"],
+            "type": it["type"],
+            # NR0003 §7-3: rows already corrupted before this fix shipped still live in
+            # workflow_sequence_items; degrade their display to the type name so the dialog
+            # never shows "?????". No DB migration needed — the read path heals the view.
+            "label": _safe_label(it["label"], it["type"]),
+            "doc_class": it["doc_class"],
+            "sort_order": it["sort_order"],
+            "status": it["status"],
+            # 0399 L0011 §2.1: the note and its origin come back for EVERY row, not
+            # just the ones a plan poured. The save replaces the whole pending block,
+            # so a note this read left behind is a note the next save deletes.
+            "note": it.get("note") or "",
+            "source_doc_id": it.get("source_doc_id"),
+            "source_revision_no": it.get("source_revision_no"),
+            **plan_revision_freshness(
+                it.get("source_doc_id"), it.get("source_revision_no")
+            ),
+            **resolve_row_provider(
+                it.get("provider_id"), it.get("provider_display_name"), provider_view
+            ),
+        })
+    stale_source_count = sum(
+        1 for item in public_items if item["source_freshness"] in {"stale", "missing"}
+    )
     return {
         "doc_id": doc_id,
         "doc_class": _resolve_doc_class(doc),
@@ -1450,30 +1531,9 @@ def get_workflow_sequence(doc_id: str) -> dict:
         # 남은 글자 수를 그리고 초과를 안내한다 — 상수를 세 벌로 베껴 두었던 것이
         # 200 자 조용한 절단이 세 곳에서 따로 굳은 원인이었다.
         "note_max_chars": STEP_NOTE_MAX_CHARS,
-        "items": [
-            {
-                "id": it["id"],
-                "item_seq": it["item_seq"],
-                "type": it["type"],
-                # NR0003 §7-3: rows already corrupted before this fix shipped still live in
-                # workflow_sequence_items; degrade their display to the type name so the dialog
-                # never shows "?????". No DB migration needed — the read path heals the view.
-                "label": _safe_label(it["label"], it["type"]),
-                "doc_class": it["doc_class"],
-                "sort_order": it["sort_order"],
-                "status": it["status"],
-                # 0399 L0011 §2.1: the note and its origin come back for EVERY row, not
-                # just the ones a plan poured. The save replaces the whole pending block,
-                # so a note this read left behind is a note the next save deletes.
-                "note": it.get("note") or "",
-                "source_doc_id": it.get("source_doc_id"),
-                "source_revision_no": it.get("source_revision_no"),
-                **resolve_row_provider(
-                    it.get("provider_id"), it.get("provider_display_name"), provider_view
-                ),
-            }
-            for it in items
-        ],
+        "has_stale_sources": stale_source_count > 0,
+        "stale_source_count": stale_source_count,
+        "items": public_items,
     }
 
 
@@ -1581,12 +1641,11 @@ def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
         sent_no = int(sent)
     except (TypeError, ValueError):
         raise ValueError("invalid_expected_plan:wp_revision_no must be an integer")
-    plan_doc = db_documents.get_by_id(wp_doc_id)
+    plan_doc, current_no, is_current = _compare_plan_revision(wp_doc_id, sent_no)
     if plan_doc is None:
         raise ValueError(f"plan_not_found:{wp_doc_id}")
-    current_no = int(plan_doc.get("revision_no") or 0)
-    if sent_no != current_no:
-        raise PlanRevisionChanged(wp_doc_id, sent_no, current_no)
+    if not is_current:
+        raise PlanRevisionChanged(wp_doc_id, sent_no, int(current_no or 0))
     return plan_doc
 
 
