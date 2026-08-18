@@ -182,32 +182,6 @@ describe('저장하지 않은 편집과 AI 채우기 (NR0004 F5)', () => {
   })
 })
 
-// ── F3 — 마지막 적용을 화면이 말한다 ─────────────────────────────────────────
-
-describe('마지막 적용 (NR0004 F3)', () => {
-  it('한 번도 부은 적이 없으면 그 사실을 그린다', async () => {
-    const wrapper = mountEditor()
-    await flushPromises()
-
-    expect(wrapper.get('.wp-last-apply').text()).toContain('워크플로에 부은 적이 없습니다')
-  })
-
-  it('부어 넣은 기록이 있으면 누가 · 언제 · 어느 리비전인지 적는다', async () => {
-    routeGet(readResponse({
-      last_application: {
-        applied_at: '2026-08-10T18:00:00+09:00', applied_by: 'sjm',
-        wp_revision_no: 2, via: 'sequence_edit',
-      },
-    }))
-    const wrapper = mountEditor()
-    await flushPromises()
-
-    const line = wrapper.get('.wp-last-apply').text()
-    expect(line).toContain('sjm')
-    expect(line).toContain('r2')
-  })
-})
-
 // ── F4 — 워크플로가 없어도 부을 길이 있다 ────────────────────────────────────
 
 describe('워크플로가 없는 그룹의 작업계획 (NR0004 F4)', () => {

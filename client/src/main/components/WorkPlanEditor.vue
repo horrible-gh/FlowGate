@@ -47,37 +47,7 @@
       </div>
 
       <template v-else-if="plan">
-        <!-- 0399 D0010 §6.1 (시안 fgh29xnk v3 · 화면 1) — the sentence that closes the gap
-             this whole module exists for: people approved a plan and expected the workflow
-             to follow. It does not, and it never did; the plan is a record until somebody
-             pours it. Said here, above the plan itself, rather than only on the button. -->
-        <div class="wp-usage-note">
-          <AppIcon name="lightning" />
-          <span>
-            <strong>{{ t('main.work_plan_pour.usage_title') }}</strong>
-            {{ t('main.work_plan_pour.usage_desc') }}
-          </span>
-        </div>
-        <!-- 0403 NR0004 F3 — 이 계획이 워크플로에 실제로 부어진 적이 있는지 한 줄로 말한다.
-             서버는 적용 이력을 갖고 있었지만 화면 어디에도 나오지 않았고, 새 붓기 경로는
-             기록조차 남기지 않아 "적용했는데 아무 데도 안 남는다"가 보이지 않았다. 한 번도
-             부은 적이 없는 계획은 그 사실을 그대로 그린다. -->
-        <p class="wp-last-apply" :class="{ 'is-none': !lastApplication }">
-          <AppIcon name="info" />
-          <span v-if="lastApplication">
-            {{ t('main.work_plan.last_application', {
-              who: lastApplication.applied_by ?? '?',
-              when: lastApplication.applied_at ?? '',
-              rev: lastApplication.wp_revision_no ?? 0,
-            }) }}
-          </span>
-          <span v-else>{{ t('main.work_plan.last_application_none') }}</span>
-        </p>
-
-        <!-- Mockup xc32frrg screen 1 — 표 편집 모드 띠 -->
         <div class="wp-toolbar">
-          <span class="wp-mode-pill"><AppIcon name="grid-four" /> {{ t('main.work_plan.table_mode') }}</span>
-          <span class="wp-mode-desc">{{ t('main.work_plan.table_mode_desc') }}</span>
           <span class="wp-toolbar-spacer"></span>
           <button
             class="btn btn-outline btn-sm"
@@ -90,10 +60,6 @@
           </button>
         </div>
 
-        <div class="wp-advisory-notice">
-          <AppIcon name="lightning" />
-          <span><strong>{{ t('main.work_plan.advisory_lead') }}</strong> {{ t('main.work_plan.advisory_notice') }}</span>
-        </div>
         <p v-if="isLocked" class="wp-locked-hint">
           <AppIcon name="lock" /> {{ lockedHint }}
         </p>
@@ -134,7 +100,6 @@
             <span class="wp-step-no-badge">1</span>
             <AppIcon name="hash" class="wp-section-ico" />
             <span class="wp-section-title">{{ t('main.work_plan.section_quantities_title') }}</span>
-            <span class="wp-section-desc">{{ t('main.work_plan.section_quantities_desc') }}</span>
             <span class="wp-section-totals">{{ t('main.work_plan.totals_line', { design: totals.design_sheets, work: totals.work_sets }) }}</span>
           </div>
           <div class="wp-qty-grid">
@@ -167,7 +132,6 @@
             <span class="wp-step-no-badge">2</span>
             <AppIcon name="users" class="wp-section-ico" />
             <span class="wp-section-title">{{ t('main.work_plan.section_steps_title') }}</span>
-            <span class="wp-section-desc">{{ t('main.work_plan.section_steps_desc') }}</span>
             <span v-if="unassignedStepCount > 0" class="wp-section-missing">
               {{ t('main.work_plan.summary_unassigned', { n: unassignedStepCount }) }}
             </span>
@@ -215,11 +179,6 @@
             </div>
           </div>
 
-          <!-- Mockup xc32frrg screen 1 — 범례 -->
-          <div class="wp-step-legend">
-            <span><span class="wp-ai-dot"></span> {{ t('main.work_plan.legend_ai') }}</span>
-            <span>{{ t('main.work_plan.legend_locked') }}</span>
-          </div>
         </section>
 
         <!-- Mockup xc32frrg screen 1 — 수량 카드 3장 -->
@@ -362,8 +321,6 @@ const dirty = ref(false)
 // 보고 따로 잠그면, 서버는 허용하는데 화면만 잠긴 계획(그리고 그 반대)이 생긴다.
 const editable = ref(true)
 const editLockedReason = ref<string | null>(null)
-// 0403 NR0004 F3 — 이 계획이 마지막으로 워크플로에 부어진 기록.
-const lastApplication = ref<{ applied_at?: string; applied_by?: string; wp_revision_no?: number } | null>(null)
 const totals = ref({ design_sheets: 0, work_sets: 0, steps: 0 })
 const conflict = ref<{ updatedBy: string | null; updatedAt: string | null } | null>(null)
 const topLevelErrors = ref<string[]>([])
@@ -591,7 +548,6 @@ async function fetchPlan() {
     // 잠글지 말지는 서버만 알고, 화면이 혼자 추측해 잠그던 것이 이 결함이었다.
     editable.value = res.data.editable === undefined ? true : !!res.data.editable
     editLockedReason.value = res.data.edit_locked_reason ?? null
-    lastApplication.value = res.data.last_application ?? null
     dirty.value = false
     totals.value = res.data.totals ?? { design_sheets: 0, work_sets: 0, steps: plan.value.steps.length }
   } catch (e: any) {
@@ -974,40 +930,12 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-status-rejected { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
 .wp-body { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
 .wp-loading { padding: 24px; text-align: center; color: var(--text-m); }
-/* Mockup xc32frrg screen 1 — 표 편집 모드 띠 */
-/* 0399 D0010 §6.1 — 작업계획 본문 위 안내 한 줄 */
-.wp-usage-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 9px 12px;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: var(--r, 8px);
-  font-size: .72rem;
-  line-height: 1.55;
-  color: #92400e;
-}
-.wp-usage-note i {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: #d97706;
-}
-
 .wp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.wp-mode-pill {
-  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
-  background: var(--primary-l, #eff6ff); color: var(--primary, #2563eb);
-  font-size: .7rem; font-weight: 700; white-space: nowrap;
-}
-.wp-mode-desc { font-size: .74rem; color: var(--text-m); }
 .wp-toolbar-spacer { flex: 1; }
-.wp-advisory-notice, .wp-review-hint, .wp-locked-hint {
+.wp-review-hint, .wp-locked-hint {
   display: flex; align-items: flex-start; gap: 8px; font-size: .78rem; line-height: 1.55; color: var(--text-m);
   background: var(--surface-h, #f8fafc); border-radius: var(--r, 6px); padding: 9px 12px;
 }
-.wp-advisory-notice strong { color: var(--text, #1e293b); }
 .wp-conflict-banner, .wp-error-banner {
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px; border-radius: var(--r, 6px);
 }
@@ -1018,12 +946,6 @@ watch(() => props.docId, () => { void fetchPlan() })
   border-radius: var(--r, 6px); background: var(--warning-l, #fef3c7); color: var(--warning, #b45309);
 }
 .wp-dirty-banner button { margin-left: auto; }
-/* 0403 NR0004 F3 — 마지막 적용 한 줄. */
-.wp-last-apply {
-  display: flex; align-items: center; gap: 6px; margin: 0;
-  font-size: .72rem; color: var(--text-m);
-}
-.wp-last-apply.is-none { color: var(--text-m); opacity: .85; }
 .wp-error-banner { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
 .wp-section { display: flex; flex-direction: column; gap: 10px; }
 .wp-section-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -1034,7 +956,6 @@ watch(() => props.docId, () => { void fetchPlan() })
 }
 .wp-section-ico { color: var(--text-m); }
 .wp-section-title { font-size: .82rem; font-weight: 700; color: var(--text); }
-.wp-section-desc { font-size: .74rem; color: var(--text-m); }
 .wp-section-missing {
   font-size: .7rem; font-weight: 700; padding: 1px 8px; border-radius: 999px;
   background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626);
@@ -1090,11 +1011,6 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-step-error-msg { font-size:.7rem; line-height:1.4; color:var(--danger,#dc2626); white-space:normal; word-break:break-word; }
 .wp-layout-narrow .wp-step-head,.wp-layout-narrow .wp-step-row { grid-template-columns:48px 36px 0 minmax(130px,1fr) minmax(160px,1.2fr); }
 .wp-layout-narrow .wp-step-label { visibility:hidden; }
-.wp-step-legend {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
-  font-size: .7rem; color: var(--text-m); padding-top: 2px;
-}
-.wp-ai-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: #ddd6fe; }
 /* Mockup xc32frrg screen 1 — 하단 수량 카드 3장 */
 .wp-sum-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
 .wp-sum-card {

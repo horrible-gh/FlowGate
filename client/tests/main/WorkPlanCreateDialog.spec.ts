@@ -179,7 +179,6 @@ describe('WorkPlanCreateDialog', () => {
     const preview = wrapper.find('.wpc-preview').text()
     expect(preview).toContain('설계 1개')
     expect(preview).toContain('Claude Opus')
-    expect(wrapper.find('.wpc-usage-note').text()).toContain('작업계획은 기록·제안용입니다.')
   })
 
   it('rejects a server-side empty-selection response without crashing (P0009 §4.3 defense-in-depth)', async () => {
