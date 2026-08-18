@@ -334,7 +334,7 @@ export function useFlowGateSse(refreshAll: () => void) {
         // An open conversation cannot resync by re-reading a document — its turns were
         // pushed one at a time and the missed ones are simply gone from this stream. It
         // closes the gap itself by asking for everything after its last known seq
-        // (P0003 시나리오 7), which needs this explicit "the stream came back" signal.
+        // (P0003 scenario 7), which needs this explicit "the stream came back" signal.
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('fg:sse_reconnected'))
         }
@@ -418,10 +418,10 @@ export function useFlowGateSse(refreshAll: () => void) {
           }))
         }
         invalidateAndRefresh(data.project)
-        // Consume the auto-advance select intent (0316 T0004 / NR0003 §3-3·권고 3).
+        // Consume the auto-advance select intent (0316 T0004 / NR0003 §3-3 recommendation 3).
         // The server tags ONLY auto-advance head documents with select:true, so ordinary
         // created/updated refreshes never steal the tree selection — the recurring
-        // "AI가 다음 문서를 만들어도 탐색기가 따라가지 않는다" gap where the client ignored the field
+        // "AI가 다음 문서를 만들어도 탐색기가 따라가지 않는다" (explorer doesn't follow even when the AI creates the next document) gap where the client ignored the field
         // the server already emits (commit fa073d7). Reveal + select the new head so the
         // explorer follows the AI's progress. Guarded to the current project: selecting a
         // node in a project not on screen would be wrong (and its tree isn't loaded).
@@ -435,7 +435,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    // One appended conversation turn (0351 T2 / P0003 시나리오 6). Carries the turn
+    // One appended conversation turn (0351 T2 / P0003 scenario 6). Carries the turn
     // itself, so the open chat appends a single bubble — no document re-fetch, and
     // deliberately no invalidateAndRefresh: a chat message is not an explorer change,
     // and routing it through the tree refresh is what used to re-read the whole
@@ -573,8 +573,9 @@ export function useFlowGateSse(refreshAll: () => void) {
         invalidateAndRefresh(project)
       } catch { /* ignore parse errors */ }
     }
-    // 0382 review: 무인/다른 화면에서 끝난 마무리도 제외 목록을 잃지 않는다. SSE
-    // payload를 그룹별 패널이 소비할 수 있는 브라우저 이벤트로 먼저 남긴 뒤 갱신한다.
+    // 0382 review: keep the exclusion list even for a finalize that finished unattended
+    // or on another screen. Re-emit the SSE payload as a browser event that per-group
+    // panels can consume, first — then refresh.
     const onGitFinalizeDone = (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

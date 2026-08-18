@@ -206,7 +206,7 @@ async def upload_attachments(
     the files first and then registering in one transaction keeps the undo to a single
     "delete the rows, delete the files" pass — and with the rows in one transaction, a
     failed commit leaves no rows at all, so the undo is really just the files
-    (DB0013 §4 트랜잭션 경계).
+    (DB0013 §4, transaction boundary).
     """
     done: list[dict] = []
     reserved: set = set()

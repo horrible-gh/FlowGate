@@ -18,7 +18,7 @@ GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
 
-RBAC (P0005 공통): read = project.settings.read, mutate = project.settings.edit.
+RBAC (P0005, common): read = project.settings.read, mutate = project.settings.edit.
 Group-scoped routes resolve the project from the group_id prefix and check the
 same keys manually (require_permission needs a path param named project_id).
 Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
@@ -93,7 +93,7 @@ class GitConfigPut(BaseModel):
     # Validated as a pair by the service (both set, or both cleared).
     author_name: str | None = None
     author_email: str | None = None
-    # TR 작업범위 검증 적용 단계: observe | warn | enforce (0299 D0004 §3.6).
+    # TR work-scope check enforcement stage: observe | warn | enforce (0299 D0004 §3.6).
     # Omitted = keep stored (exclude_unset), so an older client cannot reset it.
     tr_scope_stage: str | None = None
 
@@ -330,7 +330,7 @@ def get_base_file_diff(
     """Old/new content of one base-checkout file (0326 R0001 / NR0005 §4).
 
     HEAD blob vs the working tree — the same pair the base file explorer's dirty
-    markers are computed from. The client renders the line diff (NR0005 안 b).
+    markers are computed from. The client renders the line diff (NR0005 option b).
     """
     try:
         return git_service.read_base_file_diff(project_id, path)

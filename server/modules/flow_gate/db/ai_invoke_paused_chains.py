@@ -38,7 +38,7 @@ def load_json_map(value) -> Optional[dict]:
 def dump_json_map(value) -> Optional[str]:
     """Serialize a selection map for storage (0365 DB0004 §2-2).
 
-    ensure_ascii=False keeps the Korean [전달멘트] text readable in the column. "No
+    ensure_ascii=False keeps the Korean handoff-note text readable in the column. "No
     selection" has exactly ONE representation — NULL — so an empty or unusable map
     normalizes to None (invariant I4).
     """
@@ -109,7 +109,7 @@ def upsert(
     stop_code: Optional[str] = None,
     stop_run_id: Optional[str] = None,
     stop_last_message_excerpt: Optional[str] = None,
-    # 0365 DB0004: the provider / [전달멘트] selections the run was started with. Every
+    # 0365 DB0004: the provider / handoff-note selections the run was started with. Every
     # caller MUST pass them (invariant I3) — this upsert overwrites every column, so a
     # call that omits them wipes the stored selections and the resume falls back to the
     # project default chain again, which is the exact bug B0001 reported.
@@ -248,7 +248,7 @@ def delete_system_stop(group_id: str, stop_run_id: Optional[str]) -> None:
 
 
 def list_all_system_stops() -> list[dict]:
-    """Every system-parked row, whoever owns it (0406 T0022 작업 4).
+    """Every system-parked row, whoever owns it (0406 T0022 item 4).
 
     Read at process start, where there is no user to scope by: a handoff row left behind by
     the process that died belongs to whoever was running that chain, and all of them have to
@@ -262,7 +262,7 @@ def list_all_system_stops() -> list[dict]:
 
 
 def mark_stop_code(group_id: str, stop_code: str, *, stop_run_id: Optional[str] = None) -> None:
-    """Re-label a system row without touching anything else (0406 T0022 작업 4).
+    """Re-label a system row without touching anything else (0406 T0022 item 4).
 
     Deliberately NOT the full ``upsert``: that one overwrites every column, and a startup
     recovery that only wants to say "this handoff never landed" must not risk wiping the

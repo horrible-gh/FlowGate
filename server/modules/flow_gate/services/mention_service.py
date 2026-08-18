@@ -13,17 +13,17 @@ does not bury it:
   1. Document information
   2. Clarification guide      (query-registration POST address + no-choices guard; the
                                ready-to-send body example moved to the `question` help
-                               item — group 0372 D-0003 §3-2 "남김(축약)")
+                               item — group 0372 D-0003 §3-2 "kept, abridged")
   3. Help                     (central help-index block, L-0005 §2-10 — once per worker
                                mention, right below the identity + guide blocks)
   4. Instruction to include the next document header
   5. Reference documents      (one line each for head + selected: {slash-path}: GET {url})
-  6. Recent documents in the group  — REMOVED (group 0372 D-0003 §3-2 "뺌"); the
+  6. Recent documents in the group  — REMOVED (group 0372 D-0003 §3-2 "dropped"); the
                                        `group_documents` help item covers it
   7. Artifact registration    (edit: complete POST example, unchanged; new: address +
                                 a pointer to the `submit` help item — D-0003 §3-2/§3-5)
   8. Scratch directory        (token-owned path for doc_path files)
-  9. doc_type guide           — REMOVED (D-0003 §3-2 "뺌"); it was already a one-line
+  9. doc_type guide           — REMOVED (D-0003 §3-2 "dropped"); it was already a one-line
                                help URL and is absorbed into the always-visible
                                `doc_type` entry of the help index
  10. Reminder                 (the no-choices guard repeated for recency)
@@ -95,7 +95,7 @@ def _remote_source_crud_lines(
     locale: str = "ko",
     kind: Optional[str] = None,
 ) -> list[str]:
-    """The five mention lines that survive the 0349 shrink (P0005 [참고] / D0004 D-4).
+    """The five mention lines that survive the 0349 shrink (P0005 [notes] / D0004 D-4).
 
     Every request format, field description and JSON example the mention used to carry now
     lives behind GET /help/tools — the mention was growing one block per tool and workers
@@ -117,7 +117,7 @@ def _remote_source_crud_lines(
     names = tool_registry.tool_names(kind)
     if not names:
         # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
-        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 정상3).
+        # nothing to advertise. Matches the empty list /help/tools returns them (P0005 normal-3).
         return []
     text = tool_registry.MENTION_LINES[loc]
     return [
@@ -140,7 +140,7 @@ def _remote_source_crud_section(
     """``_remote_source_crud_lines`` as a mention section.
 
     The header stays "Remote project source CRUD": changing the title at the same time as
-    the body would mix two causes into every regression failure (P0005 [참고]).
+    the body would mix two causes into every regression failure (P0005 [notes]).
 
     ``locale`` stays positional-or-keyword: the chat mention pins it positionally
     (invoke_mention_service._chat_lookup_sections passes "en", because that mention is
@@ -207,7 +207,7 @@ def _document_lookup_lines(
 # header and the unmanned/no-choices guide block. It replaces the per-section
 # bodies that moved behind help items: what the worker loses inline, it regains
 # through the index this block teaches. Wording is pinned by L-0005 §2-10; the
-# section header is the one worker-facing header that localizes (도움말/Help/ヘルプ)
+# section header is the one worker-facing header that localizes (per-language "Help")
 # because L-0005 fixed it per locale. `{name}` is a literal placeholder shown to
 # the worker, never str.format-expanded.
 _HELP_INDEX_HEADER: dict[str, str] = {"ko": "도움말", "ja": "ヘルプ", "en": "Help"}
@@ -265,7 +265,7 @@ def _help_index_section(base: str, raw_token: str, locale: str = "ko") -> str:
 # force-terminated / register a Q / definite answer / next action) are kept in EVERY
 # locale so the guard reads and asserts identically regardless of language.
 
-# group 0372 set 3 (D-0003 §3-2 "남김(축약)"): the placeholder question JSON the guide
+# group 0372 set 3 (D-0003 §3-2 "kept, abridged"): the placeholder question JSON the guide
 # used to embed (title/body/options) moved behind the `question` help item — the guide
 # keeps the token-specific POST address + credential and points at the item for the
 # body format. The help item's example (help_catalog.build_question_content) now also
@@ -378,12 +378,12 @@ _REMINDER_TEXT = {
 # ── Continuous (unmanned) work guide (group 0051 R0001 / NR0003 §2-3, §4-3) ──
 # R0001 requires that, in continuous (unmanned) mode, the Q/no-choices guidance is
 # REPLACED (not removed) by a delegation/unmanned/no-stop/autonomous block:
-#   - 모든 권한 위임 (all authority delegated to the worker)
-#   - 무인 운영 (unmanned operation — no human is watching)
-#   - 작업 중단 금지 (do not stop the work mid-chain)
-#   - 모를 경우 자율 판단 (when unsure, decide autonomously rather than asking)
+#   - all authority delegated to the worker
+#   - unmanned operation — no human is watching
+#   - do not stop the work mid-chain
+#   - when unsure, decide autonomously rather than asking
 # This deliberately relaxes the FlowGate Q-gate, which is why the FE warning dialog
-# (NR0003 §4-5) makes the user accept "결과 무책임 · 품질은 정보량에 의존" before a
+# (NR0003 §4-5) makes the user accept "no liability for results; quality depends on how much information is given" before a
 # continuous token is minted. The block follows the worker display locale (ko/ja/en),
 # keeping the same English keywords (UNMANNED / autonomous / do NOT stop) in every
 # locale so the directive reads identically regardless of language. GET-credential
@@ -425,15 +425,15 @@ _CONTINUOUS_TEXT = {
 
 
 # AI review mode (group 0086 R0001 — TR0004 rework rev4): a continuous run the user launched
-# with [AI 검토 모드] ON. Review mode is NOT "go" yet — it is the PRE-FLIGHT Q-registration
+# with AI review mode ON. Review mode is NOT "go" yet — it is the PRE-FLIGHT Q-registration
 # phase. Before the unmanned auto-run starts, the worker reads everything and registers any
 # clarifying questions (Q); it does NOT produce the next document and does NOT advance the
 # chain. The "create the next document (action:new)" guidance is therefore REMOVED in this
-# phase and replaced by Q-registration guidance (reviewer feedback: "검토모드=아직 go가 아니라
-# 사전 질의등록 시간이다. 이때는 new안내를 빼고 Q안내가 나와야 한다").
+# phase and replaced by Q-registration guidance (reviewer feedback: "review mode is not go
+# yet, it is pre-flight Q-registration time; drop the new-document guidance and show Q guidance").
 #
 # No-Q case (reviewer asked for ideas): if the worker has nothing to ask, it must still NOT
-# auto-proceed — instead it registers a single "검토 완료 · 막는 의문 없음 · 진행 확인 요청"
+# auto-proceed — instead it registers a single "review done, nothing blocking, asking to confirm"
 # acknowledgement Q (a review summary + plan). Either way the review phase ends paused on a
 # human go-gate: the human reads the Qs / the ack and gives the explicit go (turns review
 # mode off → the non-review auto-run takes over). This keeps review mode from ever being a
@@ -497,7 +497,7 @@ _CONTINUOUS_REVIEW_TEXT = {
 def _continuous_guide_body(locale: str = "ko", review_mode: bool = False) -> str:
     """Continuous-mode replacement for the Clarification guide (R0001 / NR0003 §4-3).
 
-    ``review_mode`` (group 0086 R0001 [AI 검토 모드]): in review mode this returns the
+    ``review_mode`` (group 0086 R0001, AI review mode): in review mode this returns the
     pre-flight Q-registration block (no "create the next document" guidance) — the worker
     registers Qs and the chain waits for the human go. ``build_mention`` additionally embeds
     a ready-to-send Q POST via ``_continuous_review_guide_body``; this text-only form is for
@@ -535,7 +535,7 @@ def _continuous_review_guide_body(
     Review mode replaces the action:new "Artifact registration" guidance with Q registration.
     The POST address is anchored at the worker's bound document and carries the worker
     token; the body format/example lives behind the `question` help item (group 0372
-    set 3 — D-0003 §3-2 "질의 등록 예시는 도움말로").
+    set 3 — D-0003 §3-2 "move the question-registration example into the help").
     """
     loc = template_provision.normalize_locale(locale)
     pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
@@ -612,7 +612,7 @@ _AUTHORING_GUIDE_POINTER_TEXT: dict[str, str] = {
 
 
 def _authoring_guide_pointer_section(header: str, type_code: str, locale: str, base: str) -> str:
-    """One-line pointer replacing the full TS/N/T authoring body (D-0003 §3-2 "뺌")."""
+    """One-line pointer replacing the full TS/N/T authoring body (D-0003 §3-2 "dropped")."""
     loc = template_provision.normalize_locale(locale)
     url = f"{base}/help/items/authoring_guide/{type_code}"
     return _section(header, _AUTHORING_GUIDE_POINTER_TEXT[loc].format(url=url))
@@ -704,38 +704,38 @@ _CHANGED_FILES_REQUIRED_TEXT: dict[str, str] = {
 }
 
 
-# ── 0405 P0004 [멘트 본문] — 작업계획(WP) 제안 범위 절 ────────────────────────────
-# 다음 액션이 작업계획일 때, 사람이 제안 창에서 고른 범위를 워커에게 넘기는 단 하나의
-# 통로. P0004 "이 멘트가 반드시 지켜야 할 것"이 정한 조건 그대로다.
-#   · 머리 타입이 WP 이고 work_plan_scope 를 받았을 때에만 나온다 — 그 밖의 멘트는
-#     한 바이트도 달라지지 않는다.
-#   · 자리는 '## Instruction to include next document header' 바로 다음,
-#     '## Document template' 바로 앞. 워커가 "무엇을" 다음에 "어떤 서식으로"를 읽는 순서다.
-#   · 두 배열이 비면 절을 지우지 않고 그 줄에 (없음) 을 적는다. 절이 통째로 사라지면
-#     "범위가 없다"와 "범위 절을 못 받았다"를 구분할 수 없다.
-#   · 0405 T0011 rev1 (반려 "맡길 단계??? 이건 대체 왜나와"): 사람이 단계를 고르는 칸을
-#     화면에서 없앴다. 그래서 이 절도 '맡길 단계' 줄을 적지 않는다 — 단계 배분은 언제나
-#     작업계획을 쓰는 워커의 몫이고, 그 사실은 아래 tail 한 줄이 말한다.
+# ── 0405 P0004 [mention body] — work-plan (WP) proposal scope section ────────────
+# When the next action is a work plan, this is the ONLY channel carrying the scope a human
+# picked in the proposal dialog to the worker, exactly as P0004's "what this mention must guarantee" requires.
+#   - It appears only when the head type is WP and a work_plan_scope was given; every
+#     other mention is unchanged down to the byte.
+#   - Its position is right after '## Instruction to include next document header' and
+#     right before '## Document template' — the worker reads "what" then "in what format".
+#   - When both arrays are empty the section is kept and the line reads "none". If the whole
+#     section disappeared, "there is no scope" could not be told from "no scope section arrived".
+#   - 0405 T0011 rev1 (rejected: "steps to delegate??? why is this even here"): the field
+#     letting a human pick steps was removed, so this section writes no such line either —
+#     step allocation is always the authoring worker's job, as the tail line below states.
 _WORK_PLAN_SCOPE_HEAD_TYPE = "WP"
 
-# P0004 [DEFERRED] 1행이 이 작업지시로 넘긴 항목: ko 문안은 P0004 가 확정했고,
-# en·ja 표기는 여기서 정한다.
+# What P0004's [DEFERRED] row handed to this instruction: P0004 fixed the ko copy, and the
+# en and ja wordings are decided here.
 _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
     "ko": {
         "header": "작업계획 맡길 범위",
         "lead": "아래 범위는 사람이 화면에서 고른 것입니다. 이 범위대로 작업계획을 작성하십시오.",
         "quantities": "장수를 셀 타입",
-        # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
-        # 프로바이더 — 후보 다중선택(providers)과는 다른 값이다. rev2 (검토 발견 2): 이 값은
-        # 작업계획의 defaults.provider_id 로 옮기는 값이 아니다. 그렇게 하면 만들어지는 모든
-        # 단계가 사람 몰래 그 공급자로 배정된다 — 단계 배정은 생성 후 편집기의 몫이다.
-        # 이 줄은 "지금 이 멘트를 실행 중인 공급자"를 워커에게 알려 줄 뿐이고, 그 사실은
-        # 아래 default_provider_rule 이 워커에게 직접 말한다.
+        # 0416 TR0005 (rejected: "where did the run provider go?"): the run provider picked on
+        # screen — a different value from the multi-select candidates (providers). rev2 (review
+        # finding 2): it is NOT the value to copy into the plan's defaults.provider_id. Doing so
+        # would silently assign every created step to that provider — step assignment belongs to
+        # the post-creation editor. This line only tells the worker "the provider running this
+        # mention right now", and default_provider_rule below states that to the worker directly.
         "default_provider": "실행 프로바이더",
         "providers": "후보 공급자",
-        # 0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가 없는거지?"): 화면에서
-        # 입력한 플래너 멘트를 별도 라벨 줄로 적는다. 이 값은 작업계획의 defaults.note 로
-        # 그대로 보존되어야 하는 것과 같은 값이다(work_plan_service.py 의 정본 규칙).
+        # 0416 T0004 (B0001 "so there is no way to pass any note to the planner?"): the planner
+        # note typed on screen is written as its own labelled line. It is the same value that
+        # must be preserved verbatim as the plan's defaults.note (work_plan_service.py's rule).
         "note": "전달 멘트",
         "none": "(없음)",
         "tail": (
@@ -748,20 +748,20 @@ _WORK_PLAN_SCOPE_COPY: dict[str, dict[str, str]] = {
             "steps[].provider_id 는 비워 두십시오.\n"
             "단계 배분은 당신에게 맡깁니다 — 위 타입과 수량대로 단계를 펼치십시오."
         ),
-        # 0416 TR0005 rev2 (검토 발견 4): 실행 프로바이더는 후보 다중선택과 독립된 값이라
-        # 후보 밖 공급자가 올 수 있다. 그 값이 실린 절에 tail 의 "후보에 없는 공급자를
-        # steps[].provider_id 에 적지 마십시오"만 함께 있으면, 워커는 서로 부딪히는 두 지시를
-        # 한 절에서 읽고 어느 쪽을 따라야 하는지 알 수 없다. 두 값이 각각 무엇을 위한 것인지
-        # 한 줄로 못 박아 그 모순을 없앤다.
+        # 0416 TR0005 rev2 (review finding 4): the run provider is independent of the candidate
+        # multi-select, so a provider outside the candidates can arrive. If the section carrying
+        # it also held only the tail's "do not write a non-candidate provider into
+        # steps[].provider_id", the worker would read two conflicting orders in one section with
+        # no way to tell which wins. One line pinning down what each value is for removes that.
         "default_provider_rule": (
             "'실행 프로바이더'는 이 멘트를 받아 지금 실행 중인 공급자이며 단계 배정 후보가 "
             "아닙니다 — steps[].provider_id 와 defaults.provider_id 에는 위 '후보 공급자'에 "
             "있는 값만 적으십시오."
         ),
-        # 0416 TR0005 rev2 (검토 발견 3): 값을 적어 주기만 하고 그것을 어디에 보존하라는
-        # 지시가 없으면, AI 제안 경로에서 전달 멘트가 최종 작업계획에 남는다는 보장이 없다.
-        # T0004 완료 기준 2번("AI 가 제안해 생성한 작업계획도 defaults.note 에 입력값을
-        # 보존")이 워커에게 실제로 전달되는 문장은 이 한 줄뿐이다.
+        # 0416 TR0005 rev2 (review finding 3): writing the value down without saying where to
+        # preserve it gives no guarantee the note survives into the final plan on the AI path.
+        # T0004 completion criterion 2 ("an AI-proposed plan must also preserve the input in
+        # defaults.note") reaches the worker through this one line and no other.
         "note_rule": (
             "위 '전달 멘트'는 작업계획을 쓸 때 참고할 입력 요구사항입니다. 참조 문서와 함께 "
             "읽고, 모든 단계에 공통으로 붙는 defaults.note 와 각 단계의 steps[].note 를 새로 "
@@ -866,15 +866,15 @@ def _work_plan_provider_names(project_id: str) -> dict:
 
 
 def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
-    """Render the P0004 '## 작업계획 맡길 범위' section from the screen's scope payload."""
+    """Render the P0004 work-plan-scope section from the screen's scope payload."""
     loc = template_provision.normalize_locale(locale)
     copy = _WORK_PLAN_SCOPE_COPY[loc]
     scope = scope if isinstance(scope, dict) else {}
 
     type_codes = [code.upper() for code in _work_plan_scope_lines(scope.get("quantity_type_codes"))]
     provider_ids = _work_plan_scope_lines(scope.get("provider_ids"))
-    # 0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고"): 화면에서 고른 이번 실행
-    # 프로바이더. provider_ids(후보 다중선택)와는 다른 값이라 별도 줄로 적는다.
+    # 0416 TR0005 (rejected: "where did the run provider go?"): the run provider picked on the
+    # screen. A different value from provider_ids (the candidates), so it gets its own line.
     default_provider_id = str(scope.get("provider_id") or "").strip()
 
     quantity_text = " / ".join(
@@ -891,16 +891,16 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
         f"{default_provider_id} · {names.get(default_provider_id, default_provider_id)}"
         if default_provider_id else copy["none"]
     )
-    # 0405 T0011 rev2: 후보가 비어 있을 때 "후보에 없는 공급자를 적지 마십시오"는 워커에게
-    # 아무것도 말해 주지 않는다. 그 자리에 "공급자가 없으니 비워 두라"를 대신 적는다.
+    # 0405 T0011 rev2: with no candidates, "do not write a non-candidate provider" tells the
+    # worker nothing. "There are no providers, so leave it empty" is written instead.
     tail = copy["tail"] if provider_ids else copy["tail_no_providers"]
-    # 0416 T0004 -- 화면에서 입력한 플래너 멘트. 빈 값도 절이 사라지지 않는 것과 같은 이유로
-    # (없음)을 적는다. 이 값은 작업계획의 defaults.note 로 그대로 보존되어야 한다 — 그
-    # 지시는 아래 note_rule 로 워커에게 실제로 전달된다(주석은 워커가 읽지 못한다).
+    # 0416 T0004 -- the planner note typed on screen. An empty value writes "none", for the
+    # same reason the section itself is never dropped. It must be preserved verbatim as the
+    # plan's defaults.note — note_rule below carries that order to the worker (comments do not).
     note_text = str(scope.get("note") or "").strip()
-    # 0416 TR0005 rev2 (검토 발견 3·4): 값을 적어 주는 것만으로는 워커에게 아무 지시도 되지
-    # 않는다. 실행 프로바이더가 실린 절에는 그 값이 단계 배정용이 아니라는 사실을, 모든 절에는
-    # 전달 멘트를 defaults.note 로 옮겨 적으라는 지시를 tail 뒤에 함께 싣는다.
+    # 0416 TR0005 rev2 (review findings 3 and 4): merely writing the value down instructs the
+    # worker in nothing. The section carrying the run provider also states that the value is not
+    # for step assignment, and every section carries, after the tail, the order to copy the handoff note into defaults.note.
     rules = []
     if default_provider_id:
         rules.append(copy["default_provider_rule"])
@@ -922,7 +922,7 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str) -> str:
 # TS is authored by the worker (excluded from auto-instruction), and FlowGate runs
 # it remotely from the project source root. Without this block the worker receives a
 # generic new-document mention and the TS it writes fails parse_test_plan
-# (no_test_cases / invalid_case_block). The three H2 headers and the 기대/기동/대기
+# (no_test_cases / invalid_case_block). The three H2 headers and the Korean field labels
 # fields are matched verbatim by test_run_service.parse_test_plan; T0009 added the
 # English aliases (Setup/Test Cases/Teardown, expect|expected/start/wait) as a second
 # accepted spelling, not a replacement — either form parses. This guide was still
@@ -1158,7 +1158,7 @@ def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
 
 
 # ── N/T instruction authoring (group 0230 R0001 / T0005 WI-7) ────────────────────
-# When a continuous run chooses "AI 직접 작성" (continuation_instruction_mode = ai_direct),
+# When a continuous run chooses "the AI writes it directly" (continuation_instruction_mode = ai_direct),
 # advance_workflow SKIPS the server-side auto-complete of N/T instruction heads, so the head
 # reaches the worker mention as an N or T. Without a dedicated guide the worker would receive a
 # generic new-document mention and might mis-scope the instruction (e.g. an N that fails to name
@@ -1170,8 +1170,8 @@ def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
 _NT_AUTHORING_TYPES = {"N", "T"}
 
 # This guide was still English-fixed regardless of the worker's requested locale (B0001
-# rev2 follow-up). Unlike _ts_authoring_section, the bullet labels below (목적/배경, 조사
-# 범위, ...) are plain prose headings for the worker to fill in — nothing here is matched
+# rev2 follow-up). Unlike _ts_authoring_section, the bullet labels below (purpose/background,
+# investigation scope, ...) are plain prose headings for the worker to fill in — nothing here is matched
 # by a parser — so, unlike the TS grammar tokens, they translate freely per locale.
 _NT_AUTHORING_TEXT = {
     "ko": {
@@ -1326,7 +1326,7 @@ def build_mention(
     # edit), the Clarification guide §2 and the bottom Reminder §9 are replaced by the
     # delegation/unmanned/no-stop/autonomous block instead of the Q-registration guard.
     continuous: bool = False,
-    # Continuous AI-review mode (group 0086 R0001 [AI 검토 모드]). When True (with
+    # Continuous AI-review mode (group 0086 R0001, AI review mode). When True (with
     # ``continuous``), the replacement block is the review variant that keeps the Q
     # latitude (scrutinise → Q-if-blocked → else proceed) instead of "never stop, never ask".
     continuous_review_mode: bool = False,
@@ -1356,9 +1356,9 @@ def build_mention(
     base = _api_base(api_base_url)
 
     is_edit = action_scope == "edit"
-    # Review phase (group 0086 R0001 — TR0004 rework rev4): a continuous run with [AI 검토 모드]
+    # Review phase (group 0086 R0001 — TR0004 rework rev4): a continuous run with AI review mode
     # ON is the pre-flight Q-registration phase, not "go". All "create the next document"
-    # guidance (the "new안내") is removed so the worker only registers Qs.
+    # guidance (the new-document section) is removed so the worker only registers Qs.
     review_continuous = continuous and continuous_review_mode and not is_edit
 
     # ── Section 1: document information ──────────────────────────────────────
@@ -1509,10 +1509,10 @@ def build_mention(
             ])
         review_section = _section("Review feedback", "\n".join(review_lines))
 
-    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2 "뺌") ─────
+    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2, dropped) ──
     # The list is now the `group_documents` help item, always visible in the index — a
-    # worker never needs a pointer line for it (D-0003 §3-2: "도움말 목차 한 줄로
-    # 합쳐진다"). group_recent_docs stays accepted for caller compatibility but is no
+    # worker never needs a pointer line for it (D-0003 §3-2: "folded into one line of the help
+    # index"). group_recent_docs stays accepted for caller compatibility but is no
     # longer rendered.
 
     # ── Section 5: artifact registration ──────────────────────────────────────
@@ -1538,7 +1538,7 @@ def build_mention(
         # → record_rejection_response) then attaches it to the latest rejection item
         # for read-only display. Without this field the response is never collected,
         # so the reviewer sees no "response content" and cannot tell what changed.
-        # D-0003 §3-1 question 2 ("읽지 않으면 시작 자체가 틀리는가") keeps this whole
+        # D-0003 §3-1 question 2 ("would not reading it make the start itself wrong?") keeps this whole
         # example inline for the edit path — unlike `new` below, it is not boilerplate.
         if edit_reason == "rejected":
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
@@ -1546,8 +1546,8 @@ def build_mention(
             ]
         post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
         commit_hint = ""
-        # 0299: 재제출(edit)도 작업범위 검증을 거친다. 재작업 지시에 형식 안내가 빠져 있으면
-        # 반려된 작업자가 형식을 모르는 채로 다시 제출해 두 번째 반려를 맞는다.
+        # 0299: a resubmission (edit) goes through the work-scope check too. If the rework
+        # instruction omits the format guidance, the rejected worker resubmits blind and is rejected again.
         if str(parent_type or "").upper() in tool_registry.MUTATING_STEP_TYPES:
             commit_hint = f"\n{tr_scope_service.tr_section_guide(template_provision.normalize_locale(locale))}"
         content_source_hint = (
@@ -1607,7 +1607,7 @@ def build_mention(
         "Create the file inside it and send that file's absolute path as `doc_path`."
     )
 
-    # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "뺌") ──
+    # ── Section 7: doc_type guide — REMOVED (group 0372 set 3, D-0003 §3-2 "dropped") ──
     # It was already a bare one-line help URL; the always-visible `doc_type` entry of
     # the help index (taught by the central Help block below) absorbs it.
 
@@ -1622,7 +1622,7 @@ def build_mention(
     # branch is guarded by `not is_edit`.
     continuous_mode = continuous and not is_edit
     # Review phase (review_continuous, computed above): the Clarification section becomes the
-    # Q-registration guide and the action:new "Artifact registration" section (the "new안내") is
+    # Q-registration guide and the action:new "Artifact registration" section is
     # suppressed below — the worker registers Qs, it does not create the next document.
     if review_continuous:
         s8_header = "Review phase (pre-flight Q registration)"
@@ -1680,9 +1680,9 @@ def build_mention(
     if source_crud_section:
         sections.append(source_crud_section)
     sections.append(_section(s2_header, s2_body))
-    # 0405 P0004 [멘트 본문]: '## Instruction to include next document header' 바로 다음,
-    # '## Document template' 바로 앞. WP 머리가 아니거나 범위를 받지 못했으면 아무것도
-    # 덧붙이지 않으므로 기존 멘트는 그대로다.
+    # 0405 P0004 [mention body]: right after '## Instruction to include next document header'
+    # and right before '## Document template'. With a non-WP head, or no scope received, nothing
+    # is appended, so existing mentions are unchanged.
     if (
         work_plan_scope is not None
         and not is_edit
@@ -1699,10 +1699,10 @@ def build_mention(
     if ts_authoring_section:
         sections.append(ts_authoring_section)
         # flowgate.default.0152 / group 0372 set 3: the verified-commands list used to be
-        # inlined here (D-0003 §3-2 "검증된 테스트 명령: 뺌") — it is now the `test_commands`
+        # inlined here (D-0003 §3-2, "verified test commands: dropped") — it is now the `test_commands`
         # help item, auto-visible in the index whenever a TS is being authored, so no pointer
         # line is needed here either (same "absorbed into the index" rule as recent_documents).
-        # flowgate.default.0157's engine-recipe block ("실행 환경 준비" — same D-0003 row)
+        # flowgate.default.0157's engine-recipe block ("prepare the execution environment" — same D-0003 row)
         # rides along: help_catalog._content_test_commands now carries it as
         # `engine_recipes`, so the registry is still taught on the first help call
         # (L §2-7) without this mention inlining it.
@@ -1711,12 +1711,12 @@ def build_mention(
     sections.append(_section("Reference documents", s3_body))
     # MERGE NOTE (branch base 241f00d predates group 0370 on main): main inserts an
     # inline "Efficient document lookup" section right here. Group 0372 absorbed that
-    # guidance into the `document_access` help item (D-0003 §3-2 "참조 문서: 조회 방법
-    # 설명은 뺀다" + M0009), so the inline section must NOT come back when this branch
+    # guidance into the `document_access` help item (D-0003 §3-2, "reference documents: drop the
+    # lookup-method explanation" + M0009), so the inline section must NOT come back when this branch
     # merges — resolve any conflict here by keeping NO inline lookup section.
     if review_section:
         sections.append(review_section)
-    # Review phase suppresses the action:new artifact POST (the "new안내"): the worker must
+    # Review phase suppresses the action:new artifact POST section: the worker must
     # register Qs, not create the next document. The Q POST is embedded in s8_body instead.
     if not review_continuous:
         sections.append(_section("Artifact registration", s5_body))
@@ -1853,7 +1853,7 @@ def build_workflow_decision_mention(
 
     Continuous (unmanned) work (group 0086 R0001): when ``continuous`` is set, this
     decision step is the FIRST link of an unmanned chain that starts *before* the
-    workflow is decided ("워크플로 결정부터"). The Clarification guide + bottom Reminder
+    workflow is decided ("starting from the workflow decision"). The Clarification guide + bottom Reminder
     swap to the delegation/unmanned/no-stop/autonomous block (same one build_mention
     uses), and the worker is told the run continues automatically after the decision is
     saved — so it must decide and submit rather than stopping to ask. The server kicks
@@ -1912,7 +1912,7 @@ def build_workflow_decision_mention(
         # rev4 still appended the non-review "keep going until done, do NOT stop" line here,
         # contradicting review mode; rev5 replaces it with the review-phase instruction.
         s2_body += (
-            "\n\nThis is the PRE-FLIGHT REVIEW phase of an UNMANNED run ([AI 검토 모드] ON) — "
+            "\n\nThis is the PRE-FLIGHT REVIEW phase of an UNMANNED run (AI review mode ON) — "
             "it is NOT 'go' yet. Decide the workflow first so the sequence exists to review. "
             "After you submit the decision, the response encloses the FIRST step's review "
             "mention — review that step and register any blocking question as a Q (or, if you "
@@ -1935,7 +1935,7 @@ def build_workflow_decision_mention(
     # actually get an answer (internal contradiction) and leaked English in ko/ja. We now
     # use the shared, locale-aware helper here too, anchoring the Q on the R-root doc_id —
     # the same doc_ref the workflow_decide token is minted with, which the Q endpoint
-    # accepts (NR0003 §타당성 검증).
+    # accepts (NR0003 §feasibility check).
     # Continuous (group 0086): this is the first link of an unmanned chain, so the guide
     # is REPLACED by the delegation/unmanned block — the worker decides autonomously and
     # never stops to ask (consistent with build_mention's continuous branch).
@@ -1967,10 +1967,10 @@ def build_workflow_decision_mention(
         # help item (D-0003 §3-2); keep NO inline lookup section on merge.
     ])
 
-    # Recent documents in group — REMOVED (D-0003 §3-2 "뺌"), see build_mention's
+    # Recent documents in group — REMOVED (D-0003 §3-2 "dropped"), see build_mention's
     # Section 4 comment. group_recent_docs stays accepted for caller compatibility.
 
-    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only;
+    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only;
     # the request body format/example lives behind the `submit` help item, which the
     # help catalog builds per action_scope (workflow_decide included).
     loc = template_provision.normalize_locale(locale)
@@ -1981,7 +1981,7 @@ def build_workflow_decision_mention(
         f"{_SUBMIT_BODY_POINTER_TEXT[loc].format(url=f'{base}/help/items/submit')}"
     )
     sections.append(_section("Workflow decision submission", s5_body))
-    # doc_type guide section — REMOVED (D-0003 §3-2 "뺌"): absorbed into the help index.
+    # doc_type guide section — REMOVED (D-0003 §3-2 "dropped"): absorbed into the help index.
     if continuous:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=continuous_review_mode)))
     else:
@@ -2106,7 +2106,7 @@ def build_sequence_edit_mention(
         f"Current sequence: GET {base}/workflow/sequence?doc_id={doc_id}"
     )
 
-    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only;
+    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only;
     # the PATCH body format lives behind the `submit` help item (workflow_sequence_edit).
     loc = template_provision.normalize_locale(locale)
     s5_body = (
@@ -2208,12 +2208,12 @@ def build_review_mention(
         + "\n".join(s3_lines)
     )
 
-    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2 "뺌") ─────
+    # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2, dropped) ──
     # See build_mention's Section 4 comment; group_recent_docs stays accepted for
     # caller compatibility but is no longer rendered.
 
     # ── Section 5: review submission (inbox action:review) ────────────────────
-    # group 0372 set 3 (D-0003 §3-2 "결과 등록: 남김(최소)"): address + credential only.
+    # group 0372 set 3 (D-0003 §3-2, "result registration: kept, minimal"): address + credential only.
     # The action:review body format/example (verdict enum, findings shape) lives behind
     # the `submit` help item, which builds the review contract for review tokens; the
     # Verdict guide section below keeps the verdict semantics inline (L-0006 §2-5 keeps
@@ -2334,10 +2334,10 @@ def build_work_plan_fill_mention(
         str(provider.get("provider_id")): provider
         for provider in body.get("provider_candidates") or []
     }
-    # 0411 T0004 (B0001): 단계 공급자는 이제 후보 밖 — 이 프로젝트에 등록만 된 공급자 —
-    # 일 수 있다. 후보 스냅샷에만 이름을 물으면 그런 id 가 워커 멘트에 raw id 로 나가
-    # 작업자가 누구를 고르라는 것인지 알 수 없다. 스냅샷(고를 때 얼린 이름) → 등록 목록
-    # (현재 이름) → id 순으로 찾는다. 설정을 못 읽으면 예전처럼 id 로 떨어진다.
+    # 0411 T0004 (B0001): a step provider may now sit outside the candidates — merely registered
+    # in this project. Asking only the candidate snapshot for a name would send such an id into
+    # the worker mention as a raw id, leaving the worker unable to tell who to pick. Lookup order
+    # is snapshot (the name frozen at pick time) → registered list (current name) → id. Unreadable settings fall back to the id as before.
     registered_names: dict[str, str] = {}
     try:
         from modules.flow_gate.settings import ai_settings_service

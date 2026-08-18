@@ -1,4 +1,4 @@
-// Shared contract for WorkflowStepPicker.vue (0242 NR0003 권고 1).
+// Shared contract for WorkflowStepPicker.vue (0242 NR0003 recommendation 1).
 //
 // The picker owns "how far should this continuous run go?" for BOTH continuous-run entry
 // points (the action-bar ContinuousWorkDialog and the AI-invoke dialog), so the payload it

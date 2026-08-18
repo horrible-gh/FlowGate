@@ -308,7 +308,7 @@ function clearSearch() {
   resetSearch()
 }
 
-// 0351 T4 (P0003 시나리오 16): a conversation-turn result opens the chat tab and asks
+// 0351 T4 (P0003 scenario 16): a conversation-turn result opens the chat tab and asks
 // it to scroll to that exact turn. Cross-tree signal (GroupExplorer does not own the
 // mounted ConversationView instance — MainPanel does), same window-event idiom this
 // file already uses for fg:group_tree_changed.

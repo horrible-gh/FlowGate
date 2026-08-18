@@ -67,19 +67,77 @@ def _validate_input(body_raw: str, idempotency_key: str) -> tuple[str, str, str,
     return body, key, _sha256(body), _sha256(key)
 
 
-# ── Corrupted-body guard + body-fingerprint match (0391 B0001 제안3+4, T0005 §5-4/§6) ──
+# ── Corrupted-body guard + body-fingerprint match (0391 B0001 proposals 3+4, T0005 §5-4/§6) ──
 # Shared by append_turn (raises) and dry_run_append (reports) so both give the exact
-# same verdict for the same input — the T0005 §5-4 common rule ("드라이런과 실등록의
-# 판정 결과는 반드시 같아야 한다"). Fingerprints are checked against body_raw, i.e.
+# same verdict for the same input — the T0005 §5-4 common rule ("a dry run and a real
+# registration must always reach the same verdict"). Fingerprints are checked against body_raw, i.e.
 # BEFORE normalize_body() — normalize_body's NFC/newline/trailing-space changes are not
 # something the sender can reliably reproduce client-side, so pinning the contract to
 # the original text is the only version of it that holds (T0005 §6-3).
+_ENCODING_VIOLATION_STRINGS = {
+    "ko": {
+        "sha256_mismatch": "sha256 기대={expected} 실제={actual}",
+        "chars_mismatch": "글자수 기대={expected} 실제={actual}",
+        "chars_format_error": "body_chars 형식 오류: {value!r}",
+        "fingerprint_violation": (
+            "본문 지문이 어긋납니다: {mismatches}. 본문을 UTF-8 파일로 "
+            "먼저 쓰고 그 파일에서 글자 수와 해시를 구해 다시 보내거나, "
+            "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+        ),
+        "corrupted_body": (
+            "본문이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 먼저 쓰고, 그 "
+            "파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 다음 다시 보내세요. "
+            "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 이상)를 "
+            "적어 다시 보내세요."
+        ),
+    },
+    "en": {
+        "sha256_mismatch": "expected sha256={expected} actual={actual}",
+        "chars_mismatch": "expected char count={expected} actual={actual}",
+        "chars_format_error": "body_chars has an invalid format: {value!r}",
+        "fingerprint_violation": (
+            "The body fingerprint does not match: {mismatches}. Write the body to a "
+            "UTF-8 file first and compute the char count/hash from that file, or "
+            "resend with force_encoding_reason (10+ non-whitespace characters)."
+        ),
+        "corrupted_body": (
+            "The body looks like corrupted text (e.g. ??????). Write it to a UTF-8 "
+            "file first, compute the char count/hash (body_chars/body_sha256) from "
+            "that file, then resend. If you really must send it as-is, resend with "
+            "force_encoding_reason (10+ non-whitespace characters)."
+        ),
+    },
+    "ja": {
+        "sha256_mismatch": "sha256 期待値={expected} 実際値={actual}",
+        "chars_mismatch": "文字数 期待値={expected} 実際値={actual}",
+        "chars_format_error": "body_chars の形式が不正です: {value!r}",
+        "fingerprint_violation": (
+            "本文の指紋が一致しません: {mismatches}。本文をUTF-8ファイルとして先に書き出し、"
+            "そのファイルから文字数とハッシュを求めて送り直すか、force_encoding_reason に"
+            "理由（空白を除き10文字以上）を書いて送り直してください。"
+        ),
+        "corrupted_body": (
+            "本文が文字化け（例: ??????）しているようです。本文をUTF-8ファイルとして先に書き出し、"
+            "そのファイルから文字数とハッシュ（body_chars/body_sha256）を求めてから送り直してください。"
+            "どうしてもこのまま送る必要がある場合は、force_encoding_reason に理由"
+            "（空白を除き10文字以上）を書いて送り直してください。"
+        ),
+    },
+}
+
+
+def _encoding_violation_string(key: str, locale: str, **kwargs) -> str:
+    strings = _ENCODING_VIOLATION_STRINGS.get(locale) or _ENCODING_VIOLATION_STRINGS["ko"]
+    return strings[key].format(**kwargs)
+
+
 def _encoding_violation(
     *,
     body_raw: str,
     body_sha256: Optional[str],
     body_chars: Optional[int],
     force_encoding_reason: Optional[str],
+    locale: str = "ko",
 ) -> Optional[str]:
     reason = (force_encoding_reason or "").strip()
     if len(reason.replace(" ", "")) >= 10:
@@ -90,30 +148,29 @@ def _encoding_violation(
         actual_chars = len(body_raw)
         mismatches = []
         if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
-            mismatches.append(f"sha256 기대={body_sha256} 실제={actual_sha256}")
+            mismatches.append(_encoding_violation_string(
+                "sha256_mismatch", locale, expected=body_sha256, actual=actual_sha256
+            ))
         if body_chars is not None:
             try:
                 if int(body_chars) != actual_chars:
-                    mismatches.append(f"글자수 기대={body_chars} 실제={actual_chars}")
+                    mismatches.append(_encoding_violation_string(
+                        "chars_mismatch", locale, expected=body_chars, actual=actual_chars
+                    ))
             except (TypeError, ValueError):
-                mismatches.append(f"body_chars 형식 오류: {body_chars!r}")
+                mismatches.append(_encoding_violation_string(
+                    "chars_format_error", locale, value=body_chars
+                ))
         if mismatches:
-            return (
-                "본문 지문이 어긋납니다: " + "; ".join(mismatches) + ". 본문을 UTF-8 파일로 "
-                "먼저 쓰고 그 파일에서 글자 수와 해시를 구해 다시 보내거나, "
-                "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+            return _encoding_violation_string(
+                "fingerprint_violation", locale, mismatches="; ".join(mismatches)
             )
         return None  # fingerprint matched — trust it, skip the question-mark heuristic
 
     from modules.flow_gate.services import workflow_decision_service
 
     if workflow_decision_service._text_is_corrupted(body_raw):
-        return (
-            "본문이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 먼저 쓰고, 그 "
-            "파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 다음 다시 보내세요. "
-            "정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 10자 이상)를 "
-            "적어 다시 보내세요."
-        )
+        return _encoding_violation_string("corrupted_body", locale)
     return None
 
 
@@ -418,6 +475,7 @@ def append_turn(
     body_sha256: Optional[str] = None,
     body_chars: Optional[int] = None,
     force_encoding_reason: Optional[str] = None,
+    locale: str = "ko",
 ) -> dict:
     """Append one turn for either a session user or a token-bound AI worker."""
     body, key, body_hash, idempotency_hash = _validate_input(body_raw, idempotency_key)
@@ -428,6 +486,7 @@ def append_turn(
         body_sha256=body_sha256,
         body_chars=body_chars,
         force_encoding_reason=force_encoding_reason,
+        locale=locale,
     )
     if _violation is not None:
         raise ConversationTurnError(422, _violation)
@@ -550,6 +609,7 @@ def dry_run_append(
     body_sha256: Optional[str] = None,
     body_chars: Optional[int] = None,
     force_encoding_reason: Optional[str] = None,
+    locale: str = "ko",
 ) -> dict:
     """Validate-only counterpart to append_turn (T0004 / NR0003 3-3).
 
@@ -579,6 +639,7 @@ def dry_run_append(
         body_sha256=body_sha256,
         body_chars=body_chars,
         force_encoding_reason=force_encoding_reason,
+        locale=locale,
     )
     corrupted = _violation is not None
     message = _violation or (

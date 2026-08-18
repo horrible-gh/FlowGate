@@ -1,7 +1,7 @@
 """Tiny thread-safe TTL map, shared by the per-request caches.
 
 Extracted from auth/auth_cache.py (0276 T0009) so db/meta_cache.py (0282 NR0003
-발견 2) can reuse it without importing the auth package — auth's __init__ pulls
+finding 2) can reuse it without importing the auth package — auth's __init__ pulls
 in middleware/auth_api, which import db modules, and db importing auth back
 would be a circular import at package-init time.
 
@@ -47,8 +47,8 @@ from typing import Any, Callable
 
 MISS = object()
 
-# 리더가 신호를 못 준 채로 사라지는 경우의 상한. 이 시간을 넘기면 팔로워는 기다림을
-# 포기하고 자기가 직접 로드한다 — 즉 최악의 경우가 "느려짐" 이지 "멈춤" 이 아니다.
+# Cap for the case where the leader disappears without signalling. Past this a follower gives
+# up waiting and loads for itself — so the worst case is "slower", never "stuck".
 _LEADER_WAIT_TIMEOUT = 10.0
 
 
@@ -62,10 +62,10 @@ class _Load:
         self.value: Any = None
         self.ok = False
         self.owner = threading.get_ident()
-        # 이 로드가 도는 동안 invalidate()/clear() 가 지나갔다는 표시. 그러면 리더가
-        # 읽어 온 값은 이미 낡았을 수 있으므로 캐시에 넣지 않고 팔로워에게도 주지
-        # 않는다 — 무효화가 진행 중인 로드에 의해 되살아나는 것이 이 클래스가 만들
-        # 수 있는 유일한 정합성 구멍이다.
+        # Marks that invalidate()/clear() passed while this load was running. The value the
+        # leader fetched may then already be stale, so it is neither cached nor handed to
+        # followers — an invalidation being undone by an in-flight load is the only consistency
+        # hole this class could create.
         self.stale = False
 
     def finish(self, value: Any, ok: bool) -> None:
@@ -107,13 +107,13 @@ class SingleFlight:
             if load is not None and load.owner != threading.get_ident():
                 follower = True
             else:
-                # 없거나(리더) 같은 스레드의 재진입이거나(그냥 실행) — 둘 다 직접 돈다.
+                # Either absent (leader) or a re-entry on the same thread (just run) — both load directly.
                 follower = False
                 if load is None:
                     load = _Load()
                     self._inflight[key] = load
                 else:
-                    load = None  # 재진입: 진행 중인 항목을 건드리지 않는다.
+                    load = None  # re-entry: leave the in-flight entry alone
         if follower:
             load.done.wait(_LEADER_WAIT_TIMEOUT)
             return
@@ -186,13 +186,13 @@ class TTLCache:
         if cached is not MISS:
             return cached
         if self._ttl_fn() <= 0:
-            # 캐싱이 꺼져 있으면 조율할 것도 없다: 호출부마다 자기 값을 읽는 것이
-            # TTL=0 의 의미(= 캐시 이전 동작)다.
+            # With caching off there is nothing to coordinate: each caller reading its own value
+            # is precisely what TTL=0 means (the pre-cache behaviour).
             return loader()
 
         now = time.monotonic()
         with self._lock:
-            # 락 밖의 get() 과 여기 사이에 다른 스레드가 값을 채웠을 수 있다.
+            # Another thread may have filled the value between the unlocked get() and here.
             entry = self._entries.get(key)
             if entry is not None and entry[0] > now:
                 return entry[1]
@@ -202,9 +202,9 @@ class TTLCache:
                 self._inflight[key] = load
                 role = "leader"
             elif load.owner == threading.get_ident():
-                # 로더가 같은 키로 재진입했다 — 자기 자신을 기다리면 교착이다.
-                # 진행 중인 load 는 건드리지 않고(끝내는 것은 바깥 호출부의 몫)
-                # 이 호출만 직접 처리한다.
+                # The loader re-entered on the same key — waiting on itself would deadlock.
+                # The in-flight load is left alone (finishing it is the outer caller's job) and
+                # only this call is served directly.
                 role = "reentrant"
             else:
                 role = "follower"
@@ -216,7 +216,7 @@ class TTLCache:
             shared = load.wait()
             if shared is not MISS:
                 return shared
-            # 리더가 실패했거나 응답이 없다. 남의 예외를 물려받는 대신 직접 읽는다.
+            # The leader failed or never answered. Rather than inheriting someone else's exception, load directly.
             return self.set(key, loader())
 
         try:
@@ -231,9 +231,9 @@ class TTLCache:
             if self._inflight.get(key) is load:
                 del self._inflight[key]
         if load.stale:
-            # 로드 도중 무효화가 지나갔다: 이 값은 공표하지 않는다. 리더 자신은
-            # 방금 DB 에서 읽은 것을 그대로 쓰고(그건 무효화 이전 캐시 도입 전과
-            # 같은 상황이다), 팔로워는 각자 다시 읽는다.
+            # An invalidation passed mid-load: this value is not published. The leader itself uses
+            # what it just read from the DB (the same situation as before the cache existed), and
+            # each follower reads again for itself.
             load.finish(None, False)
             return value
         self.set(key, value)

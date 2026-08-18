@@ -148,7 +148,7 @@ def build_workflow_tag(sequence: Optional[dict], items: Iterable[dict]) -> str:
 def _poured_block(items: Iterable[dict], plan_doc_id: Optional[str]) -> Optional[list[dict]]:
     """The rows this very plan put in the sequence, reports included.
 
-    0408 M0019 재반려 3: L0010 §2.5 counts "the Nth row of type X" over the WHOLE sequence,
+    0408 M0019 re-rejection 3: L0010 §2.5 counts "the Nth row of type X" over the WHOLE sequence,
     which predates the provenance columns 0399 added. A sequence that already finished an
     N/NR pair before the plan poured its own therefore matched the plan's N#1 onto the old
     finished row, and the plan's mention for that step reached nothing. A row poured by this

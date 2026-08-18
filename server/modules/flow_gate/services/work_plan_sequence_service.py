@@ -1,14 +1,14 @@
 """Work-plan → workflow-sequence converter (flowgate.default.0399 D0010 §2 / L0011).
 
-D0010 §2 lists this as a component of its own: "계획→시퀀스 변환기 (신규) … 화면에 붙이지
-않고 따로 떼어 둔다". That separation is the whole reason the module exists — a later group
-is meant to drive the same conversion with no screen at all (D0010 [DEFERRED] 마지막 줄), so
+D0010 §2 lists this as a component of its own: "plan-to-sequence converter (new) ... kept
+separate rather than bolted onto the screen". That separation is the whole reason the module exists — a later group
+is meant to drive the same conversion with no screen at all (D0010 [DEFERRED], last row), so
 nothing in here may reach for a request, a session, or a rendering concern.
 
 What it does: turn an approved work plan's step list into *candidate* sequence rows, merge
 them into the current sequence the way the chosen mode says, and report what the person
 should know before saving. It never writes. Pouring only produces the edit dialog's starting
-state; the sequence changes when a human presses [저장] (D0010 §3.3).
+state; the sequence changes when a human presses [save] (D0010 §3.3).
 
 Everything numeric or set-valued here is L0011 §1; the algorithms are L0011 §2.
 """
@@ -29,8 +29,8 @@ from modules.flow_gate.services.workflow_decision_service import (
 from modules.flow_gate.services.work_plan_service import PROVIDER_ID_PATTERN
 
 # ── L0011 §1.1 — numeric parameters ──────────────────────────────────────────
-# 0406 T0022 작업 6: 값은 documents.constants 의 정본을 읽는다. 이름은 그대로 두어
-# 기존 호출부(시험 포함)가 wpseq.NOTE_MAX_CHARS 로 계속 물어볼 수 있게 한다.
+# 0406 T0022 item 6: the value is read from the canonical one in documents.constants. The name
+# is kept so existing callers (tests included) can still ask via wpseq.NOTE_MAX_CHARS.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 PROVIDER_NAME_MAX_CHARS = 191
 POUR_ROWS_MAX = 100
@@ -54,8 +54,8 @@ _log = logging.getLogger(__name__)
 
 # L0011 §2.10 / P0013 ① — one envelope per code; the order below is the order the dialog
 # reads them in, so it is fixed here rather than left to the caller.
-# M0020: 승인 여부는 이 목록에서 빠졌다. 아직 검토 중인 계획도 승인된 계획과 똑같이
-# 부어지고, 그래도 되는지는 마지막에 [저장]을 누르는 사람이 정한다.
+# M0020: approval status is deliberately absent from this list. A plan still under review is
+# poured exactly like an approved one; whether that is acceptable is decided by whoever presses [save].
 _NOTIFICATION_ORDER = (
     "type_not_placeable",
     "rows_truncated",
@@ -81,11 +81,11 @@ class InvalidMode(ValueError):
 
 
 class NoteTooLong(ValueError):
-    """저장하려는 한줄 멘트가 상한을 넘었다 (0406 T0022 작업 6 / M0019).
+    """The one-line note being saved exceeds the cap (0406 T0022 item 6 / M0019).
 
-    옛 동작은 조용한 절단이었다. 사용자가 1,000 자를 적어 저장해도 아무 말 없이 200 자만
-    남았고, 화면은 저장에 성공했다고 말했다. 자르는 대신 거절하고, 작업계획 저장이 이미
-    쓰는 ``note_too_long`` 과 같은 모양(코드 + max + 실제 길이)으로 사실을 실어 보낸다.
+    The old behaviour was a silent truncation: a user could save 1,000 characters and only 200
+    survived, while the screen reported success. It now rejects instead of truncating, carrying
+    the fact in the same shape the work-plan save already uses for ``note_too_long`` (code + max + actual length).
     """
 
     code = "note_too_long"
@@ -112,16 +112,16 @@ def label_of(code: str, locale: str = "ko") -> str:
 def normalize_note(raw: Any, *, strict: bool = False) -> str:
     """Trim a step note down to what a sequence row may carry.
 
-    "값이 없음"과 "빈 글자"를 나누지 않는다 (L0011 §2.2): both come back as "". Keeping the
+    "Absent" and "empty string" are not distinguished (L0011 §2.2): both come back as "". Keeping the
     distinction would flip the stored value on every save round-trip for no visible gain.
 
-    0406 T0022 작업 6 — **조용한 절단은 없다.** 옛 구현은 상한을 넘는 글자를 말없이 버렸고,
-    저장은 성공한 것처럼 보였다. 이제 자르지 않는다:
+    0406 T0022 item 6 — **no silent truncation.** The old implementation dropped characters past
+    the cap without a word and the save appeared to succeed. Nothing is truncated now:
 
-    * ``strict=True`` (저장 경로) 는 상한을 넘으면 :class:`NoteTooLong` 을 올려 거절한다.
-    * ``strict=False`` (읽기·프롬프트 조립 같은 표시 경로) 는 있는 그대로 돌려준다. 읽는
-      쪽이 옛 데이터 때문에 터지면 안 되고, 읽기가 값을 줄이면 그것도 같은 종류의 조용한
-      손실이기 때문이다.
+    * ``strict=True`` (the save path) raises :class:`NoteTooLong` and rejects past the cap.
+    * ``strict=False`` (display paths such as reads and prompt assembly) returns it as is. A
+      reader must not blow up over legacy data, and a read that shrinks the value would be the
+      same kind of silent loss.
     """
     if raw is None or not isinstance(raw, str):
         return ""
@@ -237,8 +237,8 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
     """Split the stored sequence into (locked rows, editable rows).
 
     Locked rows are the ones a save may not touch — they already produced a document, so
-    they are the structural reason "이미 끝난 줄과 지금 진행 중인 줄은 어느 방식에서도
-    지우지 않는다" holds without a single guard clause (L0011 §2.5).
+    they are the structural reason "finished rows and the row currently running are never deleted
+    by any mode" holds without a single guard clause (L0011 §2.5).
     """
     locked: list[dict] = []
     pending: list[dict] = []
@@ -278,9 +278,9 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
 def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]) -> None:
     """Hold the result step's note for the automatic row that will carry it (§2.4).
 
-    0408 M0019 재반려 ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): this used to move the
+    0408 M0019 re-rejection ("why is the TR/NR mention using T/N's?"): this used to move the
     note onto the INSTRUCTION row — and, if that row already had one, throw it away
-    (paired_note_dropped). Both outcomes made the row that actually runs under [자동 승인]
+    (paired_note_dropped). Both outcomes made the row that actually runs under [auto approve]
     (NR/TR) show a sentence somebody wrote for a different step, or none at all. The note now
     travels to its own row exactly the way pair_provider_id already does, so N/NR and T/TR
     keep two independent notes and neither can overwrite the other.
@@ -436,8 +436,8 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             auto_uid, want, locale,
             is_auto=True,
             auto_of_uid=row["uid"],
-            # 0408 TR0021 rev1: 자동 줄도 자기 멘트를 갖는다. [자동 승인]에서 AI 워커가
-            # 도는 줄이 바로 이 줄이므로, 계획이 이 단계에 적어 준 말은 여기 말고 실릴 데가 없다.
+            # 0408 TR0021 rev1: an automatic row carries its own note too. Under [auto approve]
+            # this is the very row the AI worker runs on, so what the plan wrote for this step has nowhere else to ride.
             note=pair_note,
             note_source=pair_note_source,
             origin="auto",
@@ -485,8 +485,8 @@ def overlap_types(before_uids: set[int], poured_uids: set[int], rows: list[dict]
                   poured_type_of: dict[int, str]) -> list[str]:
     """Which types a surviving original row and a poured row now share.
 
-    Only types, never positions: what a person sees is "DS 가 두 줄이네", not "DS#2 가
-    겹치네" (L0011 §2.9). Deleted rows cannot overlap with anything.
+    Only types, never positions: what a person sees is "there are two DS rows", not "DS#2
+    collides" (L0011 §2.9). Deleted rows cannot overlap with anything.
     """
     surviving = {
         row["type"] for row in rows
@@ -507,7 +507,7 @@ def row_count_change(
 ) -> dict:
     before = len(locked_rows) + len(pending_before)
     deleted = 0 if mode == "append" else len(pending_before) - cut_index(pending_before, wp_item_seq)
-    added = len(pour_rows)              # 자동 줄도 사람이 목록에서 보는 한 줄이므로 센다
+    added = len(pour_rows)              # automatic rows count too — a person sees them as rows
     return {"before": before, "after": before - deleted + added, "deleted": deleted, "added": added}
 
 
@@ -605,8 +605,8 @@ def _public_row(row: dict, provider_view: dict) -> dict:
 def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") -> dict:
     """Build the edit dialog's starting state for one work plan and one mode.
 
-    Reads only. Nothing here changes the sequence, and nothing changes the plan — "적용은
-    계획을 읽기만 한다" (D0010 §4).
+    Reads only. Nothing here changes the sequence, and nothing changes the plan — "applying
+    only reads the plan" (D0010 §4).
     """
     if mode not in MODES:
         raise InvalidMode(mode)
@@ -628,7 +628,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
 
     truncated_count = 0
     if len(pour_rows) > POUR_ROWS_MAX:
-        # 자동 줄은 부모와 함께 잘라 짝이 깨지지 않게 한다 (L0011 §5).
+        # Automatic rows are trimmed together with their parent so the pairing cannot break (L0011 §5).
         keep = pour_rows[:POUR_ROWS_MAX]
         while keep and keep[-1].get("type") in INSTRUCTION_TYPES:
             keep.pop()
@@ -654,9 +654,9 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
 
     return {
         "wp_doc_id": wp_doc_id,
-        # 0403 NR0004 F2 — 행에만 적혀 있던 계획 리비전을 응답 머리에도 싣는다. 저장할 때
-        # 이 값을 그대로 돌려보내야 "대화상자를 연 뒤 계획이 바뀌었는지"를 서버가 판정할 수
-        # 있다. 행 안의 source_revision_no 는 저장 뒤에도 계속 따라다녀 이 판정에 못 쓴다.
+        # 0403 NR0004 F2 — the plan revision, previously only on the rows, now also rides the
+        # response header. Sending this value back on save is what lets the server decide
+        # "did the plan change after the dialog opened". A row's source_revision_no keeps trailing along after a save and cannot serve that purpose.
         "wp_revision_no": wp_revision_no,
         "workflow_doc_id": owner_doc_id,
         "mode": mode,

@@ -8,7 +8,7 @@ One trap worth naming: P0011 §2 shows ``limit_bytes: 10485760`` in its
 [failure — upload too large] example. That is an *example* written while P had already
 delegated the number to L, and L0012 §1-1 explicitly warns not to copy it into the
 implementation. The real ceiling is ``ATTACH_MAX_UPLOAD_BYTES`` (20 MiB), taken from the
-approved deck's own caption ("파일당 최대 20MB").
+approved deck's own caption ("20MB max per file").
 """
 from __future__ import annotations
 
@@ -42,9 +42,9 @@ ATTACH_DOWNLOAD_FORCED_OCTET_TYPES = frozenset({
 # ── §1-3 extension policy — accepted at the door, neutralized on the way out ────
 # This list used to be a DENY list: an upload whose last extension was on it was refused
 # with 400 UNSUPPORTED_EXTENSION. TR0017 rev3 was rejected for exactly that wall — a person
-# picked their own work file and the screen answered "첨부로 받을 수 없는 확장자 입니다.".
+# picked their own work file and the screen answered "that extension cannot be attached".
 # Attachments are work material whose kinds cannot be enumerated in advance (the deck
-# caption itself says "엑셀, 이미지, PDF 등", and 등 is doing real work there: a .ps1, a .js,
+# caption itself says "Excel, images, PDF and so on", and that "and so on" is doing real work: a .ps1, a .js,
 # a shortcut and an installer are all things this project's people hand each other).
 # Nothing on this list is refused any more.
 #

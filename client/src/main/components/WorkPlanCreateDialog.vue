@@ -22,7 +22,7 @@
           <p class="wpc-intro" v-html="introHtml"></p>
 
           <div class="wpc-cols">
-            <!-- ① 수량을 확인할 타입 -->
+            <!-- ① Type to check quantities for -->
             <section class="wpc-sec">
               <div class="wpc-sec-hd">
                 <span class="wpc-sec-no">1</span>
@@ -94,7 +94,7 @@
               </div>
             </section>
 
-            <!-- ② 투입할 프로바이더 -->
+            <!-- ② Providers to use -->
             <section class="wpc-sec">
               <div class="wpc-sec-hd">
                 <span class="wpc-sec-no">2</span>
@@ -465,7 +465,7 @@ async function onCreate() {
 </script>
 
 <style scoped>
-/* Layout mirrors mockup xc32frrg screen 2 (작업계획 생성 다이얼로그): two columns
+/* Layout mirrors mockup xc32frrg screen 2 (work plan create dialog): two columns
    that each scroll on their own, so a long provider list never pushes the
    footer out of reach. */
 .modal-wpc { width: 940px; max-width: 96vw; }

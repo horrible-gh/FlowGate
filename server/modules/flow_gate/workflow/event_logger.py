@@ -19,16 +19,16 @@ EVT_PROMPT_COPIED = "prompt_copied"
 EVT_GROUP_COMPLETION_CANDIDATE = "group_completion_candidate"
 EVT_GROUP_APPROVED = "group_approved"
 # R0001 group 0125 / NR0003: present-tense work-STATE signals. Originally recorded for the dashboard
-# state board (작업상태 집계) only. NR0003 권고 4: re-introducing per-transition state changes into the
-# past-tense feed would undo the 0118 noise reduction ("상태 변화마다 알림 폭증"). The investigation
-# found "시작"(workflow start) and "연속작업 종료"(continuous-run end) had no backend signal at all;
-# these constants close that gap (NR0003 §발견 3, 권고 1).
+# state board (work-status aggregation) only. NR0003 recommendation 4: re-introducing per-transition state changes into the
+# past-tense feed would undo the 0118 noise reduction ("a notification flood on every state change"). The investigation
+# found that workflow start and continuous-run end had no backend signal at all;
+# these constants close that gap (NR0003 §finding 3, recommendation 1).
 #
 # EVT_WORK_STARTED — still state-board ONLY; MUST stay out of _NOTIFICATION_EVENT_TYPES (it is a
-#   present-tense per-start signal; promoting it revives the 폭증).
+#   present-tense per-start signal; promoting it revives the flood).
 # EVT_CONTINUOUS_WORK_ENDED — R0001 group 0135 / N0008: now ALSO on the notification feed. Unlike a
 #   per-transition state change it fires exactly ONCE per unmanned run (at the target-reached stop),
-#   so promoting just this terminal event gives a distinct "연속작업 완료" alarm without the 폭증.
+#   so promoting just this terminal event gives a distinct "continuous work finished" alarm without the flood.
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_WORK_STARTED = "work_started"
 EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
@@ -36,9 +36,9 @@ EVT_CONTINUOUS_WORK_ENDED = "continuous_work_ended"
 #   CONTINUOUS_WORK_ENDED. When an unmanned chain's server-side test_run finishes RED, no TSR is
 #   assembled (tsr_doc_id stays null) and the chain stops with NO persistent signal of any kind — only
 #   a transient SSE `test_run_finished` broadcast — so the chain went silent and nobody knew until the
-#   run record was opened by hand (NR0004 §2.4, the exact "테스트레포트에서 멈춤" R0001 reported). Like
+#   run record was opened by hand (NR0004 §2.4, the exact "stuck on the test report" R0001 reported). Like
 #   ENDED it fires exactly ONCE per unmanned run (at the failed-run stop), so promoting just this
-#   terminal event yields a distinct "연속작업 실패" alarm without reviving the 0118 per-step 폭증.
+#   terminal event yields a distinct "continuous work failed" alarm without reviving the 0118 per-step flood.
 #   See dashboard_service._NOTIFICATION_EVENT_TYPES.
 EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
 # EVT_TEST_RUN_REPAIR / EVT_TEST_RUN_REPAIR_EXHAUSTED — flowgate.default.0157 (R0001→…→T0006): the
@@ -48,15 +48,15 @@ EVT_CONTINUOUS_WORK_FAILED = "continuous_work_failed"
 #   attempt records a REPAIR event carrying the repair token + fix mention; hitting the cap records one
 #   EXHAUSTED escalation with the attempt history — the single case where the user must step in. Both
 #   are on the notification feed (dashboard_service._NOTIFICATION_EVENT_TYPES): bounded to at most
-#   MAX_REPAIR_ATTEMPTS repair rows + one exhausted row per doc, so no 0118 per-step 폭증.
+#   MAX_REPAIR_ATTEMPTS repair rows + one exhausted row per doc, so no 0118 per-step flood.
 EVT_TEST_RUN_REPAIR = "test_run_repair"
 EVT_TEST_RUN_REPAIR_EXHAUSTED = "test_run_repair_exhausted"
-# EVT_CONTINUATION_HEAD_AUTO_HANDLED — flowgate.default.0406 T0022 작업 3. 무인 체인에서
-#   서버가 N/T 지시서를 대신 만들고 승인해 AI 워커를 아예 붙이지 않은 사실. 사용자가 본
-#   화면에서는 그 단계가 그냥 없어진 것처럼 보이고, 지금까지 그 사실은 어디에도 남지
-#   않아 "멘트가 안 들어왔다"는 신고를 사후에 판정할 수 없었다. 홉당 최대 한 줄이라
-#   0118 의 per-step 폭증과는 무관하고, 알림 피드에는 **올리지 않는다** — 정상 동작의
-#   기록이지 사람이 손봐야 하는 사건이 아니다.
+# EVT_CONTINUATION_HEAD_AUTO_HANDLED — flowgate.default.0406 T0022 item 3. The fact that, in an
+#   unmanned chain, the server wrote and approved the N/T instruction itself and attached no AI
+#   worker at all. On the user's screen that step simply looks gone, and until now the fact was
+#   recorded nowhere, so a "the note never arrived" report could not be judged afterwards. At most
+#   one row per hop, so unrelated to 0118's per-step flood, and it is **not** raised onto the
+#   notification feed — it records normal behaviour, not an incident needing human action.
 EVT_CONTINUATION_HEAD_AUTO_HANDLED = "continuation_head_auto_handled"
 
 
@@ -117,8 +117,8 @@ def log_continuation_head_auto_handled(
     mode_requested: str | None,
     mode_fallback_applied: bool,
 ) -> dict:
-    """서버가 자동 작성·승인한 N/T 칸과, 모드 정규화가 발동했는지를 남긴다
-    (flowgate.default.0406 T0022 작업 2·3)."""
+    """Record the N/T slots the server auto-wrote and approved, and whether mode
+    normalisation fired (flowgate.default.0406 T0022 items 2 and 3)."""
     return log_event(
         event_type=EVT_CONTINUATION_HEAD_AUTO_HANDLED,
         project_id=project_id,
@@ -212,7 +212,7 @@ def log_work_started(
     doc_id: str | None = None,
     group_id: str | None = None,
 ) -> dict:
-    """Record an explicit workflow-"start" signal (R0001 group 0125, NR0003 권고 1).
+    """Record an explicit workflow-"start" signal (R0001 group 0125, NR0003 recommendation 1).
 
     Emitted when a requirement's workflow is decided and the document flips to
     doc_review_status='wf_in_progress'. Used only for the state board aggregation
@@ -241,10 +241,10 @@ def log_continuous_work_ended(
     group_id: str | None = None,
     target_seq: int | None = None,
 ) -> dict:
-    """Record an explicit "continuous-work ended" signal (R0001 group 0125, NR0003 권고 1).
+    """Record an explicit "continuous-work ended" signal (R0001 group 0125, NR0003 recommendation 1).
 
     Emitted when the server-driven continuous (unmanned) self-chain reaches its target and stops.
-    Before this, the system had no signal at all for "어떤 문서가 연속작업을 종료했는지" (NR0003 §발견 3).
+    Before this, the system had no signal at all for which document ended a continuous run (NR0003 §finding 3).
     Used only for the state board aggregation; never added to the notification feed whitelist.
     """
     meta: dict[str, Any] = {}
@@ -285,7 +285,7 @@ def log_continuous_work_failed(
     and the chain has nothing to hand to the next step, so it stops for a human. Before this, that stop
     produced no persistent signal at all — only a transient SSE `test_run_finished` broadcast — so the
     unmanned chain went silent (NR0004 §2.4). Fires once per failed run; promoted to the notification
-    feed as the "연속작업 실패" counterpart of continuous_work_ended.
+    feed as the "continuous work failed" counterpart of continuous_work_ended.
     """
     meta: dict[str, Any] = {}
     if doc_id:
@@ -370,7 +370,7 @@ def log_test_run_repair_exhausted(
     group_id: str | None = None,
     attempts: list[dict] | None = None,
 ) -> dict:
-    """Record the test-run repair-exhausted escalation (flowgate.default.0157, L §2-6 / P §상한 도달).
+    """Record the test-run repair-exhausted escalation (flowgate.default.0157, L §2-6 / P §cap reached).
 
     Emitted once when a doc hits MAX_REPAIR_ATTEMPTS consecutive environment failures — the auto-recovery
     loop stops re-firing and hands the attempt history to the user. The one case a human must intervene.

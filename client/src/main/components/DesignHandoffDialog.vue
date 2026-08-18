@@ -125,7 +125,7 @@
           >
             <AppIcon name="copy" /> {{ t('main.design_handoff_dialog.copy_mention') }}
           </button>
-          <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+          <!-- Group 0223: in-app invoke beside every copy-mention (running alongside it, not either/or). -->
           <button
             type="button"
             class="btn btn-primary"

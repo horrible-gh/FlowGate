@@ -231,14 +231,14 @@ def build_prompt(
 
 
 def _append_qa_block(lines: list[str], doc_id: str) -> None:
-    """Append the '## 사용자 질의응답' (User Q&A) block (D0005 §3.5) for the document, if any.
+    """Append the User Q&A block (D0005 §3.5) for the document, if any.
 
     Answered = question title + answer body; in-progress = (undecided). Human/AI distinction
     is text-only in the ment. qa_bundle rows: {seq, title, body, asker_kind, options,
     author_kind, answer_body, answer_selected_options}; a question with
     multiple answers yields multiple rows (one per answer), so group by seq.
 
-    An unanswered query with options gets a '보기:' line listing them WITH their ids, so a
+    An unanswered query with options gets an options line listing them WITH their ids, so a
     worker answering via the ai-request path can echo an id straight back in
     selected_option_ids. An answered one needs no such line — the pick is already in the
     answer body as its label. The machine-readable answer_selected_options stays out of the

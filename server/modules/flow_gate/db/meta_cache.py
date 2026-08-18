@@ -1,4 +1,4 @@
-"""Short-lived TTL cache for hot per-request metadata reads (0282 NR0003 발견 2).
+"""Short-lived TTL cache for hot per-request metadata reads (0282 NR0003 finding 2).
 
 One screen load re-read the same ``projects`` row 11 times and the same
 ``project_git_config`` row 3 times: nearly every service entry point calls

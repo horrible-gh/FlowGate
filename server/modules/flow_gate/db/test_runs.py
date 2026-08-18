@@ -172,7 +172,7 @@ def finish_run(
 ) -> None:
     """Terminal write for a natural completion (setup_failed/passed/failed).
 
-    Gated to rows still 'running' (0358 T0004 위험 2): once a cancel has moved a run to
+    Gated to rows still 'running' (0358 T0004 risk 2): once a cancel has moved a run to
     'cancelling'/'cancelled', a racing natural completion must not resurrect it as
     passed/failed. This WHERE clause is a real guard at the SQL level regardless of
     FlowGateStore._execute's missing affected-row count — it just does not by itself

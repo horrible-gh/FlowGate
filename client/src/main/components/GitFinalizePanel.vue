@@ -183,8 +183,9 @@
     </div>
   </div>
 
-  <!-- 0382 B0001 / review: 마무리 커밋이 삼키지 않은 임시 산출물. 상태 재조회에서
-       worktree가 사라져도 이 카드는 남으므로, 무인·다른 화면의 완료도 조용히 지나가지 않는다. -->
+  <!-- 0382 B0001 / review: temporary artifacts the finalize commit didn't absorb.
+       This card stays even if the worktree disappears on status re-fetch, so an
+       unattended or another-screen's completion never slips by unnoticed. -->
   <div v-if="excludedArtifactCount" class="card git-fin-card git-fin-artifact-card">
     <div class="card-bd pad">
       <section class="git-fin-artifacts">
@@ -206,7 +207,7 @@
   </div>
 
   <!-- 0212 T0009: the resolver dialog is the shared 1180×820 component (0207
-       시안 A) also used by the header GitStatusPanel — one resolver everywhere. -->
+       mockup A) also used by the header GitStatusPanel — one resolver everywhere. -->
   <GitConflictResolverDialog
     v-if="conflictDialogOpen"
     :files="conflictFiles"
@@ -307,7 +308,8 @@ interface GitFinState {
 }
 
 const state = ref<GitFinState | null>(null)
-// 0382 제안 1: 마무리가 커밋에서 뺀 흔적. 서버가 결과에 실어 보내고, 여기서 화면에 남는다.
+// 0382 proposal 1: traces the finalize step excluded from the commit. The server
+// carries them in the response, and they stay here on screen.
 const excludedArtifacts = ref<string[]>([])
 const excludedArtifactCount = ref(0)
 const artifactsOpen = ref(false)
@@ -598,8 +600,8 @@ async function postFinalize(
 }
 
 // 0331: the new `dirty_worktree` 409 is the one error the operator can act on
-// directly — it names the fix (커밋 축으로 옮기세요) instead of echoing the raw
-// server string, which is English-only and does not say what to press.
+// directly — it names the fix (switch the scope to Commit) instead of echoing the
+// raw server string, which is English-only and does not say what to press.
 function finalizeErrorMessage(err: any): string {
   if (err?.code === 'dirty_worktree') {
     const n = Array.isArray(err?.details?.files) ? err.details.files.length : 0
@@ -1055,7 +1057,7 @@ defineExpose({ fetchState })
   background: #b45309;
 }
 
-/* 0382 제안 1 — 커밋에서 제외한 흔적 줄. */
+/* 0382 proposal 1 — the row of traces excluded from the commit. */
 .git-fin-artifacts {
   margin-top: 10px;
   padding: 8px 10px;

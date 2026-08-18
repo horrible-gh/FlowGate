@@ -38,7 +38,7 @@
     <span v-else class="run-strip-actions">
       <!-- 0268 B0001: this button was labelled "AI에게 위임" with a robot icon while only
            writing the clipboard — the label itself is what hid the missing in-app call.
-           It now says what it does, and the real AI 호출 sits next to it (병행, not 택일). -->
+           It now says what it does, and the real Invoke AI sits next to it (side by side, not either/or). -->
       <button
         type="button"
         class="run-strip-btn"
@@ -130,7 +130,7 @@ const hasRunHistory = computed(() => props.testRun != null)
 // Mirror of the backend admission gate (test_run_service.validate_and_create_run):
 // TS + approved, or TS + pending_review/revised with a run already bound (0163/0169). A running
 // or cancelling run keeps the strip visible as launch/cancel feedback regardless of review
-// status; a cancelled run stays visible too (중지됨 + re-run) — only a failed run hides it,
+// status; a cancelled run stays visible too (cancelled + re-run) — only a failed run hides it,
 // because TestFailStrip already renders the re-run affordance for that state.
 const visible = computed(() => {
   if (!props.docLoaded || props.groupDisposed) return false
@@ -215,7 +215,7 @@ async function onCancel() {
   }
 }
 
-// Manned delegation (the second, previously dead entrance — NR0003 §설계 의도):
+// Manned delegation (the second, previously dead entrance — NR0003 §design intent):
 // POST /documents/test-run-request issues a test_run-scoped token wrapped in an
 // execution mention; the user pastes it to an AI worker. The mention is produced
 // inside copyToClipboardDeferred so the click's activation survives the round-trip
@@ -252,7 +252,7 @@ async function onDelegate() {
   }
 }
 
-// 0268 B0001 (NR0003 결함 2): the same delegation, run in-app. /ai-invoke/start mints the
+// 0268 B0001 (NR0003 defect 2): the same delegation, run in-app. /ai-invoke/start mints the
 // test_run token through issue_test_run_request — the same issuer /documents/test-run-request
 // uses — so the worker reads the identical execution mention; only the delivery differs.
 // The raw token never reaches the browser on this path.

@@ -13,7 +13,7 @@ Three things live here and nowhere else:
 * **The window.**  ``resolve_context_window`` turns (last read, head, mode, N) into the
   ``after_seq`` a mention advertises and the number of turns that got folded away.
 
-Note the asymmetry between the two directions, which is intended (P0009 시나리오 8):
+Note the asymmetry between the two directions, which is intended (P0009 scenario 8):
 an unknown value *arriving* in a PATCH is rejected with 422, but an unknown value
 already *sitting* in storage is quietly replaced by its default on the way out.  A
 setting must never be able to stop someone from talking to an AI.
@@ -29,7 +29,7 @@ from modules.flow_gate.services.conversation_query_service import TURN_LIMIT_MAX
 
 _log = logging.getLogger(__name__)
 
-# ── L0010 §1-1 수치 파라미터 ──────────────────────────────────────────────────
+# ── L0010 §1-1 numeric parameters ───────────────────────────────────────────
 CONTEXT_TURNS_MIN = 1
 # L0010 §1-4: derived, not copied.  A range the user can pick but the server cannot
 # hand over in one read would show up as "I narrowed it to 200 turns, so why is it
@@ -39,7 +39,7 @@ CONTEXT_TURNS_DEFAULT = 20
 # Drawn in the list; never used to decide anything (L0010 §1-1).
 CONTEXT_TURNS_PRESETS = (5, 10, 15, 20, 30)
 
-# ── L0010 §1-2 열거 파라미터 ──────────────────────────────────────────────────
+# ── L0010 §1-2 enumerated parameters ────────────────────────────────────────
 # Byte-for-byte the strings the browser already keeps in localStorage.  Renaming them
 # on the way in would buy one translation table, and that table is the accident.
 SEND_ACTION_DOMAIN = ("copy_mention", "invoke_ai", "none")
@@ -54,7 +54,7 @@ PATCH_FIELDS = ("send_action", "context_mode", "context_turns")
 
 class ChatSettingsError(ValueError):
     """A PATCH field the server refuses. Carries the field name so the screen can
-    put the message next to the box that is wrong (P0009 시나리오 7)."""
+    put the message next to the box that is wrong (P0009 scenario 7)."""
 
     def __init__(self, field: str, message: str):
         super().__init__(message)
@@ -117,7 +117,7 @@ def resolve_chat_settings(user_id: Optional[str]) -> tuple[dict, bool]:
     """Return (settings, is_default) for a user (L0010 §2-1).
 
     Only the odd field is reverted — a broken ``context_mode`` does not drag
-    ``send_action`` back to its default with it (P0009 시나리오 17).  And the repair
+    ``send_action`` back to its default with it (P0009 scenario 17).  And the repair
     stays in memory: if reading wrote its correction back, the value that caused the
     trouble would already be gone by the time anybody looked at the table.
     """
@@ -201,9 +201,9 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
     """Validate, write the sent columns only, and answer with a fresh read (L0010 §2-2).
 
     An empty patch writes nothing and creates nothing — an all-defaults row would flip
-    ``is_default`` to false and shut the [전송 시] hand-over down for good (DB0011 §3-3).
+    ``is_default`` to false and shut the [on send] hand-over down for good (DB0011 §3-3).
     The response is re-read rather than echoed back so that a value the server had to
-    repair shows up on the screen immediately (P0009 시나리오 5).
+    repair shows up on the screen immediately (P0009 scenario 5).
     """
     validate_patch(patch)
     if patch and user_id:
@@ -217,7 +217,7 @@ def save_chat_settings(user_id: Optional[str], patch: dict) -> dict:
 
 
 def settings_response(user_id: Optional[str]) -> dict:
-    """The envelope both /me/chat-settings verbs answer with (P0009 시나리오 1)."""
+    """The envelope both /me/chat-settings verbs answer with (P0009 scenario 1)."""
     settings, is_default = resolve_chat_settings(user_id)
     stored_defaults = defaults()
     stored_defaults.pop("updated_at", None)
@@ -241,12 +241,12 @@ def resolve_context_window(
 
     ``max(last_read, ...)`` is what keeps a range from dragging a caught-up worker
     backwards: narrowing the window is meant to shorten the backlog, not to move
-    somebody's read position (P0009 시나리오 15).
+    somebody's read position (P0009 scenario 15).
     """
     if mode == "all":
         # ``head_seq`` is deliberately not queried on this branch (L0010 §2-3), so it
-        # cannot be used to clamp here — and must not be, because [전체] has to produce
-        # the very mention this feature never touched (P0009 시나리오 13).
+        # cannot be used to clamp here — and must not be, because [all] has to produce
+        # the very mention this feature never touched (P0009 scenario 13).
         return max(last_read, 0), 0
     start = max(last_read, head_seq - turns)
     # Covers the short conversation (head_seq - turns is negative) and the abnormal

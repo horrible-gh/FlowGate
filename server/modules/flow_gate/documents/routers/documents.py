@@ -117,9 +117,9 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 # Document types subject to parent transition on child creation (T528)
 _PARENT_CLOSE_TYPE_CODES = {"R", "B", "M"}
 
-# 한 그룹의 문서를 한 번에 몇 건까지 읽어 head/루트 판정에 쓰는지 (0291 T3).
-# 원래 _parse_doc_workflow 안에 있던 리터럴 100 이다. 이제 "잘렸는가" 판정에도
-# 쓰이므로 — 잘렸으면 루트를 좁은 쿼리로 다시 확인한다 — 이름을 붙여 한 곳에 둔다.
+# How many documents of a group are read at once for the head/root decision (0291 T3).
+# Originally the literal 100 inside _parse_doc_workflow. It now also decides "was the list
+# truncated" — if so the root is re-checked with a narrow query — so it is named and kept in one place.
 _GROUP_DOC_SCAN_LIMIT = 100
 
 
@@ -232,7 +232,7 @@ def _regenerate_target_path(doc: dict) -> Path:
         # escaping path → fall through to a recomputed jailed path
     filename = "document.md"
     if str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
-        # A work plan's canonical body is JSON (P0009 §2.6 결정 2). Recomputing a `.md`
+        # A work plan's canonical body is JSON (P0009 §2.6 decision 2). Recomputing a `.md`
         # name here would recover the document into a file its own reader cannot open.
         from modules.flow_gate.services import work_plan_service as _wp
 
@@ -493,15 +493,15 @@ def _parse_doc_workflow(doc: dict) -> dict:
         parsed_history = []
     out["rejection_history"] = parsed_history
 
-    # 0291 T3: 그룹 문서 목록을 **먼저** 한 번 읽고, 그 아래의 R/B 루트 조회와 head
-    # 판정이 같은 결과를 나눠 쓴다. 예전에는 루트를 좁은 쿼리로 따로 두 번(R, 없으면 B)
-    # 읽은 뒤 곧바로 같은 그룹의 문서 목록을 통째로 다시 읽었다 — 뒤엣것이 앞엣것을
-    # 완전히 포함하는데도. 문서 응답당 최대 3 → 1.
+    # 0291 T3: read the group's document list **once, first**, and let the R/B root lookup and
+    # the head decision below share that result. Previously the root was fetched by two narrow
+    # queries (R, then B) and then the same group's whole document list was read again — even
+    # though the latter fully contains the former. Up to 3 → 1 per document response.
     #
-    # ``list_documents`` 의 정렬은 두 호출이 같다(``ORDER BY updated_at DESC``). 그래서
-    # 목록에서 첫 R(없으면 첫 B)을 고르는 것은 ``type_code=R, limit=1`` 과 같은 행이다 —
-    # **목록이 잘리지 않았을 때만.** 그룹 문서가 100건을 넘으면 루트가 그 100건 밖에
-    # 있을 수 있으므로 그때는 예전의 좁은 쿼리로 떨어진다.
+    # ``list_documents`` sorts identically for both calls (``ORDER BY updated_at DESC``), so
+    # picking the first R (or first B) from the list yields the same row as ``type_code=R,
+    # limit=1`` — **only when the list was not truncated.** Past 100 documents in a group the
+    # root may lie outside those 100, and it falls back to the old narrow query.
     group_head = None
     candidates: list = []  # all group docs; also used for 'pending' derivation below
     if doc.get("project_id") and doc.get("group_id"):
@@ -523,7 +523,7 @@ def _parse_doc_workflow(doc: dict) -> dict:
             if not roots:
                 roots = [c for c in candidates if c.get("type_code") == "B"][:1]
             if not roots and (_candidates_truncated or not candidates):
-                # 목록이 잘렸거나 아예 못 읽었다 — 없다고 단정할 수 없으므로 확인한다.
+                # The list was truncated or unreadable — absence cannot be concluded, so check.
                 roots = _db_docs.list_documents(
                     project_id=doc["project_id"],
                     group_id=doc["group_id"],
@@ -556,11 +556,11 @@ def _parse_doc_workflow(doc: dict) -> dict:
 
     # Resolve group head by direct documents-table lookup (PM 4-step spec, T818).
     # NOT using workflow_sequence_items.result_doc_id (rejected by PM thrice).
-    # 0291 T3: 문서 목록은 위에서 이미 한 번 읽었다 (``candidates``). 여기서는 거르기만 한다.
+    # 0291 T3: the document list was already read above (``candidates``); this only filters it.
     #
-    # 두 상수는 try 안이 아니라 여기서 정의한다. 예전에는 조회 블록 안에 있어서, 조회가
-    # 예외로 끝나면 아래 head 판정이 NameError 로 터졌다 — 목록을 못 읽은 것보다 나쁜
-    # 실패다. 목록과 무관한 값이므로 무조건 있어야 한다.
+    # The two constants are defined here, not inside the try. They used to sit in the lookup
+    # block, so if the lookup raised, the head decision below blew up with NameError — a worse
+    # failure than not reading the list. They are independent of the list and must always exist.
     NON_HEAD_TYPES = WORKFLOW_ROOT_TYPES | {"Q"} | AUTO_COMPLETE_TYPES
     APPROVED_STATUSES = {"approved", "wf_done"}
     # Filter: workflow-step docs only, not yet approved.
@@ -730,12 +730,12 @@ def _parse_doc_workflow(doc: dict) -> dict:
             # seq_items is empty. Two very different situations collapse here — keep
             # them apart (0119 B0001 / NR0009 §6.1):
             #  • _seq_found True  → the sequence ROW exists but every item was deleted
-            #    (a decided workflow emptied of all steps — the B0001 "결정됨+빈" zombie).
+            #    (a decided workflow emptied of all steps — the B0001 "decided but empty" zombie).
             #    This is NOT a finished workflow: the only legitimate terminal state is the
             #    AC (final-approval) gate (M042 / group 0104). Reporting 'done' here made the
-            #    strip paint [완료] and let the group chain advance past a broken/empty
+            #    strip paint [done] and let the group chain advance past a broken/empty
             #    workflow. Report a distinct 'empty' status so the client routes to recovery
-            #    ([시퀀스 수정]) instead of [완료]/auto-advance.
+            #    ([edit sequence]) instead of [done]/auto-advance.
             #  • _seq_found False → no sequence at all (undecided root, or a non-workflow
             #    doc with no R parent). Preserve the pre-existing terminal 'done' fallback
             #    (NR158 — test_n158_non_r_no_seq_items_fallback_done).
@@ -951,7 +951,7 @@ def _auto_approved_title(label: str, locale: str) -> str:
 def _auto_approved_body(label: str, locale: str) -> str:
     """Body line for an auto-approved instruction document.
 
-    Locale-branched (ko/ja/en, group 0099 B0001). The Korean subject particle ``가`` is
+    Locale-branched (ko/ja/en, group 0099 B0001). The Korean subject particle (i/ga) is
     only emitted in the ko branch; non-ko branches use natural copy. Unsupported → ko.
     """
     from modules.flow_gate.template_provision import normalize_locale
@@ -1140,9 +1140,9 @@ def create_next_empty_document(
     seq_no = int(m.group(1)) if m else 0
     doc_id = f"{body.group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
-    # 0395 T0026 재작업: 작업계획의 정본은 마크다운이 아니라 JSON 이다(P0009 §2.6 결정 2).
-    # 머리 칸이 WP 일 때 여기서 마크다운 뼈대를 쓰면 문서는 만들어지지만 그 문서의 판독기가
-    # 열지 못해, 화면에는 표 대신 "이 작업계획을 표로 열 수 없습니다"만 남는다(사용자 신고).
+    # 0395 T0026 rework: a work plan's canonical form is JSON, not Markdown (P0009 §2.6 decision 2).
+    # Writing a Markdown skeleton here when the head slot is WP creates the document but its
+    # reader cannot open it, leaving "this work plan cannot be opened as a table" on screen (user report).
     is_work_plan = type_code == WORK_PLAN_TYPE
     from modules.flow_gate.services import work_plan_service as _wp
 
@@ -1157,9 +1157,9 @@ def create_next_empty_document(
 
     try:
         if is_work_plan:
-            # 이 길에는 생성 대화상자가 없어 사용자가 고른 수량·공급자가 없다. 지어내는 대신
-            # 이미 정해져 있는 것에서 읽어 채운다 — 수량은 이 그룹의 워크플로 시퀀스, 공급자는
-            # 프로젝트의 실행 체인과 문서종류 배정표(work_plan_service.auto_plan_body).
+            # This path has no create dialog, so no user-chosen quantities or providers. Rather
+            # than inventing them it reads from what is already settled — quantities from this
+            # group's workflow sequence, providers from the project's run chain and per-doc-type table (work_plan_service.auto_plan_body).
             _wp.write_body_atomically(
                 doc_file_path,
                 _wp.auto_plan_body(body.project_id, _db_wfseq.get_sequence_items(seq["id"])),
@@ -1195,7 +1195,7 @@ def create_next_empty_document(
         "file_path": storage_paths.to_storage_relative(doc_file_path, body.project_id),
     }
     if is_work_plan:
-        # 작업계획 화면이 "사람이 만든 계획"으로 읽는 표시. 생성 대화상자 경로와 같은 값이다.
+        # The marker the work-plan screen reads as "a human-created plan". Same value as the create-dialog path.
         data["meta"] = _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False)
 
     try:
@@ -1287,12 +1287,12 @@ def create_next_approved_core(
 
     Extracted from the ``POST /next-approved`` handler (0048) so the same create-and-approve
     mechanics are reusable off the HTTP path — specifically by the unmanned continuous chain
-    (group 0092 / NR0003 B안), which auto-completes instruction-series steps server-side
+    (group 0092 / NR0003 option B), which auto-completes instruction-series steps server-side
     instead of spending an AI worker cycle on them. Title/body are server-generated from the
     type label (P0005 §2-2 / D-B); the approve transition is enforced with ``approver_perms``
     (resolved by the caller from the SAME resolver the live approve button uses — P0005 §4,
-    approve is never bypassed). Emits doc-created SSE so the auto-generated "○○ 승인" appears
-    in the UI without a worker-action push (NR0003 §알림).
+    approve is never bypassed). Emits doc-created SSE so the auto-generated "<type> approval" appears
+    in the UI without a worker-action push (NR0003 §notifications).
 
     Raises :class:`NextApprovedError` (status_code + detail) on every rejection so callers can
     map it to their own surface. Returns ``{"data", "doc_id", "stored_path"}`` on success.
@@ -1433,6 +1433,7 @@ def create_next_approved_core(
                 action="submit",
                 actor_user_id=actor_user_id,
                 user_permissions={"document.update"},
+                locale=locale,
             )
             # pending_review → approved. approve is an approval action, enforced with
             # the caller's REAL permission set (P0005 §4 — the asymmetry vs submit).
@@ -1441,6 +1442,7 @@ def create_next_approved_core(
                 action="approve",
                 actor_user_id=actor_user_id,
                 user_permissions=approver_perms,
+                locale=locale,
             )
             refreshed = _db_docs.get_by_id(doc["doc_id"])
             if refreshed is not None:
@@ -1479,10 +1481,10 @@ def create_next_approved_core(
     # T528: child creation → automatically transition parent (R/M) open → closed
     _try_close_parent_on_child_created(prev_doc_id, actor_user_id)
 
-    # doc-created SSE so the auto-generated "○○ 승인" instruction appears in the explorer /
+    # doc-created SSE so the auto-generated "<type> approval" instruction appears in the explorer /
     # group view without an F5. broadcast (audience="*") + threadsafe because this runs from
     # a sync worker thread (mirrors the conversation-turn publish). Best-effort: a push
-    # failure must never undo the already-committed document (NR0003 §알림).
+    # failure must never undo the already-committed document (NR0003 §notifications).
     try:
         from modules.flow_gate.api.v1.events.publisher import (
             FlowEvent,
@@ -1500,7 +1502,7 @@ def create_next_approved_core(
                     "title": gen_title,
                     "status": doc.get("status"),
                     "revision_no": 0,
-                    # NR0005 §6-3 (T0006): this auto-generated "○○ 승인" head is the
+                    # NR0005 §6-3 (T0006): this auto-generated "<type> approval" head is the
                     # auto-advance target document N0004 asked the explorer to pinpoint
                     # AND select — not merely refresh. Carry an explicit select intent so
                     # the FE can distinguish "select this" from a plain "refresh". The
@@ -1750,9 +1752,9 @@ def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
 def _return_point_payload(group_id: str) -> dict:
     from modules.flow_gate.db import workflow_return_points as _db_rp
 
-    # 0291 T2: 예전에는 여기서 네 번 조회했다(반환점 → front 문서 → pending 최소 seq →
-    # 스냅샷 개수). 뒤의 셋은 첫 조회의 id/front_seq 에서 파생될 뿐이라 한 문장으로
-    # 접었다 — 문서 응답당 4 → 1. 세부는 db/workflow_return_points.summary().
+    # 0291 T2: this used to run four queries (return point → front document → minimum pending
+    # seq → snapshot count). The last three merely derive from the first one's id/front_seq, so
+    # they were folded into one statement — 4 → 1 per document response. See db/workflow_return_points.summary().
     rp = _db_rp.summary(group_id)
     if rp is None:
         return {
@@ -2396,13 +2398,13 @@ def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
 
 
 def _scope_fallback_body(doc: dict) -> Optional[str]:
-    """미검증 판정을 만들 때만 쓰는 본문 읽기 (0390 TR0005 rev2).
+    """Body read used only when building an unevaluated verdict (0390 TR0005 rev2).
 
-    문서 본문은 documents 행이 아니라 파일에 있으므로 (`doc['content']` 같은 것은
-    없다) 여기서 직접 읽는다. 검증 대상 타입이면서 저장된 판정이 없는 문서에서만
-    불리도록 호출부가 순서를 잡고 있고, 이 함수도 대상 타입이 아니면 파일을 아예
-    열지 않는다 — 문서 상세는 탭을 열 때마다·SSE 갱신마다 불리는 길이라 모든
-    문서에 디스크 읽기를 하나씩 더 붙이지 않기 위한 것이다.
+    A document's body lives in a file, not in the documents row (there is no `doc['content']`),
+    so it is read directly here. The caller orders things so this runs only for a checked type
+    with no stored verdict, and this function itself never opens the file for a non-target
+    type — document detail is hit on every tab open and every SSE refresh, so this avoids
+    adding one more disk read to every document.
     """
     from modules.flow_gate.services import tool_registry
 
@@ -2431,12 +2433,12 @@ def get_document(
     # AI review results (document_reviews child records), variant C: latest review plus full history.
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
     out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
-    # TR 작업범위 검증 결과 (0299 D0004 §6). meta 안에 있지만 화면이 meta 문자열을
-    # 직접 파싱하지 않도록 여기서 펼친다. 0390 TR0005 rev2: 저장된 판정이 없어도
-    # 검증 대상 타입이고 본문에 `## 변경 파일` 절이 있으면 본문에서 읽은 신고
-    # 목록만 담은 미검증 판정을 대신 실어 준다 — 검증 대상이 되기 전에 제출된
-    # 문서(예: TS0006)에서 사이드바의 [작업범위 검증]이 통째로 사라지던 증상을
-    # 없애기 위한 것이다. 둘 다 없으면 예전처럼 키 자체를 두지 않는다.
+    # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the
+    # screen never parses the meta string itself. 0390 TR0005 rev2: with no stored verdict, if
+    # the type is checked and the body has a changed-files section, an unevaluated verdict
+    # carrying only the declared list read from the body is shipped instead — to remove the
+    # symptom where the sidebar's work-scope card vanished entirely on a document submitted
+    # before its type became checked (TS0006, say). With neither, the key is omitted as before.
     try:
         from modules.flow_gate.services import tr_scope_service as _tr_scope
 
@@ -2447,13 +2449,13 @@ def get_document(
             )
         if verdict is not None:
             out["tr_scope"] = verdict
-    except Exception:  # noqa: BLE001 — 표시용 부가 정보가 문서 조회를 깨선 안 된다
+    except Exception:  # noqa: BLE001 — display-only extras must not break document lookup
         pass
     return out
 
 
 def _conversation_compat_block(doc_id: str, projection: bool) -> dict:
-    """P0003 시나리오 15 compatibility summary for an old link into a CH document.
+    """P0003 scenario 15 compatibility summary for an old link into a CH document.
 
     ``projection`` is repeated inside this block (as well as at the response's top
     level) because both a legacy client reading the flat field and one reading the
@@ -2477,7 +2479,7 @@ def get_document_content(
 ) -> dict:
     """Return the content of the Markdown file linked to the document.
 
-    A CH document degrades to a compatibility mode (T4 / P0003 시나리오 15): once
+    A CH document degrades to a compatibility mode (T4 / P0003 scenario 15): once
     migrated, ``content`` is the deterministic render of its current turns (not the
     file, which stops changing the moment migration completes), and the response
     carries a ``conversation`` summary block plus ``projection: true`` so a screen or
@@ -2587,7 +2589,7 @@ def regenerate_document_file(
         restored_from = "revision"
     elif str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
         # The metadata stub below is Markdown frontmatter, which a work plan reader can
-        # only report as "이 작업계획을 표로 열 수 없습니다". Recover a valid but undecided
+        # only report as "this work plan cannot be opened as a table". Recover a valid but undecided
         # plan instead: every countable type present, every count 0. The response still
         # says body_lost, so nobody mistakes it for the plan that was there.
         from modules.flow_gate.services import work_plan_service as _wp
@@ -2797,8 +2799,8 @@ async def upload_attachment(
 ):
     """Upload one or more attachments to a document (P0011 §2).
 
-    Replaces the pre-0060 body wholesale. What went away, and why (L0012 §6 "의도적으로
-    따르지 않는 기존 동작"): `Path(name).name` sanitizing (lets a backslash path through on
+    Replaces the pre-0060 body wholesale. What went away, and why (L0012 §6, "existing
+    behaviour deliberately not followed"): `Path(name).name` sanitizing (lets a backslash path through on
     Linux), the single-shot epoch dedupe (two same-named parts in one request overwrote each
     other), `await file.read()` of the whole body into memory, the legacy
     `projects/*/attachments/{doc_id}` location, and the absolute `str(dest)` in the response

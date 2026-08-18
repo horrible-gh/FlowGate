@@ -20,8 +20,8 @@ ACTION_VALUES = ("merge", "merge_only", "push", "wait")
 STATE_VALUES = (
     "none", "awaiting_choice", "merging", "conflict", "merged", "pushed", "waiting",
 )
-# TR 작업범위 검증 적용 단계 (0299 D0004 §3.6, migration 071). 순서가 곧 강도이며,
-# tr_scope_service 가 "관측 < 경고 < 강제" 비교에 이 순서를 쓴다.
+# TR work-scope check enforcement stages (0299 D0004 §3.6, migration 071). The order IS the
+# strength, and tr_scope_service uses it for the "observe < warn < enforce" comparison.
 TR_SCOPE_STAGE_VALUES = ("observe", "warn", "enforce")
 
 
@@ -34,7 +34,7 @@ def _get_config_db(project_id: str) -> Optional[dict]:
 
 
 def get_config(project_id: str) -> Optional[dict]:
-    """TTL-cached read (0282 NR0003 발견 2) — several layers each re-fetch the
+    """TTL-cached read (0282 NR0003 finding 2) — several layers each re-fetch the
     config on one screen load. Returns a copy so a caller mutating its row
     cannot poison the cache; upsert/delete below invalidate explicitly (they
     also read via _get_config_db so their existence checks are never stale)."""

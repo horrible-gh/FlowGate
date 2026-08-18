@@ -25,7 +25,7 @@ class WorkerConversationTurnAppend(BaseModel):
     based_on_seq: Optional[int] = None
     display_name: Optional[str] = None
     dry_run: bool = False
-    # 0391 T0005 §7-4: optional body fingerprint (제안4) + bypass door (제안3 §5-6),
+    # 0391 T0005 §7-4: optional body fingerprint (proposal 4) + bypass door (proposal 3 §5-6),
     # same field names as the inbox submit paths.
     body_sha256: Optional[str] = None
     body_chars: Optional[int] = None
@@ -55,7 +55,7 @@ def _authenticate(doc_id: str, raw_token: str) -> tuple[Optional[dict], Optional
     ``inspect_for_replay`` intentionally does NOT reject an already-consumed token:
     reads never consume one at all (P0003 §0-1), and on the append path the
     idempotency lookup has to run before the single-use rule so a legitimate retry
-    replays instead of 401ing (P0003 시나리오 11).
+    replays instead of 401ing (P0003 scenario 11).
     """
     try:
         token = token_service.inspect_for_replay(raw_token)
@@ -106,6 +106,11 @@ def _append_authenticated(
         return _fail(422, "idempotency_key must equal the token id.")
 
     actor = {"kind": "worker", "token": token}
+    # T0009 task 4: the encoding/fingerprint violation messages route through the
+    # worker's own continuation_locale (same field mention_service already reads),
+    # unchanged default "ko" when absent — mirrors the pattern remote_tool_service uses.
+    from modules.flow_gate import template_provision
+    locale = template_provision.normalize_locale(token.get("continuation_locale"))
     if body.dry_run:
         # T0004: validate-only path, checked before the single-use/replay branch so a
         # dry-run never depends on (or inspects) whether the token was already consumed.
@@ -119,6 +124,7 @@ def _append_authenticated(
                 body_sha256=body.body_sha256,
                 body_chars=body.body_chars,
                 force_encoding_reason=body.force_encoding_reason,
+                locale=locale,
             )
         except conversation_turn_service.ConversationTurnError as exc:
             return _fail(exc.status_code, exc.message)
@@ -148,6 +154,7 @@ def _append_authenticated(
             body_sha256=body.body_sha256,
             body_chars=body.body_chars,
             force_encoding_reason=body.force_encoding_reason,
+            locale=locale,
         )
         result["message"] = (
             f"Turn {result['turn']['seq']} already recorded. You may end the session."
@@ -168,7 +175,7 @@ async def list_worker_conversation_turns(
     limit: Optional[int] = Query(default=None),
     include_head: Optional[int] = Query(default=None),
 ):
-    """Hand a worker the range it has not read yet (P0003 시나리오 9·13).
+    """Hand a worker the range it has not read yet (P0003 scenarios 9 and 13).
 
     The server advances this worker's cursor to the last turn actually included in the
     response, so the next call continues rather than repeating — the worker is never

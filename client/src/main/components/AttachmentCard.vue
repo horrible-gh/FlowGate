@@ -1,10 +1,10 @@
 <template>
-  <!-- flowgate.default.0060 — 승인 시안 `wdkcvrmk` 네 화면(main / empty / deleting / collapsed)을
-       실제 컴포넌트로 옮긴 것. 클래스 이름·구조·전환 값을 시안 그대로 쓴다.
-       시안에 있는 요소는 빼지 않고, 시안에 없는 요소는 만들지 않는다(D0010 6-2, DS0009 5절):
-         · `main` 화면의 [빈 상태 보기]는 시안 안에 "데모"로 표시된 시연 장치라 옮기지 않는다.
-         · 별도 [다운로드] 버튼을 만들지 않는다 — 목록 줄의 파일명 자체가 내려받기 진입점이다.
-         · [복사] 버튼을 만들지 않는다 — copy는 소스를 다루는 쪽이 부르는 API 통로다(D0010 6-7). -->
+  <!-- flowgate.default.0060 — port of the approved mockup `wdkcvrmk`'s four screens (main / empty / deleting / collapsed)
+       into a real component. Class names, structure, and transition values are taken straight from the mockup.
+       Elements present in the mockup are not omitted, and elements absent from the mockup are not added (D0010 6-2, DS0009 §5):
+         · The [view empty state] control in the `main` screen is not carried over — it is a demo device labeled "데모" in the mockup.
+         · No separate [download] button is added — the filename in the list row is itself the download entry point.
+         · No [copy] button is added — copy is an API channel called by whichever side handles the source (D0010 6-7). -->
   <section
     class="card attach-card"
     :class="{ collapsed, 'has-files': attachments.length > 0 }"
@@ -12,9 +12,10 @@
     @dragover="onCardDragEnter"
   >
     <div class="card-hd">
-      <!-- 제목 줄 전체가 접기/펼치기 버튼이다(D0010 6-2). 캐럿 회전 -90°, 전환 0.18s,
-           aria-expanded, 동작 축소 설정 처리까지 DocHeader의 접기 규칙과 같은 값을 쓴다
-           (D0010 6-3 / TR0006 실측치). 새 접기 방식을 만들지 않았다. -->
+      <!-- The entire title row is the collapse/expand button (D0010 6-2). Caret rotation -90°,
+           0.18s transition, aria-expanded, and reduced-motion handling all use the same values
+           as DocHeader's collapse rule (D0010 6-3 / TR0006 measured values). No new collapse
+           mechanism was created. -->
       <button
         class="card-hd-toggle"
         type="button"
@@ -28,7 +29,7 @@
           {{ t('main.attachment_card.title') }}
         </span>
         <AppIcon name="caret-down" class="card-hd-caret" />
-        <!-- 접었을 때만 보이는 요약. 접어 둔 채로도 몇 개가 붙어 있는지 읽힌다. -->
+        <!-- Summary shown only while collapsed. Even while collapsed, it's readable how many files are attached. -->
         <span class="attach-fold-summary">{{ foldSummary }}</span>
       </button>
       <div class="card-actions">
@@ -37,8 +38,9 @@
     </div>
 
     <div :id="bodyId" class="card-bd attach-card-bd">
-      <!-- 드롭존: 0개일 때 큰 영역, 1개 이상일 때 얇은 한 줄 바 (D0010 6-4).
-           읽기 전용(AI 실행 중)에는 올리기·지우기를 내리고 목록·내려받기만 남긴다(D0010 6-1). -->
+      <!-- Dropzone: a large area when there are 0 files, a thin single-line bar once there is
+           1 or more (D0010 6-4). In read-only mode (AI run in progress), upload/delete are
+           removed, leaving only list/download (D0010 6-1). -->
       <div
         v-if="!readOnly"
         class="attach-dropzone"
@@ -70,7 +72,7 @@
       </div>
 
       <ul class="attach-list">
-        <!-- 목록 줄: 종류 아이콘 · 파일명 · 크기 · 삭제 버튼. 시안과 같은 네 칸이다. -->
+        <!-- List row: kind icon · filename · size · delete button. Same four columns as the mockup. -->
         <li
           v-for="item in attachments"
           :key="item.filename"
@@ -81,7 +83,7 @@
           <span class="attach-item-ico" :class="kindOf(item.filename)">
             <AppIcon :name="iconOf(item.filename)" />
           </span>
-          <!-- 파일명 자체가 내려받기 진입점이다(D0010 6-2). -->
+          <!-- The filename itself is the download entry point (D0010 6-2). -->
           <button
             class="attach-item-name"
             type="button"
@@ -114,7 +116,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { deleteRequest, downloadBlobRequest, getRequest, postFormRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 
-/** P0011 1-3 첨부 객체. 경로는 언제나 storage-상대이고 절대경로가 아니다. */
+/** P0011 1-3 attachment object. The path is always storage-relative, never absolute. */
 export interface AttachmentItem {
   doc_id: string
   original_filename: string
@@ -138,16 +140,18 @@ const emit = defineEmits<{ changed: [count: number] }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 
-// L0012 1-1 attach_max_upload_bytes. 안내문의 숫자와 서버 상한은 같은 값이어야 한다 —
-// 지금까지 화면은 10MB, 시안 안내문은 20MB를 말하고 있었고 L0012가 20 MiB로 확정했다.
+// L0012 1-1 attach_max_upload_bytes. The number in the hint text and the server limit must
+// match — the screen used to say 10MB while the mockup's hint said 20MB, and L0012 fixed it
+// at 20 MiB.
 const ATTACH_MAX_UPLOAD_BYTES = 20971520
 
 const attachments = ref<AttachmentItem[]>([])
-const collapsed = ref(true)       // 문서 생성 시 초기값은 접힘 (0420 R0001) — D0010 6-3의 펼침 기본값을 대체한다
+const collapsed = ref(true)       // Initial value is collapsed when the document is created (0420 R0001) — replaces D0010 6-3's default-expanded
 const dragging = ref(false)
 const removing = ref<Set<string>>(new Set())
-// 서버가 이미 지웠고 전환이 끝나기만 기다리는 줄. `removing`과 나눠 두는 이유: 거절당해
-// 되돌아가는 줄(전환만 되감고 목록에는 남는다)과 구분해야 한다.
+// A row the server already deleted, only waiting for the transition to finish. Kept separate
+// from `removing` to distinguish it from a row that was rejected and reverts (only the
+// transition rewinds; the row stays in the list).
 const pendingDrop = ref<Set<string>>(new Set())
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const bodyId = computed(() => `attach-body-${props.docId.replace(/[^A-Za-z0-9_-]/g, '-')}`)
@@ -156,7 +160,7 @@ const maxUploadLabel = computed(() => `${Math.round(ATTACH_MAX_UPLOAD_BYTES / (1
 const foldSummary = computed(() => {
   const list = attachments.value
   if (list.length === 0) return t('main.attachment_card.fold_summary_empty')
-  // "외 N개"에서 N = count - 1 이 0이면 붙이지 않는다 (L0012 5절 경계 조건).
+  // Omit the "외 N개" ("and N more") suffix when N = count - 1 is 0 (L0012 §5 boundary condition).
   if (list.length === 1) return t('main.attachment_card.fold_summary_one', { name: list[0].filename })
   return t('main.attachment_card.fold_summary_many', {
     name: list[0].filename,
@@ -197,9 +201,10 @@ function errorCode(e: any): string {
 
 function errorMessage(e: any, fallbackKey: string): string {
   const code = errorCode(e)
-  // 0060 TR0017 rev2. 반려 사유가 콘솔의 `500 (Internal Server Error)` 한 줄과 일반 실패
-  // 문구뿐이었다. 서버가 저장/등록에 실패한 경우(5xx)는 사용자가 다시 시도할 수 있는 상황과
-  // 다르므로, 원인이 서버에 기록됐다는 것까지 화면에서 구분해 알린다.
+  // 0060 TR0017 rev2. The rejection reason was only a console line reading
+  // `500 (Internal Server Error)` plus a generic failure message. When the server fails to
+  // store/register (5xx), that differs from a situation the user can simply retry, so the
+  // screen also distinguishes and reports that the cause was logged on the server.
   const status = Number(e?.response?.status ?? 0)
   const serverSide =
     status >= 500 ||
@@ -215,7 +220,7 @@ function errorMessage(e: any, fallbackKey: string): string {
   return t(fallbackKey)
 }
 
-/** 목록 조회 (P0011 3절). 첨부 0개는 오류가 아니라 200 + 빈 배열이다. */
+/** List fetch (P0011 §3). Zero attachments is not an error — it's 200 + an empty array. */
 async function fetchList() {
   try {
     const res = await getRequest<any>(apiBase())
@@ -232,7 +237,7 @@ function openPicker() {
 }
 
 function onCardDragEnter() {
-  // 접힌 상태에서 파일을 카드 위로 끌고 오면 자동으로 펼친다 (D0010 6-3).
+  // If a file is dragged onto the card while collapsed, expand it automatically (D0010 6-3).
   if (collapsed.value) collapsed.value = false
 }
 
@@ -249,7 +254,7 @@ function onDrop(event: DragEvent) {
   if (files.length) void upload(files)
 }
 
-/** 업로드 (P0011 2절). 같은 이름 `file` part를 반복해 다건을 한 요청으로 보낸다. */
+/** Upload (P0011 §2). Multiple files are sent in one request by repeating the same-named `file` part. */
 async function upload(files: File[]) {
   const form = new FormData()
   files.forEach((f) => form.append('file', f))
@@ -261,14 +266,14 @@ async function upload(files: File[]) {
     emit('changed', attachments.value.length)
     showToast(t('main.attachment_card.uploaded', { count: added.length }), 'success')
   } catch (e: any) {
-    // 실패하면 성공 전의 목록을 그대로 둔다 (P0011 2절). 한 part가 실패하면 요청 전체가
-    // 실패하므로 부분 반영이 있을 수 없다.
+    // On failure, leave the pre-success list unchanged (P0011 §2). If one part fails the
+    // whole request fails, so there is no partial application.
     showToast(errorMessage(e, 'main.attachment_card.upload_failed'), 'error')
     await fetchList()
   }
 }
 
-/** 내려받기 (P0011 4절). 인증 헤더가 필요하므로 blob으로 받아 저장한다. */
+/** Download (P0011 §4). An auth header is required, so it's fetched as a blob and saved. */
 async function download(item: AttachmentItem) {
   try {
     const res = await downloadBlobRequest(`${apiBase()}/${encodeURIComponent(item.filename)}`)
@@ -287,9 +292,10 @@ async function download(item: AttachmentItem) {
 }
 
 /**
- * 삭제 (P0011 5절, 시안 ③ 화면).
- * 누른 줄에 `.removing`을 붙여 옅어지며 옆으로 밀리게 하고, 전환이 끝난 뒤에 목록을 다시
- * 그린다. 서버가 거절하면(예: AI 실행 중 409) 전환을 되돌려 원래 항목을 다시 표시한다.
+ * Delete (P0011 §5, mockup screen ③).
+ * Tags the pressed row with `.removing` so it fades and slides aside, then redraws the
+ * list once the transition ends. If the server rejects the request (e.g. 409 during an
+ * AI run), the transition reverts and the original item is shown again.
  */
 async function remove(item: AttachmentItem) {
   if (removing.value.has(item.filename)) return
@@ -297,8 +303,9 @@ async function remove(item: AttachmentItem) {
   try {
     await deleteRequest(`${apiBase()}/${encodeURIComponent(item.filename)}`)
     pendingDrop.value = new Set([...pendingDrop.value, item.filename])
-    // 전환이 실행되지 않는 환경(동작 축소 설정, 테스트 러너)에서도 목록이 남지 않도록
-    // 전환 시간 뒤에 한 번 더 정리한다. transitionend가 먼저 오면 그쪽이 이긴다.
+    // Also clean up once more after the transition duration, so the row doesn't linger in
+    // environments where the transition never runs (reduced-motion setting, test runners).
+    // If transitionend fires first, it wins.
     window.setTimeout(() => onRemoveTransitionEnd(item.filename), 200)
   } catch (e: any) {
     const next = new Set(removing.value)
@@ -327,12 +334,12 @@ defineExpose({ fetchList, attachments, collapsed })
 </script>
 
 <style scoped>
-/* 시안 wdkcvrmk의 규칙을 그대로 옮긴다. 값이 다르면 시안과 다른 물건이 된다. */
+/* Carries over mockup wdkcvrmk's rules as-is. Different values would make this a different thing than the mockup. */
 .attach-card { margin-bottom: 14px; }
 
-/* 아코디언 — 카드 제목 전체가 접기/펼치기 버튼.
-   캐럿·회전 각도·전환 시간(0.18s)·동작 축소 처리는 DocHeader의
-   `.doc-hdr-collapse-btn` / `.doc-hdr-caret` 과 같은 규칙이다(D0010 6-3). */
+/* Accordion — the entire card title is the collapse/expand button.
+   Caret, rotation angle, transition time (0.18s), and reduced-motion handling follow
+   the same rules as DocHeader's `.doc-hdr-collapse-btn` / `.doc-hdr-caret` (D0010 6-3). */
 .card-hd-toggle {
   display: flex;
   align-items: center;
@@ -362,7 +369,7 @@ defineExpose({ fetchList, attachments, collapsed })
   .attach-item { transition-duration: .1s; }
 }
 
-/* 접었을 때만 보이는 요약 — 접어 둔 채로도 첨부가 몇 개인지 읽힌다. */
+/* Summary shown only while collapsed — even while collapsed, the number of attachments is readable. */
 .attach-fold-summary {
   display: none;
   overflow: hidden;
@@ -373,8 +380,8 @@ defineExpose({ fetchList, attachments, collapsed })
 }
 .attach-card.collapsed .attach-fold-summary { display: inline; }
 
-/* MainPanel의 `.card-actions` 는 그 파일의 scoped 규칙이라 자식 컴포넌트 안에는 닿지 않는다.
-   같은 값을 여기 둔다. */
+/* MainPanel's `.card-actions` is a scoped rule in that file, so it can't reach into a child
+   component. The same values are duplicated here. */
 .card-actions {
   display: flex;
   align-items: center;
@@ -433,7 +440,7 @@ defineExpose({ fetchList, attachments, collapsed })
   text-decoration: underline;
   cursor: pointer;
 }
-/* 0개 → 큰 드롭존, 1개 이상 → 얇은 한 줄 바 (D0010 6-4). */
+/* 0 files → large dropzone, 1+ files → thin single-line bar (D0010 6-4). */
 .attach-card.has-files .attach-dz-empty { display: none; }
 .attach-card.has-files .attach-dz-compact { display: flex; }
 
@@ -456,7 +463,7 @@ defineExpose({ fetchList, attachments, collapsed })
   transition: opacity .16s ease, transform .16s ease, margin .16s ease, padding .16s ease, height .16s ease;
   overflow: hidden;
 }
-/* 시안 ③ 삭제 진행 중 — 옅어지며 옆으로 밀린다. */
+/* Mockup screen ③ delete in progress — fades and slides aside. */
 .attach-item.removing {
   opacity: 0;
   transform: translateX(6px);
@@ -500,9 +507,10 @@ defineExpose({ fetchList, attachments, collapsed })
   cursor: pointer;
 }
 .attach-item-del:hover { color: var(--danger); background: var(--danger-l); }
-/* R0001 재반려: 드롭존 바로 밑에 4px 여백만 두고 바닥에 붙어 있던 것을, 구분선을 그은
-   푸터 밴드로 바꿔 위아래 여백을 주고 그 안에서 가운데 정렬한다. 시안 empty.html이
-   이 안내문 자체를 이미 명시하고 있어(위 테스트 참조) 지우지 않고 자리만 고친다. */
+/* R0001 re-rejection: what used to sit flush at the bottom with only a 4px margin under the
+   dropzone is now a footer band with a divider, giving top/bottom margin and centering the
+   text inside it. Mockup empty.html already specifies this hint text itself (see the test
+   above), so it is not removed — only its placement is fixed. */
 .attach-empty-note {
   margin: 8px 0 0;
   padding: 10px 0;

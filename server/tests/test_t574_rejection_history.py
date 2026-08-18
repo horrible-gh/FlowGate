@@ -115,7 +115,7 @@ def _patch_pipeline(db_conn_fixture, monkeypatch):
     monkeypatch.setattr(db_d, "get_store", lambda: store)
     monkeypatch.setattr(ps, "get_store", lambda: store)
     # This suite isolates review-state/history behavior; body validation has dedicated tests.
-    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc: None)
+    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
 
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})

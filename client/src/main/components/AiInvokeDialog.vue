@@ -63,7 +63,7 @@
               <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
             </div>
             <!-- 0242 NR0003: how far the chain runs is picked from the real sequence, not typed
-                 as a raw `목표 seq` number. Same picker the action-bar 연속 작업 path uses. -->
+                 as a raw `목표 seq` number. Same picker the action-bar continuous-work path uses. -->
             <template v-if="pickerActive">
               <WorkflowStepPicker
                 :doc-ref="sequenceDocRef || docRef"
@@ -121,7 +121,7 @@ const props = defineProps<{
    * Sequence-owning root (R/B) doc id for the continuous-target picker. Distinct from
    * `docRef`, which is the document the run ACTS on and may be a member doc (T/TR/…) —
    * /workflow/sequence is keyed by the root only, so a member doc there returns no sequence
-   * (0242 NR0003 권고 2). Defaults to `docRef` for callers that already pass a root.
+   * (0242 NR0003 recommendation 2). Defaults to `docRef` for callers that already pass a root.
    */
   sequenceDocRef?: string
   actionScope: 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
@@ -140,7 +140,7 @@ const props = defineProps<{
   defaultMessage?: string
   messageOverrides?: Record<number, string>
   // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
-  // ContinuousWorkDialog's 시간 section. null/omitted ⇒ the server falls back to its own
+  // ContinuousWorkDialog's time section. null/omitted ⇒ the server falls back to its own
   // default (this dialog's own continuous picker, reached without ContinuousWorkDialog, never
   // sets this).
   continuationStepTimeoutSec?: number | null
@@ -168,7 +168,7 @@ const starting = ref(false)
 const startError = ref('')
 const singleStepNote = ref('')
 const singleStepNoteLoading = ref(false)
-// 0401 NR0003 §3 원인 4 / T0004 작업 6: a group whose 409 named a dead run_id -- the lease's
+// 0401 NR0003 §3 cause 4 / T0004 task 6: a group whose 409 named a dead run_id -- the lease's
 // group id, so the inline [잠금 해제] button below has something to release.
 const lockedGroupId = ref<string | null>(null)
 const releasingLease = ref(false)
@@ -188,7 +188,7 @@ const canContinuous = computed(() =>
 
 // Show the picker only where the user actually chooses a target: a workflow_decide run has no
 // sequence to pick from (it runs to the end of whatever the AI decides), and an autoStart run
-// (the action-bar 연속 작업 path) already picked its target in ContinuousWorkDialog and closes
+// (the action-bar continuous-work path) already picked its target in ContinuousWorkDialog and closes
 // immediately — mounting the picker there would refetch the sequence and clobber that choice.
 const pickerActive = computed(() =>
   canContinuous.value &&
@@ -264,8 +264,8 @@ function resetState() {
   lockedGroupId.value = null
 }
 
-// 0401 NR0003 §3 원인 4: the 409 body always names a run_id, whether or not it is still
-// alive -- the server-side end record (T0004 작업 1~2) means a dead one now answers with a
+// 0401 NR0003 §3 cause 4: the 409 body always names a run_id, whether or not it is still
+// alive -- the server-side end record (T0004 task 1-2) means a dead one now answers with a
 // persisted status='finished' payload instead of 404, so both cases are readable here.
 async function checkRunLive(runId: string): Promise<boolean> {
   try {
@@ -357,7 +357,7 @@ async function start() {
     const data = e?.response?.data ?? {}
     if (status === 409 && data.code === 'run_in_progress' && data.run_id) {
       const groupId = data.group_id ?? aiInvokeGroupId(props.project, props.module, props.group)
-      // 0401 NR0003 §3 원인 4: the 409 body always names A run_id, live or not -- adopting it
+      // 0401 NR0003 §3 cause 4: the 409 body always names A run_id, live or not -- adopting it
       // unconditionally closed this dialog onto a run that was already gone, and the very next
       // poll turned it back into the '실행 기록이 소실되었습니다' card this run was trying to
       // escape. Verify liveness first; only a genuinely live run gets adopted (scenario 8 restore).

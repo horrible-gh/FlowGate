@@ -105,7 +105,7 @@ class DecideRequest(BaseModel):
 class AdvanceRequest(BaseModel):
     """T358: advance request body (optional). Existing behavior preserved if ref_doc_ids is omitted.
 
-    Continuous work (group 0086 / 0051 R0001 / NR0003 B안): when ``continuous`` is set the
+    Continuous work (group 0086 / 0051 R0001 / NR0003 option B): when ``continuous`` is set the
     minted token carries the unmanned-chain stop point (``continuation_target_seq`` = target
     item_seq) + the AI-review-mode flag, and the mention swaps its Q-guard for the
     delegation/unmanned/no-stop/autonomous block. Omitted ⇒ an ordinary advance (no chain).
@@ -118,7 +118,7 @@ class AdvanceRequest(BaseModel):
     # 0352 T0004 §2/§3.4: the ai_direct chain's per-item_seq N/T auto-approve selection.
     # Ignored (never even normalized) unless continuous + ai_direct — see post_workflow_advance.
     continuation_auto_approve_item_seqs: Optional[List[int]] = None
-    # 0405 P0004 [멘트복사]: {quantity_type_codes, step_keys, provider_ids} — the work-plan
+    # 0405 P0004 [copy mention]: {quantity_type_codes, step_keys, provider_ids} — the work-plan
     # proposal scope a person chose on screen. Optional: omitted (or a non-WP head) produces
     # the exact same mention as before. Declared here because Pydantic's default extra='ignore'
     # dropped it silently, so the field could never have reached the mention builder.
@@ -152,7 +152,7 @@ class WorkflowDecisionRequestBody(BaseModel):
     """Issue an AI worker token + prompt to decide an R workflow.
 
     Continuous work (group 0086 R0001): when ``continuous`` is set, the continuous run is
-    started before the workflow is decided ("워크플로 결정부터"). The minted workflow_decide
+    started before the workflow is decided ("starting from the workflow decision"). The minted workflow_decide
     token carries the run-to-end sentinel + review-mode flag so the server self-chains the
     rest of the run once the decision is saved. ``continuation_review_mode`` pauses the
     chain after the first produced step for human Q&A.
@@ -180,13 +180,13 @@ class EditSequenceBodyRequest(BaseModel):
     items: list[EditSequenceItem]
     force_encoding_reason: Optional[str] = None  # 0391 T0005 §5-6
     # 0399 P0013 ②: the fingerprint handed out by /work-plan/sequence-candidates. Absent on
-    # an ordinary [시퀀스 수정] save, and absent means "do not compare" — the check exists for
+    # an ordinary sequence-edit save, and absent means "do not compare" — the check exists for
     # the pour path, whose rows were computed against a sequence read some time ago.
     expected_workflow_tag: Optional[str] = None
-    # 0403 NR0004 F2·F3·F4: { wp_doc_id, wp_revision_no, mode? } — 이 저장이 어느 작업계획을
-    # 어느 리비전으로 부은 것인지. 지문과 같은 규칙으로 붓기 저장에만 실린다. 실리면
-    # ① 그 사이 계획이 바뀌었는지 검사하고 ② 계획의 적용 이력에 기록을 남기며
-    # ③ 워크플로가 아직 없을 때 첫 시퀀스를 만들 수 있게 한다.
+    # 0403 NR0004 F2/F3/F4: { wp_doc_id, wp_revision_no, mode? } — which work plan this save is
+    # pouring, and at which revision. Like the fingerprint, it rides only on a pouring save.
+    # When present it (1) checks whether the plan changed meanwhile, (2) records an entry in the
+    # plan's application history, and (3) allows creating the first sequence when no workflow exists yet.
     expected_plan: Optional[dict] = None
 
 
@@ -274,6 +274,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
             doc_class=body.doc_class,
             sequence=[item.model_dump() for item in body.sequence],
             force_encoding_reason=body.force_encoding_reason,
+            locale=request.headers.get("x-locale") or "ko",
         )
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
@@ -388,7 +389,7 @@ def post_workflow_decide(doc_id: str, body: DecideRequest, request: Request):
         )
 
         # Continuous work (group 0086 R0001): if this workflow_decide token started an
-        # unmanned chain BEFORE the workflow was decided ("워크플로 결정부터"), the token
+        # unmanned chain BEFORE the workflow was decided ("starting from the workflow decision"), the token
         # carries continuation metadata. Now that the sequence exists, kick off the first
         # real step and enclose its token/mention in the decide response so the worker
         # proceeds — from here the inbox self-chain carries the rest of the run. Consume
@@ -664,7 +665,7 @@ def post_workflow_decision_request(body: WorkflowDecisionRequestBody, request: R
 def post_workflow_sequence_edit_request(body: SequenceEditRequestBody, request: Request):
     """Issue an AI worker token + prompt to EDIT a decided workflow's pending sequence.
 
-    R0001 group 0208: the post-decision "시퀀스 수정" counterpart of
+    R0001 group 0208: the post-decision sequence-edit counterpart of
     /workflow/decision-request. Requires a user session (a human mints the token/mention and
     hands it to AI, exactly like the initial-decision path); the worker then applies the edit
     autonomously via PATCH /workflow/sequence. The workflow must already be decided.
@@ -815,10 +816,11 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             expected_workflow_tag=body.expected_workflow_tag,
             expected_plan=body.expected_plan,
             applied_by=auth.get("issued_to"),
+            locale=request.headers.get("x-locale") or "ko",
         )
     except PlanRevisionChanged as exc:
-        # 0403 NR0004 F2: 워크플로는 그대로여도 계획이 움직였다. 열어 둔 대화상자의 낡은
-        # 행을 시퀀스에 넣는 대신, 다시 열어 최신 계획을 부으라고 답한다.
+        # 0403 NR0004 F2: the workflow is unchanged but the plan moved. Rather than inserting the
+        # open dialog's stale rows, answer by asking the user to reopen and pour the latest plan.
         return JSONResponse(
             status_code=409,
             content={
@@ -842,9 +844,9 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
             },
         )
     except NoteTooLong as exc:
-        # 0406 T0022 작업 6 / M0019: 옛 저장은 상한 뒤를 조용히 잘라 넣고 성공이라고
-        # 답했다. 이제 거절한다. 서식은 작업계획 저장이 이미 쓰는 note_too_long 과
-        # 같다 — 코드, 상한, 실제 길이, 몇 번째 줄인지.
+        # 0406 T0022 item 6 / M0019: the old save silently cut everything past the cap and
+        # answered success. It now rejects. The shape matches the note_too_long the work-plan
+        # save already uses — code, cap, actual length, and which row.
         return JSONResponse(
             status_code=422,
             content={
@@ -874,7 +876,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
                 status_code=400,
                 content={"error": "sequence_not_decided", "doc_id": doc_id_val},
             )
-        # 0403 NR0004 F2: expected_plan 이 가리키는 계획이 없다 / 형식이 아니다.
+        # 0403 NR0004 F2: the plan expected_plan names does not exist, or is malformed.
         if msg.startswith("plan_not_found:"):
             return JSONResponse(
                 status_code=404,

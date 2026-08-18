@@ -7,7 +7,7 @@ POST /api/v1/ai-invoke/{run_id}/cancel — tree-kill cancel
 
 The work token is minted server-side and injected only into the run's
 environment — unlike the copy-mention flow, the raw token is never returned to
-the browser (P0005 표기 규칙).
+the browser (P0005, notation rules).
 """
 from __future__ import annotations
 
@@ -52,12 +52,12 @@ class AiInvokeStartRequest(BaseModel):
     # 0317 T0010 rev4: item_seq (string keys) -> provider_id, from ContinuousWorkDialog's
     # per-step override table. Session-scoped — consulted once, at start_run, never persisted.
     continuation_provider_overrides: Optional[dict[str, str]] = None
-    # 0346 T0005: [전달멘트] tab values — a common note for every hop and item_seq (string
+    # 0346 T0005: handoff-note tab values — a common note for every hop and item_seq (string
     # keys) -> note overrides for individual hops. Session-scoped, same as the provider map.
     continuation_default_note: Optional[str] = None
     continuation_note_overrides: Optional[dict[str, str]] = None
     # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds), chosen in
-    # ContinuousWorkDialog's 시간 section. Session-scoped like the fields above — omitted or
+    # ContinuousWorkDialog's duration section. Session-scoped like the fields above — omitted or
     # out of range falls back to the engine's own default (ai_invoke_service.HOP_TIMEOUT_SEC).
     continuation_step_timeout_sec: Optional[int] = None
     provider_id: Optional[str] = None
@@ -86,8 +86,8 @@ _TOKEN_SCOPE = {
     "next_step_message": "new",
     "design_handoff": "new",
     "work_plan_fill": "edit",
-    # 0405 P0004 [AI 호출]: a proposal WRITES a work plan that does not exist yet, so it
-    # takes a 'new' token and goes through advance_workflow — the same path [멘트복사] uses,
+    # 0405 P0004 [AI invoke]: a proposal WRITES a work plan that does not exist yet, so it
+    # takes a 'new' token and goes through advance_workflow — the same path [copy mention] uses,
     # which is what keeps the pasted text and the invoked text one function's output.
     # Not to be confused with work_plan_fill, which EDITS an existing plan.
     "work_plan_proposal": "new",
@@ -97,7 +97,7 @@ _TOKEN_SCOPE = {
 # that also builds its mention — see the issue_builder branches in `start_ai_invoke`.
 #
 # 0268 B0001: workflow_sequence_edit and test_run were the last two token scopes with a
-# [멘트복사] entrance but no in-app AI 호출 — their surfaces (WorkflowDecisionModal,
+# [copy mention] entrance but no in-app AI invoke — their surfaces (WorkflowDecisionModal,
 # TestRunStrip) sit outside MainPanel's invoke wiring, so the parallel-invoke pass
 # (group 0223) never reached them and this allowlist kept the gap structural.
 _ALLOWED_SCOPES = (
@@ -121,7 +121,7 @@ def _validation_failed(errors: list[dict]) -> JSONResponse:
 def _continuation_target_error(doc_ref: str, target_seq: int) -> Optional[dict]:
     """Reject a continuation target that is not a remaining step of the real sequence.
 
-    0242 NR0003 발견 4: the only checks here used to be "not null" and "-1 for a pre-decision
+    0242 NR0003 finding 4: the only checks here used to be "not null" and "-1 for a pre-decision
     run", so any other number was accepted and failed SILENTLY at chain-termination time
     (inbox_routes: ``completed_seq >= target_seq``) — an already-done seq stopped the chain
     after one document, and a too-large seq ran the sequence to its end. Neither surfaced an
@@ -181,7 +181,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
     if body.action_scope not in _ALLOWED_SCOPES:
         errors.append({"loc": "action_scope", "msg": f"must be one of {', '.join(_ALLOWED_SCOPES)}"})
-    # 0405 P0004: "mode 는 항상 single 이다. 이 창은 연속 작업 체인을 시작하지 않는다."
+    # 0405 P0004: "mode is always single; this dialog never starts a continuous work chain."
     if body.action_scope == "work_plan_proposal" and body.mode != "single":
         errors.append({"loc": "mode", "msg": "work_plan_proposal must be single"})
     if body.mode == "continuous" and body.action_scope not in ("new", "edit", "workflow_decide"):
@@ -239,7 +239,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
 
-    # Needs the DB, so it runs after the cheap field checks above (0242 NR0003 권고 3).
+    # Needs the DB, so it runs after the cheap field checks above (0242 NR0003 recommendation 3).
     if (
         body.mode == "continuous"
         and body.action_scope != "workflow_decide"
@@ -252,7 +252,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
 
     # 0352 T0004 §2/§3.4: this is the FRESH client request naming the selection — the entry
     # point where the full 422 validation (including "already done") runs. workflow_decide
-    # is excluded: no item_seq exists before the decision (§2 "결정 전에는 부분 선택 받지 않음").
+    # is excluded: no item_seq exists before the decision (§2 "no partial selection before the decision").
     continuation_auto_approve_item_seqs: list[int] = []
     if body.mode == "continuous" and body.action_scope != "workflow_decide":
         try:
@@ -293,14 +293,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             locale=locale,
             continuous=is_continuous,
             merge_id=body.merge_id,
-            # 0226 NR0003 §4 (부수): the review-mode flag previously never reached the
+            # 0226 NR0003 §4 (incidental): the review-mode flag previously never reached the
             # mention builder, so a review-mode first hop got the no-stop block instead
             # of the Q-allowed review variant.
             continuous_review_mode=body.continuation_review_mode,
         )
 
     def _mention_builder(raw_token: str, scratch_dir: str):
-        # Each extra scope reproduces the text its [멘트복사] counterpart put on the
+        # Each extra scope reproduces the text its [copy mention] counterpart put on the
         # clipboard (group 0223 parallel-invoke; builders in invoke_mention_service).
         if body.action_scope == "chat":
             return invoke_mention_service.build_conversation_mention(
@@ -318,7 +318,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                     body.project, body.provider_id,
                 ),
                 provider_id=body.provider_id,
-                # 0362 T0012: whoever pressed [AI 호출]. Their saved range decides how
+                # 0362 T0012: whoever pressed [AI invoke]. Their saved range decides how
                 # far back the worker is told to start reading.
                 user_id=user_id,
             )
@@ -403,7 +403,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_review
     if body.action_scope == "workflow_sequence_edit":
-        # 0268 B0001 (NR0003 결함 1): the invoke twin of WorkflowDecisionModal's [멘트 복사].
+        # 0268 B0001 (NR0003 defect 1): the invoke twin of WorkflowDecisionModal's [copy mention].
         # Same issuer as POST /workflow/sequence-edit-request, so the worker reads the exact
         # prompt the clipboard path produced — only the delivery differs.
         # 0393 NR0003 §6: same structural gap as review, simply never exercised since the
@@ -445,10 +445,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_work_plan_fill
     if body.action_scope == "work_plan_proposal":
-        # 0405 P0004 [AI 호출 — 같은 범위, 같은 참조, 같은 작성법으로 바로 실행한다]:
-        # the invoke twin of the proposal dialog's [멘트복사]. Both call advance_workflow,
+        # 0405 P0004 [AI invoke — run it immediately with the same scope, references and authoring rules]:
+        # the invoke twin of the proposal dialog's [copy mention]. Both call advance_workflow,
         # so the head advances once and the worker reads the very mention a person would
-        # have pasted — including the '## 작업계획 맡길 범위' section built from this scope.
+        # have pasted — including the work-plan-scope section built from this scope.
         def _issue_work_plan_proposal(ai_run_id: Optional[str] = None):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=body.doc_ref or "",
@@ -468,7 +468,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_work_plan_proposal
     if body.action_scope == "test_run":
-        # 0268 B0001 (NR0003 결함 2): the invoke twin of TestRunStrip's delegation copy.
+        # 0268 B0001 (NR0003 defect 2): the invoke twin of TestRunStrip's delegation copy.
         # issue_test_run_request returns the raw token under "token" (not "raw_token"),
         # so it is remapped here to the issue_builder contract start_run expects.
         # 0393 NR0003 §6.
@@ -520,10 +520,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 continuous=True,
                 continuation_target_seq=body.continuation_target_seq,
                 continuation_review_mode=body.continuation_review_mode,
-                # 0317 T0013 결함 ②: forward the instruction mode, exactly like
+                # 0317 T0013 defect ②: forward the instruction mode, exactly like
                 # _issue_workflow_decision above. Omitting it let it normalize to
                 # auto_approved, which then got baked into the token and propagated down the
-                # whole chain — so [지시서 작성 후 진행](ai_direct) died on every hop, not just
+                # whole chain — so [write the instruction, then proceed](ai_direct) died on every hop, not just
                 # the first, and N/T instruction steps were silently auto-approved away.
                 continuation_instruction_mode=body.continuation_instruction_mode,
                 # 0359 L0007 §2.9: the first hop's token carries its run id too, so the
@@ -536,9 +536,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "token_id": adv["token_id"],
                 "scratch_dir": adv["scratch_dir"],
                 "mention": adv["mention"],
-                # 0406 T0022 작업 3: 이 홉의 워커가 실제로 무슨 문서였는지와, 서버가
-                # 대신 처리해 워커가 아예 붙지 않은 N/T 가 무엇이었는지. 실행 기록으로
-                # 내려가야 "N/T 가 사라졌다"를 사후에 설명할 수 있다.
+                # 0406 T0022 item 3: which document this hop's worker actually was, and which
+                # N/T the server handled with no worker attached at all. These must reach the
+                # run record for "the N/T vanished" to be explainable afterwards.
                 "worker_document_type": adv.get("worker_document_type"),
                 "auto_handled_item_seqs": adv.get("auto_handled_item_seqs") or [],
             }
@@ -710,7 +710,7 @@ def list_ai_invoke_runs(
 
 @router.get("/leases")
 def list_ai_invoke_leases(project: str, request: Request):
-    """Locked-group inventory for the manual-unlock screen (0401 T0004 작업 2).
+    """Locked-group inventory for the manual-unlock screen (0401 T0004 item 2).
     Declared ahead of GET /{run_id} so "leases" is never read as a run id."""
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):
@@ -746,7 +746,7 @@ def list_ai_invoke_leases(project: str, request: Request):
 @router.post("/leases/{group_id}/release")
 def release_ai_invoke_lease(group_id: str, request: Request):
     """Manual escape hatch for a lease its owning process can never release again
-    (0401 T0004 작업 2). Declared ahead of GET /{run_id} for the same path-shadowing
+    (0401 T0004 item 2). Declared ahead of GET /{run_id} for the same path-shadowing
     reason as GET /leases above."""
     auth = _require_user(request)
     if isinstance(auth, JSONResponse):

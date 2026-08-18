@@ -123,7 +123,7 @@ def unc_safe_shell(cmd: str, root: Path) -> tuple[str, Optional[str]]:
     r"""Make (cmd, cwd) safe to hand to a ``shell=True`` child on Windows.
 
     cmd.exe refuses a UNC path (``\\host\share\...``) as its current directory:
-    it prints "UNC 경로는 지원되지 않습니다 / UNC パスはサポートされません。" and
+    it prints a localized "UNC paths are not supported" message and
     silently resets CWD to ``C:\Windows``, breaking every relative path the
     command relies on (0285 B0001 -> NR0004). When *root* is a UNC path we
     therefore do NOT pass it to cmd.exe as ``cwd``; instead we prefix ``pushd``,

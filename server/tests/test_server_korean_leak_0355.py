@@ -28,6 +28,8 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MODULE_ROOT = _SERVER_DIR / "modules" / "flow_gate"
 sys.path.insert(0, str(_SERVER_DIR))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _korean_allowlist  # noqa: E402 — needs the sys.path insert above
 
 _HANGUL = re.compile(r"[가-힣]")
 _LOCALE_MARKER = re.compile(
@@ -362,11 +364,11 @@ def test_guard_rejects_one_korean_syllable():
         assert_no_korean_leak({"message": "English text 끝"})
 
 
-# ── Generalized local error-helper sink discovery (T0004 작업 9 / NR0003 권고 6) ──────
+# ── Generalized local error-helper sink discovery (T0004 item 9 / NR0003 recommendation 6) ──
 # The scan above (_localized_literals) only ever looks INSIDE recognized locale-branch
 # shapes (an en/ja-keyed dict, or an if/elif on locale). It has no opinion about a file's
 # OTHER functions, so a locally-defined error-response helper with no locale parameter at
-# all (NR0003 발견 6: ai_invoke_service.py's _http_error) is invisible to it — nothing about
+# all (NR0003 finding 6: ai_invoke_service.py's _http_error) is invisible to it — nothing about
 # that call is a "locale branch" to find. This second scanner starts the other end: find
 # every function that structurally assembles a user-facing error response (whatever it is
 # named), then check ALL of its call sites for a raw, unbranched Korean literal — one that
@@ -490,7 +492,7 @@ def test_static_error_sinks_reject_unbranched_korean_regardless_of_helper_name()
     """0355 T0023's original scanner only ever recognized locale-branch SHAPES (an
     en/ja dict, or an if/elif on locale) — it never asked "does this file have its own
     error-response helper, and is every call site of THAT helper locale-safe?". NR0003
-    발견 6 slipped through exactly that gap: ai_invoke_service._http_error has no locale
+    Finding 6 slipped through exactly that gap: ai_invoke_service._http_error has no locale
     parameter and no en/ja dict nearby, so nothing about it looked like a locale branch
     to find. This walks every discovered locale-aware file, finds its own local
     error-response helpers structurally (whatever they are named), and fails on any call
@@ -508,8 +510,255 @@ def test_static_error_sinks_reject_unbranched_korean_regardless_of_helper_name()
     )
 
 
+# ── Guard globalization (T0009 item 3 / NR0008 §3.1, §5 Q8-1) ───────────────────
+# _discover_locale_files() above only ever scans files that ALREADY look like a locale
+# source (a locale marker, or an en+ja dict literal — _is_locale_source()). A file with
+# no locale awareness at all is invisible to it end to end, even though the very same
+# _unbranched_korean_call_args mechanism would happily catch an unbranched Korean literal
+# reaching an HTTPException/JSONResponse sink there too. NR0008 §3.1 found 9 such D-point
+# coordinates hiding in exactly that blind spot. This sibling test drops the locale-source
+# prerequisite and runs the identical sink-scan over every file under server/modules/**,
+# excluding the protected (B) and locale-dictionary (A) coordinates in _korean_allowlist.
+
+
+def test_static_error_sinks_reject_unbranched_korean_across_all_modules():
+    """T0009 item 3: same mechanism as the test above, but with no _is_locale_source()
+    gate — every *.py under server/modules/** is scanned, regardless of whether it looks
+    locale-aware yet. This is what actually would have caught NR0008's D-point coordinates
+    (conversation_turn_service._encoding_violation and friends) if their message ever
+    reached a locally-defined HTTPException/JSONResponse-response helper as an inline
+    Korean literal — most of them route through a bare custom exception class instead (no
+    HTTPException/JSONResponse call in the same file), which this AST-only, single-file
+    scan structurally cannot see either. Recorded honestly in the TR rather than assumed."""
+    offenders = []
+    for path in sorted(_MODULE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source, filename=str(path))
+        helpers = _local_error_helpers(tree)
+        rel = path.relative_to(_SERVER_DIR).as_posix()
+        for lineno, value in _unbranched_korean_call_args(tree, helpers, source):
+            if _korean_allowlist.is_allowlisted(rel, value):
+                continue
+            offenders.append(f"{rel}:{lineno}: {value!r}")
+    assert not offenders, (
+        "Unbranched Korean literal(s) reaching a local error-response sink "
+        "(server/modules/** wide scan, T0009 작업 3):\n" + "\n".join(offenders[:50])
+    )
+
+
+# ── Second widening: payloads that reach a raise one hop away (T0009 item 3) ───
+# The scan above only sees Korean written INLINE at a sink call site. Every NR0008 §3.1
+# D coordinate is shaped differently: the literal lives in a module-level constant or in
+# a small message-builder function, and it reaches the user through
+# `raise SomeError(<that name>)` — a custom exception the route layer turns into a 4xx
+# body further up. Measured against the pre-T0009 tree (d146fec) in an isolated worktree
+# (widened guard + unfixed D-point source): the inline-only scan above finds 0 offenders
+# while this one finds 15 offender lines across 3 of the T0009 §3 item 4 D coordinates —
+# conversation_turn_service._encoding_violation (3 lines), workflow_decision_service.
+# corrupted_label_message (2 lines), and pipeline_service's two approval-message constants
+# (10 lines across their 6 raise sites). tr_scope_service, work_plan_service,
+# test_command_service and test_run_service's D coordinates were NOT caught by this
+# raise-following mechanism (different shape — dict/dataclass returns or an f-string
+# built at the sink, not a `raise` of a module-level constant or local builder result).
+# That RED → GREEN pair for the 3 it does catch is what proves the guard catches
+# something real; the exact count is recorded in the TR as measured, not estimated.
+
+
+def _module_level_constants(tree) -> dict:
+    """Module-level ``NAME = <expr>`` bindings, so a bare Name handed to a sink or a
+    raise can be resolved back to the literal it stands for."""
+    constants: dict = {}
+    for node in getattr(tree, "body", []):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = node.value
+    return constants
+
+
+def _inside_locale_dict(node: ast.AST, parents: dict) -> bool:
+    """True when the literal sits in a dict literal that has an "en"/"ja" sibling key —
+    the ko branch of a locale dictionary (A), not an unbranched hardcode. Same judgement
+    _localized_literals makes, applied to a literal reached through a constant."""
+    current = node
+    while current in parents:
+        parent = parents[current]
+        if isinstance(parent, ast.Dict):
+            for key in parent.keys:
+                if isinstance(key, ast.Constant) and key.value in {"en", "ja"}:
+                    return True
+        current = parent
+    return False
+
+
+def _enclosing_function(node: ast.AST, parents: dict):
+    """The FunctionDef a node sits in, so a bare Name handed to `raise` can be looked
+    up among that function's own assignments."""
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+def _local_assignments(func_node) -> dict:
+    """``NAME = <expr>`` bindings inside one function body."""
+    assigned: dict = {}
+    if func_node is None:
+        return assigned
+    for node in ast.walk(func_node):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                assigned.setdefault(node.target.id, []).append(node.value)
+    return assigned
+
+
+def _korean_error_payloads(tree, helper_names: set[str], source: str) -> list[tuple]:
+    """Korean literals reaching an error sink OR any ``raise`` — inline, through a
+    module-level constant, through a locally-defined message builder's return, or
+    through a local variable holding either of those.
+
+    That last hop is not academic: `message = _build(...)` / `raise Error(message)` is
+    the exact shape conversation_turn_service._encoding_violation had (NR0008 §3.1),
+    and without following it the scan walks straight past the single most common D
+    coordinate in this repository."""
+    sinks = helper_names | {"HTTPException"}
+    constants = _module_level_constants(tree)
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    parents = _build_parent_map(tree)
+    results: list[tuple] = []
+    seen: set = set()
+
+    def _record(literal, lineno: int, via: str) -> None:
+        if _inside_locale_dict(literal, parents):
+            return
+        if _inside_locale_branch(literal, parents, source):
+            return
+        key = (lineno, via, literal.value)
+        if key not in seen:
+            seen.add(key)
+            results.append((lineno, via, literal.value))
+
+    def _walk_argument(argument, lineno: int, via: str) -> None:
+        for literal in _constant_strings(argument):
+            if _HANGUL.search(literal.value):
+                _record(literal, lineno, via + "inline")
+        for node in ast.walk(argument):
+            if isinstance(node, ast.Name) and node.id in constants:
+                for literal in _constant_strings(constants[node.id]):
+                    if _HANGUL.search(literal.value):
+                        _record(literal, lineno, f"{via}const:{node.id}")
+            elif isinstance(node, ast.Call):
+                name = _call_target_name(node)
+                builder = None if name in sinks else functions.get(name)
+                if builder is None:
+                    continue
+                for statement in ast.walk(builder):
+                    if isinstance(statement, ast.Return) and statement.value is not None:
+                        for literal in _constant_strings(statement.value):
+                            if _HANGUL.search(literal.value):
+                                _record(literal, lineno, f"{via}builder:{name}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+            arguments = list(node.exc.args) + [kw.value for kw in node.exc.keywords]
+            via = "raise/"
+        elif isinstance(node, ast.Call) and _call_target_name(node) in sinks:
+            arguments = list(node.args) + [kw.value for kw in node.keywords]
+            via = "sink/"
+        else:
+            continue
+        local_values = _local_assignments(_enclosing_function(node, parents))
+        for argument in arguments:
+            _walk_argument(argument, node.lineno, via)
+            for inner in ast.walk(argument):
+                if isinstance(inner, ast.Name) and inner.id in local_values:
+                    for value in local_values[inner.id]:
+                        _walk_argument(value, node.lineno, f"{via}local:{inner.id}/")
+    return results
+
+
+def _scan_error_payloads(module_root: Path, base_dir: Path) -> list[str]:
+    offenders: list[str] = []
+    for path in sorted(module_root.rglob("*.py")):
+        source = path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source, filename=str(path))
+        helpers = _local_error_helpers(tree)
+        rel = path.relative_to(base_dir).as_posix()
+        for lineno, via, value in _korean_error_payloads(tree, helpers, source):
+            if _korean_allowlist.is_allowlisted(rel, value):
+                continue
+            offenders.append(f"{rel}:{lineno} [{via}] {value!r}")
+    return offenders
+
+
+def test_error_payloads_reaching_a_raise_have_no_unbranched_korean():
+    """T0009 item 3: the widening that actually goes RED on the pre-T0009 tree. A message
+    does not have to be written at the sink to reach the user — a module constant or a
+    one-line builder handed to `raise` gets there just as well, and that is the shape all
+    of NR0008 §3.1's D coordinates had."""
+    offenders = _scan_error_payloads(_MODULE_ROOT, _SERVER_DIR)
+    assert not offenders, (
+        "Korean error payload(s) reaching a raise/error sink through a constant or "
+        "builder (server/modules/** wide scan, T0009 작업 3):\n" + "\n".join(offenders[:50])
+    )
+
+
+def test_error_payload_scan_catches_constants_and_builders_but_not_locale_dicts(tmp_path):
+    """Positive control for the scan above — without it, GREEN on the real tree is
+    indistinguishable from a scan that never matches anything. Three fixture modules:
+    a locale-dict one that must stay clean, and a constant/builder pair that must both
+    be caught."""
+    module_root = tmp_path / "modules"
+    module_root.mkdir()
+    (module_root / "clean.py").write_text(
+        'MESSAGES = {"ko": "저장할 수 없습니다.", "en": "cannot save", "ja": "保存できません"}\n'
+        "\n\nclass Boom(Exception):\n    pass\n\n\n"
+        'def go(locale):\n    raise Boom(MESSAGES.get(locale) or MESSAGES["ko"])\n',
+        encoding="utf-8",
+    )
+    (module_root / "leaky_const.py").write_text(
+        '_MESSAGE = "저장할 수 없습니다."\n\n\n'
+        "class Boom(Exception):\n    pass\n\n\n"
+        "def go():\n    raise Boom(_MESSAGE)\n",
+        encoding="utf-8",
+    )
+    (module_root / "leaky_builder.py").write_text(
+        "class Boom(Exception):\n    pass\n\n\n"
+        'def _message():\n    return "저장할 수 없습니다."\n\n\n'
+        "def go():\n    raise Boom(_message())\n",
+        encoding="utf-8",
+    )
+    # The shape NR0008 §3.1's D coordinates actually had: builder result parked in a
+    # local, raised one line later (conversation_turn_service._encoding_violation).
+    (module_root / "leaky_local.py").write_text(
+        "class Boom(Exception):\n    pass\n\n\n"
+        'def _message():\n    return "저장할 수 없습니다."\n\n\n'
+        "def go():\n    violation = _message()\n    raise Boom(violation)\n",
+        encoding="utf-8",
+    )
+
+    offenders = _scan_error_payloads(module_root, tmp_path)
+    caught = sorted({line.split(":")[0] for line in offenders})
+    assert caught == [
+        "modules/leaky_builder.py", "modules/leaky_const.py", "modules/leaky_local.py"
+    ], offenders
+    assert any("const:_MESSAGE" in line for line in offenders), offenders
+    assert any("builder:_message" in line for line in offenders), offenders
+    assert any("local:violation/builder:_message" in line for line in offenders), offenders
+
+
 def test_local_error_helper_detection_generalizes_beyond_fail_and_http_error():
-    """AST fixture (T0004 작업 9): a helper named neither _fail nor _http_error must
+    """AST fixture (T0004 item 9): a helper named neither _fail nor _http_error must
     still be found structurally, and an unbranched Korean literal reaching it must
     fail the scan — while the same wording routed through a locale map must pass."""
     bad_source = (
@@ -542,8 +791,8 @@ def test_local_error_helper_detection_generalizes_beyond_fail_and_http_error():
 
 
 def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
-    """False-positive fixture (T0004 작업 9): the generalized scan must stay quiet on the
-    two legitimate shapes NR0003 권고 6 calls out — a message chosen by an explicit ko
+    """False-positive fixture (T0004 item 9): the generalized scan must stay quiet on the
+    two legitimate shapes NR0003 recommendation 6 calls out — a message chosen by an explicit ko
     branch, and Korean prose that never reaches the sink (a docstring or comment sitting
     in the same function). Only literals that actually flow into the error response
     unbranched may fail the scan."""
@@ -567,7 +816,7 @@ def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
 
 
 def test_ai_invoke_service_worktree_unavailable_is_localized():
-    """Regression pin for NR0003 발견 6 (T0004 작업 6): ai_invoke_service._http_error's
+    """Regression pin for NR0003 finding 6 (T0004 item 6): ai_invoke_service._http_error's
     worktree_unavailable 409 used to be a fixed Korean f-string that the old narrowed
     0355 scanner never saw (it matched none of the four fixed sink spellings). The
     structural helper-detector must find _http_error on its own, and the call site's

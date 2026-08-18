@@ -41,9 +41,9 @@ _BOUND_COLUMNS = (
     "oracle_mismatch", "source_dirty", "scratch_retained", "hop_item_seq",
     "token_id", "issued_to", "started_at", "finished_at", "duration_ms",
     "timeout_sec", "deadline_at",
-    # ── 0406 T0022 작업 3·5 (migration 080) ──────────────────────────────────
-    # 누가 이 홉을 수행했고, 서버가 무엇을 대신 처리했으며, 사용자가 넣은 전달멘트가
-    # 실제로 프롬프트에 들어갔는지. 원문은 저장하지 않는다 — 결정 종류와 길이·sha256뿐.
+    # ── 0406 T0022 items 3 and 5 (migration 080) ────────────────────────────
+    # Who ran this hop, what the server handled instead, and whether the user's handoff note
+    # actually made it into the prompt. The text is not stored — only kind, length and sha256.
     "worker_document_type",
     "continuation_instruction_mode_requested",
     "continuation_instruction_mode_normalized",
@@ -163,7 +163,7 @@ def upsert(row: dict[str, Any]) -> None:
         "duration_ms": row.get("duration_ms"),
         "timeout_sec": row.get("timeout_sec"),
         "deadline_at": row.get("deadline_at"),
-        # ── 0406 T0022 작업 3·5 (migration 080) ─────────────────────────────
+        # ── 0406 T0022 items 3 and 5 (migration 080) ───────────────────────
         "worker_document_type": row.get("worker_document_type"),
         "continuation_instruction_mode_requested": row.get(
             "continuation_instruction_mode_requested"
@@ -209,7 +209,7 @@ def upsert(row: dict[str, Any]) -> None:
 
 def max_serial_for_date(date_str: str) -> int:
     """Highest NNNNNN serial already used by a FINISHED run whose run_id starts with
-    ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 작업 7).
+    ``aiv_<date_str>_`` (0401 NR0003 §4 / T0004 item 7).
 
     Paired with group_ai_leases.max_serial_for_date (which covers a run still open,
     with no row here yet) to floor the in-memory run-id counter after a restart --

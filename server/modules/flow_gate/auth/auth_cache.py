@@ -1,6 +1,6 @@
 """Short-lived in-process cache for the per-request authentication lookups.
 
-0276 NR0003 발견 2: every authenticated request ran a fixed five queries before
+0276 NR0003 finding 2: every authenticated request ran a fixed five queries before
 the handler even started — token_blacklist, auth_sessions, users, and (on
 permission-protected routes) user_project_roles + role_permissions. The last two
 are handled by rbac/permission_service.py instead of this module; see T0009. The UI
@@ -22,7 +22,7 @@ Policy (0276 CH0004 delegated the choice; T0009 fixes it here):
 Set FLOWGATE_AUTH_CACHE_TTL=0 to disable caching entirely (every lookup goes to
 the DB, i.e. the pre-0276 behaviour).
 
-The TTL-map mechanics live in utils/ttl_cache.py since 0282 (NR0003 발견 2), so
+The TTL-map mechanics live in utils/ttl_cache.py since 0282 (NR0003 finding 2), so
 db/meta_cache.py can reuse them without a db↔auth circular import; this module
 keeps the auth TTL policy and the invalidation hooks.
 """
@@ -44,7 +44,7 @@ def _configured_ttl() -> float:
 
 
 def _token_ttl() -> float:
-    """TTL for the worker-token lookup (0288 NR0003 권고 3).
+    """TTL for the worker-token lookup (0288 NR0003 recommendation 3).
 
     Separate from _configured_ttl for two reasons:
 

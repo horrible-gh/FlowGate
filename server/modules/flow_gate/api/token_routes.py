@@ -51,7 +51,7 @@ class TokenIssueRequest(BaseModel):
     action_scope: Optional[str] = None
     doc_ref: Optional[str] = None
     selected_docs: Optional[list] = None  # T384: selected document list (for mention reference doc inclusion)
-    # Continuous work (group 0086 R0001 / NR0003 B안): when continuation_target_seq is set,
+    # Continuous work (group 0086 R0001 / NR0003 option B): when continuation_target_seq is set,
     # the minted token carries the unmanned-chain stop point + AI-review-mode flag and the
     # mention swaps its Q-guard for the delegation/unmanned block. This is the fallback path;
     # the FE primarily issues the first continuation token via /workflow/advance.
@@ -198,9 +198,9 @@ def issue_token(
     # Continuous work (group 0086): a continuation token swaps the mention's Q-guard for the
     # delegation/unmanned/no-stop/autonomous block (mention_service continuous branch).
     if wire_scope == "chat":
-        # 0293 NR0004 발견 3: the browser used to assemble this text itself and throw the
-        # server's mention away. It is served from here now, so the [멘트복사] path and the
-        # in-app AI 호출 path cannot drift. No provider is passed: this mention goes to
+        # 0293 NR0004 finding 3: the browser used to assemble this text itself and throw the
+        # server's mention away. It is served from here now, so the [copy mention] path and the
+        # in-app AI-invoke path cannot drift. No provider is passed: this mention goes to
         # whoever the user pastes it to, which the server cannot know — the worker fills
         # the slot in, or leaves it out.
         mention = invoke_mention_service.build_conversation_mention(
@@ -413,7 +413,7 @@ def _build_mention_for_token(
         locale=locale,
         head_context_doc=head_context_doc,
         continuous=continuous,
-        # 0226 NR0003 §4 (부수): forward the review-mode flag so a continuous
+        # 0226 NR0003 §4 (incidental): forward the review-mode flag so a continuous
         # review-phase mention carries the Q-allowed review variant, not no-stop.
         continuous_review_mode=continuous_review_mode,
     )

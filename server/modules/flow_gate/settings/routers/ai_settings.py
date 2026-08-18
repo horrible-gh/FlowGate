@@ -64,7 +64,7 @@ class DoctypeAssignmentIn(BaseModel):
 
 
 class DoctypeProvidersPut(BaseModel):
-    """Full-replace the project's "문서 종류 -> 프로바이더" 배정 규칙 (0317 D0004 구현).
+    """Full-replace the project's "document type -> provider" assignment rules (0317 D0004).
     An empty list clears the map (back to the single default-provider behavior)."""
 
     assignments: list[DoctypeAssignmentIn] | None = None
@@ -173,7 +173,7 @@ def get_project_ai_doctype_providers(
     project_id: str,
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
-    """The continuous chain's per-document-type provider 배정 규칙 + the effective provider
+    """The continuous chain's per-document-type provider assignment rules + the effective provider
     options the UI renders (0317 D0004 §6)."""
     try:
         return _svc.get_doctype_providers(project_id)

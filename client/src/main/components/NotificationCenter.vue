@@ -20,7 +20,7 @@
     <div v-if="open" class="notif-panel">
       <div class="notif-panel-hd">
         <span class="notif-panel-title">{{ t('main.notif_center.title') }}</span>
-        <!-- 시안 3: live indicator — the feed refreshes in place as workflow inflow arrives over SSE. -->
+        <!-- Mockup 3: live indicator — the feed refreshes in place as workflow inflow arrives over SSE. -->
         <span class="notif-live"><span class="notif-live-dot"></span> {{ t('main.notif_center.live') }}</span>
         <button
           v-if="store.items.length > 0"
@@ -32,7 +32,7 @@
         </button>
       </div>
 
-      <!-- 시안 3: filter tabs (전체 / 확인 필요 / 미확인) with live counts. -->
+      <!-- Mockup 3: filter tabs (all / needs attention / unread) with live counts. -->
       <div v-if="store.items.length > 0" class="notif-tabs" role="tablist">
         <button
           v-for="tab in tabs"
@@ -103,7 +103,7 @@
               <span class="notif-target-title">{{ item.group.title }}</span>
             </span>
             <span class="notif-msg">{{ activityActionLabel(item) }}</span>
-            <!-- 시안 3: "됐다는데 사실 확인 필요" — completed row whose AI verdict is issues. -->
+            <!-- Mockup 3: "됐다는데 사실 확인 필요" — completed row whose AI verdict is issues. -->
             <span v-if="showRiskWarning(item)" class="notif-warn">
               <AppIcon name="warning" /> {{ t('main.notif_center.completed_but_issues') }}
             </span>
@@ -139,8 +139,8 @@ const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, rev
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
-// 시안 3 filter tabs. 전체 = everything; 확인 필요 = rows whose AI verdict flags attention
-// (issues/hold — the "됐다는데 사실 반쪽" cases the mockup surfaces); 미확인 = unread since last open.
+// Mockup 3 filter tabs. All = everything; needs attention = rows whose AI verdict flags attention
+// (issues/hold — the "됐다는데 사실 반쪽" cases the mockup surfaces); unread = unread since last open.
 type NotifFilter = 'all' | 'attention' | 'unread'
 const activeFilter = ref<NotifFilter>('all')
 
@@ -347,7 +347,7 @@ onBeforeUnmount(() => {
 .notif-msg { font-size: .78rem; color: var(--text-secondary, #475569); }
 .notif-time { font-size: .7rem; color: var(--text-muted, #94a3b8); }
 
-/* ── 시안 3 (live feed) ── */
+/* ── Mockup 3 (live feed) ── */
 .notif-live {
   display: inline-flex;
   align-items: center;

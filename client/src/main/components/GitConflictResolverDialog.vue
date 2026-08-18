@@ -1,6 +1,6 @@
 <template>
   <!-- flowgate.default.0212 T0009 — the shared 1180×820 conflict resolver
-       (approved 0207 시안 A). Extracted verbatim from GitFinalizePanel so the
+       (approved 0207 mockup A). Extracted verbatim from GitFinalizePanel so the
        header Git status panel and the finalize panel present the SAME resolver:
        file sidebar, chunk chips/navigation, quick recommendation strip + per-chunk
        recommendation, common-block folding and font-size controls. The host

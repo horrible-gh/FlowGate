@@ -104,14 +104,16 @@
             @open-archive="openGitArchive"
             @archived="onGitArchived"
           />
-          <!-- 0060 R0001 / D0010 6-1 — 첨부 파일 카드. 본문 열의 카드 순서는
-               [문서 헤더 → 워크플로 → 첨부 파일 → 문서 미리보기] 이고, 이 자리가 아래로 이어지는
-               미리보기 카드 계열(AC / DC / CH / WP / md / text / diff v-if 사슬)의 **바로 위**다.
-               반려("맨 밑에 쳐박혀 있으니까 안보이잖아 문서 미리보기 위로 올려")가 가리킨 문제가
-               이 위치로 해소된다 — 승인 시안 wdkcvrmk 에서 첨부 카드는 스크롤 없이 첫 화면에
-               통째로 들어온다(TR0006 실측: 첨부 top 427px, 문서 미리보기 674px).
-               사슬 자체에는 넣을 수 없다. v-if / v-else-if 사이에 형제를 끼우면 사슬이 끊긴다.
-               AI 실행 중에는 읽기 전용으로 내려간다(올리기·지우기 없음, 목록·내려받기만). -->
+          <!-- 0060 R0001 / D0010 6-1 — attachment file card. The body column's card order is
+               [document header → workflow → attachment files → document preview], and this spot
+               sits directly **above** the following preview card series (AC / DC / CH / WP / md /
+               text / diff v-if chain). The rejection ("맨 밑에 쳐박혀 있으니까 안보이잖아 문서 미리보기 위로 올려")
+               pointed at this problem, and this position resolves it — in the approved mockup
+               wdkcvrmk, the attachment card fits on the first screen without scrolling
+               (TR0006 measured: attachment top 427px, document preview 674px).
+               It cannot sit inside the chain itself — inserting a sibling between v-if / v-else-if
+               breaks the chain. While an AI run is in progress it drops to read-only (no
+               upload/delete, list/download only). -->
           <AttachmentCard
             v-if="tab.typeCode"
             :doc-id="tab.id"
@@ -122,8 +124,8 @@
                the tree the tab type resolves to 'unsupported' (no md), which would
                otherwise fall through to the unsupported-view. -->
           <template v-if="tab.typeCode === 'AC'">
-            <!-- 0265 R0001: once the document is finally approved, the [Git 반영]
-                 finalize panel rises ABOVE the [최종 승인] card — after approval
+            <!-- 0265 R0001: once the document is finally approved, the [Git Integration]
+                 finalize panel rises ABOVE the [Final Approval] card — after approval
                  the merge/push is the remaining action, so it leads. Before
                  approval the approval card stays on top (approving is the primary
                  action) and the panel mounts below, as before. isCompletedDoc
@@ -1559,7 +1561,7 @@ const activeDocProjectId = computed(() => {
     ?? tabId.split('.')[0]
     ?? ''
 })
-// Per R0001 ("존재하지 않을 경우 기존과 같다") and NR0003 (권고 2·주의사항), mention-copy is
+// Per R0001 ("존재하지 않을 경우 기존과 같다") and NR0003 (recommendation 2 / caution notes), mention-copy is
 // the default in every state EXCEPT a confirmed provider. AI invoke becomes the default only
 // once the active document project's provider request has completed successfully with a
 // non-empty result — loading, a query error, a project mismatch, or an empty result all keep
@@ -1704,7 +1706,7 @@ const nextActionModalTypeCode = ref('')
 const nextActionModalCurrentType = ref('')
 const nextActionModalInitialDocs = ref<string[]>([])
 // flowgate.default.0395 D0007 §6.3 / T0021: work-plan creation dialog, opened from
-// the [워크플로 시퀀스] section of the R/B root.
+// the [Workflow Sequence] section of the R/B root.
 const workPlanCreateVisible = ref(false)
 const workPlanCreateParentDocId = ref('')
 const workPlanCreateProjectId = ref('')
@@ -1734,12 +1736,12 @@ const continuousTargetSeq = ref<number | null>(null)
 const continuousTargetType = ref('')
 const continuousTargetLabel = ref('')
 const continuousReviewMode = ref(false)
-// 0409 B0001 반려: 무인 연속 체인의 기본 선택은 [자동승인] 이다 (DEFAULT_INSTRUCTION_MODE).
+// 0409 B0001 rejection: the default selection for an unmanned continuous chain is [Auto-approve] (DEFAULT_INSTRUCTION_MODE).
 const continuousInstructionMode = ref<ContinuationInstructionMode>(DEFAULT_INSTRUCTION_MODE)
 // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
 // through the consent gate to the start request (session-scoped, never persisted).
 const continuousProviderOverrides = ref<Record<number, string>>({})
-// 0346 T0005: [전달멘트] tab values, carried from ContinuousWorkDialog's confirm payload
+// 0346 T0005: [Message] tab values, carried from ContinuousWorkDialog's confirm payload
 // through to the consent gate's start request (session-scoped, never persisted).
 const continuousDefaultMessage = ref('')
 const continuousMessageOverrides = ref<Record<number, string>>({})
@@ -1747,7 +1749,7 @@ const continuousMessageOverrides = ref<Record<number, string>>({})
 // the same way the fields above are — session-scoped, never persisted.
 const continuousAutoApproveItemSeqs = ref<number[]>([])
 // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
-// ContinuousWorkDialog's [기본 설정] 시간 section, carried through the consent gate the same
+// ContinuousWorkDialog's [Basic settings] timeout section, carried through the consent gate the same
 // way the fields above are — session-scoped, never persisted as a project setting.
 const continuousStepTimeoutSec = ref(3600)
 const continuousStepCount = ref(0)
@@ -1795,7 +1797,7 @@ const aiInvokeContinuationInstructionMode = ref<ContinuationInstructionMode>(DEF
 const aiInvokeContinuationAutoApproveItemSeqs = ref<number[]>([])
 // 0317 T0010 rev4: item_seq -> provider_id overrides forwarded onto the start request.
 const aiInvokeProviderOverrides = ref<Record<number, string>>({})
-// 0346 T0005: [전달멘트] tab values forwarded onto the start request.
+// 0346 T0005: [Message] tab values forwarded onto the start request.
 const aiInvokeDefaultMessage = ref('')
 const aiInvokeMessageOverrides = ref<Record<number, string>>({})
 // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) forwarded onto the
@@ -1935,7 +1937,7 @@ const rejectDialogVisible = ref(false)
 const rejectDialogDocId = ref('')
 const rejectDialogDocName = ref('')
 const rejectDialogTabId = ref('')
-// 0419 T0006: true when the dialog was opened from the sidebar [수정] entry point to
+// 0419 T0006: true when the dialog was opened from the sidebar [Edit] entry point to
 // correct the latest rejection's wording (PATCH), false for the ordinary new-reject
 // flow (POST review_transitions/reject) — see onEditRejectionRequested / onReviewRejected.
 const rejectDialogEditMode = ref(false)
@@ -2197,14 +2199,14 @@ function openAiInvokeDialog(
     autoApproveItemSeqs?: number[]
     // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog.
     providerOverrides?: Record<number, string>
-    // 0346 T0005: [전달멘트] tab values chosen in ContinuousWorkDialog.
+    // 0346 T0005: [Message] tab values chosen in ContinuousWorkDialog.
     defaultMessage?: string
     messageOverrides?: Record<number, string>
     // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
-    // ContinuousWorkDialog's 시간 section.
+    // ContinuousWorkDialog's timeout section.
     stepTimeoutSec?: number | null
     autoStart?: boolean
-    // 0242 NR0003 권고 2: sequence-owning root for the continuous-target picker, when it is
+    // 0242 NR0003 recommendation 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
     sequenceDocRef?: string
   },
@@ -2251,7 +2253,7 @@ function onEditInvokeAi(tab: Tab) {
     showToast(t('main.main_panel.error_info_unavailable'), 'danger')
     return
   }
-  // 0242 NR0003 권고 2: the run edits THIS document (tab.id), but the continuous-target picker
+  // 0242 NR0003 recommendation 2: the run edits THIS document (tab.id), but the continuous-target picker
   // reads /workflow/sequence, which only answers for the sequence root. Resolve the root the
   // same way every other workflow entry point does — a member doc (T/TR/…) would find no
   // sequence and the picker would fall back to "start from the workflow decision".
@@ -2260,9 +2262,9 @@ function onEditInvokeAi(tab: Tab) {
   })
 }
 
-// 0366 T0004 (rev3 rejection): the proceed dialog ([다음 단계 진행]) still opened the OLD
+// 0366 T0004 (rev3 rejection): the proceed dialog ([Proceed to Next Step]) still opened the OLD
 // standalone invoke dialog here — the very AiInvokeDialog('new') entry that was deleted from the
-// action bar. Route it through the same continuous-work flow the action-bar [AI 호출] now uses
+// action bar. Route it through the same continuous-work flow the action-bar [Invoke AI] now uses
 // (ContinuousWorkDialog → consent gate → AiInvokeDialog), so both entries open the same dialog.
 function onNextActionInvokeAi(_selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
@@ -2555,8 +2557,9 @@ function onNextActionClick(tabId: string) {
   nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
-  // 0405 P0004 [제안 창 열기]: 다음 타입이 작업계획이면 공용 진행 목록을 열지 않는다.
-  // 그 목록의 다섯 항목은 작업계획에 맞지 않고, 세 갈래가 나를 범위를 물어볼 곳도 없다.
+  // 0405 P0004 [Open Proposal Window]: when the next type is a work plan, the shared proceed list
+  // does not open. Its five entries don't fit a work plan, and none of its three branches has a
+  // place to ask for scope.
   if (openWorkPlanProposalIfWp()) return
   nextActionModalVisible.value = true
 }
@@ -2679,7 +2682,7 @@ function onReviewRejected(tabId: string) {
   rejectDialogVisible.value = true
 }
 
-// 0419 T0006 (NR0003 후속 T 권고 2/3): sidebar [수정] entry point — open the SAME
+// 0419 T0006 (NR0003 follow-up T recommendations 2/3): sidebar [Edit] entry point — open the SAME
 // dialog, but in edit mode, to correct the current rejection's wording instead of
 // filing a new one. onRejectDialogSaveReason branches on rejectDialogEditMode to
 // call the PATCH-correction endpoint instead of the reject-transition POST.
@@ -2764,7 +2767,7 @@ async function onWorkflowStepTimeMachine(tabId: string, payload: { index: number
     return
   }
   // Picker lists every realised, reviewable slot (sorted by the rolled-back document's seq);
-  // pre-select the clicked one so [되돌리기] targets it (still changeable in the list).
+  // pre-select the clicked one so [Roll Back] targets it (still changeable in the list).
   timeMachineSteps.value = items
     .filter((it) => isRollbackTarget(it))
     .sort((a, b) => (a.result_seq ?? 0) - (b.result_seq ?? 0))
@@ -3086,7 +3089,7 @@ function onReviewInvokeAiEntry(payload: ReviewActionPayload) {
     return
   }
   // ReviewActionBar hands us the viewed tab as docRef, which for a member doc (T/TR/…) is not
-  // the sequence root the continuous-target picker needs (0242 NR0003 권고 2).
+  // the sequence root the continuous-target picker needs (0242 NR0003 recommendation 2).
   openAiInvokeDialog(project, groupId, payload.docRef, 'new', {
     sequenceDocRef: nextActionDocRef(payload.docId),
   })
@@ -3263,8 +3266,9 @@ function onNonRNextActionClick(tabId: string) {
   nextActionModalProjectId.value = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
-  // 0405 P0004 [제안 창 열기]: 다음 타입이 작업계획이면 공용 진행 목록을 열지 않는다.
-  // 그 목록의 다섯 항목은 작업계획에 맞지 않고, 세 갈래가 나를 범위를 물어볼 곳도 없다.
+  // 0405 P0004 [Open Proposal Window]: when the next type is a work plan, the shared proceed list
+  // does not open. Its five entries don't fit a work plan, and none of its three branches has a
+  // place to ask for scope.
   if (openWorkPlanProposalIfWp()) return
   nextActionModalVisible.value = true
 }
@@ -3469,13 +3473,15 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
     showToast(t('main.main_panel.error_empty_doc_not_allowed', { docType }), 'warning')
     return
   }
-  // 0395 T0026 재작업: 작업계획에는 "빈 문서"가 없다. 제목만 받아 만들면 수량도 공급자도
-  // 정해지지 않은 파일이 남고, 그 파일은 작업계획 화면이 표로 열지 못한다(사용자 신고).
-  // 같은 [빈 문서 만들기] 자리에서 계획을 끝까지 정하는 창으로 넘긴다.
+  // 0395 T0026 rework: a work plan has no "empty document". Creating one from just a title
+  // leaves a file with neither quantities nor a provider decided, and the work-plan screen
+  // cannot open that file as a table (user-reported). The same [Create Empty Document] entry
+  // point now hands off to the window that settles the plan all the way through.
   //
-  // 0405 T0011: 그 창이 예전에는 [+ 생성] 하나뿐인 생성 대화상자였다. 같은 이름의
-  // [작업계획 생성]인데도 시퀀스 칸에서 연 창과 달리 [문서생성]·[멘트복사]·[AI 호출]이
-  // 없었다는 뜻이다. 두 진입점을 한 창(전용 제안 창)으로 모은다.
+  // 0405 T0011: that window used to be a create dialog with only [+ Create]. Despite sharing
+  // the name [Create Work Plan], unlike the window opened from the sequence cell it had no
+  // [Document Creation] / [Copy Mention] / [Invoke AI]. The two entry points are now merged
+  // into one window (the dedicated proposal window).
   if (docType === 'WP') {
     nextActionModalDocRef.value = docRef
     nextActionModalProjectId.value = project
@@ -3588,7 +3594,7 @@ async function onActionBarRunTest(tabId: string) {
 }
 
 // ── Work plan (flowgate.default.0395 D0007 §6.3 / T0021) ──────────────────────
-// Entry point is the [워크플로 시퀀스] section (DocWorkflow), which supplies the
+// Entry point is the [Workflow Sequence] section (DocWorkflow), which supplies the
 // sequence-owning R/B root — the strip is drawn on member documents too, and the
 // viewed tab is not necessarily the document a work plan may attach to.
 function onCreateWorkPlan(tabId: string, parentDocId: string) {
@@ -3596,10 +3602,11 @@ function onCreateWorkPlan(tabId: string, parentDocId: string) {
   const docRef = parentDocId || tabId
   const project = exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId ?? ''
   const groupId = exposedValue<string>(h?.groupId) ?? ''
-  // 0405 P0004 [제안 창 열기]: 이 이벤트는 워크플로 시퀀스의 머리 칸이 작업계획일 때만
-  // 올라온다 (DocWorkflow.onStepClick 의 WP 분기, 0395 T0036 이 시퀀스 칸을 유일한 진입점으로
-  // 고정했다). 곧 이 클릭이 문서 화면의 [다음 단계 진행] 이므로, 여기서 열려야 하는 창은
-  // 기존 생성 대화상자가 아니라 맡길 범위를 묻는 전용 제안 창이다.
+  // 0405 P0004 [Open Proposal Window]: this event only fires when the workflow sequence's head
+  // cell is a work plan (DocWorkflow.onStepClick's WP branch, fixed as the sole entry point by
+  // 0395 T0036). Since this click is the document screen's [Proceed to Next Step], the window
+  // that must open here is not the existing create dialog but the dedicated proposal window
+  // that asks for the scope to hand off.
   nextActionModalTabId.value = tabId
   nextActionModalDocRef.value = docRef
   nextActionModalCurrentType.value = getTabTypeCode(tabId) ?? 'R'
@@ -3610,7 +3617,7 @@ function onCreateWorkPlan(tabId: string, parentDocId: string) {
   nextActionModalGroupId.value = groupId
   nextActionModalModuleName.value = nextActionModuleName(tabId, groupId)
   if (openWorkPlanProposalIfWp()) return
-  // 머리 칸이 작업계획이 아닌 상태에서 올라온 경우에만 기존 생성 대화상자를 연다.
+  // Only opens the existing create dialog when this fires while the head cell is not a work plan.
   workPlanCreateParentDocId.value = docRef
   workPlanCreateProjectId.value = project
   workPlanCreateGroupId.value = groupId
@@ -3618,8 +3625,8 @@ function onCreateWorkPlan(tabId: string, parentDocId: string) {
 }
 
 /**
- * 0405 P0004 — 다음 타입이 WP 일 때만 전용 제안 창을 연다. 그 밖의 타입은 false 를 돌려
- * 공용 진행 목록으로 그대로 간다(회귀 금지).
+ * 0405 P0004 — opens the dedicated proposal window only when the next type is WP. Every other
+ * type returns false and falls straight through to the shared proceed list (no regression).
  */
 function openWorkPlanProposalIfWp(): boolean {
   if (String(nextActionModalTypeCode.value || '').toUpperCase() !== 'WP') return false
@@ -3640,8 +3647,9 @@ function workPlanProposalFailureText(failure: AdvanceFailure): string {
 }
 
 /**
- * [멘트복사] — 범위를 실은 토큰을 발급하고 그 멘트를 클립보드에 넣는다. 창은 요청 전에
- * 닫지 않는다: 복사가 끝난 뒤에만 닫고, 409 면 사유 한 줄만 바꾼 채 열어 둔다.
+ * [Copy Mention] — issues a token carrying the scope and puts that mention on the clipboard.
+ * The window does not close before the request: it closes only after the copy succeeds, and
+ * on a 409 stays open with just the reason line swapped in.
  */
 async function onWorkPlanProposalCopyMention(scope: WorkPlanScope) {
   const docRef = workPlanCreateParentDocId.value
@@ -3678,9 +3686,9 @@ async function onWorkPlanProposalCopyMention(scope: WorkPlanScope) {
 }
 
 /**
- * [AI 호출] — 공용 연속작업 창을 거치지 않는 단일 실행. 서버는 work_plan_proposal 을
- * advance_workflow 로 태우므로 여기서 실행되는 AI 가 읽는 글은 [멘트복사]가 클립보드에
- * 넣는 글과 같은 함수에서 나온다.
+ * [Invoke AI] — a single run that bypasses the shared continuous-work window. The server folds
+ * work_plan_proposal into advance_workflow, so the text the AI reads here comes from the same
+ * function as the text [Copy Mention] puts on the clipboard.
  */
 async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; providerId: string }) {
   const docRef = workPlanCreateParentDocId.value
@@ -3705,9 +3713,9 @@ async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; provi
     workPlanProposalVisible.value = false
   } catch (e: any) {
     const data = e?.response?.data ?? {}
-    // 409 run_in_progress 의 서버 메시지는 영어다. 이 사유는 화면이 이미 자기 말로
-    // 가지고 있으므로 반응형 store 상태를 사용하고 사유 문자열은
-    // 비워 둔다 — 한국어 화면에 영어 한 줄이 끼어들지 않게 한다.
+    // The server message for 409 run_in_progress is in English. The screen already has its own
+    // wording for this reason, so it uses the reactive store state instead and leaves the reason
+    // string empty — this keeps a stray English line from slipping into the Korean-language screen.
     if (data.code === 'run_in_progress') {
 
       workPlanProposalNotice.value = ''
@@ -3733,9 +3741,9 @@ function onWorkPlanCreated(payload: { docId: string; title: string }) {
   })
 }
 
-// 0399 M0020 — 작업계획을 워크플로에 넣는 길은 시퀀스 칸의 [작업계획 적용] 하나다.
-// 액션바에서 미리보기 오버레이를 열어 그 자리에서 적용해 버리던 배선은 여기 있었고,
-// 오버레이와 함께 걷었다.
+// 0399 M0020 — the only path that puts a work plan into the workflow is the sequence cell's
+// [Apply Work Plan]. The wiring that used to open a preview overlay from the action bar and
+// apply it right there used to live here, and was removed along with the overlay.
 
 // ── Continuous (unmanned) work (R0001 group 0086) ──────────────────────────────
 // Entry from the 'workflow'/'next' action-bar dropdowns. Opens the sequence-pick dialog;
@@ -3829,9 +3837,9 @@ async function issueContinuousToken(): Promise<IssuedToken | null> {
     return requestWorkflowDecision(docRef, {
       continuous: true,
       continuationReviewMode: continuousReviewMode.value,
-      // 0406 T0022 작업 2: 이 진입점은 모드를 아예 보내지 않아 서버가 조용히
-      // auto_approved 로 접었다 — 같은 창에서 [지시서 작성 후 진행]을 골라도
-      // "워크플로 결정부터" 체인만 N/T 를 서버가 자동 승인해 버렸다.
+      // 0406 T0022 task 2: this entry point sent no mode at all, so the server quietly folded
+      // it to auto_approved — even choosing [Write Instruction Then Proceed] in the same
+      // window, only the "워크플로 결정부터" chain had its N/T auto-approved by the server.
       continuationInstructionMode: continuousInstructionMode.value,
     })
   }
@@ -3845,7 +3853,7 @@ async function issueContinuousToken(): Promise<IssuedToken | null> {
     continuous: true,
     continuationTargetSeq: targetSeq,
     continuationReviewMode: continuousReviewMode.value,
-    // 0406 T0022 작업 2: [멘트복사] 로 여는 반자동 체인도 같은 모드로 시작해야 한다.
+    // 0406 T0022 task 2: the semi-automatic chain opened via [Copy Mention] must also start in the same mode.
     continuationInstructionMode: continuousInstructionMode.value,
   })
 }
@@ -4028,7 +4036,7 @@ async function onActionBarCreateConversation(tabId: string) {
 // edit. The AI reads the conversation and appends its reply turn, the same inbox-edit path
 // AI turns already use.
 // 0293: that mention used to be assembled here in TS. It now comes back as token.mention
-// from /token/issue for action_scope:'chat', so the [멘트복사] text and the in-app AI 호출
+// from /token/issue for action_scope:'chat', so the [Copy Mention] text and the in-app Invoke AI
 // prompt are produced by the same server function instead of two hand-synced copies.
 // Text of the last failed mention copy, per CH tab (B0001 / group 0240). Feeds
 // ConversationView's inline manual-copy panel — the CH-only replacement for the

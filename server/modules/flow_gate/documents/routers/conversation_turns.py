@@ -45,7 +45,7 @@ class ConversationTurnAppend(BaseModel):
 
 class ConversationReadMark(BaseModel):
     last_read_seq: int
-    # P0003 시나리오 5 carries both values on the wire; a session screen only ever
+    # P0003 scenario 5 carries both values on the wire; a session screen only ever
     # reports what it actually showed, so "viewed" is the default.
     reason: Literal["viewed", "delivered"] = "viewed"
 
@@ -71,7 +71,7 @@ def list_conversation_turns(
     include_head: Optional[int] = Query(default=None),
     current_user: dict = Depends(get_current_user),
 ):
-    """Read one page of this conversation around a cursor (P0003 시나리오 1·2·7).
+    """Read one page of this conversation around a cursor (P0003 scenarios 1, 2 and 7).
 
     Deliberately readable even when the group is disposed or the document is final —
     disposal blocks change, not the record (D0002 §3-6).  A session read never moves
@@ -98,7 +98,7 @@ def mark_conversation_read(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    """Move this user's read boundary forward (P0003 시나리오 5).
+    """Move this user's read boundary forward (P0003 scenario 5).
 
     Backwards values are absorbed silently by the monotonic cursor rather than
     rejected — a scrolled-up screen legitimately sends one.
@@ -120,7 +120,7 @@ def get_conversation_markdown(
     doc_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    """Deterministic markdown artifact for a CH document (P0003 시나리오 14, L0004 §4-4).
+    """Deterministic markdown artifact for a CH document (P0003 scenario 14, L0004 §4-4).
 
     Same 404/400 shape as the other conversation routes. A LEGACY (migration ``failed``)
     conversation returns the file verbatim with ``projection: false`` — that file IS the

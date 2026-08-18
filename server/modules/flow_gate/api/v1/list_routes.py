@@ -422,7 +422,7 @@ def search_documents(
         limit=limit, offset=offset,
     )
     # Attach a brief body preview to every result so the default explorer search
-    # (the one that runs when "내용까지 검색" is off) shows the document's simplified
+    # (the one that runs when "search inside contents" is off) shows the document's simplified
     # body — not just its id/title. The body lives on the filesystem; we read only
     # this page of rows through the same mtime cache the content search uses, so it
     # stays cheap. This is the group 0123 rev10 fix: prior revisions only added the
@@ -470,7 +470,7 @@ def search_documents_content(
     as Phase 1; each item adds a ``snippet`` (excerpt for body matches), ``matched_in``
     (body|title|doc_id), and ``match_kind`` (``document_body``|``conversation_turn``).
 
-    0370 2세트 (P0002 시나리오 9~11): each item additionally carries ``match_total`` and
+    0370 set 2 (P0002 scenarios 9-11): each item additionally carries ``match_total`` and
     ``matches`` — where in the document each hit is (a locator identical in shape to the
     one ``/outline`` and ``/section`` return) plus the matched line and its neighbours. The
     pre-existing keys keep their meaning *and their values*, so a screen reading this
@@ -503,9 +503,9 @@ def search_documents_content(
 
     from modules.flow_gate.services import document_outline_service as outline_svc
 
-    # 범위 밖 값은 422 로 멈춰 세우지 않고 자른다 — 검색은 무인 작업의 이동 수단이라
-    # 오타 하나로 왕복이 끊기는 편이 손해다. 응답에는 **실제로 적용된 값**을 메아리친다.
-    # 요청값을 그대로 되울리면 서버가 지키지도 않은 숫자를 알려 주는 셈이 된다.
+    # Out-of-range values are clamped rather than rejected with a 422: search is how unattended
+    # work moves around, and losing a round trip to one typo costs more. The response echoes
+    # **the value actually applied** — echoing the request would report a number the server never honoured.
     ctx = outline_svc.CONTEXT_LINES_DEFAULT if context_lines is None else context_lines
     ctx = max(0, min(int(ctx), outline_svc.CONTEXT_LINES_MAX))
     per_doc_hits = (

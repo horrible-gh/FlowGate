@@ -86,7 +86,7 @@ def principal_from_request(request: Request) -> MutationPrincipal:
 
 
 def _lease_run_live(run_id: Optional[str]) -> bool:
-    """0401 NR0003 SS3 원인 3 / T0004 작업 4: is the lease's OWN run still alive?
+    """0401 NR0003 SS3 cause 3 / T0004 item 4: is the lease's OWN run still alive?
 
     Shares ai_invoke_service.is_run_live so the 423 body and the screen it drives
     can never again say two different things. Deferred import -- mutation_policy is
@@ -250,8 +250,8 @@ async def resolve_request_group(
     doc_id = _find(body, {"doc_id", "doc_ref", "document_id", "target_doc_id"})
     if not doc_id:
         doc_id = _path_candidate(path, ("documents", "document", "workflow", "queries"))
-    # 0394 T0016 항목 4: 문서 한 건을 DB 에서 읽는다 — 위 dispatch 주석과 같은 이유로
-    # 이벤트 루프 밖에서 돌린다.
+    # 0394 T0016 item 4: this reads one document from the DB — run off the event loop for the
+    # same reason as the dispatch comment above.
     resolved = await anyio.to_thread.run_sync(group_id_from_doc_id, doc_id)
     if resolved:
         return resolved
@@ -272,7 +272,7 @@ _PERSONAL_PATHS = (
 
 def is_policy_control_path(path: str) -> bool:
     """Run start/resume, cancel/pause, and the manual lease release all own the lease
-    lifecycle, so none of them may self-block (0401 T0004 작업 2 adds the last one --
+    lifecycle, so none of them may self-block (0401 T0004 item 2 adds the last one --
     a lease's own release request must not be rejected BY that same lease)."""
     if "ai-invoke" not in path:
         return False
@@ -342,12 +342,12 @@ class GroupMutationPolicyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.method.upper() not in MUTATION_METHODS or is_policy_control_path(request.url.path):
             return await call_next(request)
-        # 0394 T0016 항목 4: 아래 두 단계는 DB 를 동기로 읽고(토큰 조회, 리스 조회) 쓴다
-        # (하트비트). dispatch 는 **모든** 변경 요청이 지나는 async 함수라, 그 읽기를 그대로
-        # 부르면 그 시간 동안 서버의 다른 모든 요청이 함께 멈춘다 — 0275/0279 가 라우트
-        # 핸들러에서 없앤 바로 그 결함이, 트래픽 전량이 지나는 자리에 남아 있었다.
-        # (그 가드가 `@router.*` 만 보고 미들웨어는 보지 않았기 때문에 드러나지 않았다.)
-        # 워커 스레드로 넘긴다 — 판정 결과도 순서도 그대로이고, 도는 스레드만 달라진다.
+        # 0394 T0016 item 4: the two steps below read the DB synchronously (token lookup, lease
+        # lookup) and write to it (heartbeat). dispatch is an async function **every** mutating
+        # request passes through, so calling those reads inline stalls every other request for
+        # that duration — the exact defect 0275/0279 removed from route handlers, still sitting
+        # where all traffic passes. (It stayed hidden because that guard only looked at
+        # `@router.*` and never at middleware.) It moves to a worker thread — same verdicts, same order, only a different thread.
         principal = await anyio.to_thread.run_sync(principal_from_request, request)
         group_id = await resolve_request_group(request, principal)
         if group_id:

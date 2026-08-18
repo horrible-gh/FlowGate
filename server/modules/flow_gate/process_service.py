@@ -5158,7 +5158,7 @@ def get_file_tree(project_id: str) -> dict:
     node_id = 0
 
     def _list_dir_with_retry(path: str, retries: int = 3, delay: float = 0.3) -> list:
-        # 0283 T0004 (NR0003 원인 2·3): remote/UNC storage can raise a transient
+        # 0283 T0004 (NR0003 causes 2 and 3): remote/UNC storage can raise a transient
         # OSError/PermissionError mid-walk — a network hiccup, or a worker writing the
         # same directory (Windows sharing violation). The write path already defends
         # against this (storage.filesystem.safe_rename retries on PermissionError); the
@@ -5248,9 +5248,9 @@ def _storage_create_target(
 
     Returns ``(target_path, None)`` on success and ``(None, error_dict)`` otherwise.
 
-    0327 T0004 (B0001 / NR0003 권고 1): *group_id* routes the creation into that
-    group's live worktree instead of the base checkout, which is what makes "새
-    폴더 / 새 파일" work while a group branch is selected in the explorer. It is
+    0327 T0004 (B0001 / NR0003 recommendation 1): *group_id* routes the creation into that
+    group's live worktree instead of the base checkout, which is what makes "new folder /
+    new file" work while a group branch is selected in the explorer. It is
     fail-closed on purpose — a group whose worktree is gone gets an error rather
     than a silent write into the base checkout, matching the src-content contract
     (inbox_routes._editable_source_root). No group_id keeps the base behaviour.
@@ -5346,13 +5346,13 @@ def get_group_tree(project_id: str) -> dict:
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
 
-    # 0275 NR0003 원인 3: this tree used to issue one documents query per group
+    # 0275 NR0003 cause 3: this tree used to issue one documents query per group
     # plus one 'created'-event memo_file query per document (≈ 2 + G + D queries
     # per load — thousands on a real project, ruinous against a remote DB).
     # Batch all three lookups upfront so a tree load stays at a handful of
     # queries regardless of tree size.
     #
-    # 0276 NR0003 발견 1: batching alone traded query count for bind-parameter
+    # 0276 NR0003 finding 1: batching alone traded query count for bind-parameter
     # count — the three batched lookups passed the project's whole group list and
     # whole doc_id list as IN(...) parameters (thousands of %s per tree load, and
     # still growing linearly with the project). Every one of those lists WAS the

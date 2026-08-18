@@ -1,13 +1,14 @@
 <template>
-  <!-- flowgate.default.0325 TR0007 rev1 — [변경사항 열기] 가 여는 화면.
-       R0001 은 "승인 후 머지 할까 말까 고민되는데 관련 소스가 잘 됐는지 볼 길이 없다"
-       였고, 사이드바 요약은 "몇 파일 · 몇 줄" 까지만 답한다. 실제로 읽는 자리가 이
-       화면이다 — 시안(TR0003) 후보 ③ "그룹 변경사항 전체 화면"의 구성을 그대로
-       옮겼다: 왼쪽 파일 목록(상태 배지 · 파일별 +/− · 경로 검색 · 상태 필터),
-       오른쪽 통합/분할 diff, 파일 간 이동, 그리고 [승인 화면으로] 복귀.
-       N0004 §1 이 반려한 것은 "승인 화면 본문에 항상 펼쳐진 diff 카드"였으므로,
-       여기서는 문서 편집기와 같은 모달 셸로 열고 명시적으로 닫으면 원래 자리로
-       그대로 돌아온다(승인 화면은 그대로 남아 있다). -->
+  <!-- flowgate.default.0325 TR0007 rev1 — the screen that [변경사항 열기] opens.
+       R0001 was "승인 후 머지 할까 말까 고민되는데 관련 소스가 잘 됐는지 볼 길이 없다"
+       and the sidebar summary only answers with "몇 파일 · 몇 줄". This screen is where
+       the actual reading happens — it carries over verbatim the layout of mockup
+       (TR0003) candidate ③ "그룹 변경사항 전체 화면": a file list on the left (status
+       badge · per-file +/− · path search · status filter), a unified/split diff on the
+       right, navigation between files, and a return to [승인 화면으로].
+       N0004 §1 rejected "승인 화면 본문에 항상 펼쳐진 diff 카드", so this opens as a
+       modal shell like the document editor — closing it explicitly returns to the
+       original spot (the approval screen stays as it was). -->
   <teleport to="body">
     <div class="modal-bg">
       <div
@@ -45,9 +46,10 @@
         </div>
 
         <div class="modal-bd gcd-modal-body">
-          <!-- 0382 NR0003 제안 3: 흔적은 목록에서 빼되 **없는 셈 치지 않는다**. 261개가
-               어느 화면에도 안 뜬 채 승인·병합된 것이 그 사고의 본체였다. 변경이 하나도
-               없을 때도 보이도록 목록 분기 바깥에 둔다. -->
+          <!-- 0382 NR0003 proposal 3: exclude artifacts from the list, but **don't treat them as
+               nonexistent**. 261 of them never showing on any screen while still being approved
+               and merged was the core of that incident. Keep this outside the list branch so it's
+               visible even when there are zero changes. -->
           <section v-if="artifactPaths.length" class="gcd-artifacts">
             <button
               type="button"
@@ -250,7 +252,7 @@ const props = defineProps<{
   // The already-loaded /changes list from the sidebar summary: opening the viewer must
   // not re-ask for what the caller just fetched, and both must agree on the file set.
   changes: GroupChangeData[]
-  // 0382 제안 3: 변경 목록에서 걸러낸 "도구가 남긴 흔적". 채널이 없는 서버에서는 비어 온다.
+  // 0382 proposal 3: "도구가 남긴 흔적" filtered out of the change list. Comes back empty on servers with no channel.
   toolArtifacts?: string[]
 }>()
 
@@ -335,7 +337,7 @@ function dirName(path: string): string {
   return idx === -1 ? '' : path.slice(0, idx)
 }
 
-// Five-cell added/deleted proportion bar (시안 파일 목록). Any non-zero side keeps at
+// Five-cell added/deleted proportion bar (mockup file list). Any non-zero side keeps at
 // least one cell so a 1-line change is still visible.
 function barCells(change: GroupChangeData): string[] {
   const added = change.insertions ?? 0
@@ -722,7 +724,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .gcd-line-changed, .gcd-text.gcd-line-changed { background: #fff7ed; }
 .gcd-line-blank { background: #f8fafc; }
 
-/* 0382 제안 3 — 흔적 줄. 눈에 띄되 변경 목록을 밀어내지 않는 무채색 한 줄. */
+/* 0382 proposal 3 — artifact row. A visible but achromatic single line that doesn't push the change list down. */
 .gcd-artifacts {
   display: flex;
   flex-wrap: wrap;

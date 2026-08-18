@@ -1023,9 +1023,9 @@ export default {
       clear_all: 'Clear',
       providers_hint: '[Call AI] runs with the first of the chosen providers.',
       summary: 'Design {design} · Work {work} · Providers {providers}',
-      // 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
+      // 0405 T0011 rev2 (rejection: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
       // 선택하고 생성할수 있게" / "[+ 문서생성] 이 맨 우측으로 오게하고 이걸 강조해야지"):
-      // 등록된 공급자가 0개인 프로젝트에서 쓰는 문안이다.
+      // the copy used for projects with 0 registered providers.
       loading: 'Checking the provider list…',
       intro_no_providers: 'This project has no registered AI provider, so [Call AI] would mean nothing here. Pick the types to count in pane 1 and create the work-plan document with [+ Create document].',
       summary_no_providers: 'Design {design} · Work {work} · No registered AI provider',
@@ -2358,12 +2358,12 @@ export default {
       no_diff: 'This file has no changes against the base branch.',
       added_note: 'This is a newly added file, so its full content is shown as added.',
       truncated: 'The content is too large: only the first {n} lines are shown.',
-      // 0382 NR0003 제안 3 — 변경 목록에서 감추되 없는 셈 치지 않는다.
+      // 0382 NR0003 proposal 3 — hidden from the change list, but not treated as if it doesn't exist.
       tool_artifacts: '{n} tool artifact(s)',
       tool_artifacts_note: 'Temporary files left by tests and builds, kept out of the change list. They are not committed either.',
     },
     git_finalize: {
-      // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
+      // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
       excluded_artifacts: '{n} temporary artifact(s) kept out of the commit',
       excluded_artifacts_note: 'Files left behind by tests and builds were not added to this commit. They are still in the work folder.',
       archive: {

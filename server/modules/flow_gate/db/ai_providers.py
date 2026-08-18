@@ -131,7 +131,7 @@ def replace_scope(
 
     `rows` carry final provider_id values (service issues ids for new items) with
     api_key already merged and in PLAINTEXT — encryption happens here, immediately
-    before the value reaches the column (0371 NR0007 §3 권고 3); KEEP_STORED_SECRET
+    before the value reaches the column (0371 NR0007 §3 recommendation 3); KEEP_STORED_SECRET
     means "this row's stored ciphertext is unreadable, leave it as it is". Rows absent
     from `rows` are deleted. The scope default —
     and for a project scope the tri-state `mode` — is persisted in the same
@@ -196,7 +196,7 @@ def replace_scope(
 def encrypt_plaintext_api_keys() -> int:
     """Move legacy plaintext rows to ciphertext; returns how many were rewritten.
 
-    Idempotent and resumable (NR0007 §3 권고 4): rows that already carry the enc:v1:
+    Idempotent and resumable (NR0007 §3 recommendation 4): rows that already carry the enc:v1:
     prefix are skipped, so a half-finished pass — or a second boot — simply continues.
     Runs at startup for every dialect, because "UPDATE ... SET api_key = encrypt(...)"
     is not something SQL alone can do safely.

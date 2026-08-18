@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { getRequest } from '@shared/api'
 import { useProjectStore } from './project'
 
-// 0283 T0004 (NR0003 권고 C): a single transient tree-fetch failure — a client timeout on
+// 0283 T0004 (NR0003 recommendation C): a single transient tree-fetch failure — a client timeout on
 // a slow remote-storage directory walk, or a momentary 5xx — used to surface
 // "트리를 불러오지 못했습니다." immediately and force a manual page reload. Retry once after a
 // short backoff before giving up, so a one-off blip self-heals; a second failure still
@@ -45,16 +45,17 @@ export interface GroupChangeData {
 }
 
 // 0325 TR0007 rev1 — full /changes payload. The changed-file badges only ever needed
-// the paths, but the [변경사항 열기] viewer also titles itself "<branch> ↔ <base>".
+// the paths, but the [변경사항 열기] (Open changes) viewer also titles itself "<branch> ↔ <base>".
 export interface GroupChangesData {
   group_id: string
   branch: string
   commit: string | null
   base_branch?: string | null
   changes: GroupChangeData[]
-  // 0382 NR0003 제안 3 — 화면이 감추는 "도구가 남긴 흔적". 목록에서 빼되 없는 셈 치지는
-  // 않는다: 261개가 어느 화면에도 안 뜬 채 승인·병합된 것이 그 사고의 본체였다.
-  // 이 채널이 없는(구) 서버에서는 undefined 로 온다.
+  // 0382 NR0003 proposal 3 — the "도구가 남긴 흔적" (traces the tools left behind) that the
+  // screen hides. Excluded from the list, but not treated as nonexistent: 261 of them were
+  // approved and merged without ever showing on any screen, and that was the core of the
+  // incident. Servers (old) without this channel send this back as undefined.
   tool_artifacts?: string[]
 }
 
@@ -86,7 +87,7 @@ export interface GroupFileDiffData {
 export interface GroupBlobData {
   group_id: string
   branch: string
-  // 0315 TR (NR0003 권고 3) — null for an untracked worktree file: it has no commit
+  // 0315 TR (NR0003 recommendation 3) — null for an untracked worktree file: it has no commit
   // object, so it is read straight off disk and carries no point-in-time to pin.
   commit: string | null
   path: string
@@ -98,7 +99,7 @@ export interface GroupBlobData {
   untracked?: boolean
 }
 
-// 0282 NR0003 발견 3 — response shape of GET /projects/{id}/git/status
+// 0282 NR0003 finding 3 — response shape of GET /projects/{id}/git/status
 // (git_service.project_git_status). Typed to what the four consumers read;
 // the payload may carry more fields.
 export interface GitProjectStatus {
@@ -108,7 +109,7 @@ export interface GitProjectStatus {
   ahead_count: number | null
   behind_count: number | null
   base_dirty?: { dirty: boolean; files: string[] }
-  // 0308 T0004 (NR0003 권고 1) — new (untracked) base-checkout files. Kept as a
+  // 0308 T0004 (NR0003 recommendation 1) — new (untracked) base-checkout files. Kept as a
   // SEPARATE channel from base_dirty: folding untracked into base_dirty would widen
   // the E3 merge-finalize guard (git_service.py). Drives the file-tree new-file badge.
   base_untracked?: { count: number; files: string[]; truncated?: boolean }
@@ -175,13 +176,13 @@ export const useExplorerStore = defineStore('explorer', () => {
   // tree. Refreshed by its four triggers: git/status fetch, src-content save
   // response, base-commit/base-revert response, finalize base_dirty 409.
   const baseDirtyFiles = ref<Record<string, string[]>>({})
-  // 0308 T0004 (NR0003 권고 1) — per-project set of new (untracked) base-checkout
+  // 0308 T0004 (NR0003 recommendation 1) — per-project set of new (untracked) base-checkout
   // files, the exact complement of baseDirtyFiles. The server already emits it as
   // base_untracked; it now drives a distinct file-tree new-file badge instead of being
   // consumed only by GitStatusPanel. Refreshed alongside baseDirtyFiles on every
   // git/status fetch. Never merged into baseDirtyFiles (E3 guard — git_service.py).
   const baseUntrackedFiles = ref<Record<string, string[]>>({})
-  // 0282 NR0003 발견 3: project git/status was fetched independently by four
+  // 0282 NR0003 finding 3: project git/status was fetched independently by four
   // components (FileExplorer, GitActionMenu, GitStatusPanel, GitBaseDirtyDialog)
   // — every mount race or SSE trigger multiplied the server's aggregation work.
   // The store now owns the fetch: concurrent callers coalesce onto one request,
@@ -202,7 +203,7 @@ export const useExplorerStore = defineStore('explorer', () => {
   // ancestor-folder dirty propagation; this parallel map lets file rows distinguish
   // a deletion from an ordinary modification without changing the server contract.
   const groupChangeStatuses = ref<Record<string, Record<string, string>>>({})
-  // 0315 TR (NR0003 권고 1·2·4) — new (untracked) files in a group worktree, the
+  // 0315 TR (NR0003 recommendation 1·2·4) — new (untracked) files in a group worktree, the
   // group-branch analogue of baseUntrackedFiles. The tree read returns them on a
   // separate `worktree_untracked` channel because they change without advancing the
   // branch commit (so they must NOT be cached under groupBranchTreeCache's commit key).
@@ -285,7 +286,7 @@ export const useExplorerStore = defineStore('explorer', () => {
         // 0177 §2.6-a badge trigger 1/4 (moved here from GitStatusPanel): every
         // status fetch refreshes the file-tree "modified" badges.
         if (status) setBaseDirtyFiles(pid, status.base_dirty?.files ?? [])
-        // 0308 T0004 (NR0003 권고 1) badge trigger — refresh the file-tree new-file
+        // 0308 T0004 (NR0003 recommendation 1) badge trigger — refresh the file-tree new-file
         // badges from the same status payload, on a channel separate from base-dirty.
         if (status) setBaseUntrackedFiles(pid, status.base_untracked?.files ?? [])
         return status
@@ -376,7 +377,7 @@ export const useExplorerStore = defineStore('explorer', () => {
       groupBranchCommit.value = { ...groupBranchCommit.value, [key]: data.commit }
       const nodes = data.nodes.filter((n) => n.permissions.includes('read'))
       groupBranchTreeCache.value[`${key}:${data.commit}`] = nodes
-      // 0315 TR (NR0003 권고 1) — untracked files ride a channel separate from the
+      // 0315 TR (NR0003 recommendation 1) — untracked files ride a channel separate from the
       // commit-keyed tree cache, since they change without advancing the commit.
       setGroupUntrackedFiles(pid, gid, [
         ...(data.worktree_untracked ?? []),
@@ -405,7 +406,7 @@ export const useExplorerStore = defineStore('explorer', () => {
         path: change.path.replace(/\\/g, '/'),
         status: change.status,
       }))
-    // 0315 TR (NR0003 권고 2) — the server now also lists untracked files here with a
+    // 0315 TR (NR0003 recommendation 2) — the server now also lists untracked files here with a
     // '?' status. Those drive the NEW badge (via the tree's worktree_untracked channel),
     // not the MODIFIED ('>') badge, so keep only tracked changes in groupChangedFiles;
     // otherwise a brand-new file would light up as "modified" instead of "new".
@@ -464,7 +465,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     return _anyUnder(groupChangedFiles.value[groupKey(pid, gid)], folderPath)
   }
 
-  // 0315 TR (NR0003 권고 4) — new (untracked) files in a group worktree, the
+  // 0315 TR (NR0003 recommendation 4) — new (untracked) files in a group worktree, the
   // group-branch analogue of the isBaseUntracked* helpers. Same normalization and
   // the same _anyUnder folder propagation, so a new file inside a collapsed folder
   // still marks its ancestors in the read-only group-branch tree.
@@ -506,7 +507,7 @@ export const useExplorerStore = defineStore('explorer', () => {
         `?path=${encodeURIComponent(path)}${refQ}`,
     )
     const data = (res.data as any).data as GroupBlobData
-    // 0315 TR (NR0003 권고 3) — an untracked file is read off disk with commit=null and
+    // 0315 TR (NR0003 recommendation 3) — an untracked file is read off disk with commit=null and
     // no point-in-time; caching it by commit would pin stale content across edits, so
     // it is served fresh every time. Committed reads still cache by (pid, gid, commit, path).
     if (!data.untracked && data.commit) {
@@ -542,7 +543,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     return _anyUnder(baseDirtyFiles.value[pid], folderPath)
   }
 
-  // 0308 T0004 (NR0003 권고 1·2·3) — new (untracked) base-checkout files, a channel
+  // 0308 T0004 (NR0003 recommendation 1·2·3) — new (untracked) base-checkout files, a channel
   // parallel to the base-dirty one above. Same normalization and the same _anyUnder
   // folder propagation, so a new file inside a collapsed folder still marks its ancestors.
   function setBaseUntrackedFiles(pid: string, files: string[]) {
@@ -637,8 +638,8 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   /** Reveal + select a document node in the group tree by doc id — the single
    *  implementation shared by dashboard/notification navigation, the AI run
-   *  cards' "문서 열기", and the auto-advance SSE select intent (0316 T0004 /
-   *  NR0003 권고 1·2·3). Ensures the tree is loaded (force-refetching once when the
+   *  cards' "문서 열기" (Open document), and the auto-advance SSE select intent (0316 T0004 /
+   *  NR0003 recommendation 1·2·3). Ensures the tree is loaded (force-refetching once when the
    *  id is absent, e.g. a just-created auto-advance head that the cached tree has
    *  not caught up to), expands the ancestor groups so the node is revealed, and
    *  sets it as the selected node — the same reveal the dashboard cards already
@@ -646,12 +647,13 @@ export const useExplorerStore = defineStore('explorer', () => {
    *  a tab. Best-effort: a tree-load failure resolves to null instead of throwing,
    *  so a caller that also opens a tab still opens it. Returns the node when found.
    *
-   *  `switchProject` (0316 TR0005 rev1 반려 — "문서열기 해도 해당 프로젝트로 안가잖아"):
+   *  `switchProject` (0316 TR0005 rev1 rejection — "문서열기 해도 해당 프로젝트로 안가잖아"
+   *  [opening the document doesn't even take you to that project]):
    *  when the target document lives in a project OTHER than the one on screen, the
    *  reveal/select below would land on a group tree that isn't displayed and nothing
    *  would move — the explorer stayed on the old project. The previous revision made
    *  this worse by having every caller pass the *current* project id, so a cross-project
-   *  "문서 열기" silently no-op'd. With `switchProject`, the active project is switched to
+   *  "문서 열기" (Open document) silently no-op'd. With `switchProject`, the active project is switched to
    *  `pid` first, so the explorer actually shows the document's project and the reveal
    *  lands on the tree now on screen. Off by default: only the explicit user-driven open
    *  paths opt in — a background SSE follow must never yank the user's view to another

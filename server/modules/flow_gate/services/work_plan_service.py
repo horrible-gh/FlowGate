@@ -2,8 +2,8 @@
 
 One validator, one writer, two callers. The human API (documents/routers/work_plan.py)
 and the AI inbox branch (api/inbox_routes.py) both come through this module, because
-D0007 §2.2 makes that the whole point of the design: "검증기와 저장 서비스가 사람 경로와
-AI 경로 양쪽의 유일한 통로". Two validators would drift within a release.
+D0007 §2.2 makes that the whole point of the design: "the validator and the save service are
+the only channel for both the human and the AI path". Two validators would drift within a release.
 
 Contracts implemented here
   * P0009 §2   — canonical JSON schema, key order, unknown-field policy
@@ -43,8 +43,8 @@ WP_VERSION_SUPPORTED = 1
 COUNT_MIN = 0
 COUNT_MAX = 20
 STEPS_MAX = 100
-# 0406 T0022 작업 6: 한줄 멘트 상한의 정본은 documents.constants 하나뿐이다. 여기에
-# 200 을 따로 적어 두었던 것이 시퀀스 쪽 200 과 화면의 200 과 함께 세 벌로 늘어났다.
+# 0406 T0022 item 6: documents.constants is the sole source of truth for the one-line note
+# cap. A separate 200 written here grew into three copies with the sequence's and the screen's.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
 PROVIDER_CANDIDATES_MAX = 50
 ERRORS_REPORTED_MAX = 50
@@ -238,8 +238,8 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "en": "A locked step must have origin=system.",
         "ja": "ロックされた段階の origin は system でなければなりません。",
     },
-    # 0411 T0004: 코드 이름은 그대로 두되(화면·시험이 이 코드를 고정한다) 문구는 새 규칙을
-    # 말한다 — 후보이거나 이 프로젝트에 등록된 공급자면 고를 수 있다.
+    # 0411 T0004: the code name stays (screens and tests pin this code) but the wording states
+    # the new rule — a candidate, or any provider registered in this project, may be chosen.
     "provider_not_candidate": {
         "ko": "{value} 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.",
         "en": "{value} is neither one of this work plan's provider candidates nor a provider registered in this project.",
@@ -334,7 +334,7 @@ def _error(code: str, loc: str, key: Optional[str] = None, **params) -> dict:
 
 
 def empty_selection_error(field: str) -> dict:
-    """"하나도 고르지 않았다" for a create request that skipped the dialog (P0009 §4.3)."""
+    """"Nothing was chosen at all" for a create request that skipped the dialog (P0009 §4.3)."""
     return _error("empty_selection", field, what_key=field)
 
 
@@ -345,7 +345,7 @@ def render_errors(errors: list[dict], locale: str) -> list[dict]:
     for err in errors[:ERRORS_REPORTED_MAX]:
         template = _copy(_ERROR_COPY, locale, err["code"])
         params = dict(err.get("params") or {})
-        # "체크해 주세요" needs a localized noun, so the error carries the noun's key
+        # The "please tick one" phrasing needs a localized noun, so the error carries the noun's key
         # rather than a pre-rendered word — the error is built before the locale is known.
         what_key = params.pop("what_key", None)
         if what_key:
@@ -408,14 +408,14 @@ def inbox_not_json_message(raw: str, exc: Optional[Exception], locale: str) -> s
     return template.format(where=(where + " ") if where else "").strip()
 
 
-# ── Type registry (L0010 §2.1 결정 2: order comes from the table) ─────────────
+# ── Type registry (L0010 §2.1 decision 2: order comes from the table) ────────
 
 def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -> list[dict]:
     """Countable types in the order a work plan lists them.
 
     The set of countable codes and their units are facts about the workflow and live
     in documents.constants; the ORDER is read from document_types so that adding a
-    design type does not require editing this file (L0010 §2.1 결정 2).
+    design type does not require editing this file (L0010 §2.1 decision 2).
 
     Ordering rule: sheets before sets; within sheets the design *instruction* (DS)
     leads the design series; within each group, the table's own sort_order decides.
@@ -435,7 +435,7 @@ def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -
         if not row.get("is_active", 1):
             continue
         series = str(row.get("series") or "")
-        # 'L' exists twice (design 로직 / general 로그). Only the design one is a
+        # 'L' exists twice (design "logic" / general "log"). Only the design one is a
         # countable design sheet; ignore the log type with the same letter.
         if series not in ("design", "instruction"):
             continue
@@ -516,10 +516,10 @@ def annotate_types(rows: list[dict]) -> list[dict]:
         pair = WORK_PLAN_PAIR_MAP.get(code) if countable else None
         if pair:
             item["pair_code"] = pair
-            # P0009 §4.1 · §10: 생성 대화상자는 짝의 이름까지 보인다("작업지시
-            # 3세트 · 작업레포트 포함"). 같은 응답 안의 이름을 그대로 쓰므로
-            # 로케일이 저절로 맞고, 짝 타입이 목록에 없으면 항목을 만들지
-            # 않는다 — 타입 코드를 이름인 척 보이는 것보다 없는 편이 낫다.
+            # P0009 §4.1 / §10: the create dialog shows the pair's name too ("3 sets of work
+            # instructions, work reports included"). It reuses names from the same response, so
+            # the locale matches automatically, and when the pair type is absent from the list no
+            # entry is built — better absent than showing a type code dressed up as a name.
             pair_name = names.get(pair)
             if pair_name:
                 item["pair_name"] = pair_name
@@ -666,24 +666,24 @@ def empty_recovery_body(project_id: Optional[str] = None) -> dict:
     }
 
 
-# ── Plans created outside the create dialog (0395 T0026 재작업) ───────────────
+# ── Plans created outside the create dialog (0395 T0026 rework) ──────────────
 #
-# 작업계획 문서를 만드는 길은 생성 대화상자 하나가 아니다. 워크플로 머리 칸이 WP 일 때
-# [빈 문서 만들기]로도 만들어지는데, 그 길은 제목만 받아 마크다운 머리말 뼈대를 쓴다.
-# 그 파일은 이 모듈의 판독기가 열 수 없어서, 문서를 열면 표 대신
-# "이 작업계획을 표로 열 수 없습니다"(JSON 파싱 오류)만 남는다 — 사용자가 신고한 증상이다.
+# The create dialog is not the only way a work-plan document appears. When the workflow head
+# slot is WP, "make an empty document" creates one too, and that path takes only a title and
+# writes a Markdown frontmatter skeleton. This module's reader cannot open that file, so
+# opening the document shows only a JSON parse error instead of a table — the reported symptom.
 #
-# 그 길에는 사용자가 고른 수량·공급자가 없다. 그래서 숫자를 지어내지 않고, 이미 정해져
-# 있는 곳에서 읽어 온다: 수량은 이 그룹의 워크플로 시퀀스(지금 잡혀 있는 설계 장수와 작업
-# 세트수 그 자체), 공급자는 프로젝트의 실행 체인과 문서종류별 배정표(연속 작업이 실제로
-# 그 단계를 돌릴 때 고르는 바로 그 값). 그래서 처음 열린 계획은 "이 그룹이 지금 하기로 되어
-# 있는 일"을 그대로 담고, 미지정 칸이 남지 않는다.
+# That path has no user-chosen quantities or providers. So no numbers are invented; they are
+# read from where they are already settled: quantities from this group's workflow sequence
+# (the design-document count and work-set count currently held), and providers from the
+# project's run chain and per-doc-type assignment table (the very values a continuous run
+# would pick for that step). So a freshly opened plan holds "what this group is set to do right now", with no unset cells.
 
 def workflow_type_counts(items: Optional[Iterable[dict]]) -> dict[str, int]:
-    """워크플로 시퀀스 칸을 작업계획 수량으로 환산한다.
+    """Convert workflow sequence slots into work-plan quantities.
 
-    짝으로 붙어 나오는 레포트 칸(NR/TR/TSR)은 지시 칸과 같은 한 세트다. 시퀀스에 지시
-    칸 없이 레포트 칸만 남아 있어도 그 세트는 세어야 하므로 둘 중 큰 쪽을 쓴다.
+    A paired report slot (NR/TR/TSR) belongs to the same set as its instruction slot. Even
+    with only the report slot left and no instruction slot, that set must still count, so the larger of the two is used.
     """
     direct: dict[str, int] = {}
     paired: dict[str, int] = {}
@@ -704,7 +704,7 @@ def workflow_type_counts(items: Optional[Iterable[dict]]) -> dict[str, int]:
 
 
 def _effective_chain(project_id: Optional[str]) -> dict:
-    """프로젝트의 실행 체인. 읽을 수 없으면 빈 체인 — 계획 생성이 죽으면 안 된다."""
+    """The project's run chain; an empty chain when unreadable — plan creation must not die."""
     if not project_id:
         return {}
     try:
@@ -716,7 +716,7 @@ def _effective_chain(project_id: Optional[str]) -> dict:
 
 
 def _registered_providers(project_id: Optional[str]) -> list[dict]:
-    """이 프로젝트에 지금 등록돼 있는 공급자들. 읽을 수 없으면 빈 목록."""
+    """The providers currently registered in this project; an empty list when unreadable."""
     return [
         provider for provider in (_effective_chain(project_id).get("providers") or [])
         if provider.get("id")
@@ -724,20 +724,20 @@ def _registered_providers(project_id: Optional[str]) -> list[dict]:
 
 
 def _registered_provider_ids(project_id: Optional[str]) -> set[str]:
-    """0411 T0004 (B0001 "각 프로바이더는 전체 프로바이더에서 바꿀수 있게").
+    """0411 T0004 (B0001 "each provider should be changeable from the full provider list").
 
-    사람이 손으로 고를 수 있는 범위는 계획에 얼어붙은 provider_candidates 가 아니라
-    "후보 ∪ 이 프로젝트에 현재 등록된 공급자"다. provider_candidates 는 원래 역할
-    (AI 에게 맡길 범위 + 표시 이름 스냅샷)만 갖는다 — 제거가 아니라 역할 분리다.
+    What a human may pick by hand is not the provider_candidates frozen into the plan but
+    "candidates ∪ providers currently registered in this project". provider_candidates keeps
+    only its original role (the AI-delegation range plus a display-name snapshot) — a split of roles, not a removal.
 
-    project_id 를 모르거나 설정을 읽지 못하면 빈 집합이 되고, 규칙은 예전(후보만)으로
-    좁아진다. 설정을 못 읽었다는 이유로 저장이 열리는 일은 없다.
+    With an unknown project_id or unreadable settings the set is empty and the rule narrows
+    back to the old one (candidates only). Unreadable settings never loosen a save.
     """
     return {str(provider["id"]) for provider in _registered_providers(project_id)}
 
 
 def _assigned_provider(project_id: Optional[str], type_code: str) -> Optional[str]:
-    """문서종류별 배정표(0317 D0004)가 이 타입에 정해 둔 공급자. 없으면 None."""
+    """The provider the per-doc-type assignment table (0317 D0004) sets for this type, or None."""
     if not project_id:
         return None
     try:
@@ -752,11 +752,11 @@ def auto_plan_body(
     project_id: Optional[str] = None,
     workflow_items: Optional[Iterable[dict]] = None,
 ) -> dict:
-    """생성 대화상자를 거치지 않은 작업계획의 첫 본문 — 채워진 채로 열린다.
+    """The first body of a work plan that skipped the create dialog — it opens already filled.
 
-    수량은 워크플로 시퀀스에서, 공급자 후보·기본값·타입별 배정은 프로젝트 설정에서 읽는다.
-    사람이 고른 값이 아니므로 지어내지 않는다: 시퀀스에 없는 타입은 0으로 두어 편집기에서
-    올릴 수 있게만 하고, 공급자가 하나도 없는 프로젝트라면 배정 없이 그대로 둔다.
+    Quantities come from the workflow sequence; provider candidates, defaults and per-type
+    assignments from project settings. Nothing is invented, since no human chose it: a type
+    absent from the sequence stays 0 for the editor to raise, and a project with no providers is left unassigned.
     """
     counts = workflow_type_counts(workflow_items)
     ordered = [entry["code"] for entry in list_countable_types(project_id)]
@@ -788,16 +788,16 @@ def auto_plan_body(
     try:
         return validate(body, project_id=project_id, action="create")
     except WorkPlanValidationError:
-        # 계획을 못 만드는 것보다 "아무것도 정해지지 않은 표"가 낫다. 열리지 않는 파일만은
-        # 남기지 않는다는 것이 이 함수의 존재 이유다.
+        # A table with nothing decided beats no plan at all. Not leaving behind an unopenable
+        # file is the entire reason this function exists.
         return empty_recovery_body(project_id)
 
 
 def is_unwritten_plan(raw: Optional[str]) -> bool:
-    """이 파일에 계획이 한 번도 쓰인 적 없는가 (빈 파일 / 마크다운 머리말 뼈대).
+    """Has a plan never been written to this file (empty file / Markdown frontmatter skeleton)?
 
-    되살리기는 여기서만 허용한다. 내용이 있는데 깨진 파일은 사람이 원문으로 확인할 몫이지
-    서버가 덮어쓸 대상이 아니다.
+    Reviving is permitted only here. A file with content that is merely broken is for a human
+    to inspect at source, not for the server to overwrite.
     """
     text = (raw or "").strip()
     if not text:
@@ -890,7 +890,7 @@ def _check_defaults(
     errors = _unknown_fields(defaults, DEFAULTS_FIELD_ORDER, "defaults")
     provider_id = defaults.get("provider_id")
     if provider_id is not None:
-        # 0411 T0004: 후보이거나 지금 등록된 공급자면 된다 (NR0003 §6 안 B).
+        # 0411 T0004: a candidate, or any currently registered provider, is enough (NR0003 §6 option B).
         allowed_ids = _candidate_ids(candidates) | (registered_ids or set())
         if not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id):
             errors.append(_error("provider_id_format_invalid", "defaults.provider_id",
@@ -956,14 +956,14 @@ def validate(
     """Run every layer of L0010 §2.3 and return the canonical body.
 
     Raises WorkPlanValidationError carrying all errors of the first failing layer.
-    Layers are not merged on purpose (L0010 §2.3 결정 5): reporting "the count is out
+    Layers are not merged on purpose (L0010 §2.3 decision 5): reporting "the count is out
     of range" together with "the steps do not match the counts" would show two places
     to fix where there is only one.
 
-    0411 T0004: enforce_provider_scope=False 는 *이미 디스크에 있는* 계획을 읽을 때만
-    쓴다(load_body). 쓰는 시점에는 검증을 통과했는데 그 뒤 공급자가 프로젝트에서
-    삭제됐다는 이유로 계획 파일이 통째로 안 열리면 안 된다 — 사라진 공급자는 편집기가
-    회색 이름(unavailable_provider)으로 이미 다루고 있다. 서식 검사는 그대로 돈다.
+    0411 T0004: enforce_provider_scope=False is used only when reading a plan *already on
+    disk* (load_body). A plan that passed validation when written must not become entirely
+    unopenable just because a provider was later deleted from the project — the editor already
+    handles a vanished provider as a greyed name (unavailable_provider). Format checks still run.
     """
     def fail(errors: list[dict]):
         raise WorkPlanValidationError(errors, action=action)
@@ -1036,8 +1036,8 @@ def validate(
         fail(errors)
 
     # ── layer 4: providers ──────────────────────────────────────────────────
-    # 0411 T0004: 등록 목록은 이 검증 한 번에 한 번만 읽는다. 후보 목록 자체는 여기서
-    # 넓히지 않는다 — 후보는 "AI 에게 맡길 범위", 등록 목록은 "사람이 고를 수 있는 범위".
+    # 0411 T0004: the registered list is read once per validation. The candidate list itself is
+    # not widened here — candidates are "the AI-delegation range", the registered list is "what a human may pick".
     registered_ids = _registered_provider_ids(project_id) if enforce_provider_scope else set()
     errors.extend(_check_provider_candidates(body["provider_candidates"]))
     errors.extend(_check_defaults(
@@ -1073,7 +1073,7 @@ def validate(
         fail(errors)
 
     # ── layer 7: what the values mean ───────────────────────────────────────
-    # 0411 T0004 (B0001): 비잠금 단계의 공급자는 후보이거나 지금 등록된 것이면 된다.
+    # 0411 T0004 (B0001): an unlocked step's provider need only be a candidate or currently registered.
     selectable_ids = _candidate_ids(body["provider_candidates"]) | registered_ids
     for index, step in enumerate(steps):
         loc = f"steps[{index}]"
@@ -1108,7 +1108,7 @@ def validate(
     return canonicalize(body)
 
 
-# ── Canonical form (P0009 §2.6 결정 3·4) ─────────────────────────────────────
+# ── Canonical form (P0009 §2.6 decisions 3 and 4) ────────────────────────────
 
 def canonicalize(body: dict) -> dict:
     """Fixed key order, `x_` extras preserved at the end of their own object."""
@@ -1162,7 +1162,7 @@ def dumps(body: dict) -> str:
 # ── Where a plan's canonical file lives ──────────────────────────────────────
 
 def canonical_path_for_doc(doc: dict):
-    """문서 레코드가 가리키는 곳이 아니라, 이 문서의 정본이 있어야 할 자리."""
+    """Where this document's canonical file SHOULD be, not where the document record points."""
     from modules.flow_gate.storage import paths as storage_paths
 
     group_id = doc.get("group_id") or ""
@@ -1179,10 +1179,10 @@ def canonical_path_for_doc(doc: dict):
 
 
 def plan_path_for_doc(doc: dict):
-    """작업계획 문서 하나가 읽고 쓰는 정본 JSON 파일의 경로.
+    """Path of the canonical JSON file one work-plan document reads and writes.
 
-    0403 NR0004 F3: 계획을 읽는 곳(문서 라우트)과 적용 이력을 남기는 곳(시퀀스 저장)이
-    각자 경로를 계산하면 언젠가 서로 다른 파일을 가리킨다. 계산은 여기 한 번만 한다.
+    0403 NR0004 F3: if the place that reads a plan (the document route) and the place that
+    records applications (the sequence save) each computed the path, they would eventually point at different files. It is computed here only.
     """
     from modules.flow_gate.storage import paths as storage_paths
 
@@ -1192,8 +1192,8 @@ def plan_path_for_doc(doc: dict):
         resolved = storage_paths.resolve_storage_path(stored, doc.get("project_id"), branch=branch)
         if resolved is not None:
             return resolved
-        # 파일이 아직 없을 수도 있다(되돌려진 트리). "작업계획이 아니다"라고 답하는 대신
-        # 정본이 있어야 할 자리로 떨어진다.
+        # The file may not exist yet (a reverted tree). Instead of answering "this is not a work
+        # plan", it falls back to where the canonical file should be.
         loose = storage_paths.resolve_storage_dir(stored, doc.get("project_id"))
         if loose is not None:
             return loose
@@ -1220,8 +1220,8 @@ def load_body(path) -> dict:
             "wp_version_unsupported", f"wp_version={version}", raw=raw
         )
     try:
-        # 0411 T0004: 읽기는 공급자 범위를 다시 묻지 않는다. 저장 때 이미 물었고, 그 뒤
-        # 공급자가 삭제됐다고 계획이 안 열리면 "사라진 공급자" 표기를 볼 방법이 없어진다.
+        # 0411 T0004: reads do not re-ask about provider scope. The save already did, and if a
+        # deleted provider blocked the plan from opening, the "vanished provider" marker could never be seen.
         return validate(parsed, enforce_provider_scope=False)
     except WorkPlanValidationError as exc:
         first = render_errors(exc.errors, FALLBACK_LOCALE)[0]
@@ -1284,9 +1284,9 @@ def unassigned_step_count(body: dict) -> int:
 def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
     """Per-provider step counts, named with the CURRENT display name when known.
 
-    0411 T0004: 후보 밖(등록만 된) 공급자가 단계에 배정될 수 있게 됐다. 이름 해석 순서가
-    등록 목록 → 후보 스냅샷 → id 이므로 그런 공급자도 raw id 가 아니라 현재 이름으로
-    세어진다 — 이 함수는 원래부터 후보 목록을 순회하지 않고 steps 를 센다.
+    0411 T0004: a non-candidate (merely registered) provider can now be assigned to a step.
+    Name resolution runs registered list → candidate snapshot → id, so such a provider is
+    counted under its current name rather than a raw id — this function has always counted steps, not the candidate list.
     """
     current = {p["id"]: p.get("name") for p in (providers or [])}
     snapshot = {
@@ -1313,7 +1313,7 @@ def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> li
 
 
 def _used_provider_ids(body: dict) -> list[str]:
-    """본문이 실제로 쓰고 있는 공급자 id — 기본값 다음 단계 순서, 중복 없이."""
+    """Provider ids the body actually uses — the default first, then step order, deduplicated."""
     used: list[str] = []
     seen: set[str] = set()
     candidates = [(body.get("defaults") or {}).get("provider_id")]
@@ -1329,11 +1329,11 @@ def _used_provider_ids(body: dict) -> list[str]:
 def provider_status(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
     """P0009 §4.4: is each candidate still registered, and did its name change.
 
-    0411 T0004 (B0001): 단계 공급자는 이제 후보 밖 — 이 프로젝트에 등록만 된 공급자 — 일
-    수 있다. 편집기는 이 목록에 물어 "지금도 등록돼 있는가"를 판정하므로, 본문이 실제로
-    쓰고 있는 id 는 후보가 아니어도 한 줄을 갖는다. 없으면 멀쩡히 등록된 공급자에
-    "(사용할 수 없는 프로바이더)" 딱지가 붙는다. 후보가 아닌 줄에는 스냅샷 이름이 없다
-    (얼려 둔 적이 없다) — 그래서 name_changed 는 언제나 거짓이다.
+    0411 T0004 (B0001): a step provider may now sit outside the candidates — merely registered
+    in this project. The editor asks this list whether a provider "is still registered", so an
+    id the body actually uses gets a row even when it is not a candidate. Without that, a
+    perfectly registered provider gets labelled "unavailable provider". A non-candidate row has
+    no snapshot name (none was ever frozen), so name_changed is always false for it.
     """
     current = {p["id"]: p.get("name") for p in (providers or [])}
 
@@ -1385,21 +1385,34 @@ def snapshot_candidates(provider_ids: list[str], providers: list[dict]) -> list[
     return snapshots
 
 
-# ── Change summary (P0009 §5.1 결정 10 / §5.4 결정 11) ────────────────────────
+# ── Change summary (P0009 §5.1 decision 10 / §5.4 decision 11) ───────────────
 
-def _quantities_line(body: dict) -> str:
+_QUANTITY_SET_TEMPLATES = {
+    "ko": "{code} {count}세트",
+    "en": "{code} {count} sets",
+    "ja": "{code} {count}セット",
+}
+_NOTE_CHANGED_TEMPLATES = {
+    "ko": "steps[{key}].note 변경",
+    "en": "steps[{key}].note changed",
+    "ja": "steps[{key}].note 変更",
+}
+
+
+def _quantities_line(body: dict, locale: str = "ko") -> str:
+    template = _QUANTITY_SET_TEMPLATES.get(locale) or _QUANTITY_SET_TEMPLATES["ko"]
     parts = []
     for code in body.get("counted_types") or []:
         quantity = (body.get("quantities") or {}).get(code) or {}
         count = quantity.get("count")
         if WORK_PLAN_TYPE_UNITS.get(code) == "set":
-            parts.append(f"{code} {count}세트")
+            parts.append(template.format(code=code, count=count))
         else:
             parts.append(f"{code} {count}")
     return " · ".join(parts)
 
 
-def change_summary(after: dict, before: Optional[dict] = None) -> dict:
+def change_summary(after: dict, before: Optional[dict] = None, locale: str = "ko") -> dict:
     """The work-plan flavour of the inbox change summary.
 
     A prose document is summarized by "how many lines landed in which section"; a
@@ -1408,15 +1421,15 @@ def change_summary(after: dict, before: Optional[dict] = None) -> dict:
     whether it overwrote someone else's values.
     """
     steps = after.get("steps") or []
-    # P0009 §5.1 · §5.4 의 두 예시 모두 assigned_steps + unassigned_steps == steps 다.
-    # "미배정"은 사람이 아직 고르지 않은 칸만 세고(잠긴 TSR 은 고를 수 없으니
-    # 미배정이 아니다), "배정됨"은 그 나머지다. 잠긴 칸을 어느 쪽에도 넣지
-    # 않으면 두 수의 합이 단계 수보다 작아져, 무인 작업자가 자기가 보낸 것이
-    # 다 저장됐는지를 셈으로 확인할 수 없다.
+    # Both examples in P0009 §5.1 and §5.4 satisfy assigned_steps + unassigned_steps == steps.
+    # "Unassigned" counts only cells a human has not chosen yet (a locked TSR cannot be chosen,
+    # so it is not unassigned), and "assigned" is the remainder. Putting locked cells in
+    # neither would make the two sum to less than the step count, leaving an unmanned worker
+    # unable to verify by arithmetic that everything it sent was saved.
     unassigned = unassigned_step_count(after)
     summary: dict[str, Any] = {
         "kind": "work_plan",
-        "quantities": _quantities_line(after),
+        "quantities": _quantities_line(after, locale),
         "steps": len(steps),
         "assigned_steps": len(steps) - unassigned,
         "unassigned_steps": unassigned,
@@ -1425,6 +1438,7 @@ def change_summary(after: dict, before: Optional[dict] = None) -> dict:
         summary["sections"] = ["quantities", "provider_candidates", "defaults", "steps"]
         return summary
 
+    note_changed_template = _NOTE_CHANGED_TEMPLATES.get(locale) or _NOTE_CHANGED_TEMPLATES["ko"]
     changed: list[str] = []
     before_q = before.get("quantities") or {}
     after_q = after.get("quantities") or {}
@@ -1446,7 +1460,7 @@ def change_summary(after: dict, before: Optional[dict] = None) -> dict:
                 f"{old.get('provider_id')} → {step.get('provider_id')}"
             )
         if (old.get("note") or "") != (step.get("note") or ""):
-            changed.append(f"steps[{step.get('key')}].note 변경")
+            changed.append(note_changed_template.format(key=step.get("key")))
     summary["changed"] = changed
     return summary
 

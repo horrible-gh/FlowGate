@@ -1,7 +1,7 @@
 // 0331 T0006 / NR0005 §8 — scope × push ↔ finalize action mapping.
 //
-// The approved v4 mockup drives the Git 반영 UI from two independent axes
-// (반영 범위: 머지 → 커밋 → 대기, and 원격에 푸시 on/off) rather than a flat list
+// The approved v4 mockup drives the Git apply UI from two independent axes
+// (apply scope: merge → commit → hold, and push-to-remote on/off) rather than a flat list
 // of action cards. The mapping itself is served by the API
 // (`state.action_axes`), so this module is only the pure translation between
 // the axis position the user sees and the action value the server takes. It
@@ -25,7 +25,7 @@ export interface AxisPosition {
   push: boolean
 }
 
-/** Approved default when nothing else applies: 머지 + 원격에 푸시. */
+/** Approved default when nothing else applies: merge + push to remote. */
 export const DEFAULT_AXIS_POSITION: AxisPosition = { scope: 'merge', push: true }
 
 /**

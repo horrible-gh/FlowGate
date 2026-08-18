@@ -30,7 +30,7 @@ _DRIVE_RE = storage_paths._DRIVE_RE  # same drive-letter test the storage layer 
 def within_storage_jail(path: Path, project_id: Optional[str]) -> bool:
     """The storage-jail test, bound at call time instead of at import time.
 
-    0060 TR0017 rev2. NR0015 §7 지침 5 told this package to reuse the storage jail through a
+    0060 TR0017 rev2. NR0015 §7 directive 5 told this package to reuse the storage jail through a
     PUBLIC name, so 0060 added the wrapper ``within_allowed_roots()`` to ``storage/paths.py``
     and called it from here. That is still the binding we want — it names the reuse boundary
     instead of reaching into ``_within_allowed_roots``.

@@ -1,4 +1,4 @@
-"""CRUD for the notification_seen table (R0001 group 0045, NR0003 — A안 🔔 알림센터).
+"""CRUD for the notification_seen table (R0001 group 0045, NR0003 — option A, the 🔔 notification centre).
 
 One row per (user, project): the watermark up to which the user has read the document-inflow feed.
 The feed itself comes from workflow_events (see dashboard_service.get_notification_feed); this table

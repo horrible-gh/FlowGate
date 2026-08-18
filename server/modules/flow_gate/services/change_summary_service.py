@@ -1,13 +1,13 @@
-"""저장 응답에 붙는 변경 요약 (group 0370, P0002 시나리오 14~16 / L0003 §2-9).
+"""The change summary attached to a save response (group 0370, P0002 scenarios 14-16 / L0003 §2-9).
 
-견줄 "저장 전"은 저장 과정이 이미 만들어 두는 백업 파일(`previous_revision_path`)이고,
-"저장 후"는 방금 쓴 파일이다. 이 요약은 **어디에도 저장하지 않는다** — 표도 컬럼도 늘리지
-않고 응답으로만 돌려준다(P0002 §5).
+The "before" side is the backup file the save already creates (`previous_revision_path`), and
+the "after" side is the file just written. This summary is **stored nowhere** — no table and
+no column is added; it is returned in the response only (P0002 §5).
 
-가장 중요한 규칙: **요약을 만들다 무슨 일이 나도 저장은 이미 끝난 것이다.** 여기서
-실패를 오류로 올리면 작업자가 저장이 실패한 줄 알고 같은 문서를 또 올린다(P0002
-시나리오 14). 그래서 모든 실패는 `{"changed": null, "error": "summary unavailable"}`
-한 가지로 수렴한다.
+The most important rule: **whatever goes wrong while building the summary, the save is
+already done.** Raising a failure here makes a worker think the save failed and submit the
+same document again (P0002 scenario 14). So every failure converges on the single
+`{"changed": null, "error": "summary unavailable"}`.
 """
 from __future__ import annotations
 
@@ -44,16 +44,16 @@ def _side(doc: DocumentText, revision_no: int) -> dict:
 
 
 def _common_line_flags(before: list[str], after: list[str]) -> tuple[list[bool], list[bool]]:
-    """두 줄 목록의 공통 부분수열에 속하는지를 줄마다 표시한다.
+    """Mark, per line, whether it belongs to the common subsequence of two line lists.
 
-    줄 비교는 **글자 그대로**다. 앞뒤 공백을 다듬거나 대소문자를 무시하지 않는다 —
-    들여쓰기만 고친 것도 고친 것이다(L0003 §2-9).
+    Line comparison is **literal**: no trimming of surrounding whitespace, no case folding —
+    changing only the indentation is still a change (L0003 §2-9).
 
-    공통 부분은 ``difflib.SequenceMatcher`` 의 매칭 블록으로 잰다. 참 LCS 의 동적계획법은
-    ``SUMMARY_MAX_LINES``(2만 줄) 상한에서 4억 칸이라 ``SUMMARY_TIME_BUDGET_MS``(2초)
-    예산에 들어가지 않는다. ``autojunk`` 는 반드시 꺼야 한다 — 켜 두면 200줄이 넘는
-    문서에서 자주 나오는 줄(빈 줄 등)이 통째로 "쓰레기"로 분류돼 실제보다 훨씬 많은
-    줄이 바뀐 것으로 잡힌다.
+    The common part is measured with ``difflib.SequenceMatcher``'s matching blocks. True LCS
+    dynamic programming would be 400 million cells at the ``SUMMARY_MAX_LINES`` cap (20,000
+    lines), which does not fit ``SUMMARY_TIME_BUDGET_MS`` (2 seconds). ``autojunk`` MUST be
+    off: with it on, frequently occurring lines (blank ones, say) in a document over 200 lines
+    get classified as junk wholesale and far more lines are reported as changed than really were.
     """
     b_common = [False] * len(before)
     a_common = [False] * len(after)
@@ -68,8 +68,8 @@ def _common_line_flags(before: list[str], after: list[str]) -> tuple[list[bool],
 def _line_stats(before: list[str], after: list[str]) -> dict:
     b_common, a_common = _common_line_flags(before, after)
     common = sum(1 for flag in b_common if flag)
-    # chars_added/chars_removed 는 **줄 안의 글자만** 세고 개행은 세지 않는다. 사람이
-    # 응답을 보고 검산할 수 있어야 하기 때문이다(L0003 §2-9).
+    # chars_added/chars_removed count **only characters within lines**, not newlines, so that a
+    # person can check the arithmetic straight off the response (L0003 §2-9).
     return {
         "lines_removed": len(before) - common,
         "lines_added": len(after) - common,
@@ -79,15 +79,15 @@ def _line_stats(before: list[str], after: list[str]) -> dict:
 
 
 def _section_bodies(doc: DocumentText) -> list[dict]:
-    """구간마다 ``key``(제목 경로)와 제 몸통 줄만 뽑아 둔다.
+    """Extract per section its ``key`` (heading path) and its own body lines only.
 
-    짝지어진 구간의 본문은 **``include_children = false`` 기준**(제 몸통 글자만)으로
-    견준다. 하위까지 넣어 견주면 맨 끝 소제목 한 줄만 고쳐도 그 위 모든 조상이
-    "고쳤다" 로 잡혀 요약이 쓸모없어진다(L0003 §2-9).
+    Paired sections are compared on an **``include_children = false`` basis** (own body text
+    only). Including descendants would mark every ancestor as "changed" when a single line of
+    the deepest subheading is edited, making the summary useless (L0003 §2-9).
 
-    키에서 **번호 접두사를 떼지 않는다.** ``## 2. 구성`` 이 ``## 3. 구성`` 으로 바뀌었으면
-    그것은 문서가 달라진 것이므로 "고쳤다" 로 잡히는 편이 맞다. (조회의 M4 단계는 사람이
-    대충 물어도 찾아 주려는 것이고, 여기는 기계가 두 판을 견주는 자리라 목적이 다르다.)
+    Numbering prefixes are **NOT stripped** from the key. If ``## 2. Structure`` became
+    ``## 3. Structure`` the document did change, so reporting it as changed is right. (Lookup's
+    M4 stage exists to find things for a human asking loosely; here a machine compares two revisions — a different purpose.)
     """
     out: list[dict] = []
     for idx, it in enumerate(doc.items):
@@ -116,9 +116,9 @@ def _entry(sec: dict, doc_id: str, revision_no: int) -> dict:
 
 
 def _pair_sections(before: list[dict], after: list[dict]) -> tuple[list[dict], list[dict], list[tuple[dict, dict]]]:
-    """같은 키가 한 판 안에 여럿이면 **등장 순서대로 짝짓는다**(before 1번째 ↔ after 1번째).
+    """Duplicate keys within one revision are **paired in order of appearance** (1st before ↔ 1st after).
 
-    짝이 없는 쪽이 추가/삭제다.
+    Whatever is left unpaired counts as added or removed.
     """
     buckets: dict[str, list[dict]] = {}
     for sec in before:
@@ -150,10 +150,10 @@ def build(
     before_path: Any = None,
     before_revision_no: Optional[int] = None,
 ) -> dict:
-    """저장 전후를 견주어 변경 요약을 만든다. 실패는 전부 ``summary unavailable``.
+    """Build the change summary by comparing before and after. Every failure is ``summary unavailable``.
 
-    ``before_path`` 가 없으면 신규 등록이다 — 견줄 옛 판이 없으므로 ``before`` 는
-    ``null``, ``changed`` 는 참, 전부 추가로 집계한다(P0002 시나리오 15).
+    No ``before_path`` means a first registration: with no prior revision to compare, ``before``
+    is ``null``, ``changed`` is true, and everything counts as added (P0002 scenario 15).
     """
     started = time.monotonic()
 
@@ -170,7 +170,7 @@ def build(
         if before_path:
             before_text = read_canonical(before_path)
             if before_text is None:
-                # 백업 파일이 있어야 하는데 읽히지 않는다 → 요약만 포기한다.
+                # The backup file should exist but is unreadable → give up on the summary only.
                 return _unavailable()
             before_doc = DocumentText(before_text)
 
@@ -205,8 +205,8 @@ def build(
         }
 
         if not changed:
-            # 지문이 같으면 숫자는 전부 0 이고 구간은 전부 그대로다. 개정 번호는 그래도
-            # 올라간다 — 이 규칙은 저장 동작을 바꾸지 않는다(P0002 시나리오 16).
+            # Identical fingerprints mean all counts are 0 and every section is unchanged. The
+            # revision number still increments — this rule does not alter save behaviour (P0002 scenario 16).
             summary["sections_unchanged"] = after_doc.section_total
             return summary
 
@@ -220,8 +220,8 @@ def build(
         added, removed, pairs = _pair_sections(before_secs, after_secs)
 
         sections_added = [_entry(s, doc_id, after_revision_no) for s in added]
-        # 사라진 구간의 줄 번호와 ref 는 **옛 판** 기준이다. ref 의 `@r` 이 바로 이걸
-        # 구분하라고 있는 것이다(L0003 §2-9).
+        # A removed section's line numbers and ref are relative to the **old** revision. That is
+        # exactly what the `@r` in a ref is for (L0003 §2-9).
         old_rev = before_revision_no if before_revision_no is not None else 0
         sections_removed = [_entry(s, doc_id, old_rev) for s in removed]
 
@@ -250,5 +250,5 @@ def build(
         summary["sections_unchanged"] = unchanged
         summary["truncated"] = truncated
         return summary
-    except Exception:  # noqa: BLE001 — 저장은 이미 끝났다. 요약만 포기한다.
+    except Exception:  # noqa: BLE001 — the save is already done; only the summary is abandoned
         return _unavailable()

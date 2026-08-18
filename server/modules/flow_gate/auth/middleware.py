@@ -13,10 +13,10 @@ def verify_token(token:str=Depends(oauth2_scheme)):
     except jwt.InvalidTokenError:raise credentials
     if payload.get("type")!="access":raise credentials
     if payload.get("totp_pending"):raise HTTPException(401,"2FA verification required")
-    # 0291 T1: 아래 두 판정과 get_current_user 의 사용자 조회는 서로 독립인 단일 행
-    # 조회 세 개다. 캐시가 비어 있으면 세 번 따로 가므로, 먼저 한 번에 읽어 세 캐시를
-    # 채운다. 판정 자체는 아래 그대로 — 무효화 경로가 바뀌지 않는다.
-    # 실패해도 조용히 넘어가고 종전 경로가 그대로 돈다 (auth_preamble 독스트링).
+    # 0291 T1: the two checks below and get_current_user's user lookup are three independent
+    # single-row lookups. With an empty cache they go three separate times, so one merged read
+    # fills all three caches first. The checks themselves are unchanged, so no invalidation path moves.
+    # A failure passes silently and the previous path runs as before (see auth_preamble's docstring).
     from . import auth_preamble as _preamble
     _preamble.prefetch(payload.get("jti"),payload.get("sid"),payload.get("sub"))
     try:
@@ -32,7 +32,7 @@ def get_current_user(payload:dict=Depends(verify_token)):
     if not user_id:raise HTTPException(401,"Invalid token subject")
     from modules.flow_gate.db import users as db_users
     from . import auth_cache as _auth_cache
-    # 0276 NR0003 발견 2: one of the five fixed per-request auth queries.
+    # 0276 NR0003 finding 2: one of the five fixed per-request auth queries.
     # db.users.create/update/delete invalidate this entry, so is_active/is_admin
     # changes take effect immediately in-process.
     user=_auth_cache.user_cache().get_or_load(user_id,lambda:db_users.get_by_id(user_id))

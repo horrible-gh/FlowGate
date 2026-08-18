@@ -45,12 +45,12 @@ class SequenceChanged(Exception):
 
 
 class PlanRevisionChanged(Exception):
-    """부어 넣은 작업계획이 그 사이에 바뀌었다 (0403 NR0004 F2).
+    """The poured work plan changed in the meantime (0403 NR0004 F2).
 
-    워크플로 지문(SequenceChanged)과 짝이다. 지문은 "시퀀스가 움직였다"만 잡는다. 계획만
-    바뀐 경우 — 다른 사람이나 AI 가 같은 WP 를 저장해 리비전이 오른 경우 — 지문은 그대로라
-    저장이 통과했고, 화면에서 보고 있는 최신 계획이 아니라 대화상자를 열 때의 낡은 계획이
-    시퀀스에 조용히 들어갔다. 행에 적힌 source_revision_no 는 사후 흔적일 뿐 방어가 아니다.
+    The counterpart of the workflow fingerprint (SequenceChanged), which only catches "the
+    sequence moved". When only the plan changed — someone else or an AI saved the same WP and
+    bumped its revision — the fingerprint was unchanged, the save passed, and the stale plan
+    from when the dialog opened went silently into the sequence instead of the current one.
     """
 
     def __init__(self, wp_doc_id: str, expected: int, current: int):
@@ -105,15 +105,15 @@ def resolve_row_provider(
     }
 
 # ── Continuous-chain instruction auto-completion (group 0092 B0001 / NR0003) ────────
-# Instruction-series steps ("무엇을 하라": N/T) are fillable from a fixed server template
+# Instruction-series steps ("do this": N/T) are fillable from a fixed server template
 # and carry no AI deliverable — only their paired report (NR/TR) does. In the unmanned
 # continuous chain we therefore auto-create + auto-approve any instruction head server-side
-# (reusing documents.create_next_approved_core, the exact managed "자동승인문서" mechanics)
+# (reusing documents.create_next_approved_core, the exact managed auto-approved-document mechanics)
 # instead of spending an AI worker cycle minting + processing a mention for it. The worker
 # mention is then issued only at the following report head. This removes the redundant
 # instruction cycles per R→…→TR lap that caused B0001's "token двойной/two-fold" symptom.
 #
-# TS (테스트시나리오 지시) is INTENTIONALLY EXCLUDED here (group 0121 R0001): unlike N/T, a
+# TS (test-scenario instruction) is INTENTIONALLY EXCLUDED here (group 0121 R0001): unlike N/T, a
 # test-scenario directive carries meaningful, deliverable content that the AI must author
 # itself, so TS must be token-issued — when the head reaches TS the auto-complete loop stops
 # and advance_workflow mints a worker token+mention for it (the AI writes TS, it is then
@@ -138,13 +138,13 @@ def normalize_continuation_instruction_mode(mode: Optional[str]) -> str:
 
 
 def instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
-    """요청이 모드를 말하지 않았거나 모르는 값을 보내 정규화가 실제로 발동했는가
-    (0406 T0022 작업 2·3).
+    """Did normalisation actually fire because the request omitted the mode or sent an
+    unknown value (0406 T0022 work items 2 and 3).
 
-    하위호환은 유지한다 — 외부·레거시 요청은 계속 ``auto_approved`` 로 접힌다. 다만 그
-    접힘이 **일어났다는 사실**은 더 이상 조용하지 않다. 0406 의 T0013·T0017 처럼 "N/T 에
-    멘트가 안 왔다"는 신고가 들어왔을 때, 사용자가 auto_approved 를 골랐기 때문인지 아니면
-    어떤 진입점이 모드를 빠뜨려 서버가 대신 골라 준 것인지를 사후에 가를 수 있어야 한다.
+    Backward compatibility stays: external and legacy requests still fold to ``auto_approved``.
+    What is no longer silent is **the fact that the fold happened**. When a report like 0406's
+    T0013/T0017 arrives — "the N/T got no note" — it must be possible to tell afterwards whether
+    the user chose auto_approved or some entry point omitted the mode and the server chose.
     """
     return mode not in CONTINUATION_INSTRUCTION_MODES
 
@@ -161,7 +161,7 @@ def normalize_continuation_auto_approve_item_seqs(raw: Optional[list]) -> list[i
     """Positive ints only, de-duplicated, ascending (§2). Empty/None -> [] ("no selection").
 
     Raises ValueError("invalid_auto_approve_item_seq_type:<repr>") for a non-integer or a
-    non-positive value — the 422 case §2 calls out ("정수가 아니거나 0 이하인 값").
+    non-positive value — the 422 case §2 calls out ("not an integer, or zero or less").
     """
     if not raw:
         return []
@@ -182,7 +182,7 @@ def validate_continuation_auto_approve_item_seqs(
     *,
     reject_already_done: bool = True,
 ) -> None:
-    """422-worthy semantic validation against doc_id's decided sequence (§2 검증).
+    """422-worthy semantic validation against doc_id's decided sequence (§2 validation).
 
     Rejects (ValueError, message prefix distinguishes the reason):
       - an item_seq that does not exist in the sequence at all
@@ -221,7 +221,7 @@ def is_auto_handled_step(
     instruction_mode: Optional[str],
     auto_approve_item_seqs: Optional[list] = None,
 ) -> bool:
-    """§2 자동처리 판정식 — the single source of truth, reused by ai_invoke_service so the
+    """The §2 auto-handling predicate — the single source of truth, reused by ai_invoke_service so the
     provider/note/docs-target accounting never drifts from the auto-complete loop's own
     decision.
 
@@ -242,7 +242,7 @@ def is_auto_handled_step(
     return False
 
 # ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
-# A continuous run started BEFORE the workflow is decided ("워크플로 결정부터") cannot name
+# A continuous run started BEFORE the workflow is decided ("starting from the workflow decision") cannot name
 # a concrete target item_seq — the sequence does not exist yet. The workflow_decide token
 # carries this sentinel as its continuation_target_seq; once the decision is saved the
 # sentinel is resolved to the last item_seq of the freshly-decided sequence and a normal
@@ -310,28 +310,49 @@ def force_encoding_reason_accepted(reason: Optional[str]) -> bool:
     return len("".join((reason or "").split())) >= _FORCE_ENCODING_MIN_CHARS
 
 
-def corrupted_label_message(label: Optional[str]) -> str:
-    """Why the label was rejected AND how to get it through (T0005 §5-6)."""
-    return (
-        f"단계 이름이 깨진 글자(예: ??????)로 보입니다: {label!r}. "
+_CORRUPTED_LABEL_MESSAGES = {
+    "ko": (
+        "단계 이름이 깨진 글자(예: ??????)로 보입니다: {label!r}. "
         "단계 이름을 UTF-8로 다시 만들어 보내세요. 정말 이대로 저장해야 하면 "
         "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
-    )
+    ),
+    "en": (
+        "The step label looks like corrupted text (e.g. ??????): {label!r}. "
+        "Rebuild the step label in UTF-8 and resend. If you really must save it "
+        "as-is, resend with force_encoding_reason (10+ non-whitespace characters)."
+    ),
+    "ja": (
+        "段階名が文字化け（例: ??????）しているようです: {label!r}。"
+        "段階名をUTF-8で作り直して送り直してください。どうしてもこのまま保存する"
+        "必要がある場合は、force_encoding_reason に理由（空白を除き10文字以上）を"
+        "書いて送り直してください。"
+    ),
+}
 
 
-def _reject_corrupted_labels(items: list[dict], force_encoding_reason: Optional[str]) -> None:
+def corrupted_label_message(label: Optional[str], locale: str = "ko") -> str:
+    """Why the label was rejected AND how to get it through (T0005 §5-6)."""
+    template = _CORRUPTED_LABEL_MESSAGES.get(locale) or _CORRUPTED_LABEL_MESSAGES["ko"]
+    return template.format(label=label)
+
+
+def _reject_corrupted_labels(
+    items: list[dict], force_encoding_reason: Optional[str], locale: str = "ko"
+) -> None:
     """Raise on the first corrupted step label unless the escape hatch is filled in.
 
     0391 T0005 §5-5: replaces the old silent `_safe_label` swap on the WRITE paths. The
     swap told the sender nothing and threw away what they meant to write, which is the
-    opposite of 제안3's "reject on the spot". The READ paths keep the swap — rows that
+    opposite of proposal 3's "reject on the spot". The READ paths keep the swap — rows that
     are already corrupted in the DB must stay readable.
     """
     if force_encoding_reason_accepted(force_encoding_reason):
         return
     for item in items:
         if _label_is_corrupted(item.get("label")):
-            raise ValueError("corrupted_label:" + corrupted_label_message(item.get("label")))
+            raise ValueError(
+                "corrupted_label:" + corrupted_label_message(item.get("label"), locale)
+            )
 
 
 def _log_force_encoding_reason(doc_id: str, doc: Optional[dict], reason: str) -> None:
@@ -413,6 +434,7 @@ def decide_workflow(
     doc_class: str,
     sequence: list[dict],
     force_encoding_reason: Optional[str] = None,
+    locale: str = "ko",
 ) -> dict:
     """Save the workflow decision (one-time initial call).
 
@@ -450,9 +472,9 @@ def decide_workflow(
 
     # 0391 T0005 §5-5: reject a corrupted step label outright instead of the previous
     # silent _safe_label swap, which discarded what the sender meant to write without
-    # telling them (against 제안3's "그 자리에서 거절" intent). Runs before
+    # telling them (against proposal 3's "reject on the spot" intent). Runs before
     # insert_sequence below — a rejection here leaves no partial sequence behind.
-    _reject_corrupted_labels(sequence, force_encoding_reason)
+    _reject_corrupted_labels(sequence, force_encoding_reason, locale)
     if force_encoding_reason_accepted(force_encoding_reason):
         _log_force_encoding_reason(doc_id, doc, force_encoding_reason)
 
@@ -481,7 +503,7 @@ def decide_workflow(
         },
     )
 
-    # R0001 group 0125 / NR0003 권고 1: record an explicit "시작" signal now that the document
+    # R0001 group 0125 / NR0003 recommendation 1: record an explicit "start" signal now that the document
     # entered wf_in_progress. This feeds the dashboard state board only (get_work_state_summary);
     # it is intentionally NOT a notification-feed event. Never let an event-log failure break the
     # decision itself — the workflow is already persisted above.
@@ -553,15 +575,15 @@ def _auto_complete_instruction_heads(
 
     Loops while the effective head is an instruction type AND is_auto_handled_step says this
     exact head is server-handled: create + approve it via
-    ``documents.create_next_approved_core`` (the same mechanics as the managed "자동승인문서"
+    ``documents.create_next_approved_core`` (the same mechanics as the managed auto-approved-document
     button) so the head advances to its paired report step. Stops at the first head that is
     either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
     selection — which the caller (advance_workflow) then mints the worker token + mention for.
 
-    0406 T0022 작업 3 — **어떤 칸을 서버가 대신 처리했는지 그 item_seq 목록을 돌려준다.**
-    옛 구현은 개수(int)만 돌려주었고 호출부는 그것마저 버렸다. 그래서 "N/T 단계가 그냥
-    사라졌다"는 관찰과 "서버가 그 칸을 자동 작성·승인했고 AI 워커는 다음 NR/TR 에만
-    붙었다"는 사실을 사후에 구분할 방법이 아무 데도 없었다.
+    0406 T0022 item 3 — **returns the item_seq list of the slots the server handled itself.**
+    The old implementation returned only a count, and callers discarded even that. So there
+    was nowhere to tell "the N/T step just vanished" from "the server auto-wrote and approved
+    that slot and the AI worker only attached to the following NR/TR".
 
     Permission source = the SAME resolver the live approve button and the inbox self-chain
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
@@ -666,13 +688,13 @@ def advance_workflow(
     # validate_continuation_auto_approve_item_seqs's reject_already_done docstring.
     continuation_auto_approve_item_seqs: Optional[list] = None,
     # 0405 P0004: the work-plan proposal scope chosen on screen. Handed to the mention
-    # builder untouched; it renders the '## 작업계획 맡길 범위' section only when the head
+    # builder untouched; it renders the work-plan-scope section only when the head
     # type is WP, so every other advance is byte-identical with or without this argument.
     work_plan_scope: Optional[dict] = None,
 ) -> dict:
     """Advance to next step — numbering + token issuance + mention creation + head → in_progress.
 
-    Continuous (unmanned) work (group 0051 R0001 / NR0003 B안): when ``continuous`` is set,
+    Continuous (unmanned) work (group 0051 R0001 / NR0003 option B): when ``continuous`` is set,
     the issued token carries the chain stop point (``continuation_target_seq`` = target
     item_seq) and the AI-review-mode flag, and the generated mention swaps its Q-guard for
     the unmanned/delegation/no-stop/autonomous block. The inbox self-chain
@@ -720,12 +742,12 @@ def advance_workflow(
 
     # Continuous (unmanned) chains: auto-create + auto-approve any instruction-series head
     # (N/T/TS) server-side so the worker mention below is only ever issued for a report step
-    # (group 0092 B0001 / NR0003 B안). This advances the head past the instruction(s) to its
+    # (group 0092 B0001 / NR0003 option B). This advances the head past the instruction(s) to its
     # paired report before head/token/mention resolution proceeds as normal. Managed advance
-    # (continuous=False) is untouched — the FE still drives "자동승인문서" explicitly there.
+    # (continuous=False) is untouched — the FE still drives auto-approved documents explicitly there.
     instruction_mode = normalize_continuation_instruction_mode(continuation_instruction_mode)
-    # 0406 T0022 작업 2·3: 요청이 실제로 무엇을 보냈는지와 서버가 그것을 무엇으로 읽었는지를
-    # 갈라 둔다. 둘이 다르면(= 정규화가 발동했으면) 응답과 기록이 그 사실을 말한다.
+    # 0406 T0022 items 2 and 3: keep what the request actually sent apart from what the server
+    # read it as. When they differ (normalisation fired) the response and the record say so.
     mode_requested = continuation_instruction_mode
     mode_fallback_applied = instruction_mode_fallback_applied(continuation_instruction_mode)
     auto_approve_item_seqs = normalize_continuation_auto_approve_item_seqs(
@@ -803,7 +825,7 @@ def advance_workflow(
     # worker's next step is to REQUEST the run (inbox action:test_run) and FlowGate
     # executes the TS and auto-assembles the TSR on all-green (0138 P0005 §3 / 0139 P0002).
     # So the token minted for the chain here must inherit the test_run scope (R0001 group
-    # 0150: "체인에 발급되는 토큰에 그 스코프를 물려주는 연결") instead of a 'new' token that
+    # 0150: "the link that passes that scope down to tokens issued along the chain") instead of a 'new' token that
     # would ask the worker to write the TSR by hand. Managed advance (continuous=False) is
     # untouched — the FE drives runs via POST /documents/test-run(-request) explicitly.
     if continuous and head_type.upper() == "TSR":
@@ -850,8 +872,8 @@ def advance_workflow(
                 "continuation_target_seq": continuation_target_seq,
                 "continuation_review_mode": bool(continuation_review_mode),
                 "continuation_instruction_mode": instruction_mode,
-                # 0406 T0022 작업 3: 이 홉의 워커가 실제로 무엇이었는지와, 서버가 대신
-                # 처리해 화면에서 사라진 N/T 가 무엇이었는지를 응답이 직접 말한다.
+                # 0406 T0022 item 3: the response itself states what this hop's worker actually
+                # was, and which N/T the server handled so that it vanished from the screen.
                 "continuation_instruction_mode_requested": mode_requested,
                 "continuation_instruction_mode_fallback_applied": mode_fallback_applied,
                 "auto_handled_item_seqs": auto_handled_item_seqs,
@@ -959,11 +981,11 @@ def advance_workflow(
         "continuation_target_seq": continuation_target_seq if continuous else None,
         "continuation_review_mode": bool(continuous and continuation_review_mode),
         "continuation_instruction_mode": instruction_mode if continuous else None,
-        # 0406 T0022 작업 3 — 사건 뒤에도 답할 수 있어야 하는 세 가지.
-        #   1) 요청이 보낸 원값과 서버가 읽은 값(정규화 발동 여부),
-        #   2) 서버가 자동 작성·승인해 워커를 아예 안 붙인 N/T 의 item_seq,
-        #   3) 이 홉의 워커가 실제로 채운 칸과 그 문서 타입.
-        # "N/T 가 사라졌다"와 "TR 워커가 정상 실행됐다"를 가르는 값들이다.
+        # 0406 T0022 item 3 — three things that must stay answerable after the fact.
+        #   1) the raw value the request sent vs what the server read (did normalisation fire),
+        #   2) the item_seq of N/T the server auto-wrote and approved with no worker at all,
+        #   3) the slot this hop's worker actually filled and its document type.
+        # These are the values that separate "the N/T vanished" from "the TR worker ran fine".
         "continuation_instruction_mode_requested": mode_requested if continuous else None,
         "continuation_instruction_mode_fallback_applied": (
             mode_fallback_applied if continuous else False
@@ -986,15 +1008,15 @@ def _log_auto_handled_heads(
     mode_requested: Optional[str],
     mode_fallback_applied: bool,
 ) -> None:
-    """서버가 대신 처리한 N/T 를 사건 기록에 남긴다 (0406 T0022 작업 3).
+    """Record the N/T the server handled itself into the event log (0406 T0022 item 3).
 
-    응답은 그 요청을 받은 사람만 본다. 무인 체인에서는 그 요청을 받는 쪽이 곧 종료를
-    앞둔 워커라서, 응답에만 실린 사실은 아무 데도 남지 않는다 — 0406 의 T0013·T0017 이
-    정확히 그렇게 흔적 없이 지나갔다. 그래서 같은 사실을 이벤트로도 남긴다.
+    Only the caller sees the response. In an unmanned chain that caller is a worker about to
+    exit, so a fact carried only in the response is kept nowhere — 0406's T0013 and T0017
+    passed exactly that traceless way. So the same fact is also written as an event.
 
-    정규화가 발동한 경우(요청에 모드가 없거나 모르는 값이었던 경우)는 자동처리된 칸이
-    하나도 없어도 남긴다 — 그것이 작업 2 가 요구하는 기록이다. 최선 노력이며, 실패해도
-    이미 발급된 토큰/멘트를 되돌리지 않는다.
+    When normalisation fired (the request had no mode, or an unknown one) it is recorded even
+    with zero auto-handled slots — that is the record work item 2 asks for. Best effort: a
+    failure never rolls back a token or mention that was already issued.
     """
     if not auto_handled_item_seqs and not mode_fallback_applied:
         return
@@ -1012,7 +1034,7 @@ def _log_auto_handled_heads(
             mode_requested=mode_requested,
             mode_fallback_applied=mode_fallback_applied,
         )
-    except Exception:  # noqa: BLE001 — 기록은 보조 수단이지 진행 조건이 아니다
+    except Exception:  # noqa: BLE001 — the record is an aid, not a precondition
         _log.warning("auto-handled head event failed for %s (ignored)",
                      doc.get("doc_id"), exc_info=True)
 
@@ -1106,7 +1128,7 @@ def request_workflow_decision(
     """Issue a document-bound token and prompt for AI workflow decision.
 
     Continuous (unmanned) work (group 0086 R0001): when ``continuous`` is set, the
-    continuous run is started *before* the workflow is decided ("워크플로 결정부터").
+    continuous run is started *before* the workflow is decided ("starting from the workflow decision").
     The minted workflow_decide token carries the CONTINUATION_TO_END sentinel as its
     continuation_target_seq (the concrete last item_seq is unknown until the sequence is
     decided; it is resolved when the decide self-chain kicks off — see
@@ -1184,7 +1206,7 @@ def request_sequence_edit(
 ) -> dict:
     """Issue a document-bound token + prompt for an AI worker to EDIT the pending sequence.
 
-    Parallel of request_workflow_decision, for the post-decision "시퀀스 수정" path
+    Parallel of request_workflow_decision, for the post-decision sequence-edit path
     (R0001 group 0208). The workflow is ALREADY decided, so instead of a decide token this
     mints a ``workflow_sequence_edit``-scoped token bound to the root doc plus a mention that
     hands the worker the current sequence (locked vs pending) and the edit contract. The
@@ -1446,9 +1468,9 @@ def get_workflow_sequence(doc_id: str) -> dict:
         "doc_class": _resolve_doc_class(doc),
         "decided": True,
         "sequence_id": seq["id"],
-        # 0406 T0022 작업 6: 한줄 멘트 상한은 서버가 정본이다. 화면은 이 값을 받아
-        # 남은 글자 수를 그리고 초과를 안내한다 — 상수를 세 벌로 베껴 두었던 것이
-        # 200 자 조용한 절단이 세 곳에서 따로 굳은 원인이었다.
+        # 0406 T0022 item 6: the server owns the one-line note cap. The screen takes this value
+        # to draw the remaining character count and warn on overflow — keeping three copies of
+        # the constant is why a silent 200-character truncation set in independently in three places.
         "note_max_chars": STEP_NOTE_MAX_CHARS,
         "items": [
             {
@@ -1486,9 +1508,9 @@ def _normalized_sequence_note(value, *, strict: bool = False) -> str:
     point. It means an AI worker PATCHing straight to the API cannot store a note the
     dialog could not have produced.
 
-    0406 T0022 작업 6 — ``strict`` 는 저장 경로 전용이다. 상한을 넘는 멘트는 잘리지 않고
-    :class:`~modules.flow_gate.services.work_plan_sequence_service.NoteTooLong` 으로
-    거절된다. 읽기 경로는 옛 데이터를 그대로 보여 줘야 하므로 기본값(False)을 쓴다.
+    0406 T0022 item 6 — ``strict`` is for the save path only. A note past the cap is not
+    truncated but rejected with
+    :class:`~modules.flow_gate.services.work_plan_sequence_service.NoteTooLong`. Read paths must show legacy data as-is, so they keep the default (False).
     """
     from modules.flow_gate.services.work_plan_sequence_service import normalize_note
 
@@ -1496,11 +1518,11 @@ def _normalized_sequence_note(value, *, strict: bool = False) -> str:
 
 
 def assert_sequence_notes_fit(new_items: list[dict]) -> None:
-    """저장 전에 모든 줄의 멘트 길이를 한 번에 검사한다 (0406 T0022 작업 6).
+    """Check every row's note length in one pass before saving (0406 T0022 item 6).
 
-    트랜잭션 밖에서 먼저 돈다. 삽입 루프 안에서 처음 터지면 그 앞 줄들은 이미 지워진
-    뒤이므로, 거절이 시퀀스를 반쯤 비운 채 끝난다. 몇 번째 줄이 문제였는지도 함께
-    올려 화면이 그 줄을 짚을 수 있게 한다.
+    It runs outside the transaction first. Failing partway through the insert loop would leave
+    the preceding rows already deleted, so a rejection would end with a half-emptied sequence.
+    The offending row index is reported too, so the screen can point at that row.
     """
     from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
 
@@ -1513,7 +1535,7 @@ def assert_sequence_notes_fit(new_items: list[dict]) -> None:
 
 
 def assert_sequence_item_sources(new_items: list[dict]) -> None:
-    """Refuse a revision number that names no document (0399 DB0012 §5 불변식 2).
+    """Refuse a revision number that names no document (0399 DB0012 §5 invariant 2).
 
     The same rule is a CHECK constraint in the postgres/mysql schema. Catching it here as
     well is not redundancy for its own sake: it turns a raw driver error into the reason,
@@ -1560,14 +1582,14 @@ def assert_sequence_item_providers(new_items: list[dict]) -> None:
 
 
 def _verify_expected_plan(expected_plan: Optional[dict]) -> Optional[dict]:
-    """부어 넣은 계획이 아직 그 리비전 그대로인지 확인한다 (0403 NR0004 F2).
+    """Verify the poured plan is still at the revision it was (0403 NR0004 F2).
 
-    ``expected_plan`` 은 계획을 부은 저장에만 실린다. 붓지 않은 평범한 [시퀀스 수정]에는
-    비교할 스냅숏이 없으므로 없는 것이 정상이고, 그때 이 함수는 아무것도 검사하지 않는다.
+    ``expected_plan`` rides only on a save that pours a plan. An ordinary sequence edit that
+    pours nothing has no snapshot to compare, so its absence is normal and this checks nothing.
 
-    행에 실려 오는 ``source_revision_no`` 로 대신할 수 없다: 한 번 부어 저장된 행은 그
-    출처를 계속 달고 다니므로, 다음 번 평범한 편집이 그 낡은 번호를 그대로 되돌려 보낸다.
-    "이번 저장이 어느 계획을 부은 것인가"는 요청이 따로 말해 줘야 한다.
+    The row's own ``source_revision_no`` cannot stand in: once poured, a row keeps carrying its
+    origin forever, so the next ordinary edit sends that stale number straight back.
+    "Which plan is THIS save pouring?" has to be stated by the request itself.
     """
     if not expected_plan:
         return None
@@ -1601,16 +1623,16 @@ def _record_plan_application(
     items: list[dict],
     sequence_created: bool,
 ) -> bool:
-    """계획을 워크플로에 부어 저장한 사실을 그 계획의 적용 이력에 남긴다 (0403 NR0004 F3).
+    """Record a pour-into-workflow save in that plan's application history (0403 NR0004 F3).
 
-    이 기록은 지금까지 옛 ``/work-plan/apply`` 안에서만 만들어졌는데, 화면의 실제 적용
-    경로는 그 엔드포인트를 부르지 않는다. 그래서 사람이 계획을 워크플로에 부어 넣어도
-    ``last_application`` 과 ``/applications`` 는 영원히 "적용된 적 없음"이었고, "누가 어떤
-    계획 리비전을 언제 적용했는가"를 아무도 답할 수 없었다. 저장이 성공한 바로 그 자리에서
-    남긴다.
+    Until now this record was only created inside the old ``/work-plan/apply``, which the
+    screen's real apply path never calls. So even after a person poured a plan into a workflow,
+    ``last_application`` and ``/applications`` said "never applied" forever, and nobody could
+    answer "who applied which plan revision, and when". It is written at the exact point the
+    save succeeds.
 
-    파일 추가가 실패해도 이미 저장된 시퀀스를 되돌리지는 않는다. 대신 성공 여부를 돌려주어
-    응답에 실린다 — 조용히 없어지는 것이 이 결함의 본체였다.
+    A failed file append does not roll back the already-saved sequence. Instead the outcome is
+    returned and carried in the response — disappearing silently was the whole defect.
     """
     from datetime import datetime, timezone
 
@@ -1639,16 +1661,16 @@ def _record_plan_application(
         }
         wpa.append_application(wp.plan_path_for_doc(plan_doc), wp_doc_id, row)
         return True
-    except Exception:  # noqa: BLE001 — 시퀀스는 이미 저장되었다
+    except Exception:  # noqa: BLE001 — the sequence is already saved
         _log.warning("plan application journal failed for %s", owner_doc_id, exc_info=True)
         return False
 
 
 def _start_created_sequence(doc_id: str) -> None:
-    """계획으로 갓 만들어진 시퀀스를 decide_workflow 와 같은 출발선에 세운다 (F4).
+    """Put a sequence just created from a plan on the same starting line as decide_workflow (F4).
 
-    시퀀스 행만 만들어 두면 문서는 아직 "워크플로 없음"으로 보이고, git 통합 프로젝트는
-    그룹 워크트리가 없어 첫 AI 실행에서 넘어진다. 결정 경로가 하는 두 가지를 그대로 한다.
+    With only the sequence rows created, the document still looks like "no workflow", and a
+    git-integrated project has no group worktree and trips on the first AI run. This does the same two things the decision path does.
     """
     doc = db_documents.get_by_id(doc_id)
     if doc is None:
@@ -1664,7 +1686,7 @@ def _start_created_sequence(doc_id: str) -> None:
                 doc.get("module") or "default",
                 doc["group_id"],
             )
-    except Exception:  # noqa: BLE001 — 프로비저닝이 저장을 깨뜨려서는 안 된다
+    except Exception:  # noqa: BLE001 — provisioning must not break the save
         _log.warning("git worktree hook failed for %s", doc_id, exc_info=True)
 
 
@@ -1675,6 +1697,7 @@ def edit_workflow_pending(
     expected_workflow_tag: Optional[str] = None,
     expected_plan: Optional[dict] = None,
     applied_by: Optional[str] = None,
+    locale: str = "ko",
 ) -> dict:
     """Replace PENDING items with new_items. Preserves done/in_progress items.
 
@@ -1715,14 +1738,14 @@ def edit_workflow_pending(
     if expected_workflow_tag and tag_before != expected_workflow_tag:
         raise SequenceChanged(doc_id, expected_workflow_tag, tag_before)
 
-    # 0403 NR0004 F2 — 지문은 시퀀스만 본다. 계획 쪽이 움직였는지는 여기서 본다.
+    # 0403 NR0004 F2 — the fingerprint only watches the sequence. Whether the plan moved is checked here.
     plan_doc = _verify_expected_plan(expected_plan)
 
-    # 0403 NR0004 F4 — 워크플로가 아직 없어도 계획으로 첫 시퀀스를 만든다.
-    # 후보 생성기는 시퀀스가 없어도 계획 행을 만들어 주는데 저장하는 쪽이 곧바로
-    # sequence_not_decided 로 거절했다. "계획을 먼저 세우고 그것으로 워크플로를 구성한다"는
-    # 사용 방식이 화면 끝에서 막혀 있었던 것이고, 옛 적용 서비스는 이미 할 수 있던 일이다.
-    # 계획을 부은 저장에만 연다: 평범한 [시퀀스 수정]은 여전히 결정된 워크플로를 요구한다.
+    # 0403 NR0004 F4 — build the first sequence from a plan even with no workflow yet.
+    # The candidate generator produces plan rows without a sequence, but the save side rejected
+    # them outright with sequence_not_decided. The "plan first, then build the workflow from it"
+    # way of working was blocked at the last step, though the old apply service could already do it.
+    # Opened only for a pouring save: an ordinary sequence edit still requires a decided workflow.
     create_sequence = seq is None
     if create_sequence:
         if plan_doc is None:
@@ -1731,8 +1754,8 @@ def edit_workflow_pending(
             raise ValueError(f"invalid_sequence_empty:{doc_id}")
 
     assert_sequence_item_sources(new_items)
-    # 0406 T0022 작업 6: 길이 초과는 여기서 거절한다. 옛 저장 경로는 200 자 뒤를 말없이
-    # 잘라 넣고 "저장됨"이라고 답했다 — 사용자가 M0019 에서 신고한 바로 그 손실이다.
+    # 0406 T0022 item 6: overflow is rejected here. The old save path silently cut everything
+    # past 200 characters and answered "saved" — the exact loss reported by the user in M0019.
     assert_sequence_notes_fit(new_items)
     assert_sequence_item_providers(new_items)
 
@@ -1755,20 +1778,20 @@ def edit_workflow_pending(
     # attach each instruction step's report (N→NR, T→TR, TS→TSR) here on the server, exactly
     # as decide_workflow does. expand_steps_with_reports is idempotent: the human edit modal already
     # interleaves the reports (they pass through untouched), while an AI worker that PATCHes a
-    # bare instruction list (the new autonomous 시퀀스 수정 path) gets its report steps inserted,
+    # bare instruction list (the new autonomous sequence-edit path) gets its report steps inserted,
     # so an AI edit can never drop them and desync the sequence.
     new_items = expand_steps_with_reports(new_items)
 
     # 0391 T0005 §5-5: same reject-not-swap treatment as decide_workflow, before any
     # pending item is deleted/replaced below.
-    _reject_corrupted_labels(new_items, force_encoding_reason)
+    _reject_corrupted_labels(new_items, force_encoding_reason, locale)
     if force_encoding_reason_accepted(force_encoding_reason):
         _log_force_encoding_reason(doc_id, db_documents.get_by_id(doc_id), force_encoding_reason)
 
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"
     if create_sequence:
-        # 물려받을 잠긴 줄이 없으니 시퀀스를 가진 문서의 종류를 따른다 (decide 경로와 같다).
+        # With no locked row to inherit from, follow the type of the document owning the sequence (same as the decide path).
         _owner_doc = db_documents.get_by_id(doc_id)
         doc_class = str((_owner_doc or {}).get("type_code") or doc_class).upper()
 
@@ -1778,8 +1801,8 @@ def edit_workflow_pending(
     store = get_store()
     with store.transaction():
         if create_sequence:
-            # 시퀀스를 만드는 것도 이 저장의 일부다. 라벨 거절 같은 뒤의 실패가 빈 시퀀스를
-            # 남기지 않도록, 검사가 모두 끝난 이 자리에서 같은 트랜잭션 안에서 만든다.
+            # Creating the sequence is part of this save. So that a later failure (a label
+            # rejection, say) cannot leave an empty sequence, it is created here, after every check, in the same transaction.
             db_wfseq.insert_sequence(doc_id)
             seq = db_wfseq.get_sequence_by_doc_id(doc_id)
         db_wfseq.delete_pending_items(seq["id"])

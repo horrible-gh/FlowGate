@@ -22,7 +22,7 @@ def _token_cache():
 
 
 def _invalidate_token_cache() -> None:
-    """A tokens row changed; drop the cached lookups (0288 NR0003 권고 3).
+    """A tokens row changed; drop the cached lookups (0288 NR0003 recommendation 3).
 
     Called from every write path in this module so the cache can never keep a
     consumed or revoked token alive: single-use enforcement stays exact and the
@@ -70,8 +70,8 @@ def _load_auto_approve_item_seqs(value: Any) -> list:
 
 
 def _decode_row(row: Optional[dict]) -> Optional[dict]:
-    """Read-path hook: turn the stored JSON-text column back into a list (§2 "읽을 때 JSON
-    문자열을 리스트로 되돌린다"). Every SELECT * in this module funnels through here."""
+    """Read-path hook: turn the stored JSON-text column back into a list (§2, "on read, turn the
+    JSON string back into a list"). Every SELECT * in this module funnels through here."""
     if row is None:
         return None
     row["continuation_auto_approve_item_seqs"] = _load_auto_approve_item_seqs(
@@ -89,7 +89,7 @@ def get_by_id(token_id: str) -> Optional[dict]:
 def get_by_hash(token_hash: str) -> Optional[dict]:
     """Look up a token by its peppered hash — the per-request auth query.
 
-    0288 NR0003 발견 5: this ran once for every authenticated call (the log shows
+    0288 NR0003 finding 5: this ran once for every authenticated call (the log shows
     the same hash re-read 10+ times while the explorer loads), each one taking a
     connection out of the pool the same request then needs for its real work.
     Cached like the other auth lookups (auth/auth_cache.py); every writer in this

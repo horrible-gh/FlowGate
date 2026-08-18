@@ -109,9 +109,10 @@
             <p class="form-hint">{{ $t('settings.project.git.author_hint') }}</p>
           </div>
 
-          <!-- TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 단계별 설명 한 줄을
-               함께 보여준다 — 운영자가 "강제로 올리면 무슨 일이 생기는지" 모른 채
-               올리면 돌고 있는 작업이 한꺼번에 반려된다. -->
+          <!-- TR scope-check enforcement stage (0299 D0004 §3.6). Shows a one-line
+               explanation per stage — so the operator isn't left not knowing
+               "강제로 올리면 무슨 일이 생기는지" and forcing it on rejects every job
+               already in flight all at once. -->
           <div class="form-group">
             <label class="form-label">{{ $t('settings.project.git.tr_scope_stage') }}</label>
             <select class="form-ctrl" v-model="form.tr_scope_stage" style="max-width:320px;">
@@ -234,15 +235,16 @@ const form = ref({
   username: '',
   base_branch: 'main',
   // 0331 NR0005 §4.1: an unconfigured project now seeds the approved
-  // default (머지 + 푸시). A config already saved as 'wait' is still loaded
+  // default (merge + push). A config already saved as 'wait' is still loaded
   // as 'wait' below — an explicit choice is never migrated away.
   default_finalize_action: 'merge',
   enabled: false,
   translate_url: '',
   author_name: '',
   author_email: '',
-  // TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 기본은 관측 — 이미 돌고 있는
-  // 작업들에는 `## 변경 파일` 섹션이 없으므로 곧바로 강제로 켜면 전부 걸린다.
+  // TR scope-check enforcement stage (0299 D0004 §3.6). Defaults to observe —
+  // jobs already in flight don't have a `## 변경 파일` section, so switching
+  // straight to enforce would catch all of them.
   tr_scope_stage: 'observe',
 });
 

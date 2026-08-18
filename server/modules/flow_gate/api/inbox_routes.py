@@ -1300,10 +1300,10 @@ def _content_fingerprint(text: Optional[str]) -> Optional[str]:
     """sha256 hex of a substantial body, else None.
 
     Returns None for non-str input and for short bodies (< _dup_min_chars stripped
-    chars): approval stubs ("조사지시 가 승인되었습니다."), short memos and shared
-    boilerplate legitimately repeat across groups and must never trip the cross-group
-    duplicate guard. The contamination this catches is a full report copied verbatim,
-    always well above the threshold.
+    chars): approval stubs ("Investigation Directive has been approved."), short memos
+    and shared boilerplate legitimately repeat across groups and must never trip the
+    cross-group duplicate guard. The contamination this catches is a full report copied
+    verbatim, always well above the threshold.
     """
     if not isinstance(text, str):
         return None
@@ -1501,25 +1501,27 @@ def _fail(status: int, message: str, help_url: str | None = None) -> JSONRespons
     )
 
 
-# ── Corrupted-body guard + body-fingerprint match (0391 B0001 제안3+4, T0005) ──────
+# ── Corrupted-body guard + body-fingerprint match (0391 B0001 proposal 3+4, T0005) ──
 # Runs at the real-registration sites (new/edit/review — always *before* the shared
 # dry-run short-circuit, same L0007 rule the other Step-5 guards already follow) so a
 # rejection never reserves a doc number, consumes a token, or writes to disk.
 #
 # Two layers over the same text, either can reject:
-#   1. fingerprint (제안4): if the sender attached body_sha256/body_chars for the
+#   1. fingerprint (proposal 4): if the sender attached body_sha256/body_chars for the
 #      fingerprint_field, a mismatch rejects immediately — the question-mark heuristic
 #      is skipped for that field once the fingerprint itself is being trusted/checked.
-#   2. line-based corruption (제안3): every other text field (and the fingerprint field
-#      when no fingerprint was sent) goes through
+#   2. line-based corruption (proposal 3): every other text field (and the fingerprint
+#      field when no fingerprint was sent) goes through
 #      workflow_decision_service._text_is_corrupted() — kept in that module only, per
 #      test_conversation_dry_run_0360.py:196-204's single-definition constraint.
 #
 # force_encoding_reason is the one escape hatch shared by every path: any non-trivial
 # reason (>=10 non-whitespace chars) bypasses both layers unconditionally.
-# T0004 작업 1-3 / NR0003 발견 2-3: 로케일 분기 없이 항상 한국어로 나가던 두 안내문과,
-# 응답에 그대로 삽입되던 한글 필드 이름("본문", "title: 줄")을 로케일 중립 내부 키로
-# 분리한다. remote_tool_service._ERROR_MESSAGES 패턴을 재사용.
+# T0004 task 1-3 / NR0003 finding 2-3: the two notices that used to always go out in
+# Korean regardless of locale branch, and the Korean field names (see
+# _ENCODING_FIELD_LABELS["ko"] below: body/title-line) inserted verbatim into the
+# response, are split into locale-neutral internal keys.
+# Reuses the remote_tool_service._ERROR_MESSAGES pattern.
 _ENCODING_GUARD_COPY = {
     "ko": {
         "fingerprint_mismatch": (
@@ -1625,8 +1627,8 @@ def _encoding_guard(
     return None
 
 
-# T0004 작업 4-5 / NR0003 발견 4-5: 무분기 한글로 나가던 워크플로 헤드 타입 불일치
-# 409와 TR 작업범위 반려 notice 빈 값 폴백.
+# T0004 task 4-5 / NR0003 finding 4-5: the unbranched-Korean workflow-head-type-mismatch
+# 409 and the TR scope rejection notice's empty-value fallback.
 _WORKFLOW_HEAD_MISMATCH_COPY = {
     "ko": (
         "이 그룹의 다음 단계는 {expected_head_type}입니다. 받은 타입 "
@@ -1722,8 +1724,8 @@ def _tr_scope_meta(result: dict) -> dict:
     """Trim a tr_scope verdict down to what documents.meta should carry (0299 D0004 §6).
 
     Keeps the verdict, stage, codes and assignment, plus a bounded slice of each path
-    list with its true count so the UI can render "n건" honestly while the stored blob
-    stays small. ``reported`` is also an input to later TR evaluations, so it keeps the
+    list with its true count so the UI can render "n items" honestly while the stored
+    blob stays small. ``reported`` is also an input to later TR evaluations, so it keeps the
     parser's full supported maximum instead of the display-only 50-path limit. `notice`
     is never persisted — it only exists for a rejection, and a rejection has no document
     to persist onto.
@@ -1915,8 +1917,8 @@ def _resolve_storage_path(
     If a canonical full ID is given, the group prefix is stripped to use only the short code.
 
     A work plan (WP) is the one type whose canonical body is not prose: it is stored as
-    `..._document.json` (P0009 §2.6 결정 2). Giving a JSON body a `.md` name would make the
-    viewer, search and backup all treat it as text.
+    `..._document.json` (P0009 §2.6 decision 2). Giving a JSON body a `.md` name would make
+    the viewer, search and backup all treat it as text.
     """
     group_code = group["group_id"]
     if doc_id.startswith(group_code + "."):
@@ -2086,9 +2088,10 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     #
     # Deliberate scope note: only the doc_path × content pair is exclusive. Sending NEITHER
     # stays legal and keeps meaning "the verdict is inline in this request" — that is the
-    # shape the [멘트 복사] review path uses, and T0005 §1 puts it out of bounds ("지금도
-    # 정상이므로 손대지 말 것"). A request with neither a source nor an inline verdict still
-    # fails, on the verdict check below.
+    # shape the [Copy Mention] review path uses, and T0005 §1 puts it out of bounds
+    # (it is still correct today, leave it alone).
+    # A request with neither a source nor an inline verdict still fails, on the verdict
+    # check below.
     review_doc_path: Optional[str] = body.get("doc_path")
     review_content: Optional[str] = body.get("content")
     if review_doc_path is not None and review_content is not None:
@@ -2179,9 +2182,10 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if disposed is not None:
         return disposed
 
-    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-3/§6) ──
-    # T0004 작업 2: review 경로에는 new/edit 과 달리 로케일 변수가 없었다 — 토큰 검증
-    # (Step 2) 이후 같은 규칙으로 정규화해 전달한다.
+    # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
+    # (0391 B0001 proposal 3+4, T0005 §5-3/§6) ──
+    # T0004 task 2: unlike new/edit, the review path had no locale variable — normalize
+    # it with the same rule after token verification (Step 2) and pass it through.
     _locale = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale")
     )
@@ -2416,7 +2420,7 @@ def _continuation_self_chain(
     canonical_doc_id: str,
     doc_type: str,
 ) -> Optional[dict]:
-    """Server-driven self-chaining for continuous (unmanned) work (group 0051 / NR0003 B안).
+    """Server-driven self-chaining for continuous (unmanned) work (group 0051 / NR0003 option B).
 
     After an inbox `new` submission consumes a *continuation* token, decide what the
     worker does next without a human re-issuing a token:
@@ -2429,7 +2433,8 @@ def _continuation_self_chain(
       • Non-review (go) → auto-approve the just-submitted document (NR0003 §6-①: the
         deliberate gate relaxation the FE warning dialog made the user accept) so the head
         advances, then, if the target is reached, stop with the last step already approved
-        (point 2: "최종승인 전까지이므로 마지막 작업도 승인한 상태가 되어야 함"); otherwise advance_workflow
+        (point 2: up until final approval, the last step must also end up approved);
+        otherwise advance_workflow
         mints the next token + continuous mention. Auto-approve uses the issuer's REAL
         document.approve permission (P0005 §4 — approve is never bypassed); if they genuinely
         lack it, pause honestly instead of forcing it.
@@ -2476,7 +2481,8 @@ def _continuation_self_chain(
         )
 
     # Review mode is the PRE-FLIGHT Q-registration phase, not "go" (group 0086 TR0004 rework
-    # rev4: "검토모드=아직 go가 아니라 사전 질의등록 시간"). It must NOT auto-approve or advance:
+    # rev4: review mode = not go yet, it is pre-flight question-registration time). It must
+    # NOT auto-approve or advance:
     # the worker registers clarifying Qs (or a "no blockers, confirm to proceed" Q) and the run
     # waits for the human to give the explicit go (turn review mode off → non-review auto-run).
     # The review-phase mention already tells the worker not to create documents, so reaching
@@ -2517,7 +2523,8 @@ def _continuation_self_chain(
 
     # Auto-approve the just-submitted document so the head can advance — and do it BEFORE the
     # target-reached check so the LAST step is left approved too (group 0086 TR0004 rework
-    # rev4 point 2: "최종승인 전까지이므로 마지막 작업도 승인한 상태가 되어야 함"). The continuous run
+    # rev4 point 2: up until final approval, the last step must also end up approved).
+    # The continuous run
     # runs up to the last sequence item; final approval (AC) remains a separate human gate.
     from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
     if doc_type.upper() not in AUTO_COMPLETE_TYPES:
@@ -2551,6 +2558,13 @@ def _continuation_self_chain(
                 action="approve",
                 actor_user_id=actor_user_id,
                 user_permissions=approver_perms,
+                # T0009 task 4: a failure here is handed straight back to the worker in
+                # envelope["continuation_reason"], so the now-localized approval-rejection
+                # message follows the worker's own continuation_locale — the same field
+                # mention_service uses to pick the language of the chained instruction.
+                locale=template_provision.normalize_locale(
+                    token_rec.get("continuation_locale")
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
             envelope["continuation_paused"] = True
@@ -2572,8 +2586,9 @@ def _continuation_self_chain(
         except Exception:
             import LogAssist.log as logger
             logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
-        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
-        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
+        # R0001 group 0125 / NR0003 recommendation 1: record the explicit "continuous
+        # work ended" signal that the system previously lacked entirely
+        # (NR0003 §finding 3). State-board aggregation only —
         # never a notification-feed event. Best-effort: a logging failure must not turn the
         # already-saved continuous run's clean stop into an error.
         try:
@@ -2599,7 +2614,8 @@ def _continuation_self_chain(
     # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
     # token would be minted, and BEFORE the advance-blocked pause below so a user pause is
     # never mis-reported as a generic block. Runs AFTER the auto-approve so the finished
-    # step ends approved — "진행 중 단계는 끝까지" includes its approval (P0008 S4/S5). The
+    # step ends approved — an in-progress step running through to completion includes
+    # its approval (P0008 S4/S5). The
     # row is NOT deleted here; the resume path consumes it (L0009 §2.4). Fail-open on a
     # lookup error: a pause probe must never stall a healthy unmanned chain with a 500.
     try:
@@ -2710,7 +2726,7 @@ def _continuation_self_chain(
         return _stop("hop_handoff", item_seq=completed_seq)
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
-    # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).
+    # next step keeps its review latitude — R0001 [AI Review Mode] stays on for the whole run).
     from modules.flow_gate.services import workflow_decision_service
     api_base_url = _inbox_api_base(request)
     # Prefer the locale persisted on the continuation token (group 0099 B0001): the unmanned
@@ -2746,12 +2762,14 @@ def _continuation_self_chain(
 
 
 def _build_change_summary(**kwargs) -> dict:
-    """저장 응답에 붙는 변경 요약 (0370 4세트, P0002 시나리오 14~16).
+    """Change summary attached to the save response (0370 set 4, P0002 scenarios 14-16).
 
-    **여기서 실패를 오류로 올리면 안 된다.** 이 함수가 불리는 시점에 저장은 이미 끝났고,
-    요약은 곁다리다. 실패를 500 으로 되돌리면 작업자는 저장이 실패한 줄 알고 같은 문서를
-    또 올린다 — 무인 연속 작업에서 실제로 벌어지는 일이다. 그래서 어떤 예외가 나든
-    ``{"changed": null, "error": "summary unavailable"}`` 한 가지로 수렴한다.
+    **A failure here must never be raised as an error.** By the time this function is
+    called, the save has already finished — the summary is a side dish. Turning a
+    failure into a 500 makes the worker think the save itself failed and resubmit the
+    same document — something that actually happens in unmanned continuous work. So
+    whatever exception comes out, it all converges on the one shape
+    ``{"changed": null, "error": "summary unavailable"}``.
     """
     try:
         from modules.flow_gate.services import change_summary_service
@@ -2894,17 +2912,21 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if design_error is not None:
         return design_error
 
-    # ── Step 5.6: 작업계획(WP) 본문 해석 (P0009 §5, D0007 §2.2) ────────────────
-    # doc_type 이 WP 이면 본문은 글이 아니라 정본 JSON 이다. 사람 경로(PUT
-    # /documents/{doc_id}/work-plan)와 **같은 검증기**를 부른다 — 두 경로가 각자 검사를
-    # 가지면 규칙이 곧 갈라진다(D0007 §2.2). 인박스는 서식만 바꾸고 경로는 그대로 쓰므로
-    # (P0009 §5 결정 8) 토큰 검사·번호 발급·워크플로 연결은 아래 흐름을 그대로 탄다.
+    # ── Step 5.6: work-plan (WP) body interpretation (P0009 §5, D0007 §2.2) ───────
+    # When doc_type is WP, the body is not prose but the canonical JSON. It calls the
+    # SAME validator as the human path (PUT /documents/{doc_id}/work-plan) — if the two
+    # paths each had their own check, the rules would immediately diverge (D0007 §2.2).
+    # Since inbox only changes the format and reuses the same path as-is (P0009 §5
+    # decision 8), token verification, number issuance, and workflow linking all ride
+    # the flow below unchanged.
     #
-    # 자리가 중요하다. dry-run 분기보다 *앞*이라 미리보기와 실등록이 같은 판정을 받고,
-    # 거부는 numbering/storage 이전이라 문서 번호도 토큰도 소비되지 않는다(P0009 §5.2).
-    # 제목과 연결 대상은 인박스 메타데이터가 정본이며(결정 9), 본문에 title 이나
-    # parent_doc_id 를 적으면 검증기의 모르는 항목 규칙(unknown_field)에 걸려 거절된다 —
-    # 조용히 무시하면 AI 는 자기가 적은 제목이 반영된 줄 안다.
+    # Placement matters. It sits *before* the dry-run branch, so the preview and the
+    # real registration receive the same verdict, and a rejection happens before
+    # numbering/storage, so neither the document number nor the token is consumed
+    # (P0009 §5.2). The title and the linked target take the inbox metadata as
+    # canonical (decision 9); writing title or parent_doc_id into the body trips the
+    # validator's unknown-field rule and gets rejected — silently ignoring it would let
+    # the AI believe the title it wrote was applied.
     wp_plan: Optional[dict] = None
     if doc_type.upper() == WORK_PLAN_TYPE:
         wp_locale = work_plan_service.normalize_locale(
@@ -2950,10 +2972,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     try:
         body_for_fp = body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
         fingerprints = _content_fingerprints(body_for_fp)
-        # 작업계획은 이 가드에서 빠진다. P0009 DEFERRED 가 "계획을 다른 그룹으로 복사해
-        # 오는 경로는 만들지 않는다 — 원문 보기의 [복사]와 인박스 생성으로 갈음한다"고
-        # 정했으므로, 같은 계획을 다른 그룹에 그대로 넣는 것이 **지원되는 사용법**이다.
-        # 같은 본문 판정으로 막으면 설계가 정한 유일한 복사 경로가 막힌다.
+        # Work plans are excluded from this guard. P0009 DEFERRED decided "we will not
+        # build a path that copies a plan over from another group — the [Copy] on the
+        # source view plus inbox creation stands in for it instead," so putting the same
+        # plan into another group as-is is a **supported use**. Blocking it with the
+        # same body-fingerprint judgment would close the one copy path the design chose.
         twin = (
             None if wp_plan is not None
             else _find_body_twin(fingerprints, exclude_group_id=group["group_id"])
@@ -2975,21 +2998,25 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if commit_message_draft is not None and len(commit_message_draft) > 200:
         return _fail(422, "commit_message must be a single line of at most 200 characters.")
 
-    # ── Step 5.7: TR 작업범위 검증 (0299 D0004) ────────────────────────────────
-    # TR 전용. 본문의 `## 변경 파일` 신고 목록을 이 그룹의 워크트리에서 서버가 실제로
-    # 관측한 변경과 대조해, 배정 범위 밖에서 이루어진 작업을 제출 시점에 잡는다.
+    # ── Step 5.7: TR scope validation (0299 D0004) ─────────────────────────────
+    # TR-only. Cross-checks the body's Changed Files reported-list
+    # against the changes the server actually observed in this group's worktree, so
+    # work done outside the assigned scope is caught at submission time.
     #
-    # 자리 선정이 중요하다. 본문을 다 읽은 뒤(Step 5.5 의 guards 와 같은 재료),
-    # 그리고 dry-run 분기보다 *앞*이다. 앞이어야 dry-run 과 실등록이 같은 판정을
-    # 받고, 작업자가 본 제출 전에 dry_run 으로 미리 확인할 수 있다(D0004 §3.1).
-    # 거부는 numbering/storage/DB 이전이므로 문서 번호도 토큰도 소비되지 않는다.
+    # Placement matters. It runs after the whole body has been read (the same material
+    # as the Step 5.5 guards), and *before* the dry-run branch. Being before it means
+    # dry-run and real registration get the same verdict, and the worker can preview
+    # with dry_run before the real submission (D0004 §3.1). A rejection happens before
+    # numbering/storage/DB, so neither the document number nor the token is consumed.
     #
-    # 검증 자체가 실패하면(예상 못 한 예외) 통과시킨다 — 위반 탐지 기능이 정상적인
-    # 제출을 500 으로 떨구는 것이 원래 사고보다 나쁘다.
+    # If validation itself fails (an unexpected exception), let the submission through
+    # — a violation-detection feature dropping a normal submission with a 500 is worse
+    # than the original incident it guards against.
     tr_scope_result: Optional[dict] = None
-    # T0004 작업 1-5 / NR0003 발견 2,4,5: 이 지점부터 Step 5.9 까지 공유하는 정규화
-    # 로케일. 우선순위는 토큰의 continuation_locale(무인 작업자) > 요청의 x-locale
-    # 헤더 > ko (0355 L0007 §2-1과 같은 순서, group 0099 B0001과 같은 이유).
+    # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
+    # point through Step 5.9. Priority: the token's continuation_locale (unmanned
+    # worker) > the request's x-locale header > ko (same order as 0355 L0007 §2-1,
+    # same reason as group 0099 B0001).
     _locale = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale")
     )
@@ -3003,16 +3030,18 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"]),
             )
-        except Exception:  # noqa: BLE001 — 검증 실패가 TR 접수를 막아선 안 된다
+        except Exception:  # noqa: BLE001 — a validation failure must not block TR intake
             tr_scope_result = None
-        # 검증 비대상(git 연동 꺼짐)은 판정이 아니라 부재다. 이걸 문서 meta 와
-        # dry-run 응답에까지 실으면 연동 없는 프로젝트의 모든 TR 에 "검증 안 함"
-        # 카드가 붙는다 — 아무도 고칠 수 없는 표시는 남기지 않는다.
+        # A project not subject to validation (git integration off) is an absence, not
+        # a verdict. Carrying that into document meta and the dry-run response would
+        # stamp a "not validated" card onto every TR of every integration-less project
+        # — leave no indicator that nobody can ever clear.
         if tr_scope_result and tr_scope_result.get("verdict") == tr_scope_service.VERDICT_SKIPPED:
             tr_scope_result = None
         if tr_scope_result and tr_scope_result.get("verdict") == tr_scope_service.VERDICT_REJECT:
-            # 거부된 제출에는 TR 문서 ID 가 없다(번호 예약 전). 사후 조회를 위해
-            # 그룹 타임라인에 이벤트로 남긴다 — tr_scope_service 모듈 docstring 참조.
+            # A rejected submission has no TR document ID (the number was never
+            # reserved). Record it as a group-timeline event for later lookup — see
+            # the tr_scope_service module docstring.
             try:
                 db_events.create({
                     "event_type": "action_taken",
@@ -3035,7 +3064,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         "unreported": tr_scope_result.get("unreported"),
                     }, ensure_ascii=False),
                 })
-            except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
+            except Exception:  # noqa: BLE001 — a logging failure must not swallow the rejection itself
                 pass
             return _fail(
                 422,
@@ -3047,10 +3076,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # mismatched preview and real submission fail identically without an orphan doc.
     # Standalone auto-complete types (M/CH) intentionally bypass this workflow-slot
     # constraint, matching their existing Step 7.5 behavior.
-    # 작업계획(WP)도 이 검사에서 빠진다. 워크플로 머리는 "다음에 올 단계 문서"를 못박는
-    # 값이고 그것이 단계 문서에는 맞지만, 작업계획은 자문형이라 그룹의 어느 시점에서도
-    # 쓸 수 있고 한 그룹에 여러 장을 둘 수 있다(D0007 §3.1 결정 5). 머리 타입에 묶으면
-    # 설계가 정한 AI 생성 경로(P0009 §5.1)가 그룹이 진행 중일 때마다 409 로 막힌다.
+    # Work plans (WP) are also excluded from this check. A workflow head is a value
+    # that pins down "the step document that comes next," which fits a step document,
+    # but a work plan is advisory — it can be used at any point in the group and a
+    # group can hold several of them (D0007 §3.1 decision 5). Tying it to the head type
+    # would make the AI-generation path the design chose (P0009 §5.1) 409 every time
+    # the group is in progress.
     workflow_head: Optional[dict] = None
     if doc_type.upper() not in HEAD_TYPE_GUARD_EXEMPT_TYPES:
         try:
@@ -3071,8 +3102,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     ),
                 )
 
-    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-1/§6) ──
-    # 부작용(문서 번호 예약) 이전, dry-run 분기보다 앞이라 거부돼도 흔적이 안 남는다.
+    # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
+    # (0391 B0001 proposal 3+4, T0005 §5-1/§6) ──
+    # Before the side effect (document-number reservation), and before the dry-run
+    # branch, so a rejection leaves no trace.
     _encoding_fields: dict[str, Optional[str]] = {"body": body_for_guards}
     if title_override:
         _encoding_fields["title"] = title_override
@@ -3121,9 +3154,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "doc_type": doc_type,
         "checks_passed": new_checks,
     }
-    # 0299 D0004 §3.1: dry-run 과 실등록은 같은 판정을 낸다. 거부는 위에서 이미
-    # 반환됐으므로 여기 실리는 것은 통과/경고/관측이며, 경고 사유가 있으면 작업자가
-    # 본 제출 전에 목록을 고칠 수 있게 판정 내용을 그대로 돌려준다.
+    # 0299 D0004 §3.1: dry-run and real registration produce the same verdict. A
+    # rejection has already returned above, so what lands here is pass/warn/observe;
+    # when there is a warning reason, the verdict content is returned as-is so the
+    # worker can fix the list before the real submission.
     if tr_scope_result is not None:
         new_checks.append("tr_scope")
         would_register["tr_scope"] = tr_scope_result
@@ -3155,10 +3189,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
         if wp_plan is not None:
-            # 정본은 보내온 글자가 아니라 검증기가 돌려준 표준형으로 쓴다(P0009 §2.6
-            # 결정 3·4). 키 순서와 공백이 저장할 때마다 흔들리면 리비전 사이의 차이가
-            # 실제로 바뀐 값보다 커진다. 임시 파일에 쓴 뒤 통째로 갈아끼우므로 반쯤 쓰다
-            # 끊긴 정본이 남지 않는다.
+            # The canonical body is written from the standard form the validator
+            # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
+            # If key order and whitespace wobbled on every save, the diff between
+            # revisions would grow bigger than the value that actually changed. Writes
+            # to a temp file then swaps it in wholesale, so a half-written canonical
+            # body is never left behind.
             work_plan_service.write_body_atomically(stored_path, wp_plan)
             if doc_path is not None:
                 try:
@@ -3193,19 +3229,23 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         meta_payload["related_doc_ids"] = related_doc_ids
     if fingerprints:
         meta_payload.update(fingerprints)
-    # 0299 D0004 §6: 통과/경고 판정은 생성된 TR 문서에 붙여 문서 상세에서 조회한다
-    # (거부는 문서가 존재하지 않으므로 events 로 간다 — Step 5.7 참조). 화면에 그대로
-    # 나열되는 값이라 목록 길이를 여기서 제한한다: 신고/감지 전체를 meta 에 넣으면
-    # 큰 그룹에서 meta 한 칸이 수십 KB가 되고, 화면은 어차피 접어서 보여준다.
+    # 0299 D0004 §6: a pass/warn verdict is attached to the generated TR document and
+    # looked up from the document detail view (a rejection has no document, so it goes
+    # to events instead — see Step 5.7). Since this value is listed as-is on screen, the
+    # list length is bounded here: putting the full reported/detected lists into meta
+    # would balloon a single meta cell to tens of KB in a large group, and the screen
+    # collapses it anyway.
     if tr_scope_result is not None:
         meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
-    # 0391 T0005 §5-6: 깨짐/지문 우회문을 감사 목적으로 남긴다(신규 컬럼/마이그레이션 없음).
+    # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes
+    # (no new column/migration).
     _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
     if _force_encoding_reason:
         meta_payload["force_encoding_reason"] = _force_encoding_reason
-    # 작성 경로 표시(D0007 §3.7 결정 7): 문서 정보 패널의 "작성 경로: 사람 / AI" 한 줄이
-    # 이 값을 읽는다. 사람이 만든 것과 AI가 만든 것은 같은 검토를 받지만, 검토자는 둘을
-    # 구별할 수 있어야 한다. 어느 실행이 만들었는지도 함께 남긴다.
+    # Authorship-path display (D0007 §3.7 decision 7): the document info panel's
+    # "Authored via: Human / AI" line reads this value. Human-
+    # made and AI-made documents get the same review, but a reviewer must be able to
+    # tell them apart. Also records which run made it.
     if wp_plan is not None:
         meta_payload["work_plan"] = {
             "origin": "ai",
@@ -3427,16 +3467,18 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "stored_path": str(stored_path),
         "message": f"{canonical_doc_id} registered. You may end the session.",
     }
-    # 0370 4세트 (P0002 시나리오 15): 방금 만들어진 파일을 세어 변경 요약을 붙인다. 견줄
-    # 옛 판이 없으므로 before 는 null 이고 전부 추가로 잡힌다. 요약은 어디에도 저장하지
-    # 않고 응답으로만 나가므로 새 표도 새 컬럼도 필요 없다. 줄 번호는 **저장된 파일**
-    # 기준이라 보낸 본문이 아니라 stored_path 를 다시 읽어 센다 — 그래야 목차 조회와
-    # 저장 요약이 같은 줄 번호를 말한다.
+    # 0370 set 4 (P0002 scenario 15): counts the just-created file and attaches a change
+    # summary. There is no old version to compare against, so before is null and
+    # everything lands as an addition. The summary is not stored anywhere — it only
+    # goes out in the response — so no new table or column is needed. Line numbers are
+    # keyed to the **stored file**, so it re-reads stored_path rather than the sent
+    # body — that way the outline lookup and the save summary agree on line numbers.
     if wp_plan is not None:
-        # 작업계획에는 절도 줄도 없다(P0009 §5 결정 10). 무인 작업자가 확인해야 하는 것은
-        # "몇 줄이 어느 절에 들어갔는가"가 아니라 자기가 보낸 수량과 배정이 그대로
-        # 저장됐는가이므로, kind 로 서식을 구별해 전용 요약을 돌려준다.
-        resp_content["change_summary"] = work_plan_service.change_summary(wp_plan)
+        # A work plan has neither sections nor lines (P0009 §5 decision 10). What an
+        # unmanned worker needs to confirm is not "which section which line landed in"
+        # but whether the quantities and assignments it sent were saved as-is, so it
+        # distinguishes the format by kind and returns a dedicated summary.
+        resp_content["change_summary"] = work_plan_service.change_summary(wp_plan, locale=_locale)
         resp_content.update({
             "doc_type": doc_type.upper(),
             "title": extracted_title,
@@ -3450,7 +3492,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             after_path=stored_path,
             after_revision_no=0,
         )
-    # Continuous work self-chain (group 0051 / NR0003 B안): for a continuation token,
+    # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
     # fails the (already-saved) submission — degrades to a paused envelope on any error.
@@ -3619,15 +3661,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if design_error is not None:
         return design_error
 
-    # ── 작업계획(WP) 본문 해석 — 수정 경로 (P0009 §5.4) ────────────────────────
-    # new 에만 붙이면 edit 이 통째로 우회로가 된다. 반려된 작업계획은 edit 으로 다시
-    # 올라오는데 거기에 검증이 없으면 규칙에 맞지 않는 정본이 그대로 저장되고, 그 문서는
-    # 그 뒤로 표로 열리지 않는다. 판정과 문구는 new 와 같은 검증기에서 나온다.
+    # ── Work plan (WP) body interpretation — edit path (P0009 §5.4) ───────────────
+    # Attaching this to new alone makes edit a wholesale bypass. A rejected work plan
+    # comes back up through edit, and without validation there, a canonical body that
+    # does not match the rules gets saved as-is, and that document never opens as a
+    # table again afterward. The verdict and wording come from the same validator as
+    # new.
     #
-    # 결정 11: 수정에는 리비전 검사를 걸지 않는다. 인박스의 edit 은 지금도 판 번호를 받지
-    # 않고, AI 작업자는 자기가 받은 토큰 하나로 한 문서를 고친다 — 두 사람이 같은 화면을
-    # 열어 둔 상황이 아니다. 대신 응답의 change_summary.changed 로 무엇이 무엇으로 바뀌
-    # 었는지 돌려주어, 남의 값을 덮었는지 작업자가 바로 알 수 있게 한다.
+    # Decision 11: no revision check is applied to edits. Inbox's edit still does not
+    # take a revision number today, and an AI worker fixes one document with the single
+    # token it was given — this is not a situation where two people have the same
+    # screen open. Instead, it returns what changed to what via the response's
+    # change_summary.changed, so the worker can immediately tell whether it overwrote
+    # someone else's value.
     wp_plan: Optional[dict] = None
     if edit_doc_type == WORK_PLAN_TYPE:
         wp_locale = work_plan_service.normalize_locale(
@@ -3678,8 +3724,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             else _submission_text(doc_path, content)
         )
         edit_fingerprints = _content_fingerprints(body_for_fp)
-        # new 경로와 같은 이유로 작업계획은 이 가드에서 빠진다: 같은 계획을 다른 그룹에
-        # 그대로 넣는 것이 설계가 정한 유일한 복사 경로다(P0009 DEFERRED).
+        # Work plans are excluded from this guard for the same reason as the new path:
+        # putting the same plan into another group as-is is the one copy path the
+        # design chose (P0009 DEFERRED).
         twin = (
             None if wp_plan is not None
             else _find_body_twin(edit_fingerprints, exclude_group_id=group["group_id"])
@@ -3695,17 +3742,20 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except Exception:  # noqa: BLE001 — guard is defense-in-depth; never 500 a real edit
         edit_fingerprints = {}  # unreadable doc_path / lookup error → skip; edit still proceeds
 
-    # ── Step 5.7: TR 작업범위 검증 (0299 R0001) ─────────────────────────────────
-    # _handle_new 에만 붙이면 edit 이 통째로 우회로가 된다. 사람 리뷰에서 반려된 TR 은
-    # edit 으로 재제출되는데, 그 경로에 검증이 없으면 `## 변경 파일` 목록을 사후에
-    # 아무렇게나 고쳐 넣어도 아무도 대조하지 않는다. new 의 가드를 edit 에 붙이지
-    # 않아 같은 오염이 재발한 전례(위 dup-body 가드 주석의 B0106)와 같은 구조다.
+    # ── Step 5.7: TR scope validation (0299 R0001) ─────────────────────────────
+    # Attaching this to _handle_new alone makes edit a wholesale bypass. A TR rejected
+    # in human review is resubmitted through edit, and without validation on that path,
+    # the Changed Files list can be rewritten to anything afterward
+    # with nobody cross-checking it. This is the same structure as the precedent where
+    # not attaching new's guard to edit let the same contamination recur (see B0106 in
+    # the dup-body guard comment above).
     #
-    # 판정 시점이 다르므로 결과 기록도 다르다. edit 에는 이미 문서가 있으므로 통과·경고는
-    # Step 7.1 에서 그 문서의 meta 에 갱신하고, 거부는 문서를 바꾸지 않은 채 반환한다.
+    # The verdict timing differs, so how the result is recorded differs too. edit
+    # already has a document, so a pass/warning updates that document's meta in Step
+    # 7.1; a rejection returns without changing the document.
     edit_tr_scope: Optional[dict] = None
-    # T0004 작업 1-5 / NR0003 발견 2,4,5: 이 지점부터 Step 5.9 까지 공유하는 정규화
-    # 로케일 — new 경로(위 Step 5.7)와 같은 규칙.
+    # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
+    # point through Step 5.9 — same rule as the new path (Step 5.7 above).
     _locale = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale")
     )
@@ -3719,7 +3769,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 locale=_locale,
                 prior_declared=_prior_tr_declared(group["group_id"], exclude_doc_id=doc_id),
             )
-        except Exception:  # noqa: BLE001 — 검증 실패가 재제출을 막아선 안 된다
+        except Exception:  # noqa: BLE001 — a validation failure must not block resubmission
             edit_tr_scope = None
         if edit_tr_scope and edit_tr_scope.get("verdict") == tr_scope_service.VERDICT_SKIPPED:
             edit_tr_scope = None
@@ -3747,14 +3797,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                         "unreported": edit_tr_scope.get("unreported"),
                     }, ensure_ascii=False),
                 })
-            except Exception:  # noqa: BLE001 — 기록 실패로 반려 자체를 놓치지 않는다
+            except Exception:  # noqa: BLE001 — a logging failure must not swallow the rejection itself
                 pass
             return _fail(
                 422,
                 edit_tr_scope.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
             )
 
-    # ── Step 5.9: 깨진 글자 실등록 차단 + 본문 지문 대조 (0391 B0001 제안3+4, T0005 §5-2/§6) ──
+    # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
+    # (0391 B0001 proposal 3+4, T0005 §5-2/§6) ──
     _edit_encoding_fields: dict[str, Optional[str]] = {"body": edit_body_for_guards}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
@@ -3793,7 +3844,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "doc_id": doc_id,
         "checks_passed": edit_checks,
     }
-    # new 와 같이, 거부는 위에서 이미 반환됐으므로 여기 실리는 것은 통과/경고다.
+    # As with new, a rejection has already returned above, so what lands here is pass/warn.
     if edit_tr_scope is not None:
         edit_checks.append("tr_scope")
         edit_would_register["tr_scope"] = edit_tr_scope
@@ -3825,8 +3876,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if stored_path and stored_path.exists():
         revisions_dir = stored_path.parent / "revisions"
         revisions_dir.mkdir(parents=True, exist_ok=True)
-        # 백업은 원본과 같은 확장자를 쓴다. 작업계획 정본은 .json 이라 여기서 .md 로
-        # 굳히면 되돌릴 판이 글 파일로 쌓인다(P0009 §2.6 결정 2와 같은 이유).
+        # The backup uses the same extension as the original. A work plan's canonical
+        # body is .json, so hardcoding .md here would pile up the revert copies as text
+        # files (same reason as P0009 §2.6 decision 2).
         backup_filename = f"{doc_id}.r{current_revision_no}{stored_path.suffix or '.md'}"
         backup_path = revisions_dir / backup_filename
         try:
@@ -3847,8 +3899,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
         if wp_plan is not None:
-            # new 와 같은 규칙: 보내온 글자가 아니라 검증기가 돌려준 표준형을 원자적으로
-            # 갈아끼운다(P0009 §2.6 결정 3·4).
+            # Same rule as new: atomically swaps in the standard form the validator
+            # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
             work_plan_service.write_body_atomically(stored_path, wp_plan)
         elif doc_path is not None:
             shutil.copy2(str(doc_path), str(stored_path))
@@ -3864,7 +3916,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # time-machine rollback, or a Windows absolute path that broke on host move).
     # Historically this UPDATE only bumped revision_no/updated_at, so file_path kept
     # pointing at the old, unresolvable value — the reader (_document_file_path) then
-    # 404'd ("MD 파일이 없다") even though the AI had just rewritten the body. Persist
+    # 404'd ("MD file not found") even though the AI had just
+    # rewritten the body. Persist
     # the actual write location, mirroring _handle_new which records file_path on
     # creation. to_storage_relative is idempotent and never raises, so this is safe
     # to fold into the CAS update (stays atomic with the revision bump).
@@ -3892,8 +3945,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # The dup-body guard can only catch a twin whose meta carries content_sha256.
     # _handle_new persists it on creation, but an edited/grown body — notably an
     # accumulating CH conversation — never updated it, so the *source* of a future
-    # contamination stayed invisible to the guard (NR0003 §2b: "가드를 edit에 붙여도
-    # 소스 핑거프린트가 없으면 매칭되지 않음"). Refresh it on every body change: write the
+    # contamination stayed invisible to the guard (NR0003 §2b: attaching the guard to
+    # edit still won't match without a source fingerprint). Refresh it on every body
+    # change: write the
     # new hash for a substantial body, else drop a now-stale hash so the guard can never
     # match an outdated body. Best-effort: a failure here must not break the edit that
     # already committed (mirrors the other Step 7.x best-effort blocks).
@@ -3907,14 +3961,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         else:
             _meta_obj.pop("content_sha256", None)
             _meta_obj.pop("content_sha256_norm", None)
-        # 0299: 본문이 바뀌면 신고 목록도 바뀔 수 있으므로 판정을 새 것으로 덮는다.
-        # 검증 비대상으로 바뀐 경우(연동 해제 등)에는 옛 판정을 남겨 두지 않는다 —
-        # 화면에 지금 상태와 무관한 카드가 계속 떠 있는 것이 아무것도 없는 것보다 나쁘다.
+        # 0299: if the body changed, the reported list may have changed too, so the
+        # verdict is overwritten with a fresh one. When it changed to not-subject-to-
+        # validation (e.g. integration turned off), the old verdict is not left behind
+        # — leaving a card on screen that no longer matches the current state is worse
+        # than showing nothing.
         if edit_tr_scope is not None:
             _meta_obj["tr_scope"] = _tr_scope_meta(edit_tr_scope)
         else:
             _meta_obj.pop("tr_scope", None)
-        # 0391 T0005 §5-6: 깨짐/지문 우회문을 감사 목적으로 남긴다.
+        # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes.
         _edit_force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
         if _edit_force_encoding_reason:
             _meta_obj["force_encoding_reason"] = _edit_force_encoding_reason
@@ -4112,13 +4168,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "revision_no": new_revision_no,
         "message": f"{doc_id} registered. You may end the session.",
     }
-    # 0370 4세트 (P0002 시나리오 14·16): 견줄 "저장 전"은 Step 6a 가 이미 떠 둔 백업
-    # 파일이다. 그래서 요약을 위해 새로 저장할 것이 하나도 없다. 백업이 없으면(복사 실패
-    # 등) 요약만 포기하고 저장은 성공으로 둔다.
+    # 0370 set 4 (P0002 scenarios 14, 16): the "before save" to compare against is the
+    # backup file Step 6a already dropped. So there is nothing new to save for the
+    # summary's sake. If there is no backup (e.g. a copy failure), it just gives up on
+    # the summary and still treats the save as a success.
     if wp_plan is not None:
-        # 결정 11: 무엇이 무엇으로 바뀌었는지를 돌려준다. 견줄 "저장 전"은 Step 6a 가 떠
-        # 둔 백업이다. 백업을 못 읽으면(복사 실패·깨진 옛 정본) 비교만 포기하고 저장은
-        # 성공으로 둔다 — 요약 때문에 이미 끝난 저장을 실패로 되돌리지 않는다.
+        # Decision 11: returns what changed to what. The "before save" to compare
+        # against is the backup Step 6a dropped. If the backup cannot be read (a copy
+        # failure, or a corrupted old canonical body), it just gives up on the
+        # comparison and still treats the save as a success — a save that already
+        # finished must never be turned into a failure over the summary.
         wp_before: Optional[dict] = None
         if backup_path_str:
             try:
@@ -4129,7 +4188,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             except Exception as _wp_exc:  # noqa: BLE001
                 import LogAssist.log as logger
                 logger.warning(f"[inbox edit] work plan before-image unreadable (ignored): {_wp_exc}")
-        resp_body["change_summary"] = work_plan_service.change_summary(wp_plan, wp_before)
+        resp_body["change_summary"] = work_plan_service.change_summary(wp_plan, wp_before, locale=_locale)
         resp_body["doc_type"] = WORK_PLAN_TYPE
     else:
         resp_body["change_summary"] = _build_change_summary(

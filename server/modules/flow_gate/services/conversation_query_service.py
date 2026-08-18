@@ -26,7 +26,7 @@ from modules.flow_gate.services.conversation_turn_service import (
     turn_wire,
 )
 
-# ── L0004 §1-1 조회 분량 · §1-3 읽음 지점 ─────────────────────────────────────
+# ── L0004 §1-1 page size / §1-3 read position ───────────────────────────────
 # Single source of truth for the read-side numbers.  Do not inline these values.
 TURN_LIMIT_DEFAULT = 50
 TURN_LIMIT_MAX = 200
@@ -66,7 +66,7 @@ def _readable_document(doc_id: str) -> dict:
 
 
 def _ensure_readable_rows(doc_id: str) -> str:
-    """Lazily migrate a legacy CH on first read (L0004 §3-1: 조회/추가 요청 도착).
+    """Lazily migrate a legacy CH on first read (L0004 §3-1: a read/append request arrives).
 
     A read must never fail because the old markdown has not been moved yet — that
     would make every pre-existing conversation look empty the moment this screen ships.
@@ -108,7 +108,7 @@ def intro_text(doc: dict) -> str:
 
 
 def _synthesized_intro(doc: dict) -> str:
-    """Fallback head when the markdown file is gone (L0004 §5: 문서 파일 없음)."""
+    """Fallback head when the markdown file is gone (L0004 §5: document file missing)."""
     fields = [
         ("project", doc.get("project_id")),
         ("module", doc.get("module")),
@@ -218,7 +218,7 @@ def list_turns(
     limit: Optional[int] = None,
     include_head: bool = False,
 ) -> dict:
-    """Return one page of turns around a cursor (P0003 시나리오 1·2·7·9·13)."""
+    """Return one page of turns around a cursor (P0003 scenarios 1, 2, 7, 9 and 13)."""
     if after_seq is not None and before_seq is not None:
         raise ConversationTurnError(422, "after_seq and before_seq are mutually exclusive.")
     if after_seq is not None and after_seq < 0:
@@ -300,7 +300,7 @@ def record_read(
     last_read_seq: int,
     reason: str = "viewed",
 ) -> dict:
-    """Advance a participant's cursor monotonically (L0004 §2-8, P0003 시나리오 5).
+    """Advance a participant's cursor monotonically (L0004 §2-8, P0003 scenario 5).
 
     A value that would move a cursor backwards is silently ignored rather than
     rejected: a scrolled-up screen or a late-arriving notice legitimately carries one.

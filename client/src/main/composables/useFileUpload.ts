@@ -64,7 +64,7 @@ export function useFileUpload() {
     targetPath: string,
     files: Array<File & { _relativePath?: string }>,
     onSuccess: () => void,
-    // 0327 T0004 (B0001 / NR0003 권고 2): upload into the selected group's worktree
+    // 0327 T0004 (B0001 / NR0003 recommendation 2): upload into the selected group's worktree
     // rather than the base checkout. The server resolves it fail-closed (409 when
     // that worktree is gone), so omitting it keeps the base-checkout upload intact.
     groupId?: string | null,

@@ -81,7 +81,7 @@ ALWAYS_VISIBLE = frozenset({
     "notices", "group_documents", "document_access", "doc_type", "question", "submit",
 })
 #: A console user JWT carries no document context, so only the two context-free
-#: items survive (P-0004 [엣지4]).
+#: items survive (P-0004 [edge 4]).
 USER_SESSION_VISIBLE = frozenset({"document_access", "doc_type"})
 
 AUTHORING_SCOPES = frozenset({"new", "edit"})
@@ -140,7 +140,7 @@ TITLES: dict[str, dict[str, str]] = {
 }
 
 #: ``submit`` renames itself after the work the token was issued for — a reviewer
-#: is not "submitting a result", it is submitting a verdict (P-0004 [정상3]).
+#: is not "submitting a result", it is submitting a verdict (P-0004 [normal 3]).
 SUBMIT_TITLES: dict[str, dict[str, str]] = {
     "ko": {
         "review": "판정 제출 방법",
@@ -1003,7 +1003,7 @@ def _content_test_commands(ctx: dict) -> dict:
     project = ctx.get("project") or ""
     try:
         block = test_command_service.build_verified_commands_block(project) if project else ""
-        # group 0372 set 3 (D-0003 §3-2 "실행 환경 준비 안내: 뺌"): the engine-recipe
+        # group 0372 set 3 (D-0003 §3-2, "environment-preparation guidance: dropped"): the engine-recipe
         # guidance the TS mention used to inline (flowgate.default.0157) now rides in
         # this item, so the first help call still teaches the registry (L §2-7).
         engine_recipes = engine_recipe_service.build_engine_recipes_block(ctx["base_url"])
@@ -1095,7 +1095,7 @@ def build_item(name: str, ctx: dict) -> dict:
 
     notes = _item_notes(name, ctx)
     # An empty registry is a normal answer, not a failure — say so rather than
-    # returning a silent empty list (L-0005 §5, "테스트 명령 없음").
+    # returning a silent empty list (L-0005 §5, "no test commands").
     if name == "test_commands" and not payload["content"]["has_commands"]:
         notes = notes + [_copy(_ITEM_NOTES, ctx["locale"], "test_commands_empty")]
     if notes:

@@ -115,7 +115,7 @@ def _under_root(full_path: str, root: str) -> bool:
 def _save_file(full_path_str: str, data: bytes) -> None:
     """Create intermediate directories and write one uploaded file (overwrite).
 
-    0279 T0005 (NR0003 원인 1): split out of upload_files so the blocking mkdir +
+    0279 T0005 (NR0003 cause 1): split out of upload_files so the blocking mkdir +
     write can be pushed through anyio.to_thread. Run on the event loop it froze
     every other request for the duration of the write — up to 100 MB per file and
     500 MB per request.

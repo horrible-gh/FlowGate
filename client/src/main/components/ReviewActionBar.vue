@@ -176,11 +176,12 @@
               </Teleport>
             </template>
           </div>
-          <!-- 0405 T0011 rev2 (반려: "액션바에 [작업계획 생성] 추가해서 바로 작업계획
-               생성할수 있게 해야지"): 다음 단계가 작업계획이면 이 자리는 목록을 여는 단추가
-               아니라 [작업계획 생성] 그 자체다. 한 번 눌러 곧바로 작업계획 창이 열린다 —
-               꺾쇠를 열어 항목을 찾아 들어가는 길을 거치지 않는다. 나머지 항목은 옆의 꺾쇠에
-               남는다(시험 실행 단추와 같은 얼개). -->
+          <!-- 0405 T0011 rev2 (rejection: "액션바에 [작업계획 생성] 추가해서 바로 작업계획
+               생성할수 있게 해야지"): when the next step is a work plan, this slot is not a
+               button that opens a list — it IS [작업계획 생성] itself. One click opens the
+               work-plan-create dialog directly, without going through the caret to find
+               the item. The remaining items stay in the caret next to it (same layout as
+               the test-run button). -->
           <div v-else-if="isNextWorkPlan" class="ab-split-wrap">
             <button
               class="btn btn-primary btn-sm ab-split-main ab-wp-main"
@@ -205,9 +206,9 @@
                 <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
-                <!-- 0405 T0011 rev1 (반려: "AI 호출을 없애고 그자리에 넣어야할거아냐"):
-                     예전 [AI 호출]이 앉아 있던 맨 아래 자리를 [작업계획 생성]이 차지한다.
-                     액션바의 단추와 똑같은 일을 한다. -->
+                <!-- 0405 T0011 rev1 (rejection: "AI 호출을 없애고 그자리에 넣어야할거아냐"):
+                     [작업계획 생성] now occupies the bottom slot where [AI 호출] used to sit.
+                     It does the same thing as the action-bar button. -->
                 <button class="ab-split-item ab-split-item--continuous ab-split-item--main" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
                   <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.btn_create_work_plan') }}
                 </button>
@@ -284,7 +285,7 @@
           <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onInvokeCommandClick">
             <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
           </button>
-          <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+          <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
           <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onReworkInvokeAiClick">
             <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
           </button>
@@ -298,9 +299,11 @@
         </div>
 
         <div v-else class="sfb-actions">
-          <!-- 0399 M0020 — 예전에 여기 있던 [연속 작업에 채우기]는 눌러만 놓으면 저장 없이
-               워크플로를 바로 바꿔 버렸다. 지금은 시퀀스 칸의 [작업계획 적용] 하나로 모았고,
-               그쪽은 [저장]을 눌러야 확정된다. 시안 fgh29xnk v3 화면 1의 액션바에도 없다. -->
+          <!-- 0399 M0020 — the [연속 작업에 채우기] that used to live here changed the
+               workflow immediately on click, with no save step. It has now been folded
+               into the single [작업계획 적용] in the sequence cell, which only commits once
+               [저장] is pressed. It is also absent from the action bar in mockup fgh29xnk
+               v3 screen 1. -->
 
           <!-- Approve -->
           <button class="btn btn-success btn-sm" :disabled="!canApprove || isGroupBusy" @click="onApproveClick">
@@ -331,7 +334,7 @@
                 <button class="ab-split-item" :disabled="isGroupBusy" @click="onMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
-                <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+                <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
                 <button class="ab-split-item" :disabled="isGroupBusy" @click="onReviewInvokeAiClick">
                   <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
                 </button>
@@ -526,7 +529,7 @@ const gitAuxOpen = ref(false)
 // the same predicate the server enforces as its per-group 409 run_in_progress.
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 const isGroupBusy = computed(() => aiInvokeRunsStore.isGroupRunning(props.groupId))
-// 0401 NR0003 SS3 / T0004 작업 5: the lease-fetch drives whether the pill above reads
+// 0401 NR0003 SS3 / T0004 task 5: the lease-fetch drives whether the pill above reads
 // "AI 실행중" or "잠금 남음" -- fetched per group, single-flight + generation-guarded in
 // the store itself, so this watcher can fire freely without causing flicker.
 const isLeaseOrphaned = computed(() => aiInvokeRunsStore.isGroupLeaseOrphaned(props.groupId))
@@ -757,8 +760,8 @@ const nextCreateLabelKey = computed(() =>
     : 'main.review_action_bar.btn_create_empty',
 )
 
-// 0405 T0011: 다음 단계가 작업계획일 때는 이 목록의 메인 작업이 [작업계획 생성]이다.
-// 사용자 반려: "[AI호출]이 아니라 [작업계획 생성]이 주인공이어야 한다."
+// 0405 T0011: when the next step is a work plan, the main action in this list is
+// [작업계획 생성]. User rejection: "[AI호출]이 아니라 [작업계획 생성]이 주인공이어야 한다."
 const isNextWorkPlan = computed(() => (props.nextStepCode ?? '').toUpperCase() === 'WP')
 
 // TR0044.0010 rev3: the next workflow step is a conversation (CH) → the 'next' action
@@ -1371,15 +1374,17 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-/* 0405 T0011 rev1: 작업계획이 다음 단계일 때 꺾쇠 목록의 맨 아래 자리(예전 [AI 호출]
-   자리)를 차지하는 [작업계획 생성]의 강조. 다른 타입에서는 예전 그대로 [AI 호출]이다. */
+/* 0405 T0011 rev1: emphasis for [작업계획 생성], which occupies the bottom slot of the
+   caret list (formerly [AI 호출]'s spot) when the work plan is the next step. Other
+   types still keep [AI 호출] as before. */
 .ab-split-item--main {
   color: var(--primary, #2563eb);
   font-weight: 700;
 }
 
-/* 0405 T0011 rev2: 액션바 위에 그대로 드러난 [작업계획 생성]. 목록을 여는 단추가 아니라
-   누르면 바로 작업계획 창이 열리는 주 단추다. */
+/* 0405 T0011 rev2: [작업계획 생성] exposed directly above the action bar. Not a button
+   that opens a list — it is the main button that opens the work-plan-create dialog
+   on click. */
 .ab-wp-main {
   font-weight: 700;
 }

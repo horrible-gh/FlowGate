@@ -63,7 +63,7 @@ def _offer(q: asyncio.Queue, event: FlowEvent) -> bool:
     the only thing that could drain that queue was an SSE client that had already
     stopped reading. One abandoned browser tab could wedge event delivery for
     everyone, and because ``_lock`` also guards subscribe/unsubscribe, new tabs hung
-    on connect instead of recovering. That is the "로딩중에서 멈춘다" shape R0001 asked
+    on connect instead of recovering. That is the "it hangs on loading" shape R0001 asked
     about, arriving from the event path rather than from the DB or the filesystem.
 
     A queue that is full means the subscriber is not draining, so something must be

@@ -113,10 +113,10 @@
       </div>
       <div class="doc-meta-item">
         <label>{{ t('main.doc_header.label_author') }}</label>
-        <!-- 0410 TR0009 rev2 — 이 칸은 등록 계정 이름만 보여 줘서, AI 가 쓴 문서도
-             사람 계정 이름 하나로만 보였다("작성자가 계속 test라고 나오는데?").
-             documents 에 저장된 작성 시점 스냅샷이 있으면 그 AI 를 작성자로 보여 준다.
-             스냅샷을 다시 조회하지 않으며, 없으면 예전처럼 계정 이름을 보여 준다. -->
+        <!-- 0410 TR0009 rev2 — this field used to show only the registered account name, so even
+             AI-written documents showed just a human account name ("작성자가 계속 test라고 나오는데?").
+             If documents has an authoring-time snapshot stored, show that AI as the author instead.
+             The snapshot is not re-fetched; if absent, fall back to showing the account name as before. -->
         <span
           v-if="originProviderName"
           class="doc-author-ai"
@@ -287,8 +287,9 @@ interface DocDetail {
   type_code?: string | null
   created_at?: string | null
   owner_id?: string | null
-  // 081_document_origin_snapshot.sql — 문서를 만든 AI 공급자 이름과 그 실행 ID 의
-  // 생성 시점 스냅샷. 사람이 만든 문서와 기능 도입 이전 문서는 둘 다 null 이다.
+  // 081_document_origin_snapshot.sql — a creation-time snapshot of the AI provider name
+  // and run ID that made the document. Both are null for human-authored docs and docs
+  // predating this feature.
   origin_provider_name?: string | null
   origin_ai_run_id?: string | null
   group_id?: string | null
@@ -309,8 +310,8 @@ interface DocDetail {
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
   next_step_exists?: boolean
-  // TR 작업범위 검증 결과 (0299 D0004 §6). 서버가 meta 에서 펼쳐 준다. 대상이
-  // 아니거나 검증 도입 이전 문서면 키 자체가 오지 않는다.
+  // TR scope-verification verdict (0299 D0004 §6). The server expands it from meta.
+  // The key itself is absent if the doc isn't in scope or predates verification.
   tr_scope?: TrScopeVerdict | null
 }
 
@@ -437,17 +438,17 @@ const createdDate = computed(() => {
   return raw.slice(0, 10)
 })
 
-// ── 작성자 = 이 문서를 만든 AI (0410 T0008 / TR0009 rev2) ───────────────
-// origin_provider_name 은 문서 생성 시점에 한 번 찍힌 스냅샷이다(081 마이그레이션).
-// 공백뿐인 값은 null 과 같게 다뤄 이름을 추측하지 않는다 — GroupInfoModal 배지와 같은 규칙.
+// ── Author = the AI that made this document (0410 T0008 / TR0009 rev2) ───────────────
+// origin_provider_name is a snapshot stamped once at document-creation time (081 migration).
+// Treat a whitespace-only value as null instead of guessing a name — same rule as the GroupInfoModal badge.
 const originProviderName = computed(() => {
   const name = (doc.value?.origin_provider_name ?? '').trim()
   return name || null
 })
 
-// 실행 ID 와 등록 계정은 헤더 행 높이를 늘리지 않도록 접근 가능한 설명(title)에만 싣는다.
-// 계정 이름을 버리지 않는 것은 일부러다: 화면에서는 AI 가 작성자지만, 그 실행을
-// 발급받은 계정은 감사에 필요하다.
+// The run ID and registered account only go into the accessible title so the header row
+// height doesn't grow. Keeping the account name is intentional: the AI is the author on
+// screen, but the account that issued that run is needed for auditing.
 const authorAiTitle = computed(() => {
   const parts: string[] = []
   const provider = originProviderName.value
@@ -1204,11 +1205,12 @@ const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
-// TR 작업범위 검증 결과 (0299 D0004 §6). 0390 TR0005부터 대상은 문서 타입이 아니라
-// 서버의 tool_registry.MUTATING_STEP_TYPES 멤버십(T/TR/TSR/TS)이다 -- 그 타입이
-// 아니거나 검증 도입 이전 문서면 서버가 키 자체를 보내지 않으므로 null 이고, 그때
-// 정보 패널은 영역을 아예 그리지 않는다. 이 computed 자체는 타입을 보지 않는
-// 단순 전달(pass-through)이라 그 판정이 바뀌어도 고칠 코드가 없다.
+// TR scope-verification verdict (0299 D0004 §6). Since 0390 TR0005, eligibility is no
+// longer based on document type but on server-side tool_registry.MUTATING_STEP_TYPES
+// membership (T/TR/TSR/TS) -- if the doc isn't that type or predates verification, the
+// server doesn't send the key at all, so it's null and the info panel simply doesn't
+// render that area. This computed itself doesn't look at type -- it's a plain
+// pass-through, so no code here needs to change if that verdict logic changes.
 const trScope = computed(() => doc.value?.tr_scope ?? null)
 
 const docClass = computed((): string => {
@@ -1607,8 +1609,8 @@ const statusLabel = computed(() => {
 .doc-header.collapsed .doc-mg {
   display: none;
 }
-/* 작성자 칸의 AI 알약 배지 (0410 TR0009 rev2). 긴 공급자 이름은 한 줄에서
-   말줄임하고 전체 이름은 title 로 확인한다 — 메타 행이 밀리거나 가로로 늘어나지 않게. */
+/* AI pill badge in the author field (0410 TR0009 rev2). Long provider names are truncated
+   on one line; the full name is available via the title — so the meta row never shifts or stretches wide. */
 .doc-author-ai {
   display: inline-block;
   max-width: 100%;

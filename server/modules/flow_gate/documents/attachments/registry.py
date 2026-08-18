@@ -77,7 +77,7 @@ def registry_insert(
     """§2-5 A8 / §2-11 M6.
 
     ``store`` lets the upload service pass the connection it already opened a transaction
-    on, so a whole request's rows commit or vanish together (DB0013 §4 트랜잭션 경계).
+    on, so a whole request's rows commit or vanish together (DB0013 §4, transaction boundary).
     """
     st = store or get_store()
     now = now_iso()

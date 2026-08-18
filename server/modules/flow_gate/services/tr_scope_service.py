@@ -1,33 +1,33 @@
-"""TR 작업범위 검증 (flowgate.default.0299 — R0001 → D0004 → NR0006 → T0007).
+"""TR work-scope check (flowgate.default.0299 — R0001 → D0004 → NR0006 → T0007).
 
-AI 작업자가 배정받은 워크트리가 아닌 곳(주로 원본 레포, main)에 작업하는 사고를
-TR 제출 시점에 잡는다. TR 본문의 ``## 변경 파일`` 섹션(자기신고)을 읽고, 그 그룹에
-배정된 워크트리 안에서 서버가 실제로 관측한 변경과 대조한다.
+Catches, at TR submission time, the accident of an AI worker working somewhere other than
+its assigned worktree (usually the origin repo, main). It reads the self-declared changed-
+files section of the TR body and compares it with what the server actually observed inside
 
-설계 원칙 두 가지(D0004):
+the worktree assigned to that group. Two design principles (D0004):
 
-* **범인을 추리하지 않는다.** 검사는 그 작업의 워크트리 안에서만 이루어지므로,
-  다른 작업자가 원본 레포를 오염시켜도 이 작업의 판정은 영향받지 않는다.
-* **자기신고를 믿는 것이 아니라 대조 대상으로 쓴다.**
+* **It never infers a culprit.** The check runs only inside this task's worktree, so
+  another worker polluting the origin repo cannot affect this task's verdict.
+* **The self-declaration is not trusted; it is used as the thing to compare against.**
 
-TRV-002 의 범위(N0005 Q1 답변 = o3 채택): 제출 본문에는 저장소 상대경로만 오므로
-``server/a.py`` 가 main 에서 편집됐는지 워크트리에서 편집됐는지 본문만으로는 알 수
-없다. 그래서 TRV-002 는 절대경로·``..`` 처럼 **표기 자체가 범위 밖임을 자백하는**
-형식 위반만 담당하고, 다른 위치에서 편집된 상대경로는 배정 워크트리 안에서 그 변경이
-발견되지 않으므로 TRV-003(신고분 미확인)으로 잡힌다. 즉 위치 위반의 실질 차단은
-강제(enforce) 단계에서 성립한다.
+TRV-002's scope (answer to N0005 Q1, option o3): the body carries only repo-relative paths,
+so the body alone cannot say whether ``server/a.py`` was edited on main or in the worktree.
+TRV-002 therefore covers only format violations whose **notation itself confesses** being
+out of scope (absolute paths, ``..``). A relative path edited elsewhere is not found in the
+assigned worktree and so is caught by TRV-003 (declared but unconfirmed). Real blocking of
+location violations therefore takes effect at the enforce stage.
 
-거부 기록의 저장 위치(N0005 Q3, 미답변 → 여기서 확정): 검증은 문서 번호 예약 전에
-끝나므로 거부된 제출에는 문서 ID가 없다. 따라서 판정 결과는 두 곳으로 나뉜다.
+Where rejections are stored (N0005 Q3, unanswered → settled here): the check finishes
+before a document number is reserved: a rejected submission has no document id, so the verdict splits in two.
 
-* 통과/경고 — 생성된 TR 문서의 ``documents.meta['tr_scope']`` 에 넣어 문서 상세에서
-  조회한다(문서가 있는 경우에만 가능).
-* 거부 — 문서가 없으므로 ``events`` 에 ``action_code='tr_scope_rejected'`` 이벤트로
-  남긴다. 그룹 타임라인에 붙으므로 "몇 번 반려됐고 왜였는지"가 사후에 조회된다.
+* Pass/warn — stored in the created TR's ``documents.meta['tr_scope']`` and read from
+  the document detail (only possible when a document exists).
+* Reject — with no document, it is left in ``events`` as an ``action_code='tr_scope_rejected'``
+  event. It attaches to the group timeline, so "how often and why" stays queryable afterwards.
 
-새 테이블을 만들지 않은 것은 의도적이다. 기록해야 할 것은 그룹 단위 시계열 사실이고
-events 가 이미 그 모양이며, 3개 dialect 마이그레이션을 하나 더 늘릴 근거가 이 요건
-안에는 없다.
+Adding no new table is deliberate: what must be recorded is a per-group time-series fact,
+``events`` already has that shape, and nothing in this requirement justifies one more
+migration across three dialects.
 """
 from __future__ import annotations
 
@@ -37,24 +37,24 @@ from typing import Iterable, Optional
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import git_service
-# 0382 NR0003 제안 3: 제외 규칙의 판정 코드는 path_exclusion_rules 한 곳에 있다.
-# 이 모듈이 정본이라는 결론은 이름으로 유지된다 — 아래 두 이름은 재수출이다.
+# 0382 NR0003 proposal 3: the exclusion-rule logic lives in path_exclusion_rules alone.
+# This module stays canonical by name — the two names below are re-exports.
 from modules.flow_gate.services.path_exclusion_rules import (  # noqa: F401
     exclusion_reason,
     is_excluded_path,
 )
 
-# ── 사유 코드 (D0004 §3.5) ────────────────────────────────────────────────────
-TRV_MISSING_SECTION = "TRV-001"   # 섹션 누락
-TRV_OUT_OF_SCOPE = "TRV-002"      # 범위 밖 신고
-TRV_UNCONFIRMED = "TRV-003"       # 신고분 미확인
-TRV_UNREPORTED = "TRV-004"        # 신고 누락
-TRV_FORMAT = "TRV-005"            # 형식 오류
-TRV_NO_SCOPE = "TRV-006"          # 범위 확인 불가
+# ── Reason codes (D0004 §3.5) ────────────────────────────────────────────────
+TRV_MISSING_SECTION = "TRV-001"   # section missing
+TRV_OUT_OF_SCOPE = "TRV-002"      # declared path outside scope
+TRV_UNCONFIRMED = "TRV-003"       # declared but unconfirmed
+TRV_UNREPORTED = "TRV-004"        # changed but undeclared
+TRV_FORMAT = "TRV-005"            # format error
+TRV_NO_SCOPE = "TRV-006"          # scope could not be determined
 
-# T2/TR2 (0355 NR0003 §1-4): 반려 안내문·작성 안내문이 966자 전부 한국어였고
-# 언어를 바꿀 방법이 없었다. 사유 코드 라벨을 언어별로 두고, ko 를 default 로
-# 남겨 기존 호출부(로그 등)와 호환한다.
+# T2/TR2 (0355 NR0003 §1-4): the rejection and authoring notices were 966 characters of
+# Korean with no way to change language. Reason-code labels are now per language, with ko
+# left as the default so existing callers (logging, etc.) stay compatible.
 _CODE_LABELS_BY_LOCALE: dict[str, dict[str, str]] = {
     "ko": {
         TRV_MISSING_SECTION: "섹션 누락 — `## 변경 파일`(영어 별칭 `## Changed Files`) 섹션이 없거나 비어 있습니다.",
@@ -90,35 +90,35 @@ def _code_label(code: str, locale: str) -> str:
     return table.get(code, CODE_LABELS.get(code, code))
 
 
-# ── 적용 단계 (D0004 §3.6) ───────────────────────────────────────────────────
+# ── Enforcement stages (D0004 §3.6) ──────────────────────────────────────────
 STAGE_OBSERVE = "observe"
 STAGE_WARN = "warn"
 STAGE_ENFORCE = "enforce"
 
-# 판정 결과
+# Verdicts
 VERDICT_PASS = "pass"
 VERDICT_WARN = "warn"
 VERDICT_REJECT = "reject"
 VERDICT_SKIPPED = "skipped"
 
 SECTION_HEADING = "## 변경 파일"
-SECTION_HEADING_EN = "## Changed Files"  # T0009: 파서가 받아주는 영어 별칭 (표시용 정식 명칭은 한국어 그대로)
+SECTION_HEADING_EN = "## Changed Files"  # T0009: English alias the parser accepts (the canonical display name stays Korean)
 NONE_MARKER = "없음"
 MAX_ITEMS = 200
-_MAX_LISTED = 40  # 반려 안내문에 실제로 나열하는 최대 줄 수 (D0004 §3.8-3)
+_MAX_LISTED = 40  # max lines actually listed in the rejection notice (D0004 §3.8-3)
 
-# ── 제외 규칙 (D0004 §3.3 → 0382 NR0003 제안 3 에서 화면 규칙과 통합) ────────
+# ── Exclusion rules (D0004 §3.3 → merged with the screen rules in 0382 NR0003) ──
 #
-# 규칙 본문은 path_exclusion_rules 로 옮겼다. 0382 B0001 의 사고가 정확히 "같은
-# 파일을 화면은 감추고 검사는 잡는" 두 벌 규칙에서 나왔기 때문이다 — 작업자는
-# 보이지도 않는 파일 때문에 제출이 막혔다. 여기서 `is_excluded_path` 는 그 공유
-# 모듈의 재수출이고(위 import 참조), git_service 의 화면 필터도 같은 함수를 부른다.
+# The rule bodies moved to path_exclusion_rules. The 0382 B0001 incident came from exactly
+# two sets of rules where the screen hid a file the check still flagged — the worker was
+# blocked by a file they could not even see. `is_excluded_path` here is a re-export of that
+# shared module (see the import above), and git_service's screen filter calls the same one.
 
 
-# ── 신고목록 파서 (D0004 §3.2) ────────────────────────────────────────────────
+# ── Declared-list parser (D0004 §3.2) ────────────────────────────────────────
 
-# T0009: "변경 파일" 과 영어 별칭 "Changed Files" 를 둘 다 받는다 — 표기가 늘 뿐,
-# 정식 명칭(재제출 안내에 쓰는 SECTION_HEADING)은 여전히 한국어다.
+# T0009: both the Korean heading and the English alias "Changed Files" are accepted — only
+# the spellings grow; the canonical name (SECTION_HEADING, used in resubmit guidance) stays Korean.
 _HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s*(변경\s*파일|Changed\s+Files)\s*$", re.IGNORECASE)
 _NEXT_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
 _ITEM_RE = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
@@ -129,46 +129,83 @@ _NONE_VARIANTS = frozenset({
 
 
 class ReportedFiles:
-    """``## 변경 파일`` 섹션 파싱 결과."""
+    """Result of parsing the changed-files section."""
 
     def __init__(self) -> None:
         self.found: bool = False
         self.declared_none: bool = False
-        self.paths: list[str] = []          # 정규화된 상대경로 (중복 제거, 순서 유지)
-        self.out_of_scope: list[str] = []   # 절대경로 / '..' 이탈 — TRV-002
-        self.format_errors: list[str] = []  # 사람이 읽는 한 줄 설명 — TRV-005
+        self.paths: list[str] = []          # normalised relative paths (deduped, order kept)
+        self.out_of_scope: list[str] = []   # absolute path / '..' escape — TRV-002
+        self.format_errors: list[str] = []  # one-line human-readable explanation — TRV-005
 
 
-def _normalize_reported_path(raw: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """한 항목 → ``(정규경로, 범위밖사유, 형식오류사유)``. 셋 중 하나만 채워진다."""
+_FORMAT_ERROR_STRINGS = {
+    "ko": {
+        "empty_item": "빈 항목",
+        "unreadable_path": "경로로 읽을 수 없음: {text}",
+        "looks_like_prose": "경로가 아니라 설명으로 보임: {text}",
+        "not_a_list_line": "목록 형식이 아닌 줄: {text}",
+        "too_many_items": "항목이 {count}개입니다. 최대 {max}개까지 받습니다.",
+    },
+    "en": {
+        "empty_item": "empty item",
+        "unreadable_path": "cannot be read as a path: {text}",
+        "looks_like_prose": "looks like prose, not a path: {text}",
+        "not_a_list_line": "not a list-formatted line: {text}",
+        "too_many_items": "{count} items — at most {max} are accepted.",
+    },
+    "ja": {
+        "empty_item": "空の項目",
+        "unreadable_path": "パスとして読み取れません: {text}",
+        "looks_like_prose": "パスではなく説明文のようです: {text}",
+        "not_a_list_line": "リスト形式ではない行です: {text}",
+        "too_many_items": "{count} 件の項目があります。最大 {max} 件までです。",
+    },
+}
+
+
+def _format_error(key: str, locale: str, **kwargs) -> str:
+    """T0009 task 4: locale branch for the five format_errors strings.
+
+    The ko wording is byte-identical to the pre-T0009 hardcode — existing suites
+    (test_tr_scope_0299.py) assert those exact strings.
+    """
+    strings = _FORMAT_ERROR_STRINGS.get(locale) or _FORMAT_ERROR_STRINGS["ko"]
+    return strings[key].format(**kwargs)
+
+
+def _normalize_reported_path(
+    raw: str, locale: str = "ko"
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """One entry → ``(normalised path, out-of-scope reason, format-error reason)``; exactly one is set."""
     text = raw.strip()
-    # 백틱/따옴표로 감싼 표기는 흔한 무해한 변형이라 벗겨서 받아준다. 뒤의 설명
-    # (`path — 무엇을 고쳤는지`)도 잘라 낸다. 여기서 엄격하게 굴면 정직하게 신고한
-    # 작업자가 형식 때문에 반려되고, 그건 이 기능이 잡으려는 사고가 아니다.
+    # Backtick/quote wrapping is a common harmless variation, so it is stripped and accepted.
+    # A trailing explanation (`path — what was fixed`) is cut too. Being strict here would
+    # reject an honest declaration over formatting, which is not the accident this catches.
     for separator in (" — ", " – ", " -- ", " - ", " : ", "\t"):
         if separator in text:
             text = text.split(separator, 1)[0].strip()
     text = text.strip("`").strip('"').strip("'").strip()
     if not text:
-        return None, None, "빈 항목"
+        return None, None, _format_error("empty_item", locale)
     normalized = text.replace("\\", "/")
     if normalized.startswith("/") or (len(normalized) >= 2 and normalized[1] == ":"):
-        return None, text, None  # 절대경로 = 자백 (TRV-002)
+        return None, text, None  # absolute path = confession (TRV-002)
     if ".." in normalized.split("/"):
-        return None, text, None  # 상위 이탈 = 자백 (TRV-002)
+        return None, text, None  # parent escape = confession (TRV-002)
     while normalized.startswith("./"):
         normalized = normalized[2:]
     normalized = re.sub(r"/{2,}", "/", normalized).strip("/")
     if not normalized:
-        return None, None, f"경로로 읽을 수 없음: {text}"
+        return None, None, _format_error("unreadable_path", locale, text=text)
     if " " in normalized and "/" not in normalized:
-        # 경로가 아니라 산문 한 줄을 목록에 적은 경우.
-        return None, None, f"경로가 아니라 설명으로 보임: {text}"
+        # A prose line was written into the list instead of a path.
+        return None, None, _format_error("looks_like_prose", locale, text=text)
     return normalized, None, None
 
 
-def parse_reported_files(body: str) -> ReportedFiles:
-    """TR 본문에서 ``## 변경 파일`` 섹션을 읽어낸다. 예외를 던지지 않는다."""
+def parse_reported_files(body: str, locale: str = "ko") -> ReportedFiles:
+    """Read the changed-files section out of a TR body. Never raises."""
     result = ReportedFiles()
     lines = (body or "").splitlines()
     start = -1
@@ -196,9 +233,11 @@ def parse_reported_files(body: str) -> ReportedFiles:
             continue
         match = _ITEM_RE.match(line)
         if not match:
-            result.format_errors.append(f"목록 형식이 아닌 줄: {stripped[:120]}")
+            result.format_errors.append(
+                _format_error("not_a_list_line", locale, text=stripped[:120])
+            )
             continue
-        normalized, out_of_scope, format_error = _normalize_reported_path(match.group(1))
+        normalized, out_of_scope, format_error = _normalize_reported_path(match.group(1), locale)
         if out_of_scope is not None:
             if out_of_scope not in result.out_of_scope:
                 result.out_of_scope.append(out_of_scope)
@@ -210,23 +249,23 @@ def parse_reported_files(body: str) -> ReportedFiles:
 
     if len(result.paths) > MAX_ITEMS:
         result.format_errors.append(
-            f"항목이 {len(result.paths)}개입니다. 최대 {MAX_ITEMS}개까지 받습니다."
+            _format_error("too_many_items", locale, count=len(result.paths), max=MAX_ITEMS)
         )
     return result
 
 
-# ── 적용 단계 조회 ────────────────────────────────────────────────────────────
+# ── Enforcement-stage lookup ─────────────────────────────────────────────────
 
 def resolve_stage(project_id: str) -> Optional[str]:
-    """프로젝트의 적용 단계. git 연동이 없거나 꺼져 있으면 ``None`` = 검증 비대상.
+    """The project's enforcement stage. ``None`` when git integration is absent or off = not checked.
 
-    연동이 꺼진 프로젝트에는 그룹 워크트리라는 개념 자체가 없다. 그런 프로젝트에서
-    TRV-006(범위 확인 불가)을 계속 달아 두면 아무도 고칠 수 없는 경고만 쌓이므로,
-    검증을 시도조차 하지 않는다.
+    A project with integration off has no concept of a group worktree at all. Leaving
+    TRV-006 (scope undeterminable) attached there would only pile up warnings nobody can
+    fix, so the check is not even attempted.
     """
     try:
         cfg = db_git.get_config(project_id)
-    except Exception:  # noqa: BLE001 — 설정 조회 실패가 TR 접수를 막아선 안 된다
+    except Exception:  # noqa: BLE001 — a settings lookup failure must not block TR intake
         return None
     if cfg is None or not cfg.get("enabled"):
         return None
@@ -234,7 +273,7 @@ def resolve_stage(project_id: str) -> Optional[str]:
     return stage if stage in db_git.TR_SCOPE_STAGE_VALUES else STAGE_OBSERVE
 
 
-# ── 대조 판정 (D0004 §3.4 / §3.7) ────────────────────────────────────────────
+# ── Comparison verdict (D0004 §3.4 / §3.7) ───────────────────────────────────
 
 def evaluate(
     project_id: str,
@@ -243,13 +282,13 @@ def evaluate(
     locale: str = "ko",
     prior_declared: Optional[Iterable[str]] = None,
 ) -> dict:
-    """TR 본문을 판정한다. 부작용 없음 — dry-run 과 실등록이 같은 함수를 호출한다.
+    """Judge a TR body. Side-effect free — dry-run and real registration call this same function.
 
-    반환 dict 는 그대로 dry-run 응답, 문서 meta, 이벤트 metadata 에 실린다.
-    ``locale`` 은 거부됐을 때 붙는 안내문(``notice``)의 언어만 정한다(T2/TR2) — 판정
-    자체는 언어와 무관하다. ``prior_declared`` 는 같은 그룹의 이전 TR들이 이미 신고한
-    경로이며 신고 누락 판정에만 합친다. 이번 본문의 신고분 미확인 판정에는 영향을 주지
-    않는다.
+    The returned dict is carried verbatim into the dry-run response, document meta and event
+    metadata. ``locale`` only picks the language of the ``notice`` attached on rejection
+    (T2/TR2); the verdict itself is language-independent. ``prior_declared`` holds paths
+    already declared by earlier TRs in the same group and is merged only into the undeclared
+    verdict — it does not affect this body's unconfirmed verdict.
     """
     stage = resolve_stage(project_id)
     if stage is None:
@@ -258,20 +297,20 @@ def evaluate(
             "reason": "git_integration_off",
         }
 
-    reported = parse_reported_files(body)
+    reported = parse_reported_files(body, _normalize_notice_locale(locale))
     codes: list[str] = []
 
-    # 1) 섹션 누락 / 비어 있음
+    # 1) section missing / empty
     if not reported.found:
         codes.append(TRV_MISSING_SECTION)
     elif not reported.paths and not reported.declared_none and not reported.out_of_scope:
         codes.append(TRV_MISSING_SECTION)
 
-    # 2) 형식 오류
+    # 2) format errors
     if reported.format_errors:
         codes.append(TRV_FORMAT)
 
-    # 3) 범위 밖 신고 — 표기 자체가 자백인 경우만 (N0005 Q1)
+    # 3) out-of-scope declaration — only where the notation itself confesses (N0005 Q1)
     if reported.out_of_scope:
         codes.append(TRV_OUT_OF_SCOPE)
 
@@ -282,8 +321,8 @@ def evaluate(
     unconfirmed: list[str] = []
     unreported: list[str] = []
     if not actual.get("available"):
-        # 4) 범위 확인 불가 — 판정을 계속하지 않는다. 워크트리를 못 보는 상태에서
-        #    대조하면 신고 전부가 TRV-003 으로 찍혀 작업자를 오도한다.
+        # 4) scope undeterminable — judging stops here. Comparing while blind to the
+        #    worktree would stamp every declaration TRV-003 and mislead the worker.
         codes.append(TRV_NO_SCOPE)
     else:
         detected_set = set(detected)
@@ -292,10 +331,10 @@ def evaluate(
             path for path in (prior_declared or [])
             if isinstance(path, str) and not is_excluded_path(path)
         }
-        # 5) 신고분 미확인 — 여기가 "다른 위치에서 작업함"이 실제로 잡히는 자리다.
-        #    이전 TR의 신고 경로는 이번 본문의 정직성을 판단하는 근거가 아니다.
+        # 5) declared but unconfirmed — this is where "worked in the wrong place" is caught.
+        #    Paths declared by earlier TRs are no evidence about this body's honesty.
         unconfirmed = sorted(declared_set - detected_set)
-        # 6) 신고 누락 — 실제 변경은 그룹 누적이므로 신고도 이전 TR까지 누적해 대조한다.
+        # 6) undeclared — real changes accumulate per group, so declarations are compared cumulatively.
         unreported = sorted(detected_set - (declared_set | prior_declared_set))
         if unconfirmed:
             codes.append(TRV_UNCONFIRMED)
@@ -323,18 +362,18 @@ def evaluate(
 
 
 def _verdict_for(codes: list[str], stage: str) -> str:
-    """사유 코드 + 적용 단계 → 최종 처리 (D0004 §3.7 판정 매트릭스).
+    """Reason codes + enforcement stage → final disposition (D0004 §3.7 verdict matrix).
 
-    여러 사유가 동시에 나오면 가장 무거운 처리를 따른다 — 하나라도 거부면 거부다.
+    When several reasons fire at once the heaviest disposition wins — one reject means reject.
     """
     if not codes:
         return VERDICT_PASS
-    # TRV-002 는 단계와 무관하게 항상 거부한다. 신고한 경로 자체가 범위 밖을
-    # 가리키는 것은 추리가 아니라 자백이고, 통과시키면 원본 레포에 그대로 남는다.
+    # TRV-002 always rejects, whatever the stage. A declared path pointing outside scope is
+    # a confession, not an inference, and letting it pass leaves it in the origin repo.
     if TRV_OUT_OF_SCOPE in codes:
         return VERDICT_REJECT
-    # TRV-006 은 단계와 무관하게 항상 통과 — 서버 사정을 작업자 책임으로 돌리지
-    # 않는다. 다른 사유 없이 TRV-006 뿐이면 경고에 그친다.
+    # TRV-006 always passes, whatever the stage — a server-side problem is not the worker's
+    # fault. TRV-006 alone, with no other reason, stops at a warning.
     blocking = [c for c in codes if c != TRV_NO_SCOPE]
     if not blocking:
         return VERDICT_WARN
@@ -342,15 +381,15 @@ def _verdict_for(codes: list[str], stage: str) -> str:
         return VERDICT_REJECT
     if stage == STAGE_WARN:
         return VERDICT_WARN
-    return VERDICT_PASS  # 관측 — 기록만 하고 작업자에게는 아무것도 보이지 않는다
+    return VERDICT_PASS  # observe — recorded only, nothing surfaces to the worker
 
 
-# ── 반려 안내문 (D0004 §3.8, 언어 전달 T2/TR2 — NR0003 §1-4) ────────────────
+# ── Rejection notice (D0004 §3.8, language plumbing T2/TR2 — NR0003 §1-4) ────
 #
-# NR0003 §1-4 가 실측한 문제: TR 반려 안내문이 966자 전부 한국어였고 언어를
-# 바꿀 방법이 없었다. 이 함수를 부르는 자리(inbox_routes._handle_new)는 이미
-# 토큰/헤더에서 locale 을 정해 두고 있었으므로(L0007 §2-2 "통로는 이미 있다"),
-# 여기서 할 일은 그 값을 받아 안내문을 그 언어로 짓는 것뿐이다.
+# The problem NR0003 §1-4 measured: the TR rejection notice was 966 characters of Korean
+# with no way to change the language. The caller (inbox_routes._handle_new) had already
+# resolved a locale from the token/header (L0007 §2-2, "the channel already exists"), so
+# all that is needed here is to take that value and compose the notice in that language.
 
 _SUPPORTED_NOTICE_LOCALES = ("ko", "en", "ja")
 
@@ -360,8 +399,8 @@ def _normalize_notice_locale(locale: str) -> str:
 
 
 def _spelling_changed_files(locale: str) -> str:
-    """구역 제목의 언어별 표기. 일본어 요청에도 영어 정식 표기가 나간다 — 이 문법
-    글자에 일본어 별칭은 만들지 않았으므로(0355 T0009), 알려주는 표기도 영어다."""
+    """Per-language section titles. A Japanese request still gets the English canonical form:
+    no Japanese alias was created for this grammar token (0355 T0009), so English is shown."""
     return SECTION_HEADING if _normalize_notice_locale(locale) == "ko" else SECTION_HEADING_EN
 
 
@@ -529,33 +568,33 @@ _NOTICE: dict[str, dict[str, str]] = {
 
 
 def build_notice(result: dict, locale: str = "ko") -> str:
-    """거부 사유별 재작업 지시서.
+    """A rework instruction sheet per rejection reason.
 
-    오류 통보가 아니라 지시서인 것이 요점이다. "형식 오류입니다" 한 줄만 던지면
-    같은 것을 그대로 다시 제출한다. 어조는 단정이 아니라 추정으로 쓴다 — 실제
-    원인이 다를 수 있는데 단정하면 엉뚱한 곳을 고치게 된다.
+    The point is that it is an instruction sheet, not an error notice. A bare "format error"
+    line just gets the same thing resubmitted. The tone is tentative, not assertive: the
+    real cause may differ, and asserting it sends the worker to fix the wrong thing.
 
-    ``locale`` 은 안내문 전체의 언어를 정한다(T2/TR2). 구역 번호(``[1]``~``[5]``)와
-    사유 코드(``TRV-00N``)는 언어와 무관하게 그대로 남는다 — 번역 대상이 아니다.
+    ``locale`` sets the language of the whole notice (T2/TR2). Section numbers (``[1]``-``[5]``)
+    and reason codes (``TRV-00N``) stay as they are in every language — they are not translated.
     """
     loc = _normalize_notice_locale(locale)
     strings = _NOTICE[loc]
     codes: list[str] = result.get("codes") or []
     parts: list[str] = [strings["head"]]
 
-    # 1. 왜 반려인지
+    # 1. why it was rejected
     parts.append(strings["reason_heading"])
     for code in codes:
         parts.append(f"  - {code}: {_code_label(code, loc)}")
 
-    # 2. 어디서 작업했어야 하는지 — 사고의 대부분이 자기 위치를 몰라서 생기므로
-    #    이 두 줄의 효과가 가장 크다.
+    # 2. where the work should have happened — most accidents come from not knowing one's
+    #    own location, so these two lines carry the most weight.
     parts.append(strings["location_heading"])
     parts.append(strings["branch_label"].format(branch=result.get("branch") or strings["unavailable"]))
     parts.append(strings["worktree_label"].format(worktree=result.get("worktree") or strings["unavailable"]))
     parts.append(strings["location_note"])
 
-    # 3. 서버가 실제로 본 변경 목록
+    # 3. the change list the server actually saw
     parts.append(strings["observed_heading"].format(count=len(result.get("detected") or [])))
     parts.append(_bullet_list(result.get("detected") or [], loc))
     if result.get("unconfirmed"):
@@ -572,24 +611,24 @@ def build_notice(result: dict, locale: str = "ko") -> str:
         parts.append(strings["format_errors_heading"])
         parts.append(_bullet_list(result.get("format_errors") or [], loc))
 
-    # 4. 어떻게 다시 제출하는지
+    # 4. how to resubmit
     parts.append(strings["resubmit"].format(
         heading=_spelling_changed_files(loc), none=_spelling_none(loc),
     ))
 
-    # 5. 되돌리는 법 — 이게 없으면 원본 레포에 쓰레기가 남은 채 재제출만 반복된다.
+    # 5. how to undo it — without this, junk stays in the origin repo and only the resubmit repeats.
     if TRV_OUT_OF_SCOPE in codes or TRV_UNCONFIRMED in codes:
         parts.append(strings["revert"])
     return "\n".join(parts)
 
 
-# ── 문서 상세 조회 (D0004 §6) ───────────────────────────────────────────────
+# ── Document-detail lookup (D0004 §6) ───────────────────────────────────────
 
 def verdict_from_meta(meta) -> Optional[dict]:
-    """``documents.meta`` → 저장된 작업범위 검증 결과, 없으면 None.
+    """``documents.meta`` → the stored work-scope verdict, or None when absent.
 
-    meta 는 dialect 에 따라 TEXT(JSON 문자열)로도 dict 로도 올라오므로 둘 다 받는다.
-    검증 도입 이전의 TR 에는 이 키가 없고, 그때는 화면에서 영역 자체를 감춘다.
+    Depending on the dialect, meta arrives as TEXT (a JSON string) or as a dict, so both are
+    accepted. A TR predating the check has no such key, and then the screen hides the area.
     """
     if isinstance(meta, str):
         try:
@@ -603,28 +642,28 @@ def verdict_from_meta(meta) -> Optional[dict]:
 
 
 def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
-    """저장된 판정이 없는 문서를 위한 표시 전용 판정 (0390 TR0005 rev2).
+    """A display-only verdict for documents with no stored one (0390 TR0005 rev2).
 
-    ``meta['tr_scope']`` 는 제출된 그 순간에 한 번 계산돼 박히는 값이라, 검증
-    대상이 아니던 시절에 제출된 문서(예: TS 가 대상이 되기 전의 TS)에는 아예
-    키가 없다. 그런 문서에서 화면이 영역 자체를 감추면 "이 문서는 검증이
-    적용되지 않는 종류"인지 "검증을 안 받은 것"인지 사용자가 구분할 수 없다 —
-    사이드바에 [작업범위 검증]이 통째로 사라지는 것이 정확히 그 증상이다.
+    ``meta['tr_scope']`` is computed once at submission time and frozen, so a document
+    submitted while its type was not yet checked (a TS from before TS became a target) has
+    no key at all. If the screen then hides the whole area, the user cannot tell "this kind
+    of document is not checked" from "this one was never checked" — the work-scope card
+    vanishing entirely from the sidebar is exactly that symptom.
 
-    그래서 대상 타입(``MUTATING_STEP_TYPES``)이면 git 을 건드리지 않고 본문의
-    신고 목록만 읽어 ``evaluated: False`` 인 판정을 만들어 준다. 문서 상세 조회는
-    요청마다 불리므로 여기서 워크트리 대조(``evaluate``)를 다시 하지는 않는다 —
-    그것은 제출 시점의 기록이어야 하고, 조회 때마다 값이 달라져서도 안 된다.
+    So for a target type (``MUTATING_STEP_TYPES``) it reads only the body's declared list,
+    without touching git, and builds an ``evaluated: False`` verdict. Document detail is
+    fetched on every request, so the worktree comparison (``evaluate``) is NOT redone here:
+    it must remain a record of submission time, and must not change on every read.
 
-    rev3: 본문에 ``## 변경 파일`` 절이 없으면 rev2 는 None 을 돌려 카드를 감췄다.
-    그게 rev2 가 같은 사유로 또 반려된 이유다 — 검증 대상이 되기 전에 제출된 TS
-    문서에는 애초에 그 절을 쓰라는 안내가 실리지 않았으므로 절이 **없는 것이 정상**
-    이고, 결국 화면은 rev1 과 똑같이 비어 있었다. 지금은 절이 없어도 카드를 띄우고
-    ``scope_reason`` 으로 "절 자체가 없다"와 "절은 있고 대조만 못 했다"를 구분한다.
-    R0001 이 요구한 "사이드바에 작업범위 검증도 함께 제공"은 신고 목록이 있을 때만
-    제공하라는 뜻이 아니다.
+    rev3: when the body had no changed-files section, rev2 returned None and hid the card.
+    That is why rev2 was rejected again for the same reason: a TS submitted before it became
+    a target was never told to write that section, so **its absence is normal**, and the
+    screen ended up as empty as in rev1. Now the card is drawn even without the section, and
+    ``scope_reason`` separates "there is no section" from "the section exists but was not compared".
+    R0001's requirement to "offer the work-scope check in the sidebar too" does not mean
+    offering it only when a declared list exists.
 
-    ``body`` 가 None(본문 파일을 읽을 수 없음)이어도 같다 — 신고 0건으로 그린다.
+    The same holds when ``body`` is None (the body file is unreadable) — it draws zero declarations.
     """
     from modules.flow_gate.services import tool_registry
 
@@ -643,7 +682,7 @@ def unevaluated_verdict(type_code, body: Optional[str]) -> Optional[dict]:
     }
 
 
-# ── 작업 지시에 실리는 안내 (D0004 §3.9, 언어 전달 T2/TR2) ───────────────────
+# ── Guidance carried in the work instruction (D0004 §3.9, language plumbing T2/TR2) ──
 
 _TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {
     "ko": (
@@ -695,9 +734,9 @@ _TR_SECTION_GUIDE_TEMPLATES: dict[str, str] = {
 
 
 def tr_section_guide(locale: str = "ko") -> str:
-    """작업 지시에 실리는 TR 작성 안내문 (D0004 §3.9, T2/TR2 언어 전달).
+    """The TR authoring guidance carried in a work instruction (D0004 §3.9, T2/TR2).
 
-    NR0003 §1-4: 이전에는 이 안내문도 966자 반려 안내문과 함께 전부 한국어였다.
+    NR0003 §1-4: this notice, like the 966-character rejection notice, used to be all Korean.
     """
     loc = _normalize_notice_locale(locale)
     return _TR_SECTION_GUIDE_TEMPLATES[loc].format(
@@ -705,7 +744,7 @@ def tr_section_guide(locale: str = "ko") -> str:
     )
 
 
-# 하위호환: 기존 호출부(ko 고정 화면·문서)는 모듈 상수를 그대로 쓴다.
+# Backward compatibility: existing callers (ko-fixed screens and documents) keep using the module constant.
 TR_SECTION_GUIDE = tr_section_guide("ko")
 
 
@@ -717,7 +756,7 @@ _TR_SECTION_PLACEHOLDER_TEMPLATES: dict[str, str] = {
 
 
 def tr_section_placeholder(locale: str = "ko") -> str:
-    """새 TR ``content`` 자리에 미리 넣어 두는 빈 섹션 (T1, T2/TR2 언어 전달)."""
+    """The empty section pre-filled into a new TR's ``content`` (T1, T2/TR2 language plumbing)."""
     loc = _normalize_notice_locale(locale)
     return _TR_SECTION_PLACEHOLDER_TEMPLATES[loc].format(
         heading=_spelling_changed_files(loc), none=_spelling_none(loc),

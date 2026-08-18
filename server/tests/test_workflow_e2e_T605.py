@@ -53,7 +53,7 @@ def _patch_pipeline_service(monkeypatch, doc: dict):
     mock_docs.update = MagicMock(side_effect=_update)
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     # This helper tests workflow-state effects, not document-file validation.
-    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc: None)
+    monkeypatch.setattr(ps, "_require_document_body_for_approval", lambda doc, locale="ko": None)
 
     mock_events = MagicMock()
     mock_events.create = MagicMock(return_value={"id": 1})

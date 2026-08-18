@@ -79,7 +79,7 @@
               >
                 <AppIcon name="copy" /> {{ t('main.review_reject_dialog.copy_mention') }}
               </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (병행, not either/or). -->
+              <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
               <button
                 type="button"
                 class="rrd-dropdown-item"
@@ -249,11 +249,12 @@ defineExpose({ notifySaved, notifySaveFailed })
 }
 
 .modal-rrd {
-  /* 0419 T0006 (NR0003 후속 T 권고 1 / TR0005 rev2 시안): 480px 고정폭은 장문
-     반려 사유를 담기엔 너무 좁았다. .modal-box 자체는 이미 고정 height 없이
-     내용 기준이므로, 여기서는 폭을 넓히고 뷰포트 상한만 함께 걸어 둔다 —
-     WorkflowDecisionModal.vue의 height:85vh 고정 관용구는 반려 사유 길이와
-     무관하게 항상 최대치로 보여 "태평양" 반려를 낳았으므로 재사용하지 않았다. */
+  /* 0419 T0006 (NR0003 follow-up T recommendation 1 / TR0005 rev2 mockup): the 480px fixed width
+     was too narrow to hold a long rejection reason. .modal-box itself already has no fixed
+     height and sizes to content, so here the width is widened while only the viewport cap is
+     added alongside it — WorkflowDecisionModal.vue's height:85vh fixed idiom always displayed at
+     its maximum height regardless of the rejection reason's length, producing a "태평양"
+     rejection, so it was not reused. */
   width: 620px;
   max-width: 96vw;
   max-height: 78vh;

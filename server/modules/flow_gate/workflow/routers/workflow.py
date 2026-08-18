@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import anyio.to_thread
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -365,6 +365,7 @@ async def document_review_transition_rpc(
     action: str,
     body: DocumentBodyRequest,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ):
     # flowgate.default.0162 §1 — an optional git_action rides along on the AC
     # final approval. The pre-check runs BEFORE the approval so a violation
@@ -389,7 +390,7 @@ async def document_review_transition_rpc(
                 }},
             )
         try:
-            # 0275 T0007 (NR0003 원인 2): the git precheck/finalize run sync
+            # 0275 T0007 (NR0003 cause 2): the git precheck/finalize run sync
             # subprocess + DB work — keep them off the event loop.
             group_id = await anyio.to_thread.run_sync(
                 lambda: git_service.precheck_approve_git_action(
@@ -407,6 +408,7 @@ async def document_review_transition_rpc(
         action,
         DocumentTransitionRequest(comment=body.comment),
         current_user,
+        request,
     )
 
     if git_action is not None and group_id:
@@ -416,7 +418,7 @@ async def document_review_transition_rpc(
     return response
 
 
-# 0275 T0007 (NR0003 원인 2): sync DB/git work only — plain `def` runs in the
+# 0275 T0007 (NR0003 cause 2): sync DB/git work only — plain `def` runs in the
 # threadpool instead of blocking the event loop.
 @router.post("/documents/workflow/finalize")
 def finalize_workflow_endpoint(
@@ -671,6 +673,7 @@ async def document_review_transition_endpoint(
     action: str,
     body: DocumentTransitionRequest = DocumentTransitionRequest(),
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict[str, Any]:
     """Transition the document review state (doc_review_status column).
 
@@ -678,12 +681,19 @@ async def document_review_transition_endpoint(
     Permission: approve → document.approve, reject → document.reject, mark_revised → document.update
     M026 §8-1.
     """
-    # 0275 T0007 (NR0003 원인 2): the transition + AC cascade are sync DB/git
+    # 0275 T0007 (NR0003 cause 2): the transition + AC cascade are sync DB/git
     # work — run them in the threadpool so a slow transition cannot stall the
     # event loop. Only the SSE broadcast below needs the loop; HTTPExceptions
     # raised inside the closure propagate unchanged through run_sync.
     def _transition_sync():
         user_permissions = _get_user_permissions(current_user)
+        # T0009 task 4: pipeline_service's approval-rejection messages (empty body /
+        # "not the current workflow head") became ko/en/ja dictionaries, and this is the
+        # human approve/reject path — the one surface where a reviewer actually reads
+        # them. Without this hop the dictionary would exist with nothing selecting a
+        # branch. `request` is optional (older tests and the git-action RPC call this
+        # function directly), and an absent header keeps the previous "ko".
+        locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
 
         # Capture the pre-transition state for SSE emission
         prev_doc = db_docs.get_by_id(doc_id)
@@ -699,6 +709,7 @@ async def document_review_transition_endpoint(
                 actor_user_id=current_user["user_id"],
                 user_permissions=user_permissions,
                 comment=body.comment,
+                locale=locale,
             )
         except ValueError as exc:
             detail = str(exc)
@@ -766,11 +777,11 @@ async def update_rejection_reason_endpoint(
 ) -> dict[str, Any]:
     """Correct the reason text of the document's most recent rejection.
 
-    0419 T0006 (NR0003 후속 T 권고 4): this is a CORRECTION of the latest
+    0419 T0006 (NR0003 follow-up-T recommendation 4): this is a CORRECTION of the latest
     rejection_history entry's wording, not a new rejection — it overwrites that
     entry's `reason` in place and appends to its `corrections` audit trail
     (previous_reason/corrected_at/corrected_by) instead of appending a new
-    top-level history item, so "반려 N회" does not grow just because the
+    top-level history item, so the "rejected N times" count does not grow just because the
     wording was fixed. Only reachable while the document is currently
     'rejected'; a stale/disposed/AI-running document is rejected with 409.
     Permission: document.reject
@@ -871,7 +882,7 @@ async def register_document_result_endpoint(
     from modules.flow_gate.db.connection import now_iso as _now_iso
     from modules.flow_gate.db import workflow_sequences as _db_wseq
 
-    # 0275 T0007 (NR0003 원인 2): permission check, result registration and the
+    # 0275 T0007 (NR0003 cause 2): permission check, result registration and the
     # auto submit transition are sync DB work — run them in the threadpool so
     # they cannot stall the event loop. Only the SSE broadcast below needs the
     # loop; HTTPExceptions raised inside the closure propagate through run_sync.

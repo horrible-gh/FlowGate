@@ -263,7 +263,7 @@
 
           <!-- Conflict resolution. 0182 NR0003 §6 introduced the chunk workflow;
                0212 T0009 replaced the compacted in-house overlay with the SAME
-               shared 1180×820 resolver dialog (0207 시안 A) the finalize panel
+               shared 1180×820 resolver dialog (0207 mockup A) the finalize panel
                uses: file sidebar, chunk chips/navigation, AI assist strip,
                common-block folding, font-size controls. Submits resolve/abort
                against the same backend endpoints as before. -->
@@ -360,7 +360,7 @@ const aiProviderStore = useAiProviderStore()
 // 0331 NR0005 §4.1: this header panel is the third finalize surface. It used to
 // offer only three of the actions, so work that could be finished from the
 // document panel could not be finished from here. Ordered like the approved v4
-// axis reads top-to-bottom (머지 → 커밋 → 대기, push variant first).
+// axis reads top-to-bottom (merge → commit → wait, push variant first).
 const ACTIONS = ['merge', 'merge_only', 'commit_push', 'commit_only', 'push', 'wait'] as const
 
 interface Slot {
@@ -435,7 +435,7 @@ const pendingFinalize = ref<{
 
 const baseDirtyFiles = computed(() => status.value?.base_dirty?.files ?? [])
 // A park from base_untracked_conflict must NOT open the tracked-dirty alert
-// below (its copy and its "병합 재시도" button both assume a base_dirty park) —
+// below (its copy and its merge-retry button both assume a base_dirty park) —
 // the untracked section further down already carries that park's UI.
 const showBaseDirtySection = computed(
   () => baseDirtyFiles.value.length > 0 ||
@@ -642,7 +642,7 @@ async function fetchStatus() {
     return
   }
   try {
-    // 0282 NR0003 발견 3: shared store fetch — concurrent callers coalesce onto
+    // 0282 NR0003 finding 3: shared store fetch — concurrent callers coalesce onto
     // one git/status request. The §2.6-a badge sync (trigger 1/4) moved into the
     // store fetch itself.
     const next = (await explorerStore.fetchGitStatus(
@@ -747,7 +747,7 @@ function handleBaseDirty(
   if (err?.code === 'base_untracked_conflict') {
     const blocked: string[] = Array.isArray(err.details?.files) ? err.details.files : []
     untrackedPicked.value = blocked
-    // 0350 T0004 (NR0003 §1 발견 4): park the original finalize so committing or
+    // 0350 T0004 (NR0003 §1 finding 4): park the original finalize so committing or
     // deleting the blocked paths below can resume it automatically — mirrors the
     // base_dirty park just below, but keyed off the untracked file set instead of
     // the tracked one.

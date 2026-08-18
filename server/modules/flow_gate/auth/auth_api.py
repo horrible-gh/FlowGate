@@ -13,7 +13,7 @@ from .token_store import blacklist_token,get_refresh_token,revoke_refresh_token,
 from .session_store import create_request_session,create_session,get_session,list_active_sessions,revoke_all_sessions,revoke_other_sessions,revoke_session,touch_session
 from .totp_service import TOTP_LOCK_MAX_ATTEMPTS,TOTP_LOCK_MINUTES,encrypt_totp_secret,generate_totp_secret,get_totp_provisioning_uri,verify_totp_code
 router=APIRouter()
-# 0275 T0005 (NR0003 원인 2): every handler here does sync DB work (and login/
+# 0275 T0005 (NR0003 cause 2): every handler here does sync DB work (and login/
 # password_change run bcrypt, ~100ms+ of CPU), so they are plain `def` — FastAPI
 # runs them in the threadpool instead of blocking the event loop.
 def _now_utc():return datetime.now(timezone.utc)

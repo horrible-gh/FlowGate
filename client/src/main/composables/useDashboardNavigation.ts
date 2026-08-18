@@ -36,7 +36,7 @@ export function useDashboardNavigation() {
       if (!nodes) nodes = await explorerStore.fetchGroupTree(projectId, true)
 
       if (navigation.kind === 'document' && navigation.doc_id) {
-        // 0316 T0004 / NR0003 권고 1 — the reveal+select (tree fetch, force-refetch on
+        // 0316 T0004 / NR0003 recommendation 1 — the reveal+select (tree fetch, force-refetch on
         // miss, ancestor expansion, selection) now lives in the explorer store as the
         // single implementation the AI-work open paths and the SSE select intent reuse.
         const node = await explorerStore.revealDocInGroupTree(projectId, navigation.doc_id)

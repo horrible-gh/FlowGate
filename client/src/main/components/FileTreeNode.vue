@@ -133,7 +133,7 @@
       <ContextMenuItem v-if="!isDeleted" icon="link" @click="copyLink">
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
-      <!-- 0327 T0004 (NR0003 권고 3): downloading is a read and is offered in every
+      <!-- 0327 T0004 (NR0003 recommendation 3): downloading is a read and is offered in every
            view; a group context downloads that group's worktree copy, not the base one. -->
       <ContextMenuItem v-if="!isDeleted" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
@@ -196,7 +196,7 @@ const props = defineProps<{
   allNodes: FileNode[]
   projectId: string
   // 0186 P0005 — a structurally read-only tree: suppress create / upload.
-  // 0327 T0004 (B0001 / NR0003 권고 1·5) — this no longer means "a group is selected".
+  // 0327 T0004 (B0001 / NR0003 recommendation 1·5) — this no longer means "a group is selected".
   // A group whose worktree is live accepts create/upload straight into that worktree,
   // so only groups WITHOUT one (finalized, disposed, never provisioned) are read-only.
   readonly?: boolean
@@ -206,7 +206,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   open: [node: FileNode]
   // 0326 R0001 — diff view, deliberately a SEPARATE event from `open`: the editor
-  // entry points (double-click / Enter / 우클릭 "열기") keep emitting `open`.
+  // entry points (double-click / Enter / right-click "열기") keep emitting `open`.
   'open-diff': [node: FileNode]
   'tree-changed': []
 }>()
@@ -261,7 +261,7 @@ const isSelected = computed(() => explorerStore.selectedFileNodeId === props.nod
 
 // 0327 T0004: delete follows the same rule as create/upload — available wherever the
 // tree is writable, which means the base checkout and any group with a live worktree.
-// (NR0003 권고 4 kept it blocked on the premise that delete always hit the BASE
+// (NR0003 recommendation 4 kept it blocked on the premise that delete always hit the BASE
 // checkout and so could trip the finalize E3 guard; resolved against the group's own
 // worktree it never touches base, so that premise no longer holds.) Read-only groups —
 // no worktree — keep hiding it.
@@ -300,10 +300,10 @@ const isDirty = computed(() => {
 })
 
 
-// 0308 T0004 (NR0003 권고 2·3·5) — new (untracked) file marker, a channel parallel to
+// 0308 T0004 (NR0003 recommendation 2·3·5) — new (untracked) file marker, a channel parallel to
 // isDirty. base_dirty deliberately excludes untracked files (folding them in would widen
 // the E3 merge-finalize guard — git_service.py), so new files need their own store state.
-// 0315 TR (NR0003 권고 4) — the read-only group-branch view now surfaces it too: the
+// 0315 TR (NR0003 recommendation 4) — the read-only group-branch view now surfaces it too: the
 // checkout-free tree read used to show committed files only, so a worker's uncommitted
 // new files were invisible until finalize (B0001). The group tree read now returns a
 // worktree_untracked channel that drives this badge, mirroring the base-checkout one.
@@ -446,7 +446,7 @@ async function downloadNode() {
     const endpoint = isFile ? 'download' : 'download-zip'
     const fallbackName = isFile ? props.node.name : props.node.name + '.zip'
     const url = `/api/v1/projects/${encodeURIComponent(projectId)}/files/${endpoint}`
-    // 0327 T0004 (NR0003 권고 3): in a group view the bytes must come from that
+    // 0327 T0004 (NR0003 recommendation 3): in a group view the bytes must come from that
     // group's worktree — a base-checkout read would hand back a different file.
     const res = await downloadBlobRequest(url, {
       path: props.node.path,
@@ -474,7 +474,7 @@ async function downloadNode() {
 }
 
 const deleteConfirmTitle = computed(() => t('main.file_tree_node.delete_confirm_title'))
-// NR0003 권장 6: the confirm text names the target and, for a folder, spells out that the
+// NR0003 recommendation 6: the confirm text names the target and, for a folder, spells out that the
 // deletion is recursive and irreversible. The danger styling comes from ConfirmModal.
 const deleteConfirmMessage = computed(() =>
   props.node.type === 'folder'
@@ -482,7 +482,7 @@ const deleteConfirmMessage = computed(() =>
     : t('main.file_tree_node.delete_confirm_file', { path: props.node.path }),
 )
 
-// NR0003 권장 6·9: replace the native window.confirm with the shared danger-styled
+// NR0003 recommendation 6·9: replace the native window.confirm with the shared danger-styled
 // ConfirmModal. deleteNode only opens the modal; the request runs from confirmDelete.
 function deleteNode() {
   if (!props.projectId || deleting.value) return
@@ -490,7 +490,7 @@ function deleteNode() {
   showDeleteConfirm.value = true
 }
 
-// NR0003 권장 9: map the server's distinct error codes to translated, user-facing toasts.
+// NR0003 recommendation 9: map the server's distinct error codes to translated, user-facing toasts.
 function deleteErrorMessage(e: any): string {
   const code = e?.response?.data?.error?.code
   const status = e?.response?.status
@@ -510,7 +510,7 @@ function deleteErrorMessage(e: any): string {
   return extractApiErrorMessage(e, t('main.file_tree_node.delete_failed'))
 }
 
-// NR0003 권장 7: after a successful delete, close open editor tabs and clear selection for
+// NR0003 recommendation 7: after a successful delete, close open editor tabs and clear selection for
 // the deleted node AND — when a folder is deleted — for everything under it, so a deleted
 // file's tab, the selected node, and the pending-select path can never point at a gone path.
 function cleanupDeletedRefs() {
@@ -548,7 +548,7 @@ async function confirmDelete() {
       { data: { path: props.node.path, type: props.node.type, group_id: props.groupId ?? undefined } },
     )
     cleanupDeletedRefs()
-    // NR0003 권장 8: the delete dirtied the base checkout — refresh the base-dirty markers and
+    // NR0003 recommendation 8: the delete dirtied the base checkout — refresh the base-dirty markers and
     // the Git finalize warning from the returned status, mirroring the src-content save flow.
     const baseGit = res?.data?.base_git
     if (baseGit) {
@@ -557,7 +557,7 @@ async function confirmDelete() {
     explorerStore.invalidateProject(props.projectId)
     emit('tree-changed')
   } catch (e: any) {
-    // NR0003 필수 테스트: on failure keep the tree intact (no invalidate/emit) and toast.
+    // NR0003 required test: on failure keep the tree intact (no invalidate/emit) and toast.
     showToast(deleteErrorMessage(e), 'danger')
   } finally {
     deleting.value = false

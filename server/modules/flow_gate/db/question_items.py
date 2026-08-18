@@ -67,7 +67,7 @@ def list_by_doc(doc_id: str) -> list[dict]:
 
 
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:
-    """Flattened question + answer rows for a document (ment 조립 데이터 제공자, L0007 §6).
+    """Flattened question + answer rows for a document (the mention-assembly data provider, L0007 §6).
 
     Each row: {seq, title, body, asker_kind, options, author_kind, answer_body,
     answer_selected_options}. A question with no answer yields one row with
