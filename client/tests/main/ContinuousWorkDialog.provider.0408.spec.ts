@@ -121,18 +121,36 @@ describe('ContinuousWorkDialog stored provider states (0408)', () => {
 
     expect([...selects()].map(select => select.value)).toEqual(['default', 'default', 'default'])
     expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
-    expect(document.querySelector('.cwd-provider-summary')?.textContent)
-      .toContain(i18n.global.t('main.continuous_work.provider_run_summary', { name: 'Default Provider' }))
-    expect(document.querySelector('.cwd-provider-pin-badge')?.textContent)
-      .toContain(i18n.global.t('main.continuous_work.provider_pin_badge'))
+    // 0442 B0001: 프로바이더 탭은 셀렉터와 단계 행만 남는다 — 실행 요약 줄도, 고정 배지도,
+    // 해제 단추도 렌더링되지 않는다.
+    expect(document.querySelector('.cwd-provider-row')).not.toBeNull()
+    expect(document.querySelector('.cwd-provider-summary')).toBeNull()
+    expect(document.querySelector('.cwd-provider-pin-badge')).toBeNull()
+    expect(document.querySelector('.cwd-provider-pin-clear')).toBeNull()
 
     selects()[0].value = 'other'
     selects()[0].dispatchEvent(new Event('change'))
     await flushPromises()
     expect((await confirm(wrapper)).providerOverrides).toEqual({ 1: 'other' })
+  })
 
-    ;(document.querySelector('.cwd-provider-pin-clear') as HTMLButtonElement).click()
-    expect(wrapper.emitted('clear-provider-pin')).toHaveLength(1)
+  // 0442 B0001 재반려 2 ("예전처럼 되돌리라고"): 없앤 문구가 어떤 형태로도 돌아오면 안 된다.
+  // 대조군은 고정된 공급자가 여전히 모든 단계 셀렉터에 실제로 적용된다는 것이다.
+  it('leaves no run-summary or pin copy in the Korean provider tab', async () => {
+    i18n.global.locale.value = 'ko'
+    mountDialog('default', items, true)
+    await flushPromises()
+    await openProviders()
+
+    const panel = document.querySelector('.cwd-provider-block') as HTMLElement
+    expect(panel).not.toBeNull()
+    expect(panel.querySelector('.cwd-provider-select')).not.toBeNull()
+    expect([...selects()].map(select => select.value)).toEqual(['default', 'default', 'default'])
+
+    expect(panel.textContent).not.toContain('이번 실행에 사용할 공급자')
+    expect(panel.textContent).not.toContain('이번 실행에 고정')
+    expect(panel.textContent).not.toContain('고정 해제')
+    expect(panel.textContent).not.toContain('저장된 단계 값을 따름')
   })
 
   it('sends only edits and restores untouched state when the stored value is reselected', async () => {
