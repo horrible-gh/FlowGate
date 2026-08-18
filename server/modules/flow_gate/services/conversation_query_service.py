@@ -251,6 +251,13 @@ def list_turns(
     picked, truncated_by, more = apply_budget(rows, effective_limit)
     if backward:
         picked = list(reversed(picked))  # the wire is always seq-ascending
+        turn_store.record_backward_page_audit(
+            doc_id=doc_id,
+            participant_key=resolved["participant_key"],
+            actor_kind=str(actor.get("kind") or resolved["speaker"]),
+            before_seq=int(before_seq),
+            returned_count=len(picked),
+        )
 
     next_after_seq: Optional[int] = None
     prev_before_seq: Optional[int] = None

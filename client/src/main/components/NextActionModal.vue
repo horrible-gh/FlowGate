@@ -57,6 +57,16 @@
                 class="nad-sel-tag tag-extra"
               >
                 {{ docPath }}
+                <span
+                  v-if="conversationReferenceStatus(docPath)"
+                  class="nad-conversation-ref-status"
+                  :data-live-content="conversationReferenceStatus(docPath)?.liveContent"
+                >
+                  {{ conversationReferenceStatus(docPath)?.turnCount }} {{ t('main.next_action_modal.conversation_turns_unit') }}
+                  · {{ t(conversationReferenceStatus(docPath)?.liveContent
+                    ? 'main.next_action_modal.conversation_live_content'
+                    : 'main.next_action_modal.conversation_snapshot_content') }}
+                </span>
                 <span class="tag-remove" :title="t('main.next_action_modal.remove_selection')" @click="removeSelectedDoc(docPath)">
                   <AppIcon name="x" />
                 </span>
@@ -233,6 +243,12 @@ import AppIcon from '@shared/AppIcon.vue'
 interface ModuleItem { module_id: string; title: string }
 interface GroupItem  { group_id: string; title?: string }
 interface DocItem    { doc_id: string; type_code?: string; type?: string; title: string; seq?: number }
+interface ConversationReferenceStatus { turnCount: number; liveContent: boolean }
+interface PredecessorItem {
+  doc_id: string
+  type_code?: string
+  conversation?: { turn_count?: number; live_content?: boolean }
+}
 
 const props = defineProps<{
   visible: boolean
@@ -280,6 +296,7 @@ const currentModule = ref('')
 const currentGroup  = ref('')
 const searchQuery   = ref('')
 const extraSelectedDocs = ref<Set<string>>(new Set())
+const conversationReferenceStatuses = ref<Record<string, ConversationReferenceStatus>>({})
 const proceedOpen   = ref(false)
 const nextTypeLabel = computed(() => {
   if (props.nextTypeCode === 'none') return t('main.next_action_modal.none_module_label')
@@ -335,6 +352,10 @@ function shortId(id: string): string {
 
 function isDocSelected(docId: string): boolean {
   return extraSelectedDocs.value.has(formatDocId(docId))
+}
+
+function conversationReferenceStatus(docPath: string): ConversationReferenceStatus | undefined {
+  return conversationReferenceStatuses.value[formatDocId(docPath)]
 }
 
 function moduleDisplayLabel(mod: ModuleItem): string {
@@ -609,7 +630,17 @@ async function autoCheckPredecessors() {
       `/api/v1/documents/${encodeURIComponent(props.docRef)}/predecessors`,
       { limit: 2 },
     )
-    predIds = (res.data as any)?.predecessor_doc_ids ?? []
+    const data = res.data as any
+    predIds = data?.predecessor_doc_ids ?? []
+    const statuses: Record<string, ConversationReferenceStatus> = {}
+    for (const predecessor of (data?.predecessors ?? []) as PredecessorItem[]) {
+      if (predecessor.type_code !== 'CH' || !predecessor.conversation) continue
+      statuses[formatDocId(predecessor.doc_id)] = {
+        turnCount: Number(predecessor.conversation.turn_count ?? 0),
+        liveContent: predecessor.conversation.live_content === true,
+      }
+    }
+    conversationReferenceStatuses.value = statuses
   } catch {
     // Non-fatal: fall back to self + type-aware context already checked.
     return
@@ -659,6 +690,7 @@ watch(
     }
     // Reset state
     extraSelectedDocs.value = new Set((props.initialSelectedDocs ?? []).map(formatDocId))
+    conversationReferenceStatuses.value = {}
     searchQuery.value = ''
     modules.value = []
     groups.value = []
@@ -817,6 +849,12 @@ watch(
   background: var(--bg);
   color: var(--text-s);
   border: 1px solid var(--border-d);
+}
+.nad-conversation-ref-status {
+  color: var(--primary);
+  font-family: inherit;
+  font-size: .65rem;
+  font-weight: 700;
 }
 .tag-lock-icon {
   font-size: .6rem;

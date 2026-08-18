@@ -270,6 +270,20 @@ def advance_participant_cursor(
         )
     return get_participant(doc_id, participant_key)
 
+
+def record_backward_page_audit(
+    *, doc_id: str, participant_key: str, actor_kind: str,
+    before_seq: int, returned_count: int,
+) -> None:
+    """Append an audit fact for a scroll-up read without touching participant cursors."""
+    get_store()._execute(
+        "INSERT INTO conversation_backward_page_audit "
+        "(doc_id, participant_key, actor_kind, before_seq, returned_count, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [doc_id, participant_key, actor_kind, int(before_seq), int(returned_count), now_iso()],
+    )
+
+
 def list_ch_docs_needing_migration(limit: Optional[int] = None) -> list[dict]:
     """CH documents whose migration is not yet ``migrated`` (L0004 §2-14, bulk driver).
 
