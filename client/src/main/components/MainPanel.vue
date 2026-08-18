@@ -89,7 +89,7 @@
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
             :return-targets="getReturnTargets(tab.id)"
-            @sequence-updated="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
+            @sequence-updated="() => { docHeaderRefs[tab.id]?.fetchDoc?.(tab.id); workPlanEditorRefs[tab.id]?.fetchPlan?.() }"
             @decide-workflow="openWorkflowDecisionForActive"
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"
@@ -238,6 +238,7 @@
                conversation view. flowgate.default.0395 D0007 §6.4. -->
           <WorkPlanEditor
             v-else-if="tab.typeCode === 'WP'"
+            :ref="(el) => bindActiveRef(workPlanEditorRefs, tab.id, el)"
             :doc-id="tab.id"
             :project-id="tab.projectId ?? null"
             :read-only="aiRunDocumentLocked"
@@ -1552,6 +1553,7 @@ const docHeaderRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
 const textViewerRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
+const workPlanEditorRefs = reactive<Record<string, any>>({})
 const qStatuses = reactive<Record<string, string>>({})
 const headerRevision = ref(0)
 

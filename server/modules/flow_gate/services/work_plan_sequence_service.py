@@ -23,6 +23,7 @@ from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
 from modules.flow_gate.services.workflow_decision_service import (
     AUTO_REPORT_MAP,
+    plan_revision_freshness,
     provider_view_of,
     resolve_row_provider,
 )
@@ -441,6 +442,10 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             note=pair_note,
             note_source=pair_note_source,
             origin="auto",
+            # 0434 T0004 F1/F2: automatic reports belong to the same poured plan
+            # revision as their instruction, so they participate in freshness checks too.
+            source_doc_id=row.get("source_doc_id"),
+            source_revision_no=row.get("source_revision_no"),
             provider_id=provider_id,
             provider_display_name=provider_name,
             status=status,
@@ -581,7 +586,7 @@ def build_notifications(
 
 # ── P0013 ① — the whole response ─────────────────────────────────────────────
 
-def _public_row(row: dict, provider_view: dict) -> dict:
+def _public_row(row: dict, provider_view: dict, plan_doc: dict) -> dict:
     """The row shape the dialog receives. ``item_seq`` is deliberately absent: the save
     renumbers every row, and the note rides on the row itself (L0011 §2.11)."""
     return {
@@ -596,6 +601,9 @@ def _public_row(row: dict, provider_view: dict) -> dict:
         "plan_key": row.get("plan_key"),
         "source_doc_id": row.get("source_doc_id"),
         "source_revision_no": row.get("source_revision_no"),
+        **plan_revision_freshness(
+            row.get("source_doc_id"), row.get("source_revision_no"), known_plan_doc=plan_doc
+        ),
         **resolve_row_provider(
             row.get("provider_id"), row.get("provider_display_name"), provider_view
         ),
@@ -661,7 +669,7 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         "workflow_doc_id": owner_doc_id,
         "mode": mode,
         "plan_step_count": plan_step_count,
-        "rows": [_public_row(row, provider_view) for row in all_rows],
+        "rows": [_public_row(row, provider_view, doc) for row in all_rows],
         "row_count_change": row_count_change(
             mode, locked_rows, pending_before, pour_rows, wp_item_seq,
         ),

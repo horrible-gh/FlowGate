@@ -177,12 +177,13 @@ def test_append_carries_plan_notes_and_their_origin(wired):
     ]
     assert {r["source_doc_id"] for r in poured if r["origin"] == "plan"} == {WP_DOC_ID}
     assert {r["source_revision_no"] for r in poured if r["origin"] == "plan"} == {1}
-    # 0408 M0019 재반려 2: the automatic row carries the note the plan wrote for TR#1 — the
-    # step it IS. It still names no plan step of its own, because no plan step made the row.
+    # 0434 T0004 F1/F2: the automatic report keeps its own planned note and also inherits
+    # the plan revision provenance, so it can be marked stale together with its instruction.
     assert poured[-1] == {
         "type": "TR", "label": poured[-1]["label"], "status": "pending", "locked": False,
         "poured": True, "note": "완료 후 확인", "note_source": "step", "origin": "auto",
-        "plan_key": None, "source_doc_id": None, "source_revision_no": None,
+        "plan_key": None, "source_doc_id": WP_DOC_ID, "source_revision_no": 1,
+        "source_freshness": "current", "source_current_revision_no": 1,
         "provider_id": None, "provider_display_name": None, "provider_registered": None,
     }
 
@@ -429,8 +430,8 @@ def test_saving_stores_the_note_and_where_the_row_came_from(save_wired):
             for row in inserted] == [
         ("P", "레거시 API 호환 확인", WP_DOC_ID, 1),
         ("T", "테스트 포함 구현", WP_DOC_ID, 1),
-        # The report row the server attaches itself carries neither.
-        ("TR", "", None, None),
+        # 0434 T0004 F1: worker-shaped edits omit reports; the rebuilt row keeps the handoff.
+        ("TR", "테스트 포함 구현", WP_DOC_ID, 1),
     ]
 
 

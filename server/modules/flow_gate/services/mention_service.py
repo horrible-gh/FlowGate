@@ -732,25 +732,25 @@ _SEQUENCE_EDIT_METADATA_COPY: dict[str, dict[str, str]] = {
     "ko": {
         "json_intro": "아래 JSON 배열은 PATCH items에 그대로 넣을 수 있는 대기 행입니다.",
         "rules": (
-            "손대지 않은 행은 받은 note/source_doc_id/source_revision_no를 글자 그대로 "
+            "손대지 않은 지시/일반 행은 받은 note/source_doc_id/source_revision_no를 글자 그대로 "
             "되돌리십시오. 타입을 바꾸거나 새로 넣은 행은 세 값을 비우고, 지우는 행은 "
-            "보내지 마십시오. NR/TR/TSR 레포트 행은 서버가 자동으로 붙이므로 보내지 마십시오."
+            "보내지 마십시오. NR/TR/TSR 레포트 행은 보내지 마십시오. 서버가 바로 앞 지시 행의 note/source_doc_id/source_revision_no를 자동으로 이어 붙이므로 되돌릴 필요가 없습니다."
         ),
     },
     "ja": {
         "json_intro": "次の JSON 配列は PATCH の items にそのまま入れられる保留行です。",
         "rules": (
-            "変更しない行は受け取った note/source_doc_id/source_revision_no を文字どおり "
+            "変更しない指示行と通常行は受け取った note/source_doc_id/source_revision_no を文字どおり "
             "返してください。タイプを変えた行と新規行では3値を空にし、削除行は送らないで "
-            "ください。NR/TR/TSR レポート行はサーバーが自動追加するため送らないでください。"
+            "ください。NR/TR/TSR レポート行は送らないでください。直前の指示行の note/source_doc_id/source_revision_no はサーバーが自動的に引き継ぐため、返す必要はありません。"
         ),
     },
     "en": {
         "json_intro": "The JSON array below can be returned unchanged as PATCH items.",
         "rules": (
-            "Return note/source_doc_id/source_revision_no byte-for-byte for untouched rows. "
+            "Return note/source_doc_id/source_revision_no byte-for-byte for untouched instruction and ordinary rows. "
             "Clear all three for retyped or newly inserted rows, omit deleted rows, and omit "
-            "NR/TR/TSR report rows because the server adds them automatically."
+            "NR/TR/TSR report rows. The server carries all three values forward from the preceding instruction row, so report-row values do not need to be returned."
         ),
     },
 }

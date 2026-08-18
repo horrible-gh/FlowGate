@@ -301,7 +301,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_dry_run": "본문에 \"dry_run\": true 를 넣으면 등록 없이 검증만 합니다. 토큰은 소비되지 않습니다.",
         "submit_encoding_guard": "본문이 깨진 글자(????)로 보이면 등록이 거절됩니다. 계산 순서: 먼저 본문을 UTF-8 파일로 쓰고, 그 파일에서 글자 수(body_chars)와 sha256(body_sha256)을 구한 다음 요청을 만드세요. 지문이 맞으면 그것으로 판정하고, 안 보내면 물음표 비율로 판정합니다. 지문이 어긋나거나 정말로 이대로 보내야 하면 force_encoding_reason 에 사유(공백 제외 10자 이상)를 적으세요.",
         "submit_work_plan": "작업계획의 content에는 design_template/WP 형식의 정본 JSON만 넣으십시오. 새 작업계획을 등록할 때 제목은 title, 붙일 문서는 prev_doc_id 요청 항목으로 보내며 JSON 본문에 넣지 마십시오. 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
-        "submit_workflow_sequence_edit": "손대지 않은 행은 받은 note/source_doc_id/source_revision_no를 그대로 보내고, 타입을 바꾸거나 새로 넣은 행은 세 값을 비우며, 지운 행과 서버가 자동으로 붙이는 NR/TR/TSR 행은 보내지 마십시오.",
+        "submit_workflow_sequence_edit": "손대지 않은 지시/일반 행은 받은 note/source_doc_id/source_revision_no를 그대로 보내고, 타입을 바꾸거나 새로 넣은 행은 세 값을 비우며, 지운 행과 NR/TR/TSR 행은 보내지 마십시오. 레포트 행의 세 값은 서버가 바로 앞 지시 행에서 자동으로 이어 붙입니다.",
     },
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
@@ -314,7 +314,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_dry_run": "Adding \"dry_run\": true to the body validates the submission without registering anything. The token is not consumed.",
         "submit_encoding_guard": "A body that looks corrupted (mojibake '?'s) is rejected. Calculation order: write the body to a UTF-8 file first, compute its character count (body_chars) and sha256 (body_sha256) from that file, then build the request. A matching fingerprint is trusted over the question-mark heuristic; if none is sent, the heuristic runs instead. If the fingerprint mismatches, or you must send it as-is, put a reason (>=10 non-whitespace chars) in force_encoding_reason.",
         "submit_work_plan": "The work-plan content must contain only canonical JSON in the design_template/WP format. When registering a new work plan, send the title in the title request field and its attachment target in prev_doc_id; do not put either in the JSON body. Derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
-        "submit_workflow_sequence_edit": "Return note/source_doc_id/source_revision_no unchanged for untouched rows; clear all three for retyped or newly inserted rows; omit deleted rows and the NR/TR/TSR rows the server adds automatically.",
+        "submit_workflow_sequence_edit": "Return note/source_doc_id/source_revision_no unchanged for untouched instruction and ordinary rows; clear all three for retyped or newly inserted rows; omit deleted and NR/TR/TSR rows. The server carries all three report-row values forward from the preceding instruction row.",
     },
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
@@ -327,7 +327,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
         "submit_dry_run": "本文に \"dry_run\": true を入れると、登録せず検証のみ行います。トークンは消費されません。",
         "submit_encoding_guard": "本文が文字化け(????)に見える場合、登録は拒否されます。計算順序: まず本文をUTF-8ファイルとして書き出し、そのファイルから文字数(body_chars)とsha256(body_sha256)を求めてからリクエストを作成してください。フィンガープリントが一致すればそれを優先し、送らなければ疑問符比率で判定します。フィンガープリントが一致しない場合、またはどうしてもそのまま送る必要がある場合は、force_encoding_reason に理由(空白を除き10文字以上)を記入してください。",
         "submit_work_plan": "作業計画の content には design_template/WP 形式の正規 JSON だけを入れてください。新しい作業計画を登録する場合、タイトルは title、紐付け先文書は prev_doc_id リクエスト項目で送り、JSON 本文には入れないでください。数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
-        "submit_workflow_sequence_edit": "変更しない行は受け取った note/source_doc_id/source_revision_no をそのまま返し、タイプを変えた行と新規行では3値を空にし、削除行とサーバーが自動追加する NR/TR/TSR 行は送らないでください。",
+        "submit_workflow_sequence_edit": "変更しない指示行と通常行は受け取った note/source_doc_id/source_revision_no をそのまま返し、タイプを変えた行と新規行では3値を空にし、削除行と NR/TR/TSR 行は送らないでください。レポート行の3値はサーバーが直前の指示行から自動的に引き継ぎます。",
     },
 }
 
