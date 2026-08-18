@@ -605,13 +605,18 @@ function trScopeSlice(key: (typeof trScopeAllKeys)[number]): TrScopePathSlice {
   return props.trScope?.[key] ?? emptyTrScopeSlice
 }
 
+const trScopeAutoExpanded = computed(() =>
+  !!props.trScope
+  && (props.trScope.verdict !== 'pass' || (props.trScope.codes?.length ?? 0) > 0),
+)
+
 watch(
-  () => props.trScope,
-  (v) => {
+  [() => props.docId, trScopeAutoExpanded],
+  ([, expanded]) => {
     // 경고·거부이거나 사유 코드가 하나라도 있으면 펼친다. 관측 단계에서는 통과로
     // 기록되지만 사유는 남으므로, 그때도 펼쳐서 운영자가 단계를 올리기 전에 무엇이
     // 걸릴지 미리 볼 수 있게 한다.
-    sectionCollapsed.tr_scope = !(v && (v.verdict !== 'pass' || (v.codes?.length ?? 0) > 0))
+    sectionCollapsed.tr_scope = !expanded
   },
   { immediate: true },
 )

@@ -170,4 +170,61 @@ describe('DocInfoPanel TR 작업범위 검증 영역', () => {
     expect(wrapper.find('.dip-trs-unevaluated').exists()).toBe(false)
     expect(wrapper.text()).toContain('Detected files (0)')
   })
+
+  it('동일 의미의 새 trScope 객체가 사용자의 펼침 상태를 덮어쓰지 않는다', async () => {
+    const value = { verdict: 'pass', stage: 'observe', codes: [] } as TrScopeVerdict
+    const wrapper = mountPanel(value)
+    await flushPromises()
+    const section = wrapper.find('.dip-section:has(.dip-trs-head)')
+    const toggle = section.find('.dip-sec-toggle')
+
+    expect(section.classes()).toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    await toggle.trigger('click')
+    expect(section.classes()).not.toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await wrapper.setProps({ trScope: { ...value, codes: [] } })
+    expect(section.classes()).not.toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+  })
+
+  it('실제 의미가 바뀌면 자동 펼침과 접힘을 다시 적용한다', async () => {
+    const wrapper = mountPanel({ verdict: 'pass', stage: 'observe', codes: [] })
+    await flushPromises()
+    const section = wrapper.find('.dip-section:has(.dip-trs-head)')
+    const toggle = section.find('.dip-sec-toggle')
+
+    expect(section.classes()).toContain('collapsed')
+
+    await wrapper.setProps({
+      trScope: { verdict: 'warn', stage: 'warn', codes: [] },
+    })
+    expect(section.classes()).not.toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await wrapper.setProps({
+      trScope: { verdict: 'pass', stage: 'observe', codes: [] },
+    })
+    expect(section.classes()).toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('문서 전환 시 새 문서의 기본 접힘 상태를 적용한다', async () => {
+    const wrapper = mountPanel({ verdict: 'pass', stage: 'observe', codes: [] })
+    await flushPromises()
+    const section = wrapper.find('.dip-section:has(.dip-trs-head)')
+    const toggle = section.find('.dip-sec-toggle')
+
+    await toggle.trigger('click')
+    expect(section.classes()).not.toContain('collapsed')
+
+    await wrapper.setProps({
+      docId: 'flowgate.default.0300.0006-TR',
+      trScope: { verdict: 'pass', stage: 'observe', codes: [] },
+    })
+    expect(section.classes()).toContain('collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
 })
