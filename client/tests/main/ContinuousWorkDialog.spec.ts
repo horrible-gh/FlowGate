@@ -325,8 +325,10 @@ describe('ContinuousWorkDialog', () => {
     })
     ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
     await flushPromises()
-    expect(document.querySelector('.cwd-provider-summary')?.textContent)
-      .toContain(i18n.global.t('main.continuous_work.provider_run_summary', { name: 'Fable' }))
+    // 0442 B0001 재반려 2 ("예전처럼 되돌리라고"): 실행 요약 줄은 이 블랙아웃 경로를
+    // 포함해 모든 경로에서 사라졌다. 이제 프로바이더 탭의 공급자 표면은 셀렉터 행뿐이다.
+    expect(document.querySelector('.cwd-provider-row')).not.toBeNull()
+    expect(document.querySelector('.cwd-provider-summary')).toBeNull()
 
     // Not blocked: the dialog offers to start FROM the workflow-decision step. The
     // pre-decision note is shown and there is exactly one (static) head step.

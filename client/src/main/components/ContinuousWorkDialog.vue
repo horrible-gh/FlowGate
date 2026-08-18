@@ -161,18 +161,11 @@
                       @update:model-value="(v) => emit('update:provider', v)"
                     />
                   </div>
-                  <div class="cwd-provider-summary">
-                    <span>{{ providerRunSummary }}</span>
-                    <span v-if="providerPinned" class="cwd-provider-pin-badge">
-                      {{ t('main.continuous_work.provider_pin_badge') }}
-                    </span>
-                    <button
-                      v-if="providerPinned"
-                      type="button"
-                      class="cwd-provider-pin-clear"
-                      @click="emit('clear-provider-pin')"
-                    >{{ t('main.continuous_work.provider_pin_clear') }}</button>
-                  </div>
+                  <!-- 0442 B0001 재반려 2 ("예전처럼 되돌리라고"): 이 자리에 실행 요약
+                       문장도, 고정 배지도, 해제 단추도 두지 않는다. 위의 기본 공급자
+                       셀렉터가 이번 실행에 쓸 공급자를 이미 이름으로 보여 주고 아래 단계
+                       행마다 태그가 붙으므로, 이 줄은 같은 정보를 한 문장처럼 되풀이할
+                       뿐이었다. 고정 배지가 붙기 전의 배치로 되돌렸다. -->
                   <!-- 0317 T0015: each execution step is shown directly (no "단계별로 다르게
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
@@ -309,6 +302,8 @@ const emit = defineEmits<{
   'update:visible': [value: boolean]
   // 0234 B0001 RC3: propagate a provider change back to the store-owning parent.
   'update:provider': [value: string]
+  // 0442 B0001: 프로바이더 탭에서 보이는 고정 배지·해제 단추는 없앴지만, 스토어를 가진
+  // 부모와의 이벤트 계약은 그대로 둔다(T0004 §1 — 고정의 저장 수명과 해제 경로는 불변).
   'clear-provider-pin': []
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
@@ -709,13 +704,6 @@ function providerName(id: string | undefined | null): string | null {
 const selectedProviderName = computed(() =>
   providerName(props.selectedProvider) ?? props.selectedProvider ?? '',
 )
-
-const providerRunSummary = computed(() => {
-  if (props.providerPinned || picker.value.fromDecision) {
-    return t('main.continuous_work.provider_run_summary', { name: selectedProviderName.value })
-  }
-  return t('main.continuous_work.provider_follows_stored')
-})
 
 // 0408 TR0018 rev1: an auto-approved N/T row used to lose its provider tag here too, so the
 // same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
@@ -1176,34 +1164,6 @@ watch(presetActive, (active) => {
 }
 .cwd-provider-label { font-size: .78rem; color: var(--text-m); min-width: 56px; flex-shrink: 0; }
 .cwd-provider-select { flex: 1; min-width: 0; }
-.cwd-provider-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 24px;
-  padding: 0 4px;
-  color: var(--text-m);
-  font-size: .75rem;
-}
-.cwd-provider-summary > span:first-child { flex: 1; min-width: 0; }
-.cwd-provider-pin-badge {
-  flex-shrink: 0;
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  font-weight: 700;
-}
-.cwd-provider-pin-clear {
-  flex-shrink: 0;
-  border: 0;
-  padding: 2px 4px;
-  color: var(--primary);
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-decoration: underline;
-}
 /* 0337 R0001: sits between the default-provider row and the step list, outside the scroller —
    the reason the list is shorter than the sequence must stay visible while the list scrolls. */
 .cwd-scope-note {
