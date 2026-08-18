@@ -42,7 +42,7 @@ class ChatSettingsPatch(BaseModel):
 
 def _invalid_request(exc: chat_settings_service.ChatSettingsError) -> JSONResponse:
     # Same envelope as the neighbouring settings routes (project_settings._source_mode_error),
-    # plus the field name so the screen can mark the box that is wrong (P0009 시나리오 7).
+    # plus the field name so the screen can mark the box that is wrong (P0009 scenario 7).
     return JSONResponse(
         status_code=422,
         content={

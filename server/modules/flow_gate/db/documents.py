@@ -750,7 +750,7 @@ def get_docs_for_tree_by_project(project_id: str) -> list[dict]:
     """Return every tree document of a project in a single unordered query.
 
     Replaces the get_docs_for_tree_by_groups() / get_orphan_docs_for_tree() pair
-    (0276 NR0003 발견 1). Both callers always passed the project's *entire* group
+    (0276 NR0003 finding 1). Both callers always passed the project's *entire* group
     list, so `group_id IN (?×G)` and `group_id NOT IN (?×G)` between them spent
     thousands of bind parameters encoding what `project_id = ?` says with one.
     documents.project_id is NOT NULL, so one predicate covers grouped and orphan
@@ -766,7 +766,7 @@ def get_docs_for_tree_by_project(project_id: str) -> list[dict]:
 def get_linked_result_documents_map() -> dict[str, list[dict]]:
     """Group every NR/TR document by the target_id it references.
 
-    Batch counterpart of get_linked_result_documents() (0276 NR0003 발견 3: the
+    Batch counterpart of get_linked_result_documents() (0276 NR0003 finding 3: the
     brief/queue path called the single-target version once per open document —
     N+1 ①②③ — and *each* call already scanned all NR/TR rows and re-read the
     memo file of every row with an empty target_id). Building the whole map costs
@@ -810,7 +810,7 @@ def get_followup_type_map(types: tuple) -> dict[str, set]:
     """Return target_id -> set of follow-up type_codes, for the given types.
 
     Batch counterpart of get_documents_by_target_id() for the existence checks in
-    detect_workflow_gaps()/get_pending_nr_tr_documents() (0276 NR0003 발견 3,
+    detect_workflow_gaps()/get_pending_nr_tr_documents() (0276 NR0003 finding 3,
     N+1 ④): those callers only ask "does a follow-up of type X exist for this
     target?", which one DISTINCT query answers for every target at once.
     """
@@ -832,7 +832,7 @@ def get_followup_type_map(types: tuple) -> dict[str, set]:
 def get_documents_by_ids(doc_ids: list) -> dict[str, dict]:
     """Return a doc_id -> document map for the given ids.
 
-    Batch counterpart of get_document_by_id() (0276 NR0003 발견 3, N+1 ⑤: the
+    Batch counterpart of get_document_by_id() (0276 NR0003 finding 3, N+1 ⑤: the
     action queue resolved one document per conflict event). Chunked to stay under
     SQLite's historical 999 bind-variable limit.
     """

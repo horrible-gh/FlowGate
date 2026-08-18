@@ -420,24 +420,39 @@ def _check_group_completion(
 
 # ── Document review-state transition service ─────────────────────────────────
 
-_EMPTY_BODY_APPROVAL_MESSAGE = (
-    "본문이 비어 있어 승인할 수 없습니다. 문서 내용을 채운 뒤 다시 승인하십시오."
-)
-_FILELESS_APPROVAL_STRUCTURE_MESSAGE = (
-    "최종 승인이 현재 워크플로 헤드가 아니어서 승인할 수 없습니다."
-)
+_EMPTY_BODY_APPROVAL_MESSAGES = {
+    "ko": "본문이 비어 있어 승인할 수 없습니다. 문서 내용을 채운 뒤 다시 승인하십시오.",
+    "en": "The body is empty and cannot be approved. Fill in the document content, then approve again.",
+    "ja": "本文が空のため承認できません。文書の内容を入力してから、もう一度承認してください。",
+}
+_FILELESS_APPROVAL_STRUCTURE_MESSAGES = {
+    "ko": "최종 승인이 현재 워크플로 헤드가 아니어서 승인할 수 없습니다.",
+    "en": "This final approval is not the current workflow head, so it cannot be approved.",
+    "ja": "この最終承認は現在のワークフローヘッドではないため承認できません。",
+}
 _APPROVED_REVIEW_STATUSES = {"approved", "wf_done"}
 _WORKFLOW_ROOT_TYPES = {"R", "B"}
 
 
-def _require_fileless_approval_structure(doc: dict) -> None:
+def _empty_body_approval_message(locale: str = "ko") -> str:
+    return _EMPTY_BODY_APPROVAL_MESSAGES.get(locale) or _EMPTY_BODY_APPROVAL_MESSAGES["ko"]
+
+
+def _fileless_approval_structure_message(locale: str = "ko") -> str:
+    return (
+        _FILELESS_APPROVAL_STRUCTURE_MESSAGES.get(locale)
+        or _FILELESS_APPROVAL_STRUCTURE_MESSAGES["ko"]
+    )
+
+
+def _require_fileless_approval_structure(doc: dict, locale: str = "ko") -> None:
     """Require a file-less AC to be the structurally valid current group head."""
     type_code = str(doc.get("type_code") or "").upper()
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     target_id = doc.get("target_id")
     if type_code != "AC" or not project_id or not group_id or not target_id:
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+        raise TransitionError(_fileless_approval_structure_message(locale))
 
     try:
         group_docs = db_docs.list_documents(
@@ -459,12 +474,12 @@ def _require_fileless_approval_structure(doc: dict) -> None:
             else None
         )
     except Exception as exc:
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE) from exc
+        raise TransitionError(_fileless_approval_structure_message(locale)) from exc
 
     if root is None or sequence is None or effective_head is not None:
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+        raise TransitionError(_fileless_approval_structure_message(locale))
     if root.get("doc_review_status") == "wf_done":
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+        raise TransitionError(_fileless_approval_structure_message(locale))
     if any(
         item.get("doc_id") != doc.get("doc_id")
         and str(item.get("type_code") or "").upper() == "AC"
@@ -472,7 +487,7 @@ def _require_fileless_approval_structure(doc: dict) -> None:
         and item.get("doc_review_status") in _APPROVED_REVIEW_STATUSES
         for item in group_docs
     ):
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+        raise TransitionError(_fileless_approval_structure_message(locale))
 
     non_head_types = _WORKFLOW_ROOT_TYPES | {"Q"} | AUTO_COMPLETE_TYPES
     current_heads = [
@@ -484,21 +499,21 @@ def _require_fileless_approval_structure(doc: dict) -> None:
     ]
     current_heads.sort(key=lambda item: (item.get("seq") or 0, item.get("doc_id") or ""))
     if not current_heads or current_heads[0].get("doc_id") != doc.get("doc_id"):
-        raise TransitionError(_FILELESS_APPROVAL_STRUCTURE_MESSAGE)
+        raise TransitionError(_fileless_approval_structure_message(locale))
 
 
-def _require_document_body_for_approval(doc: dict) -> None:
+def _require_document_body_for_approval(doc: dict, locale: str = "ko") -> None:
     """Reject approval when a reviewable document has no readable, non-blank body."""
     type_code = str(doc.get("type_code") or "").upper()
     if type_code in FILELESS_APPROVABLE_TYPES:
-        _require_fileless_approval_structure(doc)
+        _require_fileless_approval_structure(doc, locale)
         return
     if type_code in AUTO_COMPLETE_TYPES:
         return
 
     stored_path = (doc.get("file_path") or "").strip()
     if not stored_path:
-        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+        raise TransitionError(_empty_body_approval_message(locale))
 
     branch = (doc.get("branch") or "main").strip() or "main"
     resolved = storage_paths.resolve_storage_path(
@@ -507,15 +522,15 @@ def _require_document_body_for_approval(doc: dict) -> None:
         branch=branch,
     )
     if resolved is None or not resolved.is_file():
-        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+        raise TransitionError(_empty_body_approval_message(locale))
 
     try:
         content = resolved.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE) from exc
+        raise TransitionError(_empty_body_approval_message(locale)) from exc
 
     if not _strip_frontmatter(content).strip():
-        raise TransitionError(_EMPTY_BODY_APPROVAL_MESSAGE)
+        raise TransitionError(_empty_body_approval_message(locale))
 
 
 def transition_document_review(
@@ -525,6 +540,7 @@ def transition_document_review(
     actor_user_id: str,
     user_permissions: set[str],
     comment: str | None = None,
+    locale: str = "ko",
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -557,7 +573,7 @@ def transition_document_review(
         raise ValueError("Comment required when rejecting (reason for rejection).")
 
     if action == "approve":
-        _require_document_body_for_approval(doc)
+        _require_document_body_for_approval(doc, locale)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,

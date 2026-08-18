@@ -64,7 +64,7 @@
                  types (N/T under ai_direct) at or past the head. A dedicated class + its own
                  click/change stop keeps it from re-triggering the row's own target-select
                  click (the row is a <button>).
-                 rev2 (반려 2회: "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의
+                 rev2 (rejected twice: "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의
                  방식은 없냐"): a bare checkbox carried no caption, so the row gave no clue what
                  checking it did. Redrawn as a labelled switch — track+thumb shape instead of a
                  checkbox square, plus a visible text caption and a hover tooltip that spells out
@@ -126,11 +126,11 @@
 </template>
 
 <script setup lang="ts">
-// 0242 NR0003 권고 1: the "how far do we run?" step list, extracted out of
+// 0242 NR0003 recommendation 1: the "how far do we run?" step list, extracted out of
 // ContinuousWorkDialog so the AI-invoke dialog can present the SAME picker instead of a raw
 // `목표 seq` number input. Both continuous-run entry points now go through this component, so
 // a target is always an existing, not-yet-done step — the class of silent under/over-run that
-// a mistyped seq caused (NR0003 발견 4) cannot be expressed here.
+// a mistyped seq caused (NR0003 finding 4) cannot be expressed here.
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest } from '@shared/api'
@@ -145,7 +145,7 @@ import type {
 const props = defineProps<{
   /**
    * Sequence-owning root (R/B) doc id — /workflow/sequence is keyed by the root, so a member
-   * doc (T/TR/…) must be resolved to its parent R BEFORE it reaches this prop (NR0003 권고 2).
+   * doc (T/TR/…) must be resolved to its parent R BEFORE it reaches this prop (NR0003 recommendation 2).
    */
   docRef: string
   /** Load/refresh the sequence when this flips true (dialog opened, continuous mode picked). */
@@ -228,7 +228,7 @@ const stepTags = computed(() => items.value.map(it => props.stepTag?.(it) ?? nul
 // Which of the remaining steps the user may actually stop at. A server-auto-handled type
 // (auto_approved N/T) is executed without an AI worker, so picking it as the target would put
 // the displayed boundary one step away from the real one — the server auto-approves it and the
-// paired report runs anyway (NR0003 발견 3). Exclude it from the choice instead.
+// paired report runs anyway (NR0003 finding 3). Exclude it from the choice instead.
 const autoHandledTypeSet = computed(
   () => new Set((props.autoHandledTypes ?? []).map(s => s.toUpperCase())),
 )
@@ -425,7 +425,7 @@ async function loadSequence() {
       void revealActiveStep()
     } else {
       // Default to running the whole remaining sequence, so a user who knows nothing about
-      // the sequence can just confirm and get the natural result (NR0003 권고 1). 0337 R0001-1:
+      // the sequence can just confirm and get the natural result (NR0003 recommendation 1). 0337 R0001-1:
       // the last SELECTABLE step — a trailing auto-handled instruction is not a stop point.
       const presetIdx = props.initialTargetSeq == null
         ? -1
@@ -589,7 +589,7 @@ watch(
    folded into a shared selector).
    rev1: rejected as "too small to hit reliably" — fixed by drawing a bigger checkbox box with
    a wider hit halo, but the widget was still a bare checkbox square with no caption.
-   rev2 (반려 2회째, "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의 방식은
+   rev2 (rejected a second time, "체크박스만 덜렁 나오면 뭔지 알아보기 힘들다" / "다른 형태의 방식은
    없냐"): resizing wasn't the actual ask — a checkbox alone doesn't say what it does. Redrawn
    as a labelled switch: a track+thumb shape (not a checkbox square) plus a visible text
    caption, so the row reads "auto-approve: on/off" at a glance instead of an unexplained box.

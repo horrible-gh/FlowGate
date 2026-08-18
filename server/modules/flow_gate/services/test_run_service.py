@@ -41,7 +41,7 @@ SETUP_STEP_TIMEOUT_SEC = 600
 TEARDOWN_STEP_TIMEOUT_SEC = 600
 # flowgate.default.0358 T0004: once a cancel is accepted, teardown still runs
 # best-effort (it may undo setup side effects) but must not hold the run in
-# 'cancelling' for the full normal budget — that would defeat "즉시 취소".
+# 'cancelling' for the full normal budget — that would defeat the "cancel immediately" promise.
 CANCEL_TEARDOWN_STEP_TIMEOUT_SEC = 30
 CANCEL_TEARDOWN_BUDGET_SEC = 60
 WAIT_TIMEOUT_SEC = 60
@@ -77,7 +77,7 @@ _active_runs: dict[str, _ActiveRun] = {}
 _active_runs_meta_lock = threading.Lock()
 
 # Per-run_id lock serializing "decide the terminal status, then write it" between a
-# cancel request and the worker's own natural-completion commit (0358 T0004 위험 2).
+# cancel request and the worker's own natural-completion commit (0358 T0004 risk 2).
 # FlowGateStore._execute reports no affected-row count, so a bare
 # UPDATE ... WHERE status=? cannot tell a CAS winner from a loser on its own — this
 # lock is what makes the DB CAS calls in this module actually exclusive, the same
@@ -166,8 +166,8 @@ class TestCaseParseError(ValueError):
         self.detail = detail
 
 
-# T0009: TS 문법의 영어 별칭. 파서는 아래 두 이름을 모두 받고, 필드명도 별칭으로
-# 정규화해서 이후 로직(예: fields.get("기대", "")) 은 그대로 한국어 키를 쓴다.
+# T0009: English aliases for the TS grammar. The parser accepts both names below and
+# normalises field names through the aliases, so downstream logic keeps using the Korean canonical keys.
 TEST_CASES_SECTION_NAMES = ("테스트 케이스", "Test Cases")
 SETUP_SECTION_NAMES = ("테스트 준비", "Setup")
 TEARDOWN_SECTION_NAMES = ("테스트 정리", "Teardown")
@@ -517,7 +517,7 @@ def _run_response(run: dict) -> dict:
 
 
 def request_cancel(run_id: str) -> dict:
-    """Accept a user cancel for run_id (flowgate.default.0358 T0004 / NR0003 계약).
+    """Accept a user cancel for run_id (flowgate.default.0358 T0004 / NR0003 contract).
 
     Returns {"run_id", "status"} where status is one of:
       - 'cancelled'  — either a not-yet-picked-up run terminated immediately, or the
@@ -868,8 +868,8 @@ def _execute_run_inner(run: dict) -> None:
             if not setup_failed:
                 for idx, case in enumerate(cases, start=1):
                     if active.cancel_event.is_set():
-                        # NR0003 계약: 남은 케이스는 실행하지 않는다 — leave them NULL,
-                        # not timeout (그건 "실행했으나 초과"라는 거짓 통계가 된다).
+                        # NR0003 contract: remaining cases are not executed — leave them NULL,
+                        # not timeout (that would be a false statistic reading "ran but overran").
                         break
                     if time.monotonic() - run_started > RUN_TIMEOUT_SEC:
                         db_test_runs.mark_case_finished(
@@ -961,7 +961,7 @@ def _execute_run_inner(run: dict) -> None:
             finished_run = db_test_runs.get_run(run_id) or run
 
         if cancelled:
-            # 0358 T0004 위험 1/4/5: cancelled runs must never reach TSR assembly,
+            # 0358 T0004 risks 1/4/5: cancelled runs must never reach TSR assembly,
             # auto-recovery, or the chain-failure alarm — reuse the existing
             # test_run_finished/group_view_refresh broadcast only.
             _emit_finished(doc, finished_run, None)
@@ -1000,19 +1000,19 @@ def _handle_terminal_case_failure(doc: dict, run: dict, items: list[dict]) -> di
 
 
 def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
-    """Route a 준비(setup) stage abort — the run never reached a single test case.
+    """Route a setup-stage abort — the run never reached a single test case.
 
     flowgate.default.0157 treats this as the canonical INFRA case, and for an unmanned chain
     that is still right: the recovery loop re-fires it up to the cap and owns the signal, so
-    nothing is rewound while it is working (T0004 완료기준 3).
+    nothing is rewound while it is working (T0004 completion criterion 3).
 
     What that left uncovered is every manual run, and it is the only failure the reporter ever
     reproduced: 15 consecutive runs of test.test.0042.0006-TS on the preview server ended with
     error='setup_failed', case_passed=0, case_failed=0. handle_run_failure returns "skip" for a
-    manual run, so nothing at all happened — the 테스트시나리오지시 stayed 승인 완료, the strip
-    stayed parked on the empty 테스트레포트 slot and the action bar stayed empty. But the setup
-    commands are authored in the TS document itself (그 문서의 준비 절), so a setup step that
-    exits non-zero is a defect in the 테스트시나리오 — exactly the document the user has to edit
+    manual run, so nothing at all happened — the test-scenario instruction stayed approved, the strip
+    stayed parked on the empty test-report slot and the action bar stayed empty. But the setup
+    commands are authored in the TS document itself (its setup section), so a setup step that
+    exits non-zero is a defect in the test scenario — exactly the document the user has to edit
     and re-approve. It gets the same rewind as a RED. T0004 §2.3 had put this branch out of
     scope; that exclusion is what made the feature invisible in practice.
     """
@@ -1026,7 +1026,7 @@ def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict
 
 
 def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
-    """Send one failed 테스트시나리오지시 back to 승인 이전 through the shared Time Machine."""
+    """Send one failed test-scenario instruction back to its pre-approval state through the shared Time Machine."""
     try:
         from modules.flow_gate.services import workflow_rework_service
         from modules.flow_gate.services.mutation_policy import system_principal
@@ -1085,7 +1085,7 @@ def _record_source_root(doc: dict, run: dict, root: Path) -> None:
     silent fallback to base were indistinguishable after the fact. Written early so
     a run that dies mid-way still carries its location. Best-effort in both
     directions: bookkeeping must never fail a run, and a failure to record must not
-    masquerade as a recorded base run (the column stays NULL → "기록 없음").
+    masquerade as a recorded base run (the column stays NULL → "no record").
     """
     try:
         kind = storage_paths.classify_src_root(
@@ -1178,7 +1178,7 @@ def _execute_teardown(
     stage_started = time.monotonic()
     # 0358 T0004 §2: teardown still runs best-effort after a cancel (it may undo
     # setup side effects), but a cancelled run gets a short overall budget instead of
-    # the normal 600s-per-step timeout — otherwise "즉시 취소" could stay stuck in
+    # the normal 600s-per-step timeout — otherwise "cancel immediately" could stay stuck in
     # 'cancelling' for up to 10 minutes.
     cancel_deadline: Optional[float] = None
     for step in steps:
@@ -1524,7 +1524,14 @@ def _safe_decode(data) -> str:
     return process_runner.safe_decode(data)
 
 
-def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
+_TSR_TITLE_TEMPLATES = {
+    "ko": "테스트 레포트 — {name}",
+    "en": "Test Report — {name}",
+    "ja": "テストレポート — {name}",
+}
+
+
+def assemble_tsr(doc: dict, run: dict, cases: list[dict], locale: str = "ko") -> str:
     """Assemble this run's TSR into the TS's single active report slot (0257 NR0003 §1).
 
     Two distinct re-entry paths land here, and they need different answers:
@@ -1537,6 +1544,9 @@ def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
       what produced two TSR documents, the second of which the slot never adopted.
 
     Per-attempt history stays in test_runs/test_run_cases; the workflow keeps one document.
+    ``locale`` (T0009 task 4): no request context reaches this background assembly step
+    today, so callers all pass the "ko" default — the parameter exists so the report body
+    is localizable once one does, and so it can be unit-tested directly.
     """
     if run.get("tsr_doc_id"):
         return str(run["tsr_doc_id"])
@@ -1548,8 +1558,9 @@ def assemble_tsr(doc: dict, run: dict, cases: list[dict]) -> str:
     if not group_id or not project_id:
         raise RuntimeError("TS document has no group/project")
 
-    title = f"테스트 레포트 — {doc.get('title') or doc['doc_id']}"
-    content = _tsr_content(doc, run, cases, title)
+    title_template = _TSR_TITLE_TEMPLATES.get(locale) or _TSR_TITLE_TEMPLATES["ko"]
+    title = title_template.format(name=doc.get("title") or doc["doc_id"])
+    content = _tsr_content(doc, run, cases, title, locale)
 
     active = _active_tsr_for_ts(doc)
     if active is not None:
@@ -1620,7 +1631,7 @@ def _revise_active_tsr(doc: dict, active: dict, content: str, title: str) -> str
     group_id = doc["group_id"]
     # Recompute rather than trust the stored file_path: it is the same deterministic path the
     # create branch below writes, and rebuilding it repairs a row whose path went stale or
-    # empty — the "연결된 MD 파일이 없습니다" preview of B0001.
+    # empty — the "there is no linked MD file" preview of B0001.
     path = storage_paths.document_path(
         project_id=project_id,
         group_code=group_id,
@@ -1643,7 +1654,63 @@ def _revise_active_tsr(doc: dict, active: dict, content: str, title: str) -> str
     return tsr_doc_id
 
 
-def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str) -> str:
+_TSR_STRINGS = {
+    "ko": {
+        "target_ts": "> 대상 TS: {doc_id} (revision {revision})",
+        "run_seq": "> 실행 회차: {run_id}",
+        "run_time": "> 실행 시각: {started} ~ {now}",
+        "result_summary": "> 결과: 통과 {passed}/{total}",
+        "env_heading": "## 실행 환경",
+        "project_line": "- 프로젝트: {project} / 문서 브랜치: {branch}",
+        "src_root_line": "- 실행 위치: {src_root}",
+        "port_line": "- 할당 포트: {port} / 스크래치: 회차 전용 (종료 시 삭제됨)",
+        "actor_line": "- 실행 주체: FlowGate 서버 (워커 로컬 환경 불개입)",
+        "prep_heading": "## 준비 / 정리",
+        "prep_table_header": "| 단계 | 종류 | 명령 | 결과 | 소요 |",
+        "case_heading": "## 케이스별 결과",
+        "case_table_header": "| 케이스 | 이름 | 결과 | exit | 소요 |",
+        "excerpt_heading": "## 케이스별 출력 발췌",
+        "footer": "*이 레포트는 실행 회차 {run_id} 의 기록으로부터 FlowGate가 자동 조립했다.*",
+    },
+    "en": {
+        "target_ts": "> Target TS: {doc_id} (revision {revision})",
+        "run_seq": "> Run: {run_id}",
+        "run_time": "> Run time: {started} ~ {now}",
+        "result_summary": "> Result: {passed}/{total} passed",
+        "env_heading": "## Execution Environment",
+        "project_line": "- Project: {project} / Document branch: {branch}",
+        "src_root_line": "- Executed at: {src_root}",
+        "port_line": "- Allocated port: {port} / Scratch: run-scoped (deleted on completion)",
+        "actor_line": "- Executed by: FlowGate server (no worker-local environment involved)",
+        "prep_heading": "## Setup / Teardown",
+        "prep_table_header": "| Step | Kind | Command | Result | Duration |",
+        "case_heading": "## Case Results",
+        "case_table_header": "| Case | Name | Result | exit | Duration |",
+        "excerpt_heading": "## Case Output Excerpts",
+        "footer": "*This report was auto-assembled by FlowGate from run {run_id}'s record.*",
+    },
+    "ja": {
+        "target_ts": "> 対象TS: {doc_id} (revision {revision})",
+        "run_seq": "> 実行回次: {run_id}",
+        "run_time": "> 実行時刻: {started} ~ {now}",
+        "result_summary": "> 結果: 合格 {passed}/{total}",
+        "env_heading": "## 実行環境",
+        "project_line": "- プロジェクト: {project} / 文書ブランチ: {branch}",
+        "src_root_line": "- 実行場所: {src_root}",
+        "port_line": "- 割り当てポート: {port} / スクラッチ: 回次専用（終了時に削除）",
+        "actor_line": "- 実行主体: FlowGateサーバー（ワーカーのローカル環境は関与しません）",
+        "prep_heading": "## 準備 / 後片付け",
+        "prep_table_header": "| 段階 | 種類 | コマンド | 結果 | 所要 |",
+        "case_heading": "## ケース別結果",
+        "case_table_header": "| ケース | 名前 | 結果 | exit | 所要 |",
+        "excerpt_heading": "## ケース別出力抜粋",
+        "footer": "*このレポートは実行回次 {run_id} の記録からFlowGateが自動組み立てしました。*",
+    },
+}
+
+
+def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str, locale: str = "ko") -> str:
+    strings = _TSR_STRINGS.get(locale) or _TSR_STRINGS["ko"]
     setup = [case for case in cases if (case.get("kind") or "case") in {"setup", "service", "wait"}]
     case_rows = [case for case in cases if (case.get("kind") or "case") == "case"]
     teardown = [case for case in cases if (case.get("kind") or "case") == "teardown"]
@@ -1651,9 +1718,11 @@ def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str) -> str:
     for step in [*setup, *teardown]:
         duration = step.get("duration_ms")
         duration_text = "-" if duration is None else f"{round(duration / 1000, 1)}s"
-        result = step.get("result") or ("기동" if (step.get("kind") or "") == "service" else "")
+        result = step.get("result") or (
+            _kind_label("service", locale) if (step.get("kind") or "") == "service" else ""
+        )
         prep_rows.append(
-            f"| {step.get('case_no')} | {_kind_label(step.get('kind'))} | "
+            f"| {step.get('case_no')} | {_kind_label(step.get('kind'), locale)} | "
             f"{step.get('cmd')} | {result} | {duration_text} |"
         )
     result_rows = []
@@ -1683,79 +1752,129 @@ def _tsr_content(doc: dict, run: dict, cases: list[dict], title: str) -> str:
         [
             f"# {title}",
             "",
-            f"> 대상 TS: {doc['doc_id']} (revision {run.get('revision_no')})",
-            f"> 실행 회차: {run['run_id']}",
-            f"> 실행 시각: {run.get('started_at')} ~ {now_iso()}",
-            f"> 결과: 통과 {len(case_rows)}/{len(case_rows)}",
+            strings["target_ts"].format(doc_id=doc["doc_id"], revision=run.get("revision_no")),
+            strings["run_seq"].format(run_id=run["run_id"]),
+            strings["run_time"].format(started=run.get("started_at"), now=now_iso()),
+            strings["result_summary"].format(passed=len(case_rows), total=len(case_rows)),
             "",
-            "## 실행 환경",
+            strings["env_heading"],
             "",
-            f"- 프로젝트: {doc.get('project_id')} / 문서 브랜치: {doc.get('branch') or 'main'}",
-            f"- 실행 위치: {_src_root_label(run)}",
-            f"- 할당 포트: {run.get('port')} / 스크래치: 회차 전용 (종료 시 삭제됨)",
-            "- 실행 주체: FlowGate 서버 (워커 로컬 환경 불개입)",
+            strings["project_line"].format(
+                project=doc.get("project_id"), branch=doc.get("branch") or "main"
+            ),
+            strings["src_root_line"].format(src_root=_src_root_label(run, locale)),
+            strings["port_line"].format(port=run.get("port")),
+            strings["actor_line"],
             "",
-            "## 준비 / 정리",
+            strings["prep_heading"],
             "",
-            "| 단계 | 종류 | 명령 | 결과 | 소요 |",
+            strings["prep_table_header"],
             "|---|---|---|---|---|",
             *prep_rows,
             "",
-            "## 케이스별 결과",
+            strings["case_heading"],
             "",
-            "| 케이스 | 이름 | 결과 | exit | 소요 |",
+            strings["case_table_header"],
             "|---|---|---|---|---|",
             *result_rows,
             "",
-            "## 케이스별 출력 발췌",
+            strings["excerpt_heading"],
             "",
             *excerpts,
-            f"*이 레포트는 실행 회차 {run['run_id']} 의 기록으로부터 FlowGate가 자동 조립했다.*",
+            strings["footer"].format(run_id=run["run_id"]),
             "",
         ]
     )
 
 
-# 0280 NR0003 §4-A: the 실행 환경 block used to print doc['branch'] (always "main",
+# 0280 NR0003 §4-A: the execution-environment block used to print doc['branch'] (always "main",
 # it is the *document's* branch, not the worktree's) next to the hardcoded string
-# "프로젝트 소스 루트 (src_root)". A run that executed correctly in the group worktree
+# the project source root (src_root). A run that executed correctly in the group worktree
 # was therefore reported as having run in main — the direct source of the repeated
 # "tests run in main" reports. These labels render what the run actually recorded.
 _SRC_ROOT_REASON_LABELS = {
-    "git_integration_off": "이 프로젝트는 git 통합이 꺼져 있다",
-    "no_group_git_state": "git 통합은 켜져 있으나 그룹의 git 상태 기록이 없다",
-    "worktree_unregistered": "그룹 워크트리가 등록돼 있지 않다 (머지/푸시 후 해제된 경우 포함)",
-    "state_branch_empty": "그룹 git 상태에 브랜치 값이 없다",
-    "project_name_missing": "프로젝트명을 확인할 수 없다",
-    "worktree_dir_missing": "등록된 워크트리 디렉터리가 실제로 존재하지 않는다",
-    "no_group_context": "그룹 정보 없이 실행됐다",
-    "resolution_error": "워크트리 해석 중 오류가 발생했다",
+    "ko": {
+        "git_integration_off": "이 프로젝트는 git 통합이 꺼져 있다",
+        "no_group_git_state": "git 통합은 켜져 있으나 그룹의 git 상태 기록이 없다",
+        "worktree_unregistered": "그룹 워크트리가 등록돼 있지 않다 (머지/푸시 후 해제된 경우 포함)",
+        "state_branch_empty": "그룹 git 상태에 브랜치 값이 없다",
+        "project_name_missing": "프로젝트명을 확인할 수 없다",
+        "worktree_dir_missing": "등록된 워크트리 디렉터리가 실제로 존재하지 않는다",
+        "no_group_context": "그룹 정보 없이 실행됐다",
+        "resolution_error": "워크트리 해석 중 오류가 발생했다",
+    },
+    "en": {
+        "git_integration_off": "this project has git integration turned off",
+        "no_group_git_state": "git integration is on but the group has no recorded git state",
+        "worktree_unregistered": "the group worktree is not registered (including after a merge/push release)",
+        "state_branch_empty": "the group's git state has no branch value",
+        "project_name_missing": "the project name could not be resolved",
+        "worktree_dir_missing": "the registered worktree directory does not actually exist",
+        "no_group_context": "run without group context",
+        "resolution_error": "an error occurred while resolving the worktree",
+    },
+    "ja": {
+        "git_integration_off": "このプロジェクトはgit連携がオフになっている",
+        "no_group_git_state": "git連携はオンだが、グループのgit状態が記録されていない",
+        "worktree_unregistered": "グループワークツリーが登録されていない（マージ/プッシュ後に解除された場合を含む）",
+        "state_branch_empty": "グループのgit状態にブランチ値がない",
+        "project_name_missing": "プロジェクト名を確認できない",
+        "worktree_dir_missing": "登録済みのワークツリーディレクトリが実際には存在しない",
+        "no_group_context": "グループ情報なしで実行された",
+        "resolution_error": "ワークツリー解決中にエラーが発生した",
+    },
+}
+
+_SRC_ROOT_TEMPLATES = {
+    "ko": {
+        "no_record": "기록 없음 (이 회차는 실행 루트를 기록하지 않았다)",
+        "worktree": "그룹 워크트리 `{stored}` — 작업 브랜치에서 실행됨",
+        "unknown": "`{stored}` (워크트리 여부 미상)",
+        "base_tree": "프로젝트 base 트리 `{stored}` — 워크트리 미사용: {reason}",
+    },
+    "en": {
+        "no_record": "no record (this run did not record its execution root)",
+        "worktree": "group worktree `{stored}` — executed on the working branch",
+        "unknown": "`{stored}` (worktree status unknown)",
+        "base_tree": "project base tree `{stored}` — worktree not used: {reason}",
+    },
+    "ja": {
+        "no_record": "記録なし（この回次は実行ルートを記録しなかった）",
+        "worktree": "グループワークツリー `{stored}` — 作業ブランチで実行された",
+        "unknown": "`{stored}` （ワークツリーかどうか不明）",
+        "base_tree": "プロジェクトbaseツリー `{stored}` — ワークツリー未使用: {reason}",
+    },
 }
 
 
-def _src_root_label(run: dict) -> str:
-    """Render the run's recorded execution root for the TSR 실행 환경 block."""
+def _src_root_label(run: dict, locale: str = "ko") -> str:
+    """Render the run's recorded execution root for the TSR execution-environment block."""
+    templates = _SRC_ROOT_TEMPLATES.get(locale) or _SRC_ROOT_TEMPLATES["ko"]
+    reason_labels = _SRC_ROOT_REASON_LABELS.get(locale) or _SRC_ROOT_REASON_LABELS["ko"]
     stored = run.get("source_root")
     kind = run.get("source_root_kind")
     if not stored:
         # Runs predating 0280 T0005, and runs whose bookkeeping failed. Say so
         # rather than repeating the old guess.
-        return "기록 없음 (이 회차는 실행 루트를 기록하지 않았다)"
+        return templates["no_record"]
     if kind == "worktree":
-        return f"그룹 워크트리 `{stored}` — 작업 브랜치에서 실행됨"
+        return templates["worktree"].format(stored=stored)
     if kind == "unknown":
-        return f"`{stored}` (워크트리 여부 미상)"
-    reason = _SRC_ROOT_REASON_LABELS.get(kind, kind)
-    return f"프로젝트 base 트리 `{stored}` — 워크트리 미사용: {reason}"
+        return templates["unknown"].format(stored=stored)
+    reason = reason_labels.get(kind, kind)
+    return templates["base_tree"].format(stored=stored, reason=reason)
 
 
-def _kind_label(kind: Optional[str]) -> str:
-    return {
-        "setup": "cmd",
-        "service": "기동",
-        "wait": "대기",
-        "teardown": "cmd",
-    }.get(kind or "", kind or "")
+_KIND_LABELS = {
+    "ko": {"setup": "cmd", "service": "기동", "wait": "대기", "teardown": "cmd"},
+    "en": {"setup": "cmd", "service": "start", "wait": "wait", "teardown": "cmd"},
+    "ja": {"setup": "cmd", "service": "起動", "wait": "待機", "teardown": "cmd"},
+}
+
+
+def _kind_label(kind: Optional[str], locale: str = "ko") -> str:
+    labels = _KIND_LABELS.get(locale) or _KIND_LABELS["ko"]
+    return labels.get(kind or "", kind or "")
 
 
 def _register_tsr_workflow_result(doc: dict, tsr_doc_id: str, path: Path) -> None:
@@ -1822,7 +1941,7 @@ def _tsr_slot_item(doc: dict, db_wfseq) -> Optional[dict]:
 def _maybe_chain_auto_approve_tsr(doc: dict, tsr_doc_id: str) -> None:
     """Unmanned-chain gate passage for an auto-assembled TSR (group 0150).
 
-    L0006 (0138) deliberately left the TSR gate to "사람 또는 무인체인 승인 절차"; this is
+    L0006 (0138) deliberately left the TSR gate to "a human or an unmanned-chain approval procedure"; this is
     the latter. Chain detection is the consumed test_run token for this TS: only the
     token minted by advance_workflow's TSR-head wiring carries continuation_target_seq
     (the manned test-run-request token leaves it NULL, so manned delegation keeps its

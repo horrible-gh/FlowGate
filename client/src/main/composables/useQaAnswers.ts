@@ -113,9 +113,9 @@ export function useQaAnswers(docId: Ref<string>) {
     }
   }
 
-  // [멘트 복사] — mint this item's worker mention so the user can paste it into their own
+  // [멘트 복사] (Copy mention) — mint this item's worker mention so the user can paste it into their own
   // AI session (0248 B0001 rework). The document-bound Q&A had no hand-off at all: the only
-  // button was [답변], so whoever asked the question was left answering it themselves. The
+  // button was [답변] (Answer), so whoever asked the question was left answering it themselves. The
   // legacy Q-document flow has offered ment_copy alongside ai since the start (AnswerEditor);
   // this is that path. It is also the ONLY one that works with no provider configured.
   //

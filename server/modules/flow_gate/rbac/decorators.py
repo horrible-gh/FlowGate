@@ -24,7 +24,7 @@ def _has_permission(user: dict, permission: str, project_id: str | None) -> bool
     if not user_id:
         return False
 
-    # 0276 NR0003 발견 2: these were the remaining two of the five fixed
+    # 0276 NR0003 finding 2: these were the remaining two of the five fixed
     # per-request auth queries, on every permission-protected route.
     #
     # rbac/permission_service.py already solves exactly this: it resolves the

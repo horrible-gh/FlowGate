@@ -211,7 +211,7 @@ def get_help_tool(request: Request, name: str, locale: Optional[str] = None):
 
 
 def endpoint_catalog() -> dict:
-    """The catalog an unauthenticated caller receives (P-0004 [엣지3]).
+    """The catalog an unauthenticated caller receives (P-0004 [edge 3]).
 
     A human in a browser lands here; ``form`` tells the two /help answers apart.
     """
@@ -295,7 +295,7 @@ def _record_help_event(
     count: int = 0,
     http_status: int = 200,
 ) -> None:
-    """Best-effort audit of one authenticated help view (P-0004 [엣지2]).
+    """Best-effort audit of one authenticated help view (P-0004 [edge 2]).
 
     One event per request whatever the item count, and a failed insert never turns
     a good help answer into an error — same contract as ``help_tools_viewed``.
@@ -335,7 +335,7 @@ def _help_locale(request: Request, auth: dict, locale: Optional[str]) -> str:
 
     The first candidate that is present wins even when it names an unsupported
     locale: ``?locale=zh`` folds to ko rather than falling through to the header,
-    which is what ``/help/tools`` already does (P-0004 [엣지1]).
+    which is what ``/help/tools`` already does (P-0004 [edge 1]).
     """
     for candidate in (locale, request.headers.get("x-locale"), auth.get("continuation_locale")):
         if candidate is not None and str(candidate).strip():
@@ -427,7 +427,7 @@ def get_help_item(request: Request, name: str, locale: Optional[str] = None):
 
     # Unknown before forbidden: a name that does not exist is a typo the worker can
     # fix from the index, and calling it a permission failure sends it looking for
-    # a permission that was never the problem (P-0004 [실패3]).
+    # a permission that was never the problem (P-0004 [failure 3]).
     if name not in help_catalog.CATALOG_ORDER:
         return _help_error(404, f"Unknown help item: {name}")
 

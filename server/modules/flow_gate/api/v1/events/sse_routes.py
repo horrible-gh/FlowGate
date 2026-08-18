@@ -305,7 +305,7 @@ async def sse_stream(
                     # The heartbeat is also the revocation deadline: an idle
                     # stream is re-checked once per cadence, so a revoked login
                     # stops receiving pushes within ~_SSE_HEARTBEAT_TIMEOUT
-                    # seconds (NR0007 §4 권고 2).
+                    # seconds (NR0007 §4 recommendation 2).
                     reason = await anyio.to_thread.run_sync(_revocation_reason, ctx)
                     if reason is not None:
                         logger.debug(

@@ -163,7 +163,7 @@ async function fetchStatus() {
     return
   }
   try {
-    // 0282 NR0003 발견 3: shared store fetch — concurrent callers (explorer,
+    // 0282 NR0003 finding 3: shared store fetch — concurrent callers (explorer,
     // status panel, SSE listeners) coalesce onto one git/status request.
     status.value = (await explorerStore.fetchGitStatus(
       projectId.value,

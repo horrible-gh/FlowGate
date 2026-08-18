@@ -9,9 +9,9 @@ It serves the two hand-off routes the legacy Q-document flow has always offered 
 AnswerEditor.vue / qa_routes.py `dispatch_mode`), which the document-bound Q&A panel was
 missing entirely — leaving the asker to answer their own question:
 
-  • [멘트 복사]  → issue_answer_token: the user pastes the mention into their own worker.
+  • [copy mention] → issue_answer_token: the user pastes the mention into their own worker.
                    Works with no provider configured, which is why it is not a nicety.
-  • [AI에게 답변 요청] → dispatch_answer_run: an in-app run through the shared
+  • [ask the AI to answer] → dispatch_answer_run: an in-app run through the shared
                    ai_invoke_service engine (group lock, provider chain + fallback, scratch
                    lifecycle, timeout, cancel, status/SSE all come free).
 
@@ -22,7 +22,7 @@ Two things separate this from every other invoke path:
 1. The product is an answer ROW on an existing document, not a new document — the engine's
    document-reach oracle would score a perfect run as outcome='none'. We pass a
    completion_oracle so the run is judged by "did an AI answer appear on THIS item".
-2. The mention must pin the worker to one item. The generic '## 사용자 질의응답' block
+2. The mention must pin the worker to one item. The generic user-Q&A block
    (prompt_copy_service._append_qa_block) lists a document's whole Q&A, which does not say
    which item to answer, so this builds a dedicated prompt naming the item and its POST
    contract.
@@ -212,8 +212,8 @@ def issue_answer_token(
 ) -> dict:
     """Mint the item-bound edit token and render the worker mention for it.
 
-    Both entrances of the answer hand-off share this: [AI에게 답변 요청] feeds the result
-    into the run as its issue_builder, and [멘트 복사] hands the same text to the user's
+    Both entrances of the answer hand-off share this: [ask the AI to answer] feeds the result
+    into the run as its issue_builder, and [copy mention] hands the same text to the user's
     own worker. One builder is what keeps the two prompts byte-identical — the property
     ai_invoke_service.start_run's contract asks for, and the reason a copied mention and an
     in-app run cannot drift apart.
@@ -223,7 +223,7 @@ def issue_answer_token(
     worker only when its token matches the active lease on ALL of group / token_id / run_id /
     action_scope. start_run leases under the run id, so a token minted without one can never
     match — and the answer POST is this run's only product (0389 R0001). None on the
-    [멘트 복사] path, which starts no run and so faces no lease of its own.
+    [copy mention] path, which starts no run and so faces no lease of its own.
     """
     issued = token_service.issue(
         project=doc.get("project_id") or "",

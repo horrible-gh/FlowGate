@@ -8,13 +8,13 @@ lexical traversal rejection + realpath root-containment that also defeats
 symlink escape.
 
 Two checks (L0006 §4.2):
-  • is_safe_relative(value)   — 형식·정규화: 빈 문자열/절대경로/드라이브/`..` 세그먼트 거부.
-                                와일드카드(`*`/`**`/`?`)는 정상 입력으로 허용한다.
-  • resolve_in_root(root, rel) — realpath 후 루트 봉쇄(심볼릭 탈출 포함) → 절대 Path 또는 None.
+  • is_safe_relative(value)   — shape and normalisation: rejects empty strings, absolute paths,
+                                drive letters and `..` segments; wildcards (`*`/`**`/`?`) are allowed.
+  • resolve_in_root(root, rel) — realpath then jail to the root (symlink escapes included) → an absolute Path or None.
 
-`is_safe_relative` covers both plain paths and path-bearing patterns (grep의
-`glob`, glob의 `pattern`): a `..` component is rejected wherever it appears,
-while `*`/`**`/`?` are left untouched (e.g. `../secrets/*` → 거부, `src/**/*.ts` → 허용).
+`is_safe_relative` covers both plain paths and path-bearing patterns (grep's
+`glob`, glob's `pattern`): a `..` component is rejected wherever it appears,
+while `*`/`**`/`?` are left untouched (e.g. `../secrets/*` → rejected, `src/**/*.ts` → allowed).
 """
 from __future__ import annotations
 

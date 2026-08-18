@@ -99,7 +99,7 @@ def _to_view(row: Optional[dict]) -> Optional[dict]:
     }
 
 
-# ── management API (P §목록/추가/수정/삭제) ────────────────────────────────────
+# ── management API (P §list/add/update/delete) ──────────────────────────────
 
 def list_for_view(project: str) -> list[dict]:
     return [_to_view(r) for r in db.list_active(project)]
@@ -132,7 +132,7 @@ def create_manual(project: str, command_raw: str, description: str) -> dict:
 def patch(project: str, command_id: int, fields: dict) -> Optional[dict]:
     """Update command/description of an ACTIVE row. Returns None (→404) for missing/suppressed.
 
-    origin and last_success_at are not user-editable (P §수정).
+    origin and last_success_at are not user-editable (P §update).
     """
     row = db.get_by_id(project, command_id)
     if row is None or row.get("status") != "active":
@@ -183,7 +183,11 @@ def reflect_from_passed_run(doc: dict, items: list[dict]) -> None:
             kind = item.get("kind") or "case"
             cmd_raw = item.get("cmd") or ""
             if kind == "setup":
-                desc = f"준비 단계 ({short})"
+                # T0009 task 4: this registry's description literals are English and
+                # locale-independent by design (module docstring, L 2-5) — every other
+                # branch already is. This one Korean literal was the odd one out, not a
+                # genuine locale-dictionary candidate; corrected to match, not localized.
+                desc = f"Prep step ({short})"
             elif kind == "case":
                 title = (item.get("case_title") or "").strip()
                 case_no = item.get("case_no") or ""
@@ -237,7 +241,7 @@ def _reflect_one(project: str, cmd: str, desc: str, now: str) -> None:
     )
 
 
-# ── TS-mention block (L §2-5 / P §TS 작성 멘트) ───────────────────────────────
+# ── TS-mention block (L §2-5 / P §TS authoring mention) ─────────────────────
 
 def build_verified_commands_block(project: str) -> str:
     """Return the section BODY for the TS mention, or '' when the project has no commands.

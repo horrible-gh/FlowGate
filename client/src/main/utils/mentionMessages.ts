@@ -69,7 +69,7 @@ export function buildCandidateList(
 
 /**
  * Prepend the chosen project message(s) as ONE labeled section to the TOP of the mention
- * (R0001 group 0081 "버려져있는 사용자 메세지"). The user message specifies macros the AI
+ * (R0001 group 0081 "버려져있는 사용자 메세지" [the abandoned user message]). The user message specifies macros the AI
  * must obey, so it must lead the prompt instead of being dumped below the Reminder (the
  * previous append-at-the-end behavior, L0007 §2.4). This mirrors two existing precedents:
  * the rejection-section prepend in useFlowGateToken.copyMentToClipboard, and the server's

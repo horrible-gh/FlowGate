@@ -59,7 +59,7 @@ export interface AiInvokeRunEntry {
   toolCallMisses: number
   turnLimitExhausted: boolean
   oracleMismatch: boolean
-  // 0406 T0022 작업 3: the actual worker slot, distinct from auto-handled N/T slots.
+  // 0406 T0022 task 3: the actual worker slot, distinct from auto-handled N/T slots.
   workerItemSeq: number | null
   workerDocumentType: string | null
   autoHandledItemSeqs: number[]
@@ -92,7 +92,7 @@ const HANDOFF_FINALIZE_AFTER_POLLS = 2
 // L0009 §1: finished/cancelled/lost cards leave the list on their own; paused cards never do.
 // 0290 NR0003 §5.1: 10s was effectively "gone before it was read" — the header monitor is
 // the channel this user actually watches for completions, so a finished card now survives
-// long enough to walk away from. Reading the card (문서 열기) or removing it stays instant.
+// long enough to walk away from. Reading the card (문서 열기 [Open document]) or removing it stays instant.
 export const FINISHED_CARD_TTL_MS = 30 * 60_000
 // The document screen's inline banner shares this registry but not its lifetime: a result
 // panel pinned over the document for 30 minutes is nobody's idea of helpful (NR0003 §5.3).
@@ -415,11 +415,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const bootstrapPending = ref(true)
   let persistDirty = false
 
-  // 0401 NR0003 SS3 원인 3 / T0004 작업 5: the server's lease can outlive this process's
+  // 0401 NR0003 SS3 cause 3 / T0004 task 5: the server's lease can outlive this process's
   // own view of a run (a 'lost' card, or a lease another process holds), so the button
   // gate needs the lease's own truth too -- not just ACTIVE_PHASES. Keyed by group id;
   // a group with no key here has no known active lease. Single-flight + a per-group
-  // generation counter (T0004 작업5 주의) so a slow response can never overwrite a
+  // generation counter (T0004 task 5 note) so a slow response can never overwrite a
   // newer one, and the button never flickers while a fetch is in flight.
   const groupLeaseLive = reactive<Record<string, boolean>>({})
   const leaseFetchInFlight = new Set<string>()
@@ -797,7 +797,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       const status = error?.response?.status
       const code = error?.response?.data?.code
       if (status === 409 && code === 'run_already_active' && error?.response?.data?.run_id) {
-        // Already the desired state (P0008 실패 1): adopt the live run as this card.
+        // Already the desired state (P0008 failure 1): adopt the live run as this card.
         trackStarted({
           run_id: error.response.data.run_id,
           group_id: groupId,
@@ -842,7 +842,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   async function refreshGroupLease(groupId: string): Promise<void> {
     // Single-flight per group: a caller that fires this on every render (e.g. a watcher
-    // on groupId) must not pile up overlapping requests (T0004 작업5 주의).
+    // on groupId) must not pile up overlapping requests (T0004 task 5 note).
     if (!groupId || leaseFetchInFlight.has(groupId)) return
     leaseFetchInFlight.add(groupId)
     const generation = (leaseFetchGeneration.get(groupId) ?? 0) + 1
@@ -851,7 +851,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       const project = groupId.split('.', 1)[0]
       const response = await getRequest<any>('/api/v1/ai-invoke/leases', { project })
       // A newer call for this group already landed (or superseded this one) — a stale
-      // response must never overwrite a fresher verdict (T0004 작업5 주의, 세대 확인).
+      // response must never overwrite a fresher verdict (T0004 task 5 note, generation check).
       if (leaseFetchGeneration.get(groupId) !== generation) return
       const items: Record<string, any>[] = Array.isArray(response.data?.items) ? response.data.items : []
       const mine = items.find(item => item?.group_id === groupId)
@@ -884,7 +884,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!groupId) return false
     const phase = runsByGroup[groupId]?.phase
     if (phase != null && ACTIVE_PHASES.includes(phase)) return true
-    // 0401 NR0003 SS3 원인 3: a 'lost' (or never-tracked) card reads as "not busy" from
+    // 0401 NR0003 SS3 cause 3: a 'lost' (or never-tracked) card reads as "not busy" from
     // the run registry alone, but the group can still sit under a lease -- live in
     // another process, or orphaned. Either way the server will 423 a mutation, so the
     // button must already read as locked.

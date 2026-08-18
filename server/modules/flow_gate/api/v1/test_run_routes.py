@@ -42,7 +42,7 @@ def post_test_run(body: TestRunBody, request: Request):
             return JSONResponse(status_code=403, content={"error": "permission_denied"})
         triggered_via = "ui"
     elif auth.get("action_scope") == "test_run" and auth.get("doc_ref") == body.doc_id:
-        # flowgate.default.0157 (P §수리 후 재발사): an auto-recovery repair token bound to THIS doc
+        # flowgate.default.0157 (P §relaunch after repair): an auto-recovery repair token bound to THIS doc
         # opens the user_session wall so the unmanned chain re-fires itself without a human. Single-use
         # — consume it here so it cannot be replayed. The consumed token still carries the chain's
         # continuation fields, so a passing re-run auto-approves the TSR (_maybe_chain_auto_approve_tsr).
@@ -75,7 +75,7 @@ def post_test_run_cancel(run_id: str, request: Request):
     (test_event_loop_blocking_0279.py only flags `async def` handlers).
 
     Same permission gate as starting a run (admin or perm_test_run) rather than
-    start-author-only — NR0003 §권한: another operator must be able to reclaim a
+    start-author-only — NR0003 §permissions: another operator must be able to reclaim a
     runaway execution, and start-author-only would be inconsistent with the admin
     bypass that already exists. Worker tokens (test_run/repair_token scopes) are not
     accepted here; consumed automation tokens are not widened into a cancel grant.

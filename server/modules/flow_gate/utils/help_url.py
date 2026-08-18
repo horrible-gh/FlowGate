@@ -3,7 +3,7 @@
 Every outbound error envelope used to hard-code
 ``https://example.com/api/v1/help`` as its ``help_url`` hint — a placeholder
 domain that does not exist, so the one field meant to guide a stuck worker sent
-it nowhere (0238 NR0003, 재발 방지 제언 #2).
+it nowhere (0238 NR0003, prevention proposal #2).
 
 The outbound routers are mounted under ``{CONTEXT}/api/v1`` (server/routers/main.py),
 so derive the URL from the configured CONTEXT rather than hard-coding it.

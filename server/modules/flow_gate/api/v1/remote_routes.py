@@ -38,7 +38,7 @@ async def remote_tool(request: Request, operation: str):
         # request is authenticated, the missing fields surface as 422 (④).
         body = None
 
-    # 0279 T0005 (NR0003 원인 1): remote_tool_service.handle() is a plain `def`
+    # 0279 T0005 (NR0003 cause 1): remote_tool_service.handle() is a plain `def`
     # that walks the entire source tree (grep/glob) and does blocking file I/O.
     # Calling it directly from this `async def` ran it ON the event loop, so one
     # remote/grep froze every other in-flight request — measured at 40s, during

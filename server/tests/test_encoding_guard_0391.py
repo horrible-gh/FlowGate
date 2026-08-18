@@ -9,6 +9,7 @@ plus the new line-based detector in workflow_decision_service.
 """
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -190,13 +191,15 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     from modules.flow_gate.api import inbox_routes
 
     _patch_new_validation(monkeypatch)
+    # T0004 작업 7: 한국어 문구를 직접 단언하는 테스트라 ko 로케일을 명시한다.
     response = post_inbox(
-
         _new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64),
+        headers={"x-locale": "ko"},
     )
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
+    assert "force_encoding_reason" in payload["error_message"]
 
 
 def test_new_fingerprint_match_passes_even_when_body_looks_corrupted(monkeypatch):
@@ -535,3 +538,313 @@ def test_reject_helper_is_not_used_on_the_read_path(monkeypatch):
     monkeypatch.setattr(wf_decision, "get_type_name",
                         lambda t, locale="ko": {"N": "조사지시"}.get(t, t))
     assert wf_decision._safe_label(CORRUPT_LABEL, "N") == "조사지시"
+
+
+# ── T0004: submission validation errors follow the requested locale ─────────────
+# NR0003 발견 2-5: _encoding_guard(), the Step 5.8 workflow-head 409, and the
+# new/edit TR-scope empty-notice fallback used to ignore locale entirely and always
+# answer in Korean. These pin the en/ja no-leak contract plus the continuation_locale
+# > x-locale priority and the ko default's preserved meaning.
+
+_INBOX_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _walk_strings_for_korean(payload):
+    if isinstance(payload, str):
+        if _INBOX_HANGUL_RE.search(payload):
+            yield payload
+    elif isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(key, str) and _INBOX_HANGUL_RE.search(key):
+                yield key
+            yield from _walk_strings_for_korean(value)
+    elif isinstance(payload, (list, tuple)):
+        for value in payload:
+            yield from _walk_strings_for_korean(value)
+
+
+def _assert_no_korean(payload):
+    leaks = list(_walk_strings_for_korean(payload))
+    assert not leaks, f"Korean syllable leak(s): {leaks}"
+
+
+# 선택된 로케일의 문구가 실제로 돌아왔는지까지 확인한다 — "한글만 없으면 통과"는
+# 로케일 맵을 잘못 골라도 초록이라 T0004 완료 기준을 증명하지 못한다.
+_LOCALE_SNIPPETS = {
+    "corrupted": {"en": "looks like corrupted characters", "ja": "文字化け"},
+    "fingerprint": {
+        "en": "body fingerprint does not match",
+        "ja": "本文の指紋が一致しません",
+    },
+    "workflow_head": {"en": "cannot be accepted", "ja": "受け付けられません"},
+    "tr_scope_fallback": {
+        "en": "TR scope validation rejected",
+        "ja": "TR作業範囲検証却下",
+    },
+}
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_new_corrupted_content_locale_has_no_korean(monkeypatch, locale):
+    _patch_new_validation(monkeypatch)
+    response = post_inbox(_new_body(content=CORRUPT), headers={"x-locale": locale})
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["corrupted"][locale] in payload["error_message"]
+    assert "force_encoding_reason" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_new_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
+    _patch_new_validation(monkeypatch)
+    response = post_inbox(
+        _new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64),
+        headers={"x-locale": locale},
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["fingerprint"][locale] in payload["error_message"]
+    assert "0" * 64 in payload["error_message"]  # 지문 세부가 로케일과 무관하게 남는다
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_edit_corrupted_content_locale_has_no_korean(monkeypatch, locale):
+    _patch_edit_validation(monkeypatch)
+    response = post_inbox(_edit_body(content=CORRUPT), headers={"x-locale": locale})
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["corrupted"][locale] in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_edit_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
+    _patch_edit_validation(monkeypatch)
+    response = post_inbox(
+        _edit_body(content=CLEAN_KO, dry_run=True, body_chars=999999),
+        headers={"x-locale": locale},
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["fingerprint"][locale] in payload["error_message"]
+    assert "999999" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_review_corrupted_comment_locale_has_no_korean(monkeypatch, locale):
+    _patch_review_validation(monkeypatch)
+    response = post_inbox(_review_body(comment=CORRUPT), headers={"x-locale": locale})
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["corrupted"][locale] in payload["error_message"]
+    # 필드 식별자도 로케일 중립 내부 키라 en/ja 응답에 한글 라벨이 섞이지 않는다.
+    assert "comment" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_review_fingerprint_mismatch_locale_has_no_korean(monkeypatch, locale):
+    _patch_review_validation(monkeypatch)
+    response = post_inbox(
+        _review_body(comment=CLEAN_EN, body_sha256="0" * 64),
+        headers={"x-locale": locale},
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["fingerprint"][locale] in payload["error_message"]
+
+
+def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch):
+    """T0004 작업 2 / NR0003 발견 2: the token's continuation_locale (unmanned worker)
+    must win over the request's x-locale header, matching every other locale
+    resolution in this file (0355 L0007 §2-1)."""
+    from modules.flow_gate.api import inbox_routes
+
+    _patch_new_validation(monkeypatch)
+    token = {
+        "token_id": "tok-0391-new-locale",
+        "project": "flowgate",
+        "issued_to": "worker-0391",
+        "action_scope": "new",
+        "doc_ref": "flowgate.default.0391.0001-B",
+        "dry_run_count": 0,
+        "continuation_locale": "ja",
+    }
+    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: token)
+    response = post_inbox(_new_body(content=CORRUPT), headers={"x-locale": "en"})
+    payload = response.json()
+    assert response.status_code == 422
+    assert "文字化け" in payload["error_message"]  # ja wins over the en header
+    _assert_no_korean(payload)
+
+
+def test_new_ko_response_preserves_existing_meaning(monkeypatch):
+    """No x-locale / continuation_locale falls back to ko (unchanged default), and
+    the 422 keeps the fingerprint word the pre-T0004 behavior asserted on."""
+    _patch_new_validation(monkeypatch)
+    response = post_inbox(_new_body(content=CLEAN_KO, dry_run=True, body_sha256="0" * 64))
+    payload = response.json()
+    assert response.status_code == 422
+    assert "지문" in payload["error_message"]
+    # 지문 세부(기대/실제 sha256)와 강제 우회 안내가 ko 에서도 그대로 남는다.
+    assert "sha256" in payload["error_message"]
+    assert "0" * 64 in payload["error_message"]
+    assert "force_encoding_reason" in payload["error_message"]
+    assert "UTF-8" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_new_workflow_head_mismatch_locale_has_no_korean(monkeypatch, locale):
+    from modules.flow_gate.api import inbox_routes
+
+    _patch_new_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.db_wfseq, "get_pending_head_by_group",
+        lambda *_a, **_k: {"type": "T"},
+    )
+    response = post_inbox(_new_body(content=CLEAN_KO), headers={"x-locale": locale})
+    payload = response.json()
+    assert response.status_code == 409
+    _assert_no_korean(payload)
+    assert _LOCALE_SNIPPETS["workflow_head"][locale] in payload["error_message"]
+    assert "T" in payload["error_message"]  # expected_head_type
+    assert "NR" in payload["error_message"]  # submitted_type
+
+
+def test_new_workflow_head_mismatch_ko_default_preserves_meaning(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+
+    _patch_new_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.db_wfseq, "get_pending_head_by_group",
+        lambda *_a, **_k: {"type": "T"},
+    )
+    response = post_inbox(_new_body(content=CLEAN_KO))
+    payload = response.json()
+    assert response.status_code == 409
+    assert "T" in payload["error_message"]
+    assert "NR" in payload["error_message"]
+    assert "등록되지" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_new_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, locale):
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import tr_scope_service
+
+    _patch_new_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.tr_scope_service, "evaluate",
+        lambda **_k: {"verdict": tr_scope_service.VERDICT_REJECT, "notice": ""},
+    )
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
+    response = post_inbox(
+        _new_body(content=CLEAN_KO, doc_type="TR"),
+        headers={"x-locale": locale},
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert payload["error_message"] == _LOCALE_SNIPPETS["tr_scope_fallback"][locale]
+
+
+def test_new_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import tr_scope_service
+
+    _patch_new_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.tr_scope_service, "evaluate",
+        lambda **_k: {"verdict": tr_scope_service.VERDICT_REJECT, "notice": ""},
+    )
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
+    response = post_inbox(_new_body(content=CLEAN_KO, doc_type="TR"))
+    payload = response.json()
+    assert response.status_code == 422
+    assert "TR" in payload["error_message"]
+    assert "작업범위" in payload["error_message"]
+
+
+@pytest.mark.parametrize("locale", ["en", "ja"])
+def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, locale):
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import tr_scope_service
+
+    _patch_edit_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.db_docs, "get_by_id",
+        lambda doc_id: {
+            "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "doc_review_status": "pending_review",
+        },
+    )
+    monkeypatch.setattr(
+        inbox_routes.tr_scope_service, "evaluate",
+        lambda **_k: {"verdict": tr_scope_service.VERDICT_REJECT, "notice": ""},
+    )
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
+    response = post_inbox(_edit_body(content=CLEAN_KO), headers={"x-locale": locale})
+    payload = response.json()
+    assert response.status_code == 422
+    _assert_no_korean(payload)
+    assert payload["error_message"] == _LOCALE_SNIPPETS["tr_scope_fallback"][locale]
+
+
+def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
+    """T0004 작업 5: 폴백은 서비스가 빈 notice 를 줬을 때만 쓰인다 — 비어 있지 않은
+    notice 는 로케일 폴백보다 먼저 이긴다(`or` 의 좌변)."""
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import tr_scope_service
+
+    _patch_edit_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.db_docs, "get_by_id",
+        lambda doc_id: {
+            "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "doc_review_status": "pending_review",
+        },
+    )
+    monkeypatch.setattr(
+        inbox_routes.tr_scope_service, "evaluate",
+        lambda **_k: {
+            "verdict": tr_scope_service.VERDICT_REJECT,
+            "notice": "service-provided notice",
+        },
+    )
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
+    response = post_inbox(_edit_body(content=CLEAN_KO), headers={"x-locale": "en"})
+    payload = response.json()
+    assert response.status_code == 422
+    assert payload["error_message"] == "service-provided notice"
+
+
+def test_edit_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import tr_scope_service
+
+    _patch_edit_validation(monkeypatch)
+    monkeypatch.setattr(
+        inbox_routes.db_docs, "get_by_id",
+        lambda doc_id: {
+            "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "doc_review_status": "pending_review",
+        },
+    )
+    monkeypatch.setattr(
+        inbox_routes.tr_scope_service, "evaluate",
+        lambda **_k: {"verdict": tr_scope_service.VERDICT_REJECT, "notice": ""},
+    )
+    monkeypatch.setattr(inbox_routes, "_prior_tr_declared", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.db_events, "create", lambda *_a, **_k: None)
+    response = post_inbox(_edit_body(content=CLEAN_KO))
+    payload = response.json()
+    assert response.status_code == 422
+    assert payload["error_message"] == "TR 작업범위 검증 반려"

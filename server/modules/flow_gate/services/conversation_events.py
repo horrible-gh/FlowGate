@@ -3,7 +3,7 @@
 Kept out of ``conversation_turn_service`` so the append path has no import-time
 dependency on the SSE layer, and so a broadcast failure has one obvious place to be
 swallowed: the turn is already committed and must never be rolled back for this
-(L0004 §2-1 판단 3).
+(L0004 §2-1, judgement 3).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 
 
 def build_payload(doc: dict, result: dict) -> dict:
-    """P0003 시나리오 6 payload — the turn itself, not a "something changed" ping."""
+    """P0003 scenario 6 payload — the turn itself, not a "something changed" ping."""
     return {
         "doc_id": result["doc_id"],
         "head_seq": result["head_seq"],

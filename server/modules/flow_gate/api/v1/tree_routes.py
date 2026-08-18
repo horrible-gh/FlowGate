@@ -42,7 +42,7 @@ class SrcDeleteRequest(BaseModel):
     group_id: str | None = None
 
 
-# 0275 T0005 (NR0003 원인 2): these handlers do sync DB/filesystem work, so they
+# 0275 T0005 (NR0003 cause 2): these handlers do sync DB/filesystem work, so they
 # must be plain `def` — FastAPI then runs them in the threadpool instead of on
 # the event loop, where a slow tree load froze every in-flight request (SSE
 # heartbeats included). Only group_dispose stays async (it awaits the SSE
@@ -58,7 +58,7 @@ def _resolve_src_path(project_id: str, path: str, group_id: str | None = None):
     from modules.flow_gate.db import projects as _proj
     from modules.flow_gate.services import git_service
 
-    # 0327 T0004 (B0001 / NR0003 권고 3): downloading is a read, so the group-branch
+    # 0327 T0004 (B0001 / NR0003 recommendation 3): downloading is a read, so the group-branch
     # explorer may offer it — but it has to read the GROUP's tree. Resolving a group
     # download against the base checkout would hand the user the base version of the
     # file under a group tab, silently wrong. Fail-closed like the src-content reader.
@@ -112,7 +112,7 @@ def _resolve_delete_path(project_id: str, path: str, group_id: str | None = None
     from modules.flow_gate.services import git_service
 
     if group_id:
-        # 0327 T0004: NR0003 권고 4 assumed "delete == hard-delete in the BASE checkout",
+        # 0327 T0004: NR0003 recommendation 4 assumed "delete == hard-delete in the BASE checkout",
         # which is why it was entangled with the finalize E3 base-contamination guard.
         # Resolved against the group's own worktree the base is not touched at all, so a
         # group delete is just a working-tree change on that group's branch — the same
@@ -211,14 +211,14 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     """Delete one file or directory from the base checkout, or from a group's worktree."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
-    # NR0003 권장 4: deletion requires a WRITE permission (perm_document_delete), not read.
+    # NR0003 recommendation 4: deletion requires a WRITE permission (perm_document_delete), not read.
     # Enforce it for EVERY caller — user JWTs and worker/outbound tokens alike. verify_bearer
     # only guarantees perm_document_read, so gating this check on _is_user_jwt let any worker
     # token hard-delete base-checkout files with mere read access. Checking the token's
     # issued_to against the request project can only restrict access, never widen it.
     if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
         return _err(403, "FORBIDDEN", "insufficient permission for this operation")
-    # 0327 T0004: group context is resolved, not refused. NR0003 권고 5's blanket 403 came
+    # 0327 T0004: group context is resolved, not refused. NR0003 recommendation 5's blanket 403 came
     # from delete meaning "base checkout", which no longer holds — a group delete targets
     # that group's own worktree. The permission gate above still runs FIRST and unchanged.
     group_id = (body.group_id or "").strip() or None
@@ -243,7 +243,7 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
     try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
     except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
-    # NR0003 권장 8: a BASE delete leaves the base checkout dirty (blocking merge finalize for
+    # NR0003 recommendation 8: a BASE delete leaves the base checkout dirty (blocking merge finalize for
     # every group of this project). Return the base git status so the explorer can refresh its
     # base-dirty markers and Git finalize warning immediately, instead of the contamination
     # staying invisible until a later finalize. A group delete never dirties base — the status
@@ -385,7 +385,7 @@ def download_file(
     - Response: application/octet-stream, Content-Disposition RFC 5987 UTF-8 encoding.
     - Auth: verify_bearer() + perm_document_read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
-    - 0327 T0004: group_id downloads that group's worktree copy (NR0003 권고 3).
+    - 0327 T0004: group_id downloads that group's worktree copy (NR0003 recommendation 3).
     """
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse):
@@ -432,7 +432,7 @@ def download_zip(
     - Content-Disposition RFC 5987 UTF-8 encoding.
     - Auth: verify_bearer() + perm_document_read.
     - Path guard: _validate_path_param (400) → _resolve_src_path (403).
-    - 0327 T0004: group_id zips that group's worktree copy (NR0003 권고 3).
+    - 0327 T0004: group_id zips that group's worktree copy (NR0003 recommendation 3).
     """
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse):

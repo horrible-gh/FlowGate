@@ -112,9 +112,10 @@ function setSelectedFile(file: File | null) {
     selectedFile.value = null
     return
   }
-  // flowgate.default.0060 L0012 1-1: 시안 안내문이 '20MB' 라고 쓴 값을 상한으로 확정했고,
-  // 서버의 attach_max_upload_bytes 도 같은 20 MiB 다. 화면이 10MB 로 먼저 막으면 서버가
-  // 받아 주는 파일을 화면이 거절하는, 두 숫자가 어긋난 상태가 된다.
+  // flowgate.default.0060 L0012 1-1: the mockup's guide text wrote '20MB' as the value fixed
+  // as the upper bound, and the server's attach_max_upload_bytes is the same 20 MiB. If the
+  // screen blocked at 10MB first, the two numbers would disagree — the screen would reject a
+  // file the server would otherwise accept.
   if (file.size > 20 * 1024 * 1024) {
     selectedFile.value = null
     errorMsg.value = t('main.file_upload_modal.file_too_large')
@@ -190,8 +191,8 @@ async function doUpload() {
     emit('update:visible', false)
     resetState()
   } catch (e: any) {
-    // 0060 TR0017 rev2 — 서버가 저장에 실패한 5xx는 사용자가 고칠 수 있는 입력 오류와
-    // 구분해서 알린다. 서버는 같은 실패를 트레이스백과 함께 로그에 남긴다.
+    // 0060 TR0017 rev2 — a 5xx from a server-side save failure is reported separately from an
+    // input error the user can fix. The server logs the same failure with its traceback.
     const status = Number(e?.response?.status ?? 0)
     const code = e?.response?.data?.error?.code ?? ''
     const serverSide =

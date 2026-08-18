@@ -27,7 +27,7 @@
         >
           <AppIcon name="copy" /> {{ t('main.answer_editor.copy_message') }}
         </div>
-        <!-- Group 0223: in-app invoke beside the copy mode (병행, not either/or). The server
+        <!-- Group 0223: in-app invoke beside the copy mode (running alongside it, not either/or). The server
              runs the same M020 ment text through the configured provider (qa dispatch 'ai'). -->
         <div
           class="answer-editor__dispatch-opt"

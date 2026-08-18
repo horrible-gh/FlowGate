@@ -1023,9 +1023,9 @@ export default {
       clear_all: '解除',
       providers_hint: '[AI 呼び出し] は選んだプロバイダーの先頭で実行します。',
       summary: '設計 {design}種 · 作業 {work}種 · プロバイダー {providers}',
-      // 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
+      // 0405 T0011 rev2 (rejection: "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만
       // 선택하고 생성할수 있게" / "[+ 문서생성] 이 맨 우측으로 오게하고 이걸 강조해야지"):
-      // 등록된 공급자가 0개인 프로젝트에서 쓰는 문안이다.
+      // the copy used for projects with 0 registered providers.
       loading: 'プロバイダー一覧を確認しています…',
       intro_no_providers: 'このプロジェクトには登録済みの AI プロバイダーがないため、[AI 呼び出し] は意味がありません。1 番の欄で任せるタイプだけを選び、[+ 文書作成] で作業計画文書をそのまま作成してください。',
       summary_no_providers: '設計 {design}種 · 作業 {work}種 · 登録済み AI プロバイダーなし',
@@ -2346,12 +2346,12 @@ export default {
       no_diff: 'このファイルには本ブランチとの差分がありません。',
       added_note: '新しく追加されたファイルのため、全内容が追加として表示されます。',
       truncated: '内容が大きすぎるため先頭 {n} 行のみ表示します。',
-      // 0382 NR0003 제안 3 — 변경 목록에서 감추되 없는 셈 치지 않는다.
+      // 0382 NR0003 proposal 3 — hidden from the change list, but not treated as if it doesn't exist.
       tool_artifacts: 'ツールが残した痕跡 {n}件',
       tool_artifacts_note: 'テスト・ビルドが作った一時ファイルのため、変更一覧から除いています。コミットにも入りません。',
     },
     git_finalize: {
-      // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
+      // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
       excluded_artifacts: 'コミットから除外した一時生成物 {n}件',
       excluded_artifacts_note: 'テスト・ビルドが残したファイルのため、今回のコミットには入れていません。ファイルは作業フォルダにそのまま残っています。',
       archive: {

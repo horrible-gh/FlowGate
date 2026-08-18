@@ -220,7 +220,7 @@ EXAMPLE_BODIES = {
     "remove": {"path": "app/obsolete.py", "recursive": False},
 }
 
-# Worker-mention lines (0349 D0004 D-4/D-5, P0005 [참고] 2단계 멘트 도구 섹션 문면).
+# Worker-mention lines (0349 D0004 D-4/D-5, P0005 [notes], stage-2 mention tool section wording).
 # The mention keeps only what a worker that never calls help must still know: call help
 # first, do not touch the disk, the tool names, the token, and where the detail lives.
 # Everything else moved into the help responses above. The registry owns the strings;

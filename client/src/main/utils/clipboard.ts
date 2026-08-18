@@ -1,4 +1,4 @@
-// Clipboard helpers (B0001 / group 0133 — "가끔 클립보드에 멘트가 복사되지 않음 / 잘림 / 공백").
+// Clipboard helpers (B0001 / group 0133 — "가끔 클립보드에 멘트가 복사되지 않음 / 잘림 / 공백" [mention sometimes doesn't copy to clipboard / gets truncated / blank]).
 //
 // Root cause (NR0003): the mention-copy handlers issue a token over the network
 // (`await issueToken(...)`) BETWEEN the user's click and `navigator.clipboard.writeText()`.

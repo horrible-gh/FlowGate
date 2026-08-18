@@ -10,23 +10,23 @@ Storage format::
 
 The explicit version prefix — rather than "does this look like base64?" — is what
 tells a stored value apart from a legacy plaintext key: real API keys are often
-base64-shaped themselves, and guessing would corrupt one (NR0007 §3 권고 2).
+base64-shaped themselves, and guessing would corrupt one (NR0007 §3 recommendation 2).
 
 Key material:
 
     FLOWGATE_AI_ENCRYPT_KEY        base64-encoded 32 bytes (current)
     FLOWGATE_AI_ENCRYPT_KEY_PREV   optional; tried on decrypt during rotation
 
-A dedicated key rather than the git/TOTP one (NR0007 §3 권고 1): the three secret
+A dedicated key rather than the git/TOTP one (NR0007 §3 recommendation 1): the three secret
 stores stay independently rotatable, and one leaked key does not open the others.
 When neither the environment nor .env carries a key, one is generated once into
 ``<storage root>/.flowgate-ai-key`` (chmod 600) — the same boot-time provisioning
 git_service uses, so an install that predates this change keeps working without
 any operator action. Silently storing plaintext when no key is available is never
-an option (NR0007 §3 권고 5), and a value that carries the enc:v1: prefix but does
+an option (NR0007 §3 recommendation 5), and a value that carries the enc:v1: prefix but does
 not decrypt raises instead of being read back as plaintext — hiding a lost master
 key behind a "plausible" secret is how a chain fails much later, much less
-legibly (NR0007 §3 권고 4).
+legibly (NR0007 §3 recommendation 4).
 """
 from __future__ import annotations
 

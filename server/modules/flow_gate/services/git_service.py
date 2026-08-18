@@ -117,11 +117,11 @@ DEFAULT_FINALIZE_ACTION_VALUES = ("merge", "push", "wait")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
 FINALIZE_AUX_CHOICES = ("push",)
 # NR flowgate.default.0331.0005 §8 — the approved v4 mockup drives the finalize
-# UI from two INDEPENDENT axes (반영 범위 × 원격에 푸시) instead of a flat card
+# UI from two INDEPENDENT axes (scope of application x push to remote) instead of a flat card
 # list, so 6 actions fit where 4 used to. Published ADDITIVELY next to the legacy
 # `choices`/`aux_choices` (which stay exactly as they were) so an older client
 # keeps rendering while the axis client prefers this matrix. Display order is the
-# approved one: 머지 → 커밋 → 대기.
+# approved one: merge → commit → wait.
 FINALIZE_AXIS_SCOPES = ("merge", "commit", "none")
 FINALIZE_AXIS_MATRIX = {
     "merge": {"push": "merge", "no_push": "merge_only"},
@@ -830,8 +830,8 @@ def _config_view(row: dict) -> dict:
         # null = not overridden → server commits as the FlowGate default (0237).
         "author_name": row.get("author_name") or None,
         "author_email": row.get("author_email") or None,
-        # TR 작업범위 검증 적용 단계 (0299 D0004 §3.6). 컬럼이 NULL 인 기존 행은
-        # 마이그레이션 071 이전에 만들어진 행이므로 기본값 'observe' 로 읽는다.
+        # TR work-scope check enforcement stage (0299 D0004 §3.6). An existing row with a NULL
+        # column predates migration 071, so it is read with the default 'observe'.
         "tr_scope_stage": row.get("tr_scope_stage") or "observe",
         "updated_at": row.get("updated_at"),
     }
@@ -1919,12 +1919,12 @@ def effective_src_root_ex(
 def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) -> bool:
     """True when *group_id* has a live worktree that may be written to.
 
-    0327 T0004 (B0001 / NR0003 권고 1): the explorer used to treat "a group is
+    0327 T0004 (B0001 / NR0003 recommendation 1): the explorer used to treat "a group is
     selected" as "read-only", so create/upload stayed blocked even for the group
     the user is actively working in — while the server could already tell the two
     apart. This is that answer, in the one shape the client needs, so the UI stops
     guessing. Groups with no worktree (finalized, disposed, never provisioned)
-    remain fully read-only, exactly as before (권고 5).
+    remain fully read-only, exactly as before (recommendation 5).
     """
     return effective_src_root_ex(project_id, group_id)[0] is not None
 
@@ -1961,7 +1961,7 @@ def _group_root_wf_done(group_id: str) -> bool:
 
 
 def _groups_root_wf_done(group_ids: list[str]) -> set[str]:
-    """Batch form of _group_root_wf_done (0282 NR0003 발견 1): one IN query
+    """Batch form of _group_root_wf_done (0282 NR0003 finding 1): one IN query
     instead of one probe per group. project_git_status ran the per-group probe
     inside its slot loop — 8 groups × 2 client calls = 12 of the 68 queries in
     the R0001 screen-load log, growing linearly with group count."""
@@ -1995,7 +1995,7 @@ def _group_ac_doc_id(group_id: str) -> Optional[str]:
 
 
 def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
-    """Batch form of _group_ac_doc_id (0282 NR0003 발견 1). MAX(doc_id) per
+    """Batch form of _group_ac_doc_id (0282 NR0003 finding 1). MAX(doc_id) per
     group ≡ the single version's ORDER BY doc_id DESC first row. Same advisory
     never-raise contract: on failure every pending row simply carries no
     ac_doc_id and the [open] button falls back to the R root."""
@@ -2340,7 +2340,7 @@ def _build_tree_nodes(files: list[str], dirs: Sequence[str] = ()) -> list[dict]:
 def _is_hidden_source_path(path: str) -> bool:
     """Group-explorer exposure rule (shared by tree/changes/blob).
 
-    0382 NR0003 제안 3: this used to be a *second*, hand-rolled rule that disagreed
+    0382 NR0003 proposal 3: this used to be a *second*, hand-rolled rule that disagreed
     with the submission check — it hid ``server/.test-tmp-0313/...`` while
     ``tr_scope_service`` demanded those same 261 paths be reported. The shared rule
     in ``path_exclusion_rules`` is now the base, so a path the explorer hides as
@@ -2548,7 +2548,7 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
     empty_dirs = _group_empty_dirs_safe(project_id, group_id, branch)
     # _build_tree_nodes dedups by name per directory, so committed + untracked paths
     # can be concatenated directly. worktree_untracked is ALSO returned as a separate
-    # channel (NR0003 권고 1): the client caches the tree by commit, but untracked
+    # channel (NR0003 recommendation 1): the client caches the tree by commit, but untracked
     # files change without advancing the commit, so this list must not be cached there.
     nodes = _build_tree_nodes(visible_files + untracked, empty_dirs)
     return {"ok": True, "data": {
@@ -2608,9 +2608,9 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
 
     fields = (diff_proc.stdout or "").split("\0")
     changes: list[dict] = []
-    # 0382 NR0003 제안 3: 흔적을 감추되 **없는 셈 치지는 않는다**. 261개가 아무 화면에도
-    # 안 뜬 채 승인·병합된 것이 이 사고의 본체였으므로, 걸러낸 것은 별도 채널로 세어
-    # 내보내고 화면이 "도구가 남긴 흔적 N개" 한 줄로 항상 보여준다.
+    # 0382 NR0003 proposal 3: hide the debris but **never pretend it does not exist**. The whole
+    # incident was 261 files being approved and merged without appearing on any screen, so what
+    # is filtered out is counted on a separate channel and the screen always shows a "N tool-left files" line.
     tool_artifacts: list[str] = []
     for index in range(0, len(fields) - 1, 2):
         status, path = fields[index], fields[index + 1]
@@ -2625,8 +2625,8 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
             "path": path, "status": status[:1],
             "insertions": insertions, "deletions": deletions,
         })
-    # NR0003 권고 2: git diff never lists untracked files, so a brand-new file would be
-    # absent from the changes list entirely — the exact "수정은 보이는데 신규만 안 보이는"
+    # NR0003 recommendation 2: git diff never lists untracked files, so a brand-new file would be
+    # absent from the changes list entirely — the exact "edits show up but new files do not"
     # asymmetry B0001 reports. Surface each with "?" (git porcelain's untracked marker).
     existing = {change["path"] for change in changes}
     # Untracked debris never reaches _group_untracked_safe (it filters by the same
@@ -2647,7 +2647,7 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
         # the base branch is a project setting the client had no other way to read.
         "base_branch": base_branch, "changes": changes,
-        # 0382 제안 3: 목록은 접어 두더라도 개수는 늘 보이게 — 없는 셈 치지 않는다.
+        # 0382 proposal 3: the list may be collapsed but the count is always visible — nothing is pretended away.
         "tool_artifacts": sorted(set(tool_artifacts)),
     }}
 
@@ -2657,7 +2657,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
 
     Deliberately NOT ``read_group_changes``. That one resolves the tree through
     ``src_root(project_name, branch)`` and only checks that the directory exists,
-    and it looks at committed/tracked changes alone. For 작업범위 검증 both gaps are
+    and it looks at committed/tracked changes alone. For the work-scope check both gaps are
     fatal: a group whose worktree is missing must NOT silently be measured against
     the base checkout (that is the very accident this feature exists to catch), and
     a brand-new file that was never ``git add``-ed is the most ordinary shape of
@@ -2667,8 +2667,8 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
 
       * merge-base..worktree diff — committed + staged + unstaged tracked changes
       * ``ls-files --others`` — untracked new files
-      * renames resolved to the NEW path only (D0004 §3.2: "이름을 바꾼 경우
-        바뀐 뒤의 경로만 적는다"), hence ``-M`` instead of ``--no-renames``
+      * renames resolved to the NEW path only (D0004 §3.2: "for a rename, record only
+        the path after the rename"), hence ``-M`` instead of ``--no-renames``
 
     Returns ``{"available": bool, "reason": str, "worktree": str|None,
     "branch": str|None, "paths": [str]}``. Never raises: an unavailable worktree or
@@ -2842,7 +2842,7 @@ def _read_group_untracked_blob(
     """Read an untracked worktree file for the group explorer, or None when the path
     is not an exposed untracked file (the caller then 404s as before).
 
-    NR0003 권고 3: git objects hold committed content only, so a not-yet-committed file
+    NR0003 recommendation 3: git objects hold committed content only, so a not-yet-committed file
     can be read solely off the worktree disk. The read is gated three ways — the
     exposure filter, git's own untracked list, and a resolved-path containment check
     against the worktree root — so it can never serve a tracked, hidden, or out-of-tree
@@ -2905,7 +2905,7 @@ def read_group_blob(
         commit = ref
     entry = _ls_tree_entry(base_root, commit, path)
     if entry is None or entry[0] != "blob":
-        # NR0003 권고 3: the path may be a new file that lives only in the group
+        # NR0003 recommendation 3: the path may be a new file that lives only in the group
         # worktree (no commit object yet). Fall back to reading it off disk before
         # giving up — this is what makes a just-created file openable from the tree.
         fallback = _read_group_untracked_blob(project_id, group_id, branch, path)
@@ -2933,15 +2933,15 @@ def read_group_blob(
 
 # ── Single-file change view (0326 R0001 / NR0005 §4) ─────────────────────────
 #
-# "파일이 변경됐다"까지만 보이고 "어디가 어떻게" 바뀌었는지는 볼 수 없다는 R0001에
-# 대한 백엔드 절반. NR0005 §4 안 (b) 를 택했다: 서버는 patch 텍스트를 만들지 않고
-# 한 경로의 old/new 두 시점 내용만 내려주고, 라인 diff 는 클라이언트가 이미 가진
-# 엔진(useConflictChunks.buildChunkSideDiff)이 계산한다. 서버에서 `git diff` 를
-# 돌려 patch 를 파싱하는 것보다 기존 blob 리더(read_group_blob)와 그대로 겹치고,
-# 통합/분할 보기 전환이 서버 왕복 없이 끝난다.
+# The backend half of R0001's complaint that you could only see "a file changed" and never
+# "where and how". Option (b) of NR0005 §4 was chosen: the server builds no patch text, only
+# serves one path's old/new contents, and the line diff is computed by the engine the client
+# already has (useConflictChunks.buildChunkSideDiff). That overlaps cleanly with the existing
+# blob reader (read_group_blob) rather than running `git diff` and parsing a patch, and
+# switching between unified and split views needs no server round trip.
 #
-# 두 벌인 이유도 §4 그대로다: 베이스 체크아웃은 디스크의 작업 트리를 읽지만,
-# 그룹 브랜치 뷰는 checkout-free 라 git 오브젝트에서 읽어야 한다.
+# There are two variants for the reason §4 gives: the base checkout reads the working tree on
+# disk, while the group-branch view is checkout-free and must read from git objects.
 
 def _diff_side_payload(head: bytes, size: int) -> dict:
     """One side of a diff from raw bytes. Binary sniff / 1 MiB cap mirror read_group_blob:
@@ -3158,13 +3158,13 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
     return files
 
 
-# 마무리 커밋이 한 번에 stage 하는 새 파일 수의 상한이 아니라, 명령 한 줄에 싣는
-# 경로 수다. 0382 의 사고에서는 261개가 한꺼번에 들어왔고, 윈도우 명령줄 길이 제한에
-# 걸리면 마무리 자체가 실패한다. 나눠서 여러 번 부른다.
+# Not a cap on how many new files the finalize commit stages, but on how many paths ride one
+# command line. The 0382 incident brought 261 at once, and hitting the Windows command-line
+# length limit would fail the finalize itself. It is split across several calls.
 _ADD_PATHSPEC_CHUNK = 50
 
-# 마무리 커밋에서 제외한 흔적을 결과·이벤트에 싣는 상한. 목록 자체는 화면이 "N개"로
-# 먼저 알려주므로, 전체 개수(count)는 항상 정확하고 목록만 잘린다.
+# Cap on how much excluded debris rides the result and the event. The screen announces the
+# count first, so the total count is always exact and only the list is truncated.
 FINALIZE_ARTIFACT_LIST_MAX = 200
 
 
@@ -3184,7 +3184,7 @@ def _absorb_worker_edits(
 ) -> list[str]:
     """Commit the worker's leftover edits — WITHOUT swallowing tool debris.
 
-    0382 B0001 (NR0003 §2-4 / 제안 1). This used to be a bare ``git add -A``. It has
+    0382 B0001 (NR0003 §2-4 / proposal 1). This used to be a bare ``git add -A``. It has
     no filter, so whatever sat in the worktree went in: commit ``0f502ce`` carries 5
     real files and 261 ``server/.test-tmp-*`` leftovers, and nobody could have caught
     it because the explorer hides exactly those paths (§2-3). One unfiltered line
@@ -3200,8 +3200,8 @@ def _absorb_worker_edits(
       staged in the first place (no ``reset`` dance, nothing half-staged on failure).
 
     Excluded paths are RETURNED, never silently dropped — the caller puts them in the
-    finalize result and the SSE event so the screen can say "커밋에서 제외한 임시
-    산출물 N개". Silently correct is how this bug survived; visible is the fix.
+    finalize result and the SSE event so the screen can say "N temporary artifacts excluded
+    from the commit". Silently correct is how this bug survived; visible is the fix.
 
     Returns the excluded paths (sorted). Raises GitServiceError on a git failure.
     """
@@ -3240,7 +3240,7 @@ def _absorb_worker_edits(
 
 
 def _artifact_payload(artifacts: Sequence[str]) -> dict:
-    """The finalize result/event shape for excluded tool debris (0382 제안 1)."""
+    """The finalize result/event shape for excluded tool debris (0382 proposal 1)."""
     return {
         "excluded_artifact_count": len(artifacts),
         "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
@@ -3422,7 +3422,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         secret = _load_secret_for(cfg) or ""
         author_env = _author_env_from_cfg(cfg)   # 0237 — configured commit author
         resolved_subject: Optional[str] = None
-        # 0382 제안 1: paths the absorb commit refused to swallow. Reported on every
+        # 0382 proposal 1: paths the absorb commit refused to swallow. Reported on every
         # exit path below — a silently-dropped list is what let 261 files through.
         excluded_artifacts: list[str] = []
 
@@ -4139,7 +4139,7 @@ def cleanup_terminal_slots(project_id: str) -> dict:
 
 
 def abort_merge(group_id: str, merge_id: int) -> dict:
-    """Manual [보류] — abort the merge, preserve the work branch, reopen re-merge
+    """Manual [hold] — abort the merge, preserve the work branch, reopen re-merge
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
     (0205 §2.1 stopped holding that lock). _set_status already broadcasts
@@ -4502,7 +4502,7 @@ def project_git_status(project_id: str) -> dict:
     project_name = _project_name(project_id)
     base_root = src_root(project_name, base_branch) if project_name else None
 
-    # 0282 NR0003 발견 1: one ledger scan serves both the registered-slot
+    # 0282 NR0003 finding 1: one ledger scan serves both the registered-slot
     # aggregation and the provision-failure surface below (previously two
     # near-identical project scans), and the per-slot wf_done probe is batched
     # into a single IN query so the loop only does set membership.
@@ -4540,7 +4540,7 @@ def project_git_status(project_id: str) -> dict:
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
     pending_rows = [r for r in rows if r.get("status") in PENDING_STATUSES]
-    # 0282 NR0003 발견 1: the AC lookup was the next N+1 in line — batched
+    # 0282 NR0003 finding 1: the AC lookup was the next N+1 in line — batched
     # before pending grows with adoption.
     ac_doc_ids = _group_ac_doc_ids([r["group_id"] for r in pending_rows])
     pending = [
@@ -4557,7 +4557,7 @@ def project_git_status(project_id: str) -> dict:
     ]
     # 0205 P scenario 8: annotate conflict pending rows with how long they have
     # been unresolved (elapsed = now − conflict_since), so the panel can surface
-    # the wait time and offer [해소 재개]/[보류]. Other rows carry no field.
+    # the wait time and offer [resume resolution]/[hold]. Other rows carry no field.
     for row in pending:
         if row.get("status") == "conflict" and row.get("merge_id") is not None:
             try:
@@ -4566,7 +4566,7 @@ def project_git_status(project_id: str) -> dict:
             except Exception:
                 row["conflict_since"] = None
     # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
-    # rows with a provision_error) so a slot-less group's "깃 미추적" warning
+    # rows with a provision_error) so a slot-less group's "not tracked by git" warning
     # survives the one-shot SSE. Disposed groups are excluded. Newest first.
     provision_failures: list[dict] = []
     try:
@@ -4674,7 +4674,7 @@ def manual_fetch(project_id: str) -> dict:
         # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
         # *reported* behind_count — the local base branch never advanced, so the
         # base checkout stayed behind upstream forever and the operator-facing
-        # "Fetch" action was a no-op recovery ("영원히 안가져올건가?"). Finalize was
+        # "Fetch" action was a no-op recovery ("are you never going to fetch it?"). Finalize was
         # the ONLY path that ran `merge --ff-only origin/{base}` (see finalize). Do
         # the same fast-forward here whenever it is safe: base is clean and can be
         # fast-forwarded. A dirty base is left untouched (never force the server's

@@ -21,11 +21,11 @@
         <div class="modal-bd qhd-body">
           <p class="qhd-desc">{{ t('main.qa_review_history.desc') }}</p>
 
-          <!-- 0311 T0004 §3 의 필터. rev3 반려("현재 적용되어있는 스타일을 전혀 사용하지
-               않는다")에 따라 새 칩 스타일을 만들지 않고, 이 앱이 이미 쓰고 있는 탭 관용구
-               (.tab-nav / .tab-nav-item — client/shared/app.css, ProjectSettingsView 와
-               같은 것)를 그대로 쓴다. TR0005 rev6 반려 §3: 질의 필터는 뺐다 — 질의는
-               QaHistoryDialog 로 옮겼다. -->
+          <!-- Filter for 0311 T0004 §3. Per rev3 rejection ("현재 적용되어있는 스타일을 전혀 사용하지
+               않는다"), no new chip style was invented — this reuses the tab idiom the app
+               already has (.tab-nav / .tab-nav-item — client/shared/app.css, same as
+               ProjectSettingsView). TR0005 rev6 rejection §3: the question filter was dropped —
+               questions moved to QaHistoryDialog. -->
           <div class="tab-nav qrh-filters">
             <button
               v-for="f in FILTERS"
@@ -44,9 +44,9 @@
           <div v-if="filteredTimeline.length === 0" class="qhd-empty">{{ t('main.qa_review_history.empty') }}</div>
 
           <ul v-else class="qhd-list">
-            <!-- 반려 · AI 검수 — 기존 ReviewHistoryDialog 의 카드 마크업 그대로.
-                 반려 사유는 카드 자체가 유일한 상자이고(이중박스 없음), AI 대응은 카드
-                 바깥에 형제로 달리는 답글이다. -->
+            <!-- Rejection · AI review — card markup copied as-is from the pre-merge
+                 ReviewHistoryDialog. The rejection reason IS the card itself, the only box
+                 (no double-boxing); the AI response is a sibling reply hung outside the card. -->
             <li
               v-for="entry in filteredTimeline"
               :key="entry.key"
@@ -68,9 +68,9 @@
                   </span>
                   <span v-if="entry.kind === 'ai_review' && entry.review.revision_no != null" class="rhd-rev">rev {{ entry.review.revision_no }}</span>
                   <span class="rhd-when">{{ formatWhen(entry.at) }}</span>
-                  <!-- TR0005 rev6 반려 §2 ("AI 검수는 왜 접는거 없냐?"): AI 검수 카드도
-                       반려와 같은 접힘 컨트롤을 갖는다 — 코멘트가 있을 때만 접을 것이
-                       있다. -->
+                  <!-- TR0005 rev6 rejection §2 ("AI 검수는 왜 접는거 없냐?"): the AI-review card
+                       also gets the same fold control as a rejection — there is only
+                       something to fold when there is a comment. -->
                   <button
                     v-if="entry.kind === 'reject' || (entry.kind === 'ai_review' && entry.review.comment)"
                     type="button"
@@ -89,10 +89,10 @@
                     </li>
                   </ul>
                 </div>
-                <!-- Reviewer #8 (기존): 사유는 스크롤하지 않고 접힘/펼침한다. 열려서 시작. -->
+                <!-- Reviewer #8 (pre-existing): the reason folds/unfolds instead of scrolling. Starts open. -->
                 <p v-else class="rhd-reject-reason" :class="{ collapsed: collapsed.reason[entry.key] }">{{ entry.reject.reason }}</p>
               </div>
-              <!-- Reviewer #8 (기존): AI 대응은 반려 상자 바깥 — 카드의 형제로 달린 답글. -->
+              <!-- Reviewer #8 (pre-existing): the AI response sits outside the rejection box — a reply hung as a sibling of the card. -->
               <div
                 v-if="entry.kind === 'reject' && entry.reject.ai_response"
                 class="rhd-ai-response"
@@ -133,17 +133,18 @@ import type { AiReview } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import AppIcon from '@shared/AppIcon.vue'
 
-// 0311 T0004 — QaHistoryDialog + ReviewHistoryDialog 통합 전체보기 중 검수·반려 쪽.
-// TR0005 rev6 반려 §3 ("질의는 빼라"): 질의는 QaHistoryDialog 로 되돌아갔고, 이
-// 다이얼로그는 AI 검수(ai_review)+반려(reject) 전용이 됐다. rev3 반려("현재
-// 적용되어있는 스타일을 전혀 사용하지 않는다")가 세운 원칙은 그대로다 — 반려·AI 검수
-// 항목은 ReviewHistoryDialog 의 .rhd-item 카드(+ 형제로 달리는 AI 대응) 그대로다.
+// 0311 T0004 — the review/rejection side of the QaHistoryDialog + ReviewHistoryDialog
+// merged full-view. TR0005 rev6 rejection §3 ("질의는 빼라"): questions went back to
+// QaHistoryDialog, and this dialog became dedicated to AI review (ai_review) + rejection
+// (reject). The principle set by the rev3 rejection ("현재
+// 적용되어있는 스타일을 전혀 사용하지 않는다") still holds — rejection/AI-review
+// entries are the ReviewHistoryDialog's .rhd-item card (+ the AI response hung as a sibling), as-is.
 const props = withDefaults(defineProps<{
   visible: boolean
   reviews?: AiReview[]
   rejections?: RejectionHistoryItem[]
-  // rejection_history 항목의 rejected_by(UUID)를 표시용 이름으로 바꾸는 조회 함수.
-  // 패널이 이미 갖고 있는 캐시(useUsers 조회)를 그대로 재사용한다.
+  // Lookup function that turns a rejection_history entry's rejected_by (UUID) into a
+  // display name. Reuses the cache the panel already holds (useUsers lookup) as-is.
   rejectedByDisplay?: (userId: string | null | undefined) => string
 }>(), {
   reviews: () => [],
@@ -168,8 +169,8 @@ const FILTER_ICON: Record<FilterKey, string> = {
 }
 const activeFilter = ref<FilterKey>('all')
 
-// 최신순 정렬(기존 ReviewHistoryDialog 로직 그대로) — 반려는 rejected_at, AI검수는
-// reviewed_at ?? created_at 을 쓴다.
+// Newest-first sort (same logic as the pre-merge ReviewHistoryDialog) — rejection uses
+// rejected_at, AI review uses reviewed_at ?? created_at.
 const reviewRejectTimeline = computed<TimelineEntry[]>(() => {
   const items: TimelineEntry[] = []
   for (const r of props.reviews ?? []) {
@@ -195,9 +196,10 @@ const filteredTimeline = computed<TimelineEntry[]>(() => {
   }
 })
 
-// 기존 ReviewHistoryDialog 와 같은 규칙: 열려 있는 상태가 기본이고 레코드는 "접힌" 키만
-// 담는다. 다이얼로그를 다시 열거나 목록이 바뀌면 전부 펼침으로 되돌아간다. 인덱스가
-// 아니라 항목 키로 잡아 필터를 바꿔도 엉뚱한 카드가 접히지 않는다.
+// Same rule as the pre-merge ReviewHistoryDialog: open is the default state, and the
+// record holds only "collapsed" keys. Reopening the dialog or changing the list resets
+// everything back to expanded. Keyed by item key rather than index, so switching the
+// filter never collapses the wrong card.
 const collapsed = reactive<Record<'reason' | 'response', Record<string, boolean>>>({
   reason: {},
   response: {},
@@ -235,22 +237,22 @@ function onClose() {
 </script>
 
 <style scoped>
-/* 이 다이얼로그의 스타일은 통합 전 ReviewHistoryDialog 의 것을 그대로 옮겨온 것이다.
-   새로 쓴 규칙은 필터 줄의 개수 배지(.qrh-count)와 AI 검수 코멘트의 접힘 클램프
-   (.rhd-comment.collapsed, TR0005 rev6 반려 §2)뿐이고, 필터 줄 자체는 전역 app.css 의
-   .tab-nav / .tab-nav-item 이다. */
+/* This dialog's styles were carried over as-is from the pre-merge ReviewHistoryDialog.
+   The only newly written rules are the filter row's count badge (.qrh-count) and the
+   AI-review comment's fold clamp (.rhd-comment.collapsed, TR0005 rev6 rejection §2) —
+   the filter row itself is the global app.css .tab-nav / .tab-nav-item. */
 .modal-qhd { width: 560px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; }
 .qhd-body { overflow-y: auto; }
 .qhd-desc { font-size: .78rem; color: var(--text-m); margin-bottom: 12px; }
 .qhd-empty { padding: 24px; text-align: center; color: var(--text-m); font-size: .85rem; }
 .qhd-list { display: flex; flex-direction: column; gap: 12px; }
 
-/* 필터 줄: 전역 .tab-nav 그대로 쓰되, 개수만 흐리게 덧붙인다. */
+/* Filter row: uses the global .tab-nav as-is, just appending a faded count. */
 .qrh-filters { margin-bottom: 12px; }
 .qrh-count { opacity: .6; font-variant-numeric: tabular-nums; }
 .qhd-footer { display: flex; justify-content: flex-end; }
 
-/* ── 반려 · AI 검수 항목: 기존 ReviewHistoryDialog 의 카드 그대로 ── */
+/* ── Rejection · AI review entries: card copied as-is from the pre-merge ReviewHistoryDialog ── */
 .rhd-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .rhd-item--review { border-left: 3px solid #f59e0b; }
 .rhd-item--reject { border-left: 3px solid var(--danger, #dc2626); background: #fef2f2; }
@@ -261,13 +263,14 @@ function onClose() {
 .rhd-verdict { font-size: .62rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
 .rhd-verdict.warn { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
 .rhd-verdict.pass { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-/* 반려한 사람 — 패널의 .dip-reject-quote-author 가 보여주던 것과 같은 정보를 이 카드의
-   머리줄에 놓는다(통합 전 ReviewHistoryDialog 는 rejected_by 를 받지 못해 못 보여줬다). */
+/* Who rejected it — puts the same information the panel's .dip-reject-quote-author used
+   to show onto this card's header row (the pre-merge ReviewHistoryDialog never received
+   rejected_by, so it could not show it). */
 .rhd-who { font-size: .66rem; color: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rhd-rev { font-size: .62rem; font-weight: 600; color: var(--text-s); background: var(--surface-h); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .rhd-when { margin-left: auto; font-size: .65rem; color: var(--text-m); }
 /* R0001 (full-content view): the review comment took its full height like the
-   reason / AI response — no inner scrollbox. TR0005 rev6 반려 §2: it now folds the
+   reason / AI response — no inner scrollbox. TR0005 rev6 rejection §2: it now folds the
    same way the rejection reason does — 2-line clamp when collapsed. */
 .rhd-comment { font-size: .8rem; color: var(--text); white-space: pre-wrap; line-height: 1.55; margin: 0; overflow-wrap: anywhere; }
 .rhd-comment.collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-height: 3.2em; overflow: hidden; }

@@ -18,8 +18,8 @@
           <div class="modal-title" id="wpp-title">
             <AppIcon name="clipboard-text" class="wpp-title-ico" />
             {{ t('main.work_plan_proposal_dialog.title') }}
-            <!-- 0405 T0011: 이 창의 주인공은 [AI 호출]이 아니라 작업계획을 만드는 일이다.
-                 제목 옆의 이 표가 그 사실을 화면에 그대로 적어 둔다. -->
+            <!-- 0405 T0011: This dialog's main subject is not [AI Invoke] but creating a
+                 work plan. The badge next to the title states that fact plainly. -->
             <span class="wpp-main-task" data-test="wpp-main-task">
               {{ t('main.work_plan_proposal_dialog.main_task') }}
             </span>
@@ -29,10 +29,12 @@
           </button>
         </div>
 
-        <!-- 0405 T0011 rev2 — 공급자 목록이 오기 전에는 이 창의 모양이 아직 정해지지 않았다.
-             칸이 하나인지 둘인지도, 맨 오른쪽 주버튼이 [AI 호출]인지 [+ 문서생성]인지도 그
-             답에 달렸다. 그래서 답이 오기 전에는 고를 것도 누를 것도 그리지 않는다 — 답이
-             온 뒤 한 번만 그리고, 그 뒤로는 어떤 상태에서도 움직이지 않는다. -->
+        <!-- 0405 T0011 rev2 — Until the provider list arrives, this dialog's shape isn't
+             decided yet. Whether there's one section or two, and whether the rightmost
+             primary button is [AI Invoke] or [+ Create Document], both depend on that
+             answer. So nothing to pick or press is drawn before the answer comes — it's
+             drawn once after the answer arrives, and never moves again after that, no
+             matter the state. -->
         <div v-if="!providersSettled" class="modal-bd wpp-body wpp-loading" data-test="wpp-loading">
           {{ t('main.work_plan_proposal_dialog.loading') }}
         </div>
@@ -45,7 +47,7 @@
           </p>
 
           <div class="wpp-cols" :class="{ 'wpp-cols--solo': noProviders }">
-            <!-- ① 장수를 셀 타입 -->
+            <!-- ① Document types to count -->
             <section class="wpp-sec">
               <div class="wpp-sec-hd">
                 <span class="wpp-sec-no">1</span>
@@ -84,10 +86,11 @@
               </div>
             </section>
 
-            <!-- ② 후보 공급자 — 0405 T0011 rev2 (반려: "AI공급자 선택할게 없으면
-                 [2 후보공급자]는 안나오게 하고 1만 선택하고 생성할수 있게 해야하지 않겠니?").
-                 고를 것이 하나도 없는 칸은 그리지 않는다. 읽지 못한 경우(providersError)는
-                 다르다 — 그때는 칸을 남기고 [다시 시도]를 준다. -->
+            <!-- ② Candidate providers — 0405 T0011 rev2 (rejection: "AI공급자 선택할게
+                 없으면 [2 후보공급자]는 안나오게 하고 1만 선택하고 생성할수 있게 해야하지
+                 않겠니?"). A section with nothing to pick is not drawn at all. The case
+                 where the list failed to load (providersError) is different — then the
+                 section stays and offers [Retry]. -->
             <section v-if="!noProviders" class="wpp-sec" data-test="wpp-sec-providers">
               <div class="wpp-sec-hd">
                 <span class="wpp-sec-no">2</span>
@@ -127,19 +130,23 @@
             </section>
           </div>
 
-          <!-- flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고" /
-               "\"전달멘트\" 랑 박스 높낮이는 하나도 안맞고"): 이번 실행에 쓸 프로바이더를 고르는
-               박스. rev2 에서 계약을 다른 다이얼로그와 글자 그대로 같게 맞췄다 — 이 창은 값을
-               따로 들고 있지 않고 AiInvokeDialog.vue:41,44 / AppHeader.vue:170 /
-               ContinuousWarningDialog.vue:150 / WorkflowDecisionModal.vue:430 처럼
-               aiProviderStore.selectedProviderId 를 읽고 aiProviderStore.selectProvider 로
-               되쓴다. rev1 은 로컬 ref 를 providersLoaded[0] 으로 채웠던 탓에, 프로젝트 기본
-               공급자나 헤더에서 고른 값이 A 인데 이 창만 B 를 보여 주고 B 로 실행할 수 있었고,
-               창을 닫으면 고른 값도 사라졌다. 후보 다중선택(② 칸)과는 여전히 다른 값이다.
-               플래너 멘트와 한 행에 나란히 두고 두 입력의 높이를 맞춰서
-               (.wpp-provider-select/.wpp-note-input 모두 30px) 나란한 두 박스가 서로 다른
-               높이로 어긋나 보이지 않게 한다. 실행 중에는 옆 입력과 똑같이 :disabled 로
-               잠근다 — 이벤트만 무시하면 화면의 값과 실제로 쓰는 값이 갈라진다. -->
+          <!-- flowgate.default.0416 TR0005 (rejection: "[실행 프로바이더] 이거 어디갔냐고" /
+               "\"전달멘트\" 랑 박스 높낮이는 하나도 안맞고"): the box for picking the provider
+               used by this run. rev2 made the contract identical, word for word, to the
+               other dialogs — this dialog does not hold its own value; like
+               AiInvokeDialog.vue:41,44 / AppHeader.vue:170 /
+               ContinuousWarningDialog.vue:150 / WorkflowDecisionModal.vue:430, it reads
+               aiProviderStore.selectedProviderId and writes back through
+               aiProviderStore.selectProvider. rev1 filled a local ref from
+               providersLoaded[0], so when the project default provider or the header's
+               chosen value was A, this dialog alone showed B and could run with B — and
+               the chosen value vanished when the dialog closed. It's still a distinct
+               value from the multi-select candidates (section ②). It sits in one row
+               next to the planner note and matches the two inputs' heights
+               (.wpp-provider-select/.wpp-note-input both 30px) so the two side-by-side
+               boxes never look misaligned. While running it locks with :disabled just
+               like the input beside it — ignoring only the event would let the
+               on-screen value and the value actually used drift apart. -->
           <div class="wpp-note-row">
             <span v-if="!noProviders" class="wpp-field-block wpp-provider-block">
               <span class="wpp-note-label">{{ t('main.work_plan_proposal_dialog.provider_label') }}</span>
@@ -156,10 +163,11 @@
               />
             </span>
             <!-- flowgate.default.0416 T0004 (B0001 "플래너한테 아무런 멘트도 전달할수가
-                 없는거지?"): 작업계획 전체 단계에 공통으로 붙는 플래너 멘트. WorkPlanEditor.vue
-                 의 plan.defaults.note 입력과 같은 계약(placeholder·글자 수 표시·초과 상태)을
-                 재사용한다. 문서생성·멘트복사·AI호출 세 경로가 이 값을 scope.note 로 그대로
-                 나른다. -->
+                 없는거지?"): the planner note attached in common to every work-plan step.
+                 Reuses the same contract as WorkPlanEditor.vue's plan.defaults.note input
+                 (placeholder, character count, over-limit state). All three paths —
+                 create document, copy mention, AI invoke — carry this value through as
+                 scope.note. -->
             <span class="wpp-field-block wpp-note-block">
               <span class="wpp-note-label">{{ t('main.work_plan_proposal_dialog.note_label') }}</span>
               <span class="wpp-note-field">
@@ -182,9 +190,10 @@
                     ? t('main.work_plan.note_char_over', { current: note.length, max: noteMaxChars })
                     : t('main.work_plan.note_char_count', { current: note.length, max: noteMaxChars }) }}
                 </small>
-                <!-- flowgate.default.0421 NR0003 §3 — 값이 자동으로 채워졌을 때만 뜨는 안내.
-                     사용자가 칸을 직접 고치면(noteTouched) 사라진다. 전용 data-test와 자기
-                     CSS 클래스를 쓴다 — 공용 클래스 재사용은 findAll 단언을 흔든다. -->
+                <!-- flowgate.default.0421 NR0003 §3 — a notice that shows only when the
+                     value was auto-filled. It disappears once the user edits the field
+                     directly (noteTouched). Uses its own data-test and CSS class —
+                     reusing a shared class would make findAll assertions flaky. -->
                 <small
                   v-if="showNoteAutoFilled"
                   class="wpp-note-auto"
@@ -196,7 +205,7 @@
             </span>
           </div>
 
-          <!-- P0004 [비활성 사유]: this line always occupies its slot — a reason when there is
+          <!-- P0004 [disabled reason]: this line always occupies its slot — a reason when there is
                one, the chosen summary otherwise. Never changes the button row's height. -->
           <div class="wpp-notice" :class="{ warn: !!blockReason }" data-test="wpp-notice">
             <AppIcon :name="blockReason ? 'warning-circle' : 'info'" />
@@ -212,10 +221,12 @@
             @click="onClose"
           >{{ t('common.cancel') }}</button>
           <template v-if="providersSettled">
-            <!-- 0405 T0011 rev2 (반려 3: "AI공급자 선택할게 없으면 [AI호출이 의미 없잖아]
-                 [+ 문서생성] 이 맨 우측으로 오게하고 이걸 강조해야지"): 공급자가 없으면 이
-                 버튼이 파란 주버튼이 되고 wpp-ft-last 규칙이 이 버튼을 맨 오른쪽으로 보낸다.
-                 공급자가 있으면 예전 그대로 두 번째 자리의 흰 보조 버튼이다. -->
+            <!-- 0405 T0011 rev2 (rejection 3: "AI공급자 선택할게 없으면 [AI호출이 의미
+                 없잖아] [+ 문서생성] 이 맨 우측으로 오게하고 이걸 강조해야지"): when there's
+                 no provider, this button becomes the blue primary button and the
+                 wpp-ft-last rule pushes it to the rightmost position. When a provider
+                 exists, it stays the white secondary button in the second slot as
+                 before. -->
             <button
               type="button"
               class="btn"
@@ -241,8 +252,9 @@
                 ? t('main.work_plan_proposal_dialog.btn_copy_busy')
                 : t('main.work_plan_proposal_dialog.btn_copy') }}
             </button>
-            <!-- 고를 공급자가 하나도 없으면 이 버튼은 누를 수 있어도 할 일이 없다. 비활성으로
-                 남겨 두지 않고 아예 그리지 않는다. -->
+            <!-- When there is no provider to pick, this button would be clickable but
+                 have nothing to do. Rather than leave it disabled, it's not drawn at
+                 all. -->
             <button
               v-if="!noProviders"
               type="button"
@@ -265,33 +277,43 @@
 
 <script setup lang="ts">
 /**
- * 다음 액션이 작업계획(WP)일 때 여는 전용 제안 다이얼로그 — flowgate.default.0405 P0004.
+ * The dedicated proposal dialog opened when the next action is a work plan (WP) —
+ * flowgate.default.0405 P0004.
  *
- * 칸이 하나의 범위 객체를 만들고, 버튼들이 그 하나를 그대로 나른다. 범위 객체의 이름은 새로
- * 짓지 않고 작업계획 편집 화면의 범위 고르기 창(WorkPlanAiScopeDialog)이 이미 쓰는 항목
- * 이름을 그대로 쓴다.
+ * The sections build a single scope object, and the buttons all carry that same
+ * object forward as-is. The scope object doesn't invent new names — it reuses the
+ * field names the work-plan edit screen's scope-picking dialog
+ * (WorkPlanAiScopeDialog) already uses.
  *
- * 0405 T0011 rev1 — 사용자 반려 두 줄이 이 창의 모양을 정한다.
- *   "문서생성이 아니라 AI호출을 강조해야지"  → 파란 주버튼은 [AI 호출] 하나뿐이다.
- *   "맡길 단계??? 이건 대체 왜나와"          → 단계를 고르는 칸을 없앴다. 단계 배분은 언제나
- *                                             작업계획을 쓰는 쪽 몫이다.
+ * 0405 T0011 rev1 — two lines of user rejection shaped this dialog's design.
+ *   "문서생성이 아니라 AI호출을 강조해야지"  → the blue primary button is [AI Invoke], and
+ *                                             only that.
+ *   "맡길 단계??? 이건 대체 왜나와"          → the step-picking section was removed. Step
+ *                                             assignment is always the job of whoever
+ *                                             writes the work plan.
  *
- * 0405 T0011 rev2 — 사용자 반려 두 줄이 "공급자가 없는 프로젝트"의 모양을 정한다.
+ * 0405 T0011 rev2 — two lines of user rejection shaped the "project with no
+ * provider" case.
  *   "AI공급자 선택할게 없으면 [2 후보공급자]는 안나오게 하고 1만 선택하고 생성할수 있게"
  *   "AI공급자 선택할게 없으면 [AI호출이 의미 없잖아] [+ 문서생성] 이 맨 우측으로 오게하고
  *    이걸 강조해야지"
- *   → 등록된 공급자가 0개면 ② 칸도 [AI 호출]도 그리지 않고, ① 칸만으로 만들 수 있으며,
- *     [+ 문서생성]이 맨 오른쪽의 파란 주버튼이 된다.
- *   그 답(공급자 개수)이 오기 전에는 아무 버튼도 그리지 않는다. 창이 그려진 뒤에 버튼이
- *   자리를 옮기는 일이 없어야 하기 때문이다.
+ *   → when there are zero registered providers, neither section ② nor [AI Invoke] is
+ *     drawn; the dialog can be completed with section ① alone, and
+ *     [+ Create Document] becomes the rightmost blue primary button.
+ *   No button is drawn before that answer (the provider count) arrives — buttons
+ *   must never move once the dialog has been rendered.
  *
- * 버튼별 책임 분담:
- *   [문서생성]     이 창이 직접 POST /documents/work-plan (기존 생성 경로와 같은 바디)
- *   [멘트복사]     부모가 POST /workflow/advance → 클립보드 (쓰기가 클릭의 사용자 제스처
- *                  안에 남아야 해서 부모의 지연 복사 경로를 그대로 쓴다)
- *   [AI 호출]      부모가 POST /ai-invoke/start — 공급자가 있을 때 이 창의 주버튼
- * 부모가 도는 동안의 busy/실패 사유는 busyAction·externalNotice 로 되돌아온다. 창은 요청 전에
- * 닫지 않는다 — 성공했을 때만 부모가 visible 을 내린다.
+ * Button responsibilities:
+ *   [Create Document]  this dialog itself POSTs /documents/work-plan (same body as
+ *                       the existing creation path)
+ *   [Copy Mention]      the parent POSTs /workflow/advance → clipboard (the write
+ *                       has to stay inside the click's user gesture, so it reuses
+ *                       the parent's deferred-copy path as-is)
+ *   [AI Invoke]         the parent POSTs /ai-invoke/start — this dialog's primary
+ *                       button when a provider exists
+ * The busy state / failure reason while the parent is working comes back through
+ * busyAction / externalNotice. The dialog doesn't close before the request
+ * completes — only the parent lowers `visible` once it succeeds.
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -302,16 +324,17 @@ import { useDocTypeStore, type WorkPlanCountableType } from '../stores/docTypeSt
 import { useAiProviderStore } from '../stores/aiProvider'
 import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
 
-/** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
- *  step_keys 를 뺐다(사람이 단계를 고르는 칸이 없어졌다). rev2 에서 provider_ids 는
- *  등록된 공급자가 없는 프로젝트에서 빈 배열로 나간다. 0416 T0004 에서 note 를 더했다
- *  — 모든 단계에 공통으로 붙는 플래너 멘트, 문서생성·멘트복사·AI호출 세 갈래 모두 같은 값. */
+/** P0004 [scope payload] — the single shape shared by all three paths. 0405 T0011
+ *  rev1 dropped step_keys (the human step-picking section is gone). rev2 sends
+ *  provider_ids as an empty array for projects with no registered provider. 0416
+ *  T0004 added note — the planner note common to every step, the same value across
+ *  all three paths: create document, copy mention, AI invoke. */
 export interface WorkPlanScope {
   quantity_type_codes: string[]
   provider_ids: string[]
   /** flowgate.default.0416 T0004 — the one-line planner note common to every step. */
   note: string
-  /** flowgate.default.0416 TR0005 (반려: "[실행 프로바이더] 이거 어디갔냐고") — the provider
+  /** flowgate.default.0416 TR0005 (rejection: "[실행 프로바이더] 이거 어디갔냐고") — the provider
    *  this run actually executes with, i.e. the app-wide selection every other dialog
    *  shows (aiProviderStore.selectedProviderId). Distinct from provider_ids, which are
    *  the step-assignment candidates. Empty string when the project has no provider. */
@@ -323,11 +346,13 @@ const props = withDefaults(defineProps<{
   parentDocId: string
   projectId: string
   groupId: string
-  /** 부모가 도는 중인 요청. 버튼을 없애지 않고 사유 한 줄만 바꾼다. */
+  /** The request currently running in the parent. Doesn't remove the button, only
+   *  changes the one-line reason. */
   busyAction?: '' | 'copy' | 'ai'
-  /** 부모 요청이 남긴 실패 사유(409 sequence_exhausted / head_in_progress / run_in_progress …). */
+  /** The failure reason left by the parent request (409 sequence_exhausted /
+   *  head_in_progress / run_in_progress …). */
   externalNotice?: string
-  /** 이 그룹에서 다른 AI 실행이 돌고 있다. [AI 호출]만 비활성으로 둔다. */
+  /** Another AI run is in progress for this group. Only [AI Invoke] is disabled. */
   aiActive?: boolean
 }>(), { busyAction: '', externalNotice: '', aiActive: false })
 
@@ -345,7 +370,8 @@ const aiProviderStore = useAiProviderStore()
 const overlayRef = ref<HTMLElement | null>(null)
 const typesError = ref(false)
 const providersError = ref(false)
-/** 공급자 목록의 답이 도착했는가. 이 창의 모양(칸 개수·주버튼)이 이 값에 달렸다. */
+/** Whether the answer for the provider list has arrived. This dialog's shape
+ *  (number of sections, primary button) depends on this value. */
 const providersSettled = ref(false)
 const selectedTypes = ref<Set<string>>(new Set())
 const selectedProviders = ref<Set<string>>(new Set())
@@ -353,35 +379,43 @@ const creating = ref(false)
 const createError = ref('')
 /** flowgate.default.0416 T0004 — shared with WorkPlanEditor.vue's plan.defaults.note. */
 const note = ref('')
-/** flowgate.default.0421 NR0003 §1 — 시퀀스 머리 행의 note가 도착하기 전에 사용자가 이미
- *  입력했는지를 지킨다. true가 되면 늦게 오는 프리필 응답이 값을 덮지 않는다
- *  (선례: ContinuousWorkDialog.vue의 touchedSeqs). */
+/** flowgate.default.0421 NR0003 §1 — tracks whether the user already typed a value
+ *  before the sequence head row's note arrives. Once true, a late-arriving prefill
+ *  response won't overwrite it (precedent: ContinuousWorkDialog.vue's touchedSeqs). */
 const noteTouched = ref(false)
-/** 이번 열림에서 시퀀스 note로 자동 채워졌는가 — 안내 문구를 보일지에만 쓴다. */
+/** Whether this opening was auto-filled from the sequence note — used only to
+ *  decide whether to show the notice text. */
 const noteAutoFilled = ref(false)
-/** 0406 T0022 계약: 한 줄 멘트의 상한은 서버가 정본이다. WorkPlanEditor.vue:541 과
- *  WorkflowDecisionModal.vue:1132 가 이미 서버가 준 값을 읽고 있고, 이 창만 1000 을 베껴
- *  들고 있으면 서버 상수가 바뀌는 순간 여기만 조용히 어긋난다(초과 입력을 통과시켜 422 를
- *  맞거나, 통과할 입력을 막는다). 답이 오기 전과 못 읽은 경우의 값만 상수로 남긴다. */
+/** 0406 T0022 contract: the server is the source of truth for the one-line note's
+ *  character limit. WorkPlanEditor.vue:541 and WorkflowDecisionModal.vue:1132
+ *  already read the server-provided value; if this dialog alone kept a hardcoded
+ *  copy of 1000, it would silently drift the moment the server constant changes
+ *  (letting over-limit input through into a 422, or blocking input that should
+ *  pass). The constant only remains for before the answer arrives and for the
+ *  case it can't be read. */
 const noteMaxChars = ref(1000)
-/** flowgate.default.0416 TR0005 rev2 — 이 창은 실행 프로바이더 값을 따로 들고 있지 않는다.
- *  앱 공통 선택(사용자가 저장한 선택 → 서버의 default_provider_id → 목록 첫 값 순으로
- *  aiProviderStore 가 정한다)이 정본이고, 헤더·AI 호출 창·연속 작업 창이 모두 같은 값을
- *  본다. rev1 의 로컬 ref 는 이 창에서만 다른 공급자를 보이게 하는 원인이었다. */
+/** flowgate.default.0416 TR0005 rev2 — this dialog doesn't hold its own execution
+ *  provider value. The app-wide selection is the source of truth (aiProviderStore
+ *  decides it in order: the user's saved choice → the server's
+ *  default_provider_id → the list's first value), and the header, AI invoke
+ *  dialog, and continuous-work dialog all see the same value. rev1's local ref was
+ *  the cause of this dialog alone showing a different provider. */
 const defaultProviderId = computed(() => aiProviderStore.selectedProviderId)
 
 const countableTypes = computed<WorkPlanCountableType[]>(() => docTypeStore.countableTypes)
 const providersLoaded = computed(() => aiProviderStore.providers)
 
 /**
- * 0405 T0011 rev2 — "고를 공급자가 하나도 없다". 목록을 못 읽은 것(providersError)과는
- * 구분한다: 못 읽은 것은 다시 시도할 일이지 없는 것이 아니다.
+ * 0405 T0011 rev2 — "there is not a single provider to pick." Distinct from
+ * failing to load the list (providersError): a failed load calls for a retry, not
+ * for treating it as empty.
  */
 const noProviders = computed(() =>
   providersSettled.value && !providersError.value && providersLoaded.value.length === 0,
 )
 
-/** 칸들이 함께 만드는 하나의 범위. 순서는 서버 등록 순서를 따르고 중복은 없다. */
+/** The single scope the sections build together. Order follows the server's
+ *  registration order, with no duplicates. */
 const scope = computed<WorkPlanScope>(() => ({
   quantity_type_codes: countableTypes.value
     .filter((item) => selectedTypes.value.has(item.code)).map((item) => item.code),
@@ -391,11 +425,12 @@ const scope = computed<WorkPlanScope>(() => ({
   provider_id: defaultProviderId.value,
 }))
 
-/** T0004 — 서버 NOTE_MAX_CHARS(work_plan_service.py)와 같은 상한. 초과 입력은 세 실행
- *  경로 모두 막는다(서버도 defaults.note 검증에서 같은 상한으로 거절한다). */
+/** T0004 — the same limit as the server's NOTE_MAX_CHARS (work_plan_service.py).
+ *  Over-limit input is blocked on all three execution paths (the server also
+ *  rejects it with the same limit in defaults.note validation). */
 const noteOverLimit = computed(() => note.value.length > noteMaxChars.value)
-/** flowgate.default.0421 NR0003 §3 — 자동 채움 안내는 값이 자동으로 채워졌고 사용자가
- *  아직 직접 고치지 않았을 때만 보인다. */
+/** flowgate.default.0421 NR0003 §3 — the auto-fill notice shows only when the
+ *  value was auto-filled and the user hasn't edited it directly yet. */
 const showNoteAutoFilled = computed(() => noteAutoFilled.value && !noteTouched.value)
 
 const hasContext = computed(() => !!props.projectId && !!props.groupId && !!props.parentDocId)
@@ -404,11 +439,12 @@ const canRun = computed(() =>
   && !props.aiActive
   && !noteOverLimit.value
   && scope.value.quantity_type_codes.length > 0
-  // 공급자가 없는 프로젝트에서는 ① 칸만으로 만든다.
+  // For a project with no provider, section ① alone is enough to create.
   && (noProviders.value || scope.value.provider_ids.length > 0),
 )
 
-/** P0004 [비활성 사유] 표 — 위에서부터 처음 걸리는 한 줄만 적는다. */
+/** P0004 [disabled reason] table — records only the first matching line from top
+ *  to bottom. */
 const blockReason = computed<string>(() => {
   if (!hasContext.value) return t('main.work_plan_proposal_dialog.block_context')
   if (props.aiActive) return t('main.work_plan_proposal_dialog.block_ai_active')
@@ -488,9 +524,10 @@ async function loadTypes() {
   }
 }
 
-/** flowgate.default.0416 TR0005 rev2 — 실행 프로바이더를 채우는 코드는 이 창에 없다.
- *  loadForProject 가 저장된 선택 → 서버 기본 공급자 → 목록 첫 값 순으로 이미 정하고,
- *  이 창은 그 값을 읽기만 한다(다른 다이얼로그와 같은 계약). */
+/** flowgate.default.0416 TR0005 rev2 — this dialog has no code that fills the
+ *  execution provider. loadForProject already decides it in order: saved
+ *  selection → server default provider → list's first value, and this dialog only
+ *  reads that value (same contract as the other dialogs). */
 async function loadProviders() {
   providersError.value = false
   try {
@@ -503,23 +540,27 @@ async function loadProviders() {
   }
 }
 
-/** 0406 T0022 — 상한은 서버가 말해 준다. 이 창에는 아직 작업계획 문서가 없으므로
- *  WorkPlanEditor.vue 가 쓰는 GET /work-plan 대신, 부모 문서의 진행 순서 응답이 싣고 있는
- *  같은 값(STEP_NOTE_MAX_CHARS)을 WorkflowDecisionModal.vue:1132 와 똑같이 읽는다.
- *  못 읽으면 조용히 기본값 1000 으로 남는다 — 창이 열리지 못할 이유는 아니다. */
+/** 0406 T0022 — the server tells us the limit. Since this dialog has no work-plan
+ *  document yet, instead of the GET /work-plan that WorkPlanEditor.vue uses, it
+ *  reads the same value (STEP_NOTE_MAX_CHARS) carried in the parent document's
+ *  sequence response, exactly like WorkflowDecisionModal.vue:1132. If it can't be
+ *  read, it silently falls back to the default of 1000 — that's not a reason for
+ *  the dialog to fail to open. */
 async function loadNoteLimit() {
   if (!props.parentDocId) return
   try {
     const res = await getRequest<any>('/api/v1/workflow/sequence', { doc_id: props.parentDocId })
     noteMaxChars.value = Number((res.data as any)?.note_max_chars) || 1000
-    // flowgate.default.0421 NR0003 §1 — 같은 응답이 이미 모든 행의 note를 싣는다
-    // (workflow_decision_service.py get_workflow_sequence). 새 GET을 추가하지 않고 머리 행의
-    // note만 꺼내 쓴다. AiInvokeDialog.vue:loadSingleStepNote와 같은 추출 패턴이다.
+    // flowgate.default.0421 NR0003 §1 — the same response already carries every
+    // row's note (workflow_decision_service.py get_workflow_sequence). Rather than
+    // add a new GET, this just picks the head row's note out of it — the same
+    // extraction pattern as AiInvokeDialog.vue:loadSingleStepNote.
     const items = ((res.data as any)?.items ?? []) as { status?: string | null; note?: string | null }[]
     const headIndex = findSequenceHeadIndex(items)
     const fetchedNote = headIndex < items.length ? String(items[headIndex]?.note ?? '').trim() : ''
-    // 빈 문자열이면 덮을 것이 없으므로 항상 안전하고, 사용자가 이미 손댔다면 늦게 온 값이
-    // 그 입력을 덮지 않는다.
+    // An empty string has nothing to overwrite, so it's always safe, and if the
+    // user has already touched the field, the late-arriving value won't overwrite
+    // it.
     if (fetchedNote && !noteTouched.value) {
       note.value = fetchedNote
       noteAutoFilled.value = true
@@ -533,21 +574,24 @@ watch(
   () => props.visible,
   (val) => {
     if (!val) return
-    // P0004 [취소]: 다시 열면 칸은 모두 초기 상태(아무것도 고르지 않음)로 돌아간다.
-    // T0004: 플래너 멘트도 선택값과 함께 초기화한다.
+    // P0004 [cancel]: reopening resets every section to its initial state (nothing
+    // selected).
+    // T0004: the planner note is also reset along with the selections.
     selectedTypes.value = new Set()
     selectedProviders.value = new Set()
     note.value = ''
     noteTouched.value = false
     noteAutoFilled.value = false
-    // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 여기서 초기화하지 않는다. 그 값은
-    // 이 창의 것이 아니라 앱 공통 선택이고, 헤더·AI 호출 창에서 고른 값이 다시 열었다고
-    // 사라지면 그 창들과 다시 어긋난다.
+    // flowgate.default.0416 TR0005 rev2: the execution provider is not reset here.
+    // That value isn't this dialog's own — it's the app-wide selection — and if the
+    // value chosen in the header or AI invoke dialog vanished just because this one
+    // reopened, it would drift out of sync with those dialogs again.
     createError.value = ''
     creating.value = false
     providersError.value = false
-    // 0405 T0011 rev2: 이 프로젝트의 목록을 이미 받아 둔 상태라면 답을 아는 채로 여는
-    // 것이므로 처음부터 최종 모양으로 그린다. 아니면 답이 올 때까지 기다린다.
+    // 0405 T0011 rev2: if this project's list has already been fetched, the dialog
+    // opens already knowing the answer, so it's drawn in its final shape from the
+    // start. Otherwise it waits until the answer arrives.
     providersSettled.value = aiProviderStore.loadedProjectId === props.projectId
       && !aiProviderStore.error
     void loadTypes()
@@ -563,13 +607,15 @@ function onClose() {
 }
 
 /**
- * [문서생성] — 기존 생성 경로를 그대로 쓴다. 범위의 타입 선택은 quantities 에서 골라
- * 넘긴다: 선택한 타입은 값을 아예 보내지 않아 서버가 workflow_type_counts 유도값(없으면
- * 0)을 채우게 하고, 선택하지 않은 타입만 0 을 명시해 강제한다(flowgate.default.0423
- * T0005 item 11 — 예전에는 선택=1/미선택=0 을 여기서 하드코딩했다). 공급자는
- * provider_candidates 로 옮긴다. 단계는 지금도 서버가 quantities 에서 만든다
- * (P0004 옮기기 표) — 화면이 단계를 고르지 않으니 보낼 것도 없다. 등록된 공급자가 없는
- * 프로젝트에서는 provider_candidates 가 빈 배열로 나간다(서버도 그때만 빈 배열을 받는다).
+ * [Create Document] — reuses the existing creation path as-is. The scope's type
+ * selection is carried through quantities: a selected type sends no value at all, so the
+ * server fills in its workflow_type_counts-derived value (0 when there is none), and only
+ * an unselected type is pinned to 0 explicitly (flowgate.default.0423 T0005 item 11 —
+ * selected=1/unselected=0 used to be hardcoded here). The provider carries over as
+ * provider_candidates. Steps are still built server-side from quantities (see the
+ * P0004 mapping table) — the screen doesn't pick steps, so there's nothing extra to
+ * send. For a project with no registered provider, provider_candidates goes out as
+ * an empty array (the server only expects an empty array in that case too).
  */
 async function onCreateEmpty() {
   if (!canRun.value || creating.value || props.aiActive) return
@@ -587,13 +633,16 @@ async function onCreateEmpty() {
         quantities: Object.fromEntries(
           allCodes.filter((code) => !selectedTypes.value.has(code)).map((code) => [code, 0]),
         ),
-        // flowgate.default.0416 TR0005 rev2: defaults.provider_id 는 다시 null 이다.
-        // 이 값은 initial_body 에서 만들어지는 모든 단계의 provider_id 로 그대로 번지는데,
-        // T0004 작업 3 은 "개별 단계/기본 공급자 배정은 생성 후 WorkPlanEditor.vue 의 기존
-        // 책임으로 남긴다"고 못 박았다. rev1 처럼 실행 프로바이더를 여기에 실으면 (1) 그
-        // 배정이 사람 몰래 일어나고 (2) 박스에 빈 옵션이 없어 "배정하지 않음"을 고를 수단이
-        // 없으며 (3) 후보 밖 공급자면 표시 이름 없는 단계가 조용히 만들어진다. 실행
-        // 프로바이더는 AI 를 실제로 돌리는 두 경로([AI 호출]·[멘트복사])가 나른다.
+        // flowgate.default.0416 TR0005 rev2: defaults.provider_id is null again.
+        // This value would otherwise propagate as-is into the provider_id of every
+        // step built from initial_body, but T0004 task 3 pinned this down: "개별
+        // 단계/기본 공급자 배정은 생성 후 WorkPlanEditor.vue 의 기존 책임으로 남긴다."
+        // Carrying the execution provider in here the way rev1 did would (1) make
+        // that assignment happen behind the user's back, (2) leave no blank option
+        // in the box to pick "unassigned" with, and (3) silently create a step with
+        // no display name if the provider falls outside the candidates. The
+        // execution provider is instead carried by the two paths that actually run
+        // AI ([AI Invoke] / [Copy Mention]).
         defaults: { provider_id: null, note: note.value },
         type_providers: {},
       },
@@ -616,8 +665,10 @@ function onCopyMention() {
 
 function onInvokeAi() {
   if (!canRun.value || props.busyAction || props.aiActive || noProviders.value) return
-  // flowgate.default.0416 TR0005: 이번 실행에 쓸 프로바이더는 새로 생긴 실행 프로바이더
-  // 박스의 값이다. 목록이 비어 값이 아직 못 채워진 드문 경우에만 후보 첫 값으로 물러선다.
+  // flowgate.default.0416 TR0005: the provider used for this run is the value of
+  // the newly added execution-provider box. It falls back to the first candidate
+  // only in the rare case where the list is empty and the value hasn't been filled
+  // yet.
   emit('invoke-ai', {
     scope: scope.value,
     providerId: defaultProviderId.value || scope.value.provider_ids[0],
@@ -626,12 +677,15 @@ function onInvokeAi() {
 </script>
 
 <style scoped>
-/* 칸 + 버튼 줄. 버튼 줄은 창이 그려진 뒤 어떤 상태에서도 개수와 자리를 바꾸지 않는다 (P0004). */
+/* Sections + button row. The button row never changes its count or positions in
+   any state after the dialog is rendered (P0004). */
 .modal-wpp { width: 1040px; max-width: 96vw; }
-/* 0405 T0011 rev2 — ② 칸이 없는 창은 한 칸짜리다. 남은 한 칸이 1040px 를 혼자 쓰지 않게 한다. */
+/* 0405 T0011 rev2 — a dialog with no section ② has just one section. Keep the
+   remaining single section from having all of 1040px to itself. */
 .modal-wpp--solo { width: 620px; }
 .wpp-title-ico { color: var(--primary, #4f46e5); margin-right: 6px; }
-/* 0405 T0011 — 이 창의 메인 작업 표시. 제목이 [작업계획 생성]이라는 것을 눈으로 못 박는다. */
+/* 0405 T0011 — the badge marking this dialog's main task. Pins down visually that
+   the title is [Create Work Plan]. */
 .wpp-main-task {
   margin-left: 8px; padding: 1px 8px; border-radius: 999px; vertical-align: middle;
   font-size: .68rem; font-weight: 700; letter-spacing: .02em;
@@ -697,9 +751,10 @@ function onInvokeAi() {
 .wpp-hint { margin: 6px 0 0; font-size: .7rem; line-height: 1.5; color: var(--text-m, #64748b); }
 .wpp-empty-hint { font-size: .74rem; color: var(--text-m); font-style: italic; margin: 4px 0; }
 .wpp-load-error { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--danger, #dc2626); }
-/* flowgate.default.0416 TR0005 (반려 "박스 높낮이는 하나도 안맞고"): 실행 프로바이더 박스와
-   전달 멘트 입력을 한 행에 나란히 두고, 두 컨트롤(select/입력창)의 높이를 30px 로 못박아
-   맞춘다 — 라벨이 같은 높이·폰트라 정렬점도 같다(align-items: flex-start). */
+/* flowgate.default.0416 TR0005 (rejection "박스 높낮이는 하나도 안맞고"): places the
+   execution-provider box and the note input side by side in one row, and pins both
+   controls' (select/input) height at 30px to match — the labels share the same
+   height and font, so the alignment point matches too (align-items: flex-start). */
 .wpp-note-row { display: flex; align-items: flex-start; gap: 20px; }
 .wpp-field-block { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .wpp-provider-block { flex: 0 0 220px; }
@@ -730,9 +785,11 @@ function onInvokeAi() {
   color: var(--warning, #b45309); background: var(--warning-l, #fef3c7);
   border-color: #fde68a; border-left-color: var(--warning, #b45309);
 }
-/* 0405 T0011 rev1 — 공급자가 있는 창의 파란 주버튼은 [AI 호출] 하나뿐이다.
-   rev2 — 공급자가 없는 창에는 [AI 호출]이 없고, [+ 문서생성]이 그 주버튼 자리를 넘겨받아
-   맨 오른쪽으로 간다. DOM 순서는 그대로 두고 order 한 줄로 자리를 옮긴다. */
+/* 0405 T0011 rev1 — when a provider exists, the dialog's blue primary button is
+   [AI Invoke], and only that.
+   rev2 — when no provider exists, [AI Invoke] is gone, and [+ Create Document]
+   takes over the primary-button slot and moves to the far right. The DOM order
+   stays the same; a single `order` line moves its position. */
 .wpp-ft { display: flex; gap: 8px; justify-content: flex-end; }
 .wpp-main-btn { font-weight: 700; }
 .wpp-ft-last { order: 9; }

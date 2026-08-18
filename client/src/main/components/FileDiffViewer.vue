@@ -128,7 +128,7 @@
 <script setup lang="ts">
 // flowgate.default.0326 R0001 / N0004 — read-only change view for one file, opened
 // from the file tree's "변경 내용 보기". The server returns the two versions
-// (NR0005 §4 안 b) and the line/token diff is computed here with the engine the
+// (NR0005 §4 option b) and the line/token diff is computed here with the engine the
 // merge-conflict resolver already uses (NR0005 §5), so no new diff algorithm and no
 // server-side patch parsing were introduced.
 import { computed, ref, watch } from 'vue'

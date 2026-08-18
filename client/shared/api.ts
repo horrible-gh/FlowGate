@@ -156,7 +156,7 @@ tokenChannel?.addEventListener('message', (event: MessageEvent) => {
   }
 })
 
-// 0279 T0005 (NR0003 원인 3): this instance had no `timeout`, so axios defaulted to
+// 0279 T0005 (NR0003 cause 3): this instance had no `timeout`, so axios defaulted to
 // `timeout: 0` — wait forever. When a request stalled, its promise never settled, the
 // `finally { loading.value = false }` never ran, and no rejection reached the existing
 // error+retry UI. The screen therefore froze on "loading" rather than showing an error,
@@ -175,7 +175,7 @@ const LONG_RUNNING_PATHS = [
   /\/files\/upload/,
   /\/files\/download/,
   /\/search\//,
-  // 0283 T0004 (NR0003 근본원인): the base file-tree and group-tree GETs do a
+  // 0283 T0004 (NR0003 root cause): the base file-tree and group-tree GETs do a
   // synchronous recursive directory walk of the storage root. On remote/UNC storage
   // that walk intermittently exceeds the 30s default and axios aborts it, surfacing
   // "트리를 불러오지 못했습니다." Give these reads the same 130s ceiling the other
@@ -282,7 +282,7 @@ const ensureFreshToken = (): Promise<string> => {
 // The access-token lifetime is intentionally short on this deployment (operator .env, e.g.
 // 1 minute — deliberately NOT widened to 30m per T0004). A purely reactive 401→refresh loop
 // then means (a) every expiry surfaces at least one 401 in the browser console, and (b) the
-// SSE stream can sit pinned to a dead token until the next user action ("[워크플로 결정] not
+// SSE stream can sit pinned to a dead token until the next user action ("[Workflow Decision] not
 // refreshing"). We instead rotate the token slightly BEFORE it expires, so live requests
 // never carry an expired token and the SSE reconnect (via fg:access_token_refreshed) always
 // has a fresh token. The reactive interceptor below stays as a safety net.
@@ -406,7 +406,7 @@ export const localizeApiError = (error: AxiosError): AxiosError => {
   const code = record?.error?.code ?? record?.code ?? record?.detail?.error?.code
   if (error.response?.status !== 423 && code !== 'GROUP_AI_RUN_LOCKED') return error
 
-  // 0401 NR0003 SS3 원인 3 / T0004 작업 4: "진행 중" is only true when the lease's OWN run
+  // 0401 NR0003 SS3 cause 3 / T0004 task 4: "진행 중" is only true when the lease's OWN run
   // is still live. A lease left behind by a dead process gets a sentence that tells the
   // user what to do about it instead of asking them to wait for something that will never
   // finish. run_live is absent on any 423 this build doesn't recognize -- default to the
@@ -469,7 +469,7 @@ api.interceptors.response.use(
 export const postRequest = async <T>(path: string, data: unknown): Promise<AxiosResponse<T>> =>
   api.post<T>(path, data)
 
-// 0282 NR0003 발견 3: the screen-load SQL log showed the client running the
+// 0282 NR0003 finding 3: the screen-load SQL log showed the client running the
 // same GET series twice (racing mounts / duplicated event listeners), roughly
 // doubling the server's per-load query work. Coalesce identical in-flight GETs
 // onto one network call: a caller issuing a GET whose (path, params) twin is

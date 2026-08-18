@@ -36,9 +36,9 @@ QuestionInput = Union[str, dict]
 # question_items.options / answers.selected_options carry no DB-level CHECK — JSON
 # validation has no common syntax across the three dialects (DB0007 §2) — so the
 # validation below is the ONLY enforcement of every invariant in DB0007 §5.
-MAX_OPTIONS = 10          # 질의 항목당 선택지 하드 캡 (남용 방지 가드)
-MAX_OPTION_LABEL = 200    # label 최대 길이(strip 후 기준). 장문 후보안은 질의 body에 서술
-MAX_SELECTED = 1          # v1 단일선택
+MAX_OPTIONS = 10          # hard cap on options per question item (abuse guard)
+MAX_OPTION_LABEL = 200    # max label length (after strip); long proposals go in the question body
+MAX_SELECTED = 1          # v1 is single-select
 
 
 # ── SSE notifications ────────────────────────────────────────────────────────────
@@ -458,7 +458,7 @@ def get_answers_for_document(doc_id: str) -> list[dict]:
 
     Returns [{"Q": item_body, "A": latest_answer_body_or_null}, ...] / [] if none.
     """
-    # 0288 NR0003 발견 5 / 권고 3: this was 2 + N queries (container, items, then
+    # 0288 NR0003 finding 5 / recommendation 3: this was 2 + N queries (container, items, then
     # one answers SELECT per item) on the GET /document path, which every worker
     # hits. question_items.qa_bundle_by_doc is the same data as one LEFT JOIN
     # already ordered by (seq, answer created_at), so the whole thing is one

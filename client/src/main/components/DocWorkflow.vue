@@ -134,9 +134,10 @@
           <span>{{ t('main.doc_workflow.decided_empty') }}</span>
         </div>
       </template>
-      <!-- 0403 NR0004 F4 — 워크플로가 아직 없는 그룹의 작업계획 탭. 지금까지는 이 칸이
-           통째로 그려지지 않아 [작업계획 적용] 버튼조차 없었고, "계획을 먼저 세우고 그것으로
-           워크플로를 구성한다"가 화면에서 막혀 있었다. 빈 띠 대신 무엇을 할 수 있는지 쓴다. -->
+      <!-- 0403 NR0004 F4 — the work-plan tab for a group that has no workflow yet. Until now
+           this cell did not draw at all, so there was not even an [작업계획 적용] button, and
+           "계획을 먼저 세우고 그것으로 워크플로를 구성한다" was blocked on screen. Write what
+           can be done here instead of an empty strip. -->
       <template v-else-if="stepStates.length === 0">
         <div class="wf-empty-recover">
           <AppIcon name="info" />
@@ -168,9 +169,10 @@
     </div>
   </div>
 
-  <!-- 0403 NR0004 F4: 계획을 부어 여는 창은 후보 응답이 알려 준 시퀀스 주인에게 저장한다.
-       워크플로가 아직 없는 그룹에서는 화면이 들고 있는 상위 문서가 비어 있을 수 있고,
-       그때 작업계획 자신에게 시퀀스를 만들어 버리면 그 그룹은 영영 이상해진다. -->
+  <!-- 0403 NR0004 F4: the dialog opened by pouring the plan saves to the sequence owner the
+       candidate response told it to. In a group with no workflow yet, the parent document the
+       screen is holding may be empty, and if it created the sequence on the work plan itself
+       instead, that group would be permanently broken. -->
   <WorkflowDecisionModal
     mode="edit"
     :visible="!readOnly && showEditModal"
@@ -212,7 +214,7 @@ const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
 const isWorkflowRoot = computed(() => props.tab.typeCode === 'R' || props.tab.typeCode === 'B')
 
-// 0395 D0007 §7: 작업계획은 "요건정의 다음에 오는 일반 칸" — a sequence step like any
+// 0395 D0007 §7: the work plan is "요건정의 다음에 오는 일반 칸" — a sequence step like any
 // other, so it shows up in the strip and must be clickable there.
 const WORK_PLAN_TYPE = 'WP'
 
@@ -260,7 +262,7 @@ function stepHint(s: StepState, idx: number): string | undefined {
 function onStepClick(s: StepState, idx: number) {
   if (props.readOnly) return
   if ((s.visual === 'highlight' || s.visual === 'current') && props.canNextAction) {
-    // 0395 T0021 / D0007 §3.1 결정 3: a work plan is NOT created through the generic
+    // 0395 T0021 / D0007 §3.1 decision 3: a work plan is NOT created through the generic
     // related-document path the next-step action uses — that path builds a Markdown
     // body and touches the parent's status. It has its own dialog and route.
     if (s.code === WORK_PLAN_TYPE) {
@@ -301,8 +303,8 @@ interface RowCountChange {
 
 interface CandidateResponse {
   wp_doc_id: string
-  // 0403 NR0004 F2 — 저장할 때 그대로 돌려보내는 계획 리비전. 이것이 있어야 서버가
-  // "이 창을 연 뒤 계획이 바뀌었는지"를 판정할 수 있다.
+  // 0403 NR0004 F2 — the plan revision echoed back unchanged on save. The server needs
+  // it to judge whether the plan changed since this dialog was opened.
   wp_revision_no: number
   workflow_doc_id: string | null
   mode: 'append' | 'replace_after'
@@ -371,8 +373,9 @@ const applyState = computed<ApplyState>(() => {
 const applyOptions = computed(() =>
   POUR_MODES
     .map(mode => ({
-      // 시안 fgh29xnk v3 · 화면 1은 ph-arrow-elbow-down-right 를 썼다. iconData.ts 는 손으로
-      // 고치지 말라고 적힌 생성 파일이고 그 이름이 없어, 뜻이 가장 가까운 arrow-down 을 쓴다.
+      // Mockup fgh29xnk v3 · screen 1 used ph-arrow-elbow-down-right. iconData.ts is a
+      // generated file marked "do not hand-edit" and lacks that name, so arrow-down is
+      // used as the closest match in meaning.
       mode,
       icon: mode === 'append' ? 'arrow-down' : 'arrows-clockwise',
       change: candidates.value[mode]?.row_count_change,
@@ -427,13 +430,15 @@ async function fetchCandidates(force = false): Promise<void> {
 
 function toggleApplyMenu() {
   applyMenuOpen.value = !applyMenuOpen.value
-  // 0406 T0017 "저장도 안되고 멘트도 이상하고" — 이 칸 바로 아래에 같은 문서의 계획
-  // 편집기가 있고, 계획을 고쳐 저장하면 그 문서의 리비전이 오른다. 그런데 예전엔 마운트 때 한 번
-  // 받아 둔 후보를 그대로 부었다. 그래서 (1) 방금 고친 전달멘트가 아니라 옛 리비전의 멘트가
-  // 부어지고, (2) 저장은 wp_changed 로 거절되며, (3) 그 안내대로 창을 닫고 다시 열어도 이
-  // 캐시는 그대로여서 같은 실패가 끝없이 반복됐다 — 문서 탭을 닫기 전에는 벗어날 길이 없었다.
-  // 차림표를 여는 것은 사람의 행동이므로 그때 다시 읽는다. 답이 올 때까지 지금 값을 그대로
-  // 두므로 버튼도, 열린 차림표도 비었다가 다시 차지 않는다(M0020).
+  // 0406 T0017 "저장도 안되고 멘트도 이상하고" — right below this cell sits the plan
+  // editor for the same document, and editing and saving the plan bumps that document's
+  // revision. But previously this poured the candidate fetched once at mount time,
+  // unchanged. So (1) the mention poured was the old revision's, not the one just edited,
+  // (2) the save was rejected with wp_changed, and (3) closing and reopening the dialog as
+  // instructed left this cache untouched, so the same failure repeated endlessly — there
+  // was no way out short of closing the document tab. Opening the menu is a human action,
+  // so it re-reads at that moment. Until the answer arrives the current value is kept
+  // as-is, so neither the button nor the open menu goes blank and then refills (M0020).
   if (applyMenuOpen.value) void fetchCandidates(true)
 }
 
@@ -444,14 +449,16 @@ function closeApplyMenu() {
 // D0010 §3.3 — the promise this module is built on: choosing a mode opens the edit dialog in
 // that state and nothing else happens. The sequence changes when [저장] is pressed, there.
 async function choosePourMode(mode: PourMode) {
-  // 0406 T0017 — 차림표를 열며 시작한 다시 읽기가 아직 끝나지 않았을 수 있다. 그 답을
-  // 기다렸다가 붓는다: 함께 받는 wp_revision_no 가 저장을 판정하는 근거이고, 줄에 실린
-  // 전달멘트도 그 리비전의 것이므로, 여기서 한 박자 기다리는 것과 낡은 계획을 부어
-  // 저장에서 거절당하는 것의 차이다.
+  // 0406 T0017 — the re-read that started when the menu opened may not be done yet.
+  // Wait for that answer before pouring: the wp_revision_no it carries is what the save
+  // check is based on, and the mention on the row belongs to that same revision — waiting
+  // one beat here is the difference between that and pouring a stale plan that then gets
+  // rejected on save.
   if (applyFlight) await applyFlight
   const data = candidates.value[mode]
-  // 다시 읽었더니 이 갈래가 사라졌다면(계획이 비었거나 읽을 수 없다) 차림표를 열어 둔다 —
-  // 그 자리에 이유가 이미 적혀 있고, 조용히 닫으면 누른 사람은 아무 말도 듣지 못한다.
+  // If the re-read finds this branch gone (the plan is empty or unreadable), leave the
+  // menu open — the reason is already written right there, and closing it silently would
+  // leave the person who clicked with no explanation at all.
   if (!data) return
   applyMenuOpen.value = false
   pouredPayload.value = {
@@ -608,7 +615,7 @@ function toggleSequenceCollapsed() {
   box-shadow: 0 0 0 3px rgba(22, 163, 74, .3);
 }
 
-/* ── 0399 [작업계획 적용] 버튼과 두 갈래 리스트 (시안 fgh29xnk v3 · 화면 1) ──
+/* ── 0399 [작업계획 적용] button and the two-branch list (mockup fgh29xnk v3 · screen 1) ──
    The section needs a positioning context because the menu is absolutely placed against
    this button, and .wf-section is the nearest box that never scrolls under the strip. */
 .wf-section {
@@ -645,7 +652,7 @@ function toggleSequenceCollapsed() {
   color: #fff;
   border-color: #16a34a;
 }
-/* M0020 — 막힌 상태와 사유 문구를 버튼 옆에서 걷어냈다. 이유는 열린 차림표 안에서 말한다. */
+/* M0020 — removed the blocked-state and reason text from beside the button. The reason is now stated inside the open menu. */
 .wf-apply-msg {
   display: flex;
   align-items: center;

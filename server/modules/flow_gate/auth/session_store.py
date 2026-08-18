@@ -45,7 +45,7 @@ def get_session(session_id: str) -> dict | None:
     return get_store()._fetch_one("SELECT * FROM auth_sessions WHERE session_id = ?", [session_id])
 
 def is_session_active(session_id: str) -> bool:
-    # 0276 NR0003 발견 2: one of the five fixed per-request auth queries. Every
+    # 0276 NR0003 finding 2: one of the five fixed per-request auth queries. Every
     # revoke path below invalidates this entry, so a revocation is visible
     # immediately in-process rather than after the TTL.
     def _load() -> bool:

@@ -8,8 +8,8 @@
           {{ statusLabel }}
         </span>
       </span>
-      <!-- Mockup xc32frrg screen 1: the card header carries only 원문 보기 / 저장.
-           [AI 제안 불러오기] sits in the table toolbar and [연속 작업에 채우기] in the
+      <!-- Mockup xc32frrg screen 1: the card header carries only [view raw] / [save].
+           [Load AI Suggestion] sits in the table toolbar and [Fill Into Continuous Task] in the
            document action bar. -->
       <div class="card-actions">
         <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !!unreadable" @click="rawViewOpen = true">
@@ -67,10 +67,11 @@
           {{ t('main.work_plan.review_pending_hint') }}
         </p>
 
-        <!-- 0403 NR0004 F5 — 저장하지 않은 편집이 AI 채우기에 조용히 지워지지 않게 한다.
-             AI 채우기는 서버의 정본을 읽고, 끝나면 화면을 그 정본으로 통째로 갈아끼운다.
-             그래서 직전에 손으로 넣은 수량·배정·멘트가 아무 안내 없이 사라졌다. 여기서
-             먼저 저장하게 하면 AI 가 읽는 계획과 화면의 계획이 같아진다(F6 과 같은 이유). -->
+        <!-- 0403 NR0004 F5 — makes sure unsaved edits are not silently erased by the AI fill.
+             The AI fill reads the server's canonical copy and, when done, swaps the whole
+             screen for that copy. So quantities, assignments, and notes just entered by hand
+             disappeared with no warning. Forcing a save here first keeps the plan the AI
+             reads and the plan on screen identical (same reason as F6). -->
         <div v-if="dirty" class="wp-dirty-banner">
           <AppIcon name="warning-circle" />
           <span>{{ t('main.work_plan.unsaved_changes') }}</span>
@@ -94,7 +95,7 @@
           <span>{{ topLevelErrors.join(' ') }}</span>
         </div>
 
-        <!-- ① 수량 -->
+        <!-- ① Quantities -->
         <section class="wp-section">
           <div class="wp-section-hd">
             <span class="wp-step-no-badge">1</span>
@@ -126,7 +127,7 @@
           </div>
         </section>
 
-        <!-- ② 단계별 공급자 · 한줄 멘트 -->
+        <!-- ② per-step provider · one-line note -->
         <section class="wp-section">
           <div class="wp-section-hd">
             <span class="wp-step-no-badge">2</span>
@@ -181,7 +182,7 @@
 
         </section>
 
-        <!-- Mockup xc32frrg screen 1 — 수량 카드 3장 -->
+        <!-- Mockup xc32frrg screen 1 — 3 quantity cards -->
         <div class="wp-sum-cards">
           <div class="wp-sum-card">
             <div class="wp-sum-label"><AppIcon name="compass-tool" /> {{ t('main.work_plan.sum_design_label') }}</div>
@@ -289,7 +290,7 @@ const props = defineProps<{
   /** 0424 TR0005 rev2 — the document panel's AI-run lock, passed down exactly like
    *  DocHeader / AttachmentCard / MdViewer already receive it. Until now this editor
    *  was the one card in the column that took no lock at all, so every control on the
-   *  work plan (저장 · 수량 스테퍼 · 공급자 · 멘트 · 모두 적용 · AI 제안) stayed clickable
+   *  work plan (save · quantity stepper · provider · note · apply-to-all · AI suggest) stayed clickable
    *  through an AI run and only answered with a 423 toast. */
   readOnly?: boolean
 }>()
@@ -314,11 +315,12 @@ const assignmentSummary = ref<WPAssignmentSummary[]>([])
 const unassignedStepCount = ref(0)
 const revisionNo = ref(0)
 const docReviewStatus = ref<string | null>(null)
-// 0403 NR0004 F5 — 저장하지 않은 편집이 있는지. AI 채우기가 화면을 서버 정본으로
-// 갈아끼우기 때문에, 이 값이 참인 동안에는 AI 에 맡기지 못하게 한다.
+// 0403 NR0004 F5 — whether there is an unsaved edit. Because the AI fill swaps the screen
+// for the server's canonical copy, the AI cannot be handed control while this is true.
 const dirty = ref(false)
-// 0403 NR0004 F7 — 편집 가능 여부는 서버가 판정해 응답에 실어 준다. 화면이 승인 상태만
-// 보고 따로 잠그면, 서버는 허용하는데 화면만 잠긴 계획(그리고 그 반대)이 생긴다.
+// 0403 NR0004 F7 — the server judges editability and carries it in the response. If the
+// screen instead locks based only on approval status, you get a plan the server allows but
+// the screen locks (and the reverse).
 const editable = ref(true)
 const editLockedReason = ref<string | null>(null)
 const totals = ref({ design_sheets: 0, work_sets: 0, steps: 0 })
@@ -328,12 +330,12 @@ const stepErrors = ref<Record<string, string[]>>({})
 const unreadable = ref<{ message: string; detail: string; raw: string | null; revisions: { revision_no: number; created_by: string; created_at: string }[] } | null>(null)
 
 
-// D0007 §3.2 결정4: a value-bearing step that a lower quantity would drop stays
+// D0007 §3.2 decision 4: a value-bearing step that a lower quantity would drop stays
 // recoverable by its logical key until the plan is actually saved.
 const restoreBuffer = new Map<string, WPStep>()
 
 // 0424 B0001 / TR0005 rev2 — "AI실행중에 버튼들이 안눌리게 하던가 없애야지 토스트 띄우면
-// 다인가?". This group's own [AI 제안 불러오기] starts a run against this very WP document
+// 다인가?". This group's own [Load AI Suggestion] starts a run against this very WP document
 // (action_scope 'work_plan_fill'), and every mutating work-plan route is behind the group's
 // AI lease, so from that moment the server answers 423 GROUP_AI_RUN_LOCKED. The editor has
 // to already read as locked instead of letting the click through to a toast. Same predicate
@@ -372,7 +374,7 @@ const lockedHint = computed(() =>
 )
 
 // The scope dialog is a write surface too — a run that starts while it is open must not
-// leave [프로젝트 지도로 채우기] / [AI 로 채우기] sitting there ready to fire.
+// leave [Fill from Project Map] / [Fill with AI] sitting there ready to fire.
 watch(aiRunLocked, (locked) => {
   if (locked) aiScopeOpen.value = false
 })
@@ -394,7 +396,7 @@ function unitLabel(code: string): string {
 
 /**
  * A set row is named after the pair, not after its instruction document —
- * 조사 / 작업 / 테스트, the way mockup xc32frrg screen 1 labels the quantity cards.
+ * survey / work / test, the way mockup xc32frrg screen 1 labels the quantity cards.
  */
 function qtyCardName(code: string): string {
   if (plan.value?.quantities[code]?.unit !== 'set') return docTypeStore.getLabel(code)
@@ -544,8 +546,9 @@ async function fetchPlan() {
     revisionNo.value = res.data.revision_no
     noteMaxChars.value = Number(res.data.limits?.note_max_chars) || 1000
     docReviewStatus.value = res.data.doc_review_status
-    // 0403 NR0004 F7: 서버가 판정한 값을 그대로 쓴다. 응답에 없으면(옛 응답·목) 열어 둔다 —
-    // 잠글지 말지는 서버만 알고, 화면이 혼자 추측해 잠그던 것이 이 결함이었다.
+    // 0403 NR0004 F7: use the value the server judged, as-is. If it's absent from the
+    // response (old response · mock), leave it open — only the server knows whether to
+    // lock, and the bug was the screen guessing and locking on its own.
     editable.value = res.data.editable === undefined ? true : !!res.data.editable
     editLockedReason.value = res.data.edit_locked_reason ?? null
     dirty.value = false
@@ -810,15 +813,16 @@ async function fetchSuggestion(scope: WorkPlanScope) {
       if (suggested.note !== undefined) target.note = suggested.note
       target.origin = 'ai_suggested'
     }
-    // 제안을 받은 결과도 아직 저장되지 않은 편집이다.
+    // The result of receiving a suggestion is also an edit that hasn't been saved yet.
     markDirty()
     updateDerivedSummary()
     aiScopeOpen.value = false
     showToast(t('main.work_plan.ai_scope_success', { quantities: Object.keys(quantities).length, steps: steps.length }), 'success')
   } catch (e: any) {
     const data = e?.response?.data
-    // 0403 NR0004 F6: 제안 기준이 화면과 어긋났다. 저장 경로와 같은 코드로 오므로 같은
-    // [새로 읽기] 띠를 띄운다 — 토스트만 띄우면 무엇을 해야 하는지가 사라진다.
+    // 0403 NR0004 F6: the suggestion's basis diverged from the screen. It arrives with the
+    // same code as the save path, so the same [Reload] strip is shown — a toast alone would
+    // leave no indication of what to do.
     if (e?.response?.status === 409 && data?.code === 'wp_revision_conflict') {
       conflict.value = { updatedBy: data.updated_by ?? null, updatedAt: data.updated_at ?? null }
       aiScopeOpen.value = false
@@ -975,7 +979,7 @@ watch(() => props.docId, () => { void fetchPlan() })
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px; border-radius: var(--r, 6px);
 }
 .wp-conflict-banner { background: var(--warning-l, #fef3c7); color: var(--warning, #b45309); }
-/* 0403 NR0004 F5 — 저장하지 않은 편집 띠. 저장 충돌 띠와 같은 자리, 같은 모양. */
+/* 0403 NR0004 F5 — unsaved-edit strip. Same spot, same shape as the save-conflict strip. */
 .wp-dirty-banner {
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px;
   border-radius: var(--r, 6px); background: var(--warning-l, #fef3c7); color: var(--warning, #b45309);
@@ -999,7 +1003,7 @@ watch(() => props.docId, () => { void fetchPlan() })
   margin-left: auto; font-size: .72rem; color: var(--text-s, #475569); font-weight: 700;
   padding: 2px 9px; border: 1px solid var(--border, #e2e8f0); border-radius: 999px; background: #fff;
 }
-/* Mockup xc32frrg screen 1 — 수량 카드: 태그 · 이름/단위 · 스테퍼가 한 줄. */
+/* Mockup xc32frrg screen 1 — quantity card: tag · name/unit · stepper on one line. */
 .wp-qty-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(208px, 1fr)); gap: 8px; }
 .wp-qty-card { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); }
 .wp-qty-card.zero { border-style:dashed; background:#fbfcfe; }
@@ -1046,7 +1050,7 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-step-error-msg { font-size:.7rem; line-height:1.4; color:var(--danger,#dc2626); white-space:normal; word-break:break-word; }
 .wp-layout-narrow .wp-step-head,.wp-layout-narrow .wp-step-row { grid-template-columns:48px 36px 0 minmax(130px,1fr) minmax(160px,1.2fr); }
 .wp-layout-narrow .wp-step-label { visibility:hidden; }
-/* Mockup xc32frrg screen 1 — 하단 수량 카드 3장 */
+/* Mockup xc32frrg screen 1 — bottom 3 quantity cards */
 .wp-sum-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
 .wp-sum-card {
   border: 1px solid var(--border, #e2e8f0); border-radius: var(--r, 6px);
@@ -1071,7 +1075,7 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-raw-hd > div { display: flex; gap: 8px; }
 .wp-raw-content { margin: 0; padding: 14px; overflow: auto; font-size: .74rem; background: #0f172a; color: #e2e8f0; flex: 1; }
 
-/* L0010 §1.4: mid tier drops the 문서 column, narrow tier stacks cards. */
+/* L0010 §1.4: mid tier drops the document column, narrow tier stacks cards. */
 .wp-editor { position: relative; }
 .wp-layout-mid .wp-col-doc { display: none; }
 </style>

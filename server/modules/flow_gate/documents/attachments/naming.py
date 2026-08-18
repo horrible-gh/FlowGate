@@ -256,7 +256,7 @@ def rfc5987_disposition(name: str) -> str:
 
     NR0015 §5 measured that ``tree_routes`` has the encoder as a standalone function but
     leaves the fallback inline in ``download_file:400-407``. This is that pair lifted into
-    one shared helper, per NR0015 §7 확정 지침 4·5 — nothing imports the route.
+    one shared helper, per NR0015 §7 settled directives 4 and 5 — nothing imports the route.
     """
     encoded = rfc5987_encode(name)
     try:

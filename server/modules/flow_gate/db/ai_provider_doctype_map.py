@@ -1,6 +1,6 @@
-"""Per-document-type AI provider assignment CRUD (flowgate.default.0317 D0004 구현).
+"""Per-document-type AI provider assignment CRUD (flowgate.default.0317 D0004 implementation).
 
-Stores the project-scoped "문서 종류 -> 프로바이더" 배정 규칙 the continuous chain's hop
+Stores the project-scoped "document type -> provider" assignment rules the continuous chain's hop
 provider decider reads at each step boundary. One row = one (project_id, doc_type)
 assignment pointing at an ai_providers.provider_id.
 

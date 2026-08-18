@@ -41,7 +41,7 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import remote_tool_grants as db_grants
 from modules.flow_gate.db import remote_tool_op_log as db_oplog
 from modules.flow_gate.db import projects as db_projects
-# 0382 제안 5-c: 흔적 청소만 재귀 삭제를 허용하기 위해 화면·검사와 같은 규칙을 쓴다.
+# 0382 proposal 5-c: uses the same rule as the screens and the check so that only debris cleanup may delete recursively.
 from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -67,7 +67,7 @@ _WORKER_GRANT_PREFIX = "worker_"
 # sequence they happen to sit in (see _worker_token_step_type).
 _SELF_SCOPED_WORK_TYPES = {"CH"}
 
-# 0279 T0005 (NR0003 원인 2): directory names never worth walking for a source
+# 0279 T0005 (NR0003 cause 2): directory names never worth walking for a source
 # scan. `server/.venv` alone dominated the measured 40s grep — it is dependency
 # code, not project source, and every byte of it was being read and regex-matched.
 # Skipped for grep and glob only; read/write/remove address files directly and are
@@ -533,7 +533,7 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     self-heal and no trace, so a worker that read source in the window before its
     group worktree was provisioned (the first-group timing gap, NR0003 §4.4)
     silently read `main` and began editing on top of that state — the very
-    "자꾸 메인 브랜치에 작업" symptom of B0001. Reads must NEVER be blocked (that
+    "it keeps working on the main branch" symptom of B0001. Reads must NEVER be blocked (that
     would break legacy and non-integrated access), but when an integrated group
     falls back for a reason that means the worktree was *expected*, we now mirror
     the write gate: one synchronous ensure_worktree self-heal retry, and if it is
@@ -1032,18 +1032,18 @@ def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _clear_readonly_and_retry(func, path, _exc_info) -> None:
-    """``shutil.rmtree`` / 단일 삭제의 재시도 훅 — 읽기 전용 비트를 벗기고 한 번 더.
+    """Retry hook for ``shutil.rmtree`` and single deletes — clear the read-only bit and try again.
 
-    0382 §3-2: git 이 새로 만든 개체 파일은 읽기 전용이라 ``os.remove`` 가
-    PermissionError 를 낸다. 파이썬의 표준 관용구는 권한을 주고 다시 부르는 것이고,
-    그것만으로 이번 사고에서 "영원히 안 지워지던" 21개가 지워진다.
+    0382 §3-2: object files git has just created are read-only, so ``os.remove`` raises
+    PermissionError. Python's standard idiom is to grant permission and call again, and that
+    alone removed the 21 files that "would never delete" in this incident.
     """
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
 
 def _delete_file(target: Path) -> None:
-    """읽기 전용이어도 지운다. 그래도 막히면 '재시도해도 소용없음'으로 답한다."""
+    """Delete even when read-only; if still blocked, answer with 'retrying will not help'."""
     try:
         os.remove(target)
     except PermissionError:
@@ -1054,7 +1054,7 @@ def _delete_file(target: Path) -> None:
 
 
 def _delete_tree(target: Path) -> int:
-    """디렉터리를 통째로 지우고 지운 파일 수를 돌려준다."""
+    """Delete a whole directory and return how many files were removed."""
     count = sum(1 for path in target.rglob("*") if path.is_file())
     failures: list[str] = []
 
@@ -1064,7 +1064,7 @@ def _delete_tree(target: Path) -> int:
         except OSError:
             failures.append(str(path))
 
-    # 파이썬 3.12+ 는 onerror 폐기 → onexc. 핸들러는 세 번째 인자를 안 쓴다.
+    # Python 3.12+ deprecates onerror in favour of onexc. The handler ignores the third argument.
     if sys.version_info >= (3, 12):
         shutil.rmtree(str(target), onexc=_on_error)
     else:
@@ -1078,19 +1078,19 @@ def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     target = resolve_in_root(root, body["path"])
     if target is None:
         raise _OpError(422)
-    # _validate_required 가 HTTP 입력 타입을 막지만, 실행 함수 자체도 문자열 "false"를
-    # 참으로 승격시키지 않는다. 삭제 함수는 테스트·내부 호출에서도 안전해야 한다.
+    # _validate_required guards HTTP input types, but the executing function itself also refuses
+    # to promote the string "false" to true. A delete must be safe from tests and internal calls too.
     recursive = body.get("recursive", False) is True
     if target.is_dir():
-        # 0382 NR0003 제안 5-c (흔적 청소). 폴더를 통째로 지울 수단이 없어서, 261개를
-        # 지우려면 remove 를 261번 불러야 했다. 재귀 삭제를 열되 **도구가 남긴 흔적으로
-        # 판정되는 경로에만** 연다 — 화면·제출 검사와 같은 규칙이라, 오삭제 위험이
-        # "무엇이 흔적인가"라는 하나의 질문으로 좁혀진다.
+        # 0382 NR0003 proposal 5-c (debris cleanup). With no way to delete a folder wholesale,
+        # removing 261 files meant calling remove 261 times. Recursive delete is opened, but
+        # **only for paths judged to be tool debris** — the same rule the screens and the
+        # submission check use, so the mis-deletion risk narrows to one question: what counts as debris.
         if not recursive:
-            raise _OpError(404)  # 기존 계약 유지: 재귀를 요청하지 않은 디렉터리는 404
+            raise _OpError(404)  # existing contract kept: a directory without recursive is a 404
         normalized = path_exclusion_rules.normalize_repo_path(body["path"])
-        # 빈 정규화 결과는 소스 루트 자신이고, 루트 .git 은 복구 정보다. 둘은 흔적
-        # 규칙과 무관하게 재귀 삭제를 절대 허용하지 않는다.
+        # An empty normalised result is the source root itself, and the root .git is recovery
+        # data. Neither may ever be deleted recursively, whatever the debris rule says.
         if not normalized or normalized == ".git" or normalized.startswith(".git/"):
             raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
         if not path_exclusion_rules.is_excluded_path(normalized):
@@ -1156,7 +1156,7 @@ def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     matches: list[dict] = []
     total = 0
     truncated = False
-    # 0279 T0005 (NR0003 원인 2): scanning used to continue after max_results was
+    # 0279 T0005 (NR0003 cause 2): scanning used to continue after max_results was
     # reached so that `total` was an exact full count. That made a max_results=1
     # call walk the entire source root — the measured 40s freeze was exactly such
     # a call, and the cost grew linearly as the repo grew. Stop at the first file
@@ -1269,9 +1269,9 @@ _ERROR_MESSAGES = {
 
 
 _CUSTOM_ERROR_MESSAGES = {
-    # 0382 §3-3: 권한/잠금 실패가 503 "서버가 일시적으로 요청을 처리할 수 없습니다"로
-    # 나갔다. AI 는 "일시적"이라는 말을 믿고 3번 더 두드렸고, 영원히 안 될 일이었다.
-    # 재시도하면 될 일과 재시도해도 안 될 일은 다른 답을 내야 한다.
+    # 0382 §3-3: permission/lock failures went out as a 503 "the server cannot handle the
+    # request temporarily". The AI believed "temporarily", knocked three more times, and it was
+    # never going to work. What a retry can fix and what it cannot must give different answers.
     "path_locked": {
         "ko": "읽기 전용이거나 다른 프로세스가 잡고 있어 지울 수 없습니다. 재시도해도 같은 결과입니다 — 잠금을 푼 뒤 다시 요청하세요.",
         "en": "The path is read-only or held by another process and cannot be deleted. Retrying will not help — release the lock first.",

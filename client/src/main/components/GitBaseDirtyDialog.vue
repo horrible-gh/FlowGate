@@ -125,7 +125,7 @@ async function resolve(pid: string, dirtyFiles: string[]): Promise<'proceed' | '
 
 async function fetchDirty(pid: string): Promise<string[]> {
   try {
-    // 0282 NR0003 발견 3: shared store fetch instead of a private git/status GET.
+    // 0282 NR0003 finding 3: shared store fetch instead of a private git/status GET.
     const status = await explorerStore.fetchGitStatus(pid)
     const f = status?.base_dirty?.files
     return Array.isArray(f) ? f : []

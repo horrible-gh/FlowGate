@@ -78,7 +78,7 @@
                 >{{ t('main.continuous_work.tab_message') }}</button>
               </div>
 
-              <!-- 기본 설정: AI review mode (R0001) + N/T instruction handling. -->
+              <!-- Basic settings: AI review mode (R0001) + N/T instruction handling. -->
               <div v-if="activeTab === 'basic'" class="cwd-tab-panel">
                 <label class="cwd-toggle">
                   <input v-model="reviewMode" type="checkbox" />
@@ -112,11 +112,11 @@
                   </label>
                 </div>
 
-                <!-- 시간 설정 (flowgate.default.0400 M0005): the per-hop wall-clock budget. A
+                <!-- Timeout setting (flowgate.default.0400 M0005): the per-hop wall-clock budget. A
                      small fixed list, not free input — fewer mistakes and a narrower control.
                      Rendered as a combo box (TR0007 2nd rejection: "리스트 박스로 해라...
                      콤보박스"), the same native-select pattern as AiProviderSelect's
-                     .aip-select-input used in the 프로바이더 tab, rather than a button/pill
+                     .aip-select-input used in the provider tab, rather than a button/pill
                      group or a radio-row list. Session-scoped like the provider/message tabs,
                      but its last pick is also remembered in localStorage (D0005 Q&A) so
                      reopening the dialog defaults to what was chosen last time, without
@@ -139,10 +139,11 @@
                 </div>
               </div>
 
-              <!-- 프로바이더: default provider + per-step (item_seq) overrides (0317 T0010 rev4:
-                   재정의 단위가 문서 타입에서 실행 단계로 바뀌었다 — 같은 T가 두 번 나와도 서로
-                   다른 프로바이더를 지정할 수 있다). Session-scoped: it rides the run's start
-                   request, not a persisted project setting. -->
+              <!-- Provider: default provider + per-step (item_seq) overrides (0317 T0010 rev4:
+                   the override unit moved from document type to execution step — the same T can
+                   appear twice and each occurrence can be assigned a different provider).
+                   Session-scoped: it rides the run's start request, not a persisted project
+                   setting. -->
               <div v-else-if="activeTab === 'provider'" class="cwd-tab-panel">
                 <div v-if="!providers || providers.length === 0" class="cwd-empty-card">
                   <AppIcon name="warning" />
@@ -173,12 +174,12 @@
                   <div v-if="excludedNote" class="cwd-scope-note">
                     <AppIcon name="info" /> {{ excludedNote }}
                   </div>
-                  <!-- 0408 TR0021 재반려 2 ("왜 프로바이더는 안고치냐? 자동승인 상태면 N/T
+                  <!-- 0408 TR0021 2nd re-rejection ("왜 프로바이더는 안고치냐? 자동승인 상태면 N/T
                        빼야지... 이번 실행 미사용 이것떄문에 스크롤 생기니까 다 빼라 필요없는건
                        대체 왜넣은거야?"): reverts TR0018 rev1's "show every in-range row, read
                        only, with a badge" design — that row nobody can act on and no worker will
                        ever read was exactly the clutter the rejection means. This table now draws
-                       exactly `executionSteps`, the same rows [전달멘트] draws below. A step this
+                       exactly `executionSteps`, the same rows [Message] draws below. A step this
                        run auto-approves keeps its stored provider visible on the picker's own tag
                        instead (`stepProviderTag`, gated on `inRangeSteps`, not this table). -->
                   <div class="cwd-override-table">
@@ -205,7 +206,7 @@
                 </div>
               </div>
 
-              <!-- 전달멘트 (flowgate.default.0346 T0005 / D0004): a common note for the whole
+              <!-- Message (flowgate.default.0346 T0005 / D0004): a common note for the whole
                    chain and/or an individual note per step, both prepended to the hop's prompt
                    as a "사용자 메시지" section server-side. Unlike the provider tab, this one has
                    no "등록된 것이 없다" empty state — it depends on nothing external. -->
@@ -223,10 +224,10 @@
                   <div v-if="excludedNote" class="cwd-scope-note">
                     <AppIcon name="info" /> {{ excludedNote }}
                   </div>
-                  <!-- 0408 M0019 재반려 1 ("[자동승인] 인데 왜 N/T가 표시되게 했지?") + TR0021
-                       재반려 2 ("프로바이더는 안고치냐... 다 빼라"): the mention AND provider
+                  <!-- 0408 M0019 1st re-rejection ("[자동승인] 인데 왜 N/T가 표시되게 했지?") + TR0021
+                       2nd re-rejection ("프로바이더는 안고치냐... 다 빼라"): the mention AND provider
                        rows are now both exactly the steps an AI WORKER runs in this mode. Under
-                       [자동 승인] the server writes and approves N/T with no worker at all, so
+                       [Auto-approve] the server writes and approves N/T with no worker at all, so
                        neither a mention nor a provider CHOICE typed there could ever be
                        delivered — a row that carries no choice is not offered one. A step's
                        stored provider stays visible on the picker's own tag either way
@@ -319,7 +320,7 @@ const emit = defineEmits<{
     // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode.
     // Session-scoped (rides this run's start request only, never persisted).
     providerOverrides: Record<number, string>
-    // 0346 T0005: [전달멘트] tab — a common note for every hop, and item_seq -> note for the
+    // 0346 T0005: [Message] tab — a common note for every hop, and item_seq -> note for the
     // steps the user singled out. Session-scoped, same as providerOverrides above.
     defaultMessage: string
     messageOverrides: Record<number, string>
@@ -337,14 +338,14 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const reviewMode = ref(false)
-// 0409 B0001 반려 — 기본 선택은 [자동승인](auto_approved) 이다. 0406 T0022 작업 1 이
-// 기본값을 ai_direct 로 뒤집었던 것을 사용자 지시로 되돌렸다: "원래 [자동승인] 이 기본
-// 선택이였는데 왜 지시서 작성으로 선택되어있는거야". 값 자체는 DEFAULT_INSTRUCTION_MODE
-// 한 곳에서만 온다.
+// 0409 B0001 rejection — the default selection is [Auto-approve] (auto_approved). 0406 T0022
+// task 1 had flipped the default to ai_direct; this reverts it per the user's instruction:
+// "원래 [자동승인] 이 기본 선택이였는데 왜 지시서 작성으로 선택되어있는거야". The value itself
+// comes from a single place, DEFAULT_INSTRUCTION_MODE.
 const instructionMode = ref<'auto_approved' | 'ai_direct'>(DEFAULT_INSTRUCTION_MODE)
-// 시간 설정 (0400 M0005): a fixed list of per-hop budgets, minutes. 60 is the default; 무제한
-// was deliberately rejected (M0005 대화) because it removes the only automatic guard against a
-// runaway unmanned hop.
+// Timeout setting (0400 M0005): a fixed list of per-hop budgets, minutes. 60 is the default;
+// unlimited was deliberately rejected (M0005 discussion) because it removes the only automatic
+// guard against a runaway unmanned hop.
 const STEP_TIMEOUT_OPTIONS_MIN = [30, 45, 60, 90, 120, 180, 240]
 const STEP_TIMEOUT_DEFAULT_MIN = 60
 const STEP_TIMEOUT_STORAGE_KEY = 'flowgate.continuousWork.stepTimeoutMinutes'
@@ -381,9 +382,9 @@ const activeTab = ref<'basic' | 'provider' | 'message'>('basic')
 // assignments) — the override unit moved from document TYPE to individual STEP INSTANCE, so the
 // same type appearing twice in one chain (e.g. two T steps) can resolve to different providers.
 const overrides = ref<Record<number, string>>({})
-// 0346 T0005: [전달멘트] tab state — a common note plus item_seq -> note overrides, mirroring
-// `overrides` above but additive rather than replacing (D0004 §3-3: 개별 멘트가 공통 멘트를
-// 밀어내지 않는다).
+// 0346 T0005: [Message] tab state — a common note plus item_seq -> note overrides, mirroring
+// `overrides` above but additive rather than replacing (D0004 §3-3: an individual note does not
+// push out the common note).
 const defaultMessage = ref('')
 const messageOverrides = ref<Record<number, string>>({})
 // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq server-auto-approve selection. A checked
@@ -394,7 +395,7 @@ const presetActive = ref(false)
 const presetTargetSeq = ref<number | null>(null)
 const editedSeqs = ref(new Set<number>())
 const prefilledMessageSeqs = ref(new Set<number>())
-// 0408 M0019 재반려 3 ("문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"):
+// 0408 M0019 3rd re-rejection ("문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"):
 // the sequence rows are a SNAPSHOT of the work plan, taken when somebody last poured it. The
 // plan kept moving afterwards, so the dialog was showing sentences and providers the person
 // had already replaced in the document. These hold the plan's values as they are right now.
@@ -456,9 +457,9 @@ const executionSteps = computed<WorkflowStepItem[]>(() => {
   )
 })
 
-// 0408 TR0021 재반려 2 ("자동승인 상태면 N/T 빼야지... 스크롤 생기니까 다 빼라"): reverts
+// 0408 TR0021 2nd re-rejection ("자동승인 상태면 N/T 빼야지... 스크롤 생기니까 다 빼라"): reverts
 // TR0018 rev1's "show every in-range row" table design. The rows an AI worker actually runs
-// THIS SESSION — identical to `executionSteps`, and identical to the [전달멘트] table below —
+// THIS SESSION — identical to `executionSteps`, and identical to the [Message] table below —
 // are the only ones either tab draws now. A step this run auto-approves keeps its stored
 // provider visible on the picker's own tag (`stepProviderTag`, gated on `inRangeSteps`), never
 // as a dead row here.
@@ -476,10 +477,10 @@ const inRangeSteps = computed<WorkflowStepItem[]>(() => {
   return runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
 })
 
-// 0408 M0019 재반려 1: the [전달멘트] 표. Same rows as `executionSteps` — the steps this run
+// 0408 M0019 1st re-rejection: the [Message] table. Same rows as `executionSteps` — the steps this run
 // hands to an AI worker — because the mention is delivered to that worker and to nobody else.
 // They are all numbered: every one of them runs.
-// 0408 TR0021 재반려 2: identical to `providerRows` now (both tabs draw the same run rows) —
+// 0408 TR0021 2nd re-rejection: identical to `providerRows` now (both tabs draw the same run rows) —
 // kept as a separate name for readability at each call site.
 const messageRows = providerRows
 
@@ -489,7 +490,7 @@ const excludedNote = computed(() => {
   if (!sel || sel.fromDecision) return ''
   const inRange = runnableSteps.value.filter(s => s.item_seq <= sel.targetSeq)
   const beyondCount = runnableSteps.value.length - inRange.length
-  // 0408 TR0021 재반려 2: auto-approved steps are excluded again (they no longer draw a row
+  // 0408 TR0021 2nd re-rejection: auto-approved steps are excluded again (they no longer draw a row
   // of their own to explain themselves with) but this note still only counts steps past the
   // target — a step auto-approved WITHIN range still shows its stored provider on the picker's
   // tag, so nothing about it is actually unexplained.
@@ -500,7 +501,7 @@ const excludedNote = computed(() => {
 // 0399 T0018 --------------------------------------------------------------------------------
 // The normal "AI 호출" entry has no `preset` (that prop is only the legacy, pre-save work-plan
 // apply-preview flow). But the sequence itself may already carry per-step notes saved via the
-// [시퀀스 수정] window (TR0015 note/source_doc_id columns, TR0017 direct-edit + type-change).
+// [Edit Sequence] window (TR0015 note/source_doc_id columns, TR0017 direct-edit + type-change).
 // D0010 §3.6: the mention field reads that stored value back in and counts (without blocking)
 // the steps that still have none.
 const sequenceSourceDocId = computed<string | null>(() => {
@@ -531,7 +532,7 @@ function applySequenceNotePrefill(steps: WorkflowStepItem[]) {
 
 // 0405 L0010 §2.6 `project()` already answers exactly this question on the server — which
 // plan step's provider/mention belongs to which sequence row, folded the way the chosen
-// 실행 방식 folds it (N/T -> NR/TR under [자동 승인], own value wins over the folded one). It is
+// execution mode folds it (N/T -> NR/TR under [Auto-approve], own value wins over the folded one). It is
 // the same call the work-plan apply preview makes; this reads it for a sequence that was
 // poured earlier, so the document stays the thing a person edits and the dialog stops
 // showing a stale copy of it.
@@ -620,7 +621,7 @@ function pairedReportProviderItem(item: WorkflowStepItem): WorkflowStepItem | nu
     .find(candidate => String(candidate.type ?? '').toUpperCase() === reportType) ?? null
 }
 
-// 0408 M0019 재반려 2 ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): a row shows its OWN
+// 0408 M0019 2nd re-rejection ("TR/NR 의 멘트가 왜 T/N의 멘트를 사용하고 있지?"): a row shows its OWN
 // note and never its partner's. The plan writes N/NR and T/TR as two separate sentences and
 // the pour keeps them on two separate rows (work_plan_sequence_service.attach_auto_rows), so
 // borrowing here would put a sentence in front of a worker it was not written for.
@@ -677,7 +678,7 @@ function onStepProviderChange(item: WorkflowStepItem, value: string) {
   else next[item.item_seq] = value
   overrides.value = next
 }
-// 0346 T0005 §2-1 항목 4: blank (or whitespace-only) input is the same as "no individual note
+// 0346 T0005 §2-1 item 4: blank (or whitespace-only) input is the same as "no individual note
 // for this step" — mirrors onStepProviderChange's "같으면 삭제" rule with a "비면 삭제" rule.
 function onStepMessageChange(item: WorkflowStepItem, value: string) {
   const itemSeq = item.item_seq
@@ -860,8 +861,8 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   } else {
     presetActive.value = false
     presetTargetSeq.value = null
-    // 리셋도 같은 기본값이어야 한다 — 한 곳이라도 다른 값으로
-    // 남으면 진입점마다 결과가 달라진다.
+    // The reset must land on the same default too — if even one place keeps a different value,
+    // the result diverges by entry point.
     instructionMode.value = DEFAULT_INSTRUCTION_MODE
     overrides.value = {}
     defaultMessage.value = ''
@@ -957,7 +958,7 @@ watch(presetActive, (active) => {
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
-/* 0399 T0018: 멘트 없는 단계 안내 — informational, never blocks (D0010 §3.5). */
+/* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */
 .cwd-note-unset-flag { color:#b45309; font-weight:700; }
 .modal-cwd {
   width: 860px;
@@ -1108,7 +1109,7 @@ watch(presetActive, (active) => {
 .cwd-toggle-text { display: flex; flex-direction: column; gap: 2px; }
 .cwd-toggle-title { font-size: .85rem; font-weight: 600; color: var(--text); }
 .cwd-toggle-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
-/* 시간 설정 (0400 M0005 / TR0007 2nd rejection: "리스트 박스로 해라... 콤보박스"): a native
+/* Timeout setting (0400 M0005 / TR0007 2nd rejection: "리스트 박스로 해라... 콤보박스"): a native
    select combo box, same input pattern as .aip-select-input in AiProviderSelect.vue. */
 .cwd-timeout-combo {
   position: relative;
@@ -1247,11 +1248,11 @@ watch(presetActive, (active) => {
   padding-bottom: 2px;
   font-size: .78rem;
 }
-/* 0346 T0005: [전달멘트] tab text inputs — the header row uses the regular provider-select
+/* 0346 T0005: [Message] tab text inputs — the header row uses the regular provider-select
    sizing, the per-step row uses the compact override sizing (mirrors .cwd-override-select).
    rev1: `font: inherit` pulled in the page's base font-size (larger than the provider select's
    own .82rem), and the 6px/10px padding didn't match the select's 5px/8px either — next to the
-   프로바이더 tab's default-provider select the 전달멘트 tab's common-note input read as visibly
+   provider tab's default-provider select the message tab's common-note input read as visibly
    bigger. Match `.aip-select-input`'s font-size/vertical padding exactly (AiProviderSelect.vue)
    so the two tabs' default-row controls read as the same size. */
 .cwd-message-input {

@@ -45,8 +45,8 @@ def get_created_memo_file(doc_id: str) -> Optional[str]:
 def get_created_memo_files_map_by_project(project_id: str) -> dict[str, str]:
     """Return a doc_id -> memo_file map from the creation events of one project.
 
-    Batch counterpart of get_created_memo_file() (0275 NR0003 원인 3: the group
-    tree issued this lookup once per document). 0276 NR0003 발견 1: the caller
+    Batch counterpart of get_created_memo_file() (0275 NR0003 cause 3: the group
+    tree issued this lookup once per document). 0276 NR0003 finding 1: the caller
     passed the project's entire doc_id list, so the chunked
     `doc_id IN (?×900)` loop spent thousands of bind parameters restating what
     `d.project_id = ?` says with one. Narrowing through documents keeps the row
@@ -119,7 +119,7 @@ def get_latest_events_map(doc_ids: list[str]) -> dict[str, dict]:
     """Return a map of the latest event for each document.
 
     Chunked to stay under SQLite's historical 999 bind-variable limit
-    (0276 NR0003 발견 1: this was the one IN(...) batch left unchunked, so a
+    (0276 NR0003 finding 1: this was the one IN(...) batch left unchunked, so a
     caller with 1000+ open documents raised "too many SQL variables" instead of
     returning rows).
     """

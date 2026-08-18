@@ -1,8 +1,8 @@
 <template>
   <!-- 0331 T0006 / NR0005 §8: the ONE axis control shared by every finalize
-       surface (문서 패널 · AC 승인 다이얼로그). The approved v4 mockup replaces
-       the flat card list with two independent axes — 반영 범위(머지 → 커밋 →
-       대기) × 원격에 푸시 — which is what lets 6 actions fit in the space 4
+       surface (document panel · AC approval dialog). The approved v4 mockup replaces
+       the flat card list with two independent axes — reflect scope (merge → commit →
+       wait) × push to remote — which is what lets 6 actions fit in the space 4
        used to take. The scope×push → action mapping comes from the server
        (`state.action_axes.matrix`), so the three surfaces can never drift apart
        and adding an action never means editing three templates. -->

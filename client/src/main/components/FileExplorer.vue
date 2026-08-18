@@ -45,7 +45,7 @@
       </div>
     </div>
     <template v-if="!layoutStore.fileExplorerCollapsed">
-      <!-- 0327 T0004 (NR0003 권고 4): the badge now says WHICH of the two group views
+      <!-- 0327 T0004 (NR0003 recommendation 4): the badge now says WHICH of the two group views
            this is — an editable worktree or a worktree-less, fully read-only branch —
            so "why can I not create anything here" has a visible answer. -->
       <div v-if="selectedGroup" class="fx-readonly-badge" :class="{ 'fx-readonly-badge--rw': groupWritable }">
@@ -185,7 +185,7 @@ const rootDragOver = ref(false)
 const baseBranch = computed(() => projectStore.currentBranch || 'main')
 // `writable` (0327 T0004): the server tells us whether this slot still has a live
 // worktree behind it, so the explorer stops equating "a group is selected" with
-// "read-only" (B0001 / NR0003 발견 3). Optional so a pre-0327 server payload simply
+// "read-only" (B0001 / NR0003 finding 3). Optional so a pre-0327 server payload simply
 // reads as not-writable — the old, fully read-only behaviour.
 const groupSlots = ref<Array<{ group_id: string; branch: string; status: string; writable?: boolean }>>([])
 // selectedGroup restores from the store so an SSE-driven explorer remount
@@ -201,7 +201,7 @@ function shortGroup(gid: string): string {
   return gid.split('.').pop() ?? gid
 }
 
-// 0327 T0004 (B0001 / NR0003 권고 1·5) — the selected group has a live worktree, so
+// 0327 T0004 (B0001 / NR0003 recommendation 1·5) — the selected group has a live worktree, so
 // creating and uploading land in that worktree. A group without one stays entirely
 // read-only, and base (no group selected) is unchanged.
 const groupWritable = computed(() =>
@@ -236,7 +236,7 @@ function groupLabel(s: { group_id: string; status: string }): string {
 
 async function loadGroupSlots(pid: string) {
   try {
-    // 0282 NR0003 발견 3: fetched via the explorer store so concurrent callers
+    // 0282 NR0003 finding 3: fetched via the explorer store so concurrent callers
     // (header menu, status panel, SSE triggers) share one git/status request.
     const status = await explorerStore.fetchGitStatus(pid)
     groupSlots.value = Array.isArray(status?.slots)
@@ -450,7 +450,7 @@ function openDiff(node: FileNode) {
 }
 
 function onRootContextMenu(e: MouseEvent) {
-  // 0327 T0004 (B0001 / NR0003 발견 1): this used to bail on ANY selected group, so the
+  // 0327 T0004 (B0001 / NR0003 finding 1): this used to bail on ANY selected group, so the
   // project-root right-click produced no menu at all — no new folder, no new file, not
   // even refresh. The menu now always opens (as the per-node menu always has) and the
   // mutating entries are the part that depends on the group being writable.

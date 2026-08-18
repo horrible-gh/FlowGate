@@ -7,15 +7,19 @@ export interface WorkPlanWarning {
   message?: string
 }
 
-/** 연속 실행의 N/T 작성 주체. 0406 T0022 작업 2: 이 값을 넘기지 않은 진입점이
- *  서버에서 조용히 auto_approved 로 접히던 것이 이번 결함의 절반이라, 타입에서
- *  선택 사항이 아니게 만들어 빠뜨리면 타입 검사에서 잡히게 한다. */
+/** The N/T authoring party for a continuous run. 0406 T0022 task 2: an entry point that
+ *  didn't pass this value used to be silently folded to auto_approved on the server — that
+ *  was half of this defect — so it's made non-optional in the type, catching an omission
+ *  at type-check time instead. */
 export type ContinuationInstructionMode = 'auto_approved' | 'ai_direct'
 
-/** 새 연속 실행의 기본값. 화면·프리셋·재설정이 모두 이 한 값을 읽는다.
- *  0409 B0001 반려: 0406 T0022 작업 1 이 이 값을 ai_direct 로 뒤집었으나 사용자가
- *  "원래 [자동승인] 이 기본 선택이였는데 왜 지시서 작성으로 선택되어있는거야" 로 되돌리라고
- *  지시해 auto_approved 로 복구했다. ai_direct 는 사용자가 라디오로 직접 고를 때만 쓰인다. */
+/** Default for a new continuous run. The screen, presets, and resets all read this single
+ *  value.
+ *  0409 B0001 rejection: 0406 T0022 task 1 flipped this value to ai_direct, but the user
+ *  instructed reverting it, saying "원래 [자동승인] 이 기본 선택이였는데 왜 지시서 작성으로
+ *  선택되어있는거야" [it used to default to [Auto-approve] — why is instruction-authoring
+ *  selected now?], so it was restored to auto_approved. ai_direct is used only when the
+ *  user explicitly picks it via radio button. */
 export const DEFAULT_INSTRUCTION_MODE: ContinuationInstructionMode = 'auto_approved'
 
 /** P0009 §7.7 — client-side numeric item_seq keys. */

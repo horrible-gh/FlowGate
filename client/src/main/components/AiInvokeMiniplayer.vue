@@ -1,17 +1,17 @@
 <template>
-  <!-- 실행 미니플레이어 (group 0252 D0007 / 0269 NR0011): a header chip next to the
+  <!-- Run miniplayer (group 0252 D0007 / 0269 NR0011): a header chip next to the
        provider selector, with the run cards in a popover underneath. It lives inside the
        header instead of floating over the screen, so overlapping a screen's bottom-fixed
        elements (the chat composer, the sticky action bar) is structurally impossible —
        no offset measuring anywhere. Always present: with no run to monitor the chip just
-       goes muted so the monitor never vanishes (0269 재점검). -->
+       goes muted so the monitor never vanishes (0269 recheck). -->
   <div
     ref="rootEl"
     class="aiv-mini"
     :class="{ 'aiv-mini--idle': idle }"
     data-test="ai-miniplayer"
   >
-    <!-- No label text on the chip (CH0009 사용자 지시) — the summary rides in the
+    <!-- No label text on the chip (CH0009 user instruction) — the summary rides in the
          tooltip/aria-label, and the count badge carries the at-a-glance signal. -->
     <button
       type="button"
@@ -130,7 +130,7 @@
           >
             {{ stopReasonText(entry) }}
           </div>
-          <!-- 0401 NR0003 / T0004 작업 3: a lost card's lease can outlive the process that
+          <!-- 0401 NR0003 / T0004 task 3: a lost card's lease can outlive the process that
                acquired it -- [제거] only clears the CARD, never the server-side lock, so the
                group stayed stuck even after the card was gone. This calls the actual release
                endpoint and shows the reason inline when it can't (still-live / already gone). -->
@@ -298,7 +298,7 @@ const badgeCount = computed(() =>
 )
 
 // The count alone cannot say WHICH state it stands for, so the chip carries a colour with
-// it. Same priority as the badge: unanswered 질의 first, then live work, then the
+// it. Same priority as the badge: unanswered inquiries first, then live work, then the
 // transient end-of-run tone (danger for partial/none/lost, success for a clean finish).
 const chipState = computed(() => {
   if (store.awaitingQCount > 0) return 'awaiting'
@@ -452,8 +452,8 @@ async function doReleaseLease(entry: AiInvokeRunEntry): Promise<void> {
 }
 
 async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
-  // 질의 대기 card jumps straight to the waiting Q; answers are registered in the
-  // document's existing Q&A panel, never in the card itself (D0007 화면 구성).
+  // An inquiry-waiting card jumps straight to the waiting Q; answers are registered in the
+  // document's existing Q&A panel, never in the card itself (D0007 screen layout).
   const docId = openTargetDocId(entry)
   if (!docId) return
   try {
@@ -472,7 +472,7 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
     // Mirror the tab open into the document explorer: switch to the document's OWN
     // project (an AI run's target doc is often in another project than the one on
     // screen), reveal the ancestor groups, and select the opened doc. Passing the
-    // current project id here was the rev1 반려 — "문서열기 해도 해당 프로젝트로 안가잖아":
+    // current project id here was the rev1 rejection — "문서열기 해도 해당 프로젝트로 안가잖아":
     // a cross-project open landed the reveal on the wrong tree and the explorer never
     // moved. Use d.project_id (documents/detail is SELECT *) with switchProject; fall
     // back to the current project when detail omits it. Best-effort and detached —
@@ -516,7 +516,7 @@ watch(entries, list => {
    here measures or dodges anything — the chip cannot overlap a screen's bottom-fixed UI
    because it is not over the screen at all (0269 NR0011 §2). */
 /* Header-anchored, and it sits directly left of the provider select as one control
-   group with it — so no divider on this side (0269 TR0013 rev1 반려). */
+   group with it — so no divider on this side (0269 TR0013 rev1 rejection). */
 .aiv-mini {
   position: relative;
   display: inline-flex;
@@ -553,7 +553,7 @@ watch(entries, list => {
   color: white;
 }
 
-/* Idle presence: still there, just quiet (0269 재점검) — no badge, dimmed glyph. */
+/* Idle presence: still there, just quiet (0269 recheck) — no badge, dimmed glyph. */
 .aiv-mini--idle .aiv-mini__chip {
   color: rgba(255, 255, 255, .48);
 }
@@ -563,7 +563,7 @@ watch(entries, list => {
   color: rgba(255, 255, 255, .82);
 }
 
-/* The popover is a closing surface, so an unanswered 질의 must be visible on the chip
+/* The popover is a closing surface, so an unanswered inquiry must be visible on the chip
    itself or it gets missed (NR0011 §5.2). */
 .aiv-mini__chip-badge {
   position: absolute;

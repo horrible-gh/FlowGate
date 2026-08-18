@@ -120,21 +120,21 @@ def get_front_doc(group_id: str, front_seq: int) -> Optional[dict]:
 def summary(group_id: str) -> Optional[dict]:
     """A group's whole return-point payload in one statement (0291 T2, CH0016).
 
-    문서 응답 하나를 만들 때마다 아래 넷이 통째로 돌았다::
+    Building one document response used to run all four of these::
 
         SELECT * FROM workflow_return_points WHERE group_id = ?        -- get_by_group
         SELECT ... FROM documents WHERE group_id = ? AND seq = ?       -- get_front_doc
         SELECT MIN(d.seq) ... WHERE s.return_point_id = ?              -- current_pending_min_seq
         SELECT COUNT(*) ... WHERE return_point_id = ?                  -- count_docs
 
-    CH0016 의 덤프에 이 4종 세트가 네 번 반복된다(응답 4개 × 4). 뒤의 셋은 전부 첫
-    쿼리가 가져온 ``id`` / ``front_seq`` 만 있으면 되는 파생 조회라, 상관 서브쿼리로
-    같은 문장 안에서 참조하면 왕복이 하나로 줄어든다. 문서 응답당 4 → 1.
+    The CH0016 dump repeats this set of four four times (4 responses x 4). The last three are
+    all derived lookups needing only the ``id`` / ``front_seq`` the first query fetched, so
+    referencing them via correlated subqueries in one statement collapses it to a single round trip: 4 → 1 per document response.
 
-    개별 함수들은 그대로 남는다. 단독으로 부르는 자리가 따로 있고(재개 판정에서
-    ``current_pending_min_seq`` 만 본다), 거기서는 좁은 쿼리 하나가 이 합침보다 싸다.
+    The individual functions remain: they are still called on their own (the resume check looks
+    only at ``current_pending_min_seq``), and there one narrow query is cheaper than this merge.
 
-    반환값은 "그 반환점이 없으면 None". 있으면 다음 키를 준다:
+    Returns None when there is no such return point; otherwise these keys:
     ``id`` / ``front_seq`` / ``front_title`` / ``front_type_code`` /
     ``restorable_count`` / ``current_min_seq``.
     """
@@ -148,8 +148,8 @@ def summary(group_id: str) -> Optional[dict]:
         "         WHERE s2.return_point_id = rp.id "
         "           AND d.doc_review_status = 'pending_review') AS current_min_seq "
         "FROM workflow_return_points rp "
-        # get_front_doc 과 같은 매칭이다. LEFT JOIN 인 이유: front_seq 가 가리키는
-        # 문서가 지워졌어도 반환점 자체는 존재하며, 그때 front_label 만 비어야 한다.
+        # Same matching as get_front_doc. It is a LEFT JOIN because the return point still
+        # exists even if the document front_seq names was deleted; only front_label should be empty then.
         "LEFT JOIN documents fd ON fd.group_id = rp.group_id AND fd.seq = rp.front_seq "
         "WHERE rp.group_id = ?",
         [group_id],

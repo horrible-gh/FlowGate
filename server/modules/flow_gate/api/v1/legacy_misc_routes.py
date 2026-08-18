@@ -37,11 +37,11 @@ from modules.flow_gate import service, process_service
 router = APIRouter(prefix="/api/v1", tags=["LegacyMisc"])
 
 
-# 0275 T0005 (NR0003 원인 2): handlers doing sync DB work are plain `def` so
+# 0275 T0005 (NR0003 cause 2): handlers doing sync DB work are plain `def` so
 # FastAPI runs them in the threadpool instead of blocking the event loop. The
 # ones that `await request.json()` stay async.
 #
-# 0279 T0005 (NR0003 원인 1): staying `async def` was not enough — those handlers
+# 0279 T0005 (NR0003 cause 1): staying `async def` was not enough — those handlers
 # still ran their sync mkdir/file-create/clipboard work ON the event loop after
 # the await. They now hand that work to anyio.to_thread.run_sync, so only the
 # body parse happens on the loop.

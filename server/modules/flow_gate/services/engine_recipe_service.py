@@ -111,7 +111,7 @@ def _to_view(row: Optional[dict], *, used_by_project: Optional[bool] = None) -> 
     return view
 
 
-# ── help API (P §help 목록 / 단건) ────────────────────────────────────────────
+# ── help API (P §help list / single item) ───────────────────────────────────
 
 def list_help(engine: Optional[str] = None) -> list[dict]:
     """Active recipes as views. With `engine`, exact-match single (empty list if none — never 404)."""
@@ -121,7 +121,7 @@ def list_help(engine: Optional[str] = None) -> list[dict]:
     return [_to_view(r) for r in db.list_active()]
 
 
-# ── management CRUD (P §등록/수정/비활성; L §2-2) ──────────────────────────────
+# ── management CRUD (P §create/update/deactivate; L §2-2) ───────────────────
 
 def create(engine_raw: str, label: str, setup: str, run_example: str, notes: str, actor: str) -> dict:
     engine = normalize_engine(engine_raw)
@@ -158,7 +158,7 @@ def create(engine_raw: str, label: str, setup: str, run_example: str, notes: str
 def patch(recipe_id: int, fields: dict, actor: str) -> Optional[dict]:
     """Update an ACTIVE row. Returns None (→404) for missing/suppressed.
 
-    `engine`, `origin`, `last_success_*` are not caller-editable (P §수정) — attempting to change
+    `engine`, `origin`, `last_success_*` are not caller-editable (P §update) — attempting to change
     engine is a 422. `updated_by` is stamped with the caller automatically.
     """
     row = db.get_by_id(recipe_id)
@@ -325,7 +325,7 @@ def count_infra_attempts(doc_id: str) -> int:
         return MAX_REPAIR_ATTEMPTS
 
 
-# ── TS-mention block (L §2-7 / P §TS 작성 멘트) ───────────────────────────────
+# ── TS-mention block (L §2-7 / P §TS authoring mention) ─────────────────────
 
 def build_engine_recipes_block(base_url: str) -> str:
     """Fixed English literal (locale-independent). Always emitted — even with zero recipes, so the
@@ -342,7 +342,7 @@ def build_engine_recipes_block(base_url: str) -> str:
     )
 
 
-# ── settings visualization (P §가시화) ────────────────────────────────────────
+# ── settings visualization (P §visualization) ───────────────────────────────
 
 def _used_by_project(recipe: dict, project: str) -> bool:
     """DB Q6: has this recipe's last_success_run_id run against a doc of this project?"""
@@ -364,7 +364,7 @@ def list_for_project_view(project: str) -> list[dict]:
     return [_to_view(r, used_by_project=_used_by_project(r, project)) for r in db.list_active()]
 
 
-# ── auto-recovery loop (L §2-6 / P §인프라 실패·재발사·에스컬레이션) ─────────────
+# ── auto-recovery loop (L §2-6 / P §infra failure, relaunch, escalation) ────
 
 def handle_run_failure(doc: dict, run: dict, items: list[dict]) -> str:
     """Classify a failed run; on an unmanned-chain infra failure re-fire it (or escalate at the cap).

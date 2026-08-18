@@ -10,8 +10,8 @@
           <AppIcon name="arrow-up" />
           {{ t('main.conversation_view.continued_from', { doc: head.carried_over_from }) }}
         </div>
-        <!-- Earlier turns are fetched on demand (D0002 §6: 위로 올리면 이전 구간을 이어서
-             불러옴). The whole conversation is never pulled in one go. -->
+        <!-- Earlier turns are fetched on demand (D0002 §6: scrolling up loads the previous
+             section and continues from there). The whole conversation is never pulled in one go. -->
         <button
           v-if="hasMoreBefore"
           type="button"
@@ -57,7 +57,7 @@
                 <span v-if="turn.pending" class="conv-ts">{{ t('main.conversation_view.sending') }}</span>
               </div>
               <div class="conv-body">{{ turn.body }}</div>
-              <!-- Crossed talk (P0003 시나리오 12): this reply was written without having
+              <!-- Crossed talk (P0003 scenario 12): this reply was written without having
                    seen the turn above it. Nothing was overwritten — order preserved it —
                    but the reader needs to know the reply is not answering that turn. -->
               <p v-if="turn.stale_since_seq" class="conv-stale">
@@ -82,7 +82,7 @@
 
     <!-- Participant strip (D0002 §6): who is in this conversation and how far each has
          got. Filled by the same call that loads the turns — there is no separate
-         participants endpoint (P0003 시나리오 1). -->
+         participants endpoint (P0003 scenario 1). -->
     <div v-if="participants.length > 0" class="conv-participants">
       <span class="conv-participants-label">{{ t('main.conversation_view.participants_label') }}</span>
       <span
@@ -260,7 +260,7 @@
             {{ t('main.conversation_view.copy_mention') }}
           </button>
           <!-- Manual immediate AI call. Hidden (not disabled) when no provider exists
-               (D0005 §3-3); spinner while a run is in flight (중복 실행 방지). -->
+               (D0005 §3-3); spinner while a run is in flight (duplicate-run prevention). -->
           <button
             v-if="hasProviders"
             type="button"
@@ -379,7 +379,7 @@ interface TurnsPage {
   has_more: boolean
 }
 
-// L0004 §1-5 화면 파라미터 — single source of truth, do not inline these numbers.
+// L0004 §1-5 screen parameters — single source of truth, do not inline these numbers.
 const TURN_PAGE_SIZE = 50
 const PREPEND_PAGE_SIZE = 30
 const CATCHUP_MAX_ROUNDS = 20
@@ -577,7 +577,7 @@ async function migrateSendActionOnce(getResult: ChatSettingsResponse | null): Pr
     const res = await patchRequest<ChatSettingsResponse>('/api/v1/me/chat-settings', {
       send_action: raw,
     })
-    // Clear the browser key only after the server confirms the write (P0009 시나리오 3).
+    // Clear the browser key only after the server confirms the write (P0009 scenario 3).
     try {
       localStorage.removeItem(SEND_ACTION_KEY)
     } catch {
@@ -598,7 +598,7 @@ async function loadChatSettings(): Promise<void> {
     applyChatSettings(result)
   } catch {
     if (disposed) return
-    result = null // D0008 §3-4 / P0009 시나리오 10: keep chatting on defaults, do not block
+    result = null // D0008 §3-4 / P0009 scenario 10: keep chatting on defaults, do not block
   }
   await migrateSendActionOnce(result)
 }
@@ -622,7 +622,7 @@ function draftRangeChoiceFor(mode: ContextMode, turns: number): string {
   return 'custom'
 }
 
-// [시나리오 4] opening the dialog never re-queries the server — it redraws the
+// [scenario 4] opening the dialog never re-queries the server — it redraws the
 // last GET/PATCH result, already in hand.
 function openChatSettings(): void {
   draftSendAction.value = sendAction.value
@@ -713,7 +713,7 @@ const turns = ref<ConvTurn[]>([])
 const participants = ref<ConvParticipant[]>([])
 const head = ref<ConvHead | null>(null)
 // The highest seq the server has confirmed. This is the recovery datum: after a dropped
-// stream we ask for everything after it (P0003 시나리오 7), so it must come from the
+// stream we ask for everything after it (P0003 scenario 7), so it must come from the
 // server's post-commit MAX(seq), never from the seq we happened to be assigned.
 const headSeq = ref(0)
 // This user's read boundary, as the server knows it.
@@ -926,7 +926,7 @@ async function fetchPage(params: Record<string, unknown>): Promise<TurnsPage | n
 }
 
 /** Full (re)entry: background + everything this user has not read, then enough earlier
- *  context to make the screen readable. P0003 시나리오 1. */
+ *  context to make the screen readable. P0003 scenario 1. */
 async function load(): Promise<ConvTurn[]> {
   if (!props.docId) return []
   loading.value = true
@@ -965,7 +965,7 @@ async function load(): Promise<ConvTurn[]> {
   }
 }
 
-/** Scroll-up paging (P0003 시나리오 2). The prepended block's height is added back to
+/** Scroll-up paging (P0003 scenario 2). The prepended block's height is added back to
  *  scrollTop so the conversation does not jump under the reader's eyes. */
 async function loadOlder(opts: { keepScroll?: boolean } = {}): Promise<void> {
   if (loadingOlder.value) return
@@ -1093,7 +1093,7 @@ function onSendButtonClick(): void {
 // state and prevents duplicate runs; the server also enforces one run per group
 // (409 run_in_progress), which we adopt rather than restart.
 async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
-  if (invoking.value) return // 중복 실행 방지 (client guard)
+  if (invoking.value) return // duplicate-run prevention (client guard)
   if (!hasProviders.value) {
     if (trigger === 'manual') {
       showToast(t('main.conversation_view.send_action_invoke_disabled_hint'), 'warning')
@@ -1138,7 +1138,7 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
 
 // Re-attach to a chat AI call that is still running server-side but whose poll loop died
 // with a previous instance of this component — a tab switch or an F5 unmounts the card
-// outright, and the spinner state lives only here (0251 B0001 / NR0003 §5, B안). Without
+// outright, and the spinner state lives only here (0251 B0001 / NR0003 §5, option B). Without
 // this the surface comes back idle and the docs_reached==0 notice is lost, until the user
 // happens to press [Call AI] again and adopts the run through the 409 path.
 // Only this chat's own run is adopted (doc_ref match) — the group-scoped runs of other
@@ -1279,7 +1279,7 @@ function newIdempotencyKey(): string {
  *
  *  The key is generated ONCE per message and reused by every retry, so a turn the
  *  server already stored comes back as a replay (200) instead of being written twice
- *  (P0003 시나리오 4). 404/400/409/422 are decisions, not blips — retrying them only
+ *  (P0003 scenario 4). 404/400/409/422 are decisions, not blips — retrying them only
  *  repeats the same answer.
  */
 async function postTurn(temp: ConvTurn): Promise<boolean> {
@@ -1298,7 +1298,7 @@ async function postTurn(temp: ConvTurn): Promise<boolean> {
       const at = turns.value.findIndex((turn) => turn.localId === temp.localId)
       if (saved && !hasSeq(saved.seq)) {
         // Swap the placeholder for the numbered turn, in place, so the bubble does not
-        // visibly jump. Only this one turn arrives — never the whole body (P0003 시나리오 3).
+        // visibly jump. Only this one turn arrives — never the whole body (P0003 scenario 3).
         if (at >= 0) turns.value.splice(at, 1, saved)
         else insertInSeqOrder(saved)
       } else if (at >= 0) {
@@ -1351,7 +1351,7 @@ async function send(): Promise<void> {
   try {
     const ok = await postTurn(temp)
     if (!ok) {
-      // The draft is NOT cleared on failure (P0003 시나리오 17) and the bubble is kept
+      // The draft is NOT cleared on failure (P0003 scenario 17) and the bubble is kept
       // with a retry that reuses the same key — either route resends without doubling.
       const at = turns.value.findIndex((turn) => turn.localId === temp.localId)
       if (at >= 0) turns.value.splice(at, 1, { ...temp, pending: false, failed: true })
@@ -1391,7 +1391,7 @@ async function retryTurn(turn: ConvTurn): Promise<void> {
   }
 }
 
-// ── Live delivery (P0003 시나리오 6) ─────────────────────────────────────────
+// ── Live delivery (P0003 scenario 6) ─────────────────────────────────────────
 // The server pushes the appended TURN, so this appends one bubble instead of
 // re-fetching the document. A turn already on screen — typically our own, echoed back
 // before the POST response landed — is ignored by seq.
@@ -1419,7 +1419,7 @@ function onSseTurn(e: Event) {
   scheduleViewedReport()
 }
 
-/** Fill the gap left by a dropped stream (P0003 시나리오 7). Live delivery is an
+/** Fill the gap left by a dropped stream (P0003 scenario 7). Live delivery is an
  *  optimisation, not the record — the conversation must be correct with no SSE at all. */
 async function catchUp(): Promise<void> {
   if (disposed || !props.docId) return
@@ -1483,7 +1483,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('fg:document_content_changed', onContentChanged)
 })
 
-// 0351 T4 (P0003 시나리오 16): a conversation-turn search result names a seq that may
+// 0351 T4 (P0003 scenario 16): a conversation-turn search result names a seq that may
 // sit further back than what is currently loaded. Page older history in (reusing the
 // same loadOlder the scroll-up trigger uses) until that turn is present, then scroll
 // it into view. MainPanel calls this via the same ref map it already keeps for

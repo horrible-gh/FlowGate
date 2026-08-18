@@ -121,7 +121,7 @@
 // The backend read endpoints already exist (project.settings.read RBAC); this view only
 // renders them. No edit affordances — the user reacts to anomalies via the review/reject
 // flow, per D0002 §6. Data contracts: GET /projects/{id}/test-commands -> { data: [...] },
-// GET /projects/{id}/engine-recipes -> { ok, recipes: [...], total } (P0003 §가시화).
+// GET /projects/{id}/engine-recipes -> { ok, recipes: [...], total } (P0003 §visualization).
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest } from '@shared/api';

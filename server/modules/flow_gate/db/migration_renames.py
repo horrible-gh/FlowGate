@@ -1,6 +1,6 @@
 """Carry sqloader's applied-migration bookkeeping across a file rename.
 
-flowgate.default.0394 T0004 (NR0003 §4.4, 권고 1).
+flowgate.default.0394 T0004 (NR0003 §4.4, recommendation 1).
 
 `sql/migrations/<dialect>/` had ten numbers carrying more than one file — two
 parallel groups each picked the same next number, and the loser was only ever

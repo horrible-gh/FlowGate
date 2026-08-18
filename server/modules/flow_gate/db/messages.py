@@ -17,7 +17,7 @@ def list_by_project(project: str) -> list[dict]:
 
 
 def list_for_dialog(project: str, doc_type: str) -> list[dict]:
-    """Requested type + [전체]('*') union for the mention-add dialog (P0006 §4.5).
+    """Requested type + [all]('*') union for the mention-add dialog (P0006 §4.5).
 
     Returns the wire set as-is; display order/priority/dedup is L0007's concern.
     """

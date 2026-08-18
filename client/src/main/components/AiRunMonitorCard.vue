@@ -1,5 +1,5 @@
 <template>
-  <!-- 대시보드 AI 실행 모니터 (0269 재점검): the floating miniplayer only appears over
+  <!-- Dashboard AI-run monitor (0269 recheck): the floating miniplayer only appears over
        the current screen, so the dashboard gets its own always-present card — the run
        list is visible there even when nothing is running. -->
   <div class="card" data-test="ai-run-monitor-card">
@@ -162,7 +162,7 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
     })
     // Reveal + select the opened doc in the document explorer, same as the header
     // miniplayer — the AI-run monitor card carried the identical open-without-reveal
-    // gap (0316 T0004 / NR0003 §3-2·권고 2), and the same rev1 반려: it passed the
+    // gap (0316 T0004 / NR0003 §3-2 · recommendation 2), and the same rev1 rejection: it passed the
     // current project id, so opening a doc from another project never switched to it.
     // Target the document's OWN project (d.project_id) with switchProject. Best-effort
     // and detached from the open.

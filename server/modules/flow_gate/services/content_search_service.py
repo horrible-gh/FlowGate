@@ -61,7 +61,7 @@ def _escape_like(value: str) -> str:
 # total size of all document bodies and it never came back down. Nothing evicted:
 # `reset_cache()` is only called by tests. On a long-lived server with a growing
 # corpus that is a monotonic climb into memory pressure, which is exactly the kind
-# of slow-onset "가끔 멈춘다" R0001 is chasing.
+# of slow-onset "it freezes sometimes" R0001 is chasing.
 #
 # An LRU cap makes the footprint predictable. The cache is a pure optimisation
 # keyed on mtime — a miss re-reads the file and is correct, just slower — so
@@ -77,19 +77,19 @@ _WS = re.compile(r"\s+")
 # the ``---`` … ``---`` fence carrying project/module/group/doc_number/title/… that
 # every stored document file begins with. The detail snippet (and the body match)
 # must be drawn from the *body* below that fence so the header never shows in the
-# search detail row and the row starts from the real content ("내용…")
-# (group 0123 rev6: "상세쪽에 문서의 헤더를 출력하지 말라 … 내용… 부터 나오게").
+# search detail row and the row starts from the real content
+# (group 0123 rev6: "do not print the document header in the detail pane; start from the content").
 # This mirrors the in-app viewer's ``stripFrontmatter`` (client shared/utils/markdown.ts)
 # exactly, so search and the open document agree on where the body begins.
 #
 # rev4 mistakenly removed whole ATX markdown heading lines (``# ``…``###### ``) from
-# the snippet, reading "문서의 헤더" (the document header) as a ``#`` markdown heading.
+# the snippet, reading "the document header" as a ``#`` markdown heading.
 # rev6 clarified the header is the leading YAML ``---`` frontmatter block, not a ``#``
-# heading: a ``## 2. 리소스`` section title is *body content*. Dropping heading lines
+# heading: a ``## 2. Resources`` section title is *body content*. Dropping heading lines
 # meant a search term that lives only in a section title (very common in these
 # structured docs) matched the row but produced *no* snippet — the body excerpt came
 # and went depending on whether the hit was prose or a heading (group 0123 rev7:
-# "내용이 나왔다 안나왔다 … 본문이 있는 문서도 나오지 않는다"). So the heading *text*
+# "content appears and disappears; even documents with a body do not show up"). So the heading *text*
 # stays in the snippet; only the leading ``#`` markup glyphs are stripped so no header
 # markup shows.
 _FRONTMATTER = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n?", re.DOTALL)
@@ -115,7 +115,7 @@ def _resolve_body_path(file_path: str, project_id, branch: str) -> Optional[Path
 
     Without this the file is never read, so a document that genuinely *has* matching
     body content is silently skipped and never appears in search — the reviewer's
-    literal report: "본문이 있는 문서의 경우도 [검색에] 나오지 않는다" (group 0123 rev8).
+    literal report: "even documents that have a body do not show up in search" (group 0123 rev8).
     Purely additive: it only runs when the normal resolve already returned None, so a
     working (relative or current-host) path is never re-routed.
     """
@@ -153,7 +153,7 @@ def _get_cached_ex(doc: dict) -> Optional[tuple[str, str, str]]:
     the path does not resolve inside the storage jail, or the read fails.
 
     ``frontmatter_prefix + body_text`` is exactly the canonical file text, so a caller
-    that needs file coordinates (0370 2세트) can rebuild it without a second read.
+    that needs file coordinates (0370, set 2) can rebuild it without a second read.
     """
     file_path = (doc.get("file_path") or "").strip()
     if not file_path:
@@ -210,7 +210,7 @@ def _snippet(text: str, needle: str) -> Optional[str]:
 
     ``text`` is already the document body with the YAML frontmatter header removed
     (see ``_strip_frontmatter`` in ``_get_cached``). The excerpt is drawn from the
-    *whole* body — a markdown section heading (``## 2. 리소스 …``) is body content, so a
+    *whole* body — a markdown section heading (``## 2. Resources ...``) is body content, so a
     term that lives only in a heading still yields a snippet (group 0123 rev7: the body
     excerpt was missing whenever the hit was a heading instead of prose). Only the
     leading ``#`` heading markers inside the excerpt are dropped, so the heading text
@@ -252,7 +252,7 @@ def body_preview_for_doc(doc: dict) -> Optional[str]:
     """Public: simplified body preview for one document row, or None.
 
     This is what the **default metadata search** (Phase 1, ``GET /search/documents``
-    — the search the explorer runs when "내용까지 검색" is *off*) uses so that every
+    — the search the explorer runs when "search inside contents" is *off*) uses so that every
     result row shows the document's brief body, not just its id and title.
 
     Root cause of group 0123 rev1–rev9: the body preview was only ever attached on
@@ -308,10 +308,10 @@ def _is_migrated_conversation(doc: dict) -> bool:
 
 
 
-# ── 0370 2세트: 검색 결과의 위치와 앞뒤 줄 (P0002 시나리오 9~11 / L0003 §2-7·§2-8) ──
+# ── 0370 set 2: search-hit positions and context lines (P0002 scenarios 9-11 / L0003 §2-7, §2-8) ──
 #
-# 기존 `snippet`·`matched_in`·`match_kind` 계산은 손대지 않는다. `matches` 는 그 옆에 더할
-# 뿐이다(P0002 §3) — 지금 이 응답을 쓰는 화면은 고치지 않아도 된다.
+# The existing `snippet`, `matched_in` and `match_kind` computations are untouched. `matches` is
+# added alongside them (P0002 §3) — screens using this response today need no change.
 
 
 def _find_matches(body_text: str, query: str, scan_max: int) -> list[tuple[int, int]]:
@@ -345,7 +345,7 @@ def _match_entry(fdoc, doc_id: str, revision_no: int, char_start: int, char_end:
 
     ``fdoc`` is the *file* text (frontmatter included) so the locator agrees with
     ``/outline`` and ``/section``. Missing lines at the top/bottom of a document are simply
-    absent — they are never padded with empty strings (P0002 시나리오 9).
+    absent — they are never padded with empty strings (P0002 scenario 9).
     """
     from modules.flow_gate.services import document_outline_service as _outline
 
@@ -373,7 +373,7 @@ def _document_matches(doc: dict, needle: str, matched_in: str,
 
     A hit that came from the title or the doc_id has no place in the body, so no place is
     invented: both values come back empty. Forcing it to point at line 1 would open the
-    wrong spot when someone clicks the result (P0002 시나리오 10).
+    wrong spot when someone clicks the result (P0002 scenario 10).
     """
     from modules.flow_gate.services import document_outline_service as _outline
 
@@ -400,7 +400,7 @@ def _document_matches(doc: dict, needle: str, matched_in: str,
 
 
 def _format_turn(row: dict) -> str:
-    """``(턴번호/말한이) 본문`` — one neighbouring turn, collapsed and clipped."""
+    """``(turn number/speaker) body`` — one neighbouring turn, collapsed and clipped."""
     from modules.flow_gate.services import document_outline_service as _outline
 
     who = (row.get("display_name") or "").strip() or (row.get("speaker") or "")
@@ -436,7 +436,7 @@ def _turn_matches(row: dict, needle: str, context_lines: int,
             prevs = turn_store.fetch_turns_before(doc_id, seq, neighbours)
             before = [_format_turn(t) for t in reversed(prevs)]
             after = [_format_turn(t) for t in turn_store.fetch_turns_after(doc_id, seq, neighbours)]
-        except Exception:  # noqa: BLE001 — 앞뒤 턴을 못 읽어도 검색 결과는 살아 있어야 한다
+        except Exception:  # noqa: BLE001 — unreadable neighbouring turns must not kill the search result
             before, after = [], []
     locator = _outline.build_turn_locator(doc_id, revision_no, seq, 0, len(body))
     entries = [
@@ -472,8 +472,8 @@ def search_document_bodies(
     field that matched. Returns ``(page_items, total_matches)`` where total ignores
     limit/offset for paging. Ordering follows the DB helper (updated_at DESC).
 
-    0370 2세트: when ``include_matches`` is on, every row of the *returned page* also
-    carries ``match_total`` and ``matches`` (P0002 시나리오 9). The locators are computed
+    0370 set 2: when ``include_matches`` is on, every row of the *returned page* also
+    carries ``match_total`` and ``matches`` (P0002 scenario 9). The locators are computed
     for the page only — the match scan re-walks each body, and doing that for every
     candidate rather than the ~50 rows actually returned would make a facet-less search
     pay it corpus-wide. ``include_matches=False`` omits **both keys entirely**, giving
@@ -557,7 +557,7 @@ def search_conversation_turns(
     context_lines: int = None,
     hits_per_doc: int = None,
 ) -> list[dict]:
-    """Conversation-turn body search (T4, L0004 §2-15 / P0003 시나리오 16).
+    """Conversation-turn body search (T4, L0004 §2-15 / P0003 scenario 16).
 
     Case-insensitive (``LOWER`` on both sides); a literal ``%``/``_``/``\\`` in the
     query is escaped so it cannot act as a wildcard. At most ``per_doc`` turns are

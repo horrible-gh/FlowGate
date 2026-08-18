@@ -8,7 +8,7 @@ its only caller is the PATCH handler (DB0011 §5-2).
 
 Column-at-a-time updating is the one thing L0010 §2-2 asks of storage: a request that
 carries only ``context_mode`` must leave the stored ``context_turns`` alone, so the
-number the user was using is still there when they switch back to [최근].
+number the user was using is still there when they switch back to [recent].
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def upsert(
     if not columns:
         # An empty patch must not reach storage at all: writing here would create a
         # default row and flip is_default to false, which permanently blocks the
-        # [전송 시] hand-over (L0010 §2-2, DB0011 §3-3).
+        # [on send] hand-over (L0010 §2-2, DB0011 §3-3).
         raise ValueError("upsert requires at least one column")
 
     values = [

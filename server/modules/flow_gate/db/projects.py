@@ -20,7 +20,7 @@ def _get_by_id_db(project_id: str) -> Optional[dict]:
 
 
 def get_by_id(project_id: str) -> Optional[dict]:
-    """TTL-cached read (0282 NR0003 발견 2) — one screen load called this 11
+    """TTL-cached read (0282 NR0003 finding 2) — one screen load called this 11
     times from independent entry points. Returns a copy so a caller mutating
     its row cannot poison the cache; every writer below invalidates."""
     row = meta_cache.project_cache().get_or_load(
@@ -38,7 +38,7 @@ def list_projects(is_active: int | None = None) -> list[dict]:
     return store._fetch_all("SELECT * FROM projects ORDER BY project_id")
 
 
-# 0282 NR0003 발견 2 (꼬리 항목): the information_schema/table_exists probe for
+# 0282 NR0003 finding 2 (tail item): the information_schema/table_exists probe for
 # project_modules ran once per list_modules call. Migrations only ever CREATE
 # this table, so remember the positive answer for the process lifetime; a False
 # keeps re-probing, which stays correct while migrations are still landing.

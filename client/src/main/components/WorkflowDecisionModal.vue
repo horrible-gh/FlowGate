@@ -16,7 +16,7 @@
         </div>
 
         <!-- ── 0399 D0010 §3.3 / §6.2 — what was poured, and that it is not saved yet ──
-             The whole point of this strip: pressing a mode in [작업계획 적용] changed
+             The whole point of this strip: pressing a mode in [Apply Work Plan] changed
              nothing. It says so, and it offers the one-step way back (L0011 §3.3). -->
         <div v-if="pourSession" class="wdm-banner">
           <AppIcon name="clipboard-text" />
@@ -26,7 +26,7 @@
               n: pourSession.planStepCount,
               d: pourSession.rowCountChange.deleted,
             }) }}
-            <!-- 시안 fgh29xnk v3 · 화면 3: 부은 뒤에 사람이 손본 양을 같은 줄에서 말한다. -->
+            <!-- Mockup fgh29xnk v3 · screen 3: states, on the same line, how much a person edited after the pour. -->
             <template v-if="pourEditsText">
               {{ t('main.work_plan_pour.banner_edited', { edits: pourEditsText }) }}
             </template>
@@ -38,9 +38,10 @@
             {{ t('main.work_plan_pour.undo') }}
           </button>
         </div>
-        <!-- 시안 화면 3의 두 번째 띄: 멘트 없는 단계를 갯수만이 아니라 이름과 사유까지 적는다.
-             서버가 부을 때 세어 보낸 갯수 대신 지금 목록에서 세는다 — 사람이 칸을 채우는 순간
-             줄어들어야 하는 숫자이기 때문이다. -->
+        <!-- Mockup screen 3's second strip: lists steps with no note not just by count but by
+             name and reason. Counts from the current list rather than the count the server
+             sent when it poured — because it's a number that must drop the moment a person
+             fills the field. -->
         <div v-if="pourSession && missingNoteRows.length > 0" class="wdm-banner wdm-banner--warn">
           <AppIcon name="chat-slash" />
           <span>
@@ -373,7 +374,7 @@
                 <div class="wdm-preview-label">
                   <AppIcon name="eye" />
                   {{ t('main.workflow_decision_modal.preview_label') }}
-                  <!-- 시안 fgh29xnk v3 · 화면 3 하단 캐프션. TR0015 §8이 미뤄 둔 줄이다. -->
+                  <!-- Mockup fgh29xnk v3 · screen 3 bottom caption. The line TR0015 §8 deferred. -->
                   <template v-if="pourDiffText">— {{ pourDiffText }}</template>
                 </div>
                 <div class="wdm-preview">
@@ -444,8 +445,9 @@
             <AppIcon name="check" />
             {{ t('main.workflow_decision_modal.confirm') }}
           </button>
-          <!-- 0268 B0001: 멘트복사와 AI 호출은 택일이 아니라 병행입니다. This button used to be
-               labelled "AI에게 수정 요청" with a robot icon while only writing the clipboard,
+          <!-- 0268 B0001: mention-copy and AI invoke are not either/or, they run in parallel.
+               This button used to be labelled "AI에게 수정 요청" with a robot icon while only
+               writing the clipboard,
                which is exactly what hid the missing invoke path — it is now named for what it
                does, and the real in-app call sits beside it. -->
           <button
@@ -550,14 +552,15 @@ export interface PourNotification {
   items?: Array<Record<string, unknown>>
 }
 
-/** What [작업계획 적용] hands this dialog: a starting state, not a saved change. */
+/** What [Apply Work Plan] hands this dialog: a starting state, not a saved change. */
 export interface PourPayload {
   wpDocId: string
-  // 0403 NR0004 F2 — 이 창을 연 시점의 계획 리비전. 저장할 때 그대로 되돌려 보낸다.
+  // 0403 NR0004 F2 — the plan revision at the moment this dialog was opened. Sent back unchanged on save.
   wpRevisionNo: number
   wpShortCode: string
-  // 0403 NR0004 F4 — 시퀀스를 가진(또는 갖게 될) 문서. 워크플로가 아직 없는 그룹에서는
-  // 화면이 들고 있는 상위 문서가 비어 있을 수 있어, 후보 응답이 알려 준 주인을 쓴다.
+  // 0403 NR0004 F4 — the document that has (or will have) the sequence. In a group with no
+  // workflow yet, the parent document the screen is holding can be empty, so the owner the
+  // candidate response reported is used instead.
   workflowDocId: string | null
   mode: 'append' | 'replace_after'
   planStepCount: number
@@ -580,7 +583,7 @@ const props = defineProps<{
   /** True while the parent's decision POST is in flight — disables confirm to block
    *  the repeated-click 409 burst (R0001 / NR0003 item 2). */
   submitting?: boolean
-  /** 0399 — set when the dialog was opened by [작업계획 적용]. Absent on every other
+  /** 0399 — set when the dialog was opened by [Apply Work Plan]. Absent on every other
    *  entrance, and absent means this behaves exactly as it did before. */
   poured?: PourPayload | null
 }>()
@@ -620,7 +623,7 @@ const CATEGORIES = [
     items: [{ type: 'M', autoHintKey: '' }],
   },
   {
-    // 0395 T0021 / D0007 §7: 작업계획(WP) is "요건정의 다음에 오는 일반 칸" — a step
+    // 0395 T0021 / D0007 §7: the work plan (WP) is "요건정의 다음에 오는 일반 칸" — a step
     // that occupies a workflow slot (it is deliberately absent from
     // NON_SLOT_WORKFLOW_TYPES on the server), so it has to be placeable here. Without
     // this entry the only way to plan a group was a button that vanished half the
@@ -653,7 +656,7 @@ const CATEGORIES = [
       { type: 'DB', autoHintKey: '' },
     ],
   },
-  // 0395 T0021: the 'action' category ([커밋] / C) was removed on instruction. C is
+  // 0395 T0021: the 'action' category ([Commit] / C) was removed on instruction. C is
   // still a registered document type — this only stops it being placed as a workflow
   // step; sequences that already contain one keep rendering it.
 ]
@@ -711,13 +714,14 @@ const pourNotifications = computed(() =>
   (pourSession.value?.notifications ?? []).filter(n => n.code !== 'note_missing'),
 )
 
-// 시안 fgh29xnk v3 · 화면 3 — "그 뒤 직접 2줄 지움 · 1줄 타입 바꿈 · 1줄 추가" 를 쓰려면
-// 부은 직후가 어떤 모양이었는지를 기억해야 한다. 줄의 id 는 applyPour 가 매기므로 그것으로
-// 충분하다 — 지운 줄은 사라지고, 넣은 줄은 목록에 없는 새 id 를 갖는다.
+// Mockup fgh29xnk v3 · screen 3 — to render "그 뒤 직접 2줄 지움 · 1줄 타입 바꿈 · 1줄 추가"
+// we need to remember what things looked like right after the pour. The row's id is
+// assigned by applyPour, so that's enough — a deleted row disappears, and an added row
+// gets a new id absent from the list.
 const pourBaselineIds = ref<Set<number>>(new Set())
 
 const pourManualRows = computed(() => sequence.value.filter(s => !s.isAuto))
-// 0408 M0019 재반려 2: every row carries its own mention except TSR, which the server
+// 0408 M0019 re-rejection 2: every row carries its own mention except TSR, which the server
 // assembles ("TSR 단계에는 공급자와 멘트를 적지 않습니다" — work_plan_service).
 function isNoteEditable(item: SequenceItem): boolean {
   return item.type !== 'TSR'
@@ -830,8 +834,8 @@ function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' |
   }
 }
 
-// 0408 M0019 재반려 2: a report row a person creates here starts with an empty note (there is
-// no plan behind it yet) but it is a note-carrying row like any other — under [자동 승인] this
+// 0408 M0019 re-rejection 2: a report row a person creates here starts with an empty note (there is
+// no plan behind it yet) but it is a note-carrying row like any other — under [Auto Approval] this
 // is the row an AI worker runs, so its mention is the one that gets delivered.
 function buildAutoEntries(manualId: number, type: string, parent?: SequenceItem): SequenceItem[] {
   const autos = AUTO_MAP[type]
@@ -1098,9 +1102,9 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
       typeChanged: false,
     }
     if (AUTO_TYPES.has(it.type)) {
-      // 0408 M0019 재반려 2·3: the report row keeps the note stored ON it. Blanking it here
+      // 0408 M0019 re-rejection 2·3: the report row keeps the note stored ON it. Blanking it here
       // meant a save that changed nothing still erased whatever the plan had written for
-      // NR/TR — and [자동 승인] delivers exactly that row's note to its worker.
+      // NR/TR — and [Auto Approval] delivers exactly that row's note to its worker.
       result.push({
         id, type: it.type, label: it.label || docTypeStore.getLabel(it.type),
         isAuto: true, autoOfId: lastManualId, ...carried, origin: 'auto',
@@ -1249,9 +1253,11 @@ async function save() {
       // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
       // snapshot to be stale against, and demanding one would break every other caller.
       expected_workflow_tag: pourSession.value?.workflowTag,
-      // 0403 NR0004 F2·F3·F4: 같은 규칙으로 붓기 저장에만 실린다. 지문은 시퀀스가 움직였는지만
-      // 보므로, 워크플로를 건드리지 않은 채 계획만 바뀐 경우를 잡지 못했다. 이 값이 그 판정의
-      // 근거이고, 동시에 "이 저장이 어느 계획을 부은 것인가"를 적용 이력에 남기는 근거다.
+      // 0403 NR0004 F2·F3·F4: only carried on a pour save, by the same rule. The fingerprint
+      // only sees whether the sequence moved, so it couldn't catch a case where the plan
+      // changed without touching the workflow. This value is the evidence for that judgment,
+      // and at the same time the evidence that records which plan this save poured, in the
+      // apply history.
       expected_plan: pourSession.value
         ? {
             wp_doc_id: pourSession.value.wpDocId,
@@ -1269,8 +1275,9 @@ async function save() {
     if (e?.response?.data?.error === 'sequence_changed') {
       showToast(t('main.work_plan_pour.error_sequence_changed'), 'error')
     } else if (e?.response?.data?.error === 'wp_changed') {
-      // 0403 NR0004 F2: 워크플로는 그대로인데 계획이 바뀌었다. 지금 화면의 줄은 낡은 계획에서
-      // 나온 것이므로 덮어쓰지 않고, 다시 열어 최신 계획을 부으라고 말한다.
+      // 0403 NR0004 F2: the workflow stayed the same but the plan changed. The rows currently
+      // on screen came from the stale plan, so don't overwrite — tell the user to reopen and
+      // pour the latest plan instead.
       showToast(t('main.work_plan_pour.error_wp_changed'), 'error')
     } else {
       showToast(
@@ -1304,7 +1311,7 @@ async function requestAiSequenceEdit() {
   }
 }
 
-// 0268 B0001 (NR0003 결함 1): run the very same delegation in-app instead of by clipboard.
+// 0268 B0001 (NR0003 defect 1): run the very same delegation in-app instead of by clipboard.
 // POSTs action_scope 'workflow_sequence_edit' to /ai-invoke/start, where the server mints the
 // token through request_sequence_edit — the same issuer the copy path calls — so the worker
 // reads a byte-identical prompt. The raw token never reaches the browser on this path.
@@ -1367,8 +1374,8 @@ watch(
       }
     } else {
       // M0020 "[작업계획 적용] 한다음에 저장하지도 않았는데 주구장창 적용되어 있다":
-      // 저장하지 않고 닫았으면 부어 넣은 목록은 그 자리에서 버린다. 다음에 열 창은
-      // 무조건 서버에 저장된 시퀀스를 다시 읽어서 그린다.
+      // if closed without saving, the poured-in list is discarded right there. The next
+      // window opened always re-reads and redraws the sequence actually saved on the server.
       pourSession.value = null
       pourBaselineIds.value = new Set()
       sequence.value = []
@@ -1405,7 +1412,7 @@ watch(
   min-height: 0;
 }
 
-/* ── 0399 작업계획 적용 — 부어 넣은 결과 알림 줄 (시안 fgh29xnk v3 · 화면 2/3) ── */
+/* ── 0399 Apply Work Plan — pour-result notice strip (mockup fgh29xnk v3 · screens 2/3) ── */
 .wdm-banner {
   display: flex;
   align-items: center;
@@ -1445,7 +1452,7 @@ watch(
   background: #d1fae5;
 }
 
-/* 계획에서 온 줄: 왼쪽 초록 띠로 한눈에 갈라 보인다 */
+/* A row that came from the plan: distinguished at a glance by a green strip on the left */
 .wdm-seq-item.from-plan {
   border-color: #86efac;
   box-shadow: inset 3px 0 0 #16a34a;
@@ -1486,7 +1493,7 @@ watch(
   font-size: .62rem;
   font-weight: 700;
 }
-/* 0399 T0016 — 타입을 바꿔 계획 멘트가 비워진 줄 */
+/* 0399 T0016 — a row whose plan note was cleared because its type was changed */
 .wdm-changed-badge {
   flex-shrink: 0;
   padding: 1px 7px;
@@ -1497,7 +1504,7 @@ watch(
   font-size: .62rem;
   font-weight: 700;
 }
-/* 0399 T0016 — 줄마다 멘트 입력. 밑줄만 남겨 정적 문구처럼 읽히되 실제로는 입력칸이다. */
+/* 0399 T0016 — per-row note input. Only the underline remains so it reads like static text, but it's actually an input field. */
 .wdm-note-input {
   flex: 1;
   min-width: 0;
@@ -1530,7 +1537,7 @@ watch(
   color: var(--danger);
   font-weight: 700;
 }
-/* 0399 T0016 — 줄의 타입을 바꾸는 작은 드롭다운. doc-tag 색 배지는 그대로 두고 옆에 둔다. */
+/* 0399 T0016 — small dropdown for changing a row's type. The doc-tag color badge stays as-is, placed beside it. */
 .wdm-type-select {
   flex-shrink: 0;
   font-size: .6rem;

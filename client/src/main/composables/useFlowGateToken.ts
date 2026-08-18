@@ -36,7 +36,7 @@ interface TokenIssueBaseParams {
   workPlanScope?: WorkPlanScope
 }
 
-// 0406 T0022 작업 2: a continuous request cannot exist without an explicit N/T authoring
+// 0406 T0022 task 2: a continuous request cannot exist without an explicit N/T authoring
 // policy. The non-continuous arm uses never so a new caller cannot accidentally attach a
 // meaningless mode either; missing modes now fail type-checking before they can reach the
 // server's legacy-compatible auto_approved normalizer.
@@ -57,13 +57,15 @@ export type TokenIssueParams = TokenIssueBaseParams & (
     }
 )
 
-/** P0004 [범위 페이로드] — 세 갈래가 함께 쓰는 한 가지 서식. 0405 T0011 rev1 에서
- *  step_keys 를 뺐다(제안 창에 단계를 고르는 칸이 없어졌다). 작업계획 편집 화면의
- *  범위 고르기(WorkPlanAiScopeDialog)는 단계를 계속 고르므로 그쪽 서식은 그대로다.
- *  0416 T0004 — note 를 더했다(모든 단계에 공통으로 붙는 플래너 멘트).
- *  0416 TR0005 — provider_id 를 더했다(이번 실행에 쓸 단일 프로바이더, provider_ids
- *  후보 다중선택과는 다른 값). WorkPlanProposalDialog.vue 의 같은 이름 인터페이스와
- *  독립적으로 선언돼 있으므로(memory: 두 곳 모두 갱신 필요) 반드시 짝을 맞춘다. */
+/** P0004 [scope payload] — one shared format used by all three branches. 0405 T0011 rev1
+ *  dropped step_keys (the proposal dialog no longer has a step picker). The work-plan
+ *  editor's scope picker (WorkPlanAiScopeDialog) still lets you choose steps, so that
+ *  format stays as-is.
+ *  0416 T0004 — added note (a planner mention attached to every step in common).
+ *  0416 TR0005 — added provider_id (the single provider to use for this run, distinct
+ *  from the provider_ids multi-select candidates). It's declared independently from the
+ *  same-named interface in WorkPlanProposalDialog.vue (memory: update both places),
+ *  so keep them in sync. */
 export interface WorkPlanScope {
   quantity_type_codes: string[]
   provider_ids: string[]
@@ -93,7 +95,7 @@ export function splitGroupId(canonical: string | null | undefined): { module?: s
 // The CHAT-ONLY compact mention for conversation (CH) documents used to be built HERE
 // (buildConversationMention), because TR0044.0010 rev4 rejected the standard edit mention
 // for chat — "strip out Q info and other useless info, keep it compact" — and the server
-// had nothing else to offer. When the in-app AI 호출 path arrived it had to port the
+// had nothing else to offer. When the in-app AI invoke path arrived it had to port the
 // builder to Python, leaving one format in two languages held together by comments.
 //
 // 0293 T0005 deleted this copy. POST /token/issue accepts action_scope:'chat' and returns
@@ -230,12 +232,14 @@ export function useFlowGateToken() {
   }
 
   /**
-   * 0405 P0004 [멘트복사 — 범위를 실은 토큰을 발급한다].
+   * 0405 P0004 [copy mention — issues a token carrying the scope].
    *
-   * issueToken 은 advance 의 비인증 오류를 /token/issue 로 폴백한다. 그 폴백은 머리 칸을
-   * 진행시키지 않은 채 토큰만 만들어 내므로, 이 화면의 계약("409 면 복사하지 않고 창을
-   * 열어 둔다")과 정면으로 어긋난다. 그래서 이 경로만 폴백 없이 직접 부르고, 실패 사유를
-   * 삼키지 않고 그대로 돌려준다.
+   * issueToken falls back to /token/issue on advance's auth error. That fallback only
+   * mints a token without advancing the head cell, which runs directly counter to this
+   * screen's contract ("409 면 복사하지 않고 창을
+   * 열어 둔다" [on 409, don't copy — keep the dialog open]). So this path alone calls
+   * advance directly with no fallback, and returns the failure reason as-is instead of
+   * swallowing it.
    */
   async function advanceWithWorkPlanScope(params: {
     docId: string
@@ -306,7 +310,7 @@ export function useFlowGateToken() {
     }
   }
 
-  // Continuous work (group 0086 R0001 "워크플로 결정부터"): when opts.continuous is set, the
+  // Continuous work (group 0086 R0001 "워크플로 결정부터" [starting from workflow decision]): when opts.continuous is set, the
   // run is started before the workflow is decided. The minted workflow_decide token carries
   // the run-to-end sentinel + review-mode flag, and the server self-chains the rest of the
   // run once the decision is saved. continuationReviewMode pauses after the first produced step.
@@ -364,7 +368,7 @@ export function useFlowGateToken() {
   // Sequence edit request (R0001 group 0208): issue a token bound to a DECIDED workflow-root
   // doc + a "please edit the pending sequence" mention, and hand it to an AI worker. The worker
   // applies the change autonomously via PATCH /workflow/sequence (locked/completed steps stay
-  // immutable). Parallel of requestWorkflowDecision, for the post-decision 시퀀스 수정 path.
+  // immutable). Parallel of requestWorkflowDecision, for the post-decision sequence-edit path.
   async function requestSequenceEdit(docId: string): Promise<IssuedToken | null> {
     issuing.value = true
     try {

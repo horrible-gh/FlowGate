@@ -63,8 +63,8 @@ export const useDocTypeStore = defineStore('docType', () => {
   })
 
   /**
-   * flowgate.default.0395 시안 xc32frrg: a work row is named after the pair, not after
-   * its instruction document — 조사 / 작업 / 테스트, not 조사지시 / 작업지시 / 테스트지시.
+   * flowgate.default.0395 mockup xc32frrg: a work row is named after the pair, not after
+   * its instruction document — 조사 / 작업 / 테스트 (investigation / work / test), not 조사지시 / 작업지시 / 테스트지시 (their instruction-doc counterparts).
    *
    * The registry label is server-side and NOT localized, so the UI locale says nothing
    * about which suffix it carries; strip whichever of the known suffixes it ends with.

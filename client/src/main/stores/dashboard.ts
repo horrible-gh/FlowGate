@@ -27,7 +27,7 @@ export interface DashboardActivity {
     doc_id: string
     type_code: string
     title: string
-    // R0001 group 0135 / N0008 (시안 3): AI review signals for the trust colour + badge on the feed row.
+    // R0001 group 0135 / N0008 (mockup 3): AI review signals for the trust colour + badge on the feed row.
     // null when the document has no review yet; verdict is the latest AI verdict.
     review?: {
       status: string | null

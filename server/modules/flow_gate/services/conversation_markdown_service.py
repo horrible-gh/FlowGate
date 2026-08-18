@@ -54,7 +54,7 @@ def _fingerprint(content: str) -> str:
 
 
 def render_markdown(doc_id: str) -> dict:
-    """Render a CH document's current turns to markdown (P0003 시나리오 14).
+    """Render a CH document's current turns to markdown (P0003 scenario 14).
 
     Returns ``{content, fingerprint, head_seq, rendered_at}``. Rendering the same turn
     set twice yields byte-identical ``content``/``fingerprint`` — ``rendered_at`` is the

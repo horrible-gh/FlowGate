@@ -1,7 +1,7 @@
 """Server-side ports of the client-only mention builders (group 0223).
 
 The in-app AI invoke must feed the worker the SAME text a human would have
-copied from the matching [멘트복사] button (byte-identical principle,
+copied from the matching [copy mention] button (byte-identical principle,
 ai_invoke_service.start_run). These builders existed only in the browser
 (useFlowGateToken.ts / mentionMessages.ts / i18n templates), so an invoke
 through the generic token mention would diverge from the copy flow. Each
@@ -69,16 +69,16 @@ def _chat_lookup_sections(
     API for anything outside its own CH document, so it guessed at a local directory
     and reported the guess as fact. The scopes were never the problem — a chat token
     already resolves to ["read", "grep"] (glob shares grep's scope), and verify_bearer
-    accepts it on /search/documents* — the mention simply never said so (NR0003 발견
+    accepts it on /search/documents* — the mention simply never said so (NR0003 finding
     1/4). So this adds text, not permission.
 
     The source section is the same builder N/NR mentions use, asked for a "CH" step so
     it renders its read/search-only variant, behind the same source-mode gate: when the
-    project runs in local mode there is no remote source API to advertise (발견 3).
+    project runs in local mode there is no remote source API to advertise (finding 3).
     Document search stays either way — it reads storage, not the source tree.
 
     Kept deliberately small. TR0044.0010 rev4 rejected a chat mention padded with
-    non-chat sections, and compactness is still the rule here (발견 9).
+    non-chat sections, and compactness is still the rule here (finding 9).
     """
     # Lazy: mention_service pulls in the full mention stack, and this module is
     # imported by the invoke path at request time.
@@ -117,7 +117,7 @@ def _chat_lookup_sections(
     if source_included:
         search_lines += [
             "",
-            # 발견 5: every remote path is root-relative and the server picks the root
+            # Finding 5: every remote path is root-relative and the server picks the root
             # (this group's worktree, else the project branch checkout). Naming an
             # absolute path here would just give the worker a new wrong thing to trust.
             "Source paths are relative to the project source root, which the server resolves",
@@ -126,7 +126,7 @@ def _chat_lookup_sections(
         ]
     search_lines += [
         "",
-        # 발견 8: a successful edit consumes the token and its remote grant dies with it.
+        # Finding 8: a successful edit consumes the token and its remote grant dies with it.
         "Submitting your turn consumes this token, so finish all reading and searching first.",
     ]
     sections.append("## Document search and lookup rules\n---\n" + "\n".join(search_lines))
@@ -221,7 +221,7 @@ def build_conversation_mention(
     move the starting point forward from that cursor. Both call sites already hold the
     value and neither sends it over the wire — the screen does not get to say how much
     conversation an AI is handed, or a path that never went through the screen would
-    have no value there at all, or a made-up one (P0009 시나리오 14). Left None, the
+    have no value there at all, or a made-up one (P0009 scenario 14). Left None, the
     settings come out as their defaults, which is also what an unreachable store gives.
     """
     del module  # Kept in the public signature for the two established call sites.
@@ -232,9 +232,9 @@ def build_conversation_mention(
     )
     settings = chat_settings_service.resolve_chat_settings_safe(user_id)
     context_mode = settings["context_mode"]
-    # [전체] adds no query. With the whole conversation on offer the head cannot change
+    # [all] adds no query. With the whole conversation on offer the head cannot change
     # the answer, and costing exactly what it cost before is what keeps "put it back on
-    # [전체] and compare" usable as a way to diagnose anything (L0010 §2-3).
+    # [all] and compare" usable as a way to diagnose anything (L0010 §2-3).
     head_seq = (
         conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
     )
@@ -274,7 +274,7 @@ def build_conversation_mention(
     ]
     # Right behind the paragraph that named the starting point, and ahead of the reply
     # instructions: said in that order the worker reads the two as one thought. Appended
-    # at the end of the document it reads the first half and moves on (P0009 시나리오 11).
+    # at the end of the document it reads the first half and moves on (P0009 scenario 11).
     if folded > 0:
         lines += [""] + _fold_notice(
             api_base=api_base,

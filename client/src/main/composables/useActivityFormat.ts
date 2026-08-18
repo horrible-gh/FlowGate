@@ -11,7 +11,7 @@ const ACTIVITY_COLORS: Record<string, string> = {
   workflow_state_changed: '#7c3aed',
   question_answered: '#0891b2',
   group_approved: '#16a34a',
-  // R0001 group 0135 / N0008: the terminal "연속작업 완료" alarm — a distinct emerald so the
+  // R0001 group 0135 / N0008: the terminal "연속작업 완료" (continuous work complete) alarm — a distinct emerald so the
   // once-per-run completion stands out from the per-step document_created (blue) inflow.
   continuous_work_completed: '#059669',
   // flowgate.default.0157: test-run auto-recovery loop signals. `test_run_repair` = amber (a
@@ -25,8 +25,8 @@ const ACTIVITY_COLORS: Record<string, string> = {
   continuous_work_failed: '#dc2626',
 }
 
-// R0001 group 0135 / N0008 (시안 3): map an AI review verdict to a trust tone so a completed feed row
-// warns "됐다는데 사실 확인 필요" by colour. 🟢 pass = safe to skip / 🟡 hold = caution / 🔴 issues = check.
+// R0001 group 0135 / N0008 (mockup 3): map an AI review verdict to a trust tone so a completed feed row
+// warns "됐다는데 사실 확인 필요" (says it's done but needs a fact-check) by colour. 🟢 pass = safe to skip / 🟡 hold = caution / 🔴 issues = check.
 export type ReviewTone = 'ok' | 'caution' | 'danger'
 const VERDICT_TONES: Record<string, ReviewTone> = {
   pass: 'ok',

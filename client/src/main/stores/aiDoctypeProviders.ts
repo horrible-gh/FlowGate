@@ -1,6 +1,6 @@
 // Per-document-type AI provider assignment for the continuous chain (0317 D0004 §6).
 //
-// Loads and saves a project's "문서 종류 -> 프로바이더" 배정 규칙 the backend hop provider
+// Loads and saves a project's "문서 종류 -> 프로바이더" (doc-type -> provider) assignment rule the backend hop provider
 // decider reads at each step boundary. The continuous dialog reads `assignments` to pre-fill
 // its mapping table and calls `save` before starting the run so the persisted map is in place
 // when the first hop resolves its provider.

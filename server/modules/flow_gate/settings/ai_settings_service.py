@@ -36,7 +36,7 @@ API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000
 PROVIDERS_MAX = 20
-# Per-document-type provider assignment (flowgate.default.0317 D0004 구현). A project's
+# Per-document-type provider assignment (flowgate.default.0317 D0004 implementation). A project's
 # workflow has a handful of worker doc types (NR/TR/TSR/TS, ...); cap generously so the map
 # stays renderable without constraining any real sequence.
 DOCTYPE_ASSIGN_MAX = 50
@@ -261,7 +261,7 @@ def normalize_cli_command(kind: Optional[str], cli_command: str) -> str:
         Not inside a trusted directory and --skip-git-repo-check was not specified.
 
     on stderr with exit 1, in well under a second — which the invoke path then classifies as
-    `fast_fail` ("즉시 종료") and burns as a provider failure (0295 NR0003 §2). FlowGate has
+    `fast_fail` ("exit immediately") and burns as a provider failure (0295 NR0003 §2). FlowGate has
     three ways to end up outside a repo: the scratch-dir fallback when the source mirror is
     missing (ai_invoke_service._cli_execute), a project whose mirror exists but is not a git
     checkout, and the probe's tempfile.mkdtemp() cwd — the last of which made the 0281
@@ -692,12 +692,12 @@ def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional
     return _ai_db.get_secret(project_id, provider_id)
 
 
-# ── Per-document-type provider assignment (flowgate.default.0317 D0004 구현) ──────
+# ── Per-document-type provider assignment (flowgate.default.0317 D0004) ─────────
 #
-# The continuous chain's "홉 프로바이더 결정기": a project-scoped "문서 종류 -> 프로바이더"
+# The continuous chain's hop-provider resolver: a project-scoped "document type -> provider"
 # map the chain consults at each step boundary. An empty map reproduces today's
 # single-provider behavior (every doc type resolves to the effective default), so the
-# feature is additive and fully backward-compatible (D0004 §1 하위호환).
+# feature is additive and fully backward-compatible (D0004 §1, backward compatibility).
 
 def _norm_doctype(code: Optional[str]) -> str:
     return (code or "").strip().upper()
@@ -789,7 +789,7 @@ def resolve_doctype_provider(project_id: str, doc_type: str) -> Optional[str]:
 
     None means "use the default/fallback" — so an unmapped type, a disabled assignment, or
     any lookup hiccup all degrade to today's behavior. Never raises: a resolution failure in
-    the continuous hot path must not stall an otherwise-healthy chain (D0004 §3 폴백)."""
+    the continuous hot path must not stall an otherwise-healthy chain (D0004 §3, fallback)."""
     normalized = _norm_doctype(doc_type)
     if not normalized:
         return None

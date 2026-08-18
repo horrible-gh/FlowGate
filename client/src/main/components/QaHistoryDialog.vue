@@ -182,7 +182,7 @@ const props = withDefaults(defineProps<{
   // becomes answer-capable. Omitting them keeps the dialog read-only (back-compat).
   docId?: string
   busy?: boolean
-  // group 0126 / C안: the panel cards open this dialog focused on one query — [Open]
+  // group 0126 / option C: the panel cards open this dialog focused on one query — [Open]
   // scrolls it into view, [Answer] also opens its inline answer form.
   focusId?: number | null
   startAnswer?: boolean
@@ -228,7 +228,7 @@ const picked = ref<string | null>(null)
 // Picking alone is a complete answer: the server fills the body with the label.
 const canSubmit = computed(() => !!answerBody.value.trim() || picked.value !== null)
 
-// group 0126 / C안: per-entry element refs so an opened-with-focus query can be
+// group 0126 / option C: per-entry element refs so an opened-with-focus query can be
 // scrolled into view (the panel cards open this dialog targeting one query).
 const entryRefs = ref<Record<number, HTMLElement>>({})
 function setEntryRef(id: number, el: Element | null | { $el?: Element }) {
@@ -284,7 +284,7 @@ async function onCopyMention(itemId: number) {
 }
 
 // Reset any open answer form when the dialog is closed so it reopens clean. When opened
-// with a focus target (group 0126 / C안), scroll it into view and — for [Answer] — open
+// with a focus target (group 0126 / option C), scroll it into view and — for [Answer] — open
 // its inline answer form so the user lands directly on the compose box.
 watch(() => props.visible, async (v) => {
   if (!v) { closeAnswer(); return }
@@ -309,7 +309,7 @@ function onClose() {
 .qhd-desc { font-size: .78rem; color: var(--text-m); margin-bottom: 12px; }
 .qhd-empty { padding: 24px; text-align: center; color: var(--text-m); font-size: .85rem; }
 .qhd-list { display: flex; flex-direction: column; gap: 12px; }
-/* group 0126 / C안: full-view entries use the prototype's amber query card; an answered
+/* group 0126 / option C: full-view entries use the prototype's amber query card; an answered
    query switches its accent to green. */
 .qhd-entry {
   border: 1px solid var(--border); border-left: 3px solid #f59e0b;

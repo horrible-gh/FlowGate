@@ -310,19 +310,19 @@ def get_document_reviews(request: Request, doc_id: str):
     })
 
 
-# ── 0370 R0001 / P0002 / L0003: 부분 조회 네 갈래 ────────────────────────────────
+# ── 0370 R0001 / P0002 / L0003: the four partial-read endpoints ─────────────────
 #
-# 지금까지 문서를 열면 본문 전체가 한꺼번에 딸려 왔다. 아래 네 엔드포인트는 필요한
-# 부분만 가져오는 길이며 **전부 추가**다 — 기존 `GET /document/{doc_id}` 의 응답에서
-# 필드를 빼거나 뜻을 바꾸지 않는다(P0002 §0).
+# Until now, opening a document dragged the entire body along. The four endpoints below are
+# ways to fetch only the part you need, and they are **all additive**: no field is removed
+# from, and no meaning changed in, the existing `GET /document/{doc_id}` response (P0002 §0).
 #
-# 계산은 한 줄도 여기 두지 않는다. 목차·구간·좌표는 전부 document_outline_service 가
-# 하고, 이 파일은 그 결과를 P0002 가 정한 모양으로 옮겨 담기만 한다. 같은 이름의 숫자가
-# 화면마다 달라지지 않게 하려는 것이다(L0003 목적).
+# Not one line of computation lives here. Outlines, sections and coordinates are all done by
+# document_outline_service, and this file only repackages the result into the shape P0002
+# fixed — so one named number never differs per screen (L0003's purpose).
 
 
 def _fail_with(status: int, message: str, extra: Optional[dict] = None) -> JSONResponse:
-    """실패 응답에 P0002 가 요구한 부가 필드(후보·개정판 번호 등)를 덧붙인다."""
+    """Attach the extra fields P0002 requires on a failure response (candidates, revision, ...)."""
     content: dict = {
         "ok": False,
         "http_status": status,
@@ -335,7 +335,7 @@ def _fail_with(status: int, message: str, extra: Optional[dict] = None) -> JSONR
 
 
 def _document_text(doc: dict):
-    """현재 문서 GET과 동일한 정본을 부분 조회용 텍스트로 만든다."""
+    """Build the text partial reads work on, from the same canonical body the document GET returns."""
     content = _resolve_live_content(doc)
     if content is None:
         return None
@@ -343,14 +343,14 @@ def _document_text(doc: dict):
 
 
 def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
-    """조회 네 갈래의 공통 앞부분 — L0003 §4-1 의 검사 순서를 그대로 따른다.
+    """The shared prologue of all four reads — it follows L0003 §4-1's check order exactly.
 
-    1 토큰 → 2 doc_id 형식 → 3 문서 존재 → 6 revision_no 대조. 본문 읽기(7)는 그
-    뒤이지만, 409 응답이 ``content_sha256`` 을 실어야 하므로(P0002 시나리오 8) 파일은
-    먼저 읽어 둔다. 읽지 못했으면 지문만 null 이 되고 순서는 유지된다.
+    1 token → 2 doc_id format → 3 document exists → 6 revision_no match. Reading the body (7)
+    comes after, but a 409 must carry ``content_sha256`` (P0002 scenario 8), so the file is
+    read up front. If unreadable only the fingerprint is null and the order is preserved.
 
-    **6번(409)이 8번(404)보다 앞**인 것이 이 순서의 핵심이다. 손에 든 위치가 낡았을 때
-    "그런 구간 없음" 이라고 답하면 작업자는 제목이 지워진 줄 알고 엉뚱한 곳을 뒤진다.
+    **Check 6 (409) coming before check 8 (404)** is the heart of this order. Answering "no
+    such section" for a stale locator makes the worker think a heading was deleted and hunt in the wrong place.
     """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -391,10 +391,10 @@ def get_document_outline(
     max_level: int = Query(outline_svc.MAX_HEADING_LEVEL),
     revision_no: Optional[int] = Query(None),
 ):
-    """목차 조회 (P0002 시나리오 1·2). 본문 글자는 한 자도 담지 않는다.
+    """Outline lookup (P0002 scenarios 1 and 2). Not one character of the body is included.
 
-    제목이 하나도 없는 문서는 200 + 빈 ``items`` 다. 404 로 답하면 작업자가 문서 자체가
-    없는 줄 안다 — 요건 문서 R 은 대개 짧은 산문이라 흔한 경우다(P0002 시나리오 2).
+    A document with no headings gets 200 and an empty ``items``. A 404 would make the worker
+    think the document itself is missing — common, since requirement (R) documents are usually short prose (P0002 scenario 2).
     """
     err, doc, text = _load_for_query(request, doc_id, revision_no)
     if err is not None:
@@ -402,8 +402,8 @@ def get_document_outline(
     if text is None:
         return _fail(404, f"document body is not readable: {doc_id}")
 
-    # max_level 은 표시 깊이일 뿐이라 범위를 벗어나도 멈춰 세우지 않고 자른다. 무인
-    # 작업에서 목차 한 번을 422 로 되돌리는 편익이 없다.
+    # max_level is only a display depth, so an out-of-range value is clamped rather than
+    # rejected. Bouncing one outline read with a 422 buys nothing in unattended work.
     level = max(1, min(int(max_level), outline_svc.MAX_HEADING_LEVEL))
     items, truncated = outline_svc.outline_items(text, level)
     return JSONResponse(content={
@@ -435,14 +435,14 @@ def get_document_section(
     max_chars: Optional[int] = Query(None),
     revision_no: Optional[int] = Query(None),
 ):
-    """구간 읽기 (P0002 시나리오 3~8).
+    """Section read (P0002 scenarios 3-8).
 
-    ``section``·``section_id``·``lines``·``chars`` 중 **정확히 하나**만 보낸다. 이름으로
-    찾든 줄 번호로 찾든 같은 로케이터가 나오므로 목차 → 구간 읽기 → 검색 결과를 서로 이어
-    쓸 수 있다.
+    Send **exactly one** of ``section``/``section_id``/``lines``/``chars``. Whether found by
+    name or by line number the same locator comes back, so outline → section read → search
+    results all chain together.
 
-    상한을 넘으면 **줄 가운데를 자르지 않고** 마지막으로 끝난 줄까지만 주고, 이어 읽을
-    ``next_locator`` 를 함께 준다. 그래서 ``chars`` 가 ``max_chars`` 보다 작을 수 있다.
+    Past the cap it returns whole lines only, **never cutting mid-line**, along with a
+    ``next_locator`` to continue from. That is why ``chars`` can be less than ``max_chars``.
     """
     err, doc, text = _load_for_query(request, doc_id, revision_no)
     if err is not None:
@@ -470,7 +470,7 @@ def get_document_section(
     )
     next_locator = None
     if truncated:
-        # 이어 읽기는 같은 구간을 가리킨 채 시작 줄만 민다. 끝은 원래 구간의 끝이다.
+        # Continuation keeps pointing at the same section and only advances the start line; the end stays the section's end.
         next_locator = outline_svc.build_locator(
             text, doc_id, rev, last_line + 1, resolved.line_end, enclosing,
             char_start=text.char_start_of(last_line + 1),
@@ -487,7 +487,7 @@ def get_document_section(
         "candidates": resolved.candidates,
         "include_children": include_children,
         "locator": locator,
-        # text 에는 제목 줄 자신도 들어간다 — 받아서 그대로 붙여 넣으면 원문이 되도록.
+        # text includes the heading line itself, so pasting what you receive reproduces the original.
         "heading": text.heading_line_text(enclosing),
         "text": text.slice_lines(resolved.line_start, last_line),
         "chars": locator["char_end"] - locator["char_start"],
@@ -506,14 +506,14 @@ def get_document_meta(
     doc_id: str,
     revision_no: Optional[int] = Query(None),
 ):
-    """본문 뺀 정보만 조회 (P0002 시나리오 12).
+    """Everything except the body (P0002 scenario 12).
 
-    기존 ``GET /document/{doc_id}`` 응답에서 ``content`` 만 빼고 ``answers_count``·``body``
-    를 더한 모양이다. **``content`` 키 자체가 없다** — ``null`` 로 두면 "본문이 빈 문서"
-    와 구별이 안 된다.
+    The existing ``GET /document/{doc_id}`` response minus ``content``, plus ``answers_count``
+    and ``body``. **The ``content`` key is absent entirely** — leaving it ``null`` would be
+    indistinguishable from a document whose body is empty.
 
-    파일이 없거나 읽히지 않아도 200 이다. 문서 카드(제목·상태·검토 상태·개정판)는 본문과
-    무관하게 그릴 수 있어야 하기 때문이다.
+    A missing or unreadable file still gets 200: the document card (title, status, review
+    state, revision) must be drawable independently of the body.
     """
     err, doc, text = _load_for_query(request, doc_id, revision_no)
     if err is not None:
@@ -559,7 +559,7 @@ def get_document_meta(
     }
     resp["ai_review"], resp["ai_review_history"] = _load_reviews(doc_id)
     resp["test_run"], resp["test_run_history"] = _load_test_runs(doc_id)
-    # 답의 내용이 필요하면 기존 조회를 쓰면 된다. 여기서는 본문을 빼는 게 목적이라 개수만.
+    # Use the existing lookup if you need answer contents; the point here is to omit bodies, so only counts.
     resp["answers_count"] = len(get_answers_for_document(doc_id) or [])
     resp["body"] = body
     return JSONResponse(content=resp)
@@ -569,7 +569,7 @@ _RELATIONS_REFERENCED_BY_MAX = 50
 
 
 def _doc_brief(doc_id: Optional[str]) -> Optional[dict]:
-    """관계 응답에 싣는 문서 한 줄. 가리키는 문서가 지워졌으면 id 만 남는다."""
+    """One document row for a relations response; only the id survives if the target was deleted."""
     if not doc_id:
         return None
     row = db_docs.get_by_id(doc_id)
@@ -584,7 +584,7 @@ def _doc_brief(doc_id: Optional[str]) -> Optional[dict]:
 
 
 def _doc_seq(row: dict) -> int:
-    """묶음 안에서 몇 번째 문서인가. ``seq`` 컬럼이 비었으면 doc_id 꼬리에서 읽는다."""
+    """Position within the bundle; when the ``seq`` column is empty it is read off the doc_id tail."""
     seq = row.get("seq")
     if isinstance(seq, int):
         return seq
@@ -616,12 +616,12 @@ _WORKFLOW_UNDECIDED = {
 
 
 def _relations_workflow(doc_id: str) -> dict:
-    """워크플로의 어느 칸인지. 결정이 없으면 전부 null 인 한 벌을 돌려준다."""
+    """Which workflow slot this is; with no decision it returns a set of all-null values."""
     from modules.flow_gate.db import workflow_sequences as db_wfseq
 
     try:
         sequence = db_wfseq.get_sequence_for_member_doc(doc_id)
-    except Exception:  # noqa: BLE001 — 관계 조회가 워크플로 때문에 죽으면 안 된다
+    except Exception:  # noqa: BLE001 — a relations lookup must not die over the workflow
         sequence = None
     try:
         orphan = db_wfseq.is_orphaned_workflow_member(doc_id)
@@ -643,7 +643,7 @@ def _relations_workflow(doc_id: str) -> dict:
             mine_idx = idx
             break
     if mine_idx is None:
-        # 이 문서가 아직 어느 칸의 결과물로 등록되지 않았다(예: 워크플로를 소유한 R 자신).
+        # This document is not yet registered as any slot's output (the R that owns the workflow, say).
         return {
             "root_doc_id": root_doc_id,
             "doc_class": items[0].get("doc_class") if items else None,
@@ -674,11 +674,11 @@ def get_document_relations(
     doc_id: str,
     revision_no: Optional[int] = Query(None),
 ):
-    """관계 조회 (P0002 시나리오 13). **본문은 읽지 않는다.**
+    """Relations lookup (P0002 scenario 13). **The body is never read.**
 
-    이 문서가 무엇에서 나왔고(``triggered_by``), 무엇을 가리키며(``target``), 거꾸로
-    이 문서를 가리키는 문서가 무엇이고(``referenced_by``), 같은 묶음의 앞뒤가 무엇이며,
-    워크플로의 어느 칸인지를 모아 준다. 새 표도 새 컬럼도 쓰지 않고 이미 있는 값만 읽는다.
+    Gathers what this document came from (``triggered_by``), what it points at (``target``),
+    what points back at it (``referenced_by``), its neighbours in the same bundle, and which
+    workflow slot it is. No new table, no new column — it only reads values that already exist.
     """
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -745,7 +745,7 @@ def get_document_relations(
         "referenced_by": referenced_by,
         "superseded_by": _doc_brief(doc.get("superseded_by")),
         "workflow": _relations_workflow(doc_id),
-        # 개정 이력만이다. 각 개정판의 본문은 여기서 주지 않는다.
+        # Revision history only. The body of each revision is not served here.
         "revisions": [
             {
                 "revision_no": r.get("revision_no"),

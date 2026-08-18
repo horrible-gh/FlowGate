@@ -21,11 +21,11 @@
     <!-- Project Selector -->
     <ProjectSelector @projectChanged="onProjectChanged" />
 
-    <!-- 실행 미니플레이어 (0269 NR0011): the run monitor lives here, immediately left of
+    <!-- Run mini-player (0269 NR0011): the run monitor lives here, immediately left of
          the provider selector — "지금 뭐가 돌고 있나" next to "어느 프로바이더로 돌릴까".
          It is the only robot glyph in this group: the selector used to carry an identical
          one on its left, which read as two of the same icon flanking the select box
-         (TR0013 rev1 반려). No divider between the two — they are one control group.
+         (TR0013 rev1 rejection). No divider between the two — they are one control group.
          In the header the monitor can never overlap a screen's bottom-fixed UI (chat
          composer, sticky action bar), which the floating version kept doing. -->
     <AiInvokeMiniplayer />

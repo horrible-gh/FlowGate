@@ -20,10 +20,10 @@ _ACTIVITY_EVENT_TYPES = (
 )
 
 # Notification feed (🔔) shows a deliberately QUIETER subset than the dashboard recent-activity card.
-# R0001 group 0118 ("쓸모없는 알림기능"): a single document registration decomposes into multiple
+# R0001 group 0118 ("the notification feature is useless"): a single document registration decomposes into multiple
 # workflow_events — action_taken/doc_created + state_changed(review_submit) + state_changed(review_approve),
 # plus the parent's child_created / workflow_decide state_changed transitions — and the feed projected
-# EVERY one as its own notification ("등록 1건당 3~5개"). The user judged the feature useless because of
+# EVERY one as its own notification ("3-5 per registration"). The user judged the feature useless because of
 # this noise. Narrowing the feed to genuinely notable, ~one-per-document events collapses a registration
 # to a single notification while leaving the dashboard card's full activity stream
 # (_ACTIVITY_EVENT_TYPES, via list_recent_activities) completely untouched — the two surfaces are now
@@ -39,10 +39,10 @@ _ACTIVITY_EVENT_TYPES = (
 # R0001 group 0135 / N0008: `continuous_work_ended` is now ALSO promoted — but ONLY this single terminal
 # event. It fires exactly once, when an unmanned continuous (self-chaining) run reaches its target and
 # stops (inbox_routes._continuation_self_chain), so it does NOT reintroduce the 0118 per-step noise: a
-# 10-step chain still emits ~10 doc_created rows PLUS one terminal "연속작업 완료" row that reads
+# 10-step chain still emits ~10 doc_created rows PLUS one terminal "continuous work finished" row that reads
 # differently from the intermediate inflow. Single-mode work has no such event and is unaffected. The
 # present-tense `work_started` and the raw `state_changed` micro-transitions stay OUT (0118 / group 0125
-# NR0003 권고 4 invariant): promoting a per-transition state signal is what caused the "알림 폭증".
+# NR0003 recommendation 4 invariant): promoting a per-transition state signal is what caused the notification flood.
 _NOTIFICATION_EVENT_TYPES = (
     "doc_created",
     "action_taken",
@@ -52,7 +52,7 @@ _NOTIFICATION_EVENT_TYPES = (
     "continuous_work_failed",
     # flowgate.default.0157: the test-run auto-recovery loop signals. `test_run_repair` fires at most
     # MAX_REPAIR_ATTEMPTS times per doc (an INFRA failure being re-fired); `test_run_repair_exhausted`
-    # fires once at the cap — the single case the user must intervene. Both bounded → no 0118 폭증.
+    # fires once at the cap — the single case the user must intervene. Both bounded → no 0118 flood.
     "test_run_repair",
     "test_run_repair_exhausted",
 )
@@ -72,7 +72,7 @@ _WORKFLOW_ROOT_TYPES = ("R", "B")
 # sorted the result in Python — only for _page() to slice off the first ~10 rows.
 # Cost grew linearly and without bound as the event log accumulated, on a query that
 # runs on every dashboard load and every 🔔 poll. This is the DB-side answer to
-# R0001 ("DB 때문인지 파일 때문인지"): nothing here is slow at 500 events and all of it
+# R0001 ("is it the DB or the files?"): nothing here is slow at 500 events and all of it
 # is slow at 500,000, which is why the stall appeared gradually rather than at once.
 #
 # The ORDER BY is already newest-first and both callers render newest-first from the
@@ -210,12 +210,12 @@ def _document_dto(doc: dict | None) -> dict | None:
         "doc_id": doc["doc_id"],
         "type_code": doc.get("type_code"),
         "title": doc.get("title"),
-        # R0001 group 0135 / N0008 (시안 3): populated by _attach_review_signals after the item list is
+        # R0001 group 0135 / N0008 (mockup 3): populated by _attach_review_signals after the item list is
         # built. `verdict` is the latest AI review verdict (pass|issues|hold|null), `finding_count` the
         # number of AI findings, `status` the doc_review_status. The 🔔 feed uses these to paint the
-        # trust colour (🟢🟡🔴) and AI badge on each row so "완료로 떴지만 사실 확인 필요"(AI issues)
+        # trust colour (🟢🟡🔴) and AI badge on each row so "shown as done but needs checking" (AI issues)
         # is flagged in-list — the source is the same document_reviews the triage cockpit reads
-        # (NR0009 §발견 5). Left as null when the document has no review yet.
+        # (NR0009 §finding 5). Left as null when the document has no review yet.
         "review": None,
     }
 
@@ -232,12 +232,12 @@ def _finding_count(findings: Any) -> int:
 
 
 def _attach_review_signals(items: list[dict]) -> None:
-    """Enrich each item's document DTO with its AI verdict + review status (시안 3 trust colours).
+    """Enrich each item's document DTO with its AI verdict + review status (mockup 3 trust colours).
 
     R0001 group 0135 / N0008: the live-feed mockup paints every completed row with a trust colour
-    (🟢 pass / 🟡 hold / 🔴 issues) and an AI badge so the user can see "됐다는데 사실 확인 필요" without
+    (🟢 pass / 🟡 hold / 🔴 issues) and an AI badge so the user can see "says it is done but needs checking" without
     opening the document. The signals already exist — latest `document_reviews.verdict` + `doc_review_status`
-    (NR0009 §발견 5, same source as the triage cockpit) — so this is a read-only projection: no new column,
+    (NR0009 §finding 5, same source as the triage cockpit) — so this is a read-only projection: no new column,
     no migration. Defensive by design: a minimal store without a document_reviews table (or a fresh install
     before the first review) simply yields null verdicts and the rows render neutral.
     """
@@ -339,7 +339,7 @@ def _normalize_activity(
             transition = _transition(row)
     elif event_type == "continuous_work_ended":
         # R0001 group 0135 / N0008: the ONE terminal signal of an unmanned continuous run,
-        # surfaced as a distinct "연속작업 완료" notification so the final completion reads
+        # surfaced as a distinct "continuous work finished" notification so the final completion reads
         # differently from the per-step doc_created inflow. `doc` is the joined terminal
         # document (event carries document_id → joined_doc); navigation points at it so the
         # user lands on the last document of the finished chain. Only this terminal event is
@@ -352,7 +352,7 @@ def _normalize_activity(
     elif event_type == "continuous_work_failed":
         # R0001 group 0154 / NR0004 Gap A: failure-path counterpart of continuous_work_ended. An
         # unmanned chain whose server-side test_run went RED assembles no TSR and stops silently; this
-        # is the ONE terminal signal of that stop, surfaced as a distinct "연속작업 실패" notification
+        # is the ONE terminal signal of that stop, surfaced as a distinct "continuous work failed" notification
         # pointing at the TS document that failed so the user lands on it. Fires once per failed run —
         # same once-per-terminal-event discipline as the completion signal, no 0118 per-step noise.
         activity_type = "continuous_work_failed"
@@ -464,7 +464,7 @@ def _normalized_activities(
     Shared by the dashboard recent-activity card (list_recent_activities, full _ACTIVITY_EVENT_TYPES)
     and the 🔔 notification feed (get_notification_feed). Group 0045 originally made the feed identical
     to the dashboard ("the same data, made persistent and unread-aware" — NR0003 §2). Group 0118
-    (R0001 "쓸모없는 알림기능") deliberately decoupled them: the feed now passes the quieter
+    (R0001 "the notification feature is useless") deliberately decoupled them: the feed now passes the quieter
     _NOTIFICATION_EVENT_TYPES so a single registration is one notification instead of 3~5, while the
     dashboard card keeps the full stream. event_types selects which surface this call serves; the
     normalization itself is identical so the two never diverge in shape.
@@ -553,7 +553,7 @@ def _count_unread(items: list[dict], last_seen_at: Any) -> int:
 
 
 def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
-    """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 A안).
+    """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
 
     Returns the persistent document-inflow feed (newest first) plus the unread count derived from
     last_seen_at, so the header bell can render an unread badge. The watermark itself is owned by the
@@ -601,9 +601,9 @@ def _active_workflow_rows(project_id: str) -> list[dict]:
               -- Exclude discarded groups: a group carrying a file-less DC (discard)
               -- record is terminated, but the discard never flips the requirement out
               -- of wf_in_progress, so without this guard the discarded group keeps
-              -- showing in the dashboard "워크플로 현황" list (R0079.0001). This mirrors
+              -- showing in the dashboard's workflow-status list (R0079.0001). This mirrors
               -- the is_discarded derivation in process_service (group tree) and the
-              -- FE "작업 중" stat card, both of which already drop discarded groups.
+              -- FE "in progress" stat card, both of which already drop discarded groups.
               AND NOT EXISTS (
                   SELECT 1 FROM documents dc
                   WHERE dc.group_id = r.group_id
@@ -716,9 +716,9 @@ def _build_active_workflow_item(row: dict, project_id: str) -> dict:
             or not row.get("head_doc_title")
         ):
             raise DashboardDataError(f"invalid workflow head document: {result_doc_id}")
-        # R0001 group 0125 / NR0003 권고 2: the stage badge previously only ever showed
+        # R0001 group 0125 / NR0003 recommendation 2: the stage badge previously only ever showed
         # pending / in_progress, so a finished head step was indistinguishable from a running one
-        # ("완료(done) 표기가 아예 없음"). Surface a 'done' state once the head document is approved
+        # ("there is no 'done' state at all"). Surface a 'done' state once the head document is approved
         # (or itself wf_done) so the active-workflow card can be scanned at a glance.
         head_status = row.get("result_doc_review_status")
         head_state = "done" if head_status in ("approved", "wf_done") else "in_progress"
@@ -852,13 +852,13 @@ def get_work_state_summary(project_id: str) -> dict:
     """Present-tense document work-STATE counts for the dashboard state board.
 
     R0001 group 0125 / NR0003: the 🔔 notification feed is a past-tense event stream, but what
-    R0001 actually wants is "지금 어떤 상태인가" — 작업중·작업완료·복사됨·연속작업 종료 (NR0003 §발견 4).
+    R0001 actually wants is "what state is it in right now" — working, done, copied, chain ended (NR0003 §finding 4).
     This aggregation answers that as scannable counts and is exposed on the dashboard summary,
-    NOT on the notification feed (NR0003 권고 4 — keep _NOTIFICATION_EVENT_TYPES untouched).
+    NOT on the notification feed (NR0003 recommendation 4 — keep _NOTIFICATION_EVENT_TYPES untouched).
 
-    "복사됨" deliberately UNIFIES the two formerly-separate copy records (NR0003 권고 3): the
+    "Copied" deliberately UNIFIES the two formerly-separate copy records (NR0003 recommendation 3): the
     per-user document_mention_copies state table AND the prompt_copied workflow event, deduped to
-    a distinct-document count so "어떤 문서가 멘트를 복사했는지" is finally scannable in one place.
+    a distinct-document count so "which documents had their mention copied" is finally scannable in one place.
     """
     in_progress = _scalar_count(
         "SELECT COUNT(*) FROM documents "

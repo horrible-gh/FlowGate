@@ -103,7 +103,7 @@ class FlowGateStore:
                     txn.execute("PRAGMA foreign_keys = ON")
                 except Exception:
                     pass
-                # 0279 T0005 (NR0003 §4 'SQLite 락 경합'): busy_timeout is a
+                # 0279 T0005 (NR0003 §4, 'SQLite lock contention'): busy_timeout is a
                 # per-connection setting and the sqlite backend opens a fresh
                 # connection per call, so it reverted to Python's 5s default on
                 # every transaction, with no retry anywhere in the codebase. A
@@ -131,11 +131,11 @@ class FlowGateStore:
 
     def _execute(self, sql: str, params=None) -> None:
         sql = self._tr(sql)
-        # 0291 P3-1: 이 요청 안에서 무언가 바뀌었다 — 요청 스코프 캐시를 통째로 버린다.
-        # 어떤 SELECT 가 이 문장의 영향을 받는지는 SQL 문자열만 보고 알 수 없으므로
-        # 테이블별 추적을 하지 않는다 (request_cache 규칙 2). 무효화를 실행 **전에**
-        # 두는 이유: 여기서 예외가 나도 캐시는 이미 비어 있어야 한다. 부분 적용된
-        # 문장의 효과를 낡은 캐시가 가리는 것이 최악이다.
+        # 0291 P3-1: something changed in this request — discard the whole request-scope cache.
+        # Which SELECT this statement affects cannot be known from the SQL string alone, so
+        # there is no per-table tracking (request_cache rule 2). Invalidation goes **before**
+        # execution because the cache must already be empty even if this raises: the worst
+        # outcome is a stale cache masking the effect of a partially applied statement.
         _request_cache.invalidate()
         txn = getattr(_tx_local, "txn", None)
         if txn:
@@ -231,7 +231,7 @@ class FlowGateStore:
         """
         if not updates:
             return False
-        _request_cache.invalidate()  # 0291 P3-1: 쓰기다 — _execute 와 같은 규칙.
+        _request_cache.invalidate()  # 0291 P3-1: this is a write — same rule as _execute
         set_parts = ", ".join(f"{k} = ?" for k in updates)
         vals = list(updates.values()) + [expected_val, row_id]
         sql = self._tr(

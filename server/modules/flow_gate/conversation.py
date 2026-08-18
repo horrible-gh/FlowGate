@@ -29,7 +29,7 @@ import re
 from typing import Optional, TypedDict
 
 # ── Speaker tokens (shared by serializer and parser) ───────────────────────────
-# 0306 NR0003 발견 1: the user label is LOCALIZED. The stored turn header is the CH
+# 0306 NR0003 finding 1: the user label is LOCALIZED. The stored turn header is the CH
 # document's own text — visible in the raw CH, on copy, and to external tooling — so a
 # ko/en/ja session records its user turn in that language instead of a hardcoded Korean
 # token. "lenient in, strict out" still holds: every locale variant PARSES back to the
@@ -55,18 +55,18 @@ _TOKEN_TO_KEY: dict[str, str] = {USER_SPEAKER: "user", AI_SPEAKER: "ai"}
 
 # Speaker label alternation accepted on PARSE (R0127.0001): the leading emoji is
 # OPTIONAL so a turn typed by hand or by an external tool — "## AI · …",
-# "## 사용자 · …" — is still recognized as a chat turn. Serialization always emits
+# the legacy Korean speaker header — is still recognized as a chat turn. Serialization always emits
 # the canonical emoji form (USER_SPEAKER/AI_SPEAKER), so stored data stays uniform;
 # only recognition is relaxed (robustness principle: lenient in, strict out).
 #
-# 0293 R0001 / NR0004 발견 1: the AI label may carry a provider in parentheses —
+# 0293 R0001 / NR0004 finding 1: the AI label may carry a provider in parentheses —
 # "## 🤖 AI(claude-opus-4-8) · …". The turn header is the only metadata slot the wire
 # format has, so the provider rides there. The suffix is OPTIONAL, so every turn
 # written before this change keeps parsing unchanged. speaker_key() strips it, which
 # is what keeps the parser/renderer downstream of it untouched — see the warning in
 # that docstring.
 #
-# 0306 NR0003 발견 1: the user label may now be Korean, English, or Japanese (emoji
+# 0306 NR0003 finding 1: the user label may now be Korean, English, or Japanese (emoji
 # still optional). All three normalize to "user" (speaker_key). Because _HEADERLIKE_RE
 # and the FE parser reuse this same alternation, every locale's header — and every
 # header-LIKE body line in any locale — is recognized and escaped in lockstep.
@@ -106,8 +106,8 @@ def _strip_speaker_decorations(label: str) -> tuple[str, Optional[str]]:
 def speaker_key(label: str) -> str:
     """Normalize a parsed speaker label to a logical key ("user"/"ai").
 
-    Accepts the canonical emoji tokens ("🧑 사용자"/"🤖 AI"), their emoji-less forms
-    ("사용자"/"AI"), (0293) an AI label carrying a provider suffix
+    Accepts the canonical emoji tokens (the localized user label and "🤖 AI"), their emoji-less forms
+    (bare label / "AI"), (0293) an AI label carrying a provider suffix
     ("🤖 AI(claude-opus-4-8)"), and (0306) the English/Japanese user labels
     ("User"/"ユーザー") in either emoji or emoji-less form. Unknown labels fall back to the
     raw label (forward-compat with other speakers), matching old _TOKEN_TO_KEY behaviour.
@@ -117,7 +117,7 @@ def speaker_key(label: str) -> str:
     AI turns before and after a run (ConversationView.pollRun). A label that leaks the
     parentheses through still RENDERS as an AI bubble (the renderer only tests for
     "user"), so the failure is silent: every successful chat invoke would report
-    "no reply" (0293 NR0004 발견 2)."""
+    "no reply" (0293 NR0004 finding 2)."""
     bare, _ = _strip_speaker_decorations(label)
     if bare in _USER_NAME_TO_LOCALE:
         return "user"
@@ -128,7 +128,7 @@ def speaker_key(label: str) -> str:
 
 def user_locale_of(label: str) -> Optional[str]:
     """The UI locale a user turn header was written in ("ko"/"en"/"ja"), or None when the
-    label is not a user turn (0306 NR0003 발견 1). Lets a turn be re-serialized in its
+    label is not a user turn (0306 NR0003 finding 1). Lets a turn be re-serialized in its
     original language instead of collapsing every user turn to Korean."""
     bare, _ = _strip_speaker_decorations(label)
     return _USER_NAME_TO_LOCALE.get(bare)
@@ -194,7 +194,7 @@ def turn_header(
     contains ")" — that character would end the group early and the line would no
     longer round-trip through HEADER_RE.
 
-    *locale* (0306) selects the localized user label ("🧑 사용자"/"🧑 User"/"🧑 ユーザー")
+    *locale* (0306) selects the localized user label (ko / "🧑 User" / ja)
     for a NEW user turn; it is ignored for other speakers and falls back to ko for a
     missing/unknown locale."""
     if speaker == "user":

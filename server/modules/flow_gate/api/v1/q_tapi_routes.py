@@ -87,7 +87,7 @@ def _reject_conversation_doc(doc_id: str) -> Optional[JSONResponse]:
 
     Gate on the TARGET DOCUMENT, not on the credential, because a "chat token" does not exist
     on this side: the invoke path folds "chat" into the edit grant before issuing
-    (ai_invoke_routes._TOKEN_SCOPE), and the manual [멘트복사] path asks /token/issue for
+    (ai_invoke_routes._TOKEN_SCOPE), and the manual [copy mention] path asks /token/issue for
     action_scope='edit' outright, so nothing on the token records that it was minted for a
     conversation. What both chat paths do share is the document they are bound to.
 
@@ -410,7 +410,7 @@ def post_answer_ai_mention(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
-    """[멘트 복사] — mint the item-bound token and return the worker mention verbatim.
+    """[copy mention] — mint the item-bound token and return the worker mention verbatim.
 
     The raw token is the point of this response: the user pastes it into their own AI
     session, exactly as /token/issue serves every other copy-mention site. This is the only

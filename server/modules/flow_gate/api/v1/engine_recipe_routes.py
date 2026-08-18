@@ -108,6 +108,6 @@ def list_project_engine_recipes(
     project_id: str,
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
-    """Read-only Settings visualization (P §가시화). Global recipes + a used_by_project flag."""
+    """Read-only Settings visualization (P §visualization). Global recipes + a used_by_project flag."""
     recipes = svc.list_for_project_view(project_id)
     return {"ok": True, "recipes": recipes, "total": len(recipes)}

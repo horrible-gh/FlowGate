@@ -156,7 +156,7 @@ def issue(
     4. Create scratch directory
     5. Record workflow_events.token_issued
 
-    Continuous work (group 0051 R0001 / NR0003 B안): when continuation_target_seq is
+    Continuous work (group 0051 R0001 / NR0003 option B): when continuation_target_seq is
     given, the token carries the unmanned-chain stop point (target item_seq) and the
     AI-review-mode flag (T0004/CH0006). Both persist on the token so the inbox self-chain
     (inbox_routes._handle_new) can read them off the just-consumed token and mint the
