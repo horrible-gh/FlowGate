@@ -19,6 +19,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from modules.flow_gate.db import conversation_turns as conversation_turn_store
+from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services.auth_outbound import verify_bearer
@@ -330,10 +332,38 @@ def list_predecessor_docs(request: Request, doc_id: str, limit: int = 2):
             seq["id"], head_item_id, limit=limit
         )
 
+    predecessors: list[dict] = []
+    for predecessor_id in predecessor_doc_ids:
+        try:
+            predecessor = db_docs.get_by_id(predecessor_id)
+        except Exception:
+            # Metadata is additive; an unavailable document store must not break the
+            # long-standing predecessor_doc_ids contract used by token creation.
+            continue
+        if predecessor is None:
+            continue
+        item = {
+            "doc_id": predecessor_id,
+            "type_code": predecessor.get("type_code"),
+            "title": predecessor.get("title"),
+        }
+        if predecessor.get("type_code") == "CH":
+            try:
+                state = conversation_turn_store.migration_state(predecessor_id)
+                item["conversation"] = {
+                    "migration_state": state,
+                    "turn_count": conversation_turn_store.count_turns(predecessor_id),
+                    "live_content": state == "migrated",
+                }
+            except Exception:
+                pass
+        predecessors.append(item)
+
     return JSONResponse(content={
         "ok": True,
         "doc_id": doc_id,
         "predecessor_doc_ids": predecessor_doc_ids,
+        "predecessors": predecessors,
     })
 
 

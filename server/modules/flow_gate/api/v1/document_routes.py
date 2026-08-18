@@ -13,12 +13,15 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
+from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.storage.paths import resolve_storage_path
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.q_service import get_answers_for_document
+from modules.flow_gate.services import conversation_markdown_service
 from modules.flow_gate.services import document_outline_service as outline_svc
+from modules.flow_gate.services.conversation_turn_service import ConversationTurnError
 from modules.flow_gate.utils.help_url import help_url
 from modules.flow_gate.utils.id_validators import (
     validate_project_id,
@@ -90,6 +93,48 @@ def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
         return test_run_service.load_test_run_embed(doc_id)
     except Exception:
         return None, []
+
+
+def _file_content(doc: dict) -> Optional[str]:
+    """Read the durable artifact used by non-live and legacy conversations."""
+    file_path = doc.get("file_path")
+    if not file_path:
+        return None
+    branch_val = doc.get("branch", "main") or "main"
+    resolved = resolve_storage_path(file_path, doc.get("project_id"), branch=branch_val)
+    if resolved is None:
+        return None
+    return resolved.read_text(encoding="utf-8")
+
+
+def _uses_live_conversation_content(doc: dict) -> bool:
+    """Whether a CH's database turns, rather than its snapshot, are canonical now."""
+    if doc.get("type_code") != "CH":
+        return False
+    try:
+        return conversation_turn_store.migration_state(doc["doc_id"]) == "migrated"
+    except Exception as exc:  # database trouble must not make ordinary document GET fail
+        logger.warning(f"[document/{doc.get('doc_id')}] failed to resolve CH state: {exc}")
+        return False
+
+
+def _resolve_live_content(doc: dict) -> Optional[str]:
+    """Resolve the body visible now, falling back to the durable file artifact."""
+    if _uses_live_conversation_content(doc):
+        try:
+            return conversation_markdown_service.render_markdown(doc["doc_id"])["content"]
+        except ConversationTurnError as exc:
+            logger.warning(
+                f"[document/{doc.get('doc_id')}] live CH render failed; using file snapshot: {exc}"
+            )
+            try:
+                return _file_content(doc)
+            except OSError as file_exc:
+                logger.warning(
+                    f"[document/{doc.get('doc_id')}] failed to read CH file fallback: {file_exc}"
+                )
+                return None
+    return _file_content(doc)
 
 
 _LEGACY_PROJECT_RE = _re.compile(r"^[a-z0-9_\-\u3131-\u318E\uAC00-\uD7A3]+$")
@@ -172,17 +217,11 @@ def get_document_by_path(
         return _fail(404, f"document not found: {doc_canonical}")
     doc_id = document["doc_id"]
 
-    content: str | None = None
     file_path = document.get("file_path")
-    if file_path:
-        branch_val = document.get("branch", "main") or "main"
-        resolved = resolve_storage_path(file_path, document.get("project_id"), branch=branch_val)
-        if resolved is not None:
-            try:
-                content = resolved.read_text(encoding="utf-8")
-            except OSError as e:
-                logger.debug(f"[document/{doc_id}] failed to read file: {e}")
-                return _fail(500, "An error occurred while reading the document content")
+    try:
+        content = _resolve_live_content(document)
+    except OSError:
+        return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
         "ok": True,
@@ -296,15 +335,11 @@ def _fail_with(status: int, message: str, extra: Optional[dict] = None) -> JSONR
 
 
 def _document_text(doc: dict):
-    """저장된 본문을 정본 텍스트 하나로 읽는다. 못 읽으면 None."""
-    file_path = doc.get("file_path")
-    if not file_path:
+    """현재 문서 GET과 동일한 정본을 부분 조회용 텍스트로 만든다."""
+    content = _resolve_live_content(doc)
+    if content is None:
         return None
-    branch_val = doc.get("branch", "main") or "main"
-    resolved = resolve_storage_path(file_path, doc.get("project_id"), branch=branch_val)
-    if resolved is None:
-        return None
-    return outline_svc.DocumentText.from_path(resolved)
+    return outline_svc.DocumentText.from_raw(content)
 
 
 def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
@@ -330,7 +365,10 @@ def _load_for_query(request: Request, doc_id: str, revision_no: Optional[int]):
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist"), None, None
 
-    text = _document_text(doc)
+    try:
+        text = _document_text(doc)
+    except OSError:
+        return _fail_with(500, "An error occurred while reading the document content"), None, None
     current = int(doc.get("revision_no", 0) or 0)
     if revision_no is not None and int(revision_no) != current:
         return _fail_with(
@@ -743,17 +781,11 @@ def get_document(request: Request, doc_id: str):
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
-    content: str | None = None
     file_path = doc.get("file_path")
-    if file_path:
-        branch_val = doc.get("branch", "main") or "main"
-        resolved = resolve_storage_path(file_path, doc.get("project_id"), branch=branch_val)
-        if resolved is not None:
-            try:
-                content = resolved.read_text(encoding="utf-8")
-            except OSError as e:
-                logger.debug(f"[document/{doc_id}] failed to read file: {e}")
-                return _fail(500, "An error occurred while reading the document content")
+    try:
+        content = _resolve_live_content(doc)
+    except OSError:
+        return _fail(500, "An error occurred while reading the document content")
 
     resp: dict = {
         "ok": True,

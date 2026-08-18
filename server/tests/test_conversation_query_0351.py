@@ -73,8 +73,9 @@ def store():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("CREATE TABLE documents(doc_id TEXT PRIMARY KEY)")
-    sql = Path(__file__).resolve().parents[1] / "sql/migrations/sqlite/074_conversation_turns.sql"
-    conn.executescript(sql.read_text(encoding="utf-8"))
+    sql_dir = Path(__file__).resolve().parents[1] / "sql/migrations/sqlite"
+    conn.executescript((sql_dir / "074_conversation_turns.sql").read_text(encoding="utf-8"))
+    conn.executescript((sql_dir / "085_conversation_backward_page_audit.sql").read_text(encoding="utf-8"))
     conn.execute("INSERT INTO documents(doc_id) VALUES (?)", [DOC_ID])
     conn.commit()
 
@@ -338,7 +339,7 @@ def test_worker_read_advances_delivered_only_to_the_last_turn_actually_sent(stor
     assert row["last_viewed_seq"] == 0
 
 
-def test_scrolling_up_advances_no_cursor_at_all(store, doc):
+def test_scrolling_up_is_audited_without_advancing_any_cursor(store, doc):
     _seed(6)
     token = {"token_id": "tok_1", "provider_id": "cx_opus", "project": "flowgate"}
     with patch.object(append_service, "_provider_row", return_value={"name": "Opus"}):
@@ -346,6 +347,13 @@ def test_scrolling_up_advances_no_cursor_at_all(store, doc):
             doc_id=DOC_ID, actor={"kind": "worker", "token": token}, before_seq=5, limit=3,
         )
     assert turns.get_participant(DOC_ID, "provider:cx_opus") is None
+    audit = connection.get_store()._fetch_one(
+        "SELECT * FROM conversation_backward_page_audit WHERE doc_id = ?", [DOC_ID]
+    )
+    assert audit["participant_key"] == "provider:cx_opus"
+    assert audit["actor_kind"] == "worker"
+    assert audit["before_seq"] == 5
+    assert audit["returned_count"] == 3
 
 
 def test_viewed_advances_both_cursors_and_never_moves_backwards(store, doc):

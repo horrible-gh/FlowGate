@@ -124,4 +124,50 @@ describe('NextActionModal group pagination (bug 0145.0001-B)', () => {
     expect(wrapper.findAll('.nad-group-item').length).toBe(12)
     expect(wrapper.find('.nad-group-item.active').text()).toContain('0007')
   })
+
+  it('shows the live turn count on an auto-selected CH predecessor', async () => {
+    const chDocId = 'flowgate.default.0437.0004-CH'
+    mockGetRequest.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/modules') {
+        return { data: { items: [{ module_id: 'default', title: 'default' }] } }
+      }
+      if (/\/groups$/.test(path)) {
+        return { data: { ok: true, total: 1, items: [{ group_id: 'flowgate.default.0438' }] } }
+      }
+      if (/\/documents$/.test(path)) return { data: { items: [] } }
+      if (/\/predecessors$/.test(path)) {
+        return { data: {
+          predecessor_doc_ids: [chDocId],
+          predecessors: [{
+            doc_id: chDocId,
+            type_code: 'CH',
+            conversation: { migration_state: 'migrated', turn_count: 4, live_content: true },
+          }],
+        } }
+      }
+      return { data: {} }
+    })
+
+    const wrapper = mount(NextActionModal, {
+      props: {
+        visible: false,
+        nextStepLabel: 'T',
+        nextTypeCode: 'T',
+        projectId: 'flowgate',
+        docModule: 'default',
+        groupId: 'flowgate.default.0438',
+        docRef: 'flowgate.default.0438.0001-B',
+      },
+      global: { stubs: { teleport: true } },
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    await flushPromises()
+
+    const status = wrapper.find('.nad-conversation-ref-status')
+    expect(status.exists()).toBe(true)
+    expect(status.attributes('data-live-content')).toBe('true')
+    expect(status.text()).toContain('4')
+    expect(status.text()).toContain('main.next_action_modal.conversation_live_content')
+  })
 })
