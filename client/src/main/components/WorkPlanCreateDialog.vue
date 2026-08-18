@@ -185,10 +185,6 @@
                 <span v-html="previewLine2Html"></span>
               </span>
             </div>
-            <div class="wpc-usage-note">
-              <AppIcon name="lightning" />
-              <span v-html="usageNoteHtml"></span>
-            </div>
           </div>
 
           <p v-if="createError" class="wpc-create-error">{{ createError }}</p>
@@ -371,12 +367,6 @@ const previewLine2Html = computed(() => {
     each: bold(t('main.work_plan_create_dialog.preview_each')),
   })
 })
-const usageNoteHtml = computed(() =>
-  t('main.work_plan_create_dialog.advisory_hint', {
-    lead: bold(t('main.work_plan_create_dialog.advisory_lead')),
-  }),
-)
-
 const generatedTitle = computed(() =>
   t('main.work_plan_create_dialog.generated_title', {
     design: planSummary.value.design,
@@ -566,11 +556,6 @@ async function onCreate() {
   border-color: #fde68a; border-left-color: var(--warning, #b45309);
 }
 .wpc-preview-lines { display: flex; flex-direction: column; }
-.wpc-usage-note {
-  display: flex; align-items: flex-start; gap: 8px; padding: 8px 11px; font-size: .75rem; line-height: 1.55;
-  color: var(--text-m, #64748b); background: var(--surface-h, #f8fafc);
-  border: 1px dashed var(--border-d, #cbd5e1); border-radius: var(--r, 6px);
-}
 .wpc-create-error { color: var(--danger, #dc2626); font-size: .78rem; margin: 0; }
 
 /* Narrow viewports fall back to one column — the two boxes stack instead of

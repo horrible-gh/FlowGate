@@ -208,15 +208,19 @@ describe('WorkPlanEditor', () => {
     expect(wrapper.get('.wp-section-missing').text()).toContain('미지정 2단계')
   })
 
-  it('draws the table-mode strip, numbered sections and AI legend of the mockup', async () => {
+  it('keeps the work-plan controls while omitting explanatory chrome', async () => {
     const wrapper = mountEditor()
     await flushPromises()
 
-    expect(wrapper.get('.wp-mode-pill').text()).toContain('표 편집 모드')
     expect(wrapper.get('.wp-toolbar').text()).toContain('AI 제안 불러오기')
     expect(wrapper.findAll('.wp-step-no-badge').map((n) => n.text())).toEqual(['1', '2'])
-    expect(wrapper.get('.wp-step-legend').text()).toContain('보라색 칸 = AI가 제안한 값')
     expect(wrapper.get('.wp-step-row .wp-step-no').text()).toBe('단계 1')
+    expect(wrapper.find('.wp-usage-note').exists()).toBe(false)
+    expect(wrapper.find('.wp-last-apply').exists()).toBe(false)
+    expect(wrapper.find('.wp-mode-pill').exists()).toBe(false)
+    expect(wrapper.find('.wp-mode-desc').exists()).toBe(false)
+    expect(wrapper.find('.wp-section-desc').exists()).toBe(false)
+    expect(wrapper.find('.wp-step-legend').exists()).toBe(false)
   })
 
   it('shows the complete wording when the server reports zero unassigned steps', async () => {
