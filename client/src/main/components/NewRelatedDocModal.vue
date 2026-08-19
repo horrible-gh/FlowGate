@@ -26,14 +26,25 @@
             <!-- Title -->
             <div class="form-group">
               <label class="form-label req">{{ t('main.new_related_doc_modal.document_title') }}</label>
-              <input
-                v-model="form.title"
-                class="form-ctrl"
-                type="text"
-                maxlength="100"
-                :placeholder="t('main.new_related_doc_modal.title_placeholder')"
-                autofocus
-              />
+              <div class="title-input-row">
+                <input
+                  v-model="form.title"
+                  class="form-ctrl"
+                  type="text"
+                  maxlength="100"
+                  :placeholder="t('main.new_related_doc_modal.title_placeholder')"
+                  autofocus
+                />
+                <button
+                  class="title-fill-btn"
+                  type="button"
+                  :aria-label="t('main.new_related_doc_modal.fill_document_type_title_tooltip')"
+                  :title="t('main.new_related_doc_modal.fill_document_type_title_tooltip')"
+                  @click="applyDocumentTypeTitle"
+                >
+                  <AppIcon name="magic-wand" />
+                </button>
+              </div>
             </div>
 
             <!-- Related group -->
@@ -148,6 +159,13 @@ const groupOptions = computed(() => {
   }))
 })
 
+// group 0369 rejection rework: use the current locale's label for the document type
+// selected in this dialog. Repeated clicks stay idempotent and do not change locale.
+function applyDocumentTypeTitle() {
+  const selectedType = docTypes.value.find((item) => item.code === form.value.typeCode)
+  form.value.title = selectedType?.label ?? form.value.typeCode
+}
+
 onMounted(async () => {
   // Load current document info
   try {
@@ -225,3 +243,40 @@ async function submit() {
   }
 }
 </script>
+
+<style scoped>
+/* Title input + document-type fill button (group 0369 rejection rework) — reuses the
+   .title-input-row / .title-fill-btn shape from NewRequirementModal.vue. */
+.title-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-input-row .form-ctrl {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.title-fill-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text-m);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.title-fill-btn:hover {
+  color: var(--primary);
+  border-color: #bfdbfe;
+  background: var(--surface-h);
+}
+</style>
