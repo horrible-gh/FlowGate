@@ -130,15 +130,6 @@
               >
                 <AppIcon name="magic-wand" />
               </button>
-              <button
-                class="title-fill-btn"
-                type="button"
-                :aria-label="$t('main.new_requirement_modal.fill_document_type_title_tooltip')"
-                :title="$t('main.new_requirement_modal.fill_document_type_title_tooltip')"
-                @click="applyDocumentTypeTitle"
-              >
-                <AppIcon name="magic-wand" />
-              </button>
             </div>
           </div>
 
@@ -313,12 +304,6 @@ function applyGroupNameToTitle() {
   const name = groupNameForTitle.value
   if (!name) return
   form.value.title = name
-}
-
-// group 0369 rejection rework: independent of the group-name button above, this
-// fills the title with the localized name of the currently selected R/B root type.
-function applyDocumentTypeTitle() {
-  form.value.title = t(`main.new_requirement_modal.tab_${rootType.value}_title`)
 }
 
 function getGroupModule(group: { id: string; parent_id: string | null }, nodes: Array<{ id: string; label: string }>): string {
