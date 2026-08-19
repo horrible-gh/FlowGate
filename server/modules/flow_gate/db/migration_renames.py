@@ -88,6 +88,11 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
     ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
     ("079a_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
+    # flowgate.default.0413 T0007: 080 ordinal collided between
+    # 080_ai_invoke_prompt_audit.sql (0406) and 080_workflow_sequence_provider.sql
+    # (0408). 0408 is the later arrival, so it moves to the next free ordinal
+    # instead of taking a letter suffix.
+    ("080_workflow_sequence_provider.sql", "081_workflow_sequence_provider.sql"),
 )
 
 

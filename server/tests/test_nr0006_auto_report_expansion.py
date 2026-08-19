@@ -30,7 +30,7 @@ def test_bare_ai_sequence_gets_reports_inserted():
         {"id": 2, "type": "T", "label": "작업지시"},
         {"id": 3, "type": "TS", "label": "테스트시나리오지시"},
     ]
-    out = svc._expand_auto_reports(seq)
+    out = svc.expand_steps_with_reports(seq)
     assert _types(out) == ["N", "NR", "T", "TR", "TS", "TSR"]
     # ids are renumbered contiguous so item_seq stays unique after insertion
     assert [it["id"] for it in out] == [1, 2, 3, 4, 5, 6]
@@ -44,7 +44,7 @@ def test_client_modal_sequence_is_unchanged_idempotent():
         {"id": 3, "type": "T", "label": "작업지시"},
         {"id": 4, "type": "TR", "label": "작업레포트"},
     ]
-    out = svc._expand_auto_reports(seq)
+    out = svc.expand_steps_with_reports(seq)
     assert _types(out) == ["N", "NR", "T", "TR"]  # no duplicate reports
 
 
@@ -55,12 +55,12 @@ def test_non_instruction_steps_are_untouched():
         {"id": 3, "type": "M", "label": "메모"},
         {"id": 4, "type": "V", "label": "리뷰의뢰"},  # V→VR excluded (VR not a real type)
     ]
-    out = svc._expand_auto_reports(seq)
+    out = svc.expand_steps_with_reports(seq)
     assert _types(out) == ["DS", "D", "M", "V"]
 
 
 def test_lowercase_type_is_normalized():
-    out = svc._expand_auto_reports([{"id": 1, "type": "n", "label": "조사지시"}])
+    out = svc.expand_steps_with_reports([{"id": 1, "type": "n", "label": "조사지시"}])
     assert _types(out) == ["n", "NR"]
 
 
