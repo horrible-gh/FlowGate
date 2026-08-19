@@ -60,21 +60,17 @@ describe('NewRequirementModal — use group name as title', () => {
     const titleInput = wrapper.find('input#newReqTitle')
     expect((titleInput.element as HTMLInputElement).value).toBe('')
 
-    // Group 0369 adds a second, always-visible document-type fill button with the
-    // same class/icon, so the group-name button must be found by its own tooltip.
-    const fillBtn = wrapper.find(`[aria-label="${i18n.global.t('main.new_requirement_modal.use_group_name')}"]`)
+    const fillBtn = wrapper.find('.title-fill-btn')
     expect(fillBtn.exists()).toBe(true)
     await fillBtn.trigger('click')
 
     expect((titleInput.element as HTMLInputElement).value).toBe('User Login')
   })
 
-  it('hides the group-name button when no group is selected (default new-group mode, empty name)', async () => {
+  it('hides the button when no group is selected (default new-group mode, empty name)', async () => {
     const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n] } })
     await flushPromises()
     // Default mode is "new" with an empty new-group name → nothing to fill from.
-    expect(wrapper.find(`[aria-label="${i18n.global.t('main.new_requirement_modal.use_group_name')}"]`).exists()).toBe(false)
-    // The document-type title button is unconditional and stays visible.
-    expect(wrapper.find('.title-fill-btn').exists()).toBe(true)
+    expect(wrapper.find('.title-fill-btn').exists()).toBe(false)
   })
 })
