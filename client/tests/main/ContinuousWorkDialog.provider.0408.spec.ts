@@ -120,7 +120,18 @@ describe('ContinuousWorkDialog stored provider states (0408)', () => {
     await openProviders()
 
     expect([...selects()].map(select => select.value)).toEqual(['default', 'default', 'default'])
-    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
+    // 0444 T0007 (NR0003 §4-5). Old expectation: a pin blanked this column outright, 0 badges.
+    // New expectation: the column says what the pin displaced. Basis — NR0003 §2-5 re-ran
+    // ai_invoke_service.start_run() and confirmed a pinned provider really does override each
+    // row's stored one when the run starts, so blanking the column left the person with no way
+    // to see that a stored value had been set aside. Row 1 holds a usable stored provider ⇒ the
+    // new "pin overrode it" badge; row 3's stored provider is unregistered ⇒ the older, more
+    // urgent "unavailable" still wins; row 2 stores nothing ⇒ still no badge at all.
+    expect([...document.querySelectorAll('.cwd-filled-badge')].map(node => node.textContent?.trim()))
+      .toEqual([
+        i18n.global.t('main.continuous_work.sequence_provider_pin_overridden'),
+        i18n.global.t('main.continuous_work.sequence_provider_unavailable'),
+      ])
     // 0442 B0001: 프로바이더 탭은 셀렉터와 단계 행만 남는다 — 실행 요약 줄도, 고정 배지도,
     // 해제 단추도 렌더링되지 않는다.
     expect(document.querySelector('.cwd-provider-row')).not.toBeNull()

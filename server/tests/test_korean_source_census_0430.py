@@ -64,7 +64,10 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/test_run_service.py": 28,
     "modules/flow_gate/services/tool_registry.py": 45,
     "modules/flow_gate/services/tr_scope_service.py": 53,
-    "modules/flow_gate/services/work_plan_apply_service.py": 15,
+    # 15 -> 16: 0444 T0005 added the ko copy for the done_rows_skipped warning. _COPY is the
+    # user-facing warning text, and the T doc requires all three locales, so the ko line is
+    # product copy rather than a comment the census exists to catch.
+    "modules/flow_gate/services/work_plan_apply_service.py": 16,
     "modules/flow_gate/services/work_plan_service.py": 52,
     "modules/flow_gate/services/workflow_decision_service.py": 3,
     "modules/flow_gate/template_provision.py": 23,

@@ -107,7 +107,10 @@
             <span
               v-if="idx >= headIdx && stepTags[idx]"
               class="wsp-prov-tag"
-              :class="{ 'wsp-prov-tag--override': stepTags[idx]!.override }"
+              :class="{
+                'wsp-prov-tag--override': stepTags[idx]!.override,
+                'wsp-prov-tag--pinned': stepTags[idx]!.pinned,
+              }"
             >{{ stepTags[idx]!.text }}</span>
           </button>
         </div>
@@ -155,7 +158,9 @@ const props = defineProps<{
    * runnable (not-yet-done) steps. Owned by the caller (ContinuousWorkDialog) so this shared
    * picker stays provider-agnostic; callers that omit it (AiInvokeDialog) render no tag.
    */
-  stepTag?: (item: WorkflowStepItem) => { text: string; override: boolean } | null
+  /** 0444 T0007: `pinned` marks the tag that says a pin displaced this row's stored
+   *  provider. Additive — `override` keeps its own meaning and its own class. */
+  stepTag?: (item: WorkflowStepItem) => { text: string; override: boolean; pinned?: boolean } | null
   /**
    * 0337 R0001-1: doc types the SERVER generates and approves by itself under the caller's
    * instruction mode (auto_approved → N/T). Such a step still runs, but no AI worker performs
@@ -582,6 +587,15 @@ watch(
   color: var(--primary);
   border-color: var(--primary);
   background: var(--primary-l);
+}
+/* 0444 T0007 (NR0003 §4-5): a class of its own, not a reuse of --override. The two say
+   different things (the person chose this / the pin took this row over), and a shared
+   selector would let a test claiming to find one actually be finding the other. Warning
+   tone, from the palette this file already uses. */
+.wsp-prov-tag--pinned {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: var(--warning-l);
 }
 /* 0352 T0004 §3.7 / R rev1-2: dedicated class for the per-item_seq auto-approve control — a
    new toolbar/inline control must not reuse an existing shared class (two prior regressions:

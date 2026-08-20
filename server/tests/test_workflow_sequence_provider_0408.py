@@ -577,12 +577,24 @@ def test_plan_maps_onto_the_rows_it_poured_not_an_older_finished_pair():
     assert projection["provider_overrides"] == {"12": PROVIDER}
 
 
-def test_a_plan_that_never_poured_here_keeps_the_positional_rule():
+def test_a_plan_that_never_poured_here_skips_rows_it_may_not_fill():
+    """Rewritten from test_a_plan_that_never_poured_here_keeps_the_positional_rule
+    (0444 NR0003 §2-3).
+
+    The old expectation was that with no poured block of its own a plan fell back to the
+    positional rule over the WHOLE sequence — so this plan's N#1/NR#1 mapped onto the
+    finished pair another plan had left behind. That fallback is the row theft NR0003
+    named the top root cause. A finished row is not a slot now: nothing matches, and the
+    rows that were passed over are reported so the caller can say so on screen.
+    """
     items = [_row(2, "N", status="done"), _row(3, "NR", status="done")]
     mapping = apply_svc.build_step_map(PLAN_STEPS_PAIR, items, WP)
 
-    assert [(row["key"], row["item_seq"]) for row in mapping] == [("N#1", 2), ("NR#1", 3)]
+    assert [(row["key"], row["item_seq"], row["status"]) for row in mapping] == [
+        ("N#1", None, "unmatched"), ("NR#1", None, "unmatched"),
+    ]
     assert apply_svc.build_step_map(PLAN_STEPS_PAIR, items) == mapping
+    assert apply_svc._slot_pool(items, WP)[1] == [2, 3]
 
 
 def test_nonfolded_single_hop_reads_the_head_row_only(monkeypatch):

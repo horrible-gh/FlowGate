@@ -381,7 +381,9 @@ const createError = ref('')
 const note = ref('')
 /** flowgate.default.0421 NR0003 §1 — tracks whether the user already typed a value
  *  before the sequence head row's note arrives. Once true, a late-arriving prefill
- *  response won't overwrite it (precedent: ContinuousWorkDialog.vue's touchedSeqs). */
+ *  response won't overwrite it (precedent: ContinuousWorkDialog.vue's touchedNoteSeqs /
+ *  touchedProviderSeqs, split in two by 0444 T0007 so a typed note stops freezing the row's
+ *  provider as well). */
 const noteTouched = ref(false)
 /** Whether this opening was auto-filled from the sequence note — used only to
  *  decide whether to show the notice text. */
