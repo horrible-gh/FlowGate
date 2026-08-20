@@ -60,6 +60,11 @@ class AiInvokeStartRequest(BaseModel):
     # ContinuousWorkDialog's duration section. Session-scoped like the fields above — omitted or
     # out of range falls back to the engine's own default (ai_invoke_service.HOP_TIMEOUT_SEC).
     continuation_step_timeout_sec: Optional[int] = None
+    # flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick — how many
+    # times a no-output hop retries on the SAME step-assigned provider. Session-scoped
+    # like the field above; omitted or unrecognized falls back to the engine's own
+    # default (ai_invoke_service.RESTART_MAX_ATTEMPTS_DEFAULT).
+    continuation_restart_max_attempts: Optional[int] = None
     provider_id: Optional[str] = None
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
@@ -200,6 +205,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             "loc": "continuation_step_timeout_sec",
             "msg": f"must be between {ai_invoke_service.STEP_TIMEOUT_MIN_SEC} and "
                    f"{ai_invoke_service.STEP_TIMEOUT_MAX_SEC} seconds",
+        })
+    if (
+        body.continuation_restart_max_attempts is not None
+        and body.continuation_restart_max_attempts
+        not in ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES
+    ):
+        errors.append({
+            "loc": "continuation_restart_max_attempts",
+            "msg": "must be one of "
+                   f"{ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES}",
         })
     if (
         body.action_scope == "workflow_decide"
@@ -571,6 +586,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_note_overrides=body.continuation_note_overrides,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
             continuation_step_timeout_sec=body.continuation_step_timeout_sec,
+            continuation_restart_max_attempts=body.continuation_restart_max_attempts,
         )
     except HTTPException as exc:
         return _err(exc)

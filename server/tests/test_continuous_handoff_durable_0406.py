@@ -74,6 +74,7 @@ def _run(group="flowgate.default.0406"):
         "continuation_note_overrides": {"3": "step note"},
         "continuation_default_note": "common note",
         "continuation_step_timeout_sec": 3600,
+        "continuation_restart_max_attempts": 3,
         "continuation_auto_approve_item_seqs": [5],
         "chain_id": "chain_0406",
         "chain_docs_target": 6,
@@ -117,6 +118,7 @@ def test_request_auto_resume_persists_the_complete_i3_bundle(monkeypatch):
     assert saved["continuation_instruction_mode"] == "ai_direct"
     assert saved["continuation_auto_approve_item_seqs"] == [5]
     assert saved["continuation_step_timeout_sec"] == 3600
+    assert saved["continuation_restart_max_attempts"] == 3
 
 
 @pytest.mark.parametrize("end_reason", ["timeout", "all_providers_failed", "user_paused"])

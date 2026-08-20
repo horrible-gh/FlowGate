@@ -129,6 +129,9 @@ def upsert(
     # upsert overwrites every column, so a caller that omits it wipes the pick and a resumed
     # hop silently falls back to HOP_TIMEOUT_SEC.
     continuation_step_timeout_sec: Optional[int] = None,
+    # flowgate.default.0443 T0002 (R0001): the "재시작 횟수" pick the chain was started
+    # with. Same "every caller MUST pass it" contract as the column above.
+    continuation_restart_max_attempts: Optional[int] = None,
 ) -> None:
     """Record (or refresh) the paused row for a group — idempotent on repeat pause.
 
@@ -154,9 +157,9 @@ def upsert(
         " continuation_provider_overrides,"
         " continuation_default_note, continuation_note_overrides,"
         " continuation_instruction_mode, continuation_auto_approve_item_seqs,"
-        " continuation_step_timeout_sec,"
+        " continuation_step_timeout_sec, continuation_restart_max_attempts,"
         " created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -179,6 +182,7 @@ def upsert(
         "continuation_instruction_mode = excluded.continuation_instruction_mode, "
         "continuation_auto_approve_item_seqs = excluded.continuation_auto_approve_item_seqs, "
         "continuation_step_timeout_sec = excluded.continuation_step_timeout_sec, "
+        "continuation_restart_max_attempts = excluded.continuation_restart_max_attempts, "
         "updated_at = excluded.updated_at",
         [group_id, doc_ref, paused_by, paused_at,
          continuation_target_seq, docs_target, docs_reached,
@@ -192,6 +196,7 @@ def upsert(
          _clean_text(continuation_instruction_mode),
          dump_json_list(continuation_auto_approve_item_seqs),
          continuation_step_timeout_sec,
+         continuation_restart_max_attempts,
          now, now],
     )
 

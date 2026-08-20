@@ -1173,6 +1173,7 @@
       :default-message="aiInvokeDefaultMessage"
       :message-overrides="aiInvokeMessageOverrides"
       :continuation-step-timeout-sec="aiInvokeStepTimeoutSec"
+      :continuation-restart-max-attempts="aiInvokeRestartMaxAttempts"
       :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
@@ -1759,6 +1760,9 @@ const continuousAutoApproveItemSeqs = ref<number[]>([])
 // ContinuousWorkDialog's [Basic settings] timeout section, carried through the consent gate the same
 // way the fields above are — session-scoped, never persisted as a project setting.
 const continuousStepTimeoutSec = ref(3600)
+// flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick, carried the same
+// way stepTimeoutSec above is — session-scoped, never persisted as a project setting.
+const continuousRestartMaxAttempts = ref(1)
 const continuousStepCount = ref(0)
 // R0001 "워크플로 결정부터": true when the run is started before the workflow is decided,
 // so the first link is the workflow decision (issued via requestWorkflowDecision, not advance).
@@ -1811,6 +1815,10 @@ const aiInvokeMessageOverrides = ref<Record<number, string>>({})
 // start request. null means "no explicit pick" (e.g. entry points other than
 // ContinuousWorkDialog), and the server falls back to its own default.
 const aiInvokeStepTimeoutSec = ref<number | null>(null)
+// flowgate.default.0443 T0002 (R0001): the restart-count pick forwarded onto the start
+// request. null means "no explicit pick" (entry points other than ContinuousWorkDialog),
+// and the server falls back to its own default.
+const aiInvokeRestartMaxAttempts = ref<number | null>(null)
 const aiInvokeAutoStart = ref(false)
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 // 0351 T4: a conversation-turn search result (GroupExplorer) opens this CH tab and
@@ -2212,6 +2220,9 @@ function openAiInvokeDialog(
     // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
     // ContinuousWorkDialog's timeout section.
     stepTimeoutSec?: number | null
+    // flowgate.default.0443 T0002 (R0001): the restart-count pick chosen in
+    // ContinuousWorkDialog.
+    restartMaxAttempts?: number | null
     autoStart?: boolean
     // 0242 NR0003 recommendation 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
@@ -2242,6 +2253,7 @@ function openAiInvokeDialog(
   aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
   aiInvokeMessageOverrides.value = preset?.messageOverrides ?? {}
   aiInvokeStepTimeoutSec.value = preset?.stepTimeoutSec ?? null
+  aiInvokeRestartMaxAttempts.value = preset?.restartMaxAttempts ?? null
   aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
@@ -3793,6 +3805,7 @@ function onContinuousDialogConfirm(payload: {
   messageOverrides: Record<number, string>
   autoApproveItemSeqs: number[]
   stepTimeoutSec: number
+  restartMaxAttempts: number
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
@@ -3804,6 +3817,7 @@ function onContinuousDialogConfirm(payload: {
   continuousMessageOverrides.value = payload.messageOverrides
   continuousAutoApproveItemSeqs.value = payload.autoApproveItemSeqs
   continuousStepTimeoutSec.value = payload.stepTimeoutSec
+  continuousRestartMaxAttempts.value = payload.restartMaxAttempts
   continuousStepCount.value = payload.stepCount
   continuousFromDecision.value = payload.fromDecision
   continuousDialogVisible.value = false
@@ -3838,6 +3852,7 @@ async function onContinuousWarnConfirm() {
       defaultMessage: continuousDefaultMessage.value,
       messageOverrides: continuousMessageOverrides.value,
       stepTimeoutSec: continuousStepTimeoutSec.value,
+      restartMaxAttempts: continuousRestartMaxAttempts.value,
       autoStart: true,
     },
   )

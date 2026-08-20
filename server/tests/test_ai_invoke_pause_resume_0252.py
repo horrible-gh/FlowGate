@@ -67,7 +67,9 @@ class FakePausedStore:
                continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
                # flowgate.default.0400 M0005: the per-hop budget pick, same "rides every
                # upsert call, including system rows" treatment as instruction_mode above.
-               continuation_step_timeout_sec=None):
+               continuation_step_timeout_sec=None,
+               # flowgate.default.0443 T0002: same treatment as the budget pick above.
+               continuation_restart_max_attempts=None):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
@@ -93,6 +95,7 @@ class FakePausedStore:
             "continuation_auto_approve_item_seqs": db_paused.dump_json_list(
                 continuation_auto_approve_item_seqs),
             "continuation_step_timeout_sec": continuation_step_timeout_sec,
+            "continuation_restart_max_attempts": continuation_restart_max_attempts,
         }
 
     def get_by_group(self, group_id):

@@ -79,6 +79,13 @@ HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled
 STEP_TIMEOUT_MIN_SEC = 1800
 STEP_TIMEOUT_MAX_SEC = 14400
 NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-output retry on the SAME provider
+# flowgate.default.0443 T0002 (R0001): ContinuousWorkDialog's 기본 설정 탭 "재시작 횟수"
+# select — the no-output retry count is now a per-run pick instead of the fixed constant
+# above. -1 is the "될 때까지" sentinel (unlimited attempts); 0/1/2/3 are restart counts
+# (RESTARTS, not total attempts — total = restarts + 1). Default matches the constant's
+# pre-existing behavior exactly: 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
+RESTART_MAX_ATTEMPTS_CHOICES = (-1, 0, 1, 2, 3)
+RESTART_MAX_ATTEMPTS_DEFAULT = 1
 RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open another attempt
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
 RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
@@ -1052,6 +1059,11 @@ def start_run(
     # above — never persisted outside the paused-chain row a pause snapshots it into. None (or
     # out of STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC) falls back to HOP_TIMEOUT_SEC.
     continuation_step_timeout_sec: Optional[int] = None,
+    # flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick — how many times
+    # a no-output hop retries on the SAME step-assigned provider (never a different one).
+    # Session-scoped like the fields above; None or an unrecognized value falls back to
+    # RESTART_MAX_ATTEMPTS_DEFAULT.
+    continuation_restart_max_attempts: Optional[int] = None,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -1517,6 +1529,12 @@ def start_run(
         "continuation_step_timeout_sec": (
             continuation_step_timeout_sec if mode == "continuous" else None
         ),
+        # flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick, carried
+        # the same way the budget pick above is — read by attempts_max below and by every
+        # pause/resume/handoff snapshot that already threads continuation_step_timeout_sec.
+        "continuation_restart_max_attempts": (
+            continuation_restart_max_attempts if mode == "continuous" else None
+        ),
         # 0317 T0013 defect ③: the header default provider pin rides the run too. Without it a
         # re-spawned hop that has NO per-step override lost the user's chosen default and fell
         # back to the doc-type assignment / project default chain — contradicting the
@@ -1549,7 +1567,10 @@ def start_run(
         # notification and the stop row so "where did the chain die?" has an answer.
         "hop_item_seq": _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None,
         "attempts_used": 0,
-        "attempts_max": NO_OUTPUT_MAX_ATTEMPTS if mode == "continuous" else 1,
+        "attempts_max": (
+            _resolve_restart_max_attempts(continuation_restart_max_attempts)
+            if mode == "continuous" else 1
+        ),
         "retry_block_reason": None,
         "last_message_seen": None,
         "stop_code": None,
@@ -1672,6 +1693,23 @@ def _resolve_timeout_sec(
     if target_to_end:
         return RUN_TIMEOUT_CAP_SEC
     return min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC)
+
+
+def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[int]) -> int:
+    """Total attempts allowed for one hop (0443 R0001 "재시작 횟수").
+
+    The dialog picks a RESTART count (-1/0/1/2/3), not a total-attempts count — this
+    converts it: N restarts == N+1 total attempts, and -1 stays -1 (the "될 때까지"
+    unlimited sentinel _retry_eligible/_retry_provider_chain both check for explicitly).
+    An unset or unrecognized value falls back to RESTART_MAX_ATTEMPTS_DEFAULT, which
+    reproduces the fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior this feature replaces.
+    """
+    restart_count = continuation_restart_max_attempts
+    if restart_count not in RESTART_MAX_ATTEMPTS_CHOICES:
+        restart_count = RESTART_MAX_ATTEMPTS_DEFAULT
+    if restart_count == -1:
+        return -1
+    return int(restart_count) + 1
 
 
 def _deadline_iso(started_at: str, timeout_sec: int) -> Optional[str]:
@@ -2384,7 +2422,12 @@ def _retry_eligible(run: dict) -> bool:
         # of "no_output_exhausted" so the false-failure notification never fires.
         run["retry_block_reason"] = "question_pending"
         return False
-    if int(run.get("attempts_used") or 0) >= NO_OUTPUT_MAX_ATTEMPTS:
+    # 0443 T0002 (R0001): the cap is now the run's own resolved "재시작 횟수" pick
+    # (attempts_max), not always the fixed constant — -1 means unlimited.
+    attempts_max = run.get("attempts_max")
+    if attempts_max is None:
+        attempts_max = NO_OUTPUT_MAX_ATTEMPTS
+    if attempts_max != -1 and int(run.get("attempts_used") or 0) >= attempts_max:
         return False
     if _remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
         return False
@@ -2418,14 +2461,21 @@ def _recheck_no_output(run: dict) -> bool:
 
 
 def _retry_provider_chain(run: dict) -> list[dict]:
-    """Return the same selected provider for the hop's one no-output retry.
+    """Return the same selected provider for this hop's no-output retry.
 
     0435 T0004 replaces both older schedules — individual -> individual -> common and
-    configured-order fallback — with one contract for every origin tier. Attempt 1 may retry
-    exactly once on the finalized chain head; an unavailable provider or any later attempt
-    returns an empty chain, so `_execute_provider_chain` cannot switch providers.
+    configured-order fallback — with one contract for every origin tier: a retry NEVER
+    replays the priority tiers or falls back to another provider, only the finalized chain
+    head. 0443 T0002 (R0001) makes how MANY retries fire a per-run pick ("재시작 횟수")
+    instead of a fixed one-shot — `attempts_max` (see _resolve_restart_max_attempts) is
+    the same cap `_retry_eligible` already checked before calling this, re-checked here
+    as a second line of defense; -1 means unlimited.
     """
-    if int(run.get("attempts_used") or 0) != 1:
+    attempts_used = int(run.get("attempts_used") or 0)
+    attempts_max = run.get("attempts_max")
+    if attempts_max is None:
+        attempts_max = NO_OUTPUT_MAX_ATTEMPTS
+    if attempts_max != -1 and attempts_used >= attempts_max:
         return []
     selected_provider_id = run.get("continuation_selected_provider_id")
     if not selected_provider_id:
@@ -3765,6 +3815,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_instruction_mode=run.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
                     continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+                    continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
                 )
         except Exception:
             logger.warning(
@@ -3828,6 +3879,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_instruction_mode=run.get("continuation_instruction_mode"),
             continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
             continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+            continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
         )
     except Exception:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
@@ -4203,6 +4255,9 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # — this row is where the run object's memory ends, so the per-hop budget pick must
             # be written here or resume_chain has nothing to restore it from.
             continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+            # 0443 T0002 (R0001): the "재시작 횟수" pick is exactly as perishable — write it
+            # here too or a resumed chain silently falls back to the default retry count.
+            continuation_restart_max_attempts=run.get("continuation_restart_max_attempts"),
         )
     except Exception:
         logger.warning("ai-invoke paused-row upsert failed for %s", run_id, exc_info=True)
@@ -4310,6 +4365,7 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
         "note_overrides": run.get("continuation_note_overrides"),
         "default_note": run.get("continuation_default_note"),
         "step_timeout_sec": run.get("continuation_step_timeout_sec"),
+        "restart_max_attempts": run.get("continuation_restart_max_attempts"),
         "chain_id": run.get("chain_id"),
         "chain_docs_target": run.get("chain_docs_target"),
         "chain_docs_reached": run.get("chain_docs_reached"),
@@ -4366,6 +4422,7 @@ def _write_handoff_row(
             continuation_instruction_mode=bundle.get("instruction_mode"),
             continuation_auto_approve_item_seqs=bundle.get("auto_approve_item_seqs"),
             continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+            continuation_restart_max_attempts=bundle.get("restart_max_attempts"),
         )
     except Exception:  # noqa: BLE001 — the record is an aid, not a precondition
         logger.warning("ai-invoke handoff row write failed for %s", group_id, exc_info=True)
@@ -4499,6 +4556,9 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # flowgate.default.0400 M0005: the per-hop budget pick carries forward the same way —
         # dropping it here would silently reset a re-spawned hop back to HOP_TIMEOUT_SEC.
         "step_timeout_sec": run.get("continuation_step_timeout_sec"),
+        # 0443 T0002 (R0001): the "재시작 횟수" pick carries forward the same way — dropping
+        # it here would silently reset a re-spawned hop back to RESTART_MAX_ATTEMPTS_DEFAULT.
+        "restart_max_attempts": run.get("continuation_restart_max_attempts"),
         # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
         # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
         "chain_id": run.get("chain_id"),
@@ -4549,6 +4609,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     note_overrides = pending.get("note_overrides")
     default_note = pending.get("default_note")
     step_timeout_sec = pending.get("step_timeout_sec")
+    restart_max_attempts = pending.get("restart_max_attempts")
     chain_id = pending.get("chain_id")
     chain_docs_target = pending.get("chain_docs_target")
     chain_docs_reached = pending.get("chain_docs_reached")
@@ -4609,6 +4670,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         chain_docs_reached=chain_docs_reached,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         continuation_step_timeout_sec=step_timeout_sec,
+        continuation_restart_max_attempts=restart_max_attempts,
     )
 
 
@@ -4733,6 +4795,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     continuation_instruction_mode=row.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=row.get("continuation_auto_approve_item_seqs"),
                     continuation_step_timeout_sec=row.get("continuation_step_timeout_sec"),
+                    continuation_restart_max_attempts=row.get("continuation_restart_max_attempts"),
                 )
             except Exception:
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
@@ -4821,6 +4884,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
         note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
         default_note = (row.get("continuation_default_note") or "").strip() or None
         step_timeout_sec = row.get("continuation_step_timeout_sec")
+        restart_max_attempts = row.get("continuation_restart_max_attempts")
         try:
             return start_run(
                 project_id=project_id,
@@ -4847,6 +4911,7 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 chain_docs_reached=row.get("chain_docs_reached"),
                 continuation_auto_approve_item_seqs=resume_auto_approve_item_seqs,
                 continuation_step_timeout_sec=step_timeout_sec,
+                continuation_restart_max_attempts=restart_max_attempts,
             )
         except HTTPException as exc:
             _restore_row()
