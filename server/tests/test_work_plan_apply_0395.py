@@ -74,10 +74,19 @@ def test_logical_key_mapping_counts_occurrences():
     assert [x["item_seq"] for x in rows] == [4, 9]
 
 
-def test_completed_slot_still_counts_for_ordinal():
-    rows = svc.build_step_map([step("T#1"), step("T#2")],
-                              [item(4, "T", "done"), item(9, "T")])
-    assert rows[0]["item_seq"] == 4 and rows[1]["item_seq"] == 9
+def test_a_finished_row_is_skipped_and_the_skip_is_reported():
+    """Rewritten from test_completed_slot_still_counts_for_ordinal (0444 NR0003 §2-3).
+
+    The old name stated the old expectation: a done row kept its ordinal, so T#1 mapped
+    onto item 4. NR0003 named that the top root cause — project() then filed the stolen row
+    as ``already_started`` and dropped the new plan's provider and note, while the genuinely
+    pending row was never touched. The contract now: a slot is a row that is still pending
+    (or one this plan poured itself), and rows left out are reported, not dropped in silence.
+    """
+    items = [item(4, "T", "done"), item(9, "T")]
+    rows = svc.build_step_map([step("T#1"), step("T#2")], items)
+    assert [(x["item_seq"], x["status"]) for x in rows] == [(9, "pending"), (None, "unmatched")]
+    assert svc._slot_pool(items, None)[1] == [4]
 
 
 def test_mapping_uses_item_seq_not_sort_order():
@@ -233,6 +242,7 @@ def test_all_warning_codes_fire_and_have_distinct_three_locale_copy():
             order_differs_keys=["P#1"],
             wp_review_status="pending_review",
             unmatched_keys=["T#2"],
+            skipped_done_item_seqs=[7],
             locale=locale,
         )
         assert {row["code"] for row in warnings} == set(svc.WARNING_CODES)

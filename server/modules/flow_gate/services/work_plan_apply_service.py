@@ -29,7 +29,7 @@ INSTRUCTION_MODES = {"auto_approved", "ai_direct"}
 
 WARNING_CODES = (
     "workflow_not_decided", "steps_added", "extra_workflow_steps",
-    "steps_already_done", "type_not_placeable", "order_differs",
+    "steps_already_done", "done_rows_skipped", "type_not_placeable", "order_differs",
     "provider_unset", "provider_not_registered", "provider_renamed",
     "note_empty", "nothing_to_fill", "locked_step_has_value",
     "instructions_folded", "wp_not_approved", "unmatched_plan_steps",
@@ -38,6 +38,9 @@ WARNING_SEVERITY = {
     code: ("warning" if code in {
         "type_not_placeable", "provider_unset", "provider_not_registered",
         "nothing_to_fill", "locked_step_has_value", "unmatched_plan_steps",
+        # 0444 NR0003 §4-1: not info. The person picked a cell and the values land on a
+        # different one, so this has to be as visible as the other placement warnings.
+        "done_rows_skipped",
     } else "info")
     for code in WARNING_CODES
 }
@@ -47,6 +50,7 @@ _COPY = {
         "steps_added": "계획에 맞추면 워크플로 단계 {count}개가 더해집니다.",
         "extra_workflow_steps": "계획보다 많은 워크플로 단계 {count}개는 지우지 않습니다.",
         "steps_already_done": "이미 시작했거나 끝난 단계 {count}개는 건드리지 않습니다.",
+        "done_rows_skipped": "이미 시작했거나 끝난 단계 {count}개는 순번 계산에서 건너뛰었습니다.",
         "type_not_placeable": "워크플로에 놓을 수 없는 계획 단계가 {count}개 있습니다.",
         "order_differs": "계획과 워크플로의 단계 순서가 다릅니다. 워크플로 순서를 따릅니다.",
         "provider_unset": "공급자를 정하지 않은 단계 {count}개는 기본 공급자를 따릅니다.",
@@ -64,6 +68,7 @@ _COPY = {
         "steps_added": "{count} workflow steps will be appended to match the plan.",
         "extra_workflow_steps": "{count} workflow steps exceed the plan and will not be deleted.",
         "steps_already_done": "{count} started or completed steps will not be changed.",
+        "done_rows_skipped": "{count} started or completed steps were left out of the position count.",
         "type_not_placeable": "{count} plan steps cannot be placed in this workflow.",
         "order_differs": "Plan and workflow order differ; workflow order wins.",
         "provider_unset": "{count} steps have no provider and will use the default.",
@@ -81,6 +86,7 @@ _COPY = {
         "steps_added": "計画に合わせてワークフロー段階を{count}件追加します。",
         "extra_workflow_steps": "計画より多いワークフロー段階{count}件は削除しません。",
         "steps_already_done": "開始済みまたは完了済みの{count}段階は変更しません。",
+        "done_rows_skipped": "開始済みまたは完了済みの{count}段階は順番の計算から除外しました。",
         "type_not_placeable": "ワークフローに配置できない計画段階が{count}件あります。",
         "order_differs": "計画とワークフローの順序が異なるため、ワークフローを優先します。",
         "provider_unset": "プロバイダー未指定の{count}段階はデフォルトを使用します。",
@@ -172,14 +178,41 @@ def _poured_block(items: Iterable[dict], plan_doc_id: Optional[str]) -> Optional
     return block or None
 
 
+def _slot_pool(items: Iterable[dict],
+               plan_doc_id: Optional[str]) -> tuple[list[dict], list[int]]:
+    """The rows this plan may fill, and the rows left out of the count (0444 NR0003 §4-1).
+
+    The contract, in one sentence:
+
+        A sequence cell this plan may fill is either (a) a row that is still ``pending`` or
+        (b) a row this very plan poured. A row somebody else already started or finished
+        drops out of the ordinal count and out of the candidate set.
+
+    Half (b) is what ``_poured_block`` already does, and it is why re-applying the same plan
+    still maps its own finished rows to their own places and reports ``already_started``
+    instead of duplicating them. Half (a) is the fix: the positional fallback used to hand a
+    new plan's N#1 to a finished N row an earlier plan had left behind, and ``project`` then
+    classified that row ``already_started`` and threw the provider and the note away while the
+    genuinely new pending row sat untouched.
+
+    Returns (candidate rows, ``item_seq`` of the rows that were skipped). The second element
+    is what ``done_rows_skipped`` reports, so the skip is never silent.
+    """
+    poured = _poured_block(items, plan_doc_id)
+    if poured is not None:
+        return poured, []
+    ordered = _ordered(items)
+    candidates = [item for item in ordered if _progress(item) == "pending"]
+    skipped = [_int(item.get("item_seq")) for item in ordered if _progress(item) != "pending"]
+    return candidates, skipped
+
+
 # L0010 §2.5
 def build_step_map(plan_steps: Iterable[dict], items: Iterable[dict],
                    plan_doc_id: Optional[str] = None) -> list[dict]:
     slots: dict[tuple[str, int], dict] = {}
     seen: dict[str, int] = {}
-    pool = _poured_block(items, plan_doc_id)
-    if pool is None:
-        pool = _ordered(items)
+    pool, _skipped = _slot_pool(items, plan_doc_id)
     for item in pool:
         code = str(item.get("type") or "").upper()
         seen[code] = seen.get(code, 0) + 1
@@ -344,7 +377,8 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
                    projection: dict, sequence_decided: bool, added: list[dict],
                    extra_item_seqs: list[int], unplaceable_keys: list[str],
                    order_differs_keys: list[str], wp_review_status: Optional[str],
-                   unmatched_keys: list[str], locale: str = "ko") -> list[dict]:
+                   unmatched_keys: list[str], skipped_done_item_seqs: list[int] = (),
+                   locale: str = "ko") -> list[dict]:
     registry, result = _registry(provider_registry), []
     if not sequence_decided:
         result.append(_warning("workflow_not_decided", locale))
@@ -356,6 +390,10 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
                if row.get("matched") and row.get("status") != "pending"]
     if already:
         result.append(_warning("steps_already_done", locale, item_seqs=already))
+    # A different fact from the line above: those rows are not merely left alone, they were
+    # dropped from the position count, so this plan's values land on a row further down.
+    if skipped_done_item_seqs:
+        result.append(_warning("done_rows_skipped", locale, item_seqs=skipped_done_item_seqs))
     if unplaceable_keys:
         result.append(_warning("type_not_placeable", locale, unplaceable_keys))
     if order_differs_keys:
@@ -402,11 +440,21 @@ def _label(code: str, locale: str) -> str:
 
 
 # L0010 §4.4
-def _missing_items(plan_steps: list[dict], items: list[dict], locale: str) -> tuple[list[dict], list[str]]:
+def _missing_items(plan_steps: list[dict], items: list[dict], locale: str,
+                   plan_doc_id: Optional[str] = None) -> tuple[list[dict], list[str]]:
+    # 0444 NR0003 §4-1: the same rule as _slot_pool, or the two disagree and the fix breaks
+    # pouring outright. Only rows this plan may fill count towards "the plan already has an
+    # Nth row of type X" — otherwise a sequence holding nothing but another plan's finished
+    # rows counts them, proposes no new row, and every plan step stays unmatched forever.
+    poured = _poured_block(items, plan_doc_id) or []
+    fillable = {_int(x.get("item_seq")) for x in poured}
     counts: dict[str, int] = {}
     for item in items:
+        if _progress(item) != "pending" and _int(item.get("item_seq")) not in fillable:
+            continue
         code = str(item.get("type") or "").upper()
         counts[code] = counts.get(code, 0) + 1
+    # Positions stay whole-sequence: a new row is always appended after everything present.
     next_seq = max((_int(x.get("item_seq")) for x in items), default=0)
     next_order = max((_int(x.get("sort_order"), -1) for x in items), default=-1) + 1
     added, unplaceable = [], []
@@ -486,7 +534,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     owner = doc.get("target_id") or doc.get("triggered_by")
     sequence, current = _sequence(owner)
     steps = list(plan.get("steps") or [])
-    added, unplaceable = _missing_items(steps, current, locale)
+    added, unplaceable = _missing_items(steps, current, locale, doc.get("doc_id"))
     current_mapping = build_step_map(steps, current, doc.get("doc_id"))
     current_projection = project(steps, current_mapping, current, mode, providers)
     current_target_seq = suggest_target_seq(
@@ -521,7 +569,9 @@ def preview(*, doc: dict, plan: dict, providers: Any,
         projection=projection, sequence_decided=sequence is not None, added=added,
         extra_item_seqs=_extra_items(steps, current), unplaceable_keys=unplaceable,
         order_differs_keys=_order_differs(mapping),
-        wp_review_status=doc.get("doc_review_status"), unmatched_keys=[], locale=locale,
+        wp_review_status=doc.get("doc_review_status"), unmatched_keys=[],
+        skipped_done_item_seqs=_slot_pool(projected_items, doc.get("doc_id"))[1],
+        locale=locale,
     )
     target = by_seq.get(target_seq or -1)
     return {
@@ -607,7 +657,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
             "current_wp_revision_no": current_revision,
         })
     steps = list(plan.get("steps") or [])
-    proposed, unplaceable = _missing_items(steps, current, locale)
+    proposed, unplaceable = _missing_items(steps, current, locale, doc.get("doc_id"))
     if change_workflow:
         for item in proposed:
             item["source_doc_id"] = doc.get("doc_id")
@@ -651,7 +701,9 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
         projection=projection, sequence_decided=sequence is not None, added=added,
         extra_item_seqs=_extra_items(steps, current), unplaceable_keys=unplaceable,
         order_differs_keys=_order_differs(mapping), wp_review_status=doc.get("doc_review_status"),
-        unmatched_keys=unmatched, locale=locale,
+        unmatched_keys=unmatched,
+        skipped_done_item_seqs=_slot_pool(projected_items, doc.get("doc_id"))[1],
+        locale=locale,
     )
     after_tag = build_workflow_tag(sequence, current)
     target = next((x for x in current if _int(x.get("item_seq")) == target_seq), {})

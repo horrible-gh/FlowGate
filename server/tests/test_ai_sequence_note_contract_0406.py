@@ -117,10 +117,20 @@ def issue_mention() -> str:
     )["mention"]
 
 
+PAYLOAD_KEYS = {
+    "type", "label", "note", "source_doc_id", "source_revision_no",
+    # 0444 T0007 (NR0003 §4-6): note/source were not the only values edit_workflow_pending()
+    # rewrites from the payload — the provider pair is rewritten the same way, and until this
+    # change it was in none of the five places that tell a worker what to send back. Widened
+    # from five keys to seven; the three this test is named for still round-trip below.
+    "provider_id", "provider_display_name",
+}
+
+
 def test_mention_json_round_trips_three_metadata_fields_through_real_patch_route(sequence_world):
     mention = issue_mention()
     items = extract_pending_json(mention)
-    assert all(set(item) == {"type", "label", "note", "source_doc_id", "source_revision_no"} for item in items)
+    assert all(set(item) == PAYLOAD_KEYS for item in items)
     assert items[0]["note"] == "Keep this handoff"
 
     response = TestClient(app, raise_server_exceptions=False).patch(
@@ -172,16 +182,32 @@ def test_metadata_free_mention_is_byte_identical_to_legacy_shape():
 
 
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])
-def test_help_submit_declares_the_same_five_keys_and_rules(locale):
+def test_help_submit_declares_the_same_seven_keys_and_rules(locale):
+    """The help example and the mention payload must describe ONE contract.
+
+    Old expectation (0406 T0011): exactly the five keys
+    type/label/note/source_doc_id/source_revision_no, and a rules sentence naming the three
+    metadata values.
+
+    New expectation (0444 T0007): those five plus provider_id/provider_display_name, and a
+    rules sentence that also says what an omitted provider key means (keep what is stored)
+    and how to actually clear it (an explicit null).
+
+    Basis: NR0003 §4-6 / 0444 T0007 §4-1. The five coordinates that describe this PATCH to an
+    AI worker — request_sequence_edit's row list, the mention payload, the mention rules, this
+    help example and its guidance note — all named the same five keys, so the worker had no
+    way to return a provider, and edit_workflow_pending() then deleted it for not being sent.
+    Widening the contract in one place only would leave the worker reading a different one
+    from the four others, so the assertion moves with it rather than being deleted.
+    """
     content = help_catalog._content_submit({
         "base_url": "/flowgate/api/v1", "action_scope": "workflow_sequence_edit",
         "doc_id": ROOT, "locale": locale,
     })
-    assert set(content["body"]["items"][0]) == {
-        "type", "label", "note", "source_doc_id", "source_revision_no",
-    }
+    assert set(content["body"]["items"][0]) == PAYLOAD_KEYS
     assert "note/source_doc_id/source_revision_no" in content["guidance"]
-
+    assert "provider_id" in content["guidance"]
+    assert "null" in content["guidance"]
 
 def wire_note_rows(monkeypatch, *, stored="저장 멘트"):
     rows = [

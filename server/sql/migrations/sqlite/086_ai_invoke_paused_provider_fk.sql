@@ -1,0 +1,13 @@
+-- 086_ai_invoke_paused_provider_fk.sql
+-- flowgate.default.0444 (NR0003 §4-3/§2-6 → WP0004 T#3) -- intentionally a no-op on SQLite.
+--
+-- The MySQL counterpart adds a table-level CONSTRAINT ... FOREIGN KEY for
+-- ai_invoke_paused_chains.continuation_base_provider_id because InnoDB silently drops
+-- the column-level inline REFERENCES that 076a declared. SQLite enforces inline
+-- REFERENCES clauses on ADD COLUMN whenever PRAGMA foreign_keys is on, and this
+-- codebase's connection.transaction() forces that pragma on for every write
+-- (server/modules/flow_gate/db/connection.py) -- so 076a already gives this column a
+-- working FK here. There is nothing to repair.
+--
+-- This file exists so the three dialect directories keep identical migration
+-- filenames and the next group picking a free number sees 086 taken in all three.

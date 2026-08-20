@@ -197,7 +197,10 @@
                       <span
                         v-if="providerBadgeKey(row.item)"
                         class="cwd-filled-badge"
-                        :class="{ 'cwd-stored-provider--unavailable': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_unavailable' }"
+                        :class="{
+                          'cwd-stored-provider--unavailable': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_unavailable',
+                          'cwd-stored-provider--pin-overridden': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_pin_overridden',
+                        }"
                       >
                         {{ t(providerBadgeKey(row.item)) }}
                       </span>
@@ -407,7 +410,12 @@ const planFill = ref<{
 } | null>(null)
 // Steps the person edited by hand in THIS dialog. A later plan read never overwrites them —
 // the newest word about a step is the one its owner just typed.
-const touchedSeqs = ref(new Set<number>())
+// 0444 T0007 (NR0003 §4-5): two sets, not one. They used to share a single set, so typing a
+// sentence into a row also froze that row's PROVIDER against every later plan re-read — which
+// is a large part of why the provider looked stuck to the person who reported this.
+// A hand-typed value is only protected from the plan on the field it was actually typed in.
+const touchedNoteSeqs = ref(new Set<number>())
+const touchedProviderSeqs = ref(new Set<number>())
 let planFillToken = 0
 const presetRefreshMessage = ref('')
 let initializingPreset = false
@@ -579,13 +587,12 @@ function applyPlanFill() {
   const nextProviders = { ...overrides.value }
   for (const item of steps) {
     const seq = item.item_seq
-    if (touchedSeqs.value.has(seq)) continue
     const planNote = fill.notes[seq]
-    if (planNote !== undefined && planNote !== ownStoredMessage(item)) {
+    if (!touchedNoteSeqs.value.has(seq) && planNote !== undefined && planNote !== ownStoredMessage(item)) {
       nextNotes[seq] = planNote
     }
     const planProvider = fill.providers[seq]
-    if (planProvider !== undefined && planProvider !== (item.provider_id ?? '')) {
+    if (!touchedProviderSeqs.value.has(seq) && planProvider !== undefined && planProvider !== (item.provider_id ?? '')) {
       nextProviders[seq] = planProvider
     }
   }
@@ -649,7 +656,19 @@ function storedProviderValue(item: WorkflowStepItem): string {
 }
 
 function providerBadgeKey(item: WorkflowStepItem): string {
-  if (overrides.value[item.item_seq] !== undefined || props.providerPinned) return ''
+  if (overrides.value[item.item_seq] !== undefined) return ''
+  if (props.providerPinned) {
+    // 0444 T0007 (NR0003 §4-5): a pin used to blank this column outright, so the table gave
+    // no sign that the row had a stored provider of its own being set aside. An unusable
+    // stored provider still reports itself first — that is the more urgent of the two facts.
+    if (item.provider_id && item.provider_registered === false) {
+      return 'main.continuous_work.sequence_provider_unavailable'
+    }
+    const displaced = storedProviderItem(item)
+    return displaced && (displaced.provider_id ?? '') !== props.selectedProvider
+      ? 'main.continuous_work.sequence_provider_pin_overridden'
+      : ''
+  }
   if (item.provider_id) {
     return item.provider_registered === false
       ? 'main.continuous_work.sequence_provider_unavailable'
@@ -671,7 +690,7 @@ function markPresetEdited(itemSeq: number) {
 
 function onStepProviderChange(item: WorkflowStepItem, value: string) {
   markPresetEdited(item.item_seq)
-  touchedSeqs.value = new Set([...touchedSeqs.value, item.item_seq])
+  touchedProviderSeqs.value = new Set([...touchedProviderSeqs.value, item.item_seq])
   const next = { ...overrides.value }
   const inherited = props.providerPinned ? (props.selectedProvider ?? '') : storedProviderValue(item)
   if (!value || value === inherited) delete next[item.item_seq]
@@ -683,7 +702,7 @@ function onStepProviderChange(item: WorkflowStepItem, value: string) {
 function onStepMessageChange(item: WorkflowStepItem, value: string) {
   const itemSeq = item.item_seq
   markPresetEdited(itemSeq)
-  touchedSeqs.value = new Set([...touchedSeqs.value, itemSeq])
+  touchedNoteSeqs.value = new Set([...touchedNoteSeqs.value, itemSeq])
   const next = { ...messageOverrides.value }
   const stored = storedStepMessage(item)
   if (value === stored) {
@@ -710,7 +729,7 @@ const selectedProviderName = computed(() =>
 // same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
 // In-range steps all get the tag (gated on `inRangeSteps`, wider than the now execution-only
 // `providerRows`); a step past the target still gets none (it never runs).
-function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean } | null {
+function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean; pinned?: boolean } | null {
   if (!inRangeSteps.value.some(s => s.item_seq === item.item_seq)) return null
   const stepNo = executionSteps.value.findIndex(s => s.item_seq === item.item_seq)
   const overrideId = overrides.value[item.item_seq]
@@ -723,9 +742,26 @@ function stepProviderTag(item: WorkflowStepItem): { text: string; override: bool
   }
   if (props.providerPinned) {
     const name = selectedProviderName.value
-    return name
-      ? { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
-      : null
+    if (!name) return null
+    // 0444 T0007 (NR0003 §4-5): the pin really does beat a row's stored provider — that is
+    // what ai_invoke_service.start_run() does for a continuous run, and NR0003 §2-5 re-ran it
+    // to be certain. Flipping this side to "stored wins" would leave the screen showing one
+    // provider while another one runs, which is the worse defect. What was actually wrong is
+    // that the swap happened in silence, so the row now names BOTH: the pin that won and the
+    // stored value it displaced.
+    const displaced = storedProviderItem(item)
+    const displacedId = displaced?.provider_id ?? ''
+    if (displaced && displacedId !== props.selectedProvider) {
+      return {
+        text: t('main.continuous_work.provider_tag_pinned_over_stored', {
+          name,
+          stored: displaced.provider_display_name || displacedId,
+        }),
+        override: false,
+        pinned: true,
+      }
+    }
+    return { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
   }
   const stored = storedProviderItem(item)
   if (stored) {
@@ -843,7 +879,8 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   presetRefreshMessage.value = ''
   editedSeqs.value = new Set()
   prefilledMessageSeqs.value = new Set()
-  touchedSeqs.value = new Set()
+  touchedNoteSeqs.value = new Set()
+  touchedProviderSeqs.value = new Set()
   planFill.value = null
   planFillToken += 1
   if (value) {
@@ -958,6 +995,9 @@ watch(presetActive, (active) => {
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
+/* 0444 T0007: the pin-displaced-a-stored-provider badge gets its own modifier, so a test can
+   tell it apart from the unavailable one. */
+.cwd-stored-provider--pin-overridden { color:var(--warning); background:var(--warning-l); }
 /* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */
 .cwd-note-unset-flag { color:#b45309; font-weight:700; }
 .modal-cwd {

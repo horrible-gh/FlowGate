@@ -23,6 +23,7 @@ from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
 from modules.flow_gate.services.workflow_decision_service import (
     AUTO_REPORT_MAP,
+    SERVER_ASSEMBLED_REPORT_TYPES,
     plan_revision_freshness,
     provider_view_of,
     resolve_row_provider,
@@ -59,6 +60,7 @@ _log = logging.getLogger(__name__)
 # poured exactly like an approved one; whether that is acceptable is decided by whoever presses [save].
 _NOTIFICATION_ORDER = (
     "type_not_placeable",
+    "provider_not_registered",
     "rows_truncated",
     "type_overlap",
     "notes_discarded",
@@ -68,6 +70,7 @@ _NOTIFICATION_ORDER = (
 )
 _SEVERITY = {
     "type_not_placeable": "warning",
+    "provider_not_registered": "warning",
     "rows_truncated": "warning",
     "type_overlap": "warning",
     "notes_discarded": "warning",
@@ -153,7 +156,34 @@ def normalize_provider(raw_id: Any, raw_name: Any) -> tuple[Optional[str], Optio
     return provider_id, provider_name
 
 
-def resolve_step_provider(step: dict, plan: dict) -> tuple[Optional[str], Optional[str]]:
+def _provider_unavailable(provider_id: Optional[str], provider_view: Any) -> bool:
+    """Would the apply path refuse this id? (0444 NR0003 §4-4)
+
+    Deliberately the same condition, word for word, as
+    ``work_plan_apply_service._usable_provider``: an id the registry does not know, or a
+    row switched off through either flag. Pouring used to check only the id *format*, so
+    the same unregistered id sailed through the pour screen, landed in the sequence, and
+    was stopped only later on apply. The two paths disagreeing IS the defect, so they are
+    written to the one rule here.
+
+    Fail-open on purpose. ``provider_view`` follows the three-valued contract
+    ``workflow_decision_service.provider_view_of`` returns: with no view, or a view that
+    could not be read (``readable`` is not True), nothing is refused. "The settings were
+    unreadable" is not a reason to erase what a person chose.
+    """
+    if provider_id is None:
+        return False
+    if not isinstance(provider_view, dict) or provider_view.get("readable") is not True:
+        return False
+    row = (provider_view.get("providers") or {}).get(str(provider_id))
+    if row is None:
+        return True
+    return row.get("enabled", True) is False or row.get("is_enabled", True) is False
+
+
+def resolve_step_provider(
+    step: dict, plan: dict, *, provider_view: Optional[dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
     provider_id = step.get("provider_id")
     provider_name = step.get("provider_display_name")
     if provider_id and not provider_name:
@@ -161,7 +191,13 @@ def resolve_step_provider(step: dict, plan: dict) -> tuple[Optional[str], Option
             if candidate.get("provider_id") == provider_id:
                 provider_name = candidate.get("display_name")
                 break
-    return normalize_provider(provider_id, provider_name)
+    provider_id, provider_name = normalize_provider(provider_id, provider_name)
+    # After the format check, never before it: a malformed id must keep being reported as
+    # malformed rather than as "not registered".
+    if _provider_unavailable(provider_id, provider_view):
+        _log.warning("dropping unregistered workflow sequence provider id: %r", provider_id)
+        return None, None
+    return provider_id, provider_name
 
 
 # ── L0011 §2.1 — a row inside the edit dialog ────────────────────────────────
@@ -301,8 +337,11 @@ def _carry_note_to_pair(result_step: dict, rows: list[dict], dropped: list[dict]
     target["pair_note_source"] = "step"
 
 
-def _carry_provider_to_pair(result_step: dict, rows: list[dict], plan: dict) -> None:
-    provider_id, provider_name = resolve_step_provider(result_step, plan)
+def _carry_provider_to_pair(result_step: dict, rows: list[dict], plan: dict,
+                            provider_view: Optional[dict] = None) -> None:
+    provider_id, provider_name = resolve_step_provider(
+        result_step, plan, provider_view=provider_view,
+    )
     if provider_id is None:
         return
     pair_key = result_step.get("pair_key")
@@ -323,6 +362,8 @@ def plan_to_rows(
     plan_revision_no: Optional[int],
     locale: str = "ko",
     start_uid: int = 0,
+    *,
+    provider_view: Optional[dict] = None,
 ) -> tuple[list[dict], list[dict], int]:
     """Turn a plan body's steps into row candidates (L0011 §2.3).
 
@@ -350,11 +391,27 @@ def plan_to_rows(
             continue
         if code in AUTO_ROW_TYPES:
             _carry_note_to_pair(step, rows, dropped)
-            _carry_provider_to_pair(step, rows, plan)
+            # The result step's provider rides to its partner row, so it faces the same
+            # check — and owes the same visible reason when it fails.
+            pair_id, _pair_name = resolve_step_provider(step, plan)
+            if _provider_unavailable(pair_id, provider_view):
+                dropped.append({
+                    "plan_key": step.get("key"), "type": code,
+                    "reason": "provider_not_registered", "provider_id": pair_id,
+                })
+            _carry_provider_to_pair(step, rows, plan, provider_view=provider_view)
             continue
         uid += 1
         step_note = normalize_note(step.get("note"))
         provider_id, provider_name = resolve_step_provider(step, plan)
+        if _provider_unavailable(provider_id, provider_view):
+            dropped.append({
+                "plan_key": step.get("key"), "type": code,
+                "reason": "provider_not_registered", "provider_id": provider_id,
+            })
+            # Left as None on purpose: the default substitution below then fires and the
+            # plan's common provider takes the place of the one that does not exist.
+            provider_id, provider_name = None, None
         rows.append(_new_row(
             uid, code, locale,
             note=step_note,
@@ -374,6 +431,12 @@ def plan_to_rows(
         if isinstance(defaults, dict)
         else (None, None)
     )
+    if _provider_unavailable(default_provider_id, provider_view):
+        dropped.append({
+            "plan_key": "defaults", "type": None,
+            "reason": "provider_not_registered", "provider_id": default_provider_id,
+        })
+        default_provider_id, default_provider_name = None, None
     for row in rows:
         if row["provider_id"] is None:
             if row["type"] in INSTRUCTION_TYPES and row.get("pair_provider_id"):
@@ -423,9 +486,15 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             auto_uid = uid
             status, locked, item_seq_before = "pending", False, None
         # TSR is assembled by the server: no provider and no note may be written for it.
-        pair_note = "" if want == "TSR" else (row.get("pair_note") or "")
+        # 0444 T0007 (NR0003 §2-7): that rule is stated once now, as
+        # SERVER_ASSEMBLED_REPORT_TYPES, and workflow_decision_service.expand_steps_with_reports()
+        # reads the same name. It used to spell "TSR" out on its own and commit 178b21b2
+        # (0434 T0004 F1) moved only the provider half of it, so the note this function refuses
+        # to write was being written on the decision/edit path.
+        server_assembled = want in SERVER_ASSEMBLED_REPORT_TYPES
+        pair_note = "" if server_assembled else (row.get("pair_note") or "")
         pair_note_source = row.get("pair_note_source") if pair_note else None
-        if want == "TSR":
+        if server_assembled:
             provider_id, provider_name = None, None
         elif row.get("pair_provider_id"):
             provider_id = row.get("pair_provider_id")
@@ -544,6 +613,16 @@ def build_notifications(
             items=[{"plan_key": d.get("plan_key"), "type": d.get("type")} for d in unplaceable],
         )
 
+    unregistered = [d for d in dropped if d.get("reason") == "provider_not_registered"]
+    if unregistered:
+        found["provider_not_registered"] = _envelope(
+            "provider_not_registered", len(unregistered),
+            items=[
+                {"plan_key": d.get("plan_key"), "provider_id": d.get("provider_id")}
+                for d in unregistered
+            ],
+        )
+
     if truncated_count > 0:
         found["rows_truncated"] = _envelope("rows_truncated", truncated_count)
 
@@ -628,8 +707,13 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
     next_uid = len(items)
 
     wp_revision_no = _int(doc.get("revision_no"), 0)
+    # 0444 NR0003 §4-4: read once, here, because the conversion below now needs it to
+    # refuse an unregistered provider. _public_row further down reuses this same value —
+    # the settings are not read twice for one response.
+    provider_view = provider_view_of(doc.get("project_id"))
     plan_rows, dropped, next_uid = plan_to_rows(
         plan, wp_doc_id, wp_revision_no, locale, start_uid=next_uid,
+        provider_view=provider_view,
     )
     plan_step_count = len(plan_rows)
     pour_rows, next_uid = attach_auto_rows(plan_rows, locale, next_uid)
@@ -655,7 +739,6 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         next_rows, deleted_rows = pour_replace_after(pending_before, pour_rows, wp_item_seq)
 
     all_rows = locked_rows + next_rows
-    provider_view = provider_view_of(doc.get("project_id"))
     before_uids = {row["uid"] for row in pending_before}
     poured_uids = {row["uid"] for row in pour_rows if not row.get("is_auto")}
     poured_type_of = {row["uid"]: row["type"] for row in pour_rows if not row.get("is_auto")}

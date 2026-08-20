@@ -29,6 +29,16 @@ from modules.flow_gate.services import mention_service
 # is not a registered document_type, so attaching it would create an unprocessable step.
 AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
 
+# 0444 T0007 (NR0003 §4-2 / §2-7): report types the SERVER assembles by itself. A TSR is built
+# from a test run's result, not from an instruction a person handed down the chain, so neither
+# the instruction's note nor its provider may be written onto it. work_plan_sequence_service's
+# attach_auto_rows() has enforced exactly that since commit 0009e926 and imports this same
+# constant. The type used to be spelled out as a bare "TSR" literal on two separate lines of
+# expand_steps_with_reports() below, and commit 178b21b2 (0434 T0004 F1) changed only one of
+# them — which is how the two sibling functions came to disagree about the same row. One name,
+# read in both places, is the fix that keeps the next edit from splitting them again.
+SERVER_ASSEMBLED_REPORT_TYPES = frozenset({"TSR"})
+
 
 class SequenceChanged(Exception):
     """The sequence moved between reading it and saving it (0399 P0013 ② / L0011 §2.11).
@@ -419,12 +429,25 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
             "label": get_type_name(report_type, locale),
             # 0434 T0004 F1: a worker omits automatic report rows from PATCH items.
             # Rebuilding that row must not erase the instruction handoff the report runs with.
-            "note": _normalized_sequence_note(item.get("note")),
+            # 0444 T0007 (NR0003 §4-2): a server-assembled row has no handoff to inherit —
+            # nobody instructed it, the server builds it from the test result. Same constant as
+            # the provider line below, so the two can never drift apart again.
+            "note": (
+                "" if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else _normalized_sequence_note(item.get("note"))
+            ),
+            # 0434 T0004 F1/F2: the source pair is NOT withheld from a server-assembled row.
+            # An automatic report belongs to the same poured plan revision as its instruction,
+            # so plan_revision_freshness() has to be able to see it too.
             "source_doc_id": item.get("source_doc_id"),
             "source_revision_no": item.get("source_revision_no"),
-            "provider_id": item.get("provider_id") if report_type != "TSR" else None,
+            "provider_id": (
+                None if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else item.get("provider_id")
+            ),
             "provider_display_name": (
-                item.get("provider_display_name") if report_type != "TSR" else None
+                None if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else item.get("provider_display_name")
             ),
         })
     for new_id, item in enumerate(expanded, start=1):
@@ -1259,6 +1282,11 @@ def request_sequence_edit(
             "note": _normalized_sequence_note(it.get("note")),
             "source_doc_id": it.get("source_doc_id"),
             "source_revision_no": it.get("source_revision_no"),
+            # 0444 T0007 (NR0003 §4-6): the provider is part of what the worker is asked to
+            # hand back. edit_workflow_pending() re-inserts the pending rows from the payload,
+            # so a value this list never carries is a value the PATCH cannot preserve.
+            "provider_id": it.get("provider_id"),
+            "provider_display_name": it.get("provider_display_name"),
         }
         for it in items
     ]
@@ -1749,6 +1777,51 @@ def _start_created_sequence(doc_id: str) -> None:
         _log.warning("git worktree hook failed for %s", doc_id, exc_info=True)
 
 
+def _restore_omitted_providers(new_items: list[dict], existing: list[dict]) -> None:
+    """Keep a stored provider that the caller's item never mentioned (0444 T0007 / NR0003 §4-6).
+
+    edit_workflow_pending() deletes the pending rows and re-inserts what the caller sent, so a
+    key the payload omits is a value the row loses. For note/source that is harmless and even
+    intended: every one of those is spelled out in the mention payload, the mention rules and
+    the help example, so an absent key really does mean "leave it empty". The provider was in
+    none of those three places until this change, and the AI sequence-edit worker is a real
+    partial-payload caller — it was clearing a value the server had never shown it.
+
+    The condition is the ABSENCE of the key, never a falsy value. ``{"provider_id": None}`` is
+    a caller saying "empty this", and it is obeyed; folding the two together behind a falsy
+    check would make "clear it" impossible to express.
+
+    Deliberately NOT applied to ``note``. That key has always been in the contract, so its
+    absence carries no meaning to recover, and a retyped row clearing its note is the
+    documented behaviour — test_ai_sequence_note_contract_0406.py::
+    test_retyped_row_and_automatic_report_have_empty_metadata pins it.
+    """
+    candidates: dict[tuple, Optional[dict]] = {}
+    for row in existing or []:
+        # A locked row's provider belongs to a step that already ran; it is not a value the
+        # pending tail may inherit.
+        if row.get("result_doc_id") is not None:
+            continue
+        key = ((row.get("type") or "").upper(), row.get("label") or "")
+        # Two pending rows sharing one key are indistinguishable from here, so the key drops
+        # out of the map entirely rather than being guessed at.
+        candidates[key] = None if key in candidates else row
+    for item in new_items or []:
+        if "provider_id" in item or "provider_display_name" in item:
+            continue
+        stored = candidates.get(((item.get("type") or "").upper(), item.get("label") or ""))
+        if stored is None or not stored.get("provider_id"):
+            # Same silent outcome as before this change; the line is here so a support case
+            # can tell "nothing was stored" from "the row could not be matched".
+            _log.debug(
+                "sequence edit omitted the provider keys and no unique pending row matched %s/%s",
+                item.get("type"), item.get("label"),
+            )
+            continue
+        item["provider_id"] = stored.get("provider_id")
+        item["provider_display_name"] = stored.get("provider_display_name")
+
+
 def edit_workflow_pending(
     doc_id: str,
     new_items: list[dict],
@@ -1811,6 +1884,13 @@ def edit_workflow_pending(
             raise ValueError(f"sequence_not_decided:{doc_id}")
         if not new_items:
             raise ValueError(f"invalid_sequence_empty:{doc_id}")
+
+    # 0444 T0007 (NR0003 §4-6): give back the providers this payload never mentioned, before
+    # anything else reads the items. The position is load-bearing: ahead of
+    # assert_sequence_item_providers() so a restored value is validated exactly like a sent
+    # one, and ahead of expand_steps_with_reports() so it also rides onto the automatic
+    # TR/NR row the server attaches.
+    _restore_omitted_providers(new_items, existing)
 
     assert_sequence_item_sources(new_items)
     # 0406 T0022 item 6: overflow is rejected here. The old save path silently cut everything

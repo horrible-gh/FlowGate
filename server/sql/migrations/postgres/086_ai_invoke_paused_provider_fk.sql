@@ -1,0 +1,11 @@
+-- 086_ai_invoke_paused_provider_fk.sql
+-- flowgate.default.0444 (NR0003 §4-3/§2-6 → WP0004 T#3) -- intentionally a no-op on PostgreSQL.
+--
+-- The MySQL counterpart adds a table-level CONSTRAINT ... FOREIGN KEY for
+-- ai_invoke_paused_chains.continuation_base_provider_id because InnoDB silently drops
+-- the column-level inline REFERENCES that 076a declared. PostgreSQL always enforces an
+-- inline REFERENCES clause added via ALTER TABLE ... ADD COLUMN -- so 076a already
+-- gives this column a working FK here. There is nothing to repair.
+--
+-- This file exists so the three dialect directories keep identical migration
+-- filenames and the next group picking a free number sees 086 taken in all three.
