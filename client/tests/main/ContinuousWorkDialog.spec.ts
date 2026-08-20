@@ -1027,4 +1027,90 @@ describe('ContinuousWorkDialog', () => {
       wrapper.unmount()
     })
   })
+
+  // flowgate.default.0443 T0002 / R0001: 기본 설정 탭's 재시작 횟수 picker — a per-run
+  // pick (-1/0/1/2/3, default 1), forwarded as restartMaxAttempts on confirm. Unlike the
+  // timeout picker above, it is NOT remembered in localStorage (session-scoped policy,
+  // reset to the default on every open).
+  describe('재시작 횟수 section (0443 T0002)', () => {
+    it('defaults to 1 and reports 1 on confirm', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-restart-select') as HTMLSelectElement
+      expect(select.querySelectorAll('option')).toHaveLength(5)
+      expect(select.value).toBe('1')
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.restartMaxAttempts).toBe(1)
+
+      wrapper.unmount()
+    })
+
+    it('picking -1 (될 때까지) updates the select and the confirm payload', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-restart-select') as HTMLSelectElement
+      select.value = '-1'
+      await select.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      expect(select.value).toBe('-1')
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.restartMaxAttempts).toBe(-1)
+
+      wrapper.unmount()
+    })
+
+    it('picking 0 (재실행 안 함) reports 0, not a falsy-skip', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-restart-select') as HTMLSelectElement
+      select.value = '0'
+      await select.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      next.click()
+      await flushPromises()
+
+      const payload = wrapper.emitted('confirm')![0][0] as any
+      expect(payload.restartMaxAttempts).toBe(0)
+
+      wrapper.unmount()
+    })
+
+    it('resets to the default on a fresh open, unlike the remembered timeout pick', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const select = document.querySelector('.cwd-restart-select') as HTMLSelectElement
+      select.value = '3'
+      await select.dispatchEvent(new Event('change'))
+      await flushPromises()
+      expect(select.value).toBe('3')
+      wrapper.unmount()
+
+      const reopened = mountDialog()
+      await flushPromises()
+      const reopenedSelect = document.querySelector('.cwd-restart-select') as HTMLSelectElement
+      expect(reopenedSelect.value).toBe('1')
+      reopened.unmount()
+    })
+  })
 })

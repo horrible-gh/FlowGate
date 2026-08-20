@@ -144,6 +144,9 @@ const props = defineProps<{
   // default (this dialog's own continuous picker, reached without ContinuousWorkDialog, never
   // sets this).
   continuationStepTimeoutSec?: number | null
+  // flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick, forwarded the
+  // same session-scoped way as the budget pick above.
+  continuationRestartMaxAttempts?: number | null
   autoStart?: boolean
   // Parallel-invoke extras (group 0223): context the matching copy-mention flow
   // assembles client-side; forwarded so the server rebuilds the identical prompt.
@@ -335,6 +338,11 @@ async function start() {
       }
       if (props.continuationStepTimeoutSec) {
         body.continuation_step_timeout_sec = props.continuationStepTimeoutSec
+      }
+      // 0 and -1 are both meaningful restart-count picks ("재실행 안 함" / "될 때까지"),
+      // so this must not use a truthy check like the budget pick above.
+      if (props.continuationRestartMaxAttempts != null) {
+        body.continuation_restart_max_attempts = props.continuationRestartMaxAttempts
       }
       // 0352 T0004 §2/§3.7: never sent for a pre-decision (workflow_decide) start — no
       // item_seq exists yet, and the server rejects a selection on that scope (§2).

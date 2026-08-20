@@ -135,7 +135,26 @@
                     </select>
                     <AppIcon name="caret-down" class="cwd-timeout-caret" />
                   </label>
-                  <p class="cwd-timeout-desc">{{ t('main.continuous_work.step_timeout_desc') }}</p>
+                </div>
+
+                <!-- Restart count (flowgate.default.0443 T0002 / R0001): how many times a
+                     no-output hop retries on the SAME step-assigned provider before giving up
+                     — never a different provider (see restartCountOptionLabel below). Same
+                     native-select combo pattern as the timeout picker above. -->
+                <div class="cwd-mode-group">
+                  <div class="cwd-section-title">{{ t('main.continuous_work.restart_count_title') }}</div>
+                  <label class="cwd-restart-combo">
+                    <select
+                      v-model.number="restartMaxAttempts"
+                      class="cwd-restart-select"
+                      :aria-label="t('main.continuous_work.restart_count_title')"
+                    >
+                      <option v-for="opt in RESTART_COUNT_OPTIONS" :key="opt" :value="opt">
+                        {{ restartCountOptionLabel(opt) }}
+                      </option>
+                    </select>
+                    <AppIcon name="caret-down" class="cwd-restart-caret" />
+                  </label>
                 </div>
               </div>
 
@@ -332,6 +351,9 @@ const emit = defineEmits<{
     // (rides this run's start request only) — its last pick is remembered in localStorage so
     // reopening the dialog defaults to it, but it is never a persisted project setting.
     stepTimeoutSec: number
+    // flowgate.default.0443 T0002 (R0001): the restart-count pick above, forwarded the
+    // same session-scoped way as the timeout pick.
+    restartMaxAttempts: number
   }]
 }>()
 
@@ -368,6 +390,19 @@ watch(stepTimeoutMinutes, (value) => {
     // Best-effort remembering only — a write failure must not block the dialog.
   }
 })
+// Restart count (flowgate.default.0443 T0002 / R0001): the dialog's "재시작 횟수" pick.
+// -1 (될 때까지) is the unlimited sentinel; 0 disables the no-output retry; 1 (default)
+// matches the engine's pre-existing fixed behavior. Session-scoped like reviewMode — reset
+// on every open by installPreset, never remembered in localStorage (unlike the timeout
+// picker above): this is execution policy for THIS run, not a standing UI preference.
+const RESTART_COUNT_OPTIONS = [-1, 0, 1, 2, 3]
+const RESTART_COUNT_DEFAULT = 1
+const restartMaxAttempts = ref(RESTART_COUNT_DEFAULT)
+function restartCountOptionLabel(opt: number): string {
+  if (opt === -1) return t('main.continuous_work.restart_count_option_forever')
+  if (opt === 0) return t('main.continuous_work.restart_count_option_none')
+  return t('main.continuous_work.restart_count_option_n', { n: opt })
+}
 const picker = ref<WorkflowStepPickerState>({
   loading: true,
   errorKey: null,
@@ -829,6 +864,7 @@ function onProceed() {
     messageOverrides: messageOverridesOut,
     autoApproveItemSeqs: autoApproveOut,
     stepTimeoutSec: stepTimeoutMinutes.value * 60,
+    restartMaxAttempts: restartMaxAttempts.value,
   })
 }
 
@@ -839,6 +875,7 @@ function close() {
 function installPreset(value: WorkPlanFillPreset | null | undefined) {
   initializingPreset = true
   reviewMode.value = false
+  restartMaxAttempts.value = RESTART_COUNT_DEFAULT
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''
   editedSeqs.value = new Set()
@@ -1071,6 +1108,13 @@ watch(presetActive, (active) => {
      the per-step list (min-height:0 so the chain can actually shrink). */
   flex: 1 1 auto;
   min-height: 0;
+  /* 0443: the basic tab grew a 4th fixed section (restart count) on top of AI review mode/N-T
+     mode/timeout, and unlike the provider/message tabs it has no internal `.cwd-override-table`
+     scroller to absorb extra height. Without its own overflow, content taller than the flex
+     box spilled out past `.cwd-col-options`'s clip and visually collided with `.cwd-summary`
+     below it (measured: restart select bottom 715 vs summary top 661, overlapping). */
+  overflow-y: auto;
+  padding-right: 4px;
 }
 .cwd-toggle {
   display: flex;
@@ -1139,11 +1183,36 @@ watch(presetActive, (active) => {
   font-size: .7rem;
   pointer-events: none;
 }
-.cwd-timeout-desc {
-  margin: 0;
-  font-size: .76rem;
+/* Restart-count setting (0443 T0002 / R0001): its own classes rather than reusing
+   .cwd-timeout-* — a second control sharing that class would shift querySelector/
+   findAll-by-class assertions in the timeout section's own spec. Same combo-box look. */
+.cwd-restart-combo {
+  position: relative;
+  display: flex;
+}
+.cwd-restart-select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .82rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.cwd-restart-caret {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--text-m);
-  line-height: 1.4;
+  font-size: .7rem;
+  pointer-events: none;
 }
 .cwd-provider-block {
   display: flex;
