@@ -10,6 +10,7 @@ os.environ.setdefault("TESTING", "1")
 
 from modules.flow_gate.db import dialect  # noqa: E402
 from modules.flow_gate.db.dialect import SQLITE, MYSQL, POSTGRESQL, translate  # noqa: E402
+from modules.flow_gate.services import dashboard_service  # noqa: E402
 
 
 # ── SQLite: strict no-op ────────────────────────────────────────────────────────
@@ -190,3 +191,87 @@ def test_insert_or_ignore_mysql_and_pg():
     pg = translate(src, POSTGRESQL)
     assert pg.startswith("INSERT INTO t")
     assert pg.rstrip().endswith("ON CONFLICT DO NOTHING")
+
+
+# ── Line comments (T0004 / NR0003): `--` comment apostrophes must not eat the ──
+# ── next line's execution placeholders ──────────────────────────────────────────
+# Regression for B0001/NR0003: dashboard_service._active_workflow_rows() has a
+# `-- ... dashboard's workflow-status list ...` comment. The old single-quote-toggle
+# scanner treated that apostrophe as the start of a string literal, so the next
+# line's `dc.type_code = ?` was left unconverted on PostgreSQL/MySQL, causing
+# psycopg2 TypeError: not all arguments converted during string formatting.
+
+def test_line_comment_apostrophe_does_not_block_next_line_placeholder():
+    sql = "SELECT ? -- dashboard's note\nWHERE x = ?"
+    for d in (MYSQL, POSTGRESQL):
+        out = translate(sql, d)
+        assert out.count("%s") == 2
+        assert "?" not in out
+    # SQLite/None must stay a strict no-op for this representative SQL too.
+    assert translate(sql, SQLITE) == sql
+    assert translate(sql, None) == sql
+
+
+def test_qmark_and_quote_inside_line_comment_preserved_then_next_qmark_converted_lf():
+    sql = "SELECT 1 -- keep ? and 'quote' as-is\nWHERE x = ?"
+    for d in (MYSQL, POSTGRESQL):
+        out = translate(sql, d)
+        assert "-- keep ? and 'quote' as-is" in out
+        assert out.count("%s") == 1
+        # the comment's own "?" is untouched; only the WHERE-clause "?" converts.
+        assert out.count("?") == 1
+
+
+def test_qmark_and_quote_inside_line_comment_preserved_then_next_qmark_converted_crlf():
+    sql = "SELECT 1 -- keep ? and 'quote' as-is\r\nWHERE x = ?"
+    for d in (MYSQL, POSTGRESQL):
+        out = translate(sql, d)
+        assert "-- keep ? and 'quote' as-is\r\n" in out
+        assert out.count("%s") == 1
+        # the comment's own "?" is untouched; only the WHERE-clause "?" converts.
+        assert out.count("?") == 1
+
+
+def test_string_literal_qmark_escape_and_dashdash_preserved_before_line_comment():
+    sql = "SELECT '?' , 'it''s ok', 'a--b' -- trailing comment\nWHERE x = ?"
+    for d in (MYSQL, POSTGRESQL):
+        out = translate(sql, d)
+        assert "'?'" in out
+        assert "'it''s ok'" in out
+        assert "'a--b'" in out
+        assert out.count("%s") == 1
+
+
+# ── Real dashboard_service._active_workflow_rows() query (NR0003 §6.4) ─────────
+# Capture the actual production SQL/params via a stub store instead of copying the
+# query text, so this test tracks the real query if it ever changes.
+
+def _capture_active_workflow_query(monkeypatch, project_id="flowgate"):
+    captured = {}
+
+    class _CapturingStore:
+        def _fetch_all(self, sql, params=None):
+            captured["sql"] = sql
+            captured["params"] = list(params or [])
+            return []
+
+    monkeypatch.setattr(dashboard_service, "get_store", lambda: _CapturingStore())
+    dashboard_service._active_workflow_rows(project_id)
+    return captured["sql"], captured["params"]
+
+
+def test_dashboard_active_workflow_query_postgres_and_mysql_marker_count_matches_params(
+    monkeypatch,
+):
+    sql, params = _capture_active_workflow_query(monkeypatch)
+    assert len(params) == 2
+    for d in (MYSQL, POSTGRESQL):
+        out = translate(sql, d)
+        assert out.count("%s") == len(params)
+        assert "?" not in out
+
+
+def test_dashboard_active_workflow_query_sqlite_and_none_are_noop(monkeypatch):
+    sql, _ = _capture_active_workflow_query(monkeypatch)
+    assert translate(sql, SQLITE) == sql
+    assert translate(sql, None) == sql
