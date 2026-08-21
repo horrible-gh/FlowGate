@@ -96,21 +96,46 @@ def _rewrite_last_insert_id(sql: str, repl: str) -> str:
 
 
 def _convert_placeholders(sql: str) -> str:
-    """Replace ``?`` with ``%s`` outside of single-quoted string literals.
+    """Replace ``?`` with ``%s`` outside of single-quoted string literals and
+    ``--`` line comments.
 
     Run *after* literal ``%`` has been doubled, so the ``%s`` introduced here is
-    not itself escaped.
+    not itself escaped. Tracks two states: ``normal`` (placeholders active) and
+    ``single_quote`` (inside a ``'...'`` literal, where ``''`` is the SQL escape
+    for a literal quote). A ``--`` seen in ``normal`` state starts a line
+    comment that runs verbatim through the end of the line (LF or CRLF), during
+    which quotes and ``?`` are copied through unchanged and never toggle
+    ``single_quote`` or produce a placeholder.
     """
     out: list[str] = []
     in_str = False
-    for ch in sql:
-        if ch == "'":
-            in_str = not in_str
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        if in_str:
             out.append(ch)
-        elif ch == "?" and not in_str:
+            if ch == "'":
+                in_str = False
+            i += 1
+            continue
+        if ch == "'":
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "-" and sql[i + 1 : i + 2] == "-":
+            comment_end = sql.find("\n", i)
+            if comment_end == -1:
+                comment_end = n
+            out.append(sql[i:comment_end])
+            i = comment_end
+            continue
+        if ch == "?":
             out.append("%s")
         else:
             out.append(ch)
+        i += 1
     return "".join(out)
 
 
