@@ -1,15 +1,20 @@
-// 0444 T0007 — NR0003 §4-5: the pin overrides a row's stored provider, and the screen has to
-// say so.
+// 0448 T0005 §4 / §6 — supersedes 0444 T0007's "say what the pin displaced" contract.
 //
-// §2-5 of NR0003 re-ran ai_invoke_service.start_run() and confirmed the "pin wins globally"
-// behaviour is real and intentional on the server (test_ai_invoke_pause_resume_0252 /
-// test_ai_invoke_no_output_retry_0359 assert it). So the client is NOT flipped to
-// "stored value wins" — that would make the screen disagree with what actually runs. The
-// remaining defect is that the swap happened in silence.
+// 0444 read the server's "pin wins globally" branch as the product decision and made the row
+// narrate it: `고정 · X (저장값 Y 대신)` on the left tag and `⚠ 고정된 공급자가 저장값을 덮음`
+// on the right. B0001 quoted both back ("멘트 주절주절 있는거 싫어하는거 알면서") and added the
+// real complaint: `연계는 쳐 되어있지도 않고`. NR0003 §4 found the circular step — the pin those
+// two sentences explained was created by the ORDINARY selector, not by anyone asking for a
+// force-all, so the stored step provider was being cancelled by a plain default pick.
 //
-// The second half is §4-5's other decision: `touchedSeqs` was ONE set for both the mention
-// input and the provider select, so typing a sentence also froze that row's provider against
-// the next plan re-read. It is two sets now.
+// 0448 removes the cause instead of the wording: an ordinary pick no longer pins (§2), so
+// there is no displaced value to narrate and both strings are deleted with their renderers.
+// What survives here is the boundary — a stored row still names its stored provider, and an
+// EXPLICIT force-all names one effective provider per row, once.
+//
+// The second half is 0444 §4-5's other decision, untouched: `touchedSeqs` was ONE set for both
+// the mention input and the provider select, so typing a sentence also froze that row's
+// provider against the next plan re-read. It is two sets now.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
@@ -109,45 +114,25 @@ beforeEach(() => {
 })
 afterEach(() => { document.body.innerHTML = '' })
 
-describe('ContinuousWorkDialog pin-over-stored disclosure (0444 T0007 §5-2)', () => {
-  it('names the pinned provider AND the stored value it displaced', async () => {
-    mountDialog({ providerPinned: true })
+describe('ContinuousWorkDialog provider disclosure (0448 T0005 §4)', () => {
+  // Rewritten from 0444's "says nothing extra when the pin agrees with the stored value",
+  // which injected `providerPinned` as a stand-in for an ordinary selection. §6: an ordinary
+  // selection must not be read as a pin at all — it is the default for rows that stored
+  // nothing, so a row that DID store a provider keeps naming that one.
+  it('treats an ordinary selection as a default, so a stored row still names its stored provider', async () => {
+    mountDialog({ selectedProvider: 'other', providerPinned: false })
     await flushPromises()
 
-    const tag = providerTags()[0]
-    expect(tag).toBeDefined()
-    expect(tag.textContent).toBe(i18n.global.t(
-      'main.continuous_work.provider_tag_pinned_over_stored',
-      { name: 'Default Provider', stored: 'Stored Provider' },
-    ))
-    // Both halves have to be readable on the row — a tag that only names the winner does not
-    // tell the person what changed.
-    expect(tag.textContent).toContain('Default Provider')
-    expect(tag.textContent).toContain('Stored Provider')
-  })
-
-  it('marks that tag with its own CSS class', async () => {
-    mountDialog({ providerPinned: true })
-    await flushPromises()
-    // Re-query rather than reusing a wrapper handle: a DOMWrapper's classes() goes stale.
-    expect(providerTags()[0].classList.contains('wsp-prov-tag--pinned')).toBe(true)
-    expect(providerTags()[0].classList.contains('wsp-prov-tag')).toBe(true)
-  })
-
-  it('says nothing extra when the pin agrees with the stored value', async () => {
-    const rows = planRows()
-    rows[0].provider_id = 'default'
-    rows[0].provider_display_name = 'Default Provider'
-    mountDialog({ rows, providerPinned: true })
-    await flushPromises()
-
-    const tag = providerTags()[0]
-    // Positive control: the row DOES render a tag, so "the new copy is absent" cannot be a
-    // typo'd selector silently passing.
-    expect(tag.textContent).toBe(
-      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Default Provider' }),
+    const tags = providerTags()
+    // Row 1 stores 'stored'; row 2 stores nothing and falls back to the ordinary selection.
+    // Both are drawn, so neither assertion can pass on an empty query.
+    expect(tags[0].textContent).toBe(
+      i18n.global.t('main.continuous_work.provider_tag_stored', { name: 'Stored Provider' }),
     )
-    expect(tag.classList.contains('wsp-prov-tag--pinned')).toBe(false)
+    expect(tags[1].textContent).toBe(
+      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Other Provider' }),
+    )
+    expect(tags[0].textContent).not.toContain('Other Provider')
   })
 
   it('keeps the plain stored tag when nothing is pinned', async () => {
@@ -161,17 +146,47 @@ describe('ContinuousWorkDialog pin-over-stored disclosure (0444 T0007 §5-2)', (
     expect(tag.classList.contains('wsp-prov-tag--pinned')).toBe(false)
   })
 
-  it('badges the override table row whose stored provider the pin displaced', async () => {
+  // Replaces the three deleted 0444 tests (`names the pinned provider AND the stored value it
+  // displaced`, `marks that tag with its own CSS class`, `badges the override table row whose
+  // stored provider the pin displaced`) with the one boundary §4-2 keeps: even under an
+  // EXPLICIT force-all the row states the effective provider once, and no second element
+  // repeats it.
+  it('names one effective provider per row under an explicit force-all, with no displaced-value copy', async () => {
+    mountDialog({ providerPinned: true })
+    await flushPromises()
+
+    const tag = providerTags()[0]
+    expect(tag).toBeDefined()
+    expect(tag.textContent).toBe(
+      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Default Provider' }),
+    )
+    expect(tag.textContent).not.toContain('Stored Provider')
+    expect(tag.classList.contains('wsp-prov-tag--pinned')).toBe(false)
+
+    await openProviders()
+    // The right-hand table said the same thing a second time. Row 1's stored provider is
+    // registered and row 2 stores nothing, so neither carries a badge now.
+    expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
+    // Positive control for that zero: the selects ARE rendered, one per execution row.
+    expect(document.querySelectorAll('.cwd-override-select .aip-select-input')).toHaveLength(2)
+  })
+
+  // B0001 transcribed both sentences off the screen. They are gone from the catalogue, so
+  // this reads the rendered Korean dialog rather than an i18n key that no longer resolves.
+  it('leaves neither transcribed pin sentence anywhere in the Korean dialog', async () => {
+    i18n.global.locale.value = 'ko'
     mountDialog({ providerPinned: true })
     await flushPromises()
     await openProviders()
 
-    const badges = [...document.querySelectorAll('.cwd-filled-badge')].map(node => node.textContent?.trim())
-    expect(badges).toContain(
-      i18n.global.t('main.continuous_work.sequence_provider_pin_overridden'),
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('저장값 Stored Provider 대신')
+    expect(body).not.toContain('고정된 공급자가 저장값을 덮음')
+    // Positive control: the Korean dialog really did render the row tag, so the two absences
+    // are not an empty document passing.
+    expect(body).toContain(
+      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Default Provider' }),
     )
-    // The row with no stored provider is not displacing anything, so it gets no badge.
-    expect(badges).toHaveLength(1)
   })
 })
 
