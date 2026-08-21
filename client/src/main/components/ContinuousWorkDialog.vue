@@ -218,7 +218,6 @@
                         class="cwd-filled-badge"
                         :class="{
                           'cwd-stored-provider--unavailable': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_unavailable',
-                          'cwd-stored-provider--pin-overridden': providerBadgeKey(row.item) === 'main.continuous_work.sequence_provider_pin_overridden',
                         }"
                       >
                         {{ t(providerBadgeKey(row.item)) }}
@@ -326,7 +325,10 @@ const emit = defineEmits<{
   // 0234 B0001 RC3: propagate a provider change back to the store-owning parent.
   'update:provider': [value: string]
   // 0442 B0001: 프로바이더 탭에서 보이는 고정 배지·해제 단추는 없앴지만, 스토어를 가진
-  // 부모와의 이벤트 계약은 그대로 둔다(T0004 §1 — 고정의 저장 수명과 해제 경로는 불변).
+  // 부모와의 이벤트 계약은 그대로 둔다(T0004 §1 — 고정의 해제 경로는 불변).
+  // 0448 T0005 §2-2: 이 다이얼로그의 `update:provider`는 일반 선택(selectProvider)일 뿐이고,
+  // force-all은 aiProvider 스토어의 forceProviderForAllSteps로만 켜진다. 이 화면에는 force를
+  // 켜는 조작이 없다(§7-3 "일반 UI에는 force 조작을 새로 노출하지 않는다").
   'clear-provider-pin': []
   // Proceed to the warning/consent gate with the chosen run parameters.
   // fromDecision = true ⇒ the workflow is not decided yet; the run starts FROM the
@@ -692,23 +694,19 @@ function storedProviderValue(item: WorkflowStepItem): string {
 
 function providerBadgeKey(item: WorkflowStepItem): string {
   if (overrides.value[item.item_seq] !== undefined) return ''
-  if (props.providerPinned) {
-    // 0444 T0007 (NR0003 §4-5): a pin used to blank this column outright, so the table gave
-    // no sign that the row had a stored provider of its own being set aside. An unusable
-    // stored provider still reports itself first — that is the more urgent of the two facts.
-    if (item.provider_id && item.provider_registered === false) {
-      return 'main.continuous_work.sequence_provider_unavailable'
-    }
-    const displaced = storedProviderItem(item)
-    return displaced && (displaced.provider_id ?? '') !== props.selectedProvider
-      ? 'main.continuous_work.sequence_provider_pin_overridden'
-      : ''
-  }
+  // 0448 T0005 §4-1 (B0001 "멘트 주절주절 있는거 싫어하는거 알면서"): the
+  // "⚠ 고정된 공급자가 저장값을 덮음" badge is gone. It existed to narrate a state that no
+  // longer happens — an ordinary provider pick no longer forces every step (§2), so a stored
+  // provider is not displaced and there is nothing to warn about. §4-2: an unregistered /
+  // inactive stored provider keeps its badge, because that one is actionable.
   if (item.provider_id) {
     return item.provider_registered === false
       ? 'main.continuous_work.sequence_provider_unavailable'
       : ''
   }
+  // Under an explicit force-all the row runs the forced provider, so it did not inherit the
+  // paired step's value and must not claim it did.
+  if (props.providerPinned) return ''
   return storedProviderItem(item)
     ? 'main.continuous_work.sequence_provider_inherited'
     : ''
@@ -764,7 +762,7 @@ const selectedProviderName = computed(() =>
 // same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
 // In-range steps all get the tag (gated on `inRangeSteps`, wider than the now execution-only
 // `providerRows`); a step past the target still gets none (it never runs).
-function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean; pinned?: boolean } | null {
+function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean } | null {
   if (!inRangeSteps.value.some(s => s.item_seq === item.item_seq)) return null
   const stepNo = executionSteps.value.findIndex(s => s.item_seq === item.item_seq)
   const overrideId = overrides.value[item.item_seq]
@@ -775,27 +773,14 @@ function stepProviderTag(item: WorkflowStepItem): { text: string; override: bool
     if (!name) return null
     return { text: t('main.continuous_work.provider_tag_override', { step: stepNo + 1, name }), override: true }
   }
+  // 0448 T0005 §4-1/§4-2 (B0001 "고정 xxx (저장값 xxx 대신)"): the row names the ONE provider
+  // that will actually run, once. The "…(저장값 … 대신)" half is deleted rather than reworded:
+  // an ordinary selection is no longer a force-all (§2), and under an explicit force-all the
+  // stored value is not a fact the person has to act on. A per-step override above still wins,
+  // and a plain stored row below still says so.
   if (props.providerPinned) {
     const name = selectedProviderName.value
     if (!name) return null
-    // 0444 T0007 (NR0003 §4-5): the pin really does beat a row's stored provider — that is
-    // what ai_invoke_service.start_run() does for a continuous run, and NR0003 §2-5 re-ran it
-    // to be certain. Flipping this side to "stored wins" would leave the screen showing one
-    // provider while another one runs, which is the worse defect. What was actually wrong is
-    // that the swap happened in silence, so the row now names BOTH: the pin that won and the
-    // stored value it displaced.
-    const displaced = storedProviderItem(item)
-    const displacedId = displaced?.provider_id ?? ''
-    if (displaced && displacedId !== props.selectedProvider) {
-      return {
-        text: t('main.continuous_work.provider_tag_pinned_over_stored', {
-          name,
-          stored: displaced.provider_display_name || displacedId,
-        }),
-        override: false,
-        pinned: true,
-      }
-    }
     return { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
   }
   const stored = storedProviderItem(item)
@@ -1032,9 +1017,6 @@ watch(presetActive, (active) => {
 .cwd-preset-refresh { background:var(--surface-h); justify-content:flex-start; }
 .cwd-filled-badge { flex:0 0 auto; font-size:.61rem; color:#0f766e; background:#ccfbf1; border-radius:99px; padding:2px 5px; }
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
-/* 0444 T0007: the pin-displaced-a-stored-provider badge gets its own modifier, so a test can
-   tell it apart from the unavailable one. */
-.cwd-stored-provider--pin-overridden { color:var(--warning); background:var(--warning-l); }
 /* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */
 .cwd-note-unset-flag { color:#b45309; font-weight:700; }
 .modal-cwd {

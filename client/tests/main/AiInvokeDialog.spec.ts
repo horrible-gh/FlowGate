@@ -266,7 +266,11 @@ describe('AiInvokeDialog continuous target', () => {
     wrapper.unmount()
   })
 
-  it('forwards an explicit provider pin on the autoStart request', async () => {
+  // 0448 T0005 §6. The old single test called ONLY selectProvider('aip_one') and then
+  // expected provider_pinned:true — it had frozen NR0003 §6-1's defect (an ordinary pick
+  // silently becoming a force-all) into a contract. The two request states are asserted
+  // separately now, each through the API that is allowed to produce it.
+  async function loadProviders() {
     getRequest.mockResolvedValueOnce({
       data: {
         ok: true,
@@ -280,10 +284,11 @@ describe('AiInvokeDialog continuous target', () => {
     })
     const providerStore = useAiProviderStore()
     await providerStore.loadForProject('flowgate')
-    providerStore.selectProvider('aip_one')
-    postRequest.mockClear()
+    return providerStore
+  }
 
-    const wrapper = mountDialog({
+  function mountContinuousAutoStart() {
+    return mountDialog({
       actionScope: 'new',
       docRef: ROOT,
       sequenceDocRef: ROOT,
@@ -291,6 +296,27 @@ describe('AiInvokeDialog continuous target', () => {
       initialTargetSeq: 4,
       autoStart: true,
     })
+  }
+
+  it('forwards an ordinary provider selection without a pin on the autoStart request', async () => {
+    const providerStore = await loadProviders()
+    providerStore.selectProvider('aip_one')
+    postRequest.mockClear()
+
+    const wrapper = mountContinuousAutoStart()
+    await flushPromises()
+
+    expect(startBody()).toMatchObject({ provider_id: 'aip_one', mode: 'continuous' })
+    expect(startBody()).not.toHaveProperty('provider_pinned')
+    wrapper.unmount()
+  })
+
+  it('forwards an explicit force-all as a provider pin on the autoStart request', async () => {
+    const providerStore = await loadProviders()
+    providerStore.forceProviderForAllSteps('aip_one')
+    postRequest.mockClear()
+
+    const wrapper = mountContinuousAutoStart()
     await flushPromises()
 
     expect(startBody()).toMatchObject({

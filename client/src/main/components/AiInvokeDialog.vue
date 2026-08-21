@@ -316,6 +316,14 @@ async function start() {
       action_scope: scope,
       mode: mode.value,
     }
+    // 0448 T0005 §5-1. Two independent request states, never one:
+    //   provider_id            — the ordinary selection (aiProviderStore.selectProvider), i.e.
+    //                            the default for hops that stored no provider of their own.
+    //   provider_pinned=true   — force-all, and ONLY when the run went through the explicit
+    //                            aiProviderStore.forceProviderForAllSteps API. `pinned` can no
+    //                            longer be set by a selector's change event, so an ordinary
+    //                            pick sends provider_id alone and the server keeps running each
+    //                            step's stored provider (start_run tier 3 beats tier 4).
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (aiProviderStore.pinned) body.provider_pinned = true
     if (props.module != null) body.module = props.module
@@ -329,6 +337,10 @@ async function start() {
       body.continuation_target_seq = target?.seq ?? null
       body.continuation_review_mode = !!props.continuationReviewMode
       body.continuation_instruction_mode = props.continuationInstructionMode
+      // 0448 T0005 §5-2: item_seq -> provider_id, independent of provider_id/provider_pinned
+      // above. One fixed rule for the empty case — an empty map is OMITTED, exactly like the
+      // note map below, so "no per-step override" reaches the server as an absent key and never
+      // as `{}`. A present map is forwarded verbatim (the only producer of this wire key).
       if (props.providerOverrides && Object.keys(props.providerOverrides).length) {
         body.continuation_provider_overrides = props.providerOverrides
       }

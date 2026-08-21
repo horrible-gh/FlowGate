@@ -114,35 +114,43 @@ describe('ContinuousWorkDialog stored provider states (0408)', () => {
     expect((await confirm(wrapper)).providerOverrides).toEqual({})
   })
 
-  it('shows a pinned provider on every row while keeping per-step overrides highest', async () => {
+  // 0448 T0005 §6: 0444's single `shows a pinned provider on every row while keeping per-step
+  // overrides highest` is split in two. The pin-on-all + pin-overrode-the-stored-value badge
+  // half is deleted with the copy it asserted; the per-step-override-is-highest half is a test
+  // of its own, because it is a contract in its own right and outlives the pin question.
+  it('keeps a per-step override highest, above both the stored value and the run selection', async () => {
+    const wrapper = mountDialog('default', items, false)
+    await flushPromises()
+    await openProviders()
+
+    // Row 1 shows its stored provider (an ordinary selection does not displace it), row 2
+    // stores nothing and takes the selection, row 3's stored provider is unusable.
+    expect([...selects()].map(select => select.value)).toEqual(['stored', 'default', 'default'])
+
+    selects()[0].value = 'other'
+    selects()[0].dispatchEvent(new Event('change'))
+    await flushPromises()
+    // The explicit per-step choice is what rides the request, for the row that had a stored
+    // provider of its own.
+    expect((await confirm(wrapper)).providerOverrides).toEqual({ 1: 'other' })
+  })
+
+  it('keeps a per-step override highest even under an explicit force-all', async () => {
     const wrapper = mountDialog('default', items, true)
     await flushPromises()
     await openProviders()
 
-    expect([...selects()].map(select => select.value)).toEqual(['default', 'default', 'default'])
-    // 0444 T0007 (NR0003 §4-5). Old expectation: a pin blanked this column outright, 0 badges.
-    // New expectation: the column says what the pin displaced. Basis — NR0003 §2-5 re-ran
-    // ai_invoke_service.start_run() and confirmed a pinned provider really does override each
-    // row's stored one when the run starts, so blanking the column left the person with no way
-    // to see that a stored value had been set aside. Row 1 holds a usable stored provider ⇒ the
-    // new "pin overrode it" badge; row 3's stored provider is unregistered ⇒ the older, more
-    // urgent "unavailable" still wins; row 2 stores nothing ⇒ still no badge at all.
-    expect([...document.querySelectorAll('.cwd-filled-badge')].map(node => node.textContent?.trim()))
-      .toEqual([
-        i18n.global.t('main.continuous_work.sequence_provider_pin_overridden'),
-        i18n.global.t('main.continuous_work.sequence_provider_unavailable'),
-      ])
+    selects()[0].value = 'other'
+    selects()[0].dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect((await confirm(wrapper)).providerOverrides).toEqual({ 1: 'other' })
+
     // 0442 B0001: 프로바이더 탭은 셀렉터와 단계 행만 남는다 — 실행 요약 줄도, 고정 배지도,
     // 해제 단추도 렌더링되지 않는다.
     expect(document.querySelector('.cwd-provider-row')).not.toBeNull()
     expect(document.querySelector('.cwd-provider-summary')).toBeNull()
     expect(document.querySelector('.cwd-provider-pin-badge')).toBeNull()
     expect(document.querySelector('.cwd-provider-pin-clear')).toBeNull()
-
-    selects()[0].value = 'other'
-    selects()[0].dispatchEvent(new Event('change'))
-    await flushPromises()
-    expect((await confirm(wrapper)).providerOverrides).toEqual({ 1: 'other' })
   })
 
   // 0442 B0001 재반려 2 ("예전처럼 되돌리라고"): 없앤 문구가 어떤 형태로도 돌아오면 안 된다.
