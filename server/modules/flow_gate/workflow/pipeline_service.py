@@ -629,6 +629,25 @@ def transition_document_review(
         action_code=f"review_{action}",
     )
 
+    # 0449 T0004 item 5.2 (NR0003 E4): this is the forward way home. A rewind leaves a return
+    # point behind whose snapshot documents are all pending_review; approving the last of them
+    # here means the rewound range has been rebuilt without restore, so the ledger no longer
+    # describes a state anyone can return to. Clearing it at THIS write boundary is what lets
+    # the read APIs report only coherent return points (item 5.4). The helper refuses to act
+    # while any snapshot document is still pending (live or nested rewind) and ignores
+    # approvals of never-snapshotted types (R/B, Q, AC, M). Best effort: the approval has
+    # already been written and must not be undone by a bookkeeping failure.
+    group_id = doc.get("group_id")
+    if next_status == "approved" and group_id:
+        from modules.flow_gate.services import workflow_rework_service
+
+        try:
+            workflow_rework_service.clear_return_point_if_complete(group_id, doc)
+        except Exception as exc:  # pragma: no cover - bookkeeping stays best-effort
+            _log.warning(
+                "[return point] cleanup after approving %s failed: %s", doc_id, exc, exc_info=True
+            )
+
     return updated
 
 

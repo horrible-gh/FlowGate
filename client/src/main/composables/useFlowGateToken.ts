@@ -80,6 +80,22 @@ export interface AdvanceFailure {
 }
 
 /**
+ * 0449 T0004 item 4 — ONE parser for every /workflow/advance refusal.
+ *
+ * The server names its refusal in `error` (`sequence_exhausted`, `head_in_progress`,
+ * `sequence_not_decided`, `internal_error`, …) and explains it in `detail`. Both advance
+ * callers run through here so neither can drift into swallowing a code: whatever the server
+ * refused with is what the user is told.
+ */
+export function parseAdvanceFailure(e: any): AdvanceFailure {
+  const data = e?.response?.data ?? {}
+  return {
+    code: String(data.error ?? data.code ?? 'issue_failed'),
+    message: data.detail ?? data.message,
+  }
+}
+
+/**
  * Decomposes canonical group_id (project.module.code) into { module, groupCode }.
  * If not in 3-part format, returns groupCode as-is.
  */
@@ -139,6 +155,13 @@ export function useFlowGateToken() {
   const { showToast } = useToast()
   const issuing = ref(false)
 
+  /** User-facing text for an advance refusal: the server's own code, plus its detail when
+   *  there is one. Never collapses to the generic "failed to issue token". */
+  function advanceFailureMessage(failure: AdvanceFailure): string {
+    const base = t('main.flow_gate_token.advance_failed', { code: failure.code })
+    return failure.message ? `${base} ${failure.message}` : base
+  }
+
   async function issueToken(params: TokenIssueParams): Promise<IssuedToken | null> {
     issuing.value = true
     try {
@@ -181,9 +204,20 @@ export function useFlowGateToken() {
           }
         } catch (advErr: any) {
           const status = advErr?.response?.status
-          // Auth errors should not fall through
+          // Auth errors keep their dedicated guidance (unchanged contract).
           if (status === 401 || status === 403) throw advErr
-          // Other advance errors fall back to /token/issue (legacy compat)
+          // 0449 T0004 item 4 (NR0003 E3): every other advance failure STOPS here.
+          //
+          // This used to fall through to /token/issue "for legacy compat". That fallback
+          // minted a token without advancing the head cell, so a real server refusal
+          // (409 sequence_exhausted / 409 head_in_progress / 500 internal_error) was erased
+          // from the screen and replaced by whatever the unrelated issue call did next —
+          // the reason the incident could not be told apart from "nothing happened".
+          // action_scope 'new'/unset + doc_ref means "advance the workflow": only an
+          // advance success counts as success. edit/chat scopes never enter this branch and
+          // still call /token/issue directly, exactly as before.
+          showToast(advanceFailureMessage(parseAdvanceFailure(advErr)), 'danger')
+          return null
         }
       }
       const {
@@ -231,53 +265,51 @@ export function useFlowGateToken() {
     }
   }
 
-  /**
-   * 0405 P0004 [copy mention — issues a token carrying the scope].
-   *
-   * issueToken falls back to /token/issue on advance's auth error. That fallback only
-   * mints a token without advancing the head cell, which runs directly counter to this
-   * screen's contract ("409 면 복사하지 않고 창을
-   * 열어 둔다" [on 409, don't copy — keep the dialog open]). So this path alone calls
-   * advance directly with no fallback, and returns the failure reason as-is instead of
-   * swallowing it.
-   */
-  async function advanceWithWorkPlanScope(params: {
-    docId: string
-    workPlanScope: WorkPlanScope
-    refDocIds?: string[]
-  }): Promise<{ token: IssuedToken | null; error: AdvanceFailure | null }> {
-    issuing.value = true
-    try {
-      const res = await postRequest<any>('/api/v1/workflow/advance', {
-        doc_id: params.docId,
-        ...(params.refDocIds?.length ? { ref_doc_ids: params.refDocIds } : {}),
-        work_plan_scope: params.workPlanScope,
-      })
-      const d = res.data as any
-      return {
-        token: {
-          raw_token: d.token,
-          token_id: d.token_id,
-          expires_at: d.expires_at,
-          scratch_dir: d.scratch_dir,
-          action_scope: d.action_scope ?? 'new',
-          doc_ref: d.doc_ref ?? params.docId,
-          mention: d.mention ?? null,
-          selected_docs: params.refDocIds,
-        },
-        error: null,
-      }
-    } catch (e: any) {
-      const data = e?.response?.data ?? {}
-      return {
-        token: null,
-        error: { code: String(data.error ?? data.code ?? 'issue_failed'), message: data.detail ?? data.message },
-      }
-    } finally {
-      issuing.value = false
-    }
-  }
-
+  /**
+   * 0405 P0004 [copy mention — issues a token carrying the scope].
+   *
+   * This screen's contract is "409 면 복사하지 않고 창을 열어 둔다" [on 409, don't copy —
+   * keep the dialog open], so it calls advance directly and returns the failure reason
+   * as-is. 0449 T0004 item 4 made the general issueToken() path no-fallback too, and the
+   * two now share parseAdvanceFailure(). The only difference left is delivery: this one
+   * HANDS BACK the AdvanceFailure so the dialog can stay open and render it inline, while
+   * issueToken() toasts it and returns null.
+   */
+  async function advanceWithWorkPlanScope(params: {
+    docId: string
+    workPlanScope: WorkPlanScope
+    refDocIds?: string[]
+  }): Promise<{ token: IssuedToken | null; error: AdvanceFailure | null }> {
+    issuing.value = true
+    try {
+      const res = await postRequest<any>('/api/v1/workflow/advance', {
+        doc_id: params.docId,
+        ...(params.refDocIds?.length ? { ref_doc_ids: params.refDocIds } : {}),
+        work_plan_scope: params.workPlanScope,
+      })
+      const d = res.data as any
+      return {
+        token: {
+          raw_token: d.token,
+          token_id: d.token_id,
+          expires_at: d.expires_at,
+          scratch_dir: d.scratch_dir,
+          action_scope: d.action_scope ?? 'new',
+          doc_ref: d.doc_ref ?? params.docId,
+          mention: d.mention ?? null,
+          selected_docs: params.refDocIds,
+        },
+        error: null,
+      }
+    } catch (e: any) {
+      // Same parser as issueToken()'s advance branch — one reading of a refusal, so the two
+      // callers cannot drift into naming the same server error differently.
+      return { token: null, error: parseAdvanceFailure(e) }
+    } finally {
+      issuing.value = false
+    }
+  }
+
   // Review request: issue a token bound to doc_id and get a "please review this doc"
   // mention (read → evaluate → submit verdict via inbox action:review). Distinct from
   // issueToken/advance, which hands off CREATING the next document.

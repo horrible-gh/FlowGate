@@ -863,6 +863,7 @@ export default {
     },
     error: {
       tree_load_failed: 'Failed to load tree.',
+      tree_refresh_failed: 'Failed to refresh the tree. The content below is the last one loaded.',
       file_load_failed: 'Failed to load file.',
       file_too_large: 'File too large (over 1M)',
     },
@@ -1194,6 +1195,7 @@ export default {
     },
     flow_gate_token: {
       issue_failed: 'Failed to issue token.',
+      advance_failed: 'Could not advance to the next step. (reason: {code})',
       login_required: 'Login required.',
       permission_denied: 'No permission to issue tokens. (document.read required)',
     },

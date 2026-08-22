@@ -190,6 +190,12 @@ export const useExplorerStore = defineStore('explorer', () => {
   // badge sync happens here once instead of in each component.
   const gitStatus = ref<Record<string, GitProjectStatus | null>>({})
   const gitStatusInflight = new Map<string, Promise<GitProjectStatus | null>>()
+  // 0449 T0004 item 2 (NR0003 E2 fallout): the same inflight-join contract for the group
+  // tree. Two refreshes a few hundred ms apart (a reject's git_worktree_ready, then the
+  // re-approval's doc_review_status_changed) each owned a first GET *and* a retry GET, so a
+  // single reopen could put four multi-MB tree requests on the wire. Keyed by cacheKey(pid),
+  // which already carries the branch — requests for a different branch never join.
+  const groupTreeInflight = new Map<string, Promise<GroupNode[]>>()
   // 0186 L0006 §2.4 — checkout-free group-branch explorer caches, keyed by the
   // branch HEAD commit so a branch advance auto-invalidates the stale snapshot.
   // activeGroupBranch: currently viewed group_id in the file explorer (null = base).
@@ -246,6 +252,10 @@ export const useExplorerStore = defineStore('explorer', () => {
     }
   }
 
+  /** Fetch a project's group tree. `force` means "bypass the completed cache" — it does NOT
+   *  mean "own a private request": a caller arriving while a fetch for the same project+branch
+   *  is still running joins that fetch (and the single getTreeWithRetry retry inside it), and
+   *  receives the same resolved nodes or the same error. 0449 T0004 item 2. */
   async function fetchGroupTree(pid: string, force = false): Promise<GroupNode[]> {
     const key = cacheKey(pid)
     if (!force && groupTreeCache.value[key]) return groupTreeCache.value[key]
@@ -254,19 +264,28 @@ export const useExplorerStore = defineStore('explorer', () => {
       groupTreeCache.value[key] = MOCK_GROUP_NODES
       return MOCK_GROUP_NODES
     }
-    loadingGroup.value = true
-    groupError.value = null
-    try {
-      const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}`)
-      const nodes = (res.data as any).data.nodes as GroupNode[]
-      groupTreeCache.value[key] = nodes
-      return groupTreeCache.value[key]
-    } catch (e) {
-      groupError.value = 'tree_load_failed'
-      throw e
-    } finally {
-      loadingGroup.value = false
-    }
+    const joined = groupTreeInflight.get(key)
+    if (joined) return joined
+    const request = (async () => {
+      loadingGroup.value = true
+      groupError.value = null
+      try {
+        const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}`)
+        const nodes = (res.data as any).data.nodes as GroupNode[]
+        groupTreeCache.value[key] = nodes
+        return groupTreeCache.value[key]
+      } catch (e) {
+        groupError.value = 'tree_load_failed'
+        throw e
+      } finally {
+        // Cleared on BOTH outcomes, before any joined caller is resumed, so the next
+        // reload starts a fresh request instead of re-joining a settled one.
+        loadingGroup.value = false
+        groupTreeInflight.delete(key)
+      }
+    })()
+    groupTreeInflight.set(key, request)
+    return request
   }
 
   /** Fetch (and share) a project's git/status. Always hits the server — the

@@ -18,13 +18,16 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Query, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from modules.flow_gate.services import route_logging
 from modules.flow_gate.services.auth_outbound import verify_bearer
 
-_log = logging.getLogger(__name__)
+# 0449 T0004 item 6: through route_logging, so these records actually reach logs/default.log
+# instead of propagating to a handler-less root (see that module's docstring).
+_log = route_logging.get_logger(__name__)
 from modules.flow_gate.services.work_plan_sequence_service import NoteTooLong
 from modules.flow_gate.services.workflow_decision_service import (
     SequenceChanged,
@@ -447,6 +450,106 @@ def post_workflow_advance(
     if isinstance(auth, JSONResponse):
         return auth
 
+    # 0449 T0004 item 6 (NR0003 §3): advance leaves a trail from here on. The investigation
+    # could not establish whether the incident's 08:19 request even reached this handler,
+    # because a 400/409 refusal is ordinary control flow and logged nothing anywhere. Now the
+    # arrival and the outcome are both recorded under a shared correlation id, so this path
+    # and /token/issue can be told apart in the operational record.
+    #
+    # 0449 TR0005 rev1 — `received` is written HERE, before any other work, and every later
+    # statement runs inside the failed-guard below. rev0 opened the guard only around
+    # advance_workflow(), which left four ways to end as a 500 with no `received`/`failed`
+    # pair in the record: the instruction-mode normalisation, the _db_documents.get_by_id()
+    # lookup, the disposed/active-run checks, and any non-ValueError raised by the
+    # auto-approve validation. Those are exactly the DB and helper-service calls most likely
+    # to fail in an incident, so the blind spot sat over the cases item 6.1 exists to explain.
+    _log_advance = _AdvanceLog(doc_id, route_logging.correlation_id(request))
+    _log_advance("received")
+    try:
+        return _advance_after_auth(doc_id, request, body, auth=auth, log=_log_advance)
+    except HTTPException:
+        # A deliberate HTTP outcome raised by a dependency, not an unexpected failure:
+        # it keeps its own status and must not be relabelled `failed`/500 here.
+        raise
+    except Exception as exc:
+        # 0449 TR0005 rev2 — no `_log.exception` here. It writes a SECOND record whose
+        # `exc_info` the formatter expands into the full traceback plus `str(exc)`, and that
+        # text is not ours: an exception raised inside the mint or render helpers carries
+        # whatever they interpolated, a raw token included. That record went straight into
+        # logs/default.log AROUND route_logging's closed field list, which item 6.2 exists to
+        # close. The triage value is kept through the declared `fault` field: exception types
+        # and code coordinates, never a message.
+        _log_advance(
+            "failed",
+            status=500,
+            code="internal_error",
+            fault=route_logging.exception_signature(exc),
+            level=logging.ERROR,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "detail": str(exc)},
+        )
+
+
+class _AdvanceLog:
+    """One advance request's log writer, shared by the guard and the handler body.
+
+    ``group_id`` starts unknown — reading it costs a DB round trip, and 0449 TR0005 rev1 puts
+    the ``received`` line *before* that round trip so a failing lookup still leaves a pair.
+    The handler sets it as soon as the document is in hand and every later line carries it;
+    ``doc_id`` and the correlation id are on all of them either way, so the pair is always
+    joinable.
+    """
+
+    def __init__(self, doc_id: str, cid: str):
+        self.doc_id = doc_id
+        self.cid = cid
+        self.group_id: str | None = None
+
+    def __call__(
+        self,
+        event: str,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        fault: str | None = None,
+        level: int = logging.INFO,
+    ) -> None:
+        route_logging.log_route_event(
+            _log,
+            endpoint=route_logging.ADVANCE_ENDPOINT,
+            event=event,
+            status=status,
+            code=code,
+            doc_id=self.doc_id,
+            group_id=self.group_id,
+            correlation_id=self.cid,
+            fault=fault,
+            level=level,
+        )
+
+    def refused(self, status: int, code: str, content: dict) -> JSONResponse:
+        self("refused", status=status, code=code)
+        return JSONResponse(status_code=status, content=content)
+
+
+def _advance_after_auth(
+    doc_id: str,
+    request: Request,
+    body: Optional[AdvanceRequest],
+    *,
+    auth: dict,
+    log: _AdvanceLog,
+) -> JSONResponse:
+    """Everything advance does once the bearer check has passed.
+
+    Split out of :func:`post_workflow_advance` so that ONE ``try`` covers all of it (item 6.1).
+    The wire contract is unchanged: every ``return`` below is the response the caller used to
+    get from the same point in the original single function.
+    """
+    _refused = log.refused
+
     issued_to: str = auth["issued_to"]
     api_base_url = _build_api_base(request)
     ref_doc_ids = body.ref_doc_ids if body else None
@@ -462,11 +565,15 @@ def post_workflow_advance(
     work_plan_scope = body.work_plan_scope if body else None
 
     _pre_doc = _db_documents.get_by_id(doc_id)
+    log.group_id = (_pre_doc or {}).get("group_id")
+
     _disposed = _disposed_group_response(doc_id, _pre_doc)
     if _disposed is not None:
+        log("refused", status=_disposed.status_code, code="group_disposed")
         return _disposed
     _active_run = _active_ai_run_response_for_user(_pre_doc, auth)
     if _active_run is not None:
+        log("refused", status=_active_run.status_code, code="group_mutation_blocked")
         return _active_run
 
     # 0352 T0004 §2/§3.4: this is a FRESH client request naming the selection, so the full
@@ -482,9 +589,10 @@ def post_workflow_advance(
                 continuation_auto_approve_item_seqs, doc_id, continuation_target_seq,
             )
     except ValueError as exc:
-        return JSONResponse(
-            status_code=422,
-            content={"error": "invalid_auto_approve_item_seq", "detail": str(exc)},
+        return _refused(
+            422,
+            "invalid_auto_approve_item_seq",
+            {"error": "invalid_auto_approve_item_seq", "detail": str(exc)},
         )
 
     try:
@@ -504,30 +612,30 @@ def post_workflow_advance(
     except LookupError as exc:
         code, _, val = str(exc).partition(":")
         if code == "doc_not_found":
-            return JSONResponse(
-                status_code=404,
-                content={"error": "doc_not_found", "doc_id": val},
-            )
-        return JSONResponse(status_code=404, content={"error": str(exc)})
+            return _refused(404, "doc_not_found", {"error": "doc_not_found", "doc_id": val})
+        return _refused(404, str(exc), {"error": str(exc)})
     except ValueError as exc:
         msg = str(exc)
         if msg.startswith("sequence_not_decided:"):
             doc_id_val = msg.split(":", 1)[1]
-            return JSONResponse(
-                status_code=400,
-                content={"error": "sequence_not_decided", "doc_id": doc_id_val},
+            return _refused(
+                400,
+                "sequence_not_decided",
+                {"error": "sequence_not_decided", "doc_id": doc_id_val},
             )
         if msg.startswith("sequence_exhausted:"):
             doc_id_val = msg.split(":", 1)[1]
-            return JSONResponse(
-                status_code=409,
-                content={"error": "sequence_exhausted", "doc_id": doc_id_val},
+            return _refused(
+                409,
+                "sequence_exhausted",
+                {"error": "sequence_exhausted", "doc_id": doc_id_val},
             )
         if msg.startswith("head_in_progress:"):
             parts = msg.split(":", 2)
-            return JSONResponse(
-                status_code=409,
-                content={
+            return _refused(
+                409,
+                "head_in_progress",
+                {
                     "error": "head_in_progress",
                     "head_type": parts[1] if len(parts) > 1 else None,
                     "head_label": parts[2] if len(parts) > 2 else None,
@@ -535,20 +643,14 @@ def post_workflow_advance(
             )
         if msg.startswith("group_not_found:"):
             doc_id_val = msg.split(":", 1)[1]
-            return JSONResponse(
-                status_code=404,
-                content={"error": "group_not_found", "doc_id": doc_id_val},
+            return _refused(
+                404,
+                "group_not_found",
+                {"error": "group_not_found", "doc_id": doc_id_val},
             )
-        return JSONResponse(
-            status_code=400,
-            content={"error": msg},
-        )
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={"error": "internal_error", "detail": str(exc)},
-        )
+        return _refused(400, msg.split(":", 1)[0], {"error": msg})
 
+    log("advanced", status=201)
     return JSONResponse(status_code=201, content=result)
 
 

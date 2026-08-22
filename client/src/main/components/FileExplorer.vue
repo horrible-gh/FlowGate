@@ -72,7 +72,19 @@
         <div v-else-if="!projectId" class="sdb-state">
           {{ t('main.state.no_project') }}
         </div>
-        <ul v-else class="tree-ul">
+        <template v-else>
+        <!-- 0449 T0004 item 1.2 — same initial-load / refresh-failure split as GroupExplorer:
+             a failed background refresh keeps the rendered file tree (and the open create /
+             upload dialogs the nodes own) and reports itself in a strip above them. -->
+        <div
+          v-if="refreshError"
+          class="sdb-state sdb-state--refresh-error"
+          data-test="file-explorer-refresh-error"
+        >
+          <span>{{ t('main.error.tree_refresh_failed') }}</span>
+          <button data-test="file-explorer-refresh-retry" @click="reload">{{ t('main.explorer.retry') }}</button>
+        </div>
+        <ul class="tree-ul">
           <li
             class="tree-node"
             @contextmenu.prevent.stop="onRootContextMenu($event)"
@@ -102,6 +114,7 @@
             </ul>
           </li>
         </ul>
+        </template>
       </div>
     </template>
   </div>
@@ -169,7 +182,10 @@ const { collectDropFiles, uploadFiles } = useFileUpload()
 
 const nodes = ref<FileNode[]>([])
 const loading = ref(false)
+// 0449 T0004 item 1.2 — blocking (nothing rendered yet) vs non-blocking (a background refresh
+// failed over an already-rendered tree). See GroupExplorer for the full contract.
 const error = ref(false)
+const refreshError = ref(false)
 const showRootCtx = ref(false)
 const rootCtxX = ref(0)
 const rootCtxY = ref(0)
@@ -234,7 +250,10 @@ function groupLabel(s: { group_id: string; status: string }): string {
   return s.status && s.status !== 'none' ? `${n} (${s.status})` : n
 }
 
-async function loadGroupSlots(pid: string) {
+// Returns whether the slot list on screen can be trusted as current. 0449 TR0005 rev1:
+// the caller needs that answer, because the slot list is what decides WHICH tree the
+// reload below fetches.
+async function loadGroupSlots(pid: string): Promise<boolean> {
   try {
     // 0282 NR0003 finding 3: fetched via the explorer store so concurrent callers
     // (header menu, status panel, SSE triggers) share one git/status request.
@@ -243,11 +262,22 @@ async function loadGroupSlots(pid: string) {
       ? (status!.slots as Array<{ group_id: string; branch: string; status: string }>)
       : []
   } catch {
-    groupSlots.value = []
+    // A transient git/status failure is NOT evidence that the selected group vanished.
+    // Emptying the list here used to null `selectedGroup`, and the callers read that as
+    // "base branch" and fetched the base tree — the exact removal item 1.2 forbids, and
+    // with no error shown.
+    //
+    // 0449 TR0005 rev2: nothing is discarded on failure now, not even when the tree is
+    // still empty. rev1 kept the reconciled state only while a tree was on screen, which
+    // left the FIRST load still clearing the selection and falling through to base — and a
+    // remount that had preserved `activeGroupBranch` lost the group's entry point that way.
+    // The boolean is the whole signal, and both callers act on it.
+    return false
   }
   if (selectedGroup.value && !groupSlots.value.some((s) => s.group_id === selectedGroup.value)) {
     selectedGroup.value = null
   }
+  return true
 }
 
 // P0005 §9 — fetch the group's finalize state for the header status badge
@@ -335,10 +365,30 @@ async function reload() {
   // and never surfaced newly-created ones. loadGroupSlots also clears a
   // selectedGroup that has since vanished, so the branch/base decision below
   // reads the reconciled value.
-  await loadGroupSlots(props.projectId)
   const silent = nodes.value.length > 0
+  const slotsOk = await loadGroupSlots(props.projectId)
   if (!silent) loading.value = true
-  error.value = false
+  else error.value = false
+  // 0449 TR0005 rev1 — the slot fetch is part of the refresh, not a free prelude to it.
+  // If it failed while a tree is on screen we do not know whether this project is still
+  // on a group branch, so proceeding would swap the rendered group tree for the base one.
+  // Treat it as the refresh failure it is: keep the tree, raise the non-blocking notice,
+  // and let the same retry button try the whole thing again.
+  //
+  // 0449 TR0005 rev3 — that bail-out only fired when `silent`. An empty explorer (the
+  // initial load, or a retry from the initial-load error screen with nothing rendered yet)
+  // fell through to the tree fetch below regardless of `slotsOk`: a persistently-failing
+  // git/status was ignored as long as the independent tree endpoint happened to answer, and
+  // the retry cleared the blocking error over a tree it never verified against git/status.
+  // The `!silent` branch here is the same guard the mount watcher already applies (see the
+  // rev2 comment further down): no rendered tree survives, so an unverified one must not
+  // replace the blocking error either.
+  if (!slotsOk) {
+    if (silent) refreshError.value = true
+    else error.value = true
+    loading.value = false
+    return
+  }
   try {
     if (selectedGroup.value) {
       const r = await explorerStore.fetchGroupBranchTree(props.projectId, selectedGroup.value)
@@ -358,8 +408,12 @@ async function reload() {
         explorerStore.pendingSelectFilePath = null
       }
     }
+    error.value = false
+    refreshError.value = false
   } catch {
-    error.value = true
+    // Already-rendered tree survives a failed refresh; only an empty explorer blocks.
+    if (silent) refreshError.value = true
+    else error.value = true
   } finally {
     loading.value = false
   }
@@ -554,14 +608,30 @@ watch(() => props.projectId, async (pid, prevPid) => {
   if (prevPid !== undefined && prevPid !== pid) {
     selectedGroup.value = null
     explorerStore.activeGroupBranch = null
+    // The previous project's slots are not this one's, and since rev2 the catch below no
+    // longer empties them, so a failing git/status must not leave them in the dropdown.
+    groupSlots.value = []
   }
   groupCommit.value = null
   groupGitState.value = null
-  if (!pid) { nodes.value = []; groupSlots.value = []; return }
+  if (!pid) { nodes.value = []; groupSlots.value = []; refreshError.value = false; return }
+  // Project switch = initial load for the new project: blocking loading/error is correct.
+  nodes.value = []
   loading.value = true
   error.value = false
+  refreshError.value = false
   try {
-    await loadGroupSlots(pid)
+    // 0449 TR0005 rev2 — the slot fetch decides WHICH tree this is, on the first load just as
+    // much as in reload(). rev1 threw this boolean away here, so a failing git/status fell
+    // through to the base branch below: with the tree GET succeeding (the two fail
+    // independently) the explorer drew a full base tree with no error at all, and a remount
+    // that had preserved `activeGroupBranch` lost the group's badge, dropdown and write gate
+    // with it. A first load has no rendered tree to keep, so the honest state is the blocking
+    // error and its retry — the initial-load half of item 1.2's split.
+    if (!await loadGroupSlots(pid)) {
+      error.value = true
+      return
+    }
     if (selectedGroup.value) {
       explorerStore.activeGroupBranch = selectedGroup.value
       const r = await explorerStore.fetchGroupBranchTree(pid, selectedGroup.value)

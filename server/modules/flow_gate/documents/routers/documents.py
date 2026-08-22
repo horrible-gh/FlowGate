@@ -15,7 +15,6 @@ RBAC: assumes rbac.decorators.require_permission.
 from __future__ import annotations
 
 import json as _json
-import hashlib as _hashlib
 import logging as _logging
 import re as _re
 from pathlib import Path
@@ -1611,176 +1610,18 @@ class _RestoreBody(BaseModel):
     destination_seq: Optional[int] = None
 
 
-_RETURN_POINT_NON_RESTORE_TYPES = tuple(sorted(WORKFLOW_ROOT_TYPES | {"Q", "AC"} | AUTO_COMPLETE_TYPES))
-_FINGERPRINT_IGNORED_FRONTMATTER = {
-    "doc_review_status",
-    "updated_at",
-    "created_at",
-    "revision_no",
-}
-
-
-def _normalise_markdown_for_fingerprint(content: str) -> bytes:
-    text = content.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.split("\n")
-    if lines and lines[0].strip() == "---":
-        end_idx = None
-        for idx in range(1, len(lines)):
-            if lines[idx].strip() == "---":
-                end_idx = idx
-                break
-        if end_idx is not None:
-            frontmatter = []
-            for line in lines[1:end_idx]:
-                key = line.split(":", 1)[0].strip().lower()
-                if key in _FINGERPRINT_IGNORED_FRONTMATTER:
-                    continue
-                frontmatter.append(line)
-            lines = ["---", *frontmatter, "---", *lines[end_idx + 1:]]
-            text = "\n".join(lines)
-    return (text.rstrip() + "\n").encode("utf-8")
-
-
-def _content_fingerprint(doc: dict) -> str | None:
-    try:
-        path = _document_file_path(doc)
-        if not path.is_file():
-            return None
-        raw = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-    return _hashlib.sha256(_normalise_markdown_for_fingerprint(raw)).hexdigest()
-
-
-def _record_return_point(
-    group_id: str, docs: list[dict], *, root_prev_status: str,
-) -> dict | None:
-    from modules.flow_gate.db import workflow_return_points as _db_rp
-
-    # A return point is the workflow position you can walk "home" to after a rewind. It is captured
-    # whenever a rewind leaves behind an approved baseline to walk back to — whether the workflow was
-    # complete (wf_done) or still mid-flight (wf_in_progress). The pre-rewind root status is stored so
-    # a later restore-to-front is honest: a genuinely-done workflow is re-declared wf_done, a mid-flight
-    # one is restored to wf_in_progress rather than falsely declared done. The old rule recorded a point
-    # only when the root was wf_done, which hid the reverse time machine from every in-progress workflow
-    # — the actual "reverse time machine impossible" symptom investigated in B0001/0158.
-    existing = _db_rp.get_by_group(group_id)
-    if existing is not None and _db_rp.current_pending_min_seq(existing["id"]) is None:
-        # A lingering return point whose snapshot was fully re-approved through the normal pipeline
-        # (the worker redid the work forward instead of using restore). It no longer describes an
-        # active rewind, and keeping it would extend a stale baseline and preserve an outdated
-        # root_prev_status. Discard it so this rewind starts a clean capture. An active (still-pending)
-        # return point is left alone: this is then a nested rewind that must preserve the first
-        # capture's baseline and home status (0142 T0013 invariant).
-        _db_rp.delete(existing["id"])
-        existing = None
-
-    # The return point is the APPROVED baseline you are rewinding away from — the "home"
-    # position a later restore walks back to. Only genuinely-approved steps belong in it.
-    # Snapshotting a step that is currently pending_review (a step left pending by an earlier
-    # cycle) would record prev_status=pending_review and later "restore" it to pending — a no-op
-    # that also lets reached_front lie about the root state. That laundered a pending status into the
-    # next cycle's "original" state, and once tangled every restore became a permanent no-op. Recording
-    # only approved steps closes the laundering at the source; docs already in the return point are
-    # preserved by add_doc_if_absent, so nested rewinds keep the true approved baseline (0142 T0013).
-    affected = [
-        d for d in docs
-        if d.get("type_code") not in _RETURN_POINT_NON_RESTORE_TYPES
-        and (d.get("seq") or 0) > 0
-        and (d.get("doc_review_status") or "approved") == "approved"
-    ]
-    if not affected:
-        return existing
-
-    front_seq = max(int(d.get("seq") or 0) for d in affected)
-    rp = _db_rp.ensure(group_id, front_seq, root_prev_status)
-    for d in affected:
-        fingerprint = _content_fingerprint(d)
-        if fingerprint is None:
-            # Conservative sentinel: later restore will stop at this document because
-            # no real SHA-256 content digest can equal this value.
-            fingerprint = "!" * 64
-        _db_rp.add_doc_if_absent(
-            return_point_id=rp["id"],
-            doc_id=d["doc_id"],
-            seq=int(d.get("seq") or 0),
-            prev_status=d.get("doc_review_status") or "approved",
-            fingerprint=fingerprint,
-        )
-    return _db_rp.get_by_group(group_id)
-
-
-def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
-    from modules.flow_gate.db import documents as _db_docs
-    if doc.get("type_code") in WORKFLOW_ROOT_TYPES:
-        return doc
-    roots = _db_docs.list_documents(
-        project_id=doc.get("project_id"),
-        group_id=doc.get("group_id"),
-        type_code="R",
-        limit=1,
-    )
-    if not roots:
-        roots = _db_docs.list_documents(
-            project_id=doc.get("project_id"),
-            group_id=doc.get("group_id"),
-            type_code="B",
-            limit=1,
-        )
-    return roots[0] if roots else None
-
-
-def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
-    """The doc_ids that actually fill this group's workflow-sequence slots.
-
-    A "workflow step" is a document wired into the sequence (its result_doc_id) — NOT
-    merely any document that shares the group's seq space. Groups accumulate phantom
-    documents (superseded revisions, abandoned TRs) whose type is a normal workflow type
-    but that never filled a slot; a raw ``seq >= target`` filter sweeps those in and
-    corrupts the rewind + return-point (0142 rework: live group 0094 had an abandoned
-    0003-TR that inflated restore counts and got reset spuriously).
-
-    Returns the membership set when the group has a decided sequence, or ``None`` when no
-    sequence is decided (caller falls back to the legacy type+seq filter).
-    """
-    if root_doc is None:
-        return None
-    from modules.flow_gate.db import workflow_sequences as _db_wfseq
-    seq = _db_wfseq.get_sequence_by_doc_id(root_doc["doc_id"])
-    if seq is None:
-        return None
-    items = _db_wfseq.get_sequence_items(seq["id"])
-    return {it["result_doc_id"] for it in items if it.get("result_doc_id")}
-
-
-def _return_point_payload(group_id: str) -> dict:
-    from modules.flow_gate.db import workflow_return_points as _db_rp
-
-    # 0291 T2: this used to run four queries (return point → front document → minimum pending
-    # seq → snapshot count). The last three merely derive from the first one's id/front_seq, so
-    # they were folded into one statement — 4 → 1 per document response. See db/workflow_return_points.summary().
-    rp = _db_rp.summary(group_id)
-    if rp is None:
-        return {
-            "exists": False,
-            "front_seq": None,
-            "front_label": None,
-            "restorable_count": 0,
-            "current_min_seq": None,
-            "destination_default": None,
-            "destination_min": None,
-        }
-
-    current_min = rp["current_min_seq"]
-    return {
-        "exists": True,
-        "front_seq": rp["front_seq"],
-        "front_label": rp["front_title"] or rp["front_type_code"],
-        "restorable_count": rp["restorable_count"],
-        "current_min_seq": current_min,
-        "destination_default": rp["front_seq"],
-        "destination_min": current_min,
-    }
+# 0449 T0004 item 5.1 (NR0003 E5): the return-point helpers this router used to define itself
+# — _record_return_point / _return_point_payload / _group_workflow_root_doc, plus the
+# fingerprint pair they leaned on — were byte-for-byte copies of the ones in
+# services/workflow_rework_service.py. Two copies meant a rewind fix could land in one and
+# miss the other; the actual HTTP reopen already delegated to the service
+# (reopen_to_target), so the router's copies were the ones drifting out of use. They are gone:
+# the service owns the contract and this module calls it.
+from modules.flow_gate.services.workflow_rework_service import (  # noqa: E402
+    content_fingerprint as _content_fingerprint,
+    group_workflow_root_doc as _group_workflow_root_doc,
+    return_point_payload as _return_point_payload,
+)
 
 
 @router.post("/workflow/final-approval", status_code=201)

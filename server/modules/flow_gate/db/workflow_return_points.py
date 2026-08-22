@@ -167,7 +167,21 @@ def summary(group_id: str) -> Optional[dict]:
 
 
 def delete(return_point_id: int) -> None:
-    get_store()._execute(
+    """Delete a return point AND its snapshot rows.
+
+    The snapshot table declares ``ON DELETE CASCADE``, but SQLite only honours it while
+    ``PRAGMA foreign_keys`` is on — which connection.transaction() sets and a bare
+    ``_execute`` does not. 0449 T0004 item 5.2 deletes return points from the approval path,
+    which is not always inside that transaction, so the child rows are removed explicitly.
+    Doing it in both places is harmless (the cascade then finds nothing left to do) and it
+    keeps an orphaned snapshot from outliving its ledger on either dialect.
+    """
+    store = get_store()
+    store._execute(
+        "DELETE FROM workflow_return_point_docs WHERE return_point_id = ?",
+        [return_point_id],
+    )
+    store._execute(
         "DELETE FROM workflow_return_points WHERE id = ?",
         [return_point_id],
     )

@@ -119,6 +119,7 @@
             v-if="isNextFinalApproval"
             class="btn btn-primary btn-sm"
             type="button"
+            data-test="review-action-final-approval"
             :disabled="canNextAction === false || isGroupBusy"
             @click="$emit('next-action')"
           >
