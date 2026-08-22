@@ -439,6 +439,48 @@ _REMINDER_TEXT = {
     ),
 }
 
+# Edit-only (rejection rework) addendum: the run ends with the turn and is never
+# auto re-invoked, and long verification must run synchronously to completion
+# inside the turn rather than being handed to the background while waiting on a
+# completion notification (NR0003 §6-1 (a)(b) / T0005 group 0446). This is appended
+# AFTER the existing Q-registration guidance (_CLARIFY_TEXT / _REMINDER_TEXT), never
+# in place of it — a rejection rework still keeps the human-gated Q-registration
+# right (see build_mention's is_edit branch). Unlike _CONTINUOUS_TEXT this block is
+# NOT a full replacement block: reusing _CONTINUOUS_TEXT verbatim would carry its
+# "do NOT stop / decide autonomously instead of asking" language, which conflicts
+# with that same Q right. English keywords (background, synchronously) are kept in
+# every locale so the directive reads identically regardless of language.
+_EDIT_TURN_END_TEXT = {
+    "ko": (
+        "이 실행은 현재 턴이 끝나면 종료(end)되며, 시스템은 이 실행을 자동으로 다시 "
+        "호출하지 않습니다(will NOT auto re-invoke).\n"
+        "장시간 검증(예: 전체 테스트 스위트)을 백그라운드(background)로 넘기고 완료 "
+        "알림을 기다리며 이 턴을 끝내지 마십시오 — 그런 대기는 정당한 대기로 인식되지 "
+        "않고 무출력 재시도로 오판됩니다. 검증은 이 턴 안에서 동기적으로(synchronously) "
+        "끝까지 실행해 결과(성공/실패)를 확인한 뒤 제출하십시오.\n"
+        "확신이 서지 않으면 위 Q 등록 절차를 그대로 따르십시오."
+    ),
+    "ja": (
+        "この実行は現在のターンが終わると終了(end)し、システムはこの実行を自動的に "
+        "再度呼び出すことはありません(will NOT auto re-invoke)。\n"
+        "長時間の検証(例: 全体テストスイート)をバックグラウンド(background)に回し、完了 "
+        "通知を待ってこのターンを終了しないでください — そうした待機は正当な待機と認識 "
+        "されず、無出力の再試行と誤判定されます。検証はこのターン内で同期的に "
+        "(synchronously)最後まで実行し、結果(成功/失敗)を確認してから提出してください。\n"
+        "確信が持てない場合は、上記のQ登録手順にそのまま従ってください。"
+    ),
+    "en": (
+        "This run ENDS when the current turn ends, and the system will NOT auto "
+        "re-invoke it.\n"
+        "Do NOT hand off long-running verification (e.g. the full test suite) to the "
+        "background and end this turn while waiting for a completion notification — "
+        "that kind of wait is not recognized as legitimate and is misjudged as a "
+        "silent (no-output) retry. Run verification to completion synchronously "
+        "within this turn and confirm the result (pass/fail) before submitting.\n"
+        "If you are unsure, follow the Q-registration procedure above as usual."
+    ),
+}
+
 
 # ── Continuous (unmanned) work guide (group 0051 R0001 / NR0003 §2-3, §4-3) ──
 # R0001 requires that, in continuous (unmanned) mode, the Q/no-choices guidance is
@@ -634,12 +676,16 @@ def _continuous_review_reminder(base: str, anchor_doc_id: str, locale: str = "ko
 
 
 def _clarification_guide_body(
-    base: str, anchor_doc_id: str, raw_token: str, locale: str = "ko"
+    base: str,
+    anchor_doc_id: str,
+    raw_token: str,
+    locale: str = "ko",
+    is_edit: bool = False,
 ) -> str:
     loc = template_provision.normalize_locale(locale)
     txt = _CLARIFY_TEXT[loc]
     pointer = _QUESTION_FORMAT_POINTER[loc].format(url=f"{base}/help/items/question")
-    return (
+    body = (
         f"{txt['lead']}\n"
         "\n"
         f"POST {base}/q/{anchor_doc_id}/questions\n"
@@ -650,13 +696,28 @@ def _clarification_guide_body(
         "\n"
         f"{txt['positive']}"
     )
+    # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions additionally carry
+    # the turn-end / no-background-wait addendum after the Q guidance above.
+    if is_edit:
+        body += f"\n\n{_EDIT_TURN_END_TEXT[loc]}"
+    return body
 
 
-def _no_choices_reminder(base: str, anchor_doc_id: str, locale: str = "ko") -> str:
+def _no_choices_reminder(
+    base: str,
+    anchor_doc_id: str,
+    locale: str = "ko",
+    is_edit: bool = False,
+) -> str:
     """Recency repeat of the no-choices guard for the bottom of a long prompt (NR0003)."""
     loc = template_provision.normalize_locale(locale)
     post = f"POST {base}/q/{anchor_doc_id}/questions"
-    return _REMINDER_TEXT[loc].format(post=post)
+    text = _REMINDER_TEXT[loc].format(post=post)
+    # T0005 (group 0446 / NR0003 §6-1): rework (edit) mentions repeat the turn-end /
+    # no-background-wait addendum here too, at the bottom-of-prompt recency slot.
+    if is_edit:
+        text += f"\n\n{_EDIT_TURN_END_TEXT[loc]}"
+    return text
 
 
 # Other worker-facing strings that used to be Korean-fixed regardless of locale
@@ -1746,7 +1807,7 @@ def build_mention(
         s8_body = _continuous_guide_body(locale, review_mode=False)
     else:
         s8_header = "Clarification guide"
-        s8_body = _clarification_guide_body(base, prev_doc_id_value, raw_token, locale)
+        s8_body = _clarification_guide_body(base, prev_doc_id_value, raw_token, locale, is_edit=is_edit)
 
     # ── Document template (group 0372 set 2): one help pointer, never the body ──
     # The full D/P/L/DB template now lives behind the worker-authenticated help item.
@@ -1845,7 +1906,7 @@ def build_mention(
     elif continuous_mode:
         sections.append(_section("Reminder", _continuous_guide_body(locale, review_mode=False)))
     else:
-        sections.append(_section("Reminder", _no_choices_reminder(base, prev_doc_id_value, locale)))
+        sections.append(_section("Reminder", _no_choices_reminder(base, prev_doc_id_value, locale, is_edit=is_edit)))
 
     return "\n\n".join(sections)
 

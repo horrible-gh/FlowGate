@@ -973,21 +973,21 @@ describe('ContinuousWorkDialog', () => {
       window.localStorage.clear()
     })
 
-    it('defaults to 60 minutes and reports 3600 seconds on confirm', async () => {
+    it('defaults to 120 minutes and reports 7200 seconds on confirm', async () => {
       getRequest.mockResolvedValue(seqResponse())
       const wrapper = mountDialog()
       await flushPromises()
 
       const select = document.querySelector('.cwd-timeout-select') as HTMLSelectElement
       expect(select.querySelectorAll('option')).toHaveLength(7)
-      expect(select.value).toBe('60')
+      expect(select.value).toBe('120')
 
       const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
       const payload = wrapper.emitted('confirm')![0][0] as any
-      expect(payload.stepTimeoutSec).toBe(3600)
+      expect(payload.stepTimeoutSec).toBe(7200)
 
       wrapper.unmount()
     })

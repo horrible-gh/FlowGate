@@ -7,6 +7,11 @@ values for the array fields (reached_doc_ids / fallback_history / register_error
 -- this module owns JSON (de)serialization and the write-time value caps from
 DB0008 2.4, so a read always yields back the same shape it was given, or [] on a
 corrupt/legacy value (DB0008 5.1 invariant 10).
+
+0446 T0016 (migration 086) adds the exit diagnostics the same way: the timeout kind,
+its one-line human reading, the two output tails and the unfinished-source path list.
+Before it, all four existed only on the in-memory run, so a restarted process could
+not tell "worked and ran out of clock" from "hung" for the hop it just lost.
 """
 from __future__ import annotations
 
@@ -21,6 +26,13 @@ from .connection import get_store, iso_days_ago
 _REACHED_DOC_IDS_MAX_ITEMS = 200
 _HISTORY_MAX_ITEMS = 20
 _HISTORY_MAX_SERIALIZED_BYTES = 16384
+
+# 0446 T0016 2 and 5.2: the write-side floor for the exit diagnostics. The tails arrive
+# already cut to ai_invoke_service.OUTPUT_TAIL_BYTES and finalize already hands over at
+# most 20 paths -- these are not a second, looser budget but the same one restated where
+# the row is actually built, so no other caller can widen either of them.
+_OUTPUT_TAIL_MAX_CHARS = 8192
+_SOURCE_DIRTY_FILES_MAX_ITEMS = 20
 
 # DB0008 3.7: no scheduler exists in this deployment, so retention is swept from the
 # write path -- at most once a day, mirroring the _cleanup_retained_scratches(project_id)
@@ -55,12 +67,19 @@ _BOUND_COLUMNS = (
     "prompt_user_message_sha256",
     "prompt_final_length",
     "prompt_final_sha256",
+    # -- 0446 T0016 2 (migration 086) --------------------------------------
+    # Why this hop's clock ran out, said once for a machine (timeout_kind) and once for a
+    # person (timeout_diagnosis), plus what the worker last printed and which files it left
+    # behind. `timeout_kind` NULL on a timeout row is not "unknown kind" -- it means the
+    # watchdog left no mark at all (a legacy row, or a plain communicate() expiry).
+    "timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail",
+    "source_dirty_files",
     "created_at", "updated_at",
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
 _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
-                 "auto_handled_item_seqs")
+                 "auto_handled_item_seqs", "source_dirty_files")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
                 "continuation_instruction_mode_fallback_applied",
                 "prompt_common_default_applied")
@@ -80,6 +99,12 @@ def _dump_array(field: str, value: Any) -> Optional[str]:
             items = items[-_REACHED_DOC_IDS_MAX_ITEMS:]  # drop the oldest (head)
         return json.dumps(items, ensure_ascii=False)
 
+    if field == "source_dirty_files":
+        # Capped at the HEAD, unlike the two histories above: finalize sorts the spilled
+        # paths and keeps the first 20, so the 20 a reader gets back have to be that same
+        # first 20. Taking the tail here would answer a different question than the run did.
+        return json.dumps(items[:_SOURCE_DIRTY_FILES_MAX_ITEMS], ensure_ascii=False)
+
     # fallback_history / register_errors: item cap, then byte cap, oldest dropped
     # first, with the drop count recorded at the head so a truncated history reads
     # as truncated instead of "that's all there ever was" (DB0008 2.4).
@@ -92,6 +117,13 @@ def _dump_array(field: str, value: Any) -> Optional[str]:
     if dropped:
         items = [{"reason": "truncated", "dropped": dropped}, *items]
     return json.dumps(items, ensure_ascii=False)
+
+
+def _clip_tail(value: Any) -> Optional[str]:
+    """Last `_OUTPUT_TAIL_MAX_CHARS` characters, or None. Never widens what it was given."""
+    if value is None:
+        return None
+    return str(value)[-_OUTPUT_TAIL_MAX_CHARS:]
 
 
 def _load_array(raw: Any) -> list:
@@ -185,6 +217,15 @@ def upsert(row: dict[str, Any]) -> None:
         "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
         "prompt_final_length": int(row.get("prompt_final_length") or 0),
         "prompt_final_sha256": row.get("prompt_final_sha256"),
+        # -- 0446 T0016 3.2: every caller that has no diagnostics -- a spawn failure, an
+        # API-mode run, the orphaned-lease record written from a bare lease row -- reaches
+        # here through .get() and stores NULL. Absence is a value, and it must never be the
+        # reason a finished hop fails to leave a row behind.
+        "timeout_kind": row.get("timeout_kind"),
+        "timeout_diagnosis": row.get("timeout_diagnosis"),
+        "stdout_tail": _clip_tail(row.get("stdout_tail")),
+        "stderr_tail": _clip_tail(row.get("stderr_tail")),
+        "source_dirty_files": _dump_array("source_dirty_files", row.get("source_dirty_files")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -234,6 +275,33 @@ def get(run_id: str) -> Optional[dict]:
     row = get_store()._fetch_one(
         "SELECT * FROM ai_invoke_runs WHERE run_id = ?", [run_id]
     )
+    return _row_to_payload(row) if row is not None else None
+
+
+def latest_finished_for_group(group_id: str, doc_ref: Optional[str] = None) -> Optional[dict]:
+    """The ONE most recent finished run of a group (0446 T0016 4.1).
+
+    Ordered exactly like :func:`list_by_group` -- newest `started_at`, then `run_id` as the
+    tie-break -- and limited to one row on purpose. The caller (the rework prompt) asks
+    "how did the run right before this one end?", so a row that is not the newest one must
+    not be able to answer: searching backwards for an older timeout would hand a worker a
+    handoff from a run that has already been superseded by a clean one.
+
+    `doc_ref`, when given, additionally pins the row to the same document, so a group whose
+    last run was on a different document does not leak that run's unfinished files here.
+    """
+    if doc_ref:
+        row = get_store()._fetch_one(
+            "SELECT * FROM ai_invoke_runs WHERE group_id = ? AND doc_ref = ? "
+            "ORDER BY started_at DESC, run_id DESC LIMIT 1",
+            [group_id, doc_ref],
+        )
+    else:
+        row = get_store()._fetch_one(
+            "SELECT * FROM ai_invoke_runs WHERE group_id = ? "
+            "ORDER BY started_at DESC, run_id DESC LIMIT 1",
+            [group_id],
+        )
     return _row_to_payload(row) if row is not None else None
 
 

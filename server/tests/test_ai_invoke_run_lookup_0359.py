@@ -356,3 +356,50 @@ def test_run_detail_route_returns_persisted_payload(client, monkeypatch):
     body = resp.json()
     assert body["persisted"] is True
     assert body["stop_code"] == "chain_completed"
+
+
+def test_rework_hint_route_reuses_previous_timeout_handoff_with_doc_scope(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ai_invoke_routes, "has_permission", lambda *a, **kw: True)
+
+    def _handoff(group_id, doc_ref):
+        seen.append((group_id, doc_ref))
+        return {"run_id": "aiv_prev", "timeout_kind": "no_progress"}
+
+    monkeypatch.setattr(ai_invoke_routes.ai_invoke_service,
+                        "previous_timeout_handoff", _handoff)
+    resp = _get(client, "/api/v1/ai-invoke/rework-hint",
+                group_id=GROUP, doc_ref=DOC_REF)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "timeout_kind": "no_progress"}
+    assert seen == [(GROUP, DOC_REF)]
+
+
+def test_rework_hint_route_returns_null_without_history(client, monkeypatch):
+    monkeypatch.setattr(ai_invoke_routes, "has_permission", lambda *a, **kw: True)
+    monkeypatch.setattr(ai_invoke_routes.ai_invoke_service,
+                        "previous_timeout_handoff", lambda group_id, doc_ref: None)
+
+    resp = _get(client, "/api/v1/ai-invoke/rework-hint",
+                group_id=GROUP, doc_ref=DOC_REF)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "timeout_kind": None}
+
+
+def test_rework_hint_route_requires_document_read_permission(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(ai_invoke_routes, "has_permission", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        ai_invoke_routes.ai_invoke_service,
+        "previous_timeout_handoff",
+        lambda *args: called.append(args),
+    )
+
+    resp = _get(client, "/api/v1/ai-invoke/rework-hint",
+                group_id=GROUP, doc_ref=DOC_REF)
+
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "permission_denied"
+    assert called == []

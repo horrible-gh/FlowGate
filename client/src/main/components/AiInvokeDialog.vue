@@ -58,6 +58,41 @@
                 <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_continuous_desc') }}</span>
               </span>
             </label>
+            <!-- 0446 NR0003 R5 / T0010 §3-6: how long this run may take. A rejection rework
+                 was pinned to exactly 60 minutes by the server's own formula
+                 (min(3600 × max(1, docs_target), 14400) with docs_target=1), so the person
+                 who knew the job was bigger had no way to say so. Both rework entry points —
+                 the rejection dialog's [AI 호출] (MainPanel.onRejectDialogInvokeAi) and the
+                 rejected-state action bar (ReviewActionBar → MainPanel.onReviewReworkInvokeAi)
+                 — open THIS dialog with action_scope='rework', so one condition covers both.
+                 Scoped to rework alone on purpose: this component is shared by chat / review /
+                 new / edit / vr_correction / next_step_message / design_handoff, and R5's
+                 evidence is about rework runs only.
+                 Same native-select combo pattern as ContinuousWorkDialog's duration section,
+                 with its OWN aiv-timeout-* classes — cwd-* rules are scoped to that component
+                 and would be dead selectors here. -->
+            <div
+              v-if="stepTimeoutActive"
+              class="aiv-timeout-group"
+              data-test="ai-invoke-step-timeout"
+            >
+              <div class="aiv-timeout-title">{{ t('main.ai_invoke_dialog.step_timeout_title') }}</div>
+              <label class="aiv-timeout-combo">
+                <select
+                  v-model="stepTimeoutMinutes"
+                  class="aiv-timeout-select"
+                  @change="recordStepTimeoutChoice"
+                  data-test="ai-invoke-step-timeout-select"
+                  :aria-label="t('main.ai_invoke_dialog.step_timeout_title')"
+                >
+                  <option v-for="opt in STEP_TIMEOUT_OPTIONS_MIN" :key="opt" :value="opt">
+                    {{ t('main.ai_invoke_dialog.step_timeout_option_minutes', { n: opt }) }}
+                  </option>
+                </select>
+                <AppIcon name="caret-down" class="aiv-timeout-caret" />
+              </label>
+              <p class="aiv-timeout-desc">{{ stepTimeoutDescription }}</p>
+            </div>
             <div v-if="canContinuous && mode === 'continuous' && actionScope === 'workflow_decide'" class="aiv-seq-row">
               <AppIcon name="fast-forward" />
               <span class="aiv-seq-hint">{{ t('main.ai_invoke_dialog.target_to_end_hint') }}</span>
@@ -110,6 +145,12 @@ import { useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
+import {
+  AI_INVOKE_STEP_TIMEOUT_KEY,
+  STEP_TIMEOUT_OPTIONS_MIN,
+  loadStoredStepTimeoutMin,
+  storeStepTimeoutMin,
+} from '../composables/useStepTimeout'
 
 const props = defineProps<{
   visible: boolean
@@ -139,10 +180,13 @@ const props = defineProps<{
   // hop, and item_seq -> note for steps the user singled out. Session-scoped, same as above.
   defaultMessage?: string
   messageOverrides?: Record<number, string>
-  // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
+  // flowgate.default.0400 M0005: the wall-clock budget (seconds) chosen in
   // ContinuousWorkDialog's time section. null/omitted ⇒ the server falls back to its own
   // default (this dialog's own continuous picker, reached without ContinuousWorkDialog, never
   // sets this).
+  // 0446 T0010 §3-6: when it IS supplied it outranks the local rework picker in start() —
+  // ContinuousWorkDialog collected that choice and owns it. A 'rework' mount never receives
+  // one (MainPanel passes no preset for that scope), so the two never actually collide.
   continuationStepTimeoutSec?: number | null
   autoStart?: boolean
   // Parallel-invoke extras (group 0223): context the matching copy-mention flow
@@ -201,6 +245,91 @@ const singleStepNoteActive = computed(() =>
   mode.value === 'single' &&
   ['new', 'next_step_message', 'design_handoff'].includes(props.actionScope),
 )
+
+// 0446 NR0003 R5 / T0010 §3-6: the run-duration picker. ONE condition, and it covers both
+// rejection-rework entry points because both open this dialog with the same scope — the
+// rejection dialog's [AI 호출] (MainPanel.onRejectDialogInvokeAi) and the rejected-state
+// action bar (ReviewActionBar → MainPanel.onReviewReworkInvokeAi). Widening it to
+// `mode === 'single'` alone would bolt an unjustified control onto seven other screens.
+const stepTimeoutActive = computed(() =>
+  mode.value === 'single' && props.actionScope === 'rework',
+)
+// Its OWN storage key, never ContinuousWorkDialog's (T0010 §3-5): an unmanned chain's per-hop
+// budget and a one-shot rework's budget are different decisions, and one must not silently
+// become the other's default.
+const stepTimeoutMinutes = ref(loadStoredStepTimeoutMin(AI_INVOKE_STEP_TIMEOUT_KEY))
+const recentSingleRunMinutes = ref<number[]>([])
+const timeoutRecommendationMin = ref<number | null>(null)
+let timeoutContextGeneration = 0
+let stepTimeoutUserChanged = false
+
+const stepTimeoutDescription = computed(() => {
+  if (timeoutRecommendationMin.value != null) {
+    return t('main.ai_invoke_dialog.step_timeout_recommend', {
+      n: timeoutRecommendationMin.value,
+    })
+  }
+  const values = recentSingleRunMinutes.value
+  if (values.length === 0) return t('main.ai_invoke_dialog.step_timeout_desc')
+  if (values.length <= 9) {
+    return t('main.ai_invoke_dialog.step_timeout_recent_values', {
+      n: values.length,
+      values: values.join(' / '),
+    })
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle]
+  return t('main.ai_invoke_dialog.step_timeout_recent_summary', {
+    n: values.length,
+    median,
+    max: sorted[sorted.length - 1],
+  })
+})
+
+function recordStepTimeoutChoice() {
+  // DOM change means the person chose this value. Programmatic no-progress recommendations
+  // update the ref but never emit change, so they cannot become the next dialog's default.
+  stepTimeoutUserChanged = true
+  storeStepTimeoutMin(AI_INVOKE_STEP_TIMEOUT_KEY, stepTimeoutMinutes.value)
+}
+
+async function loadReworkTimeoutContext() {
+  const generation = ++timeoutContextGeneration
+  stepTimeoutUserChanged = false
+  const stored = loadStoredStepTimeoutMin(AI_INVOKE_STEP_TIMEOUT_KEY)
+  stepTimeoutMinutes.value = stored
+  recentSingleRunMinutes.value = []
+  timeoutRecommendationMin.value = null
+  const groupId = aiInvokeGroupId(props.project, props.module, props.group)
+  const [runsResult, hintResult] = await Promise.allSettled([
+    getRequest<any>('/api/v1/ai-invoke/runs', { project: props.project, limit: 100 }),
+    getRequest<any>('/api/v1/ai-invoke/rework-hint', {
+      group_id: groupId,
+      doc_ref: props.docRef,
+    }),
+  ])
+  if (generation !== timeoutContextGeneration || !props.visible || !stepTimeoutActive.value) return
+
+  if (runsResult.status === 'fulfilled') {
+    const items = Array.isArray(runsResult.value.data?.items) ? runsResult.value.data.items : []
+    recentSingleRunMinutes.value = items
+      .filter((run: any) => run?.mode === 'single' && run?.status === 'finished')
+      .map((run: any) => Number(run?.duration_ms))
+      .filter((durationMs: number) => Number.isFinite(durationMs) && durationMs >= 0)
+      .map((durationMs: number) => Math.round(durationMs / 60_000))
+  }
+
+  if (hintResult.status === 'fulfilled' && hintResult.value.data?.timeout_kind === 'no_progress') {
+    const options = STEP_TIMEOUT_OPTIONS_MIN as readonly number[]
+    const currentIndex = options.indexOf(stored)
+    const recommended = options[Math.min(currentIndex + 1, options.length - 1)]
+    timeoutRecommendationMin.value = recommended
+    if (!stepTimeoutUserChanged) stepTimeoutMinutes.value = recommended
+  }
+}
 
 async function loadSingleStepNote() {
   singleStepNoteLoading.value = true
@@ -342,6 +471,22 @@ async function start() {
         body.continuation_auto_approve_item_seqs = props.continuationAutoApproveItemSeqs
       }
     }
+    // 0446 NR0003 R5 / T0010 §3-6: the single rejection rework's own budget, sent OUTSIDE the
+    // continuous block above so the two paths stay independent. The field keeps its
+    // `continuation_` name because T0010 §3-1 forbids inventing a second one — the server
+    // reads it mode-independently (_resolve_timeout_sec puts an in-range explicit pick above
+    // the mode branch), and ai_invoke_routes already validated it against 1800..14400 without
+    // ever looking at `mode`.
+    //
+    // Priority, written down because it is not obvious: a preset handed in by
+    // ContinuousWorkDialog OUTRANKS this dialog's local pick. That path collected its own
+    // choice and owns it. A rework never receives one today (MainPanel.openAiInvokeDialog is
+    // called with no preset for 'rework', so the prop arrives null), so this is the documented
+    // order rather than a live branch — but without it the next person wires it backwards.
+    if (stepTimeoutActive.value) {
+      body.continuation_step_timeout_sec =
+        props.continuationStepTimeoutSec ?? stepTimeoutMinutes.value * 60
+    }
     const res = await postRequest<any>('/api/v1/ai-invoke/start', body)
     const data = res.data
     const groupId = aiInvokeGroupId(props.project, props.module, props.group)
@@ -400,6 +545,25 @@ watch(
   [() => props.visible, singleStepNoteActive, () => props.sequenceDocRef, () => props.docRef],
   ([visible, active]) => {
     if (visible && active) void loadSingleStepNote()
+  },
+  { immediate: true },
+)
+
+watch(
+  [
+    () => props.visible,
+    stepTimeoutActive,
+    () => props.project,
+    () => props.module,
+    () => props.group,
+    () => props.docRef,
+  ],
+  ([visible, active]) => {
+    if (visible && active) {
+      void loadReworkTimeoutContext()
+    } else {
+      timeoutContextGeneration += 1
+    }
   },
   { immediate: true },
 )
@@ -486,6 +650,53 @@ watch(
   background: var(--surface-h);
   border-radius: var(--r-sm);
   padding: 8px 10px;
+}
+/* 0446 T0010 §3-6: the rework run-duration combo. Visually the same native-select pattern as
+   ContinuousWorkDialog's .cwd-timeout-* section, but with its own class names — .cwd-* rules
+   are scoped to that component's data-v hash and would never reach this markup. */
+.aiv-timeout-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.aiv-timeout-title {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--text-m);
+}
+.aiv-timeout-combo {
+  position: relative;
+  display: flex;
+}
+.aiv-timeout-select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .82rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.aiv-timeout-caret {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-m);
+  font-size: .7rem;
+  pointer-events: none;
+}
+.aiv-timeout-desc {
+  margin: 0;
+  font-size: .76rem;
+  color: var(--text-m);
+  line-height: 1.4;
 }
 .aiv-error {
   font-size: .8rem;

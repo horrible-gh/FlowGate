@@ -119,6 +119,20 @@ class FakeDocs:
         self.reveal_after_calls: int | None = None
         self.pending: list[dict] = []
         self.calls = 0
+        # 0446 T0008 §4-2: the `edit` scope is judged by `_probe_doc_revision`, i.e. by this
+        # number going up — the FakeDocs counterpart of the `revision_no = revision_no + 1`
+        # the inbox's `_handle_edit` performs. A rework worker's ONLY visible product.
+        self.revision_no = 3
+        self.get_by_id_calls = 0
+        self._late_revision_in: int | None = None
+
+    def arm_late_revision(self, after_calls: int = 1) -> None:
+        """Raise the revision after `after_calls` more reads.
+
+        The scoped equivalent of `reveal_after_calls`: a write that lands between the judge's
+        probe and the moment a second worker would start (L0007 §5 / T0008 §3-4).
+        """
+        self._late_revision_in = after_calls
 
     def get_documents_by_group_id(self, group_id):
         self.calls += 1
@@ -132,7 +146,15 @@ class FakeDocs:
         return max((d.get("seq") or 0 for d in self.docs), default=1)
 
     def get_by_id(self, doc_id):
-        return {"doc_id": doc_id, "id": 77, "branch": "main", "group_id": GROUP}
+        self.get_by_id_calls += 1
+        if self._late_revision_in is not None:
+            if self._late_revision_in <= 0:
+                self.revision_no += 1
+                self._late_revision_in = None
+            else:
+                self._late_revision_in -= 1
+        return {"doc_id": doc_id, "id": 77, "branch": "main", "group_id": GROUP,
+                "revision_no": self.revision_no}
 
 
 @pytest.fixture
@@ -223,6 +245,32 @@ def _start(env, *, target=2, provider_id=None, provider_pinned=None,
     )
 
 
+def _start_rework(env, **kw):
+    """A 반려 재작업 run exactly as `ai_invoke_routes` starts one (0446 T0008).
+
+    `_TOKEN_SCOPE` folds rework / vr_correction / work_plan_fill / plain edit all into the
+    `edit` token scope (T0008 §3-9), so from the engine's side there is one shape and this
+    helper is it: mode="single", action_scope="edit", no caller `completion_oracle`, and —
+    for rework specifically — no `issue_builder` (the route declares none, §3-6).
+    """
+    return svc.start_run(
+        project_id="flowgate",
+        module="default",
+        group_id=GROUP,
+        doc_ref=DOC_REF,
+        action_scope="edit",
+        mode="single",
+        continuation_target_seq=None,
+        continuation_review_mode=False,
+        continuation_instruction_mode=None,
+        continuation_locale=None,
+        issued_to="usr_admin",
+        api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+        mention_builder=lambda raw, scratch: "## prompt\n",
+        **kw,
+    )
+
+
 def _wait_finished(run_id, timeout=30.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -251,6 +299,37 @@ def _scripted_worker(env, monkeypatch, script):
         if registers:
             env["docs"].docs.append(
                 {"doc_id": f"{GROUP}.0002-NR", "seq": 2, "status": "open"})
+        return "started_ok", None
+
+    monkeypatch.setattr(svc, "_cli_execute", _fake)
+    return launches
+
+
+def _scripted_rework_worker(env, monkeypatch, script):
+    """The rework twin of `_scripted_worker` (0446 T0008 §4-2).
+
+    An `edit` token cannot register a document, so "the work landed" here means the bound
+    document's revision went up. Entries are (last_message, action) with action in
+    (None, "revise", "late_revise") — "late_revise" arms the write to appear on the NEXT
+    probe, i.e. after the judge looked and before a second worker could start.
+
+    The oracle itself is never replaced: `start_run` builds the real `_scope_oracle` over
+    the real `_probe_doc_revision`, which is what keeps §3-1's `scope_oracle_run` wiring
+    under test rather than assumed.
+    """
+    launches: list[str] = []
+
+    def _fake(provider, prompt, run):
+        index = len(launches)
+        launches.append(provider["id"])
+        message, action = script[min(index, len(script) - 1)]
+        run["exit_code"] = 0
+        run["last_message"] = message
+        run["last_message_received"] = bool(message)
+        if action == "revise":
+            env["docs"].revision_no += 1
+        elif action == "late_revise":
+            env["docs"].arm_late_revision(1)
         return "started_ok", None
 
     monkeypatch.setattr(svc, "_cli_execute", _fake)
@@ -410,13 +489,33 @@ class TestRetryEligibility:
         assert svc._retry_eligible(_judged_run()) is True
 
     @pytest.mark.parametrize("over, why", [
-        ({"mode": "single"}, "a single run has no chain to save"),
+        # 0446 T0008 §4-1: this used to read "a single run has no chain to save". It is now
+        # split in two, because the mode alone no longer decides. (a) A single run with NO
+        # engine-planted scope oracle is still judged by documents and still blocked; the
+        # positive half (b) is `test_scope_oracle_rework_run_is_eligible` below.
+        ({"mode": "single"},
+         "a single run without the engine's scope oracle is judged by documents, so a "
+         "retry has nothing new to measure"),
+        ({"mode": "single", "action_scope": "chat", "scope_oracle_run": True,
+          "completion_oracle": (lambda: False), "docs_target": 0},
+         "T0008 §3-2 opens the `edit` scope only — chat/review/test_run/"
+         "workflow_sequence_edit keep the 0259/0268 contract untouched"),
+        ({"mode": "single", "action_scope": "edit", "scope_oracle_run": True,
+          "completion_oracle": (lambda: True), "docs_target": 0, "outcome": "complete"},
+         "T0008 §3-2: the scope oracle was satisfied — this rework DID raise the revision, "
+         "and retrying it would write a second one over the worker's own"),
         ({"end_reason": "timeout"}, "the clock decided"),
         ({"end_reason": "user_paused"}, "the user decided"),
         ({"end_reason": "cancelled"}, "the user decided"),
         ({"end_reason": "all_providers_failed"}, "the provider walk already gave its verdict"),
         ({"pause_requested": True}, "a pause is pending"),
-        ({"completion_oracle": (lambda: True)}, "success is not measured in documents"),
+        # 0446 T0008 §4-1: still blocked, and now for a stated reason. `scope_oracle_run`
+        # is pinned False so this case cannot silently turn green if `_judged_run`'s
+        # defaults ever change: what stays blocked is a CALLER's override (0248 B0001, the
+        # legacy Q&A follow-up), whose success criterion lives outside the engine.
+        ({"completion_oracle": (lambda: True), "scope_oracle_run": False},
+         "success is not measured in documents, and a caller's oracle is not the engine's "
+         "to re-ask"),
         ({"action_scope": "workflow_decide"}, "not a document-producing hop"),
         ({"action_scope": "resolve_conflict"}, "not a document-producing hop"),
         ({"docs_target": 0}, "nothing was targeted"),
@@ -431,6 +530,39 @@ class TestRetryEligibility:
         run = _judged_run()
         run["cancel_event"].set()
         assert svc._retry_eligible(run) is False
+
+    def test_scope_oracle_rework_run_is_eligible(self):
+        """0446 T0008 §4-1 (b) / §5-4: all four gates open at once, or nothing happens.
+
+        NR0003 §6-2 named three (mode, docs_target, attempts_max). The fourth —
+        `completion_oracle is not None` — is invisible from the outside because the ENGINE
+        plants that oracle itself for every scoped run, so a rework never reaches this
+        function with it unset.
+        """
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
+                          completion_oracle=(lambda: False), docs_target=0, outcome="none")
+        assert svc._retry_eligible(run) is True
+
+    def test_unwiring_the_scope_oracle_flag_closes_the_fourth_gate_again(self):
+        # §5-4's evidence: with `scope_oracle_run` back to False (i.e. §3-1's wiring
+        # reverted) the run is identical in every other respect and blocked again — so the
+        # flag, not one of the other three edits, is what opens it.
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=False,
+                          completion_oracle=(lambda: False), docs_target=0, outcome="none")
+        assert svc._retry_eligible(run) is False
+
+    def test_a_pending_question_is_reached_and_named_on_a_rework_run(self, monkeypatch):
+        # §3-2: the new outcome gate sits ABOVE `_has_pending_question`, so a hop that only
+        # registered a Q (outcome "none") still reaches it and is labelled — the half of
+        # this T that turns "quietly dead" into "waiting on a human".
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                            _container_lookup({ANCHOR: {"status": "pending"}}))
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
+                          completion_oracle=(lambda: False), docs_target=0, outcome="none",
+                          doc_ref=DOC_REF)
+        assert svc._retry_eligible(run) is False
+        assert run["retry_block_reason"] == "question_pending"
 
     def test_registration_errors_do_not_block(self):
         # "tried to register and failed" is still zero documents, and another AI may get
@@ -515,9 +647,36 @@ class TestStopCode:
         run = _judged_run(inbox_stop_code="approve_denied")
         assert svc._resolve_stop_code(run, respawn_pending=False) == "approve_denied"
 
-    def test_single_mode_has_no_stop_code(self):
+    def test_single_mode_without_a_scope_oracle_has_no_stop_code(self):
+        # 0446 T0008 §4-1: was `test_single_mode_has_no_stop_code`. Half of it survives
+        # unchanged — a plain single run still ends nameless — and the other half moved to
+        # the two cases below, where the mode is the same and the verdict is not.
         run = _judged_run(mode="single")
         assert svc._resolve_stop_code(run, respawn_pending=False) is None
+
+    def test_scope_oracle_rework_no_output_is_named(self):
+        # §3-7: docs_target is 0 by construction here, so the name has to come from the axis
+        # this run actually has — it exited on its own and its judge said "none".
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
+                          docs_target=0, outcome="none", end_reason="exited")
+        assert svc._resolve_stop_code(run, respawn_pending=False) == "no_output_exhausted"
+
+    def test_a_rework_that_raised_the_revision_keeps_a_null_stop_code(self):
+        # §3-7 regression pin: success must stay nameless, or every completed rework would
+        # start reporting a stop.
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
+                          docs_target=0, outcome="complete", end_reason="exited")
+        assert svc._resolve_stop_code(run, respawn_pending=False) is None
+
+    def test_a_blocked_retry_reason_reaches_the_persisted_sentence(self):
+        # §3-6: `retry_block_reason` has no column in `ai_invoke_runs` and is absent from
+        # `finished_payload`, so `stop_reason` is the only durable place it can be read.
+        run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
+                          docs_target=0, outcome="none", end_reason="exited",
+                          attempts_used=1, retry_block_reason="token_unavailable",
+                          continuation_selected_provider_name="OpenAI Codex CLI")
+        text = svc._stop_reason_text("no_output_exhausted", run)
+        assert "token_unavailable" in text
 
     @pytest.mark.parametrize("code, resumable", [
         ("no_output_exhausted", True), ("providers_exhausted", True), ("timeout", True),
@@ -803,6 +962,240 @@ class TestPendingQuestionEndToEnd:
 
         row = env["paused"].rows[GROUP]
         assert (row["stop_kind"], row["stop_code"]) == ("system", "question_pending")
+
+
+# -- 0446 T0008 (NR0003 R2~R4): 반려 재작업(single/edit) gets the recovery machinery ----
+#
+# NR0003 measured 27 of 242 rework runs registering nothing at all, and the 15 that ended
+# cleanly all shared one record shape: attempts_used 1, stop_code NULL, zero notifications.
+# Everything below is that shape, run end to end through the real engine.
+
+
+class TestSingleReworkNoOutputRecovery0446:
+    def _no_sequence(self, monkeypatch):
+        """A rejected document is usually not a workflow sequence member (§3-8).
+
+        The fixture pins a sequence so the continuous tests have a hop anchor; clearing it
+        here is what makes `_anchor_document` fall through to `run["doc_ref"]`, and the
+        assertion below is that the notification then lands on the rejected document itself.
+        """
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda d: None)
+
+    def test_no_output_rework_retries_once_names_the_stop_and_alerts(self, env, monkeypatch):
+        """§4-2 case 1 — the whole point of this T, in one run."""
+        self._no_sequence(monkeypatch)
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("반려 2건 다 고쳤고 백그라운드 전체 스위트 결과를 기다리는 중입니다.", None),
+        ])
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        # 1. the retry happened at all — the four gates of §3-1/§3-2 are open
+        assert launches == ["aip_1", "aip_1"]
+        assert run["attempts_used"] == svc.NO_OUTPUT_MAX_ATTEMPTS == 2
+        # §3-3: the advertised ceiling now matches the one the engine enforces
+        assert run["attempts_max"] == 2
+        # §3-5: the retry had a chain to walk because the head was recorded
+        assert run["continuation_selected_provider_id"] == "aip_1"
+        switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
+        assert len(switches) == 1
+        assert (switches[0]["reason"], switches[0]["retry_kind"]) == ("no_output", "no_output")
+        # §3-6: reuse only. rework declares no issue_builder, and NR0003 measured 15/15 of
+        # these tokens still unconsumed, so the reissue path is never needed.
+        assert switches[0]["token_reissued"] is False
+        assert run["docs_reached"] == 0            # an edit token registers nothing, ever
+
+        # 2. the failure has a name — 15 of 15 measured runs had stop_code NULL
+        assert run["stop_code"] == "no_output_exhausted"
+        assert run["outcome"] == "none"
+        assert run["oracle_mismatch"] is True
+        assert run["resumable"] is True
+        assert '"OpenAI Codex CLI" produced no document in 2 attempts' in run["stop_reason"]
+        assert len(env["records"]) == 1
+        record = env["records"][0]
+        assert (record["stop_code"], record["attempts_used"]) == ("no_output_exhausted", 2)
+        assert record["attempts_max"] == 2
+        assert "백그라운드" in record["last_message_excerpt"]
+
+        # 3. a human who was not watching that minute still finds out
+        assert len(env["signals"]) == 1
+        signal = env["signals"][0]
+        assert signal["run_id"] == res["run_id"]
+        assert signal["extra"]["stop_code"] == "no_output_exhausted"
+        assert signal["extra"]["attempts_used"] == 2
+        # §3-8: same event type as a dead continuous chain, told apart by these two
+        assert (signal["extra"]["mode"], signal["extra"]["action_scope"]) == ("single", "edit")
+        # §3-8: with no sequence to walk, the notification anchors on the rejected document
+        assert signal["doc_id"] == DOC_REF
+
+        # 4. §3-7: `resumable` is True but `_apply_stop_row` still returns on the first line
+        # for a non-continuous run, so no ghost [resume] card is created.
+        assert GROUP not in env["paused"].rows
+
+    def test_a_question_only_rework_is_named_question_pending_and_stays_silent(
+            self, env, monkeypatch):
+        """§4-2 case 2 — NR0003's 4 legitimate stops, told apart from the 11 dead ones."""
+        self._no_sequence(monkeypatch)
+        monkeypatch.setattr(svc.q_service, "resolve_question_anchor", lambda doc_id: ANCHOR)
+        monkeypatch.setattr(svc.db_questions, "get_container_by_doc",
+                            _container_lookup({ANCHOR: {"status": "pending"}}))
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("원격 도구 503. Q item_id=202 등록. 불완전한 TR은 제출하지 않았습니다.", None),
+        ])
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]               # no attempt burned on a hop that behaved
+        assert run["attempts_used"] == 1
+        assert run["retry_block_reason"] == "question_pending"
+        assert run["stop_code"] == "question_pending"
+        assert run["resumable"] is True
+        # The half of this T that R2 asked for: waiting on a human is not a failure, so
+        # nobody is woken up. `question_pending` is deliberately not in ENGINE_NOTIFY_STOP_CODES.
+        assert env["signals"] == []
+        assert env["records"][0]["stop_code"] == "question_pending"
+        assert GROUP not in env["paused"].rows
+
+    def test_a_rework_that_raised_the_revision_is_a_plain_success(self, env, monkeypatch):
+        """§4-2 case 3 — the positive control. Absence assertions alone prove nothing."""
+        self._no_sequence(monkeypatch)
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("반려 사유 3건을 모두 반영해 TR을 수정했습니다.", "revise"),
+        ])
+        before = env["docs"].revision_no
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]               # §3-2's outcome gate: success is not retried
+        assert run["attempts_used"] == 1
+        assert run["outcome"] == "complete"
+        assert run["oracle_mismatch"] is False
+        assert run["stop_code"] is None
+        assert run["resumable"] is False
+        assert env["signals"] == []
+        assert env["docs"].revision_no == before + 1     # written exactly once
+        assert GROUP not in env["paused"].rows
+
+    def test_a_late_revision_cancels_the_retry_instead_of_double_writing(
+            self, env, monkeypatch):
+        """§4-2 case 4 / §3-4 — the duplicate-write guard, which was a constant True."""
+        self._no_sequence(monkeypatch)
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("등록 중...", "late_revise"),
+        ])
+        before = env["docs"].revision_no
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        # The judge looked and saw nothing; `_recheck_no_output` asked the scope oracle again
+        # and saw the write. Without §3-4 the document query would have said "still empty"
+        # (it always does for an edit run) and a second worker would have started.
+        assert launches == ["aip_1"]
+        assert run["outcome"] == "complete"
+        assert run["docs_reached"] == 0
+        assert run["oracle_mismatch"] is False
+        assert run["stop_code"] is None
+        assert env["signals"] == []
+        assert env["docs"].revision_no == before + 1     # exactly one revision, not two
+
+    def test_a_spent_token_blocks_the_retry_and_says_so(self, env, monkeypatch):
+        """§3-6 — no reissue path for rework, so the reason must be visible instead."""
+        self._no_sequence(monkeypatch)
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-08-19T00:00:00+00:00",
+            "revoked_at": None, "expires_at": FAR_FUTURE,
+        })
+        launches = _scripted_rework_worker(env, monkeypatch, [("아무것도 못 했습니다.", None)])
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]
+        assert run["retry_block_reason"] == "token_unavailable"
+        # The stop is still named and still notified — "why was there no retry?" has to be
+        # answerable, and `retry_block_reason` itself is not persisted anywhere else.
+        assert run["stop_code"] == "no_output_exhausted"
+        assert "token_unavailable" in run["stop_reason"]
+        assert env["records"][0]["stop_reason"] == run["stop_reason"]
+        assert len(env["signals"]) == 1
+
+    def test_an_edit_scope_with_an_issue_builder_reissues_the_spent_token(
+            self, env, monkeypatch):
+        """§3-9 — `_TOKEN_SCOPE` folds four invoke scopes into `edit`, so all four open.
+
+        rework and plain `edit` declare no `issue_builder` (`ai_invoke_routes` assigns one
+        only for review / workflow_sequence_edit / work_plan_fill / work_plan_proposal /
+        test_run / workflow_decide / the continuous first hop), so for them a spent token
+        ends the retry — `test_a_spent_token_blocks_the_retry_and_says_so` above. Of the
+        four edit-folded scopes only `work_plan_fill` has one, and this is that shape: the
+        reissue path opens and the retry survives a spent token.
+        """
+        self._no_sequence(monkeypatch)
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-08-19T00:00:00+00:00",
+            "revoked_at": None, "expires_at": FAR_FUTURE,
+        })
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "raw_b", "token_id": "tok_b", "mention": "## fresh\n",
+                    "scratch_dir": str(env["tmp"] / "tokwork"), "ai_run_id": ai_run_id}
+
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("작업계획 칸을 채우지 못했습니다.", None),
+        ])
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True,
+                            issue_builder=_issue)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1", "aip_1"]
+        switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
+        assert switches[0]["token_reissued"] is True
+        assert run["token_id"] == "tok_b"
+        assert run["stop_code"] == "no_output_exhausted"
+        assert len(env["signals"]) == 1
+
+    def test_the_duplicate_write_guard_holds_for_every_edit_scope(self, env, monkeypatch):
+        """§3-9 — the same late write, on the reissue-capable shape.
+
+        `_recheck_no_output` is asked before `_prepare_retry_token` is ever called, so the
+        guard lands identically whether the scope can reissue a token or not: one revision,
+        one launch, no second worker.
+        """
+        self._no_sequence(monkeypatch)
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "raw_b", "token_id": "tok_b", "mention": "## fresh\n",
+                    "scratch_dir": str(env["tmp"] / "tokwork"), "ai_run_id": ai_run_id}
+
+        launches = _scripted_rework_worker(env, monkeypatch, [("저장 중...", "late_revise")])
+        before = env["docs"].revision_no
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True,
+                            issue_builder=_issue)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]
+        assert run["outcome"] == "complete"
+        assert run["stop_code"] is None
+        assert env["docs"].revision_no == before + 1
+        assert env["signals"] == []
+
+    def test_a_caller_supplied_oracle_run_keeps_the_old_single_shape(self, env, monkeypatch):
+        """§3-1 — the legacy Q&A follow-up (`q_answer_invoke_service`) must not change.
+
+        Same scope and mode as a rework, but the oracle came from the CALLER, so
+        `_uses_scope_oracle` is False, nothing is retried and nothing is named.
+        """
+        self._no_sequence(monkeypatch)
+        launches = _scripted_rework_worker(env, monkeypatch, [("답변을 남기지 못했습니다.", None)])
+        res = _start_rework(env, provider_id="aip_1", provider_pinned=True,
+                            completion_oracle=(lambda: False))
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1"]
+        assert run["attempts_used"] == 1
+        assert run["attempts_max"] == 1
+        assert run["scope_oracle_run"] is False
+        assert run["stop_code"] is None
+        assert env["signals"] == []
 
 
 class TestExcerpt:

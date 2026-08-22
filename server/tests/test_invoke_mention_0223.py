@@ -293,3 +293,104 @@ class TestTemplates:
             types=["DB"], mode="single", doc_ref="p.g.0001-R", locale="en",
             first_label="Database Design")
         assert "Database Design(DB)" in single
+
+
+class TestEditTurnEndAddendum:
+    """Group 0446 T0005 (NR0003 §6-1 R1): rework (edit/single) mentions carry a
+    turn-end / no-background-wait addendum that continuous mentions already had.
+
+    NR0003 found that _CONTINUOUS_TEXT's "do NOT stop / no background wait" text
+    never reached rework (action_scope=edit) mentions, because build_mention's
+    continuous_mode = continuous and not is_edit excludes edit unconditionally. These
+    cases pin: (a) the addendum is present on an edit/non-continuous mention in every
+    locale, (b) the pre-existing Q-registration guidance survives alongside it, and
+    (c) two control groups -- a continuous mention and a plain new/non-continuous
+    mention -- do NOT carry the addendum, proving it is edit-only and that continuous
+    mentions were not altered by this change.
+    """
+
+    @staticmethod
+    def _build(monkeypatch, **overrides):
+        from modules.flow_gate.services import mention_service
+
+        monkeypatch.setattr(mention_service, "_include_remote_source_crud", lambda project: False)
+        args = dict(
+            project="p",
+            module="default",
+            group="0001",
+            parent_type="TR",
+            parent_doc_number="0005",
+            parent_title="Rejected TR",
+            parent_doc_id="p.default.0001.0005-TR",
+            parent_revision_no=1,
+            head_type="",
+            head_status="pending",
+            scratch_dir="/scratch",
+            raw_token="RAW",
+            api_base_url="http://h:1/api/v1",
+        )
+        args.update(overrides)
+        return mention_service.build_mention(**args)
+
+    @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+    def test_edit_single_mention_carries_the_addendum(self, monkeypatch, locale):
+        from modules.flow_gate.services import mention_service
+
+        text = self._build(
+            monkeypatch,
+            action_scope="edit",
+            edit_reason="rejected",
+            continuous=False,
+            locale=locale,
+        )
+        assert mention_service._EDIT_TURN_END_TEXT[locale] in text
+
+    @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+    def test_edit_single_mention_still_carries_q_registration_guidance(self, monkeypatch, locale):
+        from modules.flow_gate.services import mention_service
+
+        text = self._build(
+            monkeypatch,
+            action_scope="edit",
+            edit_reason="rejected",
+            continuous=False,
+            locale=locale,
+        )
+        clarify = mention_service._CLARIFY_TEXT[locale]
+        assert clarify["lead"] in text
+        assert clarify["warn"] in text
+        assert clarify["positive"] in text
+        # _REMINDER_TEXT carries a single {post} placeholder -- check the fixed
+        # prefix/suffix around it instead of formatting a second copy here.
+        reminder_prefix, reminder_suffix = mention_service._REMINDER_TEXT[locale].split("{post}")
+        assert reminder_prefix in text
+        assert reminder_suffix in text
+
+    @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+    def test_continuous_mention_control_group_excludes_the_addendum(self, monkeypatch, locale):
+        from modules.flow_gate.services import mention_service
+
+        text = self._build(
+            monkeypatch,
+            action_scope="new",
+            continuous=True,
+            head_type="TR",
+            locale=locale,
+        )
+        assert mention_service._EDIT_TURN_END_TEXT[locale] not in text
+        # continuous mentions must be untouched by this change: they still carry
+        # the pre-existing continuous block verbatim.
+        assert mention_service._CONTINUOUS_TEXT[locale] in text
+
+    @pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+    def test_plain_new_mention_control_group_excludes_the_addendum(self, monkeypatch, locale):
+        from modules.flow_gate.services import mention_service
+
+        text = self._build(
+            monkeypatch,
+            action_scope="new",
+            continuous=False,
+            head_type="TR",
+            locale=locale,
+        )
+        assert mention_service._EDIT_TURN_END_TEXT[locale] not in text

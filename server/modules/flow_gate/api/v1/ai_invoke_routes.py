@@ -56,9 +56,13 @@ class AiInvokeStartRequest(BaseModel):
     # keys) -> note overrides for individual hops. Session-scoped, same as the provider map.
     continuation_default_note: Optional[str] = None
     continuation_note_overrides: Optional[dict[str, str]] = None
-    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds), chosen in
-    # ContinuousWorkDialog's duration section. Session-scoped like the fields above — omitted or
-    # out of range falls back to the engine's own default (ai_invoke_service.HOP_TIMEOUT_SEC).
+    # flowgate.default.0400 M0005 + 0446 T0010 §3-1: this run's wall-clock budget in seconds.
+    # The name says `continuation_` but the field is mode-independent and always was: the
+    # range check below never looked at `mode`, and the start_run call at the bottom of this
+    # module forwards it unconditionally. ContinuousWorkDialog sends it for a continuous hop;
+    # AiInvokeDialog sends it for a single rejection rework (T0010 §3-6). Session-scoped like
+    # the fields above — omitted, or out of range, falls back to the engine's own default for
+    # that mode (ai_invoke_service._resolve_timeout_sec).
     continuation_step_timeout_sec: Optional[int] = None
     provider_id: Optional[str] = None
     # provider_id alone may be an auto-restored default. This explicit signal says the person
@@ -171,6 +175,43 @@ def _require_user(request: Request):
         return JSONResponse(status_code=403, content={"code": "user_session_required",
                                                       "message": "A user session is required."})
     return auth
+
+
+def build_rework_mention(*, base: str, doc_ref: Optional[str], group_id: str,
+                         reject_reason: Optional[str], locale: Optional[str]) -> str:
+    """The whole prompt a rework (`action_scope="rework"`) worker reads.
+
+    Module level, not a closure inside the route, so this exact composition can be
+    exercised without minting a token and starting a run — the alternative is a test that
+    re-implements the ordering and then agrees with itself.
+
+    Two chunks may precede the standard edit mention, in this order (0446 T0016 §4-2):
+    the rejection reasons, then the previous-run handoff. Both are omitted when they have
+    nothing to say, and when BOTH are omitted the return value is `base` itself — the
+    prompt every non-timeout rework has always got, byte for byte.
+    """
+    doc = db_docs.get_by_id(doc_ref) or {} if doc_ref else {}
+    history = doc.get("rejection_history") or []
+    if isinstance(history, str):
+        try:
+            import json as _json
+            history = _json.loads(history) or []
+        except Exception:
+            history = []
+    last = reject_reason or doc.get("rejection_reason")
+    section = invoke_mention_service.build_rejection_section(history, last)
+    # 0446 T0016 §4-1: read the group's newest finished run BEFORE this one starts. The run
+    # being launched writes its own row only at finalize, so the row found here really is
+    # the previous hop's. `previous_timeout_handoff` answers None for everything except a
+    # timeout on this same document, and an empty block for None is what keeps the
+    # composition below byte-identical to what it produced before (§4-2).
+    handoff = invoke_mention_service.build_previous_run_section(
+        ai_invoke_service.previous_timeout_handoff(group_id, doc_ref), locale,
+    )
+    # Both leading chunks already end in a blank line, so joining on "\n" leaves exactly one
+    # blank line between every pair — the spacing the rejection section alone produced.
+    leading = [chunk for chunk in (section, handoff) if chunk]
+    return "\n".join(leading) + "\n" + base if leading else base
 
 
 @router.post("/start")
@@ -326,20 +367,13 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 user_id=user_id,
             )
         if body.action_scope == "rework":
-            doc = db_docs.get_by_id(body.doc_ref) or {}
-            history = doc.get("rejection_history") or []
-            if isinstance(history, str):
-                try:
-                    import json as _json
-                    history = _json.loads(history) or []
-                except Exception:
-                    history = []
-            last = body.reject_reason or doc.get("rejection_reason")
-            section = invoke_mention_service.build_rejection_section(history, last)
             base = _standard_mention(raw_token, scratch_dir)
             if not base:
                 return None
-            return section + "\n" + base if section else base
+            return build_rework_mention(
+                base=base, doc_ref=body.doc_ref, group_id=group_id,
+                reject_reason=body.reject_reason, locale=locale,
+            )
         if body.action_scope == "vr_correction":
             try:
                 prompt = prompt_copy_service.build_prompt(
@@ -710,6 +744,38 @@ def list_ai_invoke_runs(
     except HTTPException as exc:
         return _err(exc)
     return JSONResponse(status_code=200, content=result)
+
+
+@router.get("/rework-hint")
+def get_ai_invoke_rework_hint(group_id: str, doc_ref: str, request: Request):
+    """Return the previous-run timeout kind used by the rework prompt handoff."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    errors = []
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        errors.append({"loc": "group_id", "msg": str(exc)})
+    try:
+        validate_doc_id(doc_ref)
+    except ValueError as exc:
+        errors.append({"loc": "doc_ref", "msg": str(exc)})
+    if errors:
+        return _validation_failed(errors)
+    project = group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    handoff = ai_invoke_service.previous_timeout_handoff(group_id, doc_ref)
+    return JSONResponse(status_code=200, content={
+        "ok": True,
+        "timeout_kind": handoff.get("timeout_kind") if handoff else None,
+    })
 
 
 @router.get("/leases")
