@@ -863,6 +863,7 @@ export default {
     },
     error: {
       tree_load_failed: 'ツリーの読み込みに失敗しました。',
+      tree_refresh_failed: 'ツリーを再読み込みできませんでした。以下は最後に読み込んだ内容です。',
       file_load_failed: 'ファイルの読み込みに失敗しました。',
       file_too_large: 'ファイルが大きすぎます (1M 超過)',
     },
@@ -1194,6 +1195,7 @@ export default {
     },
     flow_gate_token: {
       issue_failed: 'トークンを発行できませんでした。',
+      advance_failed: '次のステップに進めませんでした。(理由: {code})',
       login_required: 'ログインが必要です。',
       permission_denied: 'トークンを発行する権限がありません。(document.read 権限が必要です)',
     },

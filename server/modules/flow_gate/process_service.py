@@ -5435,6 +5435,14 @@ def get_group_tree(project_id: str) -> dict:
         if project_name:
             project_label = project_name
 
+    # 0449 T0004 item 3 (NR0003 E2): `nodes` is a FLAT list and the single source of truth —
+    # every node appears in it exactly once and names its parent through `parent_id`. Nodes
+    # used to be appended here AND nested into their parent's `children`, so the same object
+    # was serialized twice (measured on the live project: 4,210 unique ids serialized as
+    # 12,169 entries — 7,959 duplicates in a 4.8 MB response). No consumer read the nested
+    # copy: GroupTreeNode.vue computes its children from parent_id. Do not reintroduce a
+    # `children` key on these nodes; the duplication is pure transfer/parse cost, and it is
+    # what made a retry of a failed refresh so expensive.
     nodes: list[dict] = []
     project_node_id = f"project:{project_id}"
     module_nodes: dict[str, dict[str, Any]] = {}
@@ -5471,7 +5479,6 @@ def get_group_tree(project_id: str) -> dict:
                 "title": resolved_title,
                 "has_md": False,
                 "md_path": None,
-                "children": [],
             }
             nodes.append(module_nodes[node_id])
         return module_nodes[node_id]
@@ -5514,7 +5521,6 @@ def get_group_tree(project_id: str) -> dict:
         "label": project_label,
         "has_md": False,
         "md_path": None,
-        "children": [],
     })
 
     # Also include modules registered in the project_modules table in the tree
@@ -5542,9 +5548,7 @@ def get_group_tree(project_id: str) -> dict:
             "md_path": None,
             "is_final_approved": False,
             "is_discarded": False,
-            "children": []
         }
-        module_node["children"].append(group_node)
         nodes.append(group_node)
 
         docs = docs_by_group.get(group_id, [])
@@ -5565,9 +5569,7 @@ def get_group_tree(project_id: str) -> dict:
                 group_node["is_discarded"] = True
 
         for doc_row in docs:
-            doc_node = _build_doc_node(doc_row, group_id)
-            group_node["children"].append(doc_node)
-            nodes.append(doc_node)
+            nodes.append(_build_doc_node(doc_row, group_id))
 
     # Handle orphan documents: include documents whose group_id is missing from
     # the groups table under the uncategorized node (fetched upfront above,
@@ -5590,12 +5592,8 @@ def get_group_tree(project_id: str) -> dict:
                 "label": label,
                 "has_md": False,
                 "md_path": None,
-                "children": [],
             }
-            module_node["children"].append(orphan_nodes[orphan_id])
             nodes.append(orphan_nodes[orphan_id])
-        doc_node = _build_doc_node(doc, orphan_id)
-        orphan_nodes[orphan_id]["children"].append(doc_node)
-        nodes.append(doc_node)
+        nodes.append(_build_doc_node(doc, orphan_id))
 
     return {"nodes": nodes}

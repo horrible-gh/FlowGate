@@ -863,6 +863,7 @@ export default {
     },
     error: {
       tree_load_failed: '트리를 불러오지 못했습니다.',
+      tree_refresh_failed: '트리를 새로 불러오지 못했습니다. 아래는 마지막으로 불러온 내용입니다.',
       file_load_failed: '파일을 불러오지 못했습니다.',
       file_too_large: '파일이 너무 큼 (1M 초과)',
     },
@@ -1195,6 +1196,7 @@ export default {
     },
     flow_gate_token: {
       issue_failed: '토큰 발급에 실패했습니다.',
+      advance_failed: '다음 단계로 진행하지 못했습니다. (사유: {code})',
       login_required: '로그인이 필요합니다.',
       permission_denied: '토큰 발급 권한이 없습니다. (document.read 권한 필요)',
     },

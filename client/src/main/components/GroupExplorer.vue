@@ -165,19 +165,33 @@
         <div v-else-if="!projectId" class="sdb-state">
           {{ t('main.state.no_project') }}
         </div>
-        <ul v-else class="tree-ul">
-          <GroupTreeNode
-            v-for="node in rootNodes"
-            :key="node.id"
-            :node="node"
-            :all-nodes="filteredNodes"
-            :tree-nodes="nodes"
-            :project-id="projectId ?? ''"
-            @open="openDocument"
-            @tree-changed="handleTreeChanged"
-            @create-requirement="$emit('create-requirement', $event)"
-          />
-        </ul>
+        <template v-else>
+          <!-- 0449 T0004 item 1 (NR0003 E1): a BACKGROUND/SSE refresh that fails must not take
+               the tree down with it. The notice is rendered ABOVE the surviving .tree-ul (never
+               instead of it), so every GroupTreeNode instance — and the dialogs/inputs they own —
+               stays mounted and the group entry points stay clickable while the refresh is broken. -->
+          <div
+            v-if="refreshError"
+            class="sdb-state sdb-state--refresh-error"
+            data-test="explorer-refresh-error"
+          >
+            <span>{{ t('main.error.tree_refresh_failed') }}</span>
+            <button data-test="explorer-refresh-retry" @click="() => reload()">{{ t('main.explorer.retry') }}</button>
+          </div>
+          <ul class="tree-ul">
+            <GroupTreeNode
+              v-for="node in rootNodes"
+              :key="node.id"
+              :node="node"
+              :all-nodes="filteredNodes"
+              :tree-nodes="nodes"
+              :project-id="projectId ?? ''"
+              @open="openDocument"
+              @tree-changed="handleTreeChanged"
+              @create-requirement="$emit('create-requirement', $event)"
+            />
+          </ul>
+        </template>
       </template>
     </div>
     </template>
@@ -203,7 +217,13 @@ const layoutStore = useLayoutStore()
 
 const nodes = ref<GroupNode[]>([])
 const loading = ref(false)
+// 0449 T0004 item 1 — two DISTINCT failure states, deliberately not folded into one flag:
+//   error        = the blocking one. There is nothing on screen yet (initial/empty load), so
+//                  the error screen is all we can offer.
+//   refreshError = the non-blocking one. Nodes are already rendered and a background/SSE
+//                  refresh failed; the stale tree stays and the failure rides above it.
 const error = ref(false)
+const refreshError = ref(false)
 const activeFilter = ref<string>('all')
 const showFinalApprovedGroups = ref(false)
 
@@ -411,12 +431,19 @@ function isInsideFinalApprovedGroup(nodeId: string, list: GroupNode[]): boolean 
 // are kept even when they become empty.
 const baseNodes = computed<GroupNode[]>(() => {
   const hidden = new Set<string>()
+  // 0449 T0004 item 1 / NR0003 "최종승인 숨김 판정": is_final_approved is a SERVER-derived
+  // terminal flag, so while a refresh is failing the copy we hold may predate a reopen that
+  // already flipped it back to false. Keeping the tree but still hiding on that stale flag
+  // would preserve the DOM and lose the very group the user just reopened — the reported
+  // "can't get to the group". So while refreshError stands, nothing is hidden on the terminal
+  // flags; the toggle resumes governing as soon as a refresh succeeds.
+  const trustTerminalFlags = !refreshError.value
   nodes.value.forEach((n) => {
     if (n.node_type !== 'group') return
     // One toggle hides/reveals BOTH terminal kinds — final-approved (AC) and
     // discarded (DC). Two separate toggles caused "show all groups → only AC
     // appears, DC stays hidden" (review r4). Default hidden, like AC.
-    if (!showFinalApprovedGroups.value && (n.is_final_approved === true || n.is_discarded === true)) {
+    if (trustTerminalFlags && !showFinalApprovedGroups.value && (n.is_final_approved === true || n.is_discarded === true)) {
       hidden.add(n.id)
     }
   })
@@ -493,6 +520,20 @@ function expandAncestors(targetNodeId: string, nextNodes: GroupNode[]) {
   explorerStore.expandGroupAncestors(props.projectId, nextNodes, targetNodeId)
 }
 
+// Applies the "reveal this node" side effects against ONE node list. Kept separate so the
+// success path can run it on the freshly fetched nodes and the failure path can still run it
+// on the retained ones — a reveal request must not be dropped just because the GET failed.
+function applyReveal(revealNodeId: string, list: GroupNode[]) {
+  activeFilter.value = 'all'
+  // User action wins over the hide setting: if the reveal target lives in a
+  // final-approved group, force the toggle on so it is visible (D0002 §7).
+  if (!showFinalApprovedGroups.value && isInsideFinalApprovedGroup(revealNodeId, list)) {
+    showFinalApprovedGroups.value = true
+    persistShowFinalApproved()
+  }
+  expandAncestors(revealNodeId, list)
+}
+
 async function reload(revealNodeId?: string) {
   if (!props.projectId) return
   // Keep an already-rendered tree mounted during background/SSE refreshes. Setting
@@ -500,24 +541,32 @@ async function reload(revealNodeId?: string) {
   // unmounts GroupTreeNode and destroys any dialog/input it owns even though the
   // GroupExplorer instance itself survives. Only the initial empty load needs the
   // blocking loading state.
+  //
+  // 0449 T0004 item 1: `silent` now governs the FAILURE path too. It used to suppress only
+  // the loading branch, while the catch set the blocking error unconditionally — so a
+  // background refresh failure still replaced the whole tree with the error screen
+  // (NR0003 E1, reproduced at 2 failed GETs). A retry after a silent failure is silent as
+  // well (the nodes are still there), so persistent failure keeps the tree, not loses it.
   const silent = nodes.value.length > 0
   if (!silent) loading.value = true
-  error.value = false
+  else error.value = false
   try {
     const nextNodes = await explorerStore.fetchGroupTree(props.projectId, true)
-    if (revealNodeId) {
-      activeFilter.value = 'all'
-      // User action wins over the hide setting: if the reveal target lives in a
-      // final-approved group, force the toggle on so it is visible (D0002 §7).
-      if (!showFinalApprovedGroups.value && isInsideFinalApprovedGroup(revealNodeId, nextNodes)) {
-        showFinalApprovedGroups.value = true
-        persistShowFinalApproved()
-      }
-      expandAncestors(revealNodeId, nextNodes)
-    }
+    // Reveal/expand/toggle decisions belong to the response that actually succeeded.
+    if (revealNodeId) applyReveal(revealNodeId, nextNodes)
     nodes.value = nextNodes
+    error.value = false
+    refreshError.value = false
   } catch {
-    error.value = true
+    if (silent) {
+      // Stale-while-revalidate: nodes.value is left untouched, so the tree below the notice
+      // is exactly what it was. The reveal still runs — against the retained list — so the
+      // caller's target group keeps its entry point even on a failed refresh.
+      refreshError.value = true
+      if (revealNodeId) applyReveal(revealNodeId, nodes.value)
+    } else {
+      error.value = true
+    }
   } finally {
     loading.value = false
   }
@@ -561,9 +610,13 @@ watch(() => props.projectId, async (pid) => {
   loadShowFinalApproved(pid)
   // A search is scoped to one project; switching projects clears the stale query.
   clearSearch()
-  if (!pid) { nodes.value = []; return }
+  if (!pid) { nodes.value = []; refreshError.value = false; return }
+  // Switching projects discards the previous project's nodes, so this is an INITIAL load by
+  // definition: the blocking loading/error branch is the right one here.
+  nodes.value = []
   loading.value = true
   error.value = false
+  refreshError.value = false
   try {
     nodes.value = await explorerStore.fetchGroupTree(pid, true)
   } catch {

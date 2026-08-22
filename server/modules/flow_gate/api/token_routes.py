@@ -6,6 +6,7 @@ Auth: login session cookie (get_current_user dependency)
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Optional
 
@@ -20,6 +21,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import mention_service
+from modules.flow_gate.services import route_logging
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services.workflow_decision_service import (
@@ -35,6 +37,32 @@ from modules.flow_gate.utils.id_validators import (
 from config import settings
 
 router = APIRouter(prefix="/api/v1", tags=["TokenIssue"])
+
+# 0449 T0004 item 6 (NR0003 §3): this module had NO logger at all, so the incident's
+# /token/issue call — which the client used to reach as a silent fallback after an advance
+# refusal — left no trace whatsoever and could not be told apart from "never called". Arrival
+# and final status are recorded now, under the same correlation id the advance route uses.
+_log = route_logging.get_logger(__name__)
+
+
+class TokenIssueInternalError(RuntimeError):
+    """An unexpected /token/issue failure, re-raised with no message of its own.
+
+    0449 TR0005 rev4: the ``except Exception`` branch below used to re-raise the original
+    exception unchanged. That exception still has to escape past this router for FastAPI's
+    default 500 handling to apply — but escaping the app is exactly what hands it to
+    Starlette's ``ServerErrorMiddleware``, which builds the generic response and then
+    re-raises so the ASGI server can see it. Uvicorn's own request cycle catches that at the
+    server boundary and logs it with ``exc_info=True`` through ``logging.getLogger
+    ("uvicorn.error")`` — a logger this module does not own and cannot route through
+    :func:`route_logging.log_route_event`'s closed field list. If the escaping exception's
+    message ever interpolated the token/mention `_issue_token` was minting (a mint or render
+    helper raising mid-step), that text lands in the global server log regardless of anything
+    this module does with its own logger. Swapping in this fixed-message type before the
+    re-raise (``from None``, so the original is not chained into the printed traceback) keeps
+    the "still raises, not swallowed into a response" contract while guaranteeing nothing
+    escapes the app boundary but a type name and this literal string.
+    """
 
 # Wire scopes accepted on the request, and the TOKEN scope each one is minted under.
 # Chat has a dedicated append-only grant; its wire scope also selects the compact mention.
@@ -83,6 +111,89 @@ def issue_token(
     request: Request,
     current_user: dict = Depends(get_current_user),
 ):
+    """Token issuance endpoint (D020 §2-7) — see :func:`_issue_token` for the steps.
+
+    This wrapper exists only to record that the request reached this endpoint and how it
+    ended (0449 T0004 item 6). Refusals (`HTTPException`) are re-raised untouched — their
+    `.detail` is a deliberate, already-safe client message, so the wire contract for those is
+    exactly what it was; only the operational record changed. An unexpected failure is not:
+    it still ends as a raised exception (never swallowed into a response), but rev4 swaps in
+    :class:`TokenIssueInternalError` first, because the original exception has to escape this
+    function for FastAPI's generic-500 handling to run, and escaping puts it in front of
+    Uvicorn's own ASGI-boundary logging — outside this module's leak-proof logger entirely.
+    """
+    cid = route_logging.correlation_id(request)
+    group_hint = f"{body.project}.{body.module or 'none'}.{body.group}"
+
+    def _log_issue(
+        event: str, *, status=None, code=None, group_id=None, token_id=None,
+        fault=None, level=logging.INFO,
+    ):
+        route_logging.log_route_event(
+            _log,
+            endpoint=route_logging.TOKEN_ISSUE_ENDPOINT,
+            event=event,
+            status=status,
+            code=code,
+            doc_id=body.doc_ref,
+            group_id=group_id or group_hint,
+            token_id=token_id,
+            correlation_id=cid,
+            fault=fault,
+            level=level,
+        )
+
+    _log_issue("received", code=body.action_scope or "auto")
+    try:
+        response = _issue_token(body, request, current_user)
+    except HTTPException as exc:
+        # A refusal is a decision, not a fault: status + the endpoint's own reason, no body.
+        _log_issue("refused", status=exc.status_code, code=f"http_{exc.status_code}")
+        raise
+    except git_service.GitServiceError as exc:
+        # rev4: also a deliberate, structured refusal — status/code/message/details built to be
+        # shown, exactly like HTTPException — not the unexpected-fault case the sanitizing
+        # branch below exists for. main.py's GitServiceError handler needs the original object
+        # (routers/main.py builds the {ok:false, error:{code,message}} envelope from its
+        # .status/.code/.message), so this must reach that handler untouched; swallowing it into
+        # TokenIssueInternalError below would turn a controlled 404/409 into a bare 500
+        # (test_git_service_error_envelope_0233.py pins this).
+        _log_issue("refused", status=exc.status, code=f"git_{exc.code}")
+        raise
+    except Exception as exc:
+        # 0449 TR0005 rev2 — see the same guard in workflow_decision_routes: a
+        # `logger.exception` record carries `str(exc)` and the whole traceback, and this is the
+        # one endpoint where the exception in flight is most likely to have a raw token in its
+        # message. The signature keeps the triage value without the text.
+        _log_issue(
+            "failed",
+            status=500,
+            code="internal_error",
+            fault=route_logging.exception_signature(exc),
+            level=logging.ERROR,
+        )
+        # rev4: `raise` alone (re-raising `exc` itself) was still a leak — see
+        # TokenIssueInternalError's docstring. `exc`'s message never reaches this module's own
+        # logger, but it still has to escape this function for the 500 to happen at all, and
+        # Uvicorn logs whatever escapes with exc_info=True at the ASGI server boundary, outside
+        # route_logging's closed field list entirely. `from None` drops the original from the
+        # printed chain so only the fixed message below is ever visible past this point.
+        raise TokenIssueInternalError("token issuance failed unexpectedly") from None
+    _log_issue(
+        "issued",
+        status=200,
+        code=response.action_scope,
+        group_id=response.group_id,
+        token_id=response.token_id,
+    )
+    return response
+
+
+def _issue_token(
+    body: TokenIssueRequest,
+    request: Request,
+    current_user: dict,
+) -> TokenIssueResponse:
     """Token issuance endpoint (D020 §2-7).
 
     1. Session check (get_current_user)

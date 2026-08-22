@@ -1,4 +1,12 @@
-"""Workflow rewind domain service shared by HTTP and automatic test rework."""
+"""Workflow rewind domain service shared by HTTP and automatic test rework.
+
+0449 T0004 item 5 (NR0003 E5): this module is the SINGLE definition of the return-point
+lifecycle — recording a snapshot, reading its payload, resolving a group's workflow root, and
+deleting a ledger the workflow has walked out of. ``documents/routers/documents.py`` used to
+carry byte-for-byte copies of ``_record_return_point`` / ``_return_point_payload`` /
+``_group_workflow_root_doc``; the router now imports the public functions below, so a fix to
+the rewind contract cannot land in one copy and miss the other.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +19,10 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES
+from modules.flow_gate.documents.constants import (
+    AUTO_COMPLETE_TYPES,
+    NON_SLOT_WORKFLOW_TYPES,
+)
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services.mutation_policy import (
     MutationPrincipal,
@@ -24,8 +35,19 @@ from modules.flow_gate.workflow import event_logger
 logger = logging.getLogger(__name__)
 
 WORKFLOW_ROOT_TYPES = {"R", "B"}
+# Types a return point must never snapshot, reopen, or let decide that a rewind is over.
+#
+# 0449 TR0005 rev1: this used to be spelled out here as ``{"Q", "AC"} | AUTO_COMPLETE_TYPES``,
+# which silently omitted **A**. A (the answer to a Q) is as much outside
+# ``workflow_sequence_items`` as Q itself — ``documents.constants.NON_SLOT_WORKFLOW_TYPES``
+# has said so all along — but in the legacy fallback where a group has no decided sequence
+# (``workflow_step_doc_ids`` is None) nothing else filtered it out, so an approved A landed in
+# the snapshot and was reopened to ``pending_review`` by a rewind, and an A approval could
+# also be the event that cleared the ledger. Deriving the set from the shared constant is what
+# keeps the two from drifting apart again; the R/B root is the only addition, because a root is
+# a slot-less step of a different kind (it OWNS the sequence rather than sitting outside it).
 _RETURN_POINT_NON_RESTORE_TYPES = tuple(
-    sorted(WORKFLOW_ROOT_TYPES | {"Q", "AC"} | AUTO_COMPLETE_TYPES)
+    sorted(WORKFLOW_ROOT_TYPES | NON_SLOT_WORKFLOW_TYPES)
 )
 _FINGERPRINT_IGNORED_FRONTMATTER = {
     "doc_review_status",
@@ -59,7 +81,10 @@ def _normalise_markdown_for_fingerprint(content: str) -> bytes:
     return (text.rstrip() + "\n").encode("utf-8")
 
 
-def _content_fingerprint(doc: dict) -> Optional[str]:
+def content_fingerprint(doc: dict) -> Optional[str]:
+    """SHA-256 of a document's stored markdown, normalised so status-only rewrites don't
+    change it. ``None`` when the file cannot be read — callers substitute a sentinel that no
+    real digest can equal, so a later restore stops at that document."""
     try:
         raw_path = (doc.get("file_path") or "").strip()
         if not raw_path:
@@ -77,7 +102,9 @@ def _content_fingerprint(doc: dict) -> Optional[str]:
     return hashlib.sha256(_normalise_markdown_for_fingerprint(raw)).hexdigest()
 
 
-def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
+def group_workflow_root_doc(doc: dict) -> Optional[dict]:
+    """The R/B document that owns this document's group workflow (the doc itself when it is
+    already a root), or None when the group has neither."""
     if doc.get("type_code") in WORKFLOW_ROOT_TYPES:
         return doc
     roots = db_docs.list_documents(
@@ -96,7 +123,11 @@ def _group_workflow_root_doc(doc: dict) -> Optional[dict]:
     return roots[0] if roots else None
 
 
-def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
+def workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
+    """doc_ids that actually fill this group's workflow-sequence slots, or None when no
+    sequence is decided (callers fall back to the legacy type+seq filter). A group
+    accumulates phantom documents that share the seq space but never filled a slot; a raw
+    ``seq >= target`` filter would sweep those into the rewind (0142 rework)."""
     if root_doc is None:
         return None
     sequence = db_wfseq.get_sequence_by_doc_id(root_doc["doc_id"])
@@ -109,9 +140,17 @@ def _workflow_step_doc_ids(root_doc: Optional[dict]) -> Optional[set[str]]:
     }
 
 
-def _record_return_point(
+def record_return_point(
     group_id: str, docs: list[dict], *, root_prev_status: str
 ) -> Optional[dict]:
+    """Capture the approved baseline a rewind is walking away from.
+
+    ``root_prev_status`` is the root's status BEFORE the rewind, so a later restore is honest:
+    a genuinely-done workflow is re-declared wf_done, a mid-flight one returns to
+    wf_in_progress. A pre-existing ledger with no pending snapshot document left is discarded
+    first (this rewind starts a clean capture); a still-pending one is a nested rewind and is
+    preserved untouched, baseline and root_prev_status included (0142 T0013 invariant).
+    """
     from modules.flow_gate.db import workflow_return_points as db_rp
 
     existing = db_rp.get_by_group(group_id)
@@ -132,7 +171,7 @@ def _record_return_point(
     front_seq = max(int(doc.get("seq") or 0) for doc in affected)
     point = db_rp.ensure(group_id, front_seq, root_prev_status)
     for doc in affected:
-        fingerprint = _content_fingerprint(doc) or ("!" * 64)
+        fingerprint = content_fingerprint(doc) or ("!" * 64)
         db_rp.add_doc_if_absent(
             return_point_id=point["id"],
             doc_id=doc["doc_id"],
@@ -143,21 +182,48 @@ def _record_return_point(
     return db_rp.get_by_group(group_id)
 
 
-def _return_point_payload(group_id: str) -> dict:
+_ABSENT_RETURN_POINT = {
+    "exists": False,
+    "front_seq": None,
+    "front_label": None,
+    "restorable_count": 0,
+    "current_min_seq": None,
+    "destination_default": None,
+    "destination_min": None,
+}
+
+
+def return_point_payload(group_id: str) -> dict:
+    """The group's return point as the API exposes it.
+
+    0291 T2 folded what used to be four queries into ``summary()``.
+
+    0449 T0004 item 5.4 — this is a READ and it NEVER edits the ledger. Cleanup belongs to the
+    write boundaries (``pipeline_service`` when a forward re-approval exhausts the ledger,
+    ``record_return_point`` when the next rewind finds a spent one), so a reader must not
+    delete anything here: a GET that mutates would rewrite history behind an operator who is
+    only looking at it.
+
+    What it does owe the caller is a COHERENT answer. A ledger whose snapshot documents are
+    all out of ``pending_review`` (``current_min_seq is None`` with a non-empty snapshot) no
+    longer describes a rewound state anyone can return to — the exact shape NR0003 measured on
+    the incident group (``exists=true / current_min_seq=null``), where the screen kept offering
+    a "return" that had nothing to return to. The write-boundary cleanup stops NEW ones from
+    forming, but it cannot reach a ledger that was already exhausted before it shipped: that
+    ledger's last approval is in the past. So an exhausted ledger reads as absent. The row is
+    left exactly where it is and the next rewind discards it, as it always did.
+
+    A ledger with an EMPTY snapshot is a different thing and stays visible: it was never
+    populated rather than walked out of, and ``restore`` still has its front_seq to work with.
+    """
     from modules.flow_gate.db import workflow_return_points as db_rp
 
     point = db_rp.summary(group_id)
     if point is None:
-        return {
-            "exists": False,
-            "front_seq": None,
-            "front_label": None,
-            "restorable_count": 0,
-            "current_min_seq": None,
-            "destination_default": None,
-            "destination_min": None,
-        }
+        return dict(_ABSENT_RETURN_POINT)
     current_min = point["current_min_seq"]
+    if current_min is None and (point["restorable_count"] or 0) > 0:
+        return dict(_ABSENT_RETURN_POINT)
     return {
         "exists": True,
         "front_seq": point["front_seq"],
@@ -167,6 +233,45 @@ def _return_point_payload(group_id: str) -> dict:
         "destination_default": point["front_seq"],
         "destination_min": current_min,
     }
+
+
+def clear_return_point_if_complete(
+    group_id: str, approved_doc: Optional[dict] = None
+) -> bool:
+    """Drop the return point once the workflow has walked home the FORWARD way.
+
+    0449 T0004 item 5.2 (NR0003 E4). A rewind snapshots the approved baseline and every
+    snapshot document goes back to ``pending_review``. When the worker redoes that work
+    forward — re-approving each snapshot document through the normal pipeline instead of
+    pressing restore — the ledger stops describing anything: there is no rewound state left
+    to walk back to. It used to survive until the NEXT rewind discarded it, so in between the
+    document API kept answering ``exists=true / current_min_seq=null`` and the screen kept
+    offering a "return" that had nothing to return to.
+
+    Deletes ONLY when the ledger is exhausted:
+
+    * ``current_min_seq is None`` — not one snapshot document is still pending. While even one
+      is pending the rewind is live, and a nested rewind is live by construction (a rewind
+      re-pends its range), so the first baseline and its ``root_prev_status`` are untouched.
+    * ``approved_doc`` (when given) is a restorable type. Types that are never snapshotted —
+      the R/B root and every non-slot type (Q, **A**, AC, and the auto-complete M/CH) — are
+      approved on their own schedule and must not be the event that decides a rewind is over
+      (item 5.3). See ``_RETURN_POINT_NON_RESTORE_TYPES``.
+
+    Returns True when a ledger was deleted. Callers treat it as best effort: the approval
+    itself has already happened and must not be undone by a bookkeeping failure.
+    """
+    from modules.flow_gate.db import workflow_return_points as db_rp
+
+    if approved_doc is not None and approved_doc.get("type_code") in _RETURN_POINT_NON_RESTORE_TYPES:
+        return False
+    point = db_rp.summary(group_id)
+    if point is None:
+        return False
+    if point["current_min_seq"] is not None:
+        return False
+    db_rp.delete(point["id"])
+    return True
 
 
 def _archive_ac(doc: dict, *, reason: Optional[str], run_id: Optional[str]) -> None:
@@ -199,8 +304,8 @@ def _reopen_in_transaction(
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     group_docs = db_docs.list_documents(project_id=project_id, group_id=group_id, limit=200)
-    root_doc = _group_workflow_root_doc(doc)
-    step_ids = _workflow_step_doc_ids(root_doc)
+    root_doc = group_workflow_root_doc(doc)
+    step_ids = workflow_step_doc_ids(root_doc)
 
     def is_rewindable_step(candidate: dict) -> bool:
         if candidate.get("type_code") in _RETURN_POINT_NON_RESTORE_TYPES:
@@ -211,7 +316,7 @@ def _reopen_in_transaction(
 
     root_prev_status = (root_doc or {}).get("doc_review_status") or "wf_in_progress"
     root_was_done = root_prev_status == "wf_done"
-    _record_return_point(
+    record_return_point(
         group_id,
         [candidate for candidate in group_docs if is_rewindable_step(candidate)],
         root_prev_status=root_prev_status,
@@ -242,7 +347,7 @@ def _reopen_in_transaction(
     metadata: dict[str, Any] = {
         "reopened": reopened,
         "target_seq": target_seq,
-        "return_point": _return_point_payload(group_id),
+        "return_point": return_point_payload(group_id),
     }
     if reason:
         metadata["reason"] = reason
@@ -260,7 +365,7 @@ def _reopen_in_transaction(
     except Exception as exc:  # pragma: no cover - audit remains best-effort for manual compatibility
         logger.warning("[workflow reopen] event logging failed: %s", exc, exc_info=True)
 
-    return {"ok": True, "reopened": reopened, "return_point": _return_point_payload(group_id)}
+    return {"ok": True, "reopened": reopened, "return_point": return_point_payload(group_id)}
 
 
 def _rearm_git(project_id: str, group_id: str) -> None:
