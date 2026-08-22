@@ -410,3 +410,392 @@ describe('AiInvokeDialog 전달멘트 forwarding (0346 T0005)', () => {
     wrapper.unmount()
   })
 })
+
+// ── 0446 NR0003 R5 / T0010 §4-3: 반려 재작업 실행 시간 선택 ───────────────────
+//
+// A rejection rework was pinned to exactly 60 minutes by the server formula
+// min(3600 × max(1, docs_target), 14400) — 264 of 264 measured runs got 3600 seconds, two were
+// cut at the 3603-second boundary. The picker below is the UI half of the fix; the server half
+// (an in-range pick outranks the mode branch in _resolve_timeout_sec) is proven in
+// server/tests/test_ai_invoke_step_timeout_0400.py. Neither half is a fix on its own: this
+// spec proves what LEAVES the browser, that spec proves what is SAVED.
+describe('AiInvokeDialog 실행 시간 선택 (0446 T0010 R5)', () => {
+  const CWD_KEY = 'flowgate.continuousWork.stepTimeoutMinutes'
+  const AIV_KEY = 'flowgate.aiInvoke.stepTimeoutMinutes'
+
+  /** Re-query every time: a DOMWrapper captured earlier goes stale after a re-render. */
+  function timeoutSelect(): HTMLSelectElement | null {
+    return document.querySelector('[data-test="ai-invoke-step-timeout-select"]')
+  }
+
+  async function clickStart() {
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+  }
+
+  it('renders the picker on a rework, defaults to 120 minutes, and sends 7200', async () => {
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    const select = timeoutSelect()
+    expect(select).not.toBeNull()
+    // All seven options ContinuousWorkDialog offers — the shared list in
+    // composables/useStepTimeout.ts, so neither dialog can quietly lose 240 minutes.
+    expect(Array.from(select!.options).map((o) => Number(o.value)))
+      .toEqual([30, 45, 60, 90, 120, 180, 240])
+    expect(Number(select!.value)).toBe(120)
+
+    await clickStart()
+    expect(startBody()).toMatchObject({
+      mode: 'single',
+      action_scope: 'rework',
+      continuation_step_timeout_sec: 7200,
+    })
+
+    wrapper.unmount()
+  })
+
+  it('sends 14400 when 240 minutes is chosen', async () => {
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    const select = timeoutSelect()!
+    select.value = '240'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    await clickStart()
+    expect(startBody().continuation_step_timeout_sec).toBe(14400)
+
+    wrapper.unmount()
+  })
+
+  it.each([1800, 2700, 3600, 5400, 7200, 10800, 14400])(
+    'sends %i seconds for the matching option',
+    async (seconds) => {
+      const wrapper = mountDialog({ actionScope: 'rework' })
+      await flushPromises()
+
+      const select = timeoutSelect()!
+      select.value = String(seconds / 60)
+      select.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      await clickStart()
+      // The two edges (1800 / 14400) are exactly the server's STEP_TIMEOUT_MIN_SEC /
+      // STEP_TIMEOUT_MAX_SEC, so no option the screen offers can be a 422.
+      expect(startBody().continuation_step_timeout_sec).toBe(seconds)
+
+      wrapper.unmount()
+    },
+  )
+
+  it('attaches the picker to rework ONLY — with a positive control in the same test', async () => {
+    // §4-3 #3: a bare "it is absent" assertion passes just as well when the selector is
+    // misspelled or the component failed to mount. So the positive case runs first, in the
+    // same test, through the same query.
+    const rework = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(timeoutSelect()).not.toBeNull()          // positive control
+    await clickStart()
+    expect(startBody()).toHaveProperty('continuation_step_timeout_sec', 7200)
+    rework.unmount()
+    document.body.innerHTML = ''
+
+    for (const scope of ['edit', 'review', 'chat', 'new', 'vr_correction',
+                         'next_step_message', 'design_handoff'] as const) {
+      postRequest.mockClear()
+      const other = mountDialog({ actionScope: scope })
+      await flushPromises()
+      expect(timeoutSelect()).toBeNull()            // re-queried, never a stale wrapper
+      await clickStart()
+      expect(startBody()).not.toHaveProperty('continuation_step_timeout_sec')
+      other.unmount()
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('leaves the continuous preset path untouched (regression)', async () => {
+    // §4-3 #4: ContinuousWorkDialog's own pick still travels the `mode === 'continuous'`
+    // branch, on a scope that has no rework picker at all.
+    const wrapper = mountDialog({
+      actionScope: 'edit',
+      docRef: ROOT,
+      sequenceDocRef: ROOT,
+      initialMode: 'continuous',
+      initialTargetSeq: 4,
+      autoStart: true,
+      continuationStepTimeoutSec: 7200,
+    })
+    await flushPromises()
+
+    expect(timeoutSelect()).toBeNull()
+    expect(startBody()).toMatchObject({
+      mode: 'continuous',
+      continuation_step_timeout_sec: 7200,
+    })
+
+    wrapper.unmount()
+  })
+
+  it('remembers the pick under its OWN key and never touches the chain dialog key', async () => {
+    // §4-3 #5. The two dialogs answer different questions ("how long may one hop of an
+    // unmanned chain run?" vs "how long may this one rework run?"), so one pick must not
+    // become the other's default.
+    localStorage.setItem(CWD_KEY, '30')
+
+    const first = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    const select = timeoutSelect()!
+    // The chain dialog's stored 30 is NOT read: this dialog opens on its own default.
+    expect(Number(select.value)).toBe(120)
+    select.value = '180'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    expect(localStorage.getItem(AIV_KEY)).toBe('180')
+    expect(localStorage.getItem(CWD_KEY)).toBe('30')   // control: untouched
+    first.unmount()
+    document.body.innerHTML = ''
+
+    // Reopened (a fresh mount, as MainPanel does) — the pick is restored, not reset.
+    const second = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(Number(timeoutSelect()!.value)).toBe(180)
+    postRequest.mockClear()
+    await clickStart()
+    expect(startBody().continuation_step_timeout_sec).toBe(10800)
+
+    second.unmount()
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)('renders real %s copy, not raw i18n keys', async (locale) => {
+    i18n.global.locale.value = locale
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    const group = document.querySelector('[data-test="ai-invoke-step-timeout"]') as HTMLElement
+    expect(group).not.toBeNull()
+    // A missing key renders as the key path itself in vue-i18n.
+    expect(group.textContent).not.toContain('main.ai_invoke_dialog.step_timeout')
+    expect(group.textContent).toContain(i18n.global.t('main.ai_invoke_dialog.step_timeout_title'))
+    // Not borrowed from the chain dialog: that copy is about ONE STEP of a chain and would be
+    // wrong on a single-run screen (T0010 §3-6).
+    expect(group.textContent)
+      .not.toContain(i18n.global.t('main.continuous_work.step_timeout_desc'))
+    // The option labels are localised too, not bare numbers.
+    expect(timeoutSelect()!.options[2].textContent?.trim())
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_option_minutes', { n: 60 }))
+
+    wrapper.unmount()
+    i18n.global.locale.value = 'ko'
+  })
+
+  function mockReworkContext(
+    runs: Array<Record<string, unknown>> = [],
+    timeoutKind: string | null = null,
+  ) {
+    getRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/ai-invoke/runs') return Promise.resolve({ data: { items: runs } })
+      if (url === '/api/v1/ai-invoke/rework-hint') {
+        return Promise.resolve({ data: { ok: true, timeout_kind: timeoutKind } })
+      }
+      if (url === '/api/v1/workflow/sequence') return Promise.resolve(seqResponse())
+      return Promise.resolve({ data: { providers: [] } })
+    })
+  }
+
+  function finishedRun(minutes: number, mode = 'single', status = 'finished') {
+    return { mode, status, duration_ms: minutes * 60_000 }
+  }
+
+  it('still applies the no-progress hint when the independent runs lookup fails', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/ai-invoke/runs') return Promise.reject(new Error('runs unavailable'))
+      if (url === '/api/v1/ai-invoke/rework-hint') {
+        return Promise.resolve({ data: { ok: true, timeout_kind: 'no_progress' } })
+      }
+      return Promise.resolve({ data: { providers: [] } })
+    })
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    expect(Number(timeoutSelect()!.value)).toBe(180)
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_recommend', { n: 180 }))
+
+    wrapper.unmount()
+  })
+
+  it('still renders run history when the independent hint lookup fails', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/ai-invoke/runs') {
+        return Promise.resolve({ data: { items: [finishedRun(42)] } })
+      }
+      if (url === '/api/v1/ai-invoke/rework-hint') {
+        return Promise.reject(new Error('hint unavailable'))
+      }
+      return Promise.resolve({ data: { providers: [] } })
+    })
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    expect(Number(timeoutSelect()!.value)).toBe(120)
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_recent_values', {
+        n: 1,
+        values: '42',
+      }))
+
+    wrapper.unmount()
+  })
+
+  it('renders no-history, small-sample, and 10+ descriptions from real run data', async () => {
+    i18n.global.locale.value = 'ko'
+
+    mockReworkContext()
+    const empty = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_desc'))
+    empty.unmount()
+    document.body.innerHTML = ''
+
+    mockReworkContext([
+      finishedRun(18),
+      finishedRun(999, 'continuous'),
+      finishedRun(24),
+      finishedRun(777, 'single', 'running'),
+      finishedRun(59),
+    ])
+    const small = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_recent_values', {
+        n: 3,
+        values: '18 / 24 / 59',
+      }))
+    small.unmount()
+    document.body.innerHTML = ''
+
+    mockReworkContext(
+      [10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((minutes) => finishedRun(minutes)),
+    )
+    const many = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_recent_summary', {
+        n: 10,
+        median: 55,
+        max: 100,
+      }))
+    many.unmount()
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)(
+    'renders the new recent-run copy in %s instead of a raw key',
+    async (locale) => {
+      i18n.global.locale.value = locale
+      mockReworkContext([finishedRun(18), finishedRun(24), finishedRun(59)])
+      const wrapper = mountDialog({ actionScope: 'rework' })
+      await flushPromises()
+
+      const description = document.querySelector('.aiv-timeout-desc')?.textContent
+      expect(description).toBe(i18n.global.t(
+        'main.ai_invoke_dialog.step_timeout_recent_values',
+        { n: 3, values: '18 / 24 / 59' },
+      ))
+      expect(description).not.toContain('main.ai_invoke_dialog')
+
+      wrapper.unmount()
+      i18n.global.locale.value = 'ko'
+    },
+  )
+
+  it.each([
+    ['no_progress', 180, true],
+    ['absolute_cap', 120, false],
+    [null, 120, false],
+  ] as const)(
+    'uses the previous-run kind %s only as a no-progress recommendation',
+    async (timeoutKind, expectedMinutes, recommended) => {
+      mockReworkContext([finishedRun(42)], timeoutKind)
+      const wrapper = mountDialog({ actionScope: 'rework' })
+      await flushPromises()
+
+      expect(Number(timeoutSelect()!.value)).toBe(expectedMinutes)
+      const description = document.querySelector('.aiv-timeout-desc')?.textContent ?? ''
+      const recommendCopy = i18n.global.t('main.ai_invoke_dialog.step_timeout_recommend', {
+        n: expectedMinutes,
+      })
+      if (recommended) {
+        expect(description).toBe(recommendCopy)
+      } else {
+        expect(description).not.toBe(recommendCopy)
+        expect(description).toBe(i18n.global.t(
+          'main.ai_invoke_dialog.step_timeout_recent_values',
+          { n: 1, values: '42' },
+        ))
+      }
+
+      wrapper.unmount()
+    },
+  )
+
+  it('keeps a user choice made before the no-progress hint arrives', async () => {
+    localStorage.setItem(AIV_KEY, '120')
+    let resolveHint!: (value: { data: { ok: boolean; timeout_kind: string } }) => void
+    const hint = new Promise<{ data: { ok: boolean; timeout_kind: string } }>((resolve) => {
+      resolveHint = resolve
+    })
+    getRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/ai-invoke/runs') return Promise.resolve({ data: { items: [] } })
+      if (url === '/api/v1/ai-invoke/rework-hint') return hint
+      return Promise.resolve({ data: { providers: [] } })
+    })
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    const select = timeoutSelect()!
+    expect(Number(select.value)).toBe(120)
+    select.value = '240'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(localStorage.getItem(AIV_KEY)).toBe('240')
+
+    resolveHint({ data: { ok: true, timeout_kind: 'no_progress' } })
+    await flushPromises()
+    expect(Number(timeoutSelect()!.value)).toBe(240)
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_recommend', { n: 180 }))
+
+    await clickStart()
+    expect(startBody().continuation_step_timeout_sec).toBe(14400)
+
+    wrapper.unmount()
+  })
+
+  it('does not persist a programmatic recommendation and restores the saved value next time', async () => {
+    localStorage.setItem(AIV_KEY, '90')
+    mockReworkContext([], 'no_progress')
+    const recommended = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    expect(Number(timeoutSelect()!.value)).toBe(120)
+    expect(localStorage.getItem(AIV_KEY)).toBe('90')
+    await clickStart()
+    expect(startBody().continuation_step_timeout_sec).toBe(7200)
+    recommended.unmount()
+    document.body.innerHTML = ''
+
+    mockReworkContext([], 'absolute_cap')
+    const control = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(Number(timeoutSelect()!.value)).toBe(90)
+    expect(document.querySelector('.aiv-timeout-desc')?.textContent)
+      .toBe(i18n.global.t('main.ai_invoke_dialog.step_timeout_desc'))
+    expect(localStorage.getItem(AIV_KEY)).toBe('90')
+
+    control.unmount()
+  })
+})

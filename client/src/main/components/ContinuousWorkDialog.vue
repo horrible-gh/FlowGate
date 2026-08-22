@@ -304,6 +304,12 @@ import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { DEFAULT_INSTRUCTION_MODE, type WorkPlanFillPreset } from '../types/workPlanFillPreset'
+import {
+  CONTINUOUS_WORK_STEP_TIMEOUT_KEY,
+  STEP_TIMEOUT_OPTIONS_MIN,
+  loadStoredStepTimeoutMin,
+  storeStepTimeoutMin,
+} from '../composables/useStepTimeout'
 
 const props = defineProps<{
   visible: boolean
@@ -373,27 +379,16 @@ const instructionMode = ref<'auto_approved' | 'ai_direct'>(DEFAULT_INSTRUCTION_M
 // Timeout setting (0400 M0005): a fixed list of per-hop budgets, minutes. 60 is the default;
 // unlimited was deliberately rejected (M0005 discussion) because it removes the only automatic
 // guard against a runaway unmanned hop.
-const STEP_TIMEOUT_OPTIONS_MIN = [30, 45, 60, 90, 120, 180, 240]
-const STEP_TIMEOUT_DEFAULT_MIN = 60
-const STEP_TIMEOUT_STORAGE_KEY = 'flowgate.continuousWork.stepTimeoutMinutes'
-function loadStoredStepTimeoutMin(): number {
-  try {
-    const stored = Number(window.localStorage.getItem(STEP_TIMEOUT_STORAGE_KEY))
-    if (STEP_TIMEOUT_OPTIONS_MIN.includes(stored)) return stored
-  } catch {
-    // localStorage unavailable (private mode, SSR, ...) — fall back to the default below.
-  }
-  return STEP_TIMEOUT_DEFAULT_MIN
-}
+// 0446 T0010 §3-5: the option list, the default and the loader now live in
+// composables/useStepTimeout.ts so AiInvokeDialog's rejection-rework picker offers exactly the
+// same seven values against the same server bounds. Nothing here changed behaviourally — same
+// options, same 60-minute default, same localStorage key — which is why the existing
+// ContinuousWorkDialog.spec.ts coverage of this section needed no edit at all.
 // Not reset by installPreset: this is a local UI preference, not part of a work-plan preset or
 // the per-run confirm state those functions manage.
-const stepTimeoutMinutes = ref(loadStoredStepTimeoutMin())
+const stepTimeoutMinutes = ref(loadStoredStepTimeoutMin(CONTINUOUS_WORK_STEP_TIMEOUT_KEY))
 watch(stepTimeoutMinutes, (value) => {
-  try {
-    window.localStorage.setItem(STEP_TIMEOUT_STORAGE_KEY, String(value))
-  } catch {
-    // Best-effort remembering only — a write failure must not block the dialog.
-  }
+  storeStepTimeoutMin(CONTINUOUS_WORK_STEP_TIMEOUT_KEY, value)
 })
 // Restart count (flowgate.default.0443 T0002 / R0001): the dialog's "재시작 횟수" pick.
 // -1 (될 때까지) is the unlimited sentinel; 0 disables the no-output retry; 1 (default)

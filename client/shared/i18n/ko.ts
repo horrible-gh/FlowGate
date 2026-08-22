@@ -1217,6 +1217,15 @@ export default {
       mode_continuous: '연속 실행(무인 체인)',
       mode_continuous_desc: '선택한 단계에 도달할 때까지 AI가 문서를 계속 등록합니다.',
       target_to_end_hint: '워크플로 결정 후 전체 시퀀스를 실행합니다.',
+      // 0446 T0010 §3-6: 반려 재작업 실행 시간 선택. main.continuous_work.step_timeout_* 는
+      // "단계별 제한 시간 / 한 단계가 이 시간을 넘기면 중단됩니다" 라서 1회 실행 화면에서는
+      // 틀린 말이 되므로 재사용하지 않고 이 블록에 따로 둔다.
+      step_timeout_title: '실행 제한 시간',
+      step_timeout_option_minutes: '{n}분',
+      step_timeout_desc: '이 실행이 이 시간을 넘기면 중단됩니다. 고르지 않으면 120분입니다.',
+      step_timeout_recent_values: '최근 단일 실행 {n}건: {values}분',
+      step_timeout_recent_summary: '최근 단일 실행 {n}건: 중앙값 {median}분, 최장 {max}분',
+      step_timeout_recommend: '지난 실행이 진행 정체로 중단되어 {n}분을 권장합니다.',
       btn_start: 'AI 실행 시작',
       btn_cancel_run: '실행 취소',
       running: 'AI가 작업 중입니다… 완성된 문서부터 차례로 등록됩니다.',

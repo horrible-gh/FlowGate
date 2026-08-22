@@ -1216,6 +1216,15 @@ export default {
       mode_continuous: 'Continuous run (unmanned chain)',
       mode_continuous_desc: 'The AI keeps registering documents until the step you pick is reached.',
       target_to_end_hint: 'Runs the entire sequence after the workflow decision.',
+      // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
+      // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain and
+      // would be wrong on a single-run screen.
+      step_timeout_title: 'Run Time Limit',
+      step_timeout_option_minutes: '{n} min',
+      step_timeout_desc: 'The run is stopped once it exceeds this time. 120 minutes if unchanged.',
+      step_timeout_recent_values: 'Recent {n} single runs: {values} min',
+      step_timeout_recent_summary: 'Recent {n} single runs: median {median} min, longest {max} min',
+      step_timeout_recommend: 'The previous run stopped after no progress, so {n} min is recommended.',
       btn_start: 'Start AI run',
       btn_cancel_run: 'Cancel run',
       running: 'AI is working… documents register as they are completed.',

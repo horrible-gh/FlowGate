@@ -1216,6 +1216,14 @@ export default {
       mode_continuous: '連続実行（無人チェーン）',
       mode_continuous_desc: '選択したステップに到達するまでAIがドキュメントを登録し続けます。',
       target_to_end_hint: 'ワークフロー決定後、シーケンス全体を実行します。',
+      // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
+      // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain.
+      step_timeout_title: '実行の制限時間',
+      step_timeout_option_minutes: '{n}分',
+      step_timeout_desc: 'この実行がこの時間を超えると中断されます。未選択なら120分です。',
+      step_timeout_recent_values: '最近の単一実行{n}件: {values}分',
+      step_timeout_recent_summary: '最近の単一実行{n}件: 中央値{median}分、最長{max}分',
+      step_timeout_recommend: '前回の実行が進行停滞で中断されたため、{n}分を推奨します。',
       btn_start: 'AI 実行開始',
       btn_cancel_run: '実行を取消',
       running: 'AIが作業中です… 完成したドキュメントから順に登録されます。',

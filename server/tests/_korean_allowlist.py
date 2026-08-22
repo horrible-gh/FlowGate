@@ -181,6 +181,26 @@ PROTECTED = [
         "tests": [],
     },
     {
+        "file": "modules/flow_gate/services/invoke_mention_service.py",
+        "symbols": [
+            "직전 AI 실행", "직전 실행({runId})이 제한시간에 걸려", "중단 진단", "소스 상태",
+            "그 실행이 시작된 뒤 생긴 변경", "작업 폴더에 남은 변경이 있지만",
+            "그 실행이 남긴 변경은 없습니다", "작업 폴더 상태를 확인하지 못했습니다",
+            "이 파일들은 이전 세션의 미완 변경일 수 있습니다",
+        ],
+        "reason": (
+            "0446 T0016 §4-5: the ko half of build_previous_run_section()'s label "
+            "dictionaries (_PREV_RUN_*). Every one has full ko/en/ja siblings in the same "
+            "dict, so this is a normal locale dictionary (A) — the same class as the four "
+            "_MM_SECTION_HEADER / _REJECT_TEMPLATE / _DESIGN_* entries already in this "
+            "file, which the census counts under its cap for the same reason."
+        ),
+        "tests": [
+            "tests/test_ai_invoke_run_diagnostics_0446.py::TestPreviousRunBlock",
+            "tests/test_server_korean_leak_0355.py::test_static_locale_branch_scan_has_zero_korean",
+        ],
+    },
+    {
         "file": "templates/flow_gate/group_detail.html",
         "symbols": ["다음 예상 액션", "멘트복사"],
         "reason": (

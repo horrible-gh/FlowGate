@@ -63,6 +63,11 @@ FAST_FAIL_WINDOW_SEC = 15        # nonzero exit + 0 docs inside this window ⇒ 
 SCRATCH_RETENTION_DAYS = 7       # failed-run scratch retention
 LAST_MESSAGE_MAX_BYTES = 16384   # keep the tail, truncate the front
 OUTPUT_TAIL_BYTES = 8192         # stdout/stderr auxiliary tails
+# 0446 T0016 2/3-3: how many spilled source paths a finished hop reports and stores. It
+# was a bare `[:20]` inside _finalize_run; naming it is what lets the durable row, the
+# finished payload and the rework handoff all provably use the SAME 20 rather than three
+# independently-chosen limits.
+SOURCE_DIRTY_FILES_LIMIT = 20
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 API_MAX_TOOL_NUDGES = 2          # retry when the model claims completion without using the tool
 ORACLE_SETTLE_SEC = 3            # wait before judging (late-commit slack)
@@ -73,9 +78,14 @@ CONCURRENT_RUNS_PER_GROUP = 1
 # ran, produced nothing and exited 0 fell straight out of the loop with no retry, no record
 # and no signal. These parameters bound the retry branch that closes that hole.
 HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled by slots left
-# flowgate.default.0400 M0005: the ContinuousWorkDialog duration section's fixed option list, as
-# seconds — 30/45/60/90/120/180/240 minutes. A per-hop pick outside this range is rejected by
-# the route (422); HOP_TIMEOUT_SEC above remains the fallback when no pick was made at all.
+# flowgate.default.0400 M0005: the duration section's fixed option list, as seconds —
+# 30/45/60/90/120/180/240 minutes. A pick outside this range is rejected by the route (422).
+# 0446 T0010 §3-2: these two bounds are now shared by BOTH entry points — ContinuousWorkDialog
+# (a continuous hop) and AiInvokeDialog (a single rejection rework) — and by the route's own
+# validation, deliberately with no single-run-only pair beside them; a second pair would let
+# the screen, the route and the engine disagree about where the edge is. With no pick at all
+# the mode's own default still applies: HOP_TIMEOUT_SEC for a continuous hop, and
+# min(RUN_TIMEOUT_BASE_SEC × max(1, docs_target), RUN_TIMEOUT_CAP_SEC) for a single run.
 STEP_TIMEOUT_MIN_SEC = 1800
 STEP_TIMEOUT_MAX_SEC = 14400
 NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-output retry on the SAME provider
@@ -90,6 +100,28 @@ RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open 
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
 RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
 RUN_LIST_LIMIT_MAX = 100         # GET /ai-invoke/runs clamp ceiling
+
+# ── 0446 T0014 §2: no-progress threshold vs. absolute ceiling ────────────────
+# T0010 made the budget above choosable; NR0003 then measured what it is actually
+# spent on — hops still registering documents when the hour ran out, and workers that
+# had been dead for fifty minutes when it did. One number cannot separate those two,
+# so from here the budget `_resolve_timeout_sec` returns is read as the NO-PROGRESS
+# threshold (how long a run may show nothing new — `_stall_remaining_sec`), and the
+# run's hard ceiling is named separately (`_absolute_remaining_sec`). The formula, the
+# 1800..14400 bounds and the 30/45/60/90/120/180/240 list are deliberately untouched:
+# this T raises nobody's default, it only stops charging a working run for the time it
+# spent working.
+#
+# RUN_TIMEOUT_CAP_SEC is already exactly four hours — and already the budget a
+# `target_to_end` run gets — so the ceiling REUSES that constant (see
+# `_absolute_cap_sec`) rather than adding a second 14400 literal that could drift away
+# from it. The distinction lives in the helper names and their comments, not in the
+# number: `_stall_remaining_sec` is the threshold, `_absolute_remaining_sec` the
+# ceiling.
+STALL_POLL_INTERVAL_SEC = 15                 # watchdog tick: short, finite, bounded
+# `_git_status_paths` shells out with its own 30s timeout, so a tick already inside it
+# needs more than one tick length to come back and be joined.
+STALL_WATCHDOG_JOIN_SEC = 40
 
 # L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops
 # (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
@@ -533,7 +565,7 @@ def get_run_detail(run_id: str) -> dict:
 def _run_detail_from_row(row: dict) -> dict:
     """Shape a persisted `ai_invoke_runs` row like the live `finished_payload` (same
     field names) so a client renders both through one path."""
-    return {
+    payload = {
         "ok": True,
         "run_id": row["run_id"],
         "status": "finished",
@@ -591,7 +623,19 @@ def _run_detail_from_row(row: dict) -> dict:
         "prompt_user_message_sha256": row.get("prompt_user_message_sha256"),
         "prompt_final_length": row.get("prompt_final_length"),
         "prompt_final_sha256": row.get("prompt_final_sha256"),
+        # 0446 T0016 §3-4: same names, same meaning as `finished_payload` — this is the
+        # restart half of the pair, and a field that reads differently here than it did in
+        # memory is exactly the divergence that section forbids.
+        "timeout_kind": row.get("timeout_kind"),
+        "timeout_diagnosis": row.get("timeout_diagnosis"),
+        "stdout_tail": row.get("stdout_tail"),
+        "stderr_tail": row.get("stderr_tail"),
     }
+    # `finished_payload` carries the path list only when something actually spilled. Mirror
+    # that, so the key's PRESENCE means the same thing on both sides of a restart.
+    if row.get("source_dirty"):
+        payload["source_dirty_files"] = list(row.get("source_dirty_files") or [])
+    return payload
 
 
 def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
@@ -972,6 +1016,34 @@ def _uses_scope_oracle(action_scope: str, mode: str, completion_oracle: Optional
     return completion_oracle is None and mode == "single" and action_scope in _SCOPE_PROBES
 
 
+def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
+                             scope_oracle_run: Optional[bool]) -> bool:
+    """0446 T0008 §3-2: may this SINGLE run use the no-output recovery machinery?
+
+    NR0003 measured 27 of 242 post-rejection rework runs ending with nothing registered,
+    and found the cause structural rather than incidental: retry, stop code and failure
+    notification all live inside `mode == "continuous"`, while rework is always `mode="single"`
+    carrying an `edit` token.
+
+    Two deliberate narrowings:
+      * `scope_oracle_run` — the ENGINE planted this run's judge (`_scope_oracle`). A
+        caller-supplied `completion_oracle` override (0248 B0001, the legacy Q&A follow-up in
+        `q_answer_invoke_service`) keeps the old block: its success criterion is defined
+        outside the engine, so the engine must not re-ask or re-run it.
+      * `edit` only — `_SCOPE_PROBES` also holds chat / review / test_run /
+        workflow_sequence_edit, but NR0003's measurement is the 264 edit/single runs. Opening
+        the others would move the 0259/0268 judging contract with nothing behind it.
+    """
+    return bool(scope_oracle_run) and mode == "single" and action_scope == "edit"
+
+
+def _scope_oracle_retry_run(run: dict) -> bool:
+    """The same question asked of a live run dict — `scope_oracle_run` rides on it (§3-1)."""
+    return _scope_oracle_retry_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run")
+    )
+
+
 # ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
 
 def list_runtime_providers(project_id: str) -> dict:
@@ -1054,10 +1126,16 @@ def start_run(
     # provider resolution / docs_target counting / worker item_seq folding agrees with the
     # SAME selection the user made once at the start of the chain.
     continuation_auto_approve_item_seqs: Optional[list] = None,
-    # flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
-    # ContinuousWorkDialog's duration section. Session-scoped like the provider/note overrides
-    # above — never persisted outside the paused-chain row a pause snapshots it into. None (or
-    # out of STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC) falls back to HOP_TIMEOUT_SEC.
+    # flowgate.default.0400 M0005 + 0446 T0010 §3-1: THIS RUN's wall-clock budget in seconds,
+    # picked either in ContinuousWorkDialog's duration section (a continuous hop) or in
+    # AiInvokeDialog's time section (a single rejection rework). The `continuation_` prefix is
+    # a misnomer kept on purpose — renaming it would move a route field, this argument, an
+    # ai_invoke_paused_chains column and a client prop at once, which T0010 §3-1 rules out of
+    # scope. Read it as "the run's budget pick", not as "continuous only".
+    # Session-scoped like the provider/note overrides above — never persisted outside the
+    # paused-chain row a continuous pause snapshots it into. None (or a value outside
+    # STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC) falls back to the mode's own default:
+    # HOP_TIMEOUT_SEC for continuous, the per-document formula for single.
     continuation_step_timeout_sec: Optional[int] = None,
     # flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick — how many times
     # a no-output hop retries on the SAME step-assigned provider (never a different one).
@@ -1432,6 +1510,26 @@ def start_run(
         # answered by re-deriving the formula from logs — which is exactly the work NR0003 had
         # to do (and got wrong on its first pass).
         "deadline_at": _deadline_iso(started_at, timeout_sec),
+        # ── 0446 T0014 §2: two clocks, kept apart by name ───────────────────────
+        # `timeout_sec` / `deadline_at` above keep their exact stored meaning and are
+        # read from here on as the NO-PROGRESS threshold: the EARLIEST this run may be
+        # stopped, and only if it shows nothing new for that long. The ceiling below is
+        # the latest it can possibly run, progress or not. Both live in memory on
+        # purpose — the column and the migration belong to T#2 (§2-5).
+        "absolute_cap_sec": _absolute_cap_sec(),
+        "absolute_deadline_at": _deadline_iso(started_at, _absolute_cap_sec()),
+        "stall_anchor_mono": None,     # start of the current no-progress window
+        "last_progress_mono": None,    # None = nothing was ever observed to move
+        "last_progress_at": None,
+        "last_progress_signal": None,
+        "progress_observations": 0,
+        "watchdog_kill": None,         # raw, monotonic, process-local (0446 T0014)
+        # 0446 T0016 3-1: the durable reading of the above, resolved once at finalize.
+        # These two are what the row, the detail response and the next rework prompt read.
+        "timeout_kind": None,
+        "timeout_diagnosis": None,
+        "stdout_tail": None,
+        "stderr_tail": None,
         "provider": None,
         "provider_id": None,
         "attempt_no": 0,
@@ -1464,6 +1562,11 @@ def start_run(
         "api_base_url": api_base_url,
         "chain_source": chain_source,
         "action_scope": action_scope,
+        # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
+        # caller hand one in? Computed at the top of start_run and, until now, discarded —
+        # which left `completion_oracle is not None` an unconditional retry block for every
+        # scoped run. That is the fourth gate NR0003 §6-2 did not name.
+        "scope_oracle_run": scope_oracle_run,
         "target_to_end": target_to_end,
         "continuation_instruction_mode": (
             continuation_instruction_mode if mode == "continuous" else None
@@ -1507,11 +1610,27 @@ def start_run(
         # 0435 T0004: retry code never replays the priority tiers. The finalized chain head is
         # the single source of truth for this hop, regardless of whether it came from a step
         # override, a human pin, a stored row, a header default, or a doc-type assignment.
+        # 0446 T0008 §3-5: a scope-oracle rework run needs the same head on the record, or
+        # `_retry_provider_chain` returns [] and the loop ends as
+        # "providers_exhausted_for_retry" with every gate above it already open. The 0435
+        # T0004 contract is untouched: attempt 1 retries exactly once on THIS provider and
+        # never switches to another. `_stop_reason_text` reads the name back for the human
+        # sentence.
         "continuation_selected_provider_id": (
-            chain[0].get("id") if mode == "continuous" and chain else None
+            chain[0].get("id")
+            if chain and (
+                mode == "continuous"
+                or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+            )
+            else None
         ),
         "continuation_selected_provider_name": (
-            chain[0].get("name") if mode == "continuous" and chain else None
+            chain[0].get("name")
+            if chain and (
+                mode == "continuous"
+                or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+            )
+            else None
         ),
         # 0346 T0005: the handoff-note bundle rides the run forward the same way the
         # provider override map does, so a re-spawned hop (_maybe_auto_resume_hop ->
@@ -1522,13 +1641,21 @@ def start_run(
         "continuation_default_note": (
             continuation_default_note if mode == "continuous" else None
         ),
-        # flowgate.default.0400 M0005: the per-hop budget PICK rides the run forward the same
-        # way the provider/note selections do, so a re-spawned hop (auto-resume, or a resume
-        # after a user pause) re-applies the same choice instead of silently falling back to
+        # flowgate.default.0400 M0005: the budget PICK rides the run forward the same way the
+        # provider/note selections do, so a re-spawned hop (auto-resume, or a resume after a
+        # user pause) re-applies the same choice instead of silently falling back to
         # HOP_TIMEOUT_SEC. Session-scoped — never persisted outside a paused-chain snapshot.
-        "continuation_step_timeout_sec": (
-            continuation_step_timeout_sec if mode == "continuous" else None
-        ),
+        #
+        # 0446 T0010 §3-3: no longer blanked on a single run. This read
+        # `continuation_step_timeout_sec if mode == "continuous" else None`, so a single run
+        # forgot the ORIGIN of its own budget the instant it started — get_run_record showed
+        # a 4-hour timeout_sec with nothing to say where it came from. The value only ever
+        # LEAVES this dict through continuous-chain code (_maybe_auto_resume_hop /
+        # _spawn_auto_resume / _apply_stop_row), and _apply_stop_row returns on
+        # `mode != "continuous"` at its first line, so a single run still writes no
+        # ai_invoke_paused_chains row and still queues no auto-resume hop. Keeping the value
+        # is a record of the user's pick, not a new execution path.
+        "continuation_step_timeout_sec": continuation_step_timeout_sec,
         # flowgate.default.0443 T0002 (R0001): the dialog's "재시작 횟수" pick, carried
         # the same way the budget pick above is — read by attempts_max below and by every
         # pause/resume/handoff snapshot that already threads continuation_step_timeout_sec.
@@ -1567,9 +1694,20 @@ def start_run(
         # notification and the stop row so "where did the chain die?" has an answer.
         "hop_item_seq": _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None,
         "attempts_used": 0,
+        # flowgate.default.0443 T0002 (R0001): a continuous hop resolves the user's
+        # "재시작 횟수" pick via _resolve_restart_max_attempts instead of the fixed
+        # NO_OUTPUT_MAX_ATTEMPTS constant.
+        # 0446 T0008 §3-3: a record/display value — the real ceiling is the
+        # `attempts_used >= NO_OUTPUT_MAX_ATTEMPTS` comparison in `_retry_eligible`. Leaving
+        # this at 1 for a scope-oracle rework run would make `ai_invoke_runs` and the screen
+        # say one thing while the engine does another. continuation_restart_max_attempts is
+        # None outside continuous mode, so _resolve_restart_max_attempts falls back to
+        # reproducing the previous fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior for it.
         "attempts_max": (
             _resolve_restart_max_attempts(continuation_restart_max_attempts)
-            if mode == "continuous" else 1
+            if mode == "continuous"
+            or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+            else 1
         ),
         "retry_block_reason": None,
         "last_message_seen": None,
@@ -1676,19 +1814,34 @@ def _resolve_timeout_sec(
     budget by how many slots are still ahead — the old min(3600 × slots_left, 14400) — handed
     the LAST hop the SMALLEST budget, which is backwards. NR0003 §7 cleared this of causing
     the reported incident (that hop had 2h and used 2m25s) but kept it as a live hazard: TR
-    hops of 74 minutes were measured. Fixed per hop now; the single-run formula is untouched.
+    hops of 74 minutes were measured. Fixed per hop now.
 
-    flowgate.default.0400 M0005: the fixed per-hop budget is now a user pick (30-240 minutes,
-    ContinuousWorkDialog duration section) instead of always HOP_TIMEOUT_SEC — an explicit,
-    in-range pick wins; anything else (not continuous, no pick, or an out-of-range value that
-    somehow reached here) keeps the old fixed budget.
+    flowgate.default.0400 M0005: that fixed per-hop budget became a user pick (30-240 minutes,
+    ContinuousWorkDialog duration section) instead of always HOP_TIMEOUT_SEC.
+
+    0446 NR0003 §3-5 (R5) / T0010 §3-2: the pick is no longer continuous-only. The single-run
+    formula min(RUN_TIMEOUT_BASE_SEC × max(1, docs_target), RUN_TIMEOUT_CAP_SEC) bottoms out
+    at exactly 3600 for a rejection rework — its docs_target is 1 and the max(1, …) floor
+    pins it there — so every rework got precisely one hour and no screen could ask for more
+    (264/264 measured runs had timeout_sec=3600; NR §2 lost two of them at the 3603s boundary
+    and a third quit at 59.6 minutes). So the explicit pick is read FIRST, above the mode
+    branch:
+
+        an in-range explicit pick is this run's budget, whatever the mode;
+        otherwise the previous order stands — continuous ⇒ HOP_TIMEOUT_SEC,
+        target_to_end ⇒ RUN_TIMEOUT_CAP_SEC, else the per-document formula.
+
+    The bounds stay STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC — the same pair
+    ai_invoke_routes validates against (422) and the same list both dialogs offer — so the
+    screen, the route and the engine cannot drift apart. The no-pick default is deliberately
+    untouched: 3600 was never the defect, "cannot choose" was.
     """
+    if (
+        continuation_step_timeout_sec is not None
+        and STEP_TIMEOUT_MIN_SEC <= continuation_step_timeout_sec <= STEP_TIMEOUT_MAX_SEC
+    ):
+        return int(continuation_step_timeout_sec)
     if mode == "continuous":
-        if (
-            continuation_step_timeout_sec is not None
-            and STEP_TIMEOUT_MIN_SEC <= continuation_step_timeout_sec <= STEP_TIMEOUT_MAX_SEC
-        ):
-            return int(continuation_step_timeout_sec)
         return HOP_TIMEOUT_SEC
     if target_to_end:
         return RUN_TIMEOUT_CAP_SEC
@@ -2392,7 +2545,8 @@ def _retry_eligible(run: dict) -> bool:
     145 seconds, reported that it could not work, and exited 0. That is not a startup failure —
     it is a completed attempt with nothing to show, and it needs an edge of its own.
     """
-    if run.get("mode") != "continuous":
+    scope_retry = _scope_oracle_retry_run(run)
+    if run.get("mode") != "continuous" and not scope_retry:
         return False
     cancel_event = run.get("cancel_event")
     if cancel_event is not None and cancel_event.is_set():
@@ -2404,16 +2558,31 @@ def _retry_eligible(run: dict) -> bool:
         return False
     if run.get("pause_requested"):
         return False
-    if run.get("completion_oracle") is not None:
+    if run.get("completion_oracle") is not None and not scope_retry:
+        # 0446 T0008 §3-1: the ENGINE's own scope default judge is re-askable —
+        # `_recheck_no_output` below does exactly that before a second worker starts. A
+        # caller's override is not, so it keeps the original block.
         return False
     if run.get("action_scope") in ("workflow_decide", "resolve_conflict"):
         return False
-    if int(run.get("docs_target") or 0) < 1:
+    if int(run.get("docs_target") or 0) < 1 and not scope_retry:
+        # 0446 T0008 §3-2: start_run pins a scope-oracle run's docs_target to 0 because its
+        # token cannot register a document at all. For that run the count is not a low
+        # number — it is not a measurement.
         return False
     if peek_auto_resume(run.get("group_id")) is not None:
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
+    if scope_retry and run.get("outcome") != "none":
+        # 0446 T0008 §3-2: the guard directly above cannot see a scope-oracle SUCCESS —
+        # `_judge_hop` pins docs_reached to 0 for every scoped run, satisfied or not. Without
+        # this line a rework that correctly raised the document's revision would qualify for a
+        # retry and write a SECOND revision over its own work. The scoped equivalent of
+        # "output is output" is the judge's own verdict, so require it explicitly.
+        return False
+    # Reached with outcome == "none": a hop that only registered a Q looks exactly like one
+    # that died, and the guard below is the only thing that tells them apart (§3-2).
     if _has_pending_question(run.get("doc_ref")):
         # NR0003 follow-up proposal 1: this hop stopped to wait for a human answer, not because
         # it failed — spending another attempt (and another provider) on a question the
@@ -2429,7 +2598,21 @@ def _retry_eligible(run: dict) -> bool:
         attempts_max = NO_OUTPUT_MAX_ATTEMPTS
     if attempts_max != -1 and int(run.get("attempts_used") or 0) >= attempts_max:
         return False
-    if _remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
+    if _retry_remaining_sec(run) < RETRY_MIN_REMAINING_SEC:
+        # 0446 T0014 §4-4: the reading, not the gate, changed — `_retry_remaining_sec` is
+        # min(no-progress clock, absolute ceiling). A hop that ran 90 productive minutes on
+        # a 60-minute threshold has a NEGATIVE `_remaining_sec` and would have been refused
+        # a retry for a budget it never actually exhausted. With no watchdog anchor recorded
+        # the two readings are identical, so every case below still decides as it did.
+        # 0446 T0010 §3-4 — the hole T0008 §3-6 / TR0009 §7-4 explicitly left to R5. This gate
+        # blocked the retry and said nothing. `_stop_reason_text` already listed "a budget too
+        # far spent" among the reasons no further attempt opened, but no code ever SET that
+        # reason, so the only durable field (stop_reason) read "produced no document in N
+        # attempts" and the real cause never left the process. No new stop_code: the reason
+        # rides the existing "No further attempt was opened: <reason>." tail on
+        # no_output_exhausted. Ordered BELOW the question_pending probe on purpose — a Q stop
+        # is not a failure (T0008 §3-2) and must keep its own name.
+        run["retry_block_reason"] = "budget_exhausted"
         return False
     # register_errors / tool_call_misses / turn_limit_exhausted deliberately do NOT block:
     # "tried to register and failed" is still zero documents, and another AI may get through.
@@ -2443,6 +2626,31 @@ def _recheck_no_output(run: dict) -> bool:
     judgment and the moment a second worker would start. Two documents from one hop is worse
     than one wasted hop, so ask again and cancel the retry if anything appeared.
     """
+    if _scope_oracle_retry_run(run):
+        # 0446 T0008 §3-4: a rework run never creates a document, so the document query below
+        # would answer "still empty" for it under every circumstance — turning the one guard
+        # standing between a late write and a duplicate one into a constant True. Ask the
+        # scope's own judge again instead, exactly as `_judge_hop` did.
+        oracle = run.get("completion_oracle")
+        if oracle is None:
+            return False
+        try:
+            satisfied = bool(oracle())
+        except Exception:
+            logger.warning("ai-invoke scoped retry recheck failed for %s",
+                           run["run_id"], exc_info=True)
+            # Deliberately the opposite of the document path's fallback below: when the judge
+            # cannot answer, a wasted hop is cheaper than a second revision written over the
+            # worker's own (L0007 §5).
+            return False
+        if not satisfied:
+            return True
+        # The same shape `_judge_hop` gives a satisfied scope oracle.
+        run["docs_reached"] = 0
+        run["reached_doc_ids"] = []
+        run["outcome"] = "complete"
+        run["oracle_mismatch"] = False
+        return False
     try:
         new_docs = _oracle_new_docs(run)
     except Exception:
@@ -2630,6 +2838,10 @@ def _reset_attempt_state(run: dict) -> None:
     run["tool_call_misses"] = 0
     run["turn_limit_exhausted"] = False
     run["attempt_started_mono"] = time.monotonic()
+    # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
+    # no-progress window is re-anchored when the next watchdog starts; the absolute
+    # ceiling is not, because started_mono survives this reset by the contract above.
+    run["watchdog_kill"] = None
     # codex writes its final message to a file in the run scratch. Leaving the previous
     # attempt's file behind would let the next attempt inherit words it never said.
     try:
@@ -2641,8 +2853,71 @@ def _reset_attempt_state(run: dict) -> None:
                        run["run_id"], exc_info=True)
 
 
+def _now_mono() -> float:
+    """The monotonic clock behind ONE name, so the watchdog's 30-minute and 4-hour
+    edges can be exercised without waiting for them (0446 T0014 §5). Nothing else
+    about it differs from calling time.monotonic() directly."""
+    return time.monotonic()
+
+
 def _remaining_sec(run: dict) -> float:
+    """The hop's nominal budget measured from hop START — unchanged, and still exactly
+    what the `timeout_sec` / `deadline_at` of every response and stored row means.
+
+    0446 T0014 §2-5: that deadline is now the EARLIEST this run may be stopped rather
+    than the latest, and it lands only if the run shows nothing new for the whole
+    budget. The two helpers below are the ones the watchdog and the retry gate ask.
+    """
     return run["timeout_sec"] - (time.monotonic() - run["started_mono"])
+
+
+def _stall_remaining_sec(run: dict) -> float:
+    """Seconds left on the NO-PROGRESS clock (0446 T0014 §2-3).
+
+    The same budget with a different anchor: it runs from the last point this run was
+    known to be moving (`stall_anchor_mono` — set when an attempt launches, moved
+    forward by every observed document or source change) instead of from hop start.
+    With no anchor recorded this is precisely `_remaining_sec`, which is why a run that
+    never had a watchdog keeps its previous behaviour to the second.
+    """
+    anchor = run.get("stall_anchor_mono")
+    if anchor is None:
+        anchor = run["started_mono"]
+    return run["timeout_sec"] - (_now_mono() - anchor)
+
+
+def _absolute_cap_sec() -> int:
+    """The run's hard ceiling, in seconds (0446 T0014 §2-4).
+
+    Deliberately RUN_TIMEOUT_CAP_SEC itself, read at CALL time instead of copied into
+    a second four-hour literal: that constant is already four hours, already the roof
+    of the per-document formula and already what a `target_to_end` run gets, so a
+    duplicate could only drift away from it. Reading it through a function is also
+    what keeps `test_ai_invoke_0187.py::TestForcedKill` honest — it shortens the cap to
+    one second to prove the timeout path, and a bound-at-import alias would have
+    silently ignored it.
+    """
+    return RUN_TIMEOUT_CAP_SEC
+
+
+def _absolute_remaining_sec(run: dict) -> float:
+    """Seconds left before the run's hard ceiling (0446 T0014 §2-4).
+
+    Measured from `started_mono` — the HOP's start, not the attempt's — so a no-output
+    retry inherits what is left of the four hours instead of being handed a fresh four.
+    """
+    return _absolute_cap_sec() - (_now_mono() - run["started_mono"])
+
+
+def _retry_remaining_sec(run: dict) -> float:
+    """The budget the retry gate asks about: how long could another attempt run?
+
+    0446 T0014 §4-4: `_remaining_sec` alone would answer "none" for every hop that
+    legitimately outlived its no-progress threshold BY WORKING, and `_retry_eligible`
+    would then report `budget_exhausted` for a run with hours of ceiling left. Both
+    limits are real, so the smaller one is the answer.
+    """
+    return min(_stall_remaining_sec(run), _absolute_remaining_sec(run))
 
 
 def _work_landed(run: dict) -> bool:
@@ -2719,6 +2994,202 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
+# ── No-progress watchdog (0446 T0014 §3) ─────────────────────────────────────
+#
+# `_cli_execute` waits for the worker with a single `communicate(timeout=...)`, so the
+# only question it could ever ask was "has the clock run out?". NR0003 measured both
+# ways that goes wrong on a fixed hour: a 74-minute TR hop that was still registering
+# documents got cut off, and a worker that died in its first minutes still held its
+# group for the remaining 59. This watchdog asks the other question — "is anything
+# still happening?" — beside that wait, on its own thread, and answers it from the two
+# signals the run already carries: the group's document max-seq and `git status` on the
+# group worktree. The stdin prompt is still handed to `communicate()` exactly once and
+# the watchdog never touches the pipes (§3-1).
+_watchdog_kill_lock = threading.Lock()
+
+
+def _observe_group_max_seq(run: dict) -> Optional[int]:
+    """The document signal, or None for "could not observe" (§3-5).
+
+    Deliberately the same draft-INCLUSIVE max-seq `_work_landed` falls back on: counting
+    a stray draft as progress only makes this guard more reluctant to kill, and that is
+    the safe direction for a "may I end this process?" question.
+    """
+    try:
+        return int(db_docs.get_group_max_seq(run["group_id"]))
+    except Exception:
+        logger.warning("ai-invoke %s: progress watchdog could not read the document seq",
+                       run.get("run_id"), exc_info=True)
+        return None
+
+
+def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
+                         kind: str, now: float) -> bool:
+    """Decide — once — whether the watchdog may end this process tree (§4-2).
+
+    Every other exit owns the same process, so the claim is taken under a lock and
+    re-checks all of them: the run thread already past `communicate()` (`stop_event`), a
+    user cancel (which outranks the clock in `_classify_end_reason` and must stay
+    `cancelled`), an earlier tick's claim, and a child that exited on its own between the
+    poll and here. Losing any of those races means doing nothing at all.
+    """
+    with _watchdog_kill_lock:
+        if stop_event.is_set():
+            return False
+        cancel_event = run.get("cancel_event")
+        if cancel_event is not None and cancel_event.is_set():
+            return False
+        if run.get("watchdog_kill") is not None:
+            return False
+        if proc.poll() is not None:
+            return False
+        anchor = run.get("stall_anchor_mono")
+        if anchor is None:
+            anchor = run["started_mono"]
+        run["watchdog_kill"] = {
+            "kind": kind,                       # "no_progress" | "absolute_cap"
+            "stalled_sec": int(max(0.0, now - anchor)),
+            "elapsed_sec": int(max(0.0, now - run["started_mono"])),
+            "threshold_sec": int(run.get("timeout_sec") or 0),
+            "absolute_cap_sec": _absolute_cap_sec(),
+            "last_progress_at": run.get("last_progress_at"),
+            "progress_observations": int(run.get("progress_observations") or 0),
+            "attempt_no": int(run.get("attempt_no") or 0),
+        }
+        # The same flag an expired `communicate()` raises, so this ends as end_reason
+        # "timeout" / stop_code "timeout" and NEVER as a provider spawn_failed or
+        # fast_fail (§4-3). `watchdog_kill` is the minimal in-memory mark that tells the
+        # two kinds apart; T#2 turns it into the durable sentence. No new stop code and
+        # no new column here (§3-4).
+        run["timed_out"] = True
+        claim = run["watchdog_kill"]
+    logger.warning(
+        "ai-invoke %s: %s — ending the worker (stalled %ss of %ss, elapsed %ss of %ss)",
+        run.get("run_id"), kind, claim["stalled_sec"], claim["threshold_sec"],
+        claim["elapsed_sec"], claim["absolute_cap_sec"],
+    )
+    try:
+        process_runner.kill_process_tree(proc)
+    except Exception:
+        logger.warning("ai-invoke %s: watchdog kill failed", run.get("run_id"), exc_info=True)
+    return True
+
+
+def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
+                            interval: float = STALL_POLL_INTERVAL_SEC) -> Optional[str]:
+    """The poll body. Returns the kill kind, or None if it never killed anything."""
+    source_root = Path(run["source_root"]) if run.get("source_root") else None
+    # §3-3: the run's OWN start snapshot is the first comparison point, and every tick
+    # after that is compared with the previous SUCCESSFUL read. Comparing forever against
+    # the baseline instead would count one early edit as progress on every later tick — a
+    # worker that wrote a single file and then hung would look busy until the ceiling.
+    git_watermark = run.get("dirty_baseline")
+    # A run with no source tree at all (the scratch fallback) has no source signal to
+    # fail: that is not an unreadable sample, and treating it as one would disable the
+    # guard outright for those runs. The document signal alone speaks for them.
+    git_enabled = source_root is not None and source_root.is_dir()
+    doc_watermark = run.get("baseline_seq")          # §3-2
+    if not git_enabled:
+        logger.info("ai-invoke %s: progress watchdog has no source tree — documents only",
+                    run.get("run_id"))
+
+    while not stop_event.wait(interval):
+        now = _now_mono()
+        cancel_event = run.get("cancel_event")
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        if proc.poll() is not None:
+            return None
+        # The ceiling is unconditional (§3-6): it does not care how much progress there
+        # has been, and it does not need a readable sample to be true.
+        if now - run["started_mono"] >= _absolute_cap_sec():
+            return "absolute_cap" if _claim_watchdog_kill(
+                run, proc, stop_event, "absolute_cap", now) else None
+
+        moved: list[str] = []
+        readable = True
+        seq = _observe_group_max_seq(run)
+        if seq is None:
+            readable = False
+        elif doc_watermark is None:
+            doc_watermark = seq                      # first reading: nothing to compare to
+        elif seq > doc_watermark:
+            doc_watermark = seq
+            moved.append("document")
+        if git_enabled:
+            paths = _git_status_paths(source_root)
+            if paths is None:
+                readable = False
+            elif git_watermark is None:
+                git_watermark = paths
+            elif paths != git_watermark:
+                git_watermark = paths
+                moved.append("source")               # added AND removed paths both count
+
+        if moved:
+            # §3-5, second half: one signal actually moving is enough — the other one
+            # standing still proves nothing about it.
+            run["stall_anchor_mono"] = now
+            run["last_progress_mono"] = now
+            run["last_progress_at"] = now_iso()
+            run["last_progress_signal"] = ",".join(moved)
+            run["progress_observations"] = int(run.get("progress_observations") or 0) + 1
+            continue
+        if not readable:
+            # §3-5, first half: an unreadable sample means "unknown", not "nothing
+            # happened". Warn and let the next tick decide. A permanently blind run is
+            # still ended on time by the ceiling above.
+            logger.warning("ai-invoke %s: progress watchdog sample was unreadable — retrying",
+                           run.get("run_id"))
+            continue
+        anchor = run.get("stall_anchor_mono")
+        if anchor is None:
+            anchor = run["started_mono"]
+        if now - anchor >= float(run["timeout_sec"]):
+            return "no_progress" if _claim_watchdog_kill(
+                run, proc, stop_event, "no_progress", now) else None
+    return None
+
+
+def _start_progress_watchdog(run: dict, proc,
+                             interval: float = STALL_POLL_INTERVAL_SEC) -> tuple:
+    """Start the watchdog for ONE attempt. Returns (stop_event, thread)."""
+    stop_event = threading.Event()
+    # Each attempt opens its own no-progress window — a fresh worker cannot be charged
+    # for the silence of the one before it. The ABSOLUTE ceiling deliberately does NOT
+    # reset: it is measured from started_mono, which `_reset_attempt_state` keeps (§2-4).
+    run["stall_anchor_mono"] = _now_mono()
+    run["watchdog_kill"] = None
+    thread = threading.Thread(
+        target=_progress_watchdog_loop, args=(run, proc, stop_event, interval),
+        name=f"ai-invoke-watchdog-{run.get('run_id')}", daemon=True,
+    )
+    thread.start()
+    return stop_event, thread
+
+
+def _stop_progress_watchdog(stop_event: Optional[threading.Event], thread,
+                            run_id: Optional[str] = None) -> None:
+    """Stop and join the watchdog on EVERY exit of the attempt (§4-1).
+
+    Called from `_cli_execute`'s finally, so a natural exit, a TimeoutExpired, a broken
+    stdin pipe, a user cancel and a fast-fail all come through here. The join matters as
+    much as the event: a thread left running would still hold a `proc` the next attempt
+    is about to replace.
+    """
+    if stop_event is None:
+        return
+    stop_event.set()
+    if thread is None:
+        return
+    thread.join(timeout=STALL_WATCHDOG_JOIN_SEC)
+    if thread.is_alive():
+        # It can no longer kill anything — `_claim_watchdog_kill` re-reads stop_event
+        # under the lock — but it should not have taken this long, so say so.
+        logger.warning("ai-invoke %s: progress watchdog did not stop within %ss",
+                       run_id, STALL_WATCHDOG_JOIN_SEC)
+
+
 # ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
 
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
@@ -2790,7 +3261,14 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if run["cancel_event"].is_set():
         process_runner.kill_process_tree(proc)
     timed_out = False
-    remaining = max(1.0, _remaining_sec(run))
+    # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
+    # watchdog thread, because `communicate()` cannot be asked "is it still working?".
+    # What is left for the wait itself is the absolute ceiling — the one deadline that
+    # holds however well the worker is doing (§3-6) — so a run that keeps producing is
+    # no longer cut off at its threshold, and a run that produces nothing is still
+    # ended there, by the watchdog, long before this timeout could fire.
+    watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
+    remaining = max(1.0, _absolute_remaining_sec(run))
     try:
         stdout, stderr = proc.communicate(input=prompt.encode("utf-8"), timeout=remaining)
     except subprocess.TimeoutExpired as exc:
@@ -2809,11 +3287,25 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         except Exception:
             stdout, stderr = None, None
         elapsed = time.monotonic() - launched
-        if elapsed < FAST_FAIL_WINDOW_SEC and not _work_landed(run):
+        if (
+            elapsed < FAST_FAIL_WINDOW_SEC
+            and not _work_landed(run)
+            # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
+            # startup failure — it must not send the chain to the next provider.
+            and run.get("watchdog_kill") is None
+        ):
             return "spawn_failed", str(exc)[:500]
     finally:
         run["proc"] = None
+        _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
 
+    # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
+    # already gone, so there is no TimeoutExpired to catch and the local flag above is
+    # still False. Merge the verdict in before anything reads it: the exit code of a
+    # killed worker is not a verdict (it stays None, as on any other timeout) and a
+    # killed worker is not a fast_fail candidate. `watchdog_kill` — not `run["timed_out"]`
+    # — is the source here, because it is re-armed per attempt by the watchdog itself.
+    timed_out = timed_out or run.get("watchdog_kill") is not None
     elapsed = time.monotonic() - launched
     out_text = process_runner.safe_decode(stdout)
     err_text = process_runner.safe_decode(stderr)
@@ -2936,6 +3428,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         turn += 1
         if run["cancel_event"].is_set():
             break
+        # 0446 T0014 §4-5: the model-call loop keeps the ORIGINAL reading. It has no
+        # subprocess to watch and no watchdog attached, so `_stall_remaining_sec` would
+        # return this very number anyway; naming `_remaining_sec` here keeps the API
+        # call ceiling and its cancel/timeout behaviour bit-for-bit unchanged.
         remaining = _remaining_sec(run)
         if remaining <= 0:
             run["timed_out"] = True
@@ -3415,6 +3911,110 @@ def _conflict_resolved(run: dict) -> bool:
     return sum(int(f.get("conflict_count") or 0) for f in files) == 0
 
 
+# ── 0446 T0016 §2/§3-1: the durable reading of a watchdog stop ───────────────
+# T0014's verdict lives in `run["watchdog_kill"]`, and every number in it is an offset
+# from a monotonic clock that means nothing once this process is gone. These helpers
+# turn it into the pair that goes on the row: a fixed vocabulary the next step can
+# branch on, and one sentence a person can read.
+#
+# The sentence is English, like `stop_reason` — the column right beside it, written by
+# `_stop_reason_text`, and read by the same UI. A stored row has no locale to be written
+# in; the rework block that quotes this line localizes its own labels around it (§4-5).
+_TIMEOUT_KINDS = ("no_progress", "absolute_cap")
+
+
+def _format_span(seconds: int) -> str:
+    """Short, stable reading of a duration — whole minutes once there is one."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds} sec"
+    return f"{seconds // 60} min"
+
+
+def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str]]:
+    """`(timeout_kind, timeout_diagnosis)` for a finished run, or `(None, None)`.
+
+    Called once from `_finalize_run` AFTER `duration_ms` is fixed, so the total this
+    sentence quotes is exactly the total the row stores. Two rounding rules matter:
+    `duration_ms` is floored to whole seconds, and the stalled window is then clamped to
+    that total. The watchdog measured its own number one poll before finalize measured
+    the total, so without the clamp a boundary case can print a stall longer than the run
+    that contains it.
+
+    A run with no watchdog mark — a plain `communicate()` expiry, an API-mode run, any row
+    written before T0014 — returns `(None, None)`. That NULL is the third state (§2-1):
+    not "unknown kind of stall", but "nothing watched this one".
+    """
+    kill = run.get("watchdog_kill")
+    if not isinstance(kill, dict):
+        return None, None
+    kind = kill.get("kind")
+    if kind not in _TIMEOUT_KINDS:
+        return None, None
+    total_sec = max(0, int(run.get("duration_ms") or 0) // 1000)
+    stalled_sec = min(max(0, int(kill.get("stalled_sec") or 0)), total_sec)
+    if kind == "absolute_cap":
+        # §2-2: a run that was still producing when it hit the ceiling must NOT be filed as
+        # stalled. The observation count is the evidence, and it is honest about the blind
+        # case too (a run whose samples never read stops here with 0 observations).
+        cap_sec = int(kill.get("absolute_cap_sec") or _absolute_cap_sec())
+        return kind, (
+            f"Reached the {_format_span(cap_sec)} absolute run ceiling after "
+            f"{_format_span(total_sec)}; not a no-progress stop "
+            f"(progress observations: {int(kill.get('progress_observations') or 0)})."
+        )
+    return kind, (
+        f"No document registration or source change during the last "
+        f"{_format_span(stalled_sec)} of {_format_span(total_sec)} total."
+    )
+
+
+def previous_timeout_handoff(group_id: str, doc_ref: Optional[str] = None) -> Optional[dict]:
+    """What the run right before this one left behind — but only if it timed out (§4-1/2).
+
+    Read while the rework prompt is being assembled, which is before the new run has a row
+    of its own (finalize writes that), so "the latest finished row" really is the previous
+    hop. Exactly ONE row is considered: if the newest run exited cleanly this returns None
+    even when an older timeout sits behind it, because a stop that has already been
+    superseded is not a handoff.
+
+    Returns None for every other shape too — no row at all, a cancel, a fast_fail, another
+    group, another document — and that None is what keeps the existing rework prompt
+    byte-identical for every run that is not resuming a timeout.
+
+    Never raises. A handoff is an aid; if the row cannot be read the worker gets exactly
+    the prompt it would have got before this existed.
+    """
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        row = db_runs.latest_finished_for_group(group_id, doc_ref=doc_ref)
+    except Exception:
+        logger.warning("ai-invoke previous-run handoff lookup failed for group %s",
+                       group_id, exc_info=True)
+        return None
+    if not row:
+        return None
+    if row.get("end_reason") != "timeout" and row.get("stop_code") != "timeout":
+        return None
+    source_dirty = row.get("source_dirty")
+    return {
+        "run_id": row.get("run_id"),
+        "finished_at": row.get("finished_at"),
+        "timeout_kind": row.get("timeout_kind"),
+        "timeout_diagnosis": row.get("timeout_diagnosis"),
+        # Three states, kept apart: True (files below), False (the tree was clean), None
+        # (the run could not read git at all, so nothing is claimed either way).
+        "source_dirty": None if source_dirty is None else bool(source_dirty),
+        # A dirty run with an empty list stays dirty — the block says so rather than
+        # inventing file names for it.
+        "source_dirty_files": (
+            list(row.get("source_dirty_files") or [])[:SOURCE_DIRTY_FILES_LIMIT]
+            if source_dirty else []
+        ),
+    }
+
+
 def _finalize_run(run: dict) -> None:
     """Close the hop out — once, whatever it took to get here (L0007 §2.7).
 
@@ -3472,10 +4072,14 @@ def _finalize_run(run: dict) -> None:
     else:
         spilled = sorted(now_paths - baseline)
         run["source_dirty"] = bool(spilled)
-        run["source_dirty_files"] = spilled[:20]
+        run["source_dirty_files"] = spilled[:SOURCE_DIRTY_FILES_LIMIT]
 
     # The whole hop, every attempt inside it — not just the last one.
     run["duration_ms"] = int((time.monotonic() - run["started_mono"]) * 1000)
+    # 0446 T0016 §3-1: source delta and duration are both settled now, so read the
+    # watchdog's verdict ONCE, here. Nothing downstream — the row, the finished payload,
+    # the next rework prompt — touches `watchdog_kill` again; they read these two.
+    run["timeout_kind"], run["timeout_diagnosis"] = _resolve_timeout_diagnostics(run)
     run["finished_at"] = now_iso()
     run["status"] = "finished"
 
@@ -3529,11 +4133,14 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         # _retry_eligible this hop is waiting on a human answer, not silently dead; name it
         # separately so it never reaches _notify_chain_failure_if_needed as a failure.
         return "question_pending"
-    if (
-        run.get("mode") == "continuous"
-        and int(run.get("docs_target") or 0) >= 1
-        and int(run.get("docs_reached") or 0) == 0
-        and run.get("outcome") == "none"
+    if int(run.get("docs_reached") or 0) == 0 and run.get("outcome") == "none" and (
+        (run.get("mode") == "continuous" and int(run.get("docs_target") or 0) >= 1)
+        # 0446 T0008 §3-7: the same fact told on the axis a scope-oracle rework run actually
+        # has — it exited on its own and its judge was not satisfied (the `oracle_mismatch`
+        # shape). Its docs_target is 0 by construction, so the document-count clause above can
+        # never speak for it, and all 15 measured clean failures ended with stop_code NULL.
+        # A rework that DID raise the revision has outcome "complete" and keeps its NULL.
+        or (_scope_oracle_retry_run(run) and run.get("end_reason") == "exited")
     ):
         # The shape of this incident: the hop ran, the hop finished, the hop made nothing —
         # and until now the system had no name for that, so it treated it as an ordinary end.
@@ -3562,9 +4169,17 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return "This hop produced its document; the next hop starts in a new worker."
     if stop_code == "no_output_exhausted":
         provider_name = run.get("continuation_selected_provider_name") or run.get("continuation_selected_provider_id") or "Selected provider"
+        # 0446 T0008 §3-6: `retry_block_reason` has no column in `ai_invoke_runs` and is not
+        # in `finished_payload` either, so a run that never got to open its retry
+        # ("token_unavailable", "providers_exhausted_for_retry", or a budget too far spent)
+        # left no durable trace of WHY. `stop_reason` is persisted, so the reason rides here.
+        # question_pending never reaches this branch — it is named above.
+        blocked = run.get("retry_block_reason")
+        blocked_text = f" No further attempt was opened: {blocked}." if blocked else ""
         return (f'"{provider_name}" produced no document in '
                 f"{int(run.get('attempts_used') or 0)} attempts. "
-                "The chain stopped without switching to another provider.")
+                "The chain stopped without switching to another provider."
+                f"{blocked_text}")
     if stop_code == "question_pending":
         return ("This hop registered a query and is waiting for a human answer. "
                 "The chain stopped and can be resumed once it is answered.")
@@ -3955,6 +4570,15 @@ def _persist_run_record(run: dict) -> None:
             "prompt_user_message_sha256": run.get("prompt_user_message_sha256"),
             "prompt_final_length": int(run.get("prompt_final_length") or 0),
             "prompt_final_sha256": run.get("prompt_final_sha256"),
+            # ── 0446 T0016 §3-2 (migration 086) ─────────────────────────────
+            # The four exit diagnostics that were memory-only until now. Every one is read
+            # with .get(): a spawn failure never opened a watchdog, an API-mode run has no
+            # tails, and neither may turn a finished hop into an unsaved one.
+            "timeout_kind": run.get("timeout_kind"),
+            "timeout_diagnosis": run.get("timeout_diagnosis"),
+            "stdout_tail": run.get("stdout_tail"),
+            "stderr_tail": run.get("stderr_tail"),
+            "source_dirty_files": list(run.get("source_dirty_files") or []),
             "created_at": stamp,
             "updated_at": stamp,
         })
@@ -3971,7 +4595,9 @@ def _notify_chain_failure_if_needed(run: dict) -> None:
     that was looking at a different project in that second, with no way to look back. This
     writes the same fact to the notification feed, which survives not watching.
     """
-    if run.get("mode") != "continuous":
+    # 0446 T0008 §3-8: scope-oracle rework runs speak here too. `question_pending` is still
+    # absent from ENGINE_NOTIFY_STOP_CODES, so a hop waiting on a human answer stays silent.
+    if run.get("mode") != "continuous" and not _scope_oracle_retry_run(run):
         return
     if run.get("stop_code") not in ENGINE_NOTIFY_STOP_CODES:
         return
@@ -3997,6 +4623,13 @@ def _notify_chain_failure_if_needed(run: dict) -> None:
                 "item_seq": run.get("hop_item_seq"),
                 "provider_id": run.get("provider_id"),
                 "attempts_used": int(run.get("attempts_used") or 0),
+                # 0446 T0008 §3-8: the event TYPE stays `continuous_work_failed` — it is the
+                # only one `dashboard_service._NOTIFICATION_EVENT_TYPES` carries to the 🔔
+                # feed, and `test_run_service` already fires it from a non-continuous context.
+                # These two fields are how a reader tells a dead continuous chain apart from a
+                # dead single rework run.
+                "mode": run.get("mode"),
+                "action_scope": run.get("action_scope"),
             },
         )
     except Exception:
@@ -4072,6 +4705,12 @@ def finished_payload(run: dict) -> dict:
         "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(run.get("oracle_mismatch")),
         "source_dirty": run["source_dirty"],
+        # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
+        # existing conditional place at the bottom of this function.
+        "timeout_kind": run.get("timeout_kind"),
+        "timeout_diagnosis": run.get("timeout_diagnosis"),
+        "stdout_tail": run.get("stdout_tail"),
+        "stderr_tail": run.get("stderr_tail"),
         "duration_ms": run["duration_ms"],
         # 0359 P0006 [stop confirmed]: why it stopped, whether it can be picked up again, how many
         # attempts it cost and against what budget. All additive — no existing field moved.

@@ -55,6 +55,61 @@ _DESIGN_SINGLE_TEMPLATE = {
     "ja": "ワーカーさん、次のステップは{label}({code})です。次のステップを開始してください。\n対象: {docRef}",
 }
 
+# ── 0446 T0016 §4: the previous-run handoff block ────────────────────────────
+# Added to a rework prompt ONLY when the run right before it on the same document was
+# stopped by the clock. Everything here is a label around data the server already
+# stored; the diagnosis sentence itself comes from the `ai_invoke_runs` row and, like
+# its neighbour `stop_reason`, is written in English (a row has no locale).
+_PREV_RUN_HEADING = {
+    "ko": "직전 AI 실행",
+    "en": "Previous AI run",
+    "ja": "直前のAI実行",
+}
+_PREV_RUN_TIMED_OUT = {
+    "ko": "직전 실행({runId})이 제한시간에 걸려 중단되었습니다. 아래는 그 실행이 남긴 상태입니다.",
+    "en": "The previous run on this document ({runId}) was stopped by its time limit. What it left behind is below.",
+    "ja": "直前の実行（{runId}）は制限時間により中断されました。以下はその実行が残した状態です。",
+}
+_PREV_RUN_DIAGNOSIS = {
+    "ko": "중단 진단",
+    "en": "Stop diagnosis",
+    "ja": "中断診断",
+}
+_PREV_RUN_SOURCE = {
+    "ko": "소스 상태",
+    "en": "Source state",
+    "ja": "ソース状態",
+}
+_PREV_RUN_SOURCE_DIRTY = {
+    "ko": "그 실행이 시작된 뒤 생긴 변경 {count}건이 작업 폴더에 남아 있습니다.",
+    "en": "{count} change(s) made after that run started were left in the working tree.",
+    "ja": "その実行の開始後に生じた変更が{count}件、作業フォルダに残っています。",
+}
+_PREV_RUN_SOURCE_DIRTY_NO_LIST = {
+    "ko": "작업 폴더에 남은 변경이 있지만 파일 목록은 기록되지 않았습니다. 직접 확인하십시오.",
+    "en": "Changes were left in the working tree, but no file list was recorded. Check it yourself.",
+    "ja": "作業フォルダに残った変更がありますが、ファイル一覧は記録されていません。ご自身で確認してください。",
+}
+_PREV_RUN_SOURCE_CLEAN = {
+    "ko": "그 실행이 남긴 변경은 없습니다.",
+    "en": "That run left no change behind.",
+    "ja": "その実行が残した変更はありません。",
+}
+_PREV_RUN_SOURCE_UNKNOWN = {
+    "ko": "작업 폴더 상태를 확인하지 못했습니다. 남은 변경이 있는지는 알 수 없습니다.",
+    "en": "The working-tree state could not be read, so whether anything was left behind is unknown.",
+    "ja": "作業フォルダの状態を確認できなかったため、変更が残っているかは不明です。",
+}
+_PREV_RUN_GUIDE = {
+    "ko": "이 파일들은 이전 세션의 미완 변경일 수 있습니다. 이어서 고치기 전에 각 파일의 현재 내용을 먼저 읽어 검증하십시오.",
+    "en": "These files may be an unfinished edit from that earlier session. Read and verify each file's current content before continuing to change it.",
+    "ja": "これらのファイルは前のセッションの未完了の変更である可能性があります。続けて修正する前に、各ファイルの現在の内容を読んで検証してください。",
+}
+# The server stores at most this many paths (ai_invoke_service.SOURCE_DIRTY_FILES_LIMIT).
+# Restated rather than imported: this module is the mention side and must not start
+# depending on the run service, but it must not print more than what was stored either.
+_PREV_RUN_FILES_LIMIT = 20
+
 
 def _locale(locale: Optional[str]) -> str:
     return locale if locale in ("ko", "en", "ja") else "ko"
@@ -323,6 +378,67 @@ def build_conversation_mention(
     ):
         lines += ["", section]
     return "\n".join(lines)
+
+def _single_line(value: Optional[str]) -> str:
+    """Collapse stored text to one safe line for a bullet (0446 T0016 §4-3).
+
+    Both the diagnosis sentence and the spilled paths are DATA. `git status` will report a
+    path containing a newline or a backtick without complaint, and either one, printed
+    verbatim, ends the line (or the code span) early and lets the remainder read as prompt
+    text of its own.
+    """
+    text = str(value or "").replace("\r", " ").replace("\n", " ").replace("`", "'")
+    return " ".join(text.split()).strip()
+
+
+def build_previous_run_section(handoff: Optional[dict], locale: Optional[str]) -> str:
+    """The previous-run handoff block for a rework prompt (0446 T0016 §4-3).
+
+    `handoff` is exactly what `ai_invoke_service.previous_timeout_handoff()` returned, so
+    it has ALREADY been narrowed to "the newest finished run on this document ended on the
+    clock". Anything falsy returns "" and the caller then adds nothing at all — that empty
+    string is what keeps every other rework prompt byte-identical (§4-2).
+
+    Two things are deliberately absent (§4-4). The stored stdout/stderr tails are
+    post-mortem material for a person reading the run card, not an instruction to a worker.
+    And the previous run's scratch directory is gone as far as this worker is concerned —
+    every run gets its own — so naming it would be handing over something unopenable.
+    """
+    if not handoff:
+        return ""
+    loc = _locale(locale)
+    lines = [
+        f"## {_PREV_RUN_HEADING[loc]}",
+        "---",
+        _PREV_RUN_TIMED_OUT[loc].replace("{runId}", _single_line(handoff.get("run_id")) or "?"),
+    ]
+    diagnosis = _single_line(handoff.get("timeout_diagnosis"))
+    if diagnosis:
+        # Absent on a legacy row, or on a timeout the watchdog never marked. The block still
+        # reports the timeout itself — that fact does not depend on the sentence.
+        lines.append(f"- {_PREV_RUN_DIAGNOSIS[loc]}: {diagnosis}")
+
+    dirty = handoff.get("source_dirty")
+    files = [p for p in (_single_line(p) for p in (handoff.get("source_dirty_files") or [])) if p]
+    files = files[:_PREV_RUN_FILES_LIMIT]
+    if dirty is None:
+        lines.append(f"- {_PREV_RUN_SOURCE[loc]}: {_PREV_RUN_SOURCE_UNKNOWN[loc]}")
+    elif not dirty:
+        lines.append(f"- {_PREV_RUN_SOURCE[loc]}: {_PREV_RUN_SOURCE_CLEAN[loc]}")
+    elif files:
+        lines.append(
+            f"- {_PREV_RUN_SOURCE[loc]}: "
+            + _PREV_RUN_SOURCE_DIRTY[loc].replace("{count}", str(len(files)))
+        )
+        lines += [f"  - `{path}`" for path in files]
+        lines.append(_PREV_RUN_GUIDE[loc])
+    else:
+        # Dirty is still dirty with an empty list (the paths were capped away, or the row
+        # predates the column). Say that rather than invent file names for it.
+        lines.append(f"- {_PREV_RUN_SOURCE[loc]}: {_PREV_RUN_SOURCE_DIRTY_NO_LIST[loc]}")
+    lines.append("")
+    return "\n".join(lines)
+
 
 def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     """Port of buildRejectionSection (useFlowGateToken.ts).
