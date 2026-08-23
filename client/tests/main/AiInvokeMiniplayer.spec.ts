@@ -11,6 +11,7 @@ import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import AiInvokeMiniplayer from '@main/components/AiInvokeMiniplayer.vue'
 import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
 import { useProjectStore } from '@main/stores/project'
 import { useExplorerStore } from '@main/stores/explorer'
 import { useToast } from '@main/components/common/useToast'
@@ -622,12 +623,16 @@ describe('AiInvokeMiniplayer', () => {
 // used to stop counting it the instant the run ended — and the popover is closed by
 // default, so "완료" was the one state the user could never see. The store-level TTL test
 // passed the whole time; only the chip's own signal was missing, so it is pinned here.
+//
+// 0452: FINISHED_CARD_TTL_MS is now the retention of somebody who has never opened the
+// account screen, which is what this case is about — hence the cleared mirror below.
 describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     // Finished cards outlive the store now (per-tab persistence), so each case has to
     // start from an empty cache or it inherits the previous one's results.
     sessionStorage.clear()
+    localStorage.removeItem(RETENTION_MIRROR_KEY)
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()

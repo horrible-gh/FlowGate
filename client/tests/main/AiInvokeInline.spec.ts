@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiInvokeInline from '@main/components/AiInvokeInline.vue'
 import { INLINE_RESULT_WINDOW_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
 
 const inlineSource = readFileSync(join(process.cwd(), 'src/main/components/AiInvokeInline.vue'), 'utf8')
 
@@ -206,6 +207,42 @@ describe('AiInvokeInline', () => {
       expect(store.runsByGroup['flowgate.default.0290']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 0452 L0003 §2-6. "Never expires" is a request about the header monitor's list, not a
+  // request to keep a result panel parked on top of the document — which is the symptom
+  // 0290 NR0003 §5.3 removed. The banner therefore stays capped at 60s while the card it
+  // is reading stays in the registry indefinitely.
+  it('still closes after 60s when finished cards are set never to expire', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    try {
+      const wrapper = mount(AiInvokeInline, {
+        props: { groupId: 'flowgate.default.0452' },
+        global: { plugins: [i18n] },
+      })
+      const store = useAiInvokeRunsStore()
+      expect(store.retentionMinutes).toBe(-1)
+      store.trackStarted({
+        run_id: 'run-never', group_id: 'flowgate.default.0452',
+        doc_ref: 'flowgate.default.0452.0001-R', status: 'running',
+      })
+      store.trackFinished({
+        run_id: 'run-never', group_id: 'flowgate.default.0452', outcome: 'complete', docs_reached: 1,
+      })
+      await nextTick()
+      expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)
+
+      vi.advanceTimersByTime(INLINE_RESULT_WINDOW_MS + 1_000)
+      await nextTick()
+      expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
+      // The card itself is untouched — this surface expired its own view, nothing more.
+      expect(store.runsByGroup['flowgate.default.0452']?.phase).toBe('finished')
+      wrapper.unmount()
+    } finally {
+      localStorage.removeItem(RETENTION_MIRROR_KEY)
       vi.useRealTimers()
     }
   })

@@ -143,10 +143,30 @@ export default {
   settings: {
     nav: {
       account: 'アカウント',
+      ai_run_monitor: 'AI実行モニター',
       security: 'セキュリティとセッション',
       system: 'システム',
       users: 'プロジェクト管理',
       project: 'プロジェクト',
+    },
+    ai_run_monitor: {
+      title: 'AI実行モニター',
+      description: 'ヘッダーのAI実行モニターに完了カードをどれだけ残すかを、このアカウントにのみ適用して設定します。',
+      retention: {
+        label: 'AI完了カードの保持時間',
+        hint: 'ヘッダーのAI実行モニターで完了カードが残る時間を選びます。',
+        never: '消えない',
+        immediate: 'すぐに消す',
+        minutes: '{minutes}分',
+        hour: '{hours}時間',
+        hours: '{hours}時間',
+        loading: '読み込み中…',
+        save: '保存',
+        saving: '保存中…',
+        saved: '保存しました',
+        load_failed: '設定を読み込めませんでした。',
+        save_failed: '設定を保存できませんでした。',
+      },
     },
     security_sessions: {
       title: 'セキュリティとログインセッション',

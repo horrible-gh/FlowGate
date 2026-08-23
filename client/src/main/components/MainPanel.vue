@@ -1328,7 +1328,7 @@ import {
 import { useShortcuts } from '../composables/useShortcuts'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
 import { useActivityFormat } from '../composables/useActivityFormat'
-import { useToast } from './common/useToast'
+import { useToast, type ToastType } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
 import {
@@ -3109,7 +3109,10 @@ async function doWorkflowStepReturn() {
     refreshAfterCancel()
     const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
     const source = restoreSourceSentence(data.tr_commit_restore ?? null)
-    const say = (msg: string, kind: string) => showToast(source ? `${msg} ${source}` : msg, kind)
+    // `string` here was a pre-existing type error: showToast takes the ToastType union,
+    // and the four call sites below already pass members of it (0452 T0005 — npm run
+    // typecheck is one of the verifications this change has to report green).
+    const say = (msg: string, kind: ToastType) => showToast(source ? `${msg} ${source}` : msg, kind)
     // Messages name the document reached, not a raw step count (complaint #3).
     if (data.stopped_doc_id) {
       // Hit an edited step before reaching the clicked target — stop there, keep the return point.

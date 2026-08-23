@@ -266,7 +266,7 @@ _SYSTEM_PATHS = (
     re.compile(r"/(?:events|health)(?:/|$)"),
 )
 _PERSONAL_PATHS = (
-    re.compile(r"/(?:chat-settings|notification-seen|user-chat-settings)(?:/|$)"),
+    re.compile(r"/(?:chat-settings|notification-seen|ui-settings|user-chat-settings)(?:/|$)"),
 )
 
 

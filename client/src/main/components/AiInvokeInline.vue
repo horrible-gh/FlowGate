@@ -107,7 +107,6 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import {
-  INLINE_RESULT_WINDOW_MS,
   isFinishedCard,
   useAiInvokeRunsStore,
   type AiInvokeProviderSwitch,
@@ -135,7 +134,10 @@ const run = computed(() => {
   const entry = storeRun.value
   if (!entry || hiddenEntryKey.value === entryKey(entry)) return null
   if (!isFinishedCard(entry)) return entry
-  return store.now - (entry.finishedAtMs as number) < INLINE_RESULT_WINDOW_MS ? entry : null
+  // 0452 L0003 §2-6: min(60s, the retention in force). "Never expires" still closes this
+  // banner after a minute — the user asked the header list to keep results, not the
+  // document to stay covered — and at 0 there is no card to show in the first place.
+  return store.now - (entry.finishedAtMs as number) < store.inlineResultWindowMs ? entry : null
 })
 
 // docsTarget 0 = the server judged this run by its scope (an edit's revision, a review's

@@ -92,7 +92,27 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # 080_ai_invoke_prompt_audit.sql (0406) and 080_workflow_sequence_provider.sql
     # (0408). 0408 is the later arrival, so it moves to the next free ordinal
     # instead of taking a letter suffix.
-    ("080_workflow_sequence_provider.sql", "081_workflow_sequence_provider.sql"),
+    #
+    # flowgate.default.0452: the ordinal it landed on, 081, turned out to already be taken
+    # too — flowgate.default.0410 independently added 081_document_origin_snapshot.sql in a
+    # parallel branch that could not see this file's 081 (the same class of collision T0007
+    # itself was fixing, one ordinal later). Unlike 080, this one was not caught by
+    # `test_no_two_migrations_share_an_ordinal` before it shipped, and a real
+    # `DatabaseMigrator` reboot hit it as `duplicate column name: provider_id`. THREE already-
+    # applied histories exist for this file, and no database holds more than one, so (078/079's
+    # situation, module docstring above) every entry converges directly on the final name
+    # rather than chaining through the now-taken 081:
+    #
+    #   080_…   databases migrated before T0007 moved the file off 080.
+    #   080b_…  what the dev deployment (FlowGate-dev/server/storage/flowgate.db) actually
+    #           holds — a letter suffix assigned in yet another branch, for the very same
+    #           080 collision, before T0007 chose to move the file instead. Read straight
+    #           off that database's `migrations` table while diagnosing this rejection.
+    #   081_…   databases migrated after T0007 but before this fix. This is what the stg
+    #           deployment's PostgreSQL ledger holds.
+    ("080_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
+    ("080b_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
+    ("081_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
     # flowgate.default.0332: this group authored its ledger migration as 085 against a base whose
     # newest file on disk was 083. origin/main has since merged 084_ai_invoke_provider_pin.sql and
     # 085_conversation_backward_page_audit.sql, so 085 is taken and both of this group's files move
