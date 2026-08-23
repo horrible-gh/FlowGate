@@ -298,12 +298,150 @@
         <p v-if="!status.slots.length" class="git-status-empty">
           {{ t('main.git_status.empty_slots') }}
         </p>
-        <div v-for="s in status.slots" :key="s.group_id" class="git-status-slot">
-          <AppIcon name="git-branch" />
-          <span class="git-status-branch">{{ s.branch }}</span>
-          <span class="git-status-slot-gid">{{ s.group_id }}</span>
-          <span class="badge" :class="statusBadgeClass(s.status)">{{ statusLabel(s.status) }}</span>
-        </div>
+        <template v-for="s in status.slots" :key="s.group_id">
+          <div class="git-status-slot">
+            <AppIcon name="git-branch" />
+            <span class="git-status-branch">{{ s.branch }}</span>
+            <span class="git-status-slot-gid">{{ s.group_id }}</span>
+            <!-- 0332 D0005 §6.2 — 이 그룹의 커밋. 접힌 상태에서도 개수는 늘 보이고(살아
+                 있는 커밋 / 취소된 커밋을 구분해서), 목록 전체만 접는다. 커밋이 한 줄도
+                 없는 그룹에는 배지 자체가 없어 패널은 이 기능이 있기 전과 똑같다. -->
+            <button
+              v-if="commitRowCount(s) > 0"
+              type="button"
+              class="git-trc-badge"
+              :aria-expanded="trCommitsOpen === s.group_id"
+              :title="t('main.git_status.tr_commits.badge', {
+                live: s.tr_commits?.live ?? 0, canceled: s.tr_commits?.canceled ?? 0,
+              })"
+              @click="toggleTrCommits(s.group_id)"
+            >
+              <AppIcon name="git-commit" />
+              {{ t('main.git_status.tr_commits.badge', {
+                live: s.tr_commits?.live ?? 0, canceled: s.tr_commits?.canceled ?? 0,
+              }) }}
+              <AppIcon :name="trCommitsOpen === s.group_id ? 'caret-up' : 'caret-down'" />
+            </button>
+            <span class="badge" :class="statusBadgeClass(s.status)">{{ statusLabel(s.status) }}</span>
+          </div>
+          <!-- 0332 TR0019 — 되돌리기/되살리기가 충돌한 채 세션으로 남아 있다. 접기 안에
+               넣지 않는다: 이건 커밋 목록의 한 줄이 아니라 이 그룹이 지금 멈춰 있는
+               이유이고, 접힌 채로는 사람이 영영 못 본다. 병합 충돌과 같은 편집기를 열고
+               같은 AI 를 부르지만, 커밋만은 사람이 눌러야 끝난다. -->
+          <div v-if="trConflictOf(s)" class="git-trc-conflict">
+            <span class="git-trc-note">{{ trConflictLabel(s) }}</span>
+            <span v-if="trConflictReviewReady(s)" class="git-trc-note git-trc-conflict-ready">
+              {{ t('main.git_status.tr_commits.conflict_review_ready') }}
+            </span>
+            <button
+              type="button"
+              class="btn btn-sm btn-danger-ol git-trc-conflict-btn"
+              :disabled="busy"
+              @click="openResolve(s.group_id)"
+            >
+              <AppIcon name="warning" />
+              {{ t('main.git_status.tr_commits.conflict_resolve_btn') }}
+            </button>
+            <button
+              v-if="trConflictReviewReady(s)"
+              type="button"
+              class="btn btn-sm btn-primary git-trc-conflict-commit-btn"
+              :disabled="busy"
+              @click="commitTrConflict(s)"
+            >
+              <AppIcon name="git-commit" />
+              {{ t('main.git_status.tr_commits.conflict_commit_btn') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-secondary git-trc-conflict-abort-btn"
+              :disabled="busy"
+              @click="abortTrConflict(s)"
+            >
+              {{ t('main.git_status.tr_commits.conflict_abort_btn') }}
+            </button>
+          </div>
+          <GitConflictResolverDialog
+            v-if="expanded === s.group_id && !!trConflictOf(s)"
+            :files="conflictFiles"
+            :branch="s.branch || s.group_id"
+            :base-branch="status?.base_branch || null"
+            :busy="busy"
+            :load-status="conflictLoadStatus"
+            :error-message="conflictError"
+            :providers="aiProviderStore.providers"
+            :selected-provider="aiProviderStore.selectedProviderId"
+            :provider-loading="aiProviderStore.loading"
+            :provider-errored="!!aiProviderStore.error"
+            @close="collapseResolve"
+            @abort="abortTrConflict(s)"
+            @submit="submitResolveInline(trConflictTarget(s))"
+            @retry="openResolve(s.group_id)"
+            @ai-invoke="invokeConflictAi(trConflictTarget(s))"
+            @copy-mention="copyConflictMention(trConflictTarget(s))"
+            @update:provider="aiProviderStore.selectProvider"
+          />
+          <div v-if="trCommitsOpen === s.group_id" class="git-trc-list">
+            <div
+              v-for="c in (s.tr_commits?.commits ?? [])"
+              :key="c.doc_id + ':' + (c.commit ?? c.skipped_reason ?? '')"
+              class="git-trc-row"
+              :class="trRowClass(c)"
+            >
+              <span class="git-trc-code">{{ c.doc_code || c.doc_id }}</span>
+              <template v-if="c.state === 'no_commit'">
+                <!-- K3 의 이유가 바로 이 두 줄이다. "소스를 안 건드렸다"와 "커밋을 시도조차
+                     못 했다"는 다음에 할 일이 다르므로 같은 문구로 뭉치지 않는다. -->
+                <span class="git-trc-note">
+                  {{ c.skipped_reason === 'no_changes' || c.skipped_reason === 'artifacts_only'
+                    ? t('main.git_status.tr_commits.no_source_change')
+                    : t('main.git_status.tr_commits.commit_failed', { reason: skipReasonLabel(c.skipped_reason) }) }}
+                </span>
+              </template>
+              <template v-else>
+                <span class="git-trc-sha">{{ c.commit }}</span>
+                <span class="git-trc-subject">{{ c.subject }}</span>
+                <span v-if="c.state === 'canceled'" class="git-trc-note">
+                  {{ t('main.git_status.tr_commits.canceled') }}
+                  <span v-if="c.cancel_commit" class="git-trc-sha">{{ c.cancel_commit }}</span>
+                </span>
+                <!-- 0332 T0018 K11 — 되살린 커밋은 살아 있는 커밋이지만 처음 승인이
+                     남긴 것과는 다른 줄이다. 표식이 없으면 한 단계에 똑같아 보이는
+                     live 줄이 둘 생긴다. -->
+                <span v-else-if="c.restored" class="git-trc-restored">
+                  {{ t('main.git_status.tr_commits.restored') }}
+                </span>
+              </template>
+            </div>
+            <!-- 조용한 절단 금지(L0007 §5): 접힌 나머지는 개수로 말한다. -->
+            <div v-if="(s.tr_commits?.more ?? 0) > 0" class="git-trc-more">
+              {{ t('main.git_status.tr_commits.more', { n: s.tr_commits?.more ?? 0 }) }}
+            </div>
+            <!-- 0332 T0018 §3-6 — 되살릴 소스가 남았고, 마지막 차단이 다시 눌러 볼
+                 만한 것(dirty_worktree / git_busy)일 때만. 충돌은 눌러도 같은 답이
+                 나오므로 사유만 남기고 단추를 주지 않는다(P0006 §5-3). 새 리스트를
+                 만들지 않고 이미 있는 TR 커밋 목록 안에 붙인다. -->
+            <div v-if="reapplyOffer(s)" class="git-trc-reapply">
+              <span class="git-trc-note">
+                {{ t('main.git_status.tr_commits.reapply_pending') }}
+                {{ t('main.git_status.tr_commits.reapply_failed', {
+                  reason: blockReasonLabel(s.tr_commits?.last_block?.reason ?? null),
+                }) }}
+              </span>
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary git-trc-reapply-btn"
+                :disabled="reapplyBusy === s.group_id"
+                @click="doReapply(s)"
+              >
+                <AppIcon name="arrow-counter-clockwise" />
+                {{ reapplyBusy === s.group_id
+                  ? t('main.git_status.tr_commits.reapply_busy')
+                  : t('main.git_status.tr_commits.reapply_btn') }}
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- Recovery (manual cleanup only; base push is a first-class header action). -->
@@ -363,11 +501,59 @@ const aiProviderStore = useAiProviderStore()
 // axis reads top-to-bottom (머지 → 커밋 → 대기, push variant first).
 const ACTIONS = ['merge', 'merge_only', 'commit_push', 'commit_only', 'push', 'wait'] as const
 
+// 0332 D0005 §6.2 / P0006 §2 — one ledger row as the panel reads it.
+interface TrCommitRow {
+  doc_id: string
+  doc_code: string
+  state: 'live' | 'canceled' | 'no_commit'
+  commit: string | null
+  subject: string | null
+  skipped_reason: string | null
+  cancel_commit: string | null
+  /** 0332 T0018 K11 — this live row came back through a forward restore */
+  restored?: boolean
+}
+// 0332 T0018 §3-5 — 마지막으로 취소/되살리기 게이트가 거절한 사유. `retryable` 은
+// 서버의 한 표(CANCEL_BLOCK_RETRYABLE)에서 오고 화면이 다시 판단하지 않는다.
+interface TrCommitBlock {
+  reason: string
+  sub: string | null
+  at: string | null
+  retryable: boolean
+}
+interface TrCommits {
+  live: number
+  canceled: number
+  no_commit: number
+  commits: TrCommitRow[]
+  /** rows the server folded away — shown as "N개 더", never dropped silently */
+  more: number
+  /** 0332 T0018 §3-5 — 되살릴 수 있는 취소 행이 남아 있는가. 서버가 정해서 보낸다 */
+  reapply_pending?: boolean
+  last_block?: TrCommitBlock | null
+  /** 0332 TR0019 — 이 그룹이 붙들고 있는 되돌리기/되살리기 충돌 세션. 화면이 추측하지
+   *  않도록 서버가 실어 보낸다: `git_busy` 하나로는 "남의 git 작업"과 "내 충돌"을
+   *  구분할 수 없다. */
+  conflict_session?: TrConflictSession | null
+}
+interface TrConflictSession {
+  merge_id: number
+  /** 'tr_revert' = 되감기가 취소하던 중, 'tr_reapply' = 앞으로 복원이 되살리던 중 */
+  kind: string
+  doc_id: string | null
+  doc_code: string | null
+  subject: string | null
+  files: string[]
+  remaining: string[]
+  /** 'open' = 아직 표식이 남았다, 'resolved' = 커밋만 남았다(사람이 누른다) */
+  review_state: string
+}
 interface Slot {
   group_id: string
   branch: string | null
   status: string
   merge_id: number | null
+  tr_commits?: TrCommits
 }
 interface Pending {
   group_id: string
@@ -417,6 +603,167 @@ interface UnpushedMerge {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
+// 0332 D0005 §6.2 — 펼쳐 둔 슬롯 하나. 목록은 기본 접힘이고 개수 배지만 늘 보인다.
+const trCommitsOpen = ref<string | null>(null)
+
+function toggleTrCommits(groupId: string) {
+  trCommitsOpen.value = trCommitsOpen.value === groupId ? null : groupId
+}
+
+// 배지는 커밋이든 "소스 변경 없음" 줄이든 한 줄이라도 있을 때만 나온다.
+function commitRowCount(slot: Slot): number {
+  const c = slot.tr_commits
+  if (!c) return 0
+  return (c.live ?? 0) + (c.canceled ?? 0) + (c.no_commit ?? 0)
+}
+
+function trRowClass(row: TrCommitRow): string {
+  if (row.state === 'canceled') return 'is-canceled'
+  if (row.state === 'no_commit') {
+    return row.skipped_reason === 'no_changes' || row.skipped_reason === 'artifacts_only'
+      ? 'is-quiet'
+      : 'is-warn'
+  }
+  return 'is-live'
+}
+
+// 0332 T0018 §3-6 — [소스 되살리기 다시 시도] 를 그릴지. 조건은 둘 다 서버가 준
+// 값이다: 되살릴 행이 남아 있고(reapply_pending), 마지막 차단이 다시 눌러 볼 만한
+// 것(retryable)일 때. 충돌은 retryable=false 라 여기서 걸러진다 — 눌러도 같은 답이
+// 나오는 단추는 거짓말이다.
+const reapplyBusy = ref<string | null>(null)
+
+function reapplyOffer(slot: Slot): boolean {
+  const c = slot.tr_commits
+  return !!c?.reapply_pending && !!c?.last_block?.retryable
+}
+
+// 이 라우트는 문서 하나를 열쇠로 그 문서의 그룹에 대해 동작한다. 패널은 문서가
+// 아니라 슬롯을 그리므로, 이 그룹의 원장 줄이 지목하는 문서를 그대로 쓴다.
+function reapplyDocId(slot: Slot): string | null {
+  return slot.tr_commits?.commits?.[0]?.doc_id ?? null
+}
+
+const BLOCK_REASON_KEYS = [
+  'dirty_worktree', 'git_busy', 'already_merged', 'no_worktree', 'git_inactive',
+] as const
+
+function blockReasonLabel(reason: string | null): string {
+  if (!reason) return ''
+  return (BLOCK_REASON_KEYS as readonly string[]).includes(reason)
+    ? t(`main.git_status.tr_commits.block_${reason}`)
+    : reason
+}
+
+// 0332 TR0019 — 붙들려 있는 충돌 세션. 여기 있는 값은 전부 서버가 계산해 보낸 것이고
+// 화면은 그리기만 한다(T0018 §3-5 가 reapply_pending 에 세운 규칙 그대로).
+function trConflictOf(slot: Slot): TrConflictSession | null {
+  return slot.tr_commits?.conflict_session ?? null
+}
+
+function trConflictReviewReady(slot: Slot): boolean {
+  return trConflictOf(slot)?.review_state === 'resolved'
+}
+
+function trConflictLabel(slot: Slot): string {
+  const cs = trConflictOf(slot)
+  if (!cs) return ''
+  // 되돌리기와 되살리기는 사람이 다음에 할 일이 다르다 — 한 문구로 뭉치지 않는다.
+  const key = cs.kind === 'tr_reapply' ? 'conflict_tr_reapply' : 'conflict_tr_revert'
+  return t(`main.git_status.tr_commits.${key}`, {
+    code: cs.doc_code || cs.doc_id || '',
+    n: cs.files.length,
+  })
+}
+
+function trConflictTarget(slot: Slot): ConflictTarget {
+  return { group_id: slot.group_id, merge_id: trConflictOf(slot)?.merge_id ?? null }
+}
+
+async function commitTrConflict(slot: Slot) {
+  const cs = trConflictOf(slot)
+  if (!cs || busy.value) return
+  busy.value = true
+  try {
+    const { data } = await postRequest<{ ok: boolean; result?: any }>(
+      `/api/v1/groups/${slot.group_id}/git/merge/${cs.merge_id}/tr-commit`, {},
+    )
+    showToast(t('main.git_status.tr_commits.conflict_committed_toast', {
+      commit: String(data.result?.commit || '').slice(0, 7),
+    }), 'success')
+    collapseResolve()
+  } catch (e: any) {
+    showToast(
+      e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger',
+    )
+  } finally {
+    busy.value = false
+    // 커밋이 됐든 거절됐든 원장과 그룹 상태가 움직였을 수 있다.
+    await fetchStatus()
+  }
+}
+
+async function abortTrConflict(slot: Slot) {
+  const cs = trConflictOf(slot)
+  if (!cs || busy.value) return
+  busy.value = true
+  try {
+    await postRequest(
+      `/api/v1/groups/${slot.group_id}/git/merge/${cs.merge_id}/abort`, {},
+    )
+    showToast(t('main.git_status.tr_commits.conflict_aborted_toast'), 'warning')
+    collapseResolve()
+  } catch (e: any) {
+    showToast(
+      e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger',
+    )
+  } finally {
+    busy.value = false
+    await fetchStatus()
+  }
+}
+
+async function doReapply(slot: Slot) {
+  const docId = reapplyDocId(slot)
+  if (!docId || reapplyBusy.value) return
+  reapplyBusy.value = slot.group_id
+  try {
+    const { data } = await postRequest<any>(
+      `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point/reapply-commits`,
+      {},
+    )
+    const restore = data?.tr_commit_restore ?? null
+    const n = Array.isArray(restore?.reapplied) ? restore.reapplied.length : 0
+    if (restore?.blocked_reason) {
+      showToast(t('main.git_status.tr_commits.reapply_failed', {
+        reason: blockReasonLabel(restore.blocked_reason),
+      }), 'danger')
+    } else if (n > 0) {
+      showToast(t('main.git_status.tr_commits.reapply_done', { n }), 'success')
+    } else {
+      showToast(t('main.git_status.tr_commits.reapply_none'), 'warning')
+    }
+  } catch (e: any) {
+    showToast(e?.response?.data?.detail ?? t('main.git_status.failed'), 'danger')
+  } finally {
+    reapplyBusy.value = null
+    // 성공이든 차단이든 원장이 움직였을 수 있다 — 목록과 배지를 다시 읽는다.
+    await fetchStatus()
+  }
+}
+
+// P0006 §5-2 의 닫힌 여섯 코드. 모르는 값이 와도 코드 자체를 보여 주고 넘어간다 —
+// 사유가 비어 보이는 것보다 낫다.
+const SKIP_REASON_KEYS = [
+  'no_changes', 'artifacts_only', 'git_inactive', 'no_worktree', 'git_busy', 'commit_failed',
+] as const
+
+function skipReasonLabel(reason: string | null): string {
+  if (!reason) return ''
+  return (SKIP_REASON_KEYS as readonly string[]).includes(reason)
+    ? t(`main.git_status.tr_commits.reason_${reason}`)
+    : reason
+}
 const explorerStore = useExplorerStore()
 
 // ── Base-checkout commit / revert (0177 L0002 §2.6-b·c) ──────────────────────
@@ -968,8 +1315,25 @@ async function toggleResolve(p: Pending) {
   await openResolve(p.group_id)
 }
 
-async function openResolve(groupId: string) {
+// 0332 TR0019 — 충돌 세션은 두 곳에 나타난다: 마무리 병합은 pending 줄에, TR 되돌리기
+// 충돌은 슬롯 줄에(그 그룹은 아직 마무리를 시작하지도 않았으므로 pending 에 없다).
+// 편집기·AI·중단은 merge_id 하나만 있으면 되므로 그 둘을 여기서 하나로 만든다.
+interface ConflictTarget {
+  group_id: string
+  merge_id: number | null
+}
+
+function conflictTargetOf(groupId: string): ConflictTarget | null {
   const p = status.value?.pending.find((x) => x.group_id === groupId)
+  if (p && p.merge_id != null) return { group_id: p.group_id, merge_id: p.merge_id }
+  const s = status.value?.slots.find((x) => x.group_id === groupId)
+  const parked = s?.tr_commits?.conflict_session?.merge_id ?? null
+  if (parked != null) return { group_id: groupId, merge_id: parked }
+  return null
+}
+
+async function openResolve(groupId: string) {
+  const p = conflictTargetOf(groupId)
   if (!p || p.merge_id == null) {
     // No merge session id — fall back to the full finalize panel.
     emit('open-group', groupId)
@@ -994,8 +1358,8 @@ async function openResolve(groupId: string) {
   }
 }
 
-async function submitResolveInline(p: Pending) {
-  if (p.merge_id == null || busy.value || !inlineResolved.value) return
+async function submitResolveInline(p: ConflictTarget | null) {
+  if (!p || p.merge_id == null || busy.value || !inlineResolved.value) return
   busy.value = true
   conflictError.value = ''
   try {
@@ -1011,6 +1375,11 @@ async function submitResolveInline(p: Pending) {
     } else if (data.result?.status === 'merged') {
       const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
+      collapseResolve()
+    } else if (data.result?.status === 'resolved_pending_review') {
+      // 0332 TR0019 — TR 충돌은 여기서 끝나지 않는다. 표식이 사라졌다는 것과 이 되돌림이
+      // 옳다는 것은 다른 주장이라, 커밋은 사람이 눌러야 한다.
+      showToast(t('main.git_status.tr_commits.conflict_resolved_toast'), 'success')
       collapseResolve()
     }
   } catch (e: any) {
@@ -1042,8 +1411,8 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(ta)
 }
 
-async function invokeConflictAi(p: Pending) {
-  if (p.merge_id == null || busy.value) return
+async function invokeConflictAi(p: ConflictTarget | null) {
+  if (!p || p.merge_id == null || busy.value) return
   busy.value = true
   try {
     // RC1: forward the header/dialog provider selection so the run honours it instead
@@ -1066,8 +1435,8 @@ async function invokeConflictAi(p: Pending) {
   }
 }
 
-async function copyConflictMention(p: Pending) {
-  if (p.merge_id == null || busy.value) return
+async function copyConflictMention(p: ConflictTarget | null) {
+  if (!p || p.merge_id == null || busy.value) return
   busy.value = true
   try {
     const { data } = await postRequest<{ mention?: string }>('/api/v1/token/issue', {
@@ -1379,6 +1748,112 @@ defineExpose({ fetchStatus })
 .git-status-slot-gid {
   color: var(--text-m);
   flex: 1 1 auto;
+}
+/* 0332 D0005 §6.2 — 그룹 커밋 목록. 슬롯 행 아래에 접어서 붙고, 펼쳐도 패널의 다른
+   절(미푸시 / 마무리 대기 / 복구)을 밀어내지 않도록 상한까지만 그린다. */
+.git-trc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 0.72rem;
+  color: var(--text-m);
+  background: var(--bg-2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.git-trc-badge:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.git-trc-list {
+  margin: 2px 0 6px 22px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border, #e2e8f0);
+}
+.git-trc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 0.74rem;
+  min-width: 0;
+}
+.git-trc-row.is-canceled .git-trc-sha,
+.git-trc-row.is-canceled .git-trc-subject {
+  text-decoration: line-through;
+  color: var(--text-m);
+}
+.git-trc-row.is-quiet {
+  color: var(--text-m);
+}
+/* 0332 T0018 K11 — 되살린 커밋 배지와, 그 아래 붙는 재시도 줄. */
+.git-trc-restored {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  color: #0f766e;
+  background: rgba(15, 118, 110, 0.1);
+}
+.git-trc-reapply {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 2px;
+  font-size: 0.74rem;
+}
+.git-trc-reapply-btn {
+  flex: 0 0 auto;
+}
+/* 0332 TR0019 — 붙들린 충돌. 되살리기 줄과 같은 형태를 쓰되 자기 클래스를 갖는다
+   (남의 클래스를 재사용하면 "이 단추가 그려졌다"는 시험이 헛돈다). */
+.git-trc-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 2px;
+  font-size: 0.74rem;
+  color: #b45309;
+}
+.git-trc-conflict-ready {
+  color: #047857;
+}
+.git-trc-conflict-btn,
+.git-trc-conflict-commit-btn,
+.git-trc-conflict-abort-btn {
+  flex: 0 0 auto;
+}
+.git-trc-row.is-warn .git-trc-note {
+  color: #b45309;
+}
+.git-trc-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--text-m);
+  flex: 0 0 auto;
+}
+.git-trc-sha {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: #0369a1;
+  flex: 0 0 auto;
+}
+.git-trc-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-trc-note {
+  color: var(--text-m);
+  flex: 0 0 auto;
+}
+.git-trc-more {
+  padding: 2px 0;
+  font-size: 0.72rem;
+  color: var(--text-m);
 }
 .git-status-recovery {
   border-top: 1px dashed var(--border, #e2e8f0);

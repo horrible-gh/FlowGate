@@ -50,6 +50,40 @@ export function resolveClickedSlot(
   return sameType[occurrence - 1] ?? direct ?? null
 }
 
+// 0332 D0005 §6.1 — a strip cell's source commit. The sequence endpoint hangs it on the
+// slot (`tr_commit`), and the marker is resolved through the SAME slot resolution the click
+// uses: a repeated type must not mark one cell and roll back another.
+export interface SlotCommitMark {
+  state: 'live' | 'canceled'
+  commit: string | null
+  subject?: string | null
+  cancel_commit?: string | null
+  /**
+   * 0332 T0018 K11 — a `live` mark that came back through a forward restore rather than
+   * through a fresh approval. The marker itself is unchanged (the newest-row-wins rule
+   * already brings it back); this only lets the hover line say which of the two it is.
+   */
+  restored?: boolean
+}
+
+/**
+ * Per-cell commit marks, aligned to `stripCells`. `null` = draw nothing: either the slot
+ * has no realised document, or its TR changed no source (the server sends no mark for a
+ * `no_commit` row). A step that touched no source stays quiet — that is the design, not a
+ * missing value.
+ */
+export function slotCommitMarks(
+  stripCells: StripCell[],
+  items: SequenceSlot[],
+): (SlotCommitMark | null)[] {
+  return stripCells.map((cell, index) => {
+    const slot = resolveClickedSlot(stripCells, items, { index, code: cell.code })
+    const mark = slot?.tr_commit as SlotCommitMark | null | undefined
+    if (!mark || (mark.state !== 'live' && mark.state !== 'canceled')) return null
+    return mark
+  })
+}
+
 // Structural / auto-complete step types that reopen never rolls back and that therefore
 // are not valid time-machine targets (mirrors the server reopen exclusion).
 export const NON_ROLLBACK_TYPES = ['R', 'B', 'Q', 'AC', 'M']

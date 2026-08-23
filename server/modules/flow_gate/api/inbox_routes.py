@@ -43,6 +43,7 @@ from modules.flow_gate.rbac.decorators import _has_permission, require_permissio
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
+from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services import work_plan_service
 from modules.flow_gate.storage.paths import (
@@ -2464,6 +2465,40 @@ def _continuation_self_chain(
             envelope["continuation_paused"] = True
             envelope["continuation_reason"] = f"auto-approve failed: {exc}"
             return _stop("approve_failed", detail=str(exc))
+        # 0332 D0005 §2.2 / P0006 §1-7 — the second approval entry point. An unmanned
+        # chain approves its TR here without ever touching the HTTP approve route, so
+        # leaving this line out would mean TR commits exist only for hand-clicked
+        # approvals — i.e. never, on the path this product actually runs. Same hook,
+        # same payload; it returns None for every non-TR type and never raises.
+        tr_commit_result = tr_commit_service.on_document_approved(canonical_doc_id)
+        if tr_commit_result is not None:
+            envelope["tr_commit"] = tr_commit_result
+            # P0006 §1-7: 무인 체인에는 사람이 보는 응답이 없다 — 화면은 SSE 로만 안다.
+            # 이 자리에는 지금까지 승인 이벤트가 없었으므로, 새 이벤트를 모든 타입에
+            # 뿌리지 않고 **TR 승인일 때만** 낸다. 비-TR 문서의 SSE 흐름은 이전과
+            # 한 글자도 다르지 않다. 실패해도 무시한다 — 문서는 이미 승인됐다.
+            try:
+                from modules.flow_gate.api.v1.events.publisher import (
+                    FlowEvent,
+                    broadcast_event_threadsafe,
+                )
+                from modules.flow_gate.api.v1.events.event_types import EventType
+                broadcast_event_threadsafe(FlowEvent(
+                    event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
+                    payload={
+                        "doc_id": canonical_doc_id,
+                        "prev_status": "pending_review",
+                        "next_status": "approved",
+                        "rejection_reason": None,
+                        "metadata": {"tr_commit": tr_commit_result},
+                    },
+                    audience="*",
+                    doc_id=canonical_doc_id,
+                    project=project,
+                ))
+            except Exception:
+                import LogAssist.log as logger
+                logger.warning("[inbox] tr_commit SSE emission failed (ignored)")
 
     # Target reached → stop the chain. Reached only AFTER the just-submitted document was
     # auto-approved above, so the last step ends approved (point 2), not left submitted.

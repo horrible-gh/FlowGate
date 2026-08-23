@@ -159,6 +159,17 @@
           >
             <AppIcon :name="s.iconClass" />
             <span class="s-lbl">{{ docTypeStore.getLabel(s.code) }}</span>
+            <!-- 0332 D0005 §6.1 — 칸의 모양(색·아이콘·클릭 동작)은 그대로 두고 표식 하나만
+                 오른쪽 위에 얹는다. 커밋은 진행 상태가 아니라 그 칸에 딸린 부가 사실이라
+                 진행을 나타내는 표현을 빼앗으면 안 되고, 칸 클릭은 이미 세 가지 뜻을
+                 갖고 있어 네 번째를 얹을 자리가 없다. -->
+            <span
+              v-if="commitOf(idx)"
+              class="wf-commit-mark"
+              :class="commitOf(idx)?.state === 'canceled' ? 'is-canceled' : 'is-live'"
+            >
+              <AppIcon :name="commitOf(idx)?.state === 'canceled' ? 'arrow-counter-clockwise' : 'git-commit'" />
+            </span>
           </div>
           <span v-if="idx < stepStates.length - 1" class="wf-arrow">
             <AppIcon name="caret-right" />
@@ -186,6 +197,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import type { Tab } from '../stores/tabs'
+import type { SlotCommitMark } from '../workflow/timeMachineSlot'
 import type { StepState } from '../workflow/workflowViewState'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import WorkflowDecisionModal, { type PourPayload, type PourRow } from './WorkflowDecisionModal.vue'
@@ -202,6 +214,10 @@ const props = withDefaults(defineProps<{
    *  rewound steps sitting AHEAD of the current head; hovering makes them clickable to roll the
    *  workflow forward (restore) to that step. Empty/absent when no active return point. */
   returnTargets?: number[]
+  /** 0332 D0005 §6.1 — 칸마다의 소스 커밋 표식. stepStates 와 같은 순서이고, 표식이 없는
+   *  칸은 null 이다. 배열 자체가 비어 있거나 없으면(시퀀스 조회 실패 포함) 표식을 하나도
+   *  그리지 않는다 — 그때 칸은 이 기능이 있기 전과 똑같이 보인다. */
+  slotCommits?: (SlotCommitMark | null)[]
   /** Disable every document/workflow mutation affordance while keeping the sequence visible. */
   readOnly?: boolean
 }>(), {
@@ -245,13 +261,35 @@ function isReturnTarget(idx: number): boolean {
   return props.returnTargets?.includes(idx) ?? false
 }
 
+// 0332 D0005 §6.1 — 그 칸의 소스 커밋. 없으면 null 이고, 그때 표식도 호버 줄도 없다.
+function commitOf(idx: number): SlotCommitMark | null {
+  return props.slotCommits?.[idx] ?? null
+}
+
 // Hover tooltip: a rewound step ahead of the head hints "return here"; a completed step behind
 // the head hints "roll back here". (A cell is only ever one of the two.)
+// 0332 D0005 §6.1: 커밋이 달린 칸은 여기에 한 줄이 더 붙는다 — 짧은 해시와 상태. 읽기
+// 전용이라 되돌리기 힌트가 없는 칸에서도 이 줄은 보인다(사실을 말할 뿐 동작이 아니다).
 function stepHint(s: StepState, idx: number): string | undefined {
-  if (props.readOnly) return undefined
-  if (isReturnTarget(idx)) return t('main.doc_workflow.time_machine_return_hint')
-  if (s.visual === 'done') return t('main.doc_workflow.time_machine_hint')
-  return undefined
+  const lines: string[] = []
+  if (!props.readOnly) {
+    if (isReturnTarget(idx)) lines.push(t('main.doc_workflow.time_machine_return_hint'))
+    else if (s.visual === 'done') lines.push(t('main.doc_workflow.time_machine_hint'))
+  }
+  const commit = commitOf(idx)
+  if (commit) {
+    // 0332 T0018 K11 — three states, not two. A restored commit is live and must show a
+    // marker (it IS in the tree), but saying only "소스 커밋 abc1234" hides the round
+    // trip the person just made and makes the log look like it never happened.
+    const key = commit.state === 'canceled'
+      ? 'main.doc_workflow.tr_commit_canceled_hint'
+      : commit.restored
+        ? 'main.doc_workflow.tr_commit_restored_hint'
+        : 'main.doc_workflow.tr_commit_hint'
+    const sha = commit.state === 'canceled' ? commit.cancel_commit : commit.commit
+    lines.push(t(key, { commit: sha ?? '' }))
+  }
+  return lines.length > 0 ? lines.join('\n') : undefined
 }
 
 // 0018 R0001 / 0142 R0001 — head step keeps its "proceed to next step" action; a completed
@@ -531,6 +569,30 @@ function toggleSequenceCollapsed() {
 </script>
 
 <style scoped>
+/* 0332 D0005 §6.1 — 커밋 표식. 칸의 크기와 배치는 그대로 두고 오른쪽 위 모서리에만
+   얹으므로 칸을 감싸는 relative 만 더한다. 표식은 클릭 대상이 아니다 — pointer-events 를
+   꺼서 표식 위를 눌러도 칸 클릭(진행 / 되돌리기 / 복귀)이 그대로 간다. */
+.wf-step {
+  position: relative;
+}
+.wf-commit-mark {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .62rem;
+  line-height: 1;
+  pointer-events: none;
+}
+.wf-commit-mark.is-live i {
+  color: var(--success, #16a34a);
+}
+.wf-commit-mark.is-canceled i {
+  color: var(--text-m, #64748b);
+}
+
 /* 0119 B0001: decided-but-empty recovery hint */
 .wf-empty-recover {
   display: flex;

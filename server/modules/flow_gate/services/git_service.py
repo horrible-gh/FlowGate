@@ -3179,6 +3179,40 @@ def _worktree_untracked_paths(wt_path: Path) -> list[str]:
     return sorted(p for p in (proc.stdout or "").split("\0") if p)
 
 
+def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
+    """Stage a worktree's leftover edits under the tool-debris rule — the shared half.
+
+    Returns ``(excluded_artifacts, has_staged)``. Two callers use it and they must not
+    drift apart: the finalize absorb commit below, and the TR commit point
+    (``create_tr_commit``, 0332 D0005 K2). 0382 happened because one rule lived in two
+    places — the screen hid what the check caught — so the exclusion decision is made
+    exactly once, here, and both commits inherit it.
+
+    * ``git add -u`` stages every tracked change, **including deletions**. That matters:
+      the cleanup of already-committed debris has to be committable through this same
+      path, and a filter that also dropped deletions would make those files unremovable.
+    * new files are added by explicit pathspec, so a rule-matching one is never staged in
+      the first place (no ``reset`` dance, nothing half-staged on failure).
+
+    ``has_staged`` is false when the index came out empty — a worktree dirty ONLY because
+    of debris. That is the gate doing its job, not a failure, and each caller decides what
+    to do with it (finalize skips the commit; the TR path reports ``artifacts_only``).
+    """
+    kept, artifacts = path_exclusion_rules.partition_paths(
+        _worktree_untracked_paths(wt_path)
+    )
+    proc = _run_git(["add", "-u"], cwd=wt_path)
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+    for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
+        chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
+        proc = _run_git(["add", "--", *chunk], cwd=wt_path)
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
+    return artifacts, staged.returncode != 0
+
+
 def _absorb_worker_edits(
     wt_path: Path, subject: str, author_env: Optional[dict]
 ) -> list[str]:
@@ -3205,30 +3239,18 @@ def _absorb_worker_edits(
 
     Returns the excluded paths (sorted). Raises GitServiceError on a git failure.
     """
-    kept, artifacts = path_exclusion_rules.partition_paths(
-        _worktree_untracked_paths(wt_path)
-    )
+    artifacts, has_staged = _stage_worker_edits(wt_path)
     if artifacts:
         _log.info(
             "finalize: excluding %d tool artifact(s) from the absorb commit in %s",
             len(artifacts), wt_path,
         )
 
-    proc = _run_git(["add", "-u"], cwd=wt_path)
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
-        chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
-        proc = _run_git(["add", "--", *chunk], cwd=wt_path)
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-
     # A worktree dirty ONLY because of debris now has an empty index, and
     # `git commit` on an empty index exits non-zero ("nothing to commit"). That is
     # not a failure — it is the gate doing its job — so skip the commit instead of
     # turning a clean finalize into a 500.
-    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
-    if staged.returncode == 0:
+    if not has_staged:
         return artifacts
 
     proc = _run_git(
@@ -3244,6 +3266,721 @@ def _artifact_payload(artifacts: Sequence[str]) -> dict:
     return {
         "excluded_artifact_count": len(artifacts),
         "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
+    }
+
+
+# ── TR commit point (flowgate.default.0332 D0005 §3.1 / L0007 §1·§2.6) ────────
+
+# L0007 §1 tr_commit_lock_wait_sec = 0. The approval does NOT queue behind a
+# finalize: approvals happen many times an hour and a 5-second lock wait would make
+# one finalize stall every approval in the project. Giving up costs nothing — the
+# changes stay in the worktree for the next TR commit or the absorb commit, and the
+# ledger records that this round was skipped for `git_busy` (D0005 §4).
+TR_COMMIT_LOCK_WAIT_SEC = 0
+
+
+def create_tr_commit(group_id: str, subject: str) -> dict:
+    """Commit the group worktree's pending work as one TR's commit point.
+
+    Called right after a TR approval has committed (D0005 K1), so it must **never
+    raise and never block**: every refusal is a ``skipped_reason`` from the closed set
+    P0006 §5-2 fixed, and the approval stands either way. Returns::
+
+        {committed, commit (7-char), commit_sha (40-char), subject,
+         skipped_reason, excluded_artifacts, committed_paths}
+
+    The scope is the worktree, not the document's reported file list — see
+    tr_commit_service for why trusting that list would let one TR's commit carry (and
+    a later rewind revert) another TR's work.
+
+    The gates mirror the cancel side's G2~G9 (L0007 §4.1) in the same order, so the
+    two halves of this feature never disagree about what "this group has git" means.
+    """
+    blank = {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "commit_failed", "excluded_artifacts": [],
+        "committed_paths": [],
+    }
+
+    def skip(reason: str, artifacts: Optional[Sequence[str]] = None) -> dict:
+        return {**blank, "skipped_reason": reason,
+                "excluded_artifacts": list(artifacts or [])}
+
+    project_id = _project_of_group(group_id)
+    if not project_id:
+        return skip("git_inactive")
+    try:
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return skip("git_inactive")
+        if not git_available():
+            return skip("git_inactive")
+        state = db_git.get_state(group_id)
+        if state is None:
+            return skip("git_inactive")
+        if not state.get("worktree_registered") or not state.get("branch"):
+            return skip("no_worktree")
+        project_name = _project_name(project_id)
+        if not project_name:
+            return skip("no_worktree")
+    except Exception:
+        _log.warning("tr commit precheck failed for %s", group_id, exc_info=True)
+        return skip("commit_failed")
+
+    holder = f"trcommit:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=TR_COMMIT_LOCK_WAIT_SEC):
+        return skip("git_busy")
+    try:
+        wt_path = src_root(project_name, state["branch"])
+        if not wt_path.is_dir():
+            return skip("no_worktree")
+
+        artifacts, has_staged = _stage_worker_edits(wt_path)
+        if not has_staged:
+            # D0005 K3 / P0006 §1-5: "changed nothing" and "changed only debris" are
+            # two different sentences on screen, so they stay two different codes.
+            return skip("artifacts_only" if artifacts else "no_changes", artifacts)
+
+        # -z keeps paths raw: git quotes non-ASCII names in the plain form, and a
+        # quoted path would never match the document's reported list.
+        listing = _run_git(
+            ["diff", "--cached", "--name-only", "-z"], cwd=wt_path,
+            timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        committed_paths = sorted(p for p in (listing.stdout or "").split("\0") if p)
+
+        proc = _run_git(
+            [*_GIT_IDENT, "commit", "-m", subject], cwd=wt_path,
+            author_env=_author_env_from_cfg(cfg),
+        )
+        if proc.returncode != 0:
+            _log.warning(
+                "tr commit failed for %s: %s", group_id, _last_line(proc.stderr)
+            )
+            return skip("commit_failed", artifacts)
+
+        head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
+        full = (head.stdout or "").strip() or None
+        return {
+            "committed": True,
+            "commit": full[:7] if full else None,
+            "commit_sha": full,
+            "subject": subject,
+            "skipped_reason": None,
+            "excluded_artifacts": list(artifacts),
+            "committed_paths": committed_paths,
+        }
+    except Exception:
+        _log.warning("tr commit point failed for group %s", group_id, exc_info=True)
+        return skip("commit_failed")
+    finally:
+        try:
+            db_git.release_lock(project_id, holder)
+        except Exception:
+            _log.warning("tr commit lock release failed for %s", project_id, exc_info=True)
+
+
+# ── TR commit cancel (flowgate.default.0332 D0005 §3.2 / L0007 §2.2~§2.6) ─────
+
+# L0007 §1 cancel_lock_wait_sec = 5, deliberately NOT the approval side's 0. An
+# approval happens many times an hour and its commit is a by-product, so waiting is
+# pure latency; a rewind is a person pressing [되돌리기] once and the cancel IS the
+# point of that press. Giving up because a finalize held the lock for two seconds
+# would hand them a [다시 시도] button that does nothing new.
+CANCEL_LOCK_WAIT_SEC = LOCK_WAIT_SEC
+
+# L0007 §2.6 — the cancel commit's body always names the reverted commit in full, so
+# `git log --grep` finds the pair from either side.
+_CANCEL_TRAILER = "FlowGate: TR commit cancel for {code} (group {group_id})."
+
+# T0018 K11 — the same idea for the other direction. A distinct wording, because a reader
+# grepping the log has to be able to tell a cancel from the restore that undid it.
+_REAPPLY_TRAILER = "FlowGate: TR commit reapply for {code} (group {group_id})."
+
+
+def cancel_subject(commit_subject: Optional[str]) -> str:
+    """``Revert "<original subject>"`` clipped to the shared subject cap (L0007 §2.6).
+
+    Clipping puts the ellipsis INSIDE the quotes so the result still reads as one
+    quoted title rather than a truncated sentence.
+    """
+    original = _one_line_subject(commit_subject or "")
+    quoted = f'Revert "{original}"'
+    if len(quoted) <= COMMIT_SUBJECT_MAX:
+        return quoted
+    keep = COMMIT_SUBJECT_MAX - len('Revert ""') - 1
+    return f'Revert "{original[:max(keep, 0)]}…"'
+
+
+def cancel_body(commit_sha: str, doc_code: str, group_id: str) -> str:
+    return (
+        f"This reverts commit {commit_sha}.\n\n"
+        + _CANCEL_TRAILER.format(code=doc_code, group_id=group_id)
+    )
+
+
+def reapply_subject(commit_subject: Optional[str]) -> str:
+    """``Reapply "<original subject>"`` — the forward restore's commit (T0018 K11).
+
+    Same clipping rule as :func:`cancel_subject`, ellipsis inside the quotes, so a step
+    that went commit → revert → restore reads as three lines of one sentence in the log.
+    Named after the ORIGINAL TR, not after the cancel commit it technically reverts:
+    "Revert \"Revert \"0009-TR: ...\"\"" is what git would have written by itself and it
+    tells a reader nothing.
+    """
+    original = _one_line_subject(commit_subject or "")
+    quoted = f'Reapply "{original}"'
+    if len(quoted) <= COMMIT_SUBJECT_MAX:
+        return quoted
+    keep = COMMIT_SUBJECT_MAX - len('Reapply ""') - 1
+    return f'Reapply "{original[:max(keep, 0)]}…"'
+
+
+def reapply_body(
+    cancel_sha: str, original_sha: str, doc_code: str, group_id: str
+) -> str:
+    """The reapply commit's body — it names BOTH ends of the round trip.
+
+    The first line is the one git's own tooling looks for, and it has to name the commit
+    actually being reverted (the cancel). The original TR commit is named on its own line
+    underneath, so one ``git log --grep`` on either sha pulls the whole triple — the TR
+    commit, the cancel that undid it, the reapply that put it back.
+    """
+    lines = [f"This reverts commit {cancel_sha}.", ""]
+    if original_sha:
+        lines.append(f"Restores the TR commit {original_sha}.")
+        lines.append("")
+    lines.append(_REAPPLY_TRAILER.format(code=doc_code, group_id=group_id))
+    return "\n".join(lines)
+
+
+def cancel_blocking_dirty(wt_path: Path) -> bool:
+    """Does this worktree hold changes a revert would get mixed up with? (L0007 §2.5)
+
+    NOT the finalize ``_dirty()``: that one calls any untracked file dirty, and the TR
+    commit path *deliberately leaves tool debris behind* (0382), so every group would
+    permanently look dirty and no cancel would ever run. What actually mixes with a
+    revert is a tracked-file edit or a new file the exclusion rules would have kept —
+    and the exclusion rule used here is the same function the commit side uses, so a
+    path can never be "not committed but still blocking".
+    """
+    proc = _run_git(
+        ["status", "--porcelain", "--untracked-files=no"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0 or (proc.stdout or "").strip():
+        return True
+    kept, _artifacts = path_exclusion_rules.partition_paths(
+        _worktree_untracked_paths(wt_path)
+    )
+    return bool(kept)
+
+
+def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
+    """Is every target commit an ancestor of this worktree's HEAD? (L0007 §4.1 G11)
+
+    Fail-closed on purpose: if the branch was re-provisioned from base HEAD, or moved
+    by hand, the commits the ledger names are not in this tree and reverting "what is
+    still here" would peel off somebody else's work. No cancel beats a partial one.
+    """
+    for sha in shas:
+        if not sha:
+            return False
+        proc = _run_git(
+            ["merge-base", "--is-ancestor", sha, "HEAD"],
+            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        if proc.returncode != 0:
+            return False
+    return True
+
+
+def _cancel_prelock_gate(group_id: str) -> dict:
+    """L0007 §4.1 G2~G7 — everything that can be judged from the DB alone.
+
+    Split out of :func:`open_cancel_session` because the rewind dialog's preview must
+    answer with the SAME reading in the SAME order (L0007 §3 그룹 관측 상태); two copies
+    of this ladder is exactly how a dialog ends up saying "2 commits will be reverted"
+    about a group whose cancel then refuses.
+    """
+    out = {
+        "blocked_reason": None, "block_sub": None,
+        "project_id": None, "cfg": None, "state": None,
+    }
+
+    def blocked(reason: str, sub: str) -> dict:
+        return {**out, "blocked_reason": reason, "block_sub": sub}
+
+    project_id = _project_of_group(group_id)
+    if not project_id:
+        return blocked("git_inactive", "integration_disabled")
+    out["project_id"] = project_id
+    cfg = db_git.get_config(project_id)                                    # G2
+    if cfg is None or not cfg.get("enabled"):
+        return blocked("git_inactive", "integration_disabled")
+    out["cfg"] = cfg
+    state = db_git.get_state(group_id)                                     # G3
+    if state is None:
+        return blocked("git_inactive", "no_group_git_state")
+    out["state"] = state
+    if not git_available():                                                # G4
+        return blocked("git_inactive", "git_unavailable")
+    status = state.get("status") or "none"
+    if status in ("merged", "pushed"):                                     # G5
+        return blocked("already_merged", "already_merged")
+    if status in ("merging", "conflict"):                                  # G6
+        return blocked("git_busy", "merge_in_flight")
+    if not state.get("worktree_registered") or not state.get("branch"):    # G7
+        return blocked("no_worktree", "worktree_unregistered")
+    return out
+
+
+# L0007 §3 — the preview's group-level status. `git_busy`/`dirty_worktree` are NOT in
+# it: both are true only at the instant a revert is being laid down, and a dialog that
+# opened ten seconds ago would be stating them as facts (P0006 §2 서두). A merge in
+# flight therefore previews as "active" and the confirm press answers `git_busy` — with
+# a [다시 시도] button, which is the honest sequence.
+_PREVIEW_STATUS_OF_BLOCK = {
+    "git_inactive": "git_inactive",
+    "already_merged": "already_merged",
+    "no_worktree": "no_worktree",
+    "git_busy": "active",
+}
+
+
+def cancel_group_status(group_id: str) -> str:
+    """``active`` | ``already_merged`` | ``no_worktree`` | ``git_inactive`` (P0006 §2)."""
+    gate = _cancel_prelock_gate(group_id)
+    reason = gate["blocked_reason"]
+    if not reason:
+        return "active"
+    return _PREVIEW_STATUS_OF_BLOCK.get(reason, "active")
+
+
+def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
+    """Evaluate L0007 §4.1 G2~G11 and, if all pass, hold the project git lock.
+
+    Returns ``{"ok": True, "session": {...}}`` or
+    ``{"ok": False, "blocked_reason": <P0006 §5-3 code>, "block_sub": <L0007 detail>}``.
+
+    The gate ORDER is the part that carries meaning, and it is the same order the
+    preview reads (L0007 §3 그룹 관측 상태) so the dialog never promises something the
+    press of the button then refuses:
+
+    * ``already_merged`` is checked BEFORE ``worktree_registered`` — cleanup unregisters
+      a merged slot's worktree, so the other order would report every merged group as
+      ``no_worktree`` and the screen would lose its one useful sentence ("use [병합
+      되돌리기]").
+    * the lock is taken BEFORE the disk is read — "clean" decided outside the lock is
+      already stale by the time the first revert lands.
+
+    The caller MUST call :func:`close_cancel_session` in a ``finally``; the re-arm that
+    follows a rewind takes the same lock and it is not re-entrant (L0007 §2.1 ③).
+
+    T0018 K11: the forward restore opens this SAME session, deliberately un-renamed. Every
+    gate above applies to a reapply word for word — a merged group, a missing worktree, a
+    busy lock and a dirty tree block putting source back for exactly the reasons they block
+    taking it away — and G11 keeps its meaning because the restore passes the CANCEL
+    commits as ``target_shas``: "are the commits I am about to peel off still in this tree".
+    """
+    def block(reason: str, sub: str) -> dict:
+        return {"ok": False, "blocked_reason": reason, "block_sub": sub, "session": None}
+
+    gate = _cancel_prelock_gate(group_id)                                 # G2~G7
+    if gate["blocked_reason"]:
+        return block(gate["blocked_reason"], gate["block_sub"])
+    project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
+
+    holder = f"cancel:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):  # G8
+        return block("git_busy", "lock_timeout")
+    try:
+        project_name = _project_name(project_id)
+        wt_path = src_root(project_name, state["branch"]) if project_name else None
+        if wt_path is None or not wt_path.is_dir():                       # G9
+            raise _CancelGateFailed("no_worktree", "worktree_missing")
+        if cancel_blocking_dirty(wt_path):                                # G10
+            raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
+        if not _commits_present(wt_path, target_shas):                    # G11
+            raise _CancelGateFailed("no_worktree", "commits_absent")
+    except _CancelGateFailed as gate:
+        _release_cancel_lock(project_id, holder)
+        return block(gate.reason, gate.sub)
+    except Exception:
+        # A gate that blew up must not leave the project lock behind — the re-arm
+        # right after this would then wait five seconds and fail silently.
+        _release_cancel_lock(project_id, holder)
+        raise
+    return {
+        "ok": True, "blocked_reason": None, "block_sub": None,
+        "session": {
+            "project_id": project_id, "group_id": group_id, "holder": holder,
+            "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
+        },
+    }
+
+
+class _CancelGateFailed(Exception):
+    """Internal: a post-lock gate refused. Carries the pair the caller reports."""
+
+    def __init__(self, reason: str, sub: str) -> None:
+        super().__init__(f"{reason}:{sub}")
+        self.reason = reason
+        self.sub = sub
+
+
+def _release_cancel_lock(project_id: str, holder: str) -> None:
+    try:
+        db_git.release_lock(project_id, holder)
+    except Exception:
+        _log.warning("tr cancel lock release failed for %s", project_id, exc_info=True)
+
+
+def close_cancel_session(session: Optional[dict]) -> None:
+    if not session:
+        return
+    _release_cancel_lock(session["project_id"], session["holder"])
+
+
+def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
+    """Lay one revert commit on top of the worktree (L0007 §2.3). One TR, one commit.
+
+    Returns ``{"kind": "ok"|"empty"|"blocked", "commit": <full 40-char sha>|None,
+    "sub": str|None}``. The ledger stores the full hash (DB0008 §4-3); the 7-character
+    form is cut where a screen reads it, never on the way in.
+
+    ``--no-commit`` then our own ``commit``: the subject, the body trailer and the
+    commit identity have to match the rest of FlowGate's commits, and ``git revert``'s
+    self-generated message follows none of those rules. Reverts are never batched — one
+    revert commit per TR is what lets the ledger point at them one to one (D0005 K6).
+    """
+    return _revert_one(session, commit_sha=commit_sha, subject=subject, body=body)
+
+
+def reapply_tr_commit(session: dict, *, cancel_commit: str, subject: str, body: str) -> dict:
+    """Peel one cancel commit back off — the forward restore's git step (T0018 K11).
+
+    A reapply IS a revert: reverting the revert is what puts the original TR's source
+    back, and it is the only form that keeps the rewind itself visible in the log
+    (D0005 K5). So this is deliberately a two-line wrapper over the same helper
+    :func:`revert_tr_commit` uses rather than a second copy of the procedure —
+    ``--no-commit``, the empty check, our own message, the same three ``kind`` values.
+    A copy would drift the moment one of the two learns something, and a clean automatic
+    merge is perfectly happy to keep both (see [[clean-automerge-can-shadow-duplicate-defs]]).
+
+    ``cancel_commit`` is the cancel commit's sha, not the original TR commit's: what is
+    being undone here is the cancel.
+    """
+    return _revert_one(session, commit_sha=cancel_commit, subject=subject, body=body)
+
+
+def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
+    """The shared body of :func:`revert_tr_commit` and :func:`reapply_tr_commit`."""
+    wt_path: Path = session["wt_path"]
+    proc = _run_git(
+        ["revert", "--no-commit", "--no-edit", commit_sha],
+        cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        # Conflict, failed application and timeout are one outcome here on purpose:
+        # the person's next move is identical in all three (P0006 §5-4 closed the set),
+        # and the difference is kept in the ledger's attempt log, not in the response.
+        sub = "timeout" if "timeout_expired" in (proc.stderr or "") else "revert_conflict"
+        return {"kind": "blocked", "commit": None, "sub": sub}
+    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
+    if staged.returncode == 0:
+        # Nothing to undo — the same content was already reverted by another route.
+        # An empty commit would be noise in the history for a no-op (D0005 K3).
+        return {"kind": "empty", "commit": None, "sub": "empty_revert"}
+    proc = _run_git(
+        [*_GIT_IDENT, "commit", "-m", subject, "-m", body],
+        cwd=wt_path, author_env=session.get("author_env"), timeout=GIT_LOCAL_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        return {"kind": "blocked", "commit": None, "sub": "commit_failed"}
+    head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
+    full = (head.stdout or "").strip() or None
+    return {"kind": "ok", "commit": full, "sub": None}
+
+
+def restore_after_failed_revert(session: dict) -> None:
+    """Put the worktree back the way the failed revert found it (L0007 §2.3).
+
+    ``git clean`` is NOT called and never will be on this path — 0382 is what happens
+    when a git command that deletes untracked files sits in an automatic flow. Return
+    codes are ignored: the outcome is already ``blocked`` and the loop stops here.
+
+    TR0019: this is no longer what a CONFLICT does. A conflict now becomes a session
+    (:func:`open_tr_conflict_session`) so a person or an AI can still see it; this
+    stays as the fallback for the failures nobody can resolve by editing a file — a
+    timeout, a commit that would not run, a session row that could not be written —
+    and as the body of the explicit [give up] press (:func:`abort_tr_conflict`).
+    Destroying the evidence was never wrong; being the only option was.
+    """
+    wt_path: Path = session["wt_path"]
+    _run_git(["revert", "--quit"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
+    _run_git(["reset", "--hard", "HEAD"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC)
+
+
+# ── TR revert/reapply conflict session (TR0019, migration 088) ───────────────
+#
+# Before this block a conflicted revert was a dead end with a `retryable=false` label on
+# it: the loop wiped the index and told the person to go fix their worktree by hand. The
+# machinery for the opposite outcome already existed one module over — the finalize merge
+# keeps its conflict as a session row, the Git status panel opens an inline editor on that
+# row, and an AI can be handed a token bound to that merge_id and asked to resolve it. All
+# of it is keyed on a merge session, so the whole change is: let a TR conflict BE one.
+
+# `context.review_state`. Two values, and the gap between them is the point: a TR conflict
+# that has been resolved is NOT a TR conflict that has been committed.
+TR_CONFLICT_REVIEW_OPEN = "open"
+TR_CONFLICT_REVIEW_RESOLVED = "resolved"
+
+
+def _unmerged_paths(wt_path: Path) -> list[str]:
+    """The conflicted paths of an in-flight revert, worktree-relative and sorted."""
+    proc = _run_git(
+        ["diff", "--name-only", "--diff-filter=U"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        return []
+    return sorted({line.strip() for line in (proc.stdout or "").splitlines() if line.strip()})
+
+
+def _revert_in_flight(wt_path: Path) -> bool:
+    """Is a `revert --no-commit` still open in this worktree?
+
+    ``REVERT_HEAD`` is asked for through ``rev-parse --git-path`` rather than by joining
+    ``.git``: a group slot is a real ``git worktree``, so its ``.git`` is a FILE pointing at
+    the shared gitdir and every ``wt / ".git" / "X"`` test would answer False forever.
+    """
+    proc = _run_git(
+        ["rev-parse", "--git-path", "REVERT_HEAD"],
+        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if proc.returncode != 0:
+        return False
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        return False
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = wt_path / candidate
+    return candidate.exists()
+
+
+def _set_tr_review_state(merge_id: int, review_state: str) -> None:
+    """Move a TR conflict session between `open` and `resolved` (read-modify-write)."""
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session)
+    context["review_state"] = review_state
+    db_git.set_session_context(merge_id, context)
+
+
+def open_tr_conflict_session(
+    cancel_session: dict,
+    *,
+    kind: str,
+    group_id: str,
+    ledger_row_id: int,
+    doc_id: str,
+    doc_code: str,
+    target_sha: str,
+    original_sha: Optional[str],
+    subject: str,
+    body: str,
+) -> Optional[dict]:
+    """Keep a conflicted revert alive as a conflict session instead of destroying it.
+
+    Returns ``{"merge_id": int, "files": [...]}``, or **None** when the conflict cannot be
+    kept — git reports no unmerged path (so the revert failed for some other reason and
+    there is nothing for anyone to edit), or the session row could not be written (a merge
+    session is already open for this group; one open session per group is a DB0007 I3
+    invariant and not one to bend). None means the caller falls back to the old destroy,
+    which is the only safe default: an in-flight revert nobody can see, finish or abort is
+    worse than no revert at all.
+
+    The group goes to ``status='conflict'`` with this ``merge_id``, exactly as a finalize
+    merge does, because that is what makes the existing screen open on it. The status it
+    came from is stored so the abort can put it back — the group was mid-rewind, not
+    mid-merge, and 'waiting' would be a lie about which button to press next.
+    """
+    wt_path: Path = cancel_session["wt_path"]
+    paths = _unmerged_paths(wt_path)
+    if not paths:
+        return None
+    state = db_git.get_state(group_id) or {}
+    try:
+        merge_id = db_git.create_session(
+            group_id, paths, kind=kind,
+            context={
+                "review_state": TR_CONFLICT_REVIEW_OPEN,
+                "ledger_row_id": int(ledger_row_id),
+                "doc_id": doc_id,
+                "doc_code": doc_code,
+                "target_sha": target_sha,
+                "original_sha": original_sha,
+                "subject": subject,
+                "body": body,
+                "prev_status": state.get("status") or "none",
+                "branch": state.get("branch"),
+            },
+        )
+    except Exception:
+        _log.warning(
+            "tr conflict session could not be opened for %s; falling back to restore",
+            group_id, exc_info=True,
+        )
+        return None
+    _set_status(group_id, "conflict", merge_id=merge_id)
+    return {"merge_id": int(merge_id), "files": paths}
+
+
+def tr_conflict_session(group_id: str) -> Optional[dict]:
+    """This group's open TR conflict session as a screen needs it, or None.
+
+    Best-effort by construction: it feeds a panel block, and a group whose session table
+    cannot be read should render without that block rather than fail the whole panel.
+    """
+    try:
+        session = db_git.get_open_session_by_group(group_id)
+    except Exception:
+        _log.warning("tr conflict session lookup failed for %s", group_id, exc_info=True)
+        return None
+    kind = db_git.session_kind(session) if session else None
+    if not session or kind not in db_git.TR_SESSION_KINDS:
+        return None
+    merge_id = int(session["merge_id"])
+    context = db_git.session_context(session)
+    try:
+        files = [row["path"] for row in db_git.session_files(merge_id)]
+        remaining = db_git.remaining_conflicts(merge_id)
+    except Exception:
+        files, remaining = [], []
+    return {
+        "merge_id": merge_id,
+        "kind": kind,
+        "doc_id": context.get("doc_id"),
+        "doc_code": context.get("doc_code"),
+        "subject": context.get("subject"),
+        "files": files,
+        "remaining": remaining,
+        "review_state": context.get("review_state") or TR_CONFLICT_REVIEW_OPEN,
+    }
+
+
+def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
+    """Commit a resolved TR conflict — the second press, and the reason there is one.
+
+    A merge conflict may finish itself: both sides were written by people, "keep both" is
+    close to the whole question, and a person still presses [병합] at the end. A revert is
+    not symmetric. One side says "remove what this TR did" and the other is every change
+    that landed on top of it, so a resolver in a hurry — or an AI that is confidently
+    wrong — can hand back a file with no conflict markers in it that undid half the TR.
+    Marker-free is not the same claim as correct. If ``resolve_conflicts`` committed on the
+    AI's say-so, the strip would draw "cancelled" over a tree that is neither the old state
+    nor the new one, and that is worse than the dead end this whole block replaces.
+
+    So: the session parks at ``review_state='resolved'``, the person reads the diff, and
+    this is what they press. Returns the new commit and the session context; the ledger
+    writes are the caller's (tr_commit_service owns the ledger, this module owns git).
+    """
+    session, cfg, project_id, root = _session_context(group_id, merge_id)
+    kind = db_git.session_kind(session)
+    if kind not in db_git.TR_SESSION_KINDS:
+        raise GitServiceError(409, "invalid_state", "not a TR conflict session")
+    context = db_git.session_context(session)
+    if context.get("review_state") != TR_CONFLICT_REVIEW_RESOLVED:
+        raise GitServiceError(
+            409, "conflict_markers_remain", "resolve every file in this session first"
+        )
+    remaining = db_git.remaining_conflicts(merge_id)
+    if remaining:
+        raise GitServiceError(
+            409, "conflict_markers_remain",
+            f"{len(remaining)} file(s) still unresolved in this session",
+        )
+    # Asked of git, not just of our own bookkeeping: the resolve endpoint marks a row
+    # resolved, and between then and now somebody could have touched the worktree.
+    unmerged = _unmerged_paths(root)
+    if unmerged:
+        raise GitServiceError(
+            409, "conflict_markers_remain",
+            f"git still reports {len(unmerged)} unmerged path(s)",
+        )
+
+    holder = f"trconflict:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):
+        raise GitServiceError(
+            409, "git_busy", f"another git operation is in progress for '{project_id}'"
+        )
+    try:
+        # A resolution that keeps the tree exactly as HEAD has it — "take ours" on every
+        # chunk, which is a perfectly reasonable answer and one an AI will sometimes give.
+        # There is nothing to commit then, and an empty commit is noise in the history
+        # (D0005 K3). It is not a failure either: the outcome the person asked for is
+        # already true of the tree, and the ledger records it the same way the cancel loop
+        # records its own empty reverts.
+        staged = _run_git(
+            ["diff", "--cached", "--quiet"], cwd=root, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        empty = staged.returncode == 0
+        commit = None
+        if not empty:
+            proc = _run_git(
+                [*_GIT_IDENT, "commit",
+                 "-m", context.get("subject") or "", "-m", context.get("body") or ""],
+                cwd=root, author_env=_author_env_from_cfg(cfg), timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
+            if proc.returncode != 0:
+                raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+            head = _run_git(["rev-parse", "HEAD"], cwd=root, timeout=GIT_READ_TIMEOUT_SEC)
+            commit = (head.stdout or "").strip() or None
+        # Either way the revert is over; the sequencer state is what is left of it.
+        _run_git(["revert", "--quit"], cwd=root, timeout=GIT_READ_TIMEOUT_SEC)
+    finally:
+        _release_cancel_lock(project_id, holder)
+
+    db_git.close_session(merge_id, "done")
+    _set_status(group_id, context.get("prev_status") or "waiting")
+    return {
+        "ok": True,
+        "result": {
+            "status": "empty" if empty else "committed", "kind": kind, "commit": commit,
+            "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
+            "ledger_row_id": context.get("ledger_row_id"),
+            "target_sha": context.get("target_sha"),
+            "original_sha": context.get("original_sha"),
+            "commit_subject": context.get("subject"),
+        },
+    }
+
+
+def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
+    """Give up on a TR conflict: restore the worktree, close the session, keep the row.
+
+    The body is the old :func:`restore_after_failed_revert` — ``revert --quit`` then
+    ``reset --hard HEAD``, and still never ``git clean`` (0382). The ledger row is left
+    exactly as it was, because nothing about it changed: the commit it names is still live
+    (a cancel that gave up) or still cancelled (a reapply that gave up).
+    """
+    session, _cfg, _project_id, root = _session_context(group_id, merge_id)
+    kind = db_git.session_kind(session)
+    if kind not in db_git.TR_SESSION_KINDS:
+        raise GitServiceError(409, "invalid_state", "not a TR conflict session")
+    context = db_git.session_context(session)
+    _run_git(["revert", "--quit"], cwd=root, timeout=GIT_READ_TIMEOUT_SEC)
+    _run_git(["reset", "--hard", "HEAD"], cwd=root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+    db_git.close_session(merge_id, "aborted")
+    _set_status(group_id, context.get("prev_status") or "waiting")
+    return {
+        "ok": True,
+        "result": {
+            "status": "aborted", "kind": kind,
+            "doc_id": context.get("doc_id"), "doc_code": context.get("doc_code"),
+            "ledger_row_id": context.get("ledger_row_id"),
+        },
     }
 
 
@@ -3347,13 +4084,20 @@ def base_checkout_dirty_status(project_id: str) -> dict:
 
 def _merge_commit_subject(branch: str, base_branch: str) -> str:
     """flowgate.default.0232 B0001 — the `--no-ff` merge commit must NOT reuse the
-    work subject. Workers never run `git commit`, so the work branch holds exactly
-    one absorb commit carrying finalize_subject(); wrapping that single commit in a
-    merge commit of the SAME memoized subject made origin show identical title+diff
-    twice ("same code committed twice"). A conventional Merge subject makes the pair
-    read as a normal work-commit + merge-commit instead of a duplicate. `--no-ff`
-    (the two-parent topology) is deliberately kept so unmerge's `^2` restore
-    (flowgate.default.0202) still resolves the merged work branch."""
+    work subject. Back when a work branch held exactly ONE absorb commit carrying
+    finalize_subject(), wrapping that single commit in a merge commit of the SAME
+    memoized subject made origin show identical title+diff twice ("same code committed
+    twice"). A conventional Merge subject makes the pair read as a normal work-commit +
+    merge-commit instead of a duplicate.
+
+    That "exactly one commit" premise is gone: since flowgate.default.0332 every TR
+    approval leaves its own commit point on the branch and the absorb commit only
+    picks up what is left over (D0005 K4). The rule above still stands — with several
+    commits on the branch the duplicate-title collision is even less likely — but the
+    old sentence stated a fact that no longer holds, and leaving it would have the next
+    reader reason from a premise the code abandoned. `--no-ff` (the two-parent
+    topology) is deliberately kept so unmerge's `^2` restore (flowgate.default.0202)
+    still resolves the merged work branch."""
     return f"Merge branch '{branch}' into '{base_branch}'"
 
 
@@ -3724,22 +4468,30 @@ def has_conflict_markers(content: str) -> bool:
 
 
 def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path]:
+    """``(session, cfg, project_id, root)`` — ``root`` is the repo the conflict lives in.
+
+    A finalize merge conflicts in the base checkout; a TR revert or reapply conflicts in the
+    group's own worktree (088). That one value is the entire difference for everything
+    downstream — the file list, the resolved writes, the abort — which is why the two kinds
+    can share a table, a screen, a set of endpoints and an AI run at all.
+    """
     session = db_git.get_session(merge_id)
     if session is None or session.get("group_id") != group_id or session.get("status") != "open":
         raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
-    cfg, _state, project_id, base_root, _wt = _finalize_context(group_id)
-    return session, cfg, project_id, base_root
+    cfg, _state, project_id, base_root, wt_path = _finalize_context(group_id)
+    is_tr = db_git.session_kind(session) in db_git.TR_SESSION_KINDS
+    return session, cfg, project_id, (wt_path if is_tr else base_root)
 
 
 def list_conflicts(group_id: str, merge_id: int) -> dict:
-    _session, cfg, _project_id, base_root = _session_context(group_id, merge_id)
+    session, cfg, _project_id, root = _session_context(group_id, merge_id)
     db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     state = db_git.get_state(group_id) or {}
     files = []
     for row in db_git.session_files(merge_id):
         path = row["path"]
         try:
-            content = (base_root / path).read_text(encoding="utf-8", errors="replace")
+            content = (root / path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             content = ""
         files.append({
@@ -3749,19 +4501,35 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
                 1 for l in content.splitlines() if _CONFLICT_OPEN_RE.match(l)
             ),
         })
+    kind = db_git.session_kind(session)
+    context = db_git.session_context(session)
     return {
         "ok": True,
         "merge_id": merge_id,
         "branch": state.get("branch"),
         "base_branch": (cfg.get("base_branch") or "main"),
         "files": files,
+        # 088 — the same payload for both kinds, plus what a reader needs to know WHICH
+        # question is being asked. "Combine two branches" and "undo this TR's commit" want
+        # very different resolutions out of the same conflict markers, and the editor, the
+        # toast and the AI mention all read this to say so.
+        "kind": kind,
+        "tr_conflict": (
+            None if kind not in db_git.TR_SESSION_KINDS else {
+                "doc_id": context.get("doc_id"),
+                "doc_code": context.get("doc_code"),
+                "target_sha": (context.get("target_sha") or "")[:7] or None,
+                "subject": context.get("subject"),
+                "review_state": context.get("review_state") or TR_CONFLICT_REVIEW_OPEN,
+            }
+        ),
     }
 
 
 def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete: bool) -> dict:
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    session, cfg, project_id, base_root = _session_context(group_id, merge_id)
+    session, cfg, project_id, root = _session_context(group_id, merge_id)
     db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     session_paths = {row["path"] for row in db_git.session_files(merge_id)}
 
@@ -3786,7 +4554,7 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
                 422, "conflict_markers_remain",
                 f"Conflict markers remain in '{path}' (line {line_no})",
             )
-        target = resolve_in_root(base_root, path)
+        target = resolve_in_root(root, path)
         if target is None:
             raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
         staged.append((path, target, content))
@@ -3794,7 +4562,7 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
     for path, target, content in staged:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        proc = _run_git(["add", "--", path], cwd=base_root)
+        proc = _run_git(["add", "--", path], cwd=root)
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
         db_git.mark_file_resolved(merge_id, path)
@@ -3809,6 +4577,32 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
             },
         }
 
+    if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+        # 088 — a TR conflict STOPS here. Every file is clean of markers and staged, and the
+        # revert is one `git commit` from done, and that commit is exactly what this branch
+        # refuses to make on its own.
+        #
+        # A merge conflict can end itself because a person still presses [병합] afterwards and
+        # because "the markers are gone" is close to the whole question there — both sides were
+        # written by people and the goal is to have both. A revert's question is not symmetric:
+        # one side says "delete what this TR did" and the other is the work that landed on top
+        # of it. A resolver — a person in a hurry or an AI that is confidently wrong — can
+        # produce a marker-free file that undid half the TR, and if this branch committed it the
+        # screen would say "cancelled" over a tree that is neither the old state nor the new one.
+        # So the session stays open at `resolved`, the panel shows the diff, and
+        # `commit_tr_conflict` is the second press that ends it.
+        _set_tr_review_state(merge_id, TR_CONFLICT_REVIEW_RESOLVED)
+        return {
+            "ok": True,
+            "result": {
+                "status": "resolved_pending_review", "merge_commit": None, "pushed": False,
+                "remaining_conflicts": [],
+            },
+        }
+
+    # From here down the session is a finalize merge, so the conflict root IS the base
+    # checkout; the name change keeps the merge/push reads saying what they mean.
+    base_root = root
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     # 0232 B0001: finishing a conflicted merge also creates a merge commit over the
     # absorb commit — give it the same conventional Merge subject (not the work
@@ -4143,9 +4937,15 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
     (0205 §2.1 stopped holding that lock). _set_status already broadcasts
-    git_pending_changed so the badge clears immediately (0184 lesson)."""
-    _session, _cfg, project_id, base_root = _session_context(group_id, merge_id)
-    _run_git(["merge", "--abort"], cwd=base_root)
+    git_pending_changed so the badge clears immediately (0184 lesson).
+
+    088: a TR conflict session arrives here from the same button on the same panel row,
+    and `merge --abort` has nothing to abort in a group worktree — it is delegated whole
+    to :func:`abort_tr_conflict` rather than given a second endpoint to learn."""
+    session, _cfg, project_id, root = _session_context(group_id, merge_id)
+    if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+        return abort_tr_conflict(group_id, merge_id)
+    _run_git(["merge", "--abort"], cwd=root)
     db_git.close_session(merge_id, "aborted")
     _set_status(group_id, "waiting")
     db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
@@ -4221,6 +5021,40 @@ def _auto_abort_session(
         db_git.release_lock(project_id, holder)
 
 
+def _sweep_tr_session(session: dict, project_id: str) -> None:
+    """The sweep's TR branch (088) — the same two outcomes, read off the group worktree.
+
+    Orphan: the revert is no longer in flight, so somebody finished or unwound it outside
+    FlowGate; close the row and put the group status back where the session found it, or
+    the group would claim a conflict forever. TTL: hand it to the ordinary abort, which is
+    the same restore a person's [give up] press performs.
+    """
+    merge_id = int(session["merge_id"])
+    group_id = session["group_id"]
+    context = db_git.session_context(session)
+    state = db_git.get_state(group_id) or {}
+    project_name = _project_name(project_id)
+    branch = state.get("branch") or context.get("branch")
+    wt_path = src_root(project_name, branch) if (project_name and branch) else None
+    if wt_path is None or not wt_path.is_dir():
+        return   # slot gone — never guess, same rule as the base-checkout branch
+    if not _revert_in_flight(wt_path):
+        db_git.close_session(merge_id, "aborted")
+        _set_status(group_id, context.get("prev_status") or "waiting")
+        _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
+        return
+    if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
+        return
+    try:
+        abort_tr_conflict(group_id, merge_id)
+    except Exception:
+        _log.warning(
+            "tr conflict session auto-abort failed for merge %s", merge_id, exc_info=True
+        )
+        return
+    _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
+
+
 def merge_session_sweep() -> None:
     """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
 
@@ -4237,6 +5071,12 @@ def merge_session_sweep() -> None:
         try:
             group_id = session["group_id"]
             project_id = _project_of_group(group_id)
+            if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+                # 088 — a TR conflict has no MERGE_HEAD anywhere and does not live in the
+                # base checkout, so every branch below would call it an orphan and close it
+                # while the conflicted revert sat on disk with nothing pointing at it.
+                _sweep_tr_session(session, project_id)
+                continue
             base_root = _base_root_of(project_id)
             if base_root is None or not (base_root / ".git").exists():
                 continue   # checkout gone — do not touch (log only)
@@ -4294,6 +5134,11 @@ def startup_recovery() -> None:
             group_id = session["group_id"]
             try:
                 project_id = _project_of_group(group_id)
+                if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+                    # 088 — re-affirm the status and leave the on-disk question to the
+                    # sweep at the end of this function, which knows where to look.
+                    _set_status(group_id, "conflict", merge_id=merge_id)
+                    continue
                 base_root = _base_root_of(project_id)
                 merge_head_exists = bool(
                     base_root and (base_root / ".git" / "MERGE_HEAD").exists()
@@ -4539,6 +5384,23 @@ def project_git_status(project_id: str) -> dict:
          "writable": group_worktree_writable(project_id, r["group_id"])}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
+    # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot
+    # row carries its TR commit ledger — counts always, the newest rows for the folded
+    # list. One query for every slot (the N+1 this function paid off in 0282), and a
+    # lazy import because tr_commit_service imports this module.
+    try:
+        from modules.flow_gate.services import tr_commit_service
+        summaries = tr_commit_service.group_commit_summaries(
+            [s["group_id"] for s in slots]
+        )
+        for slot in slots:
+            slot["tr_commits"] = summaries.get(
+                slot["group_id"], dict(tr_commit_service.EMPTY_SUMMARY)
+            )
+    except Exception:
+        # Advisory display state: a ledger that cannot be read leaves the panel looking
+        # exactly as it did before this feature, never breaks the status call.
+        _log.warning("tr commit slot summaries failed for %s", project_id, exc_info=True)
     pending_rows = [r for r in rows if r.get("status") in PENDING_STATUSES]
     # 0282 NR0003 발견 1: the AC lookup was the next N+1 in line — batched
     # before pending grows with adoption.

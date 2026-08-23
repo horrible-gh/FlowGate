@@ -907,6 +907,34 @@ async function doApprove() {
     } else if (git?.result?.status === 'archived') {
       showToast(t('main.git_finalize.archive.success'), 'success')
     }
+    // 0332 D0005 §6.5 / P0006 §1 — TR 승인이면 응답에 tr_commit 이 실려 온다. 승인은
+    // 언제나 성공이므로 이 문구는 "승인했습니다 —" 로 시작해 그 뒤에 커밋이 어떻게
+    // 되었는지를 붙인다. 커밋하지 못한 것은 경고이지 실패가 아니다(승인은 서 있다).
+    const trCommit = (res.data as any)?.tr_commit
+    if (trCommit) {
+      if (trCommit.committed) {
+        showToast(t('main.review_action_bar.tr_commit_toast', { commit: trCommit.commit || '' }), 'success')
+      } else if (trCommit.skipped_reason === 'no_changes' || trCommit.skipped_reason === 'artifacts_only') {
+        showToast(t('main.review_action_bar.tr_commit_none_toast'), 'success')
+      } else {
+        showToast(
+          t('main.review_action_bar.tr_commit_failed_toast', {
+            reason: t(`main.git_status.tr_commits.reason_${trCommit.skipped_reason || 'commit_failed'}`),
+          }),
+          'warning',
+        )
+      }
+      // 표식과 커밋 목록은 같은 갱신으로 함께 움직인다 — 헤더 Git 패널이 다시 읽는다.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+          detail: {
+            project: props.projectId || null,
+            group_id: props.groupId || null,
+            status: null,
+          },
+        }))
+      }
+    }
     if (git) {
       dispatchGitStatusEvent(git)
     } else if (isAcDoc.value && typeof window !== 'undefined') {
