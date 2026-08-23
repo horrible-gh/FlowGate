@@ -251,6 +251,189 @@ def is_auto_handled_step(
         return item_seq is not None and item_seq in set(auto_approve_item_seqs or [])
     return False
 
+# ── Per-item_seq [검수] selection (group 0414 P0007 / L0008 §1.1) ──────────────────
+# Two session-scoped maps chosen in ContinuousWorkDialog's [검수] tab: how many times each
+# step's output is reviewed, and who reviews it. Same key space as
+# continuation_provider_overrides / continuation_note_overrides — the MODE-AWARE worker
+# item_seq (_hop_worker_item_seq's slot), so an auto_approved N/T folds to its paired NR/TR.
+#
+# Values are NOT narrowed in the pydantic model (P0007): a narrowed dict[str, int] would
+# split the error envelope in two (FastAPI's default vs validation_failed) and force every
+# unmanned caller to parse both. One envelope, produced here.
+
+REVIEW_COUNT_VALUES = frozenset({-1, 0, 1, 2, 3})
+REVIEW_COUNT_DEFAULT = 0
+# TSR is assembled by the server (its content is stitched from the TS run), so like an
+# auto-handled N/T it has no worker output anybody could review.
+REVIEW_SERVER_ASSEMBLED_TYPES = {"TSR"}
+
+
+def _review_item_seq_key(key) -> int:
+    """A map key is an item_seq: a positive int, or its decimal string ("4" and 4 both).
+
+    Rejects a work-plan step key ("TR#1") and anything <= 0 — the same "both spellings
+    accepted" rule _resolve_continuation_hop_override already applies when READING these
+    maps, enforced once here at the door.
+    """
+    if isinstance(key, bool):
+        raise ValueError(
+            f"invalid_review_item_seq_key:{key!r} — key must be a positive item_seq")
+    if isinstance(key, int):
+        value = key
+    elif isinstance(key, str):
+        try:
+            value = int(key.strip(), 10)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"invalid_review_item_seq_key:{key!r} — key must be a positive item_seq")
+    else:
+        raise ValueError(
+            f"invalid_review_item_seq_key:{key!r} — key must be a positive item_seq")
+    if value <= 0:
+        raise ValueError(
+            f"invalid_review_item_seq_key:{key!r} — key must be a positive item_seq")
+    return value
+
+
+def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
+    """P0007 정규화 규칙 1·2·4 for the per-step review COUNT map.
+
+    Keys unify to strings; count 0 is dropped (it is the default "do not review", so
+    "no selection" must have exactly ONE representation — invariant I4); an empty result
+    folds to None. Raises ValueError on the first violation, in key order.
+
+    bool is rejected explicitly for the same reason
+    normalize_continuation_auto_approve_item_seqs rejects it: in Python ``True == 1``, so an
+    unguarded ``true`` would sail through as "review once" — a value nobody asked for.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"invalid_review_count_map:{raw!r} — must be an object keyed by item_seq")
+    normalized: dict[str, int] = {}
+    for key, value in raw.items():
+        item_seq = _review_item_seq_key(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value not in REVIEW_COUNT_VALUES:
+            raise ValueError(
+                f"invalid_review_count_value:{value!r} — must be one of -1, 0, 1, 2, 3")
+        if value == REVIEW_COUNT_DEFAULT:
+            continue
+        normalized[str(item_seq)] = value
+    return normalized or None
+
+
+def normalize_continuation_reviewer_overrides(
+    raw, review_count_overrides: Optional[dict] = None
+) -> Optional[dict]:
+    """P0007 정규화 규칙 1·3·4 for the per-step REVIEWER map.
+
+    Values are validated BEFORE rule 3 drops the orphans, so a malformed reviewer id is a
+    422 even on a step whose count was 0 — the request is wrong either way, and silently
+    accepting it would hide a client bug until the step it names is actually reached.
+
+    Rule 3: a reviewer on a step with no surviving review count has nothing to apply to, so
+    it is dropped; an empty result folds to None (invariant I4). Passing the ALREADY
+    normalized count map is what makes the two maps agree on which steps exist.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"invalid_reviewer_map:{raw!r} — must be an object keyed by item_seq")
+    counts = review_count_overrides or {}
+    normalized: dict[str, str] = {}
+    for key, value in raw.items():
+        item_seq = _review_item_seq_key(key)
+        if isinstance(value, bool) or not isinstance(value, str) or not value.strip():
+            raise ValueError(f"invalid_reviewer_provider_id:{value!r}")
+        if str(item_seq) not in counts:
+            continue
+        normalized[str(item_seq)] = value.strip()
+    return normalized or None
+
+
+def validate_continuation_review_item_seqs(
+    review_count_overrides: Optional[dict],
+    doc_id: str,
+    target_seq: Optional[int],
+    *,
+    instruction_mode: Optional[str] = None,
+    auto_approve_item_seqs: Optional[list] = None,
+    reject_already_done: bool = True,
+) -> None:
+    """422-worthy semantic validation against doc_id's decided sequence (P0007 실패 시나리오).
+
+    Rejects, in ascending item_seq order, stopping at the FIRST violation:
+      - a step that has no worker output to review — absent from the sequence, a server
+        auto-handled N/T under the request's own mode, or a server-assembled TSR
+        (``ineligible_review_item_seq``)
+      - a step beyond ``target_seq`` (``out_of_range_review_item_seq``)
+      - a step that already finished (``already_done_review_item_seq``)
+
+    Eligibility reads the REQUEST's ``instruction_mode`` + ``auto_approve_item_seqs``
+    through is_auto_handled_step, so the same map is valid under ai_direct and invalid
+    under auto_approved — that difference is the point, not a bug (P0007).
+
+    ``reject_already_done=False`` mirrors validate_continuation_auto_approve_item_seqs: an
+    ONGOING chain re-reading its own selection must not be invalidated by the steps it has
+    already finished itself. Only a fresh client request runs with the default (True).
+    """
+    if not review_count_overrides:
+        return
+    seq = db_wfseq.get_sequence_for_member_doc(doc_id)
+    items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
+    by_seq = {item.get("item_seq"): item for item in items}
+    for item_seq in sorted(int(key) for key in review_count_overrides):
+        item = by_seq.get(item_seq)
+        if item is None:
+            raise ValueError(
+                f"ineligible_review_item_seq:{item_seq} — this step has no worker output to review")
+        item_type = (item.get("type") or "").upper()
+        if item_type in REVIEW_SERVER_ASSEMBLED_TYPES or is_auto_handled_step(
+            head_type=item_type,
+            item_seq=item_seq,
+            instruction_mode=instruction_mode,
+            auto_approve_item_seqs=auto_approve_item_seqs,
+        ):
+            raise ValueError(
+                f"ineligible_review_item_seq:{item_seq} — this step has no worker output to review")
+        if target_seq is not None and item_seq > target_seq:
+            raise ValueError(
+                f"out_of_range_review_item_seq:{item_seq} — beyond continuation_target_seq "
+                f"{target_seq}")
+        if reject_already_done and item.get("status") == "done":
+            raise ValueError(
+                f"already_done_review_item_seq:{item_seq} — pick a remaining step")
+
+
+def unavailable_reviewer_provider_ids(
+    project_id: Optional[str], reviewer_overrides: Optional[dict]
+) -> list[str]:
+    """Reviewer ids the project's effective chain does not contain (P0007 reviewer_unavailable).
+
+    A NEW request fails visibly on these instead of silently switching reviewer: the user
+    picked a reviewer to get their output read by SOMEONE ELSE, and a quiet substitution can
+    land on self-review — a result nobody ordered. Resume is deliberately the opposite
+    (L0008 §2.2 resolve_reviewer drops the dead pick and keeps reviewing); a chain a person
+    parked must never become an un-resumable card.
+
+    An unreadable provider view yields [] — a transient settings failure must not turn a
+    valid start into a 422 (same fail-open stance as provider_view_of's callers).
+    """
+    if not reviewer_overrides:
+        return []
+    view = provider_view_of(project_id)
+    if not view.get("readable"):
+        return []
+    known = view.get("providers") or {}
+    missing: list[str] = []
+    for provider_id in reviewer_overrides.values():
+        if provider_id not in known and provider_id not in missing:
+            missing.append(provider_id)
+    return missing
+
+
 # ── Continuous-work "run to the end" sentinel (group 0086 R0001) ────────────────────
 # A continuous run started BEFORE the workflow is decided ("starting from the workflow decision") cannot name
 # a concrete target item_seq — the sequence does not exist yet. The workflow_decide token

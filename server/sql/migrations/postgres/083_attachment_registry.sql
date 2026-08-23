@@ -9,8 +9,8 @@
 -- and nothing yet references `attachments`, so `DROP TABLE attachments` is a complete
 -- rollback (DB0013 §3-3).
 --
--- Numbering: main has taken 080 twice (080_ai_invoke_prompt_audit /
--- 080_workflow_sequence_provider) and 081/082 as well since this branch was cut, so this file
+-- Numbering: main has taken 080 twice (080a_ai_invoke_prompt_audit /
+-- 080b_workflow_sequence_provider) and 081/082 as well since this branch was cut, so this file
 -- sits at 083 — the first free ordinal. Everything is `IF NOT EXISTS`, which makes
 -- re-application a no-op no matter where the file lands in the order (DB0013 §3-1 warning).
 --

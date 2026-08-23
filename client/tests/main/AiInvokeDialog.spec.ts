@@ -799,3 +799,120 @@ describe('AiInvokeDialog 실행 시간 선택 (0446 T0010 R5)', () => {
     control.unmount()
   })
 })
+
+// 0414 T0012 / P0007: ContinuousWorkDialog 의 [검수] 탭 값이 여기까지 내려와
+// continuation_review_count_overrides / continuation_reviewer_overrides 라는 정확한
+// snake_case 키로 시작 요청에 실려야 한다. 위 전달멘트 블록과 같은 이유로 이 한 홉은
+// 클라이언트 스펙과 서버 스펙 어느 쪽도 혼자서는 지키지 못한다.
+describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
+  function mountAutoStart(props: Record<string, unknown> = {}) {
+    return mountDialog({
+      actionScope: 'new',
+      docRef: ROOT,
+      sequenceDocRef: ROOT,
+      initialMode: 'continuous',
+      initialTargetSeq: 5,
+      autoStart: true,
+      ...props,
+    })
+  }
+
+  it('비어 있지 않은 두 맵을 snake_case 키로 시작 요청에 싣는다', async () => {
+    const wrapper = mountAutoStart({
+      reviewCountOverrides: { 3: -1, 4: 2, 5: 3 },
+      reviewerOverrides: { 3: 'aip_codex', 4: 'aip_sonnet', 5: 'aip_codex' },
+    })
+    await flushPromises()
+
+    expect(startBody()).toMatchObject({
+      mode: 'continuous',
+      continuation_review_count_overrides: { 3: -1, 4: 2, 5: 3 },
+      continuation_reviewer_overrides: { 3: 'aip_codex', 4: 'aip_sonnet', 5: 'aip_codex' },
+    })
+    // 값은 횟수 정수와 provider id 문자열 그대로다.
+    const body = startBody() as any
+    expect(Object.values(body.continuation_review_count_overrides).every((v) => typeof v === 'number')).toBe(true)
+    expect(Object.values(body.continuation_reviewer_overrides).every((v) => typeof v === 'string')).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('횟수만 있고 검수자가 비면 검수자 키만 생략한다', async () => {
+    // P0007: 검수자 맵이 비어도 422 가 아니다 — 서버가 프로젝트 유효 체인의 첫 프로바이더로
+    // 해석한다. 빈 맵을 `{}` 로 실어 보내지 않는다.
+    const wrapper = mountAutoStart({
+      reviewCountOverrides: { 4: 2 },
+      reviewerOverrides: {},
+    })
+    await flushPromises()
+
+    expect(startBody().continuation_review_count_overrides).toEqual({ 4: 2 })
+    expect(startBody()).not.toHaveProperty('continuation_reviewer_overrides')
+
+    wrapper.unmount()
+  })
+
+  it('두 맵이 비어 있으면 두 키를 모두 생략한다', async () => {
+    const wrapper = mountAutoStart({ reviewCountOverrides: {}, reviewerOverrides: {} })
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).not.toHaveProperty('continuation_review_count_overrides')
+    expect(body).not.toHaveProperty('continuation_reviewer_overrides')
+    // 검수 없는 요청은 이 기능이 생기기 전과 한 글자도 다르지 않아야 한다.
+    expect(body).toMatchObject({ mode: 'continuous', continuation_target_seq: 5 })
+
+    wrapper.unmount()
+  })
+
+  it('props 자체가 없어도 두 키를 싣지 않는다', async () => {
+    const wrapper = mountAutoStart()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).not.toHaveProperty('continuation_review_count_overrides')
+    expect(body).not.toHaveProperty('continuation_reviewer_overrides')
+
+    wrapper.unmount()
+  })
+
+  it('single 요청에는 값이 들어와도 두 키를 절대 싣지 않는다', async () => {
+    const wrapper = mountDialog({
+      reviewCountOverrides: { 4: 2 },
+      reviewerOverrides: { 4: 'aip_codex' },
+    })
+    await flushPromises()
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body.mode).toBe('single')
+    expect(body).not.toHaveProperty('continuation_review_count_overrides')
+    expect(body).not.toHaveProperty('continuation_reviewer_overrides')
+
+    wrapper.unmount()
+  })
+
+  it('pre-decision(workflow_decide) 요청에는 값이 들어와도 두 키를 싣지 않는다', async () => {
+    // 워크플로가 결정되기 전에는 단계별 item_seq 가 없다 — 검수 키를 매길 좌표가 없다.
+    getRequest.mockImplementation((url: string) =>
+      url === '/api/v1/workflow/sequence'
+        ? Promise.reject({ response: { status: 400, data: { error: 'sequence_not_decided', doc_id: ROOT } } })
+        : Promise.resolve({ data: { providers: [] } }),
+    )
+    const wrapper = mountDialog({
+      reviewCountOverrides: { 4: 2 },
+      reviewerOverrides: { 4: 'aip_codex' },
+    })
+    await pickContinuous()
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).toMatchObject({ action_scope: 'workflow_decide', continuation_target_seq: -1 })
+    expect(body).not.toHaveProperty('continuation_review_count_overrides')
+    expect(body).not.toHaveProperty('continuation_reviewer_overrides')
+
+    wrapper.unmount()
+  })
+})

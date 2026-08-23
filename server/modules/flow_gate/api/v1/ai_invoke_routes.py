@@ -69,6 +69,14 @@ class AiInvokeStartRequest(BaseModel):
     # like the field above; omitted or unrecognized falls back to the engine's own
     # default (ai_invoke_service.RESTART_MAX_ATTEMPTS_DEFAULT).
     continuation_restart_max_attempts: Optional[int] = None
+    # 0414 P0007 [검수] 탭: item_seq (string or int keys) -> review count, and -> reviewer
+    # provider_id. Session-scoped like the maps above. Deliberately NOT narrowed to
+    # dict[str, int] / dict[str, str]: a narrowed type would make pydantic emit FastAPI's own
+    # error envelope for a bad value while every other failure here emits validation_failed,
+    # and an unmanned caller would then have to parse two shapes. One envelope, produced by
+    # workflow_decision_service's normalizers below.
+    continuation_review_count_overrides: Optional[dict] = None
+    continuation_reviewer_overrides: Optional[dict] = None
     provider_id: Optional[str] = None
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
@@ -286,6 +294,33 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 validate_doc_id(body.doc_ref)
             except ValueError as exc:
                 errors.append({"loc": "doc_ref", "msg": str(exc)})
+    # 0414 P0007: shape and value checks are CHEAP, so they run here with the rest of the
+    # field validation — before the project lookup, before the token, before the scratch
+    # directory. A request that will be refused must not leave anything behind (0299 R0001).
+    #
+    # workflow_decide is excluded for the same reason continuation_auto_approve_item_seqs is:
+    # before the decision there are no item_seqs to key on, so the maps are dropped to None
+    # rather than refused. `single` is excluded because it has no next hop to review.
+    continuation_review_count_overrides = None
+    continuation_reviewer_overrides = None
+    if body.mode == "continuous" and body.action_scope != "workflow_decide":
+        try:
+            continuation_review_count_overrides = (
+                workflow_decision_service.normalize_continuation_review_count_overrides(
+                    body.continuation_review_count_overrides
+                )
+            )
+        except ValueError as exc:
+            errors.append({"loc": "continuation_review_count_overrides", "msg": str(exc)})
+        try:
+            continuation_reviewer_overrides = (
+                workflow_decision_service.normalize_continuation_reviewer_overrides(
+                    body.continuation_reviewer_overrides,
+                    continuation_review_count_overrides,
+                )
+            )
+        except ValueError as exc:
+            errors.append({"loc": "continuation_reviewer_overrides", "msg": str(exc)})
     if errors:
         return _validation_failed(errors)
 
@@ -330,6 +365,38 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             return _validation_failed([{
                 "loc": "continuation_auto_approve_item_seqs", "msg": str(exc),
             }])
+
+    # 0414 P0007: the sequence-aware half of the [검수] validation. Needs the DB, so it runs
+    # after the cheap checks (0242 NR0003 권고 3) and after the auto-approve selection is
+    # normalized — eligibility reads BOTH, because which steps have worker output depends on
+    # the instruction mode this very request is asking for.
+    if body.mode == "continuous" and body.action_scope != "workflow_decide":
+        if body.doc_ref and continuation_review_count_overrides:
+            try:
+                workflow_decision_service.validate_continuation_review_item_seqs(
+                    continuation_review_count_overrides,
+                    body.doc_ref,
+                    body.continuation_target_seq,
+                    instruction_mode=body.continuation_instruction_mode,
+                    auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+                )
+            except ValueError as exc:
+                return _validation_failed([{
+                    "loc": "continuation_review_count_overrides", "msg": str(exc),
+                }])
+        # A reviewer this project does not have fails VISIBLY on a fresh request instead of
+        # switching silently: the pick exists to get the output read by someone else, and a
+        # quiet substitution can land on self-review. Resume is the deliberate opposite
+        # (ai_invoke_service._resumable_reviewer_overrides) — there is nobody left to ask.
+        unavailable = workflow_decision_service.unavailable_reviewer_provider_ids(
+            body.project, continuation_reviewer_overrides,
+        )
+        if unavailable:
+            return JSONResponse(status_code=422, content={
+                "code": "reviewer_unavailable",
+                "message": "The selected reviewer is not enabled for this project.",
+                "reviewer_provider_ids": unavailable,
+            })
 
     # The mention is built through the exact token_routes path so the prompt the
     # invoked AI reads stays byte-identical to the copy-mention flow.
@@ -621,6 +688,11 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
             continuation_step_timeout_sec=body.continuation_step_timeout_sec,
             continuation_restart_max_attempts=body.continuation_restart_max_attempts,
+            # Already normalized above: keys unified to strings, count 0 and orphan reviewers
+            # dropped, empty maps folded to None. start_run stores them on the run only for
+            # mode="continuous", so the single / workflow_decide paths keep passing None.
+            continuation_review_count_overrides=continuation_review_count_overrides,
+            continuation_reviewer_overrides=continuation_reviewer_overrides,
         )
     except HTTPException as exc:
         return _err(exc)

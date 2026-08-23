@@ -132,6 +132,14 @@ def upsert(
     # flowgate.default.0443 T0002 (R0001): the "재시작 횟수" pick the chain was started
     # with. Same "every caller MUST pass it" contract as the column above.
     continuation_restart_max_attempts: Optional[int] = None,
+    # 0414 DB0009 §4-1: the [검수] selections (per-step review count and reviewer) the run
+    # was started with. Same invariant I3 as every column above — this upsert overwrites
+    # EVERY column, so a caller that omits them wipes the stored selections and the chain
+    # resumes with no review gate at all. DB0009 §5-3 calls that out as strictly worse than
+    # the 0365 provider loss: losing a provider means "resumed on a pricier provider",
+    # losing these means "approved with nobody reviewing it" (L0008 invariant R1).
+    continuation_review_count_overrides=None,
+    continuation_reviewer_overrides=None,
 ) -> None:
     """Record (or refresh) the paused row for a group — idempotent on repeat pause.
 
@@ -158,8 +166,9 @@ def upsert(
         " continuation_default_note, continuation_note_overrides,"
         " continuation_instruction_mode, continuation_auto_approve_item_seqs,"
         " continuation_step_timeout_sec, continuation_restart_max_attempts,"
+        " continuation_review_count_overrides, continuation_reviewer_overrides,"
         " created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -183,6 +192,11 @@ def upsert(
         "continuation_auto_approve_item_seqs = excluded.continuation_auto_approve_item_seqs, "
         "continuation_step_timeout_sec = excluded.continuation_step_timeout_sec, "
         "continuation_restart_max_attempts = excluded.continuation_restart_max_attempts, "
+        # DB0009 §4-1: excluded wins, deliberately NOT COALESCE(excluded.x, table.x). A new
+        # run started WITHOUT review selections must clear an older row's — otherwise the
+        # user turns review off and the gate keeps firing from a stale row.
+        "continuation_review_count_overrides = excluded.continuation_review_count_overrides, "
+        "continuation_reviewer_overrides = excluded.continuation_reviewer_overrides, "
         "updated_at = excluded.updated_at",
         [group_id, doc_ref, paused_by, paused_at,
          continuation_target_seq, docs_target, docs_reached,
@@ -197,6 +211,11 @@ def upsert(
          dump_json_list(continuation_auto_approve_item_seqs),
          continuation_step_timeout_sec,
          continuation_restart_max_attempts,
+         # Both maps ride the existing generic (de)serializers — dump_json_map does not care
+         # whether the values are ints (count map) or strings (reviewer map), so DB0009 §2-2
+         # needs no new helper. Empty maps normalize to NULL (invariant I4).
+         dump_json_map(continuation_review_count_overrides),
+         dump_json_map(continuation_reviewer_overrides),
          now, now],
     )
 

@@ -1178,6 +1178,8 @@
       :provider-overrides="aiInvokeProviderOverrides"
       :default-message="aiInvokeDefaultMessage"
       :message-overrides="aiInvokeMessageOverrides"
+      :review-count-overrides="aiInvokeReviewCountOverrides"
+      :reviewer-overrides="aiInvokeReviewerOverrides"
       :continuation-step-timeout-sec="aiInvokeStepTimeoutSec"
       :continuation-restart-max-attempts="aiInvokeRestartMaxAttempts"
       :auto-start="aiInvokeAutoStart"
@@ -1762,6 +1764,10 @@ const continuousProviderOverrides = ref<Record<number, string>>({})
 // through to the consent gate's start request (session-scoped, never persisted).
 const continuousDefaultMessage = ref('')
 const continuousMessageOverrides = ref<Record<number, string>>({})
+// 0414 T0012 / P0007: [검수] 탭 값(item_seq -> 횟수, item_seq -> 검수자 provider id), 위
+// 필드들과 똑같이 경고창을 거쳐 시작 요청까지만 사는 세션 값이다. 절대 영속되지 않는다.
+const continuousReviewCountOverrides = ref<Record<number, number>>({})
+const continuousReviewerOverrides = ref<Record<number, string>>({})
 // 0352 T0004 §2/§3.7: ai_direct-only per-item_seq N/T server-auto-approve selection, carried
 // the same way the fields above are — session-scoped, never persisted.
 const continuousAutoApproveItemSeqs = ref<number[]>([])
@@ -1820,6 +1826,11 @@ const aiInvokeProviderOverrides = ref<Record<number, string>>({})
 // 0346 T0005: [Message] tab values forwarded onto the start request.
 const aiInvokeDefaultMessage = ref('')
 const aiInvokeMessageOverrides = ref<Record<number, string>>({})
+// 0414 T0012: [검수] 탭 값을 시작 요청으로 넘기는 자리. openAiInvokeDialog 가 프리셋 없는
+// 진입점에서는 빈 맵으로 되돌리므로, 앞선 연속 실행의 검수 선택이 다음 single/continuous
+// 실행으로 새지 않는다.
+const aiInvokeReviewCountOverrides = ref<Record<number, number>>({})
+const aiInvokeReviewerOverrides = ref<Record<number, string>>({})
 // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) forwarded onto the
 // start request. null means "no explicit pick" (e.g. entry points other than
 // ContinuousWorkDialog), and the server falls back to its own default.
@@ -2238,6 +2249,9 @@ function openAiInvokeDialog(
     // 0346 T0005: [Message] tab values chosen in ContinuousWorkDialog.
     defaultMessage?: string
     messageOverrides?: Record<number, string>
+    // 0414 T0012: [검수] 탭 값 chosen in ContinuousWorkDialog.
+    reviewCountOverrides?: Record<number, number>
+    reviewerOverrides?: Record<number, string>
     // flowgate.default.0400 M0005: the per-hop wall-clock budget (seconds) chosen in
     // ContinuousWorkDialog's timeout section.
     stepTimeoutSec?: number | null
@@ -2273,6 +2287,8 @@ function openAiInvokeDialog(
   aiInvokeProviderOverrides.value = preset?.providerOverrides ?? {}
   aiInvokeDefaultMessage.value = preset?.defaultMessage ?? ''
   aiInvokeMessageOverrides.value = preset?.messageOverrides ?? {}
+  aiInvokeReviewCountOverrides.value = preset?.reviewCountOverrides ?? {}
+  aiInvokeReviewerOverrides.value = preset?.reviewerOverrides ?? {}
   aiInvokeStepTimeoutSec.value = preset?.stepTimeoutSec ?? null
   aiInvokeRestartMaxAttempts.value = preset?.restartMaxAttempts ?? null
   aiInvokeAutoStart.value = !!preset?.autoStart
@@ -4005,6 +4021,8 @@ function onContinuousDialogConfirm(payload: {
   autoApproveItemSeqs: number[]
   stepTimeoutSec: number
   restartMaxAttempts: number
+  reviewCountOverrides: Record<number, number>
+  reviewerOverrides: Record<number, string>
 }) {
   continuousTargetSeq.value = payload.targetSeq
   continuousTargetType.value = payload.targetType
@@ -4014,6 +4032,8 @@ function onContinuousDialogConfirm(payload: {
   continuousProviderOverrides.value = payload.providerOverrides
   continuousDefaultMessage.value = payload.defaultMessage
   continuousMessageOverrides.value = payload.messageOverrides
+  continuousReviewCountOverrides.value = payload.reviewCountOverrides
+  continuousReviewerOverrides.value = payload.reviewerOverrides
   continuousAutoApproveItemSeqs.value = payload.autoApproveItemSeqs
   continuousStepTimeoutSec.value = payload.stepTimeoutSec
   continuousRestartMaxAttempts.value = payload.restartMaxAttempts
@@ -4050,6 +4070,8 @@ async function onContinuousWarnConfirm() {
       providerOverrides: continuousProviderOverrides.value,
       defaultMessage: continuousDefaultMessage.value,
       messageOverrides: continuousMessageOverrides.value,
+      reviewCountOverrides: continuousReviewCountOverrides.value,
+      reviewerOverrides: continuousReviewerOverrides.value,
       stepTimeoutSec: continuousStepTimeoutSec.value,
       restartMaxAttempts: continuousRestartMaxAttempts.value,
       autoStart: true,

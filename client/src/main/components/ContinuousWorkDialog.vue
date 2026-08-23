@@ -75,6 +75,14 @@
                   :class="{ 'cwd-tab--active': activeTab === 'message' }"
                   @click="activeTab = 'message'"
                 >{{ t('main.continuous_work.tab_message') }}</button>
+                <!-- 0414 T0012: 승인 시안 45z739t7 의 네 번째 탭. 탭 순서는 시안 그대로
+                     기본 설정 -> 프로바이더 -> 전달멘트 -> 검수 로 고정한다. -->
+                <button
+                  type="button"
+                  class="cwd-tab"
+                  :class="{ 'cwd-tab--active': activeTab === 'review' }"
+                  @click="activeTab = 'review'"
+                >{{ t('main.continuous_work.tab_review') }}</button>
               </div>
 
               <!-- Basic settings: AI review mode (R0001) + N/T instruction handling. -->
@@ -231,7 +239,7 @@
                    chain and/or an individual note per step, both prepended to the hop's prompt
                    as a "사용자 메시지" section server-side. Unlike the provider tab, this one has
                    no "등록된 것이 없다" empty state — it depends on nothing external. -->
-              <div v-else class="cwd-tab-panel">
+              <div v-else-if="activeTab === 'message'" class="cwd-tab-panel">
                 <div class="cwd-provider-block">
                   <div class="cwd-provider-row">
                     <label class="cwd-provider-label">{{ t('main.continuous_work.message_default_label') }}</label>
@@ -265,6 +273,49 @@
                         :placeholder="t('main.continuous_work.message_step_placeholder')"
                         @input="onStepMessageChange(row.item, ($event.target as HTMLInputElement).value)"
                       />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 검수 (0414 R0001 / T0012, 승인 시안 45z739t7 = f8ri1s6k v7): 이번 실행에서
+                   AI 워커가 산출물을 내는 각 단계에 검수 횟수와 검수자를 지정한다. 시안이
+                   지운 공용 [기본 횟수]·[기본 검수자] 카드는 여기에 두지 않는다(TR0005 반려
+                   1) — 안내문 한 줄과 단계별 행이 이 탭의 전부다. 행 집합은 [프로바이더]·
+                   [전달멘트] 와 똑같은 `executionSteps` 이므로, 서버가 대신 처리하는 N/T 나
+                   목표 뒤 단계처럼 이번 실행에 워커 산출물이 없는 칸은 검수 대상이 아니다. -->
+              <div v-else class="cwd-tab-panel">
+                <div class="cwd-provider-block">
+                  <p class="cwd-review-intro">
+                    {{ t('main.continuous_work.review_intro') }}
+                    <span class="cwd-review-legend">{{ t('main.continuous_work.review_legend') }}</span>
+                  </p>
+                  <div v-if="excludedNote" class="cwd-scope-note">
+                    <AppIcon name="info" /> {{ excludedNote }}
+                  </div>
+                  <div class="cwd-override-table">
+                    <div v-for="row in reviewRows" :key="row.item.item_seq" class="cwd-override-row cwd-review-row">
+                      <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
+                      <span class="doc-tag cwd-override-badge" :class="`c-${row.item.type}`">{{ row.item.type }}</span>
+                      <span class="cwd-override-label">{{ row.item.label }}</span>
+                      <select
+                        class="cwd-review-select cwd-review-count-select"
+                        :aria-label="t('main.continuous_work.review_count_aria', { n: row.stepNo })"
+                        :value="String(reviewCountValue(row.item))"
+                        @change="onReviewCountChange(row.item, ($event.target as HTMLSelectElement).value)"
+                      >
+                        <option v-for="opt in REVIEW_COUNT_OPTIONS" :key="opt" :value="String(opt)">{{ opt }}</option>
+                      </select>
+                      <select
+                        class="cwd-review-select cwd-review-reviewer-select"
+                        :aria-label="t('main.continuous_work.review_reviewer_aria', { n: row.stepNo })"
+                        :value="reviewerValue(row.item)"
+                        @change="onReviewerChange(row.item, ($event.target as HTMLSelectElement).value)"
+                      >
+                        <option v-for="reviewer in (providers ?? [])" :key="reviewer.id" :value="reviewer.id">
+                          {{ reviewer.name }}
+                        </option>
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -365,6 +416,12 @@ const emit = defineEmits<{
     // flowgate.default.0443 T0002 (R0001): the restart-count pick above, forwarded the
     // same session-scoped way as the timeout pick.
     restartMaxAttempts: number
+    // 0414 T0012 / P0007: item_seq -> 검수 횟수, item_seq -> 검수자 provider id. 위 override
+    // 맵들과 같은 세션 범위이며 이 실행의 시작 요청에만 실린다. 횟수 0(안 함)인 단계와 이번
+    // 실행 범위 밖 단계는 두 맵 어디에도 들어가지 않고, 남은 단계는 두 맵에서 같은 item_seq
+    // 로 짝을 이룬다(고아 검수자 항목 없음).
+    reviewCountOverrides: Record<number, number>
+    reviewerOverrides: Record<number, string>
   }]
 }>()
 
@@ -412,7 +469,7 @@ const picker = ref<WorkflowStepPickerState>({
   steps: [],
 })
 
-const activeTab = ref<'basic' | 'provider' | 'message'>('basic')
+const activeTab = ref<'basic' | 'provider' | 'message' | 'review'>('basic')
 // 0317 T0010 rev4: item_seq -> provider_id. Replaces the D0004 per-doc-type map (chainDocTypes/
 // assignments) — the override unit moved from document TYPE to individual STEP INSTANCE, so the
 // same type appearing twice in one chain (e.g. two T steps) can resolve to different providers.
@@ -426,6 +483,21 @@ const messageOverrides = ref<Record<number, string>>({})
 // N/T step is server-generated + auto-approved exactly like auto_approved handles it, without
 // switching the whole chain out of ai_direct.
 const autoApproveItemSeqs = ref<number[]>([])
+// 0414 T0012 / P0007: [검수] 탭. 허용 집합이자 드롭다운의 DOM 표시 순서다 — -1 이 맨 앞이고
+// 0 이 그 다음이다(T0004, TR0005 rev5 가 다섯 번 반려하며 못박은 순서). 숫자를 문자열
+// 의미값으로 바꾸거나 0 을 앞으로 당기지 않는다. 의미: -1 통과할 때까지 / 0 안 함(기본값) /
+// 1~3 지정 횟수. 0414 M0020: 이 숫자는 [검수+수정] 짝의 횟수다 — 지적이 나온 라운드마다
+// 그 단계의 작업 프로바이더가 수정하고, 마지막 수정까지 끝나면 다음 단계로 넘어간다.
+// pass 가 나오면 남은 횟수와 무관하게 즉시 종료.
+const REVIEW_COUNT_OPTIONS = [-1, 0, 1, 2, 3]
+const REVIEW_COUNT_DEFAULT = 0
+// item_seq -> 검수 횟수. `overrides` 와 같은 규칙으로 기본값(0 = 안 함)인 행은 키를 만들지
+// 않는다 — 화면의 셀렉트는 키가 없으면 0 을 그린다.
+const reviewCountOverrides = ref<Record<number, number>>({})
+// item_seq -> 검수자 provider id(이름이 아니다). 실행 프로바이더의 선택·핀·시퀀스 저장
+// 배정은 검수자 해석에 관여하지 않는다(P0007 "검수자 해석 순서") — 손대지 않은 행은 아래
+// `defaultReviewerId`, 즉 프로젝트 유효 프로바이더 체인의 첫 항목이다.
+const reviewerOverrides = ref<Record<number, string>>({})
 const presetActive = ref(false)
 const presetTargetSeq = ref<number | null>(null)
 const editedSeqs = ref(new Set<number>())
@@ -523,6 +595,35 @@ const inRangeSteps = computed<WorkflowStepItem[]>(() => {
 // 0408 TR0021 2nd re-rejection: identical to `providerRows` now (both tabs draw the same run rows) —
 // kept as a separate name for readability at each call site.
 const messageRows = providerRows
+// 0414 T0012: [검수] 표도 같은 행 집합이다. 검수는 이번 실행이 워커에게 넘긴 단계의 산출물을
+// 대상으로만 돌 수 있으므로, 서버가 대신 처리하는 N/T 나 목표 뒤 단계에는 걸 자리가 없다.
+const reviewRows = providerRows
+
+/** P0007 "검수자 해석 순서" 2번 — 아무도 고르지 않은 행의 검수자. */
+const defaultReviewerId = computed(() => props.providers?.[0]?.id ?? '')
+
+function reviewCountValue(item: WorkflowStepItem): number {
+  return reviewCountOverrides.value[item.item_seq] ?? REVIEW_COUNT_DEFAULT
+}
+
+function reviewerValue(item: WorkflowStepItem): string {
+  return reviewerOverrides.value[item.item_seq] ?? defaultReviewerId.value
+}
+
+function onReviewCountChange(item: WorkflowStepItem, value: string) {
+  const count = Number(value)
+  const next = { ...reviewCountOverrides.value }
+  if (!REVIEW_COUNT_OPTIONS.includes(count) || count === REVIEW_COUNT_DEFAULT) delete next[item.item_seq]
+  else next[item.item_seq] = count
+  reviewCountOverrides.value = next
+}
+
+function onReviewerChange(item: WorkflowStepItem, value: string) {
+  const next = { ...reviewerOverrides.value }
+  if (!value || value === defaultReviewerId.value) delete next[item.item_seq]
+  else next[item.item_seq] = value
+  reviewerOverrides.value = next
+}
 
 /** Why the provider list is shorter than the step list — stated, not left to be guessed. */
 const excludedNote = computed(() => {
@@ -776,6 +877,17 @@ watch(executionSteps, (steps) => {
   if (kept.length !== Object.keys(overrides.value).length) {
     overrides.value = Object.fromEntries(kept)
   }
+  // 0414 T0012: 검수는 `executionSteps` 에 매인다 — 목표를 줄이거나, N/T 실행 방식을 바꾸거나,
+  // 개별 자동승인을 켜서 행이 사라지면 그 단계의 횟수와 검수자를 함께 버린다. 행이 다시
+  // 나타나면 키가 없으므로 기본값 0(안 함)에서 다시 시작한다.
+  const keptReviewCounts = Object.entries(reviewCountOverrides.value).filter(([seq]) => inRun.has(Number(seq)))
+  if (keptReviewCounts.length !== Object.keys(reviewCountOverrides.value).length) {
+    reviewCountOverrides.value = Object.fromEntries(keptReviewCounts)
+  }
+  const keptReviewers = Object.entries(reviewerOverrides.value).filter(([seq]) => inRun.has(Number(seq)))
+  if (keptReviewers.length !== Object.keys(reviewerOverrides.value).length) {
+    reviewerOverrides.value = Object.fromEntries(keptReviewers)
+  }
   // Mentions stay attached to every row inside the chosen range regardless of mode (gated on
   // `inRangeSteps`, not the now execution-only `providerRows`). Changing only the execution
   // mode must not erase N/T values; shrinking the target still removes rows that leave the range.
@@ -828,6 +940,19 @@ function onProceed() {
   }
   const validAutoApprove = inRangeAutoApproveCandidates.value
   const autoApproveOut = autoApproveItemSeqs.value.filter(seq => validAutoApprove.has(seq))
+  // 0414 T0012 / P0007: 검수 횟수 0 은 "안 함"이자 기본값이라 요청에 실을 것이 없다. 실리는
+  // 행에는 반드시 검수자를 짝지어 담아 두 맵의 키 공간을 일치시킨다 — 횟수 없는 검수자
+  // 항목은 서버 정규화가 떨어뜨리는 고아이고, 화면이 만들 이유가 없다. `executionSteps` 를
+  // 훑으므로 fromDecision(아직 item_seq 가 없는 상태)에서는 둘 다 빈 맵이다.
+  const reviewCountOverridesOut: Record<number, number> = {}
+  const reviewerOverridesOut: Record<number, string> = {}
+  for (const item of executionSteps.value) {
+    const count = reviewCountValue(item)
+    if (count === REVIEW_COUNT_DEFAULT || !REVIEW_COUNT_OPTIONS.includes(count)) continue
+    reviewCountOverridesOut[item.item_seq] = count
+    const reviewer = reviewerValue(item)
+    if (reviewer) reviewerOverridesOut[item.item_seq] = reviewer
+  }
   emit('confirm', {
     targetSeq: sel.targetSeq,
     targetType: sel.targetType,
@@ -842,6 +967,8 @@ function onProceed() {
     autoApproveItemSeqs: autoApproveOut,
     stepTimeoutSec: stepTimeoutMinutes.value * 60,
     restartMaxAttempts: restartMaxAttempts.value,
+    reviewCountOverrides: reviewCountOverridesOut,
+    reviewerOverrides: reviewerOverridesOut,
   })
 }
 
@@ -861,6 +988,11 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   touchedProviderSeqs.value = new Set()
   planFill.value = null
   planFillToken += 1
+  // 0414 T0012: 작업계획 프리셋에는 검수 필드가 없다. 프리셋이 있든 없든 검수 상태는 늘
+  // 이번 열기의 기본값(횟수 0 · 기본 검수자)에서 시작하며, 이전 실행의 선택을 물려받거나
+  // provider/message 프리셋에 얹혀 영속화되지 않는다.
+  reviewCountOverrides.value = {}
+  reviewerOverrides.value = {}
   if (value) {
     presetActive.value = true
     instructionMode.value = value.instructionMode
@@ -1320,6 +1452,33 @@ watch(presetActive, (active) => {
   padding: 2px 8px;
   font-size: .78rem;
 }
+/* 0414 T0012 / 시안 45z739t7 의 .override-row-review: 한 행에 실행단계 번호, 문서 타입 배지,
+   단계 라벨, 검수 횟수, 검수자를 한 줄로 놓는다. 횟수는 값이 짧아 좁고, 검수자는 프로바이더
+   이름이 들어가므로 [프로바이더] 탭의 셀렉트와 같은 폭을 쓴다. */
+.cwd-review-intro {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: .76rem;
+  color: var(--text-m);
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+.cwd-review-legend { font-size: .72rem; color: var(--text-s); }
+.cwd-review-select {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .78rem;
+  cursor: pointer;
+}
+.cwd-review-count-select { flex: 0 0 62px; }
+.cwd-review-reviewer-select { flex: 0 0 128px; }
 .cwd-empty-card {
   display: flex;
   align-items: flex-start;

@@ -416,13 +416,17 @@ def _build_mention_for_token(
     project_id: str,
     scratch_dir: str,
     raw_token: str,
-    request: Request,
+    request: Optional[Request] = None,
     ref_doc_ids: Optional[list] = None,
     action_scope: str = "new",
     locale: str = "ko",
     continuous: bool = False,
     merge_id: Optional[int] = None,
     continuous_review_mode: bool = False,
+    # 0414 L0008 §2.6: the ENGINE has no Request object — it builds the rework hop's mention
+    # from a background thread. The only thing `request` was ever used for here is the API
+    # base, so callers that already know it hand it over directly and pass no Request.
+    api_base_url: Optional[str] = None,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -430,6 +434,7 @@ def _build_mention_for_token(
     Generates with placeholders even when no sequence/head exists.
     Includes the 5 most recent group documents in section 4 (section omitted if 0).
     """
+    resolved_api_base = api_base_url or _build_api_base(request)
     if action_scope == "resolve_conflict":
         if not group_id or merge_id is None:
             return None
@@ -439,7 +444,7 @@ def _build_mention_for_token(
             merge_id=merge_id,
             scratch_dir=scratch_dir,
             raw_token=raw_token,
-            api_base_url=_build_api_base(request),
+            api_base_url=resolved_api_base,
         )
 
     if not doc_ref or not group_id:
@@ -502,7 +507,7 @@ def _build_mention_for_token(
         "group_id": group_id,
         "scratch_dir": scratch_dir,
     }
-    api_base_url = _build_api_base(request)
+    api_base_url = resolved_api_base
     current_review = _load_current_revision_review(parent_doc) if action_scope == "edit" else None
     edit_reason = (
         "rejected"

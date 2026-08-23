@@ -52,6 +52,14 @@ still be pairwise distinct (that is what makes each entry unambiguous); only the
 one-`new`-per-`old` constraint is dropped. See `apply_migration_renames`'s "both
 rows present" branch: it already deletes the disqualified duplicate instead of
 raising, which is exactly what makes convergence safe.
+
+flowgate.default.0414 T0017: 080 collided the same way (0406's
+ai_invoke_prompt_audit.sql against 0408's workflow_sequence_provider.sql), split
+into 080a/080b in sort order. The shared dev preview's database (M0016's boot
+failure) turned out to hold a THIRD name for the provider file —
+081_workflow_sequence_provider.sql, from before 081/082 were claimed elsewhere and
+it was renumbered down to 080 — so that ordinal has three convergent `old` names
+for the one `new` name, the same convergence shape as 078b/079b above.
 """
 
 from __future__ import annotations
@@ -88,11 +96,19 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
     ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
     ("079a_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
-    # flowgate.default.0413 T0007: 080 ordinal collided between
-    # 080_ai_invoke_prompt_audit.sql (0406) and 080_workflow_sequence_provider.sql
-    # (0408). 0408 is the later arrival, so it moves to the next free ordinal
-    # instead of taking a letter suffix.
-    ("080_workflow_sequence_provider.sql", "081_workflow_sequence_provider.sql"),
+    # 080: a second same-number collision (flowgate.default.0414 T0017), same shape as
+    # 078/079 above. "080_ai_invoke_prompt_audit.sql" (0406) and
+    # "080_workflow_sequence_provider.sql" (0408) both landed on 080; the letter split
+    # keeps ai-invoke-prompt-audit first (080a) and workflow-sequence-provider second
+    # (080b), matching the order they already sorted in. The dev preview database that
+    # surfaced the boot failure (M0016) had additionally applied the provider migration
+    # under yet another historical ordinal, "081_workflow_sequence_provider.sql" — a
+    # third distinct name for the same file, from before 081/082 were claimed by
+    # document_origin_snapshot/backfill and it was renumbered down to 080. All three old
+    # names converge on the one final name.
+    ("080_ai_invoke_prompt_audit.sql", "080a_ai_invoke_prompt_audit.sql"),
+    ("080_workflow_sequence_provider.sql", "080b_workflow_sequence_provider.sql"),
+    ("081_workflow_sequence_provider.sql", "080b_workflow_sequence_provider.sql"),
     # flowgate.default.0332: this group authored its ledger migration as 085 against a base whose
     # newest file on disk was 083. origin/main has since merged 084_ai_invoke_provider_pin.sql and
     # 085_conversation_backward_page_audit.sql, so 085 is taken and both of this group's files move

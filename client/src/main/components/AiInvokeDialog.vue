@@ -180,6 +180,11 @@ const props = defineProps<{
   // hop, and item_seq -> note for steps the user singled out. Session-scoped, same as above.
   defaultMessage?: string
   messageOverrides?: Record<number, string>
+  // 0414 T0012 / P0007: [검수] 탭 값 chosen in ContinuousWorkDialog — item_seq -> 검수 횟수
+  // (-1 | 1 | 2 | 3; 0 은 "안 함"이라 애초에 담기지 않는다) and item_seq -> 검수자
+  // provider id. Session-scoped, same lifetime as the fields above.
+  reviewCountOverrides?: Record<number, number>
+  reviewerOverrides?: Record<number, string>
   // flowgate.default.0400 M0005: the wall-clock budget (seconds) chosen in
   // ContinuousWorkDialog's time section. null/omitted ⇒ the server falls back to its own
   // default (this dialog's own continuous picker, reached without ContinuousWorkDialog, never
@@ -489,6 +494,16 @@ async function start() {
       // item_seq exists yet, and the server rejects a selection on that scope (§2).
       if (!preDecision && props.continuationAutoApproveItemSeqs?.length) {
         body.continuation_auto_approve_item_seqs = props.continuationAutoApproveItemSeqs
+      }
+      // 0414 T0012 / P0007: 두 필드 모두 선택이며, 보내지 않은 요청의 동작은 지금과 같다 —
+      // 빈 맵을 `{}` 로 실어 서버가 무시하게 만드는 대신 키 자체를 생략한다. 단계별 검수는
+      // item_seq 로 매기므로 pre-decision(workflow_decide)에는 실을 수 없다: 그 시점에는
+      // 아직 시퀀스가 없다. 다이얼로그 경로에서 두 맵은 비어 있지만 방어적으로도 막는다.
+      if (!preDecision && props.reviewCountOverrides && Object.keys(props.reviewCountOverrides).length) {
+        body.continuation_review_count_overrides = props.reviewCountOverrides
+      }
+      if (!preDecision && props.reviewerOverrides && Object.keys(props.reviewerOverrides).length) {
+        body.continuation_reviewer_overrides = props.reviewerOverrides
       }
     }
     // 0446 NR0003 R5 / T0010 §3-6: the single rejection rework's own budget, sent OUTSIDE the
