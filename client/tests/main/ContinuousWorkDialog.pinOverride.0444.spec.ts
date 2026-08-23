@@ -114,61 +114,56 @@ beforeEach(() => {
 })
 afterEach(() => { document.body.innerHTML = '' })
 
-describe('ContinuousWorkDialog provider disclosure (0448 T0005 §4)', () => {
-  // Rewritten from 0444's "says nothing extra when the pin agrees with the stored value",
-  // which injected `providerPinned` as a stand-in for an ordinary selection. §6: an ordinary
-  // selection must not be read as a pin at all — it is the default for rows that stored
-  // nothing, so a row that DID store a provider keeps naming that one.
-  it('treats an ordinary selection as a default, so a stored row still names its stored provider', async () => {
+describe('ContinuousWorkDialog provider disclosure (0451 T0007 rev1)', () => {
+  // rev0 answered CH0006's "N/T가 프로바이더 아무것도 표시 안된다" by naming a provider on every
+  // step row. The rejection reversed that outright — 좌측단에 프로바이더는 출력하지 않는다,
+  // 어차피 우측단에 프로바이더 지정 탭이 있으니까 — so the step list carries state only again and
+  // the [Providers] tab is the single place a step's provider is shown.
+  it('names no provider on the step list, stored row or ordinary selection alike', async () => {
     mountDialog({ selectedProvider: 'other', providerPinned: false })
     await flushPromises()
 
-    const tags = providerTags()
-    // Row 1 stores 'stored'; row 2 stores nothing and falls back to the ordinary selection.
-    // Both are drawn, so neither assertion can pass on an empty query.
-    expect(tags[0].textContent).toBe(
-      i18n.global.t('main.continuous_work.provider_tag_stored', { name: 'Stored Provider' }),
-    )
-    expect(tags[1].textContent).toBe(
-      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Other Provider' }),
-    )
-    expect(tags[0].textContent).not.toContain('Other Provider')
+    // Positive control for the zero below: both rows really did render.
+    expect(document.querySelectorAll('.wsp-step')).toHaveLength(2)
+    expect(providerTags()).toHaveLength(0)
+    const list = document.querySelector('.wsp-steps')!.textContent ?? ''
+    expect(list).not.toContain('Stored Provider')  // row 1's stored value
+    expect(list).not.toContain('Other Provider')   // row 2's ordinary selection
   })
 
-  it('keeps the plain stored tag when nothing is pinned', async () => {
-    mountDialog({ providerPinned: false })
-    await flushPromises()
-
-    const tag = providerTags()[0]
-    expect(tag.textContent).toBe(
-      i18n.global.t('main.continuous_work.provider_tag_stored', { name: 'Stored Provider' }),
-    )
-    expect(tag.classList.contains('wsp-prov-tag--pinned')).toBe(false)
-  })
-
-  // Replaces the three deleted 0444 tests (`names the pinned provider AND the stored value it
-  // displaced`, `marks that tag with its own CSS class`, `badges the override table row whose
-  // stored provider the pin displaced`) with the one boundary §4-2 keeps: even under an
-  // EXPLICIT force-all the row states the effective provider once, and no second element
-  // repeats it.
-  it('names one effective provider per row under an explicit force-all, with no displaced-value copy', async () => {
+  // The 0444 boundary §4-2 kept ("even under an EXPLICIT force-all, no displaced-value copy")
+  // now holds on the right-hand table alone, since the left tag it used to check is gone.
+  it('names no provider on the step list under an explicit force-all either', async () => {
     mountDialog({ providerPinned: true })
     await flushPromises()
 
-    const tag = providerTags()[0]
-    expect(tag).toBeDefined()
-    expect(tag.textContent).toBe(
-      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Default Provider' }),
-    )
-    expect(tag.textContent).not.toContain('Stored Provider')
-    expect(tag.classList.contains('wsp-prov-tag--pinned')).toBe(false)
+    expect(providerTags()).toHaveLength(0)
+    expect(document.querySelector('.wsp-steps')!.textContent).not.toContain('Default Provider')
 
     await openProviders()
-    // The right-hand table said the same thing a second time. Row 1's stored provider is
-    // registered and row 2 stores nothing, so neither carries a badge now.
+    // Row 1's stored provider is registered and row 2 stores nothing, so neither carries a badge.
     expect(document.querySelectorAll('.cwd-filled-badge')).toHaveLength(0)
     // Positive control for that zero: the selects ARE rendered, one per execution row.
     expect(document.querySelectorAll('.cwd-override-select .aip-select-input')).toHaveLength(2)
+  })
+
+  // rejection 1/3: the state badge is back to a bare span straight after the flex:1 label —
+  // that is what right-aligns it — with no `.wsp-step-end` wrapper or fixed-width slots, and
+  // `.wsp-step-label` now carries `min-width: 0` so a long label is clipped instead of widening
+  // the row past the list.
+  it('renders the state badge as a bare wsp-step-tag directly after the label', async () => {
+    mountDialog()
+    await flushPromises()
+
+    expect(document.querySelector('.wsp-step-end')).toBeNull()
+    expect(document.querySelector('.wsp-step-state-slot')).toBeNull()
+    expect(document.querySelector('.wsp-step-prov-slot')).toBeNull()
+
+    const rows = document.querySelectorAll('.wsp-step')
+    const head = rows[0].querySelector('.wsp-step-tag')!
+    expect(head.classList.contains('wsp-step-tag--head')).toBe(true)
+    expect(head.parentElement!.classList.contains('wsp-step')).toBe(true)
+    expect(head.previousElementSibling!.classList.contains('wsp-step-label')).toBe(true)
   })
 
   // B0001 transcribed both sentences off the screen. They are gone from the catalogue, so
@@ -182,11 +177,11 @@ describe('ContinuousWorkDialog provider disclosure (0448 T0005 §4)', () => {
     const body = document.body.textContent ?? ''
     expect(body).not.toContain('저장값 Stored Provider 대신')
     expect(body).not.toContain('고정된 공급자가 저장값을 덮음')
-    // Positive control: the Korean dialog really did render the row tag, so the two absences
-    // are not an empty document passing.
-    expect(body).toContain(
-      i18n.global.t('main.continuous_work.provider_tag_default', { name: 'Default Provider' }),
-    )
+    // Positive control: the Korean dialog really did render, so the two absences are not an
+    // empty document passing. The name now comes from the [Providers] tab (opened above) rather
+    // than a step-list tag; a provider's display name is not translated, so ko reads like en.
+    expect(body).toContain('Default Provider')
+    expect(document.querySelector('.wsp-steps')!.textContent).not.toContain('Default Provider')
   })
 })
 

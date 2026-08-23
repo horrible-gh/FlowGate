@@ -92,23 +92,17 @@
             </label>
             <span class="wsp-step-badge doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
             <span class="wsp-step-label">{{ item.label }}</span>
-            <span v-if="idx === headIdx" class="wsp-step-tag wsp-step-tag--head">
-              {{ t('main.continuous_work.head_tag') }}
-            </span>
-            <span v-else-if="idx < headIdx" class="wsp-step-tag wsp-step-tag--done">
-              {{ t('main.continuous_work.done_tag') }}
-            </span>
-            <!-- 0337 R0001-1: a step the server generates and approves on its own is executed
-                 but is not a choice — it carries no AI worker, so it can be neither a stop
-                 point nor a provider target. Say so on the row instead of offering a control. -->
-            <span v-if="autoHandledIdx(idx)" class="wsp-step-tag wsp-step-tag--auto">
-              {{ t('main.continuous_work.auto_step_tag') }}
-            </span>
+            <!-- 0451 T0007 rev1: back to the pre-T0007 shape the rejection asked for — the state
+                 badge (현재/완료/자동 승인) sits directly after the flex:1 label, which is what
+                 pushes it to the row's right edge; no fixed-width slot wrapper. The provider
+                 badge is gone entirely (좌측단에 프로바이더는 출력하지 않는다) — a step's provider
+                 is named in the dialog's [프로바이더] tab, and the fixed 224px row end this
+                 replaces is what made long N/T rows overflow to the right. -->
             <span
-              v-if="idx >= headIdx && stepTags[idx]"
-              class="wsp-prov-tag"
-              :class="{ 'wsp-prov-tag--override': stepTags[idx]!.override }"
-            >{{ stepTags[idx]!.text }}</span>
+              v-if="stateTag(idx)"
+              class="wsp-step-tag"
+              :class="`wsp-step-tag--${stateTag(idx)!.kind}`"
+            >{{ stateTag(idx)!.text }}</span>
           </button>
         </div>
 
@@ -150,15 +144,9 @@ const props = defineProps<{
   docRef: string
   /** Load/refresh the sequence when this flips true (dialog opened, continuous mode picked). */
   active: boolean
-  /**
-   * 0317 T0010 rev4: per-step "which provider will actually run this" tag, shown next to
-   * runnable (not-yet-done) steps. Owned by the caller (ContinuousWorkDialog) so this shared
-   * picker stays provider-agnostic; callers that omit it (AiInvokeDialog) render no tag.
-   */
-  /** 0448 T0005 §4-1: 0444's third `pinned` state is gone. A row names the one provider that
-   *  will run it — `override` (the person picked it for this step) is the only distinction
-   *  left, and it keeps its own class. */
-  stepTag?: (item: WorkflowStepItem) => { text: string; override: boolean } | null
+  // 0451 T0007 rev1: the per-step provider tag prop (`stepTag`, 0317 T0010 rev4) is removed.
+  // This picker is provider-agnostic again — its only provider-aware caller
+  // (ContinuousWorkDialog) names a step's provider in its own [프로바이더] tab instead.
   /**
    * 0337 R0001-1: doc types the SERVER generates and approves by itself under the caller's
    * instruction mode (auto_approved → N/T). Such a step still runs, but no AI worker performs
@@ -223,10 +211,6 @@ const headIdx = computed(() => findSequenceHeadIndex(items.value))
 const headInProgress = computed(
   () => headIdx.value < items.value.length && items.value[headIdx.value].status === 'in_progress',
 )
-// Memoized per-step tags (0317 T0010 rev4): computed once per items/props.stepTag change
-// rather than re-invoked on every template re-render.
-const stepTags = computed(() => items.value.map(it => props.stepTag?.(it) ?? null))
-
 // 0337 R0001-1 ---------------------------------------------------------------------------
 // Which of the remaining steps the user may actually stop at. A server-auto-handled type
 // (auto_approved N/T) is executed without an AI worker, so picking it as the target would put
@@ -252,6 +236,18 @@ const selectableIdxSet = computed(() => {
 })
 function autoHandledIdx(idx: number): boolean {
   return idx >= headIdx.value && !selectableIdxSet.value.has(idx)
+}
+
+// 0451 T0007: head/done/auto used to draw as up to two separate
+// `<span>`s on the same row (a head row that is also auto-handled got both), so the number of
+// badges — and the row's right edge — shifted depending on state. One value now: auto wins over
+// head (the row is not "current" in any AI-worker sense once the server owns it), otherwise
+// head/done/nothing exactly as before.
+function stateTag(idx: number): { text: string; kind: 'head' | 'done' | 'auto' } | null {
+  if (autoHandledIdx(idx)) return { text: t('main.continuous_work.auto_step_tag'), kind: 'auto' }
+  if (idx === headIdx.value) return { text: t('main.continuous_work.head_tag'), kind: 'head' }
+  if (idx < headIdx.value) return { text: t('main.continuous_work.done_tag'), kind: 'done' }
+  return null
 }
 
 // 0352 T0004 §3.7: which rows show the checkbox itself — candidate type, not yet excluded by
@@ -548,12 +544,20 @@ watch(
 }
 .wsp-step-label {
   flex: 1;
+  /* 0451 T0007 rev1 (rejection 3 — 지시서 작성모드에서 N/T 칸의 텍스트가 우측으로 뚫고 나가지
+     않게 한다): a flex item's min-width defaults to auto, so the overflow/ellipsis below could
+     never shrink this label past its own content width — a long N/T label widened the row and
+     pushed its right end out of the list instead of being clipped. This line is the actual fix;
+     it has been missing since the label was introduced. */
+  min-width: 0;
   font-size: .82rem;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 0451 T0007 rev1: back to the pre-T0007 state-badge spec — no border, .6rem, pill radius.
+   The one-spec-for-two-badges rule is gone with the provider badge it was written for. */
 .wsp-step-tag {
   font-size: .6rem;
   font-weight: 700;
@@ -570,22 +574,6 @@ watch(
 .wsp-step-tag--auto { background: var(--surface-h); color: var(--text-m); }
 .wsp-step--auto { cursor: default; }
 .wsp-step--auto .wsp-step-label { color: var(--text-m); }
-.wsp-prov-tag {
-  font-size: .62rem;
-  font-weight: 700;
-  color: var(--text-m);
-  background: var(--surface-h);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1px 7px;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.wsp-prov-tag--override {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-l);
-}
 /* 0352 T0004 §3.7 / R rev1-2: dedicated class for the per-item_seq auto-approve control — a
    new toolbar/inline control must not reuse an existing shared class (two prior regressions:
    findAll(...).length / first-match assertions silently shifted when a new control quietly

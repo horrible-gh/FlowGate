@@ -648,10 +648,11 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
     selects = document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
     expect(selects).toHaveLength(2)
-    // ...and the step-6 provider tag is gone from the step list too. The remaining tags
-    // are T, TR, TS: the tag is gated on the in-range steps rather than on the execution
-    // rows, so a step's provider no longer appears and disappears with the 실행 방식 radio.
-    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(3)
+    // 0451 T0007 rev1: the step list carries no provider tag at all now (좌측단에 프로바이더는
+    // 출력하지 않는다), so shrinking the target is visible in the table's select count above —
+    // asserted at 2 — rather than in a per-row tag. Zero tags, on every row, in every mode.
+    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(0)
+    expect(document.querySelectorAll('.wsp-step').length).toBeGreaterThan(0)
 
     const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
     next.click()

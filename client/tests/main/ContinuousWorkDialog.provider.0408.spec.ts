@@ -212,8 +212,11 @@ describe('ContinuousWorkDialog paired instruction providers (0408 T0017)', () =>
   // 0408 TR0021 재반려 2 ("왜 프로바이더는 안고치냐? 자동승인 상태면 N/T 빼야지... 이번 실행
   // 미사용 이것떄문에 스크롤 생기니까 다 빼라"): reverts TR0018 rev1's "keep every in-range row,
   // read-only for the auto-approved ones" design — that row cost table height for a value
-  // nobody could act on. Only the run's own rows show now, in BOTH tabs; a hidden N/T's stored
-  // provider still surfaces on the picker's own tag (`.wsp-prov-tag`, gated on `inRangeSteps`).
+  // nobody could act on. Only the run's own rows show now, in BOTH tabs.
+  // 0451 T0007 rev1: rev0 answered that by printing a provider name on every picker row. The
+  // rejection removed it outright (좌측단에 프로바이더는 출력하지 않는다 — the [Providers] tab on
+  // the right already names one per step), so under auto-approve an N/T step names no provider
+  // anywhere. That is the accepted result of TR0021 + this change, not a regression.
   it('shows only the rows this run hands to a worker under auto-approve, all four under ai_direct, and never moves a value across round trips', async () => {
     mountDialog('default', pairedItems)
     await flushPromises()
@@ -224,9 +227,11 @@ describe('ContinuousWorkDialog paired instruction providers (0408 T0017)', () =>
     expect(document.querySelector('.cwd-override-readonly')).toBeNull()
     expect(document.querySelector('.cwd-auto-provider-badge')).toBeNull()
     expect(document.querySelector('.cwd-scope-note')).toBeNull()
-    // The N/T rows this run auto-approves still name their stored provider — on the step list's
-    // own tag, not as a dead table row.
-    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(4)
+    const provTags = () => [...document.querySelectorAll('.wsp-prov-tag')]
+    // The step list names no provider in either mode. Positive control for that zero: the four
+    // rows themselves ARE rendered, and the table above draws its own two.
+    expect(document.querySelectorAll('.wsp-step')).toHaveLength(4)
+    expect(provTags()).toHaveLength(0)
 
     const shown = () => [...document.querySelectorAll('.cwd-override-badge')].map(node => node.textContent)
     const autoApproved = shown()
@@ -235,7 +240,9 @@ describe('ContinuousWorkDialog paired instruction providers (0408 T0017)', () =>
     await switchInstructionMode('ai_direct')
     expect(shown()).toEqual(['N', 'NR', 'T', 'TR'])
     expect([...selects()].map(select => select.value)).toEqual(['stored', 'stored', 'other', 'other'])
-    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(4)
+    // Still nothing on the left under ai_direct either — the four names above are read off the
+    // [Providers] table, which is now the only place they appear.
+    expect(provTags()).toHaveLength(0)
 
     await switchInstructionMode('auto_approved')
     expect(shown()).toEqual(autoApproved)
@@ -316,6 +323,64 @@ describe('ContinuousWorkDialog paired instruction providers (0408 T0017)', () =>
     expect([...document.querySelectorAll('.cwd-filled-badge')].map(node => node.textContent))
       .not.toContain(i18n.global.t('main.continuous_work.sequence_provider_inherited'))
     expect((await confirm(wrapper)).providerOverrides).toEqual({})
+  })
+})
+
+// 0451 T0007 rev1: rev0's four-variant step-list provider badge is gone — the rejection asked
+// for the pre-T0007 left column back (state only, right-aligned, nothing else). What is checked
+// here is that absence, each time against a positive control, plus the state badge's shape.
+describe('ContinuousWorkDialog step list state badges (0451 T0007 rev1)', () => {
+  it('names no provider on a stored, an unregistered or a per-step-override row', async () => {
+    mountDialog('default', items)
+    await flushPromises()
+    await openProviders()
+    selects()[0].value = 'other'
+    selects()[0].dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // Positive control for the zeroes below: three rows and three selects really did render.
+    expect(document.querySelectorAll('.wsp-step')).toHaveLength(3)
+    expect(selects()).toHaveLength(3)
+
+    expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(0)
+    const list = document.querySelector('.wsp-steps')!.textContent ?? ''
+    expect(list).not.toContain('Other Provider')    // the override just picked
+    expect(list).not.toContain('Stored Provider')   // row 1's stored value
+    expect(list).not.toContain('Deleted Snapshot')  // row 3's unregistered stored value
+  })
+
+  // The N row here is both the head AND auto-handled (auto_approved default), which before
+  // T0007 drew TWO separate state spans ("현재" + "자동 승인") on one row — the "글씨가 들쭉날쭉
+  // 하다" complaint (CH0006 turn 5). stateTag()'s merge stays: auto wins over head, one badge.
+  it('shows exactly one state tag per row, as a bare span with no slot wrapper', async () => {
+    mountDialog('default', pairedItems)
+    await flushPromises()
+
+    const nRow = document.querySelectorAll('.wsp-step')[0]
+    expect(nRow.querySelectorAll('.wsp-step-tag')).toHaveLength(1)
+    expect(nRow.querySelector('.wsp-step-tag--auto')?.textContent).toBe(
+      i18n.global.t('main.continuous_work.auto_step_tag'),
+    )
+    // rejection 1 (좌측단의 완료/대기/현재는 기존(우측 정렬)으로 되돌린다): the badge is a bare
+    // span right after the flex:1 label — that is what right-aligns it — not a fixed-width slot
+    // inside a `.wsp-step-end` wrapper.
+    expect(document.querySelector('.wsp-step-end')).toBeNull()
+    expect(document.querySelector('.wsp-step-state-slot')).toBeNull()
+    expect(document.querySelector('.wsp-step-prov-slot')).toBeNull()
+    const tag = nRow.querySelector('.wsp-step-tag')!
+    expect(tag.parentElement!.classList.contains('wsp-step')).toBe(true)
+    expect(tag.previousElementSibling!.classList.contains('wsp-step-label')).toBe(true)
+  })
+
+  it('keeps the head class on the current row and leaves a plain pending row untagged', async () => {
+    mountDialog('default', items)
+    await flushPromises()
+
+    const rows = document.querySelectorAll('.wsp-step')
+    expect(rows[0].querySelector('.wsp-step-tag--head')?.textContent).toBe(
+      i18n.global.t('main.continuous_work.head_tag'),
+    )
+    expect(rows[1].querySelector('.wsp-step-tag')).toBeNull()
   })
 })
 

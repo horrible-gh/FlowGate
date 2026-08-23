@@ -45,7 +45,6 @@
               :doc-ref="docRef"
               :active="visible"
               :initial-target-seq="presetTargetSeq"
-              :step-tag="stepProviderTag"
               :auto-handled-types="autoHandledTypes"
               :auto-handled-item-seqs="autoApproveItemSeqs"
               :auto-approve-candidate-types="autoApproveCandidateTypes"
@@ -199,8 +198,9 @@
                        only, with a badge" design — that row nobody can act on and no worker will
                        ever read was exactly the clutter the rejection means. This table now draws
                        exactly `executionSteps`, the same rows [Message] draws below. A step this
-                       run auto-approves keeps its stored provider visible on the picker's own tag
-                       instead (`stepProviderTag`, gated on `inRangeSteps`, not this table). -->
+                       run auto-approves shows no provider anywhere this session: TR0021 removed
+                       it from this table, and 0451 T0007 rev1 removed the picker's provider tag
+                       too (좌측단에 프로바이더는 출력하지 않는다). That is the intended result. -->
                   <div class="cwd-override-table">
                     <div v-for="row in providerRows" :key="row.item.item_seq" class="cwd-override-row">
                       <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
@@ -250,9 +250,9 @@
                        rows are now both exactly the steps an AI WORKER runs in this mode. Under
                        [Auto-approve] the server writes and approves N/T with no worker at all, so
                        neither a mention nor a provider CHOICE typed there could ever be
-                       delivered — a row that carries no choice is not offered one. A step's
-                       stored provider stays visible on the picker's own tag either way
-                       (`stepProviderTag`), just not as a dead row in this table. -->
+                       delivered — a row that carries no choice is not offered one. Since 0451
+                       T0007 rev1 the picker carries no provider tag either, so a step this run
+                       auto-approves shows no provider at all — intended, not a loss. -->
                   <div class="cwd-override-table">
                     <div v-for="row in messageRows" :key="row.item.item_seq" class="cwd-override-row">
                       <span class="cwd-override-step-no">{{ t('main.continuous_work.step_no_label', { n: row.stepNo }) }}</span>
@@ -500,17 +500,17 @@ const executionSteps = computed<WorkflowStepItem[]>(() => {
 // 0408 TR0021 2nd re-rejection ("자동승인 상태면 N/T 빼야지... 스크롤 생기니까 다 빼라"): reverts
 // TR0018 rev1's "show every in-range row" table design. The rows an AI worker actually runs
 // THIS SESSION — identical to `executionSteps`, and identical to the [Message] table below —
-// are the only ones either tab draws now. A step this run auto-approves keeps its stored
-// provider visible on the picker's own tag (`stepProviderTag`, gated on `inRangeSteps`), never
-// as a dead row here.
+// are the only ones either tab draws now. A step this run auto-approves is not drawn as a dead
+// row here, and since 0451 T0007 rev1 the picker carries no provider tag either — such a step
+// shows no provider anywhere this session, which is the intended result.
 const providerRows = computed<{ item: WorkflowStepItem; stepNo: number }[]>(
   () => executionSteps.value.map((item, idx) => ({ item, stepNo: idx + 1 })),
 )
 
 // Every step inside the chosen range, regardless of whether this run's mode auto-approves it —
 // wider than `executionSteps`/`providerRows`/`messageRows` on purpose. Used only to keep
-// state alive across a radio toggle (the picker's provider tag, a mention typed for a step that
-// just became auto-approved): never to decide what a table renders.
+// state alive across a radio toggle (a mention typed for a step that just became
+// auto-approved): never to decide what a table renders.
 const inRangeSteps = computed<WorkflowStepItem[]>(() => {
   const sel = picker.value.selection
   if (!sel || sel.fromDecision) return []
@@ -744,49 +744,10 @@ function onStepMessageChange(item: WorkflowStepItem, value: string) {
   messageOverrides.value = next
 }
 
-function providerName(id: string | undefined | null): string | null {
-  if (!id) return null
-  return props.providers?.find(p => p.id === id)?.name ?? null
-}
-
-const selectedProviderName = computed(() =>
-  providerName(props.selectedProvider) ?? props.selectedProvider ?? '',
-)
-
-// 0408 TR0018 rev1: an auto-approved N/T row used to lose its provider tag here too, so the
-// same step read "시퀀스 저장값 · X" under one radio and only "자동 승인" under the other.
-// In-range steps all get the tag (gated on `inRangeSteps`, wider than the now execution-only
-// `providerRows`); a step past the target still gets none (it never runs).
-function stepProviderTag(item: WorkflowStepItem): { text: string; override: boolean } | null {
-  if (!inRangeSteps.value.some(s => s.item_seq === item.item_seq)) return null
-  const stepNo = executionSteps.value.findIndex(s => s.item_seq === item.item_seq)
-  const overrideId = overrides.value[item.item_seq]
-  // A row outside executionSteps has no run step number. It also gets no select, so it cannot
-  // carry an override today — but never print "실행단계0" if that ever changes.
-  if (overrideId && stepNo >= 0) {
-    const name = providerName(overrideId)
-    if (!name) return null
-    return { text: t('main.continuous_work.provider_tag_override', { step: stepNo + 1, name }), override: true }
-  }
-  // 0448 T0005 §4-1/§4-2 (B0001 "고정 xxx (저장값 xxx 대신)"): the row names the ONE provider
-  // that will actually run, once. The "…(저장값 … 대신)" half is deleted rather than reworded:
-  // an ordinary selection is no longer a force-all (§2), and under an explicit force-all the
-  // stored value is not a fact the person has to act on. A per-step override above still wins,
-  // and a plain stored row below still says so.
-  if (props.providerPinned) {
-    const name = selectedProviderName.value
-    if (!name) return null
-    return { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
-  }
-  const stored = storedProviderItem(item)
-  if (stored) {
-    const name = stored.provider_display_name || stored.provider_id || ''
-    return { text: t('main.continuous_work.provider_tag_stored', { name }), override: false }
-  }
-  const name = providerName(props.selectedProvider)
-  if (!name) return null
-  return { text: t('main.continuous_work.provider_tag_default', { name }), override: false }
-}
+// 0451 T0007 rev1: `stepProviderTag` and its private helpers (`providerName`,
+// `selectedProviderName`, `inactiveStoredProviderItem`) are removed with the step-list provider
+// badge they existed for. The step list names no provider now; the [프로바이더] tab above is
+// the single place a step's provider is shown and chosen.
 function onPickerChange(state: WorkflowStepPickerState) {
   picker.value = state
 }
