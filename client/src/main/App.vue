@@ -26,6 +26,10 @@ const aiInvokeRunsStore = useAiInvokeRunsStore()
 // AppHeader, which remounts on every route change (0269 NR0011 §4).
 onMounted(() => {
   void aiInvokeRunsStore.bootstrap()
+  // 0452 L0003 §2-4: the store was built from the browser mirror, which is a cache. Ask the
+  // server once per app mount so a value saved in another browser (or never mirrored here)
+  // takes effect on this load rather than on the next recovery signal.
+  void aiInvokeRunsStore.refreshRetentionSetting()
 })
 
 // Reload labels when locale changes

@@ -143,10 +143,30 @@ export default {
   settings: {
     nav: {
       account: 'Account',
+      ai_run_monitor: 'AI run monitor',
       security: 'Security & sessions',
       system: 'System',
       users: 'Project Management',
       project: 'Project',
+    },
+    ai_run_monitor: {
+      title: 'AI run monitor',
+      description: 'Choose how long the AI run monitor in the header keeps finished cards. Applies to this account only.',
+      retention: {
+        label: 'How long finished AI cards stay',
+        hint: 'Choose how long a finished card remains in the AI run monitor in the header.',
+        never: 'Never',
+        immediate: 'Immediately',
+        minutes: '{minutes} min',
+        hour: '{hours} hour',
+        hours: '{hours} hours',
+        loading: 'Loading…',
+        save: 'Save',
+        saving: 'Saving…',
+        saved: 'Saved',
+        load_failed: 'Could not load the setting.',
+        save_failed: 'Could not save the setting.',
+      },
     },
     security_sessions: {
       title: 'Security and login sessions',

@@ -1,6 +1,19 @@
 import { computed, onScopeDispose, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { getRequest, postRequest } from '@shared/api'
+import {
+  MINUTE_MS,
+  RETENTION_DEFAULT_MINUTES,
+  RETENTION_MIRROR_KEY,
+  RETENTION_NEVER,
+  UI_SETTINGS_PATH,
+  parseRetentionMinutes,
+  readRetentionMirror,
+  retentionFromResponse,
+  retentionMs,
+  writeRetentionMirror,
+  type UiSettingsResponse,
+} from '@shared/aiFinishedCardRetention'
 
 export type AiInvokePhase = 'running' | 'pause_requested' | 'paused' | 'finished' | 'lost'
 
@@ -93,13 +106,41 @@ const HANDOFF_FINALIZE_AFTER_POLLS = 2
 // 0290 NR0003 §5.1: 10s was effectively "gone before it was read" — the header monitor is
 // the channel this user actually watches for completions, so a finished card now survives
 // long enough to walk away from. Reading the card (문서 열기 [Open document]) or removing it stays instant.
-export const FINISHED_CARD_TTL_MS = 30 * 60_000
+//
+// 0452 L0003 §1-3: this is no longer the number the sweep reads. It is DERIVED from the
+// default so it still means exactly "the retention of somebody who has never saved", which
+// is what the regressions that import it are about. The live TTL is `retentionTtlMs`.
+export const FINISHED_CARD_TTL_MS = RETENTION_DEFAULT_MINUTES * MINUTE_MS
 // The document screen's inline banner shares this registry but not its lifetime: a result
 // panel pinned over the document for 30 minutes is nobody's idea of helpful (NR0003 §5.3).
+// Unchanged by the setting: the user asked for the header list to keep results, not for the
+// document to stay covered (0452 L0003 §2-6). It is a CEILING — see `inlineResultWindowMs`.
 export const INLINE_RESULT_WINDOW_MS = 60_000
 // A 30-minute TTL turns the list into a log unless it is capped (NR0003 §5.5).
 export const MAX_FINISHED_CARDS = 20
+// 0452 L0003 §2-7: "never expires" is an explicit choice to pile results up, so cutting it
+// at 20 would break the very request. The cap still has to exist — persistFinished's quota
+// failure used to lose every stored card silently — so it moves rather than disappears.
+export const MAX_FINISHED_CARDS_UNBOUNDED = 200
+// One bounded retry's worth of cards when sessionStorage refuses the full snapshot.
+export const PERSIST_QUOTA_FALLBACK_CARDS = 20
 const FINISHED_STORAGE_KEY = 'fg.ai_invoke.finished_cards'
+
+// The single expiry predicate, shared by the sweep and by session restore (L0003 §2-3).
+// The two sentinels are answered BEFORE the subtraction on purpose: the sweep's `now` is a
+// 1s tick that can sit slightly behind a card's own `finishedAtMs`, which makes the age
+// negative — and `-5 >= 0` is false, so a "disappears immediately" card would linger for up
+// to a second. Infinity is intercepted for the same reason in the other direction.
+export function isExpired(finishedAtMs: number, referenceNowMs: number, ttlMs: number): boolean {
+  if (ttlMs === 0) return true
+  if (!Number.isFinite(ttlMs)) return false
+  return referenceNowMs - finishedAtMs >= ttlMs
+}
+
+// Slot count is a memory guard, not a time rule, so only the unbounded choice widens it.
+export function cardSlotsFor(minutes: number): number {
+  return minutes === RETENTION_NEVER ? MAX_FINISHED_CARDS_UNBOUNDED : MAX_FINISHED_CARDS
+}
 
 function nullableString(value: unknown): string | null {
   return value == null || value === '' ? null : String(value)
@@ -366,6 +407,17 @@ export function compareRunEntries(a: AiInvokeRunEntry, b: AiInvokeRunEntry): num
 // Finished cards live only in this store, and /ai-invoke/active-all deliberately omits
 // finished runs — so without this a reload wiped the very cards the TTL is meant to keep
 // (NR0003 §3.5). sessionStorage, not local: per-tab is the right scope for a popover.
+// Restore runs at store construction, which is BEFORE the server's answer can arrive, so
+// it judges by the browser mirror (L0003 §2-4). With no usable mirror it fails OPEN — an
+// unbounded TTL — because the other direction is unrecoverable: assuming 30 minutes would
+// permanently delete the cards of somebody who chose "never expires" on their first reload.
+// Cards kept a moment too long cost nothing; the first sweep after the setting lands
+// removes them.
+function retentionMsFromMirror(): number {
+  const mirrored = readRetentionMirror()
+  return mirrored == null ? Number.POSITIVE_INFINITY : retentionMs(mirrored)
+}
+
 function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
   if (typeof sessionStorage === 'undefined') return {}
   try {
@@ -373,10 +425,11 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
     if (!raw) return {}
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object') return {}
-    const cutoff = Date.now() - FINISHED_CARD_TTL_MS
+    const ttlMs = retentionMsFromMirror()
+    const now = Date.now()
     const restored: Record<string, AiInvokeRunEntry> = {}
     for (const [groupId, entry] of Object.entries(parsed as Record<string, AiInvokeRunEntry>)) {
-      if (entry && isFinishedCard(entry) && (entry.finishedAtMs as number) > cutoff) {
+      if (entry && isFinishedCard(entry) && !isExpired(entry.finishedAtMs as number, now, ttlMs)) {
         restored[groupId] = entry
       }
     }
@@ -388,15 +441,27 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
 
 function persistFinished(runsByGroup: Record<string, AiInvokeRunEntry>): void {
   if (typeof sessionStorage === 'undefined') return
+  const entries = Object.entries(runsByGroup).filter(([, entry]) => isFinishedCard(entry))
   try {
-    const snapshot: Record<string, AiInvokeRunEntry> = {}
-    for (const [groupId, entry] of Object.entries(runsByGroup)) {
-      if (isFinishedCard(entry)) snapshot[groupId] = entry
+    if (entries.length === 0) {
+      sessionStorage.removeItem(FINISHED_STORAGE_KEY)
+      return
     }
-    if (Object.keys(snapshot).length === 0) sessionStorage.removeItem(FINISHED_STORAGE_KEY)
-    else sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(snapshot))
+    sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
+    return
   } catch {
-    // Quota/private-mode failures are not worth breaking the monitor over.
+    // Fall through to one bounded retry. Swallowing the quota error outright is what
+    // 0452 L0003 §5 calls out: with 200 cards allowed, the FIRST oversized write used to
+    // leave the key holding the previous snapshot and nobody was told (L0003 §2-7).
+  }
+  try {
+    const newest = [...entries]
+      .sort((a, b) => (b[1].finishedAtMs as number) - (a[1].finishedAtMs as number))
+      .slice(0, PERSIST_QUOTA_FALLBACK_CARDS)
+    sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(Object.fromEntries(newest)))
+  } catch {
+    // Give up on the WRITE only. The in-memory registry still holds every card, so the
+    // monitor is intact for this tab; only a reload would lose them.
   }
 }
 
@@ -424,6 +489,17 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const groupLeaseLive = reactive<Record<string, boolean>>({})
   const leaseFetchInFlight = new Set<string>()
   const leaseFetchGeneration = new Map<string, number>()
+
+  // 0452 L0003 §2-4/§2-5. The value in force right now. The mirror is the only thing this
+  // synchronous construction can consult; the server's answer replaces it a round trip
+  // later, and another tab's save arrives as a storage event in between. Single-flight plus
+  // a generation counter (the same shape refreshGroupLease already uses) is what stops a
+  // slow GET from landing on top of a newer value that a storage event just adopted.
+  const retentionMinutes = ref(readRetentionMirror() ?? RETENTION_DEFAULT_MINUTES)
+  const retentionTtlMs = computed(() => retentionMs(retentionMinutes.value))
+  let retentionGeneration = 0
+  let retentionAdoptedGeneration = 0
+  let retentionFetchInFlight = false
 
   // Batched through the 1s clock: the finished set changes in bursts (a sweep can drop
   // several cards at once) and sessionStorage writes are synchronous.
@@ -467,6 +543,15 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   function finalizeHandoff(groupId: string, runId: string): void {
     const run = runsByGroup[groupId]
     if (!run || run.runId !== runId || !run.handoffPending) return
+    if (retentionTtlMs.value === 0) {
+      // The hop turned out to be the end of the chain, so this IS a completion — and a
+      // completion makes no card at this setting. Doing it here rather than leaving it to
+      // the sweep is what keeps the "not for one tick" promise (L0003 §4-1).
+      delete runsByGroup[groupId]
+      clearHandoffTracking(groupId)
+      schedulePersist()
+      return
+    }
     run.phase = 'finished'
     run.handoffPending = false
     run.finishedPayload = handoffFinishedPayloads.get(groupId) ?? run.finishedPayload
@@ -533,6 +618,15 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // Boundary stop (P0008 S4): a user-paused finish is a PAUSED card with a resume
     // button, never a finished card — and never a TTL-sweep candidate.
     const userPaused = payload.end_reason === 'user_paused'
+    // Order matters (L0003 §4-1): a user pause and a hop boundary are judged FIRST, and
+    // neither makes a finished card at any setting. Only what is left over — a real
+    // completion — is dropped outright when the user chose "disappears immediately".
+    if (!userPaused && !handoffPending && retentionTtlMs.value === 0) {
+      delete runsByGroup[groupId]
+      clearHandoffTracking(groupId)
+      schedulePersist()
+      return
+    }
     const finishedSwitches = normalizeSwitches(payload.fallback_history)
     runsByGroup[groupId] = {
       ...base,
@@ -606,6 +700,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   function markLost(groupId: string, runId?: string): void {
     const run = runsByGroup[groupId]
     if (!run || (runId && run.runId !== runId) || !ACTIVE_PHASES.includes(run.phase)) return
+    if (retentionTtlMs.value === 0) {
+      delete runsByGroup[groupId]
+      schedulePersist()
+      return
+    }
     run.phase = 'lost'
     run.cancelling = false
     run.finishedAtMs = Date.now()
@@ -927,29 +1026,78 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function sweepFinishedCards(): void {
-    // L0009 §2.6 / 0290 NR0003 §5.5: finished+lost cards decay after FINISHED_CARD_TTL_MS
-    // and, beyond MAX_FINISHED_CARDS, the oldest ones go early so a long TTL cannot turn
-    // the popover into an unbounded run log. Manual dismiss stays immediate; paused cards
-    // never decay by either rule.
+    // L0009 §2.6 / 0290 NR0003 §5.5, now read through the user's own retention (L0003 §2-3):
+    // finished+lost cards decay at the chosen TTL and, beyond the slot count for that
+    // choice, the oldest ones go early so a long retention cannot turn the popover into an
+    // unbounded run log. Manual dismiss stays immediate; paused and handoff cards are not
+    // finished cards, so neither rule reaches them at any setting.
+    const ttlMs = retentionTtlMs.value
+    const slots = cardSlotsFor(retentionMinutes.value)
     let removed = false
     const survivors: Array<[string, AiInvokeRunEntry]> = []
     for (const [groupId, run] of Object.entries(runsByGroup)) {
       if (!isFinishedCard(run)) continue
-      if (now.value - (run.finishedAtMs as number) >= FINISHED_CARD_TTL_MS) {
+      if (isExpired(run.finishedAtMs as number, now.value, ttlMs)) {
         delete runsByGroup[groupId]
         removed = true
       } else {
         survivors.push([groupId, run])
       }
     }
-    if (survivors.length > MAX_FINISHED_CARDS) {
+    if (survivors.length > slots) {
       survivors.sort((a, b) => (a[1].finishedAtMs as number) - (b[1].finishedAtMs as number))
-      for (const [groupId] of survivors.slice(0, survivors.length - MAX_FINISHED_CARDS)) {
+      for (const [groupId] of survivors.slice(0, survivors.length - slots)) {
         delete runsByGroup[groupId]
         removed = true
       }
     }
     if (removed) schedulePersist()
+  }
+
+  // 0452 L0003 §2-5: adoption is one assignment followed by ONE immediate sweep. Waiting
+  // for the next 1s tick would mean somebody who switched to "disappears immediately" sees
+  // the list they just emptied for another second. `mirror` is false for a value that came
+  // FROM the mirror (another tab's storage event) — rewriting it there would be a no-op at
+  // best and an echo at worst.
+  function adoptRetention(candidateMinutes: unknown, generation: number, mirror: boolean): void {
+    if (generation < retentionAdoptedGeneration) return
+    retentionAdoptedGeneration = generation
+    const resolved = parseRetentionMinutes(candidateMinutes)
+    retentionMinutes.value = resolved
+    if (mirror) writeRetentionMirror(resolved)
+    sweepFinishedCards()
+    flushPersist()
+  }
+
+  // A failed lookup must not destroy a value that is already in force (L0003 §4-4 branch 3):
+  // it only fills in for a store that has never adopted anything, mirror first, then 30.
+  function fallbackRetention(): void {
+    if (retentionAdoptedGeneration > 0) return
+    retentionMinutes.value = readRetentionMirror() ?? RETENTION_DEFAULT_MINUTES
+  }
+
+  async function refreshRetentionSetting(): Promise<void> {
+    if (retentionFetchInFlight) return
+    retentionFetchInFlight = true
+    retentionGeneration += 1
+    const generation = retentionGeneration
+    try {
+      const response = await getRequest<UiSettingsResponse>(UI_SETTINGS_PATH)
+      adoptRetention(retentionFromResponse(response.data), generation, true)
+    } catch {
+      fallbackRetention()
+    } finally {
+      retentionFetchInFlight = false
+    }
+  }
+
+  // Exactly this key, and nothing else in localStorage. The account screen writes the
+  // mirror only after the server has accepted the value, so an event here is already a
+  // saved setting — no re-fetch, adopt and sweep.
+  function onRetentionStorage(event: StorageEvent): void {
+    if (event.key !== RETENTION_MIRROR_KEY) return
+    retentionGeneration += 1
+    adoptRetention(event.newValue, retentionGeneration, false)
   }
 
   function onInvokeEvent(event: Event): void {
@@ -973,6 +1121,9 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   function onRecoverySignal(): void {
     void refreshAllRunning()
+    // Coming back online or back to the tab is also when a setting saved elsewhere (a tab
+    // that was closed, another machine) has to be picked up (L0003 §2-5 row 3).
+    void refreshRetentionSetting()
   }
 
   function onVisibilityChange(): void {
@@ -996,6 +1147,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     window.addEventListener('fg:q_answered', onQAnswered)
     window.addEventListener('fg:open_docs_refresh', onRecoverySignal)
     window.addEventListener('online', onRecoverySignal)
+    window.addEventListener('storage', onRetentionStorage)
     document.addEventListener('visibilitychange', onVisibilityChange)
     clockTimer = setInterval(clockTick, CLOCK_INTERVAL_MS)
   }
@@ -1007,6 +1159,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       window.removeEventListener('fg:q_answered', onQAnswered)
       window.removeEventListener('fg:open_docs_refresh', onRecoverySignal)
       window.removeEventListener('online', onRecoverySignal)
+      window.removeEventListener('storage', onRetentionStorage)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
     if (clockTimer) clearInterval(clockTimer)
@@ -1020,6 +1173,13 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // 1s clock, exposed so a surface can age its own view of an entry (the inline banner
     // uses it for INLINE_RESULT_WINDOW_MS) without running a second timer.
     now,
+    // 0452: the retention in force, and the window the document-screen banner may use.
+    // The banner is capped at 60s even when cards never expire, and it disappears with the
+    // card itself at 0 (L0003 §2-6).
+    retentionMinutes,
+    retentionTtlMs,
+    inlineResultWindowMs: computed(() => Math.min(INLINE_RESULT_WINDOW_MS, retentionTtlMs.value)),
+    refreshRetentionSetting,
     activeCount: computed(() => Object.values(runsByGroup).filter(run => ACTIVE_PHASES.includes(run.phase)).length),
     awaitingQCount: computed(() => Object.values(runsByGroup).filter(isAwaitingQ).length),
     pausedCount: computed(() => Object.values(runsByGroup).filter(run => run.phase === 'paused').length),
@@ -1045,6 +1205,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     dismiss,
     dismissAllFinished,
     sweepFinishedCards,
+    adoptRetention,
     isGroupRunning,
     isGroupInlineVisible,
     isGroupLeaseLocked,

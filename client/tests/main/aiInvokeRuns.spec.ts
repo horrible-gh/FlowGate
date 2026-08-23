@@ -4,11 +4,43 @@ import { getRequest, postRequest } from '@shared/api'
 import {
   FINISHED_CARD_TTL_MS,
   MAX_FINISHED_CARDS,
+  MAX_FINISHED_CARDS_UNBOUNDED,
+  PERSIST_QUOTA_FALLBACK_CARDS,
+  cardSlotsFor,
+  isExpired,
   isFinishedCard,
   openTargetDocId,
   type AiInvokeRunEntry,
   useAiInvokeRunsStore,
 } from '@main/stores/aiInvokeRuns'
+import {
+  RETENTION_DEFAULT_MINUTES,
+  RETENTION_DOMAIN_MINUTES,
+  RETENTION_MIRROR_KEY,
+  UI_SETTINGS_PATH,
+  normalizeRetentionMinutes,
+  parseRetentionMinutes,
+  retentionMs,
+} from '@shared/aiFinishedCardRetention'
+
+const FINISHED_STORAGE_KEY = 'fg.ai_invoke.finished_cards'
+
+// A finished card as it sits in sessionStorage, so restore can be exercised without
+// having to run (and then dispose) a whole store first.
+function seedFinishedSnapshot(groupId: string, finishedAtMs: number): void {
+  sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify({
+    [groupId]: {
+      runId: 'run-seed', groupId, docRef: 'r', phase: 'finished', mode: 'single',
+      handoffPending: false, endReason: 'exited', outcome: 'complete',
+      pendingQDocIds: [], reachedDocIds: [], finishedAtMs,
+    },
+  }))
+}
+
+function finishOne(store: ReturnType<typeof useAiInvokeRunsStore>, groupId: string): void {
+  store.trackStarted({ run_id: `run-${groupId}`, group_id: groupId, doc_ref: 'r' })
+  store.trackFinished({ run_id: `run-${groupId}`, group_id: groupId, outcome: 'complete' })
+}
 
 vi.mock('@shared/api', () => ({
   getRequest: vi.fn(),
@@ -55,6 +87,7 @@ describe('aiInvokeRuns store', () => {
 
   beforeEach(() => {
     sessionStorage.clear()
+    localStorage.clear()
     setActivePinia(createPinia())
     store = useAiInvokeRunsStore()
     vi.clearAllMocks()
@@ -594,6 +627,7 @@ describe('aiInvokeRuns store — bounded handoff adoption', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-01T12:00:00Z'))
     sessionStorage.clear()
+    localStorage.clear()
     setActivePinia(createPinia())
     store = useAiInvokeRunsStore()
     vi.clearAllMocks()
@@ -631,10 +665,14 @@ describe('aiInvokeRuns store — bounded handoff adoption', () => {
   })
 })
 
+// Every case in this block is the DEFAULT retention — somebody who has never opened the
+// account screen. 0452 kept that number at 30 minutes precisely so these regressions keep
+// meaning what they meant; the per-user cases live in the block after it.
 describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sessionStorage.clear()
+    localStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
@@ -742,6 +780,10 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   // /ai-invoke/active-all never returns finished runs, so without this a reload wiped
   // the cards the TTL exists to keep (0290 NR0003 §3.5).
   it('restores finished cards across a reload and drops the expired ones', () => {
+    // The mirror is what a reload judges by (0452 L0003 §2-4), and 30 is what it holds for
+    // a user who never changed the setting. Without it this case would be the fail-open
+    // branch instead, which the next block covers on its own.
+    localStorage.setItem(RETENTION_MIRROR_KEY, String(RETENTION_DEFAULT_MINUTES))
     const store = useAiInvokeRunsStore()
     store.trackStarted({ run_id: 'run-f', group_id: 'g.persist.1', doc_ref: 'r' })
     store.trackFinished({ run_id: 'run-f', group_id: 'g.persist.1', outcome: 'complete' })
@@ -772,5 +814,369 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     // Paused chains come back from the server (active-all), not from this cache.
     expect(reloaded.runsByGroup['g.persist.2']).toBeUndefined()
     reloaded.$dispose()
+  })
+})
+
+// ── 0452: the retention is a per-user setting ─────────────────────────────────
+
+describe('finished-card retention — the shared contract', () => {
+  it('accepts exactly the nine values and repairs everything else', () => {
+    for (const minutes of RETENTION_DOMAIN_MINUTES) {
+      expect(normalizeRetentionMinutes(minutes)).toBe(minutes)
+    }
+    // -1 is a MEMBER, not a lower bound. A range clamp passes every other case here and
+    // silently turns "never expires" into 30 minutes.
+    expect(normalizeRetentionMinutes(-1)).toBe(-1)
+    for (const bad of [null, undefined, true, false, '30', 'abc', 45, -2, 0.5, NaN, 100_000]) {
+      expect(normalizeRetentionMinutes(bad)).toBe(RETENTION_DEFAULT_MINUTES)
+    }
+  })
+
+  it('reads text values without letting an empty string become "immediately"', () => {
+    expect(parseRetentionMinutes('-1')).toBe(-1)
+    expect(parseRetentionMinutes('0')).toBe(0)
+    expect(parseRetentionMinutes(' 1440 ')).toBe(1440)
+    // Number('') and Number(' ') are both 0, and 0 empties the list, so the text has to
+    // be judged before it is converted.
+    for (const bad of ['', '   ', 'null', '3o', null]) {
+      expect(parseRetentionMinutes(bad)).toBe(RETENTION_DEFAULT_MINUTES)
+    }
+  })
+
+  it('converts minutes to a TTL, with -1 leaving arithmetic entirely', () => {
+    expect(retentionMs(-1)).toBe(Number.POSITIVE_INFINITY)
+    expect(retentionMs(0)).toBe(0)
+    expect(retentionMs(30)).toBe(1_800_000)
+    expect(retentionMs(1440)).toBe(86_400_000)
+    // The default constant is derived from the same place, not typed twice.
+    expect(FINISHED_CARD_TTL_MS).toBe(retentionMs(RETENTION_DEFAULT_MINUTES))
+  })
+
+  it('expires at the boundary and intercepts both sentinels before the subtraction', () => {
+    expect(isExpired(0, 1_800_000 - 1, 1_800_000)).toBe(false)
+    expect(isExpired(0, 1_800_000, 1_800_000)).toBe(true)   // age >= ttl
+    expect(isExpired(0, 1_800_001, 1_800_000)).toBe(true)
+    expect(isExpired(0, Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY)).toBe(false)
+    // The sweep's 1s tick can sit behind a card's own finishedAtMs, so the age is
+    // negative — and `-5 >= 0` is false. Without the branch, "disappears immediately"
+    // would leave a card up for as much as a second.
+    expect(isExpired(1_000, 995, 0)).toBe(true)
+    expect(isExpired(1_000, 995, 1_800_000)).toBe(false)
+  })
+
+  it('widens the slot count only for the unbounded choice', () => {
+    expect(cardSlotsFor(-1)).toBe(MAX_FINISHED_CARDS_UNBOUNDED)
+    for (const minutes of RETENTION_DOMAIN_MINUTES.filter((m) => m !== -1)) {
+      expect(cardSlotsFor(minutes)).toBe(MAX_FINISHED_CARDS)
+    }
+  })
+})
+
+describe('aiInvokeRuns store — per-user retention', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    sessionStorage.clear()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('starts from the mirror and falls back to 30 when there is none', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '1440')
+    const mirrored = useAiInvokeRunsStore()
+    expect(mirrored.retentionMinutes).toBe(1440)
+    mirrored.$dispose()
+
+    setActivePinia(createPinia())
+    localStorage.setItem(RETENTION_MIRROR_KEY, 'nonsense')
+    const broken = useAiInvokeRunsStore()
+    expect(broken.retentionMinutes).toBe(RETENTION_DEFAULT_MINUTES)
+    broken.$dispose()
+  })
+
+  it('never expires a card by time at -1, and caps the pile at 200 instead of 20', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    const store = useAiInvokeRunsStore()
+    finishOne(store, 'g.never.1')
+
+    vi.advanceTimersByTime(2 * 24 * 60 * 60_000)
+    expect(store.runsByGroup['g.never.1']).toBeDefined()
+    expect(store.finishedCount).toBe(1)
+
+    for (let i = 0; i < MAX_FINISHED_CARDS_UNBOUNDED + 2; i += 1) {
+      finishOne(store, `g.never.cap.${String(i).padStart(3, '0')}`)
+      vi.advanceTimersByTime(1_000)   // distinct finishedAtMs so "oldest" is unambiguous
+    }
+
+    const remaining = Object.keys(store.runsByGroup)
+    expect(remaining).toHaveLength(MAX_FINISHED_CARDS_UNBOUNDED)
+    // The first card and the two oldest of the batch are what fell out, newest first out
+    // is never the rule.
+    expect(remaining).not.toContain('g.never.1')
+    expect(remaining).not.toContain('g.never.cap.000')
+    expect(remaining).toContain(
+      `g.never.cap.${String(MAX_FINISHED_CARDS_UNBOUNDED + 1).padStart(3, '0')}`,
+    )
+    store.$dispose()
+  })
+
+  it('makes no finished or lost card at 0, and still leaves paused and handoff alone', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '0')
+    const store = useAiInvokeRunsStore()
+
+    finishOne(store, 'g.zero.done')
+    expect(store.runsByGroup['g.zero.done']).toBeUndefined()
+    expect(store.finishedCount).toBe(0)
+
+    store.trackStarted({ run_id: 'run-lost', group_id: 'g.zero.lost', doc_ref: 'r' })
+    store.markLost('g.zero.lost', 'run-lost')
+    expect(store.runsByGroup['g.zero.lost']).toBeUndefined()
+
+    // A user pause and a hop boundary are judged FIRST and are not completions, so
+    // "disappears immediately" must not reach either of them (L0003 §4-1).
+    store.trackStarted({ run_id: 'run-p', group_id: 'g.zero.paused', doc_ref: 'r', mode: 'continuous' })
+    store.trackFinished({ run_id: 'run-p', group_id: 'g.zero.paused', end_reason: 'user_paused' })
+    expect(store.runsByGroup['g.zero.paused']?.phase).toBe('paused')
+
+    store.trackStarted({
+      run_id: 'run-h', group_id: 'g.zero.handoff', mode: 'continuous',
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 6,
+    })
+    store.trackFinished({
+      run_id: 'run-h', group_id: 'g.zero.handoff', end_reason: 'exited',
+      stop_code: 'hop_handoff', outcome: 'complete',
+      chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 7,
+    })
+    expect(store.runsByGroup['g.zero.handoff']?.handoffPending).toBe(true)
+    expect(store.runsByGroup['g.zero.handoff']?.phase).toBe('running')
+
+    // Not one tick: a card must never appear and then be swept a second later.
+    vi.advanceTimersByTime(5_000)
+    expect(store.finishedCount).toBe(0)
+    expect(store.runsByGroup['g.zero.paused']?.phase).toBe('paused')
+    store.$dispose()
+  })
+
+  it.each([30, 60, 120, 180, 360, 720, 1440])(
+    'removes a card exactly at the %i-minute boundary',
+    (minutes) => {
+      localStorage.setItem(RETENTION_MIRROR_KEY, String(minutes))
+      setActivePinia(createPinia())
+      const store = useAiInvokeRunsStore()
+      finishOne(store, 'g.boundary')
+
+      vi.advanceTimersByTime(minutes * 60_000 - 1_000)
+      expect(store.runsByGroup['g.boundary']).toBeDefined()
+
+      vi.advanceTimersByTime(1_000)
+      expect(store.runsByGroup['g.boundary']).toBeUndefined()
+      store.$dispose()
+    },
+  )
+
+  it('restores by the mirror, and fails open when the mirror is missing', () => {
+    const finishedAtMs = Date.now() - 45 * 60_000
+
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    seedFinishedSnapshot('g.restore.30', finishedAtMs)
+    const short = useAiInvokeRunsStore()
+    expect(short.runsByGroup['g.restore.30']).toBeUndefined()
+    short.$dispose()
+
+    setActivePinia(createPinia())
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    seedFinishedSnapshot('g.restore.never', finishedAtMs)
+    const never = useAiInvokeRunsStore()
+    expect(never.runsByGroup['g.restore.never']).toBeDefined()
+    never.$dispose()
+
+    // No mirror: restore everything. Assuming 30 here would permanently delete the cards
+    // of somebody who chose "never expires" and has not been told the setting yet — and
+    // there is no way back from that. The first sweep after the value lands is the cost
+    // of the other direction.
+    setActivePinia(createPinia())
+    localStorage.removeItem(RETENTION_MIRROR_KEY)
+    seedFinishedSnapshot('g.restore.absent', finishedAtMs)
+    const failOpen = useAiInvokeRunsStore()
+    expect(failOpen.runsByGroup['g.restore.absent']).toBeDefined()
+    failOpen.$dispose()
+  })
+
+  it('adopts the server value, mirrors it, and sweeps at once', async () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    const store = useAiInvokeRunsStore()
+    finishOne(store, 'g.server.1')
+    expect(store.finishedCount).toBe(1)
+
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: { ok: true, settings: { ai_finished_card_retention_minutes: 0 }, is_default: false },
+    } as any)
+    await store.refreshRetentionSetting()
+
+    expect(vi.mocked(getRequest)).toHaveBeenCalledWith(UI_SETTINGS_PATH)
+    expect(store.retentionMinutes).toBe(0)
+    expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('0')
+    // Swept on adoption, not on the next 1s tick: the list the user just emptied is empty.
+    expect(store.finishedCount).toBe(0)
+    store.$dispose()
+  })
+
+  it('repairs a server value that is not in the domain', async () => {
+    const store = useAiInvokeRunsStore()
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: { settings: { ai_finished_card_retention_minutes: 45 } },
+    } as any)
+    await store.refreshRetentionSetting()
+    expect(store.retentionMinutes).toBe(RETENTION_DEFAULT_MINUTES)
+    store.$dispose()
+  })
+
+  it('keeps a usable value when the lookup fails, and lands on 30 when there is none', async () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '720')
+    const mirrored = useAiInvokeRunsStore()
+    vi.mocked(getRequest).mockRejectedValueOnce(new Error('offline'))
+    await mirrored.refreshRetentionSetting()
+    expect(mirrored.retentionMinutes).toBe(720)
+    expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('720')
+    mirrored.$dispose()
+
+    setActivePinia(createPinia())
+    localStorage.removeItem(RETENTION_MIRROR_KEY)
+    const bare = useAiInvokeRunsStore()
+    vi.mocked(getRequest).mockRejectedValueOnce(new Error('offline'))
+    await bare.refreshRetentionSetting()
+    expect(bare.retentionMinutes).toBe(RETENTION_DEFAULT_MINUTES)
+    bare.$dispose()
+  })
+
+  it('coalesces overlapping lookups into a single request', async () => {
+    const store = useAiInvokeRunsStore()
+    vi.mocked(getRequest).mockResolvedValue({
+      data: { settings: { ai_finished_card_retention_minutes: 60 } },
+    } as any)
+
+    await Promise.all([store.refreshRetentionSetting(), store.refreshRetentionSetting()])
+
+    const calls = vi.mocked(getRequest).mock.calls.filter(([path]) => path === UI_SETTINGS_PATH)
+    expect(calls).toHaveLength(1)
+    expect(store.retentionMinutes).toBe(60)
+    store.$dispose()
+  })
+
+  it('adopts another tab\'s save from the storage event and sweeps immediately', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    const store = useAiInvokeRunsStore()
+    finishOne(store, 'g.storage.1')
+    expect(store.finishedCount).toBe(1)
+
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: RETENTION_MIRROR_KEY, oldValue: '30', newValue: '0',
+    }))
+    expect(store.retentionMinutes).toBe(0)
+    expect(store.finishedCount).toBe(0)
+
+    // Widening the setting does not resurrect what is already gone: retention decides how
+    // long results will last from now on, it does not undo removals (L0003 §2-5).
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: RETENTION_MIRROR_KEY, oldValue: '0', newValue: '-1',
+    }))
+    expect(store.retentionMinutes).toBe(-1)
+    expect(store.finishedCount).toBe(0)
+
+    // Any other key in localStorage is none of this listener's business.
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'fg_refresh_token', oldValue: null, newValue: '0',
+    }))
+    expect(store.retentionMinutes).toBe(-1)
+    store.$dispose()
+  })
+
+  it('drops a lookup response that lost the race to a storage event', async () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    const store = useAiInvokeRunsStore()
+
+    let settle: (value: unknown) => void = () => {}
+    vi.mocked(getRequest).mockImplementationOnce(
+      () => new Promise((resolve) => { settle = resolve }) as any,
+    )
+    const pending = store.refreshRetentionSetting()
+
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: RETENTION_MIRROR_KEY, oldValue: '30', newValue: '-1',
+    }))
+    expect(store.retentionMinutes).toBe(-1)
+
+    settle({ data: { settings: { ai_finished_card_retention_minutes: 30 } } })
+    await pending
+
+    // The slow answer describes a state that is already two saves old.
+    expect(store.retentionMinutes).toBe(-1)
+    store.$dispose()
+  })
+
+  it('retries a quota-refused write with only the newest cards, then keeps them in memory', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    const store = useAiInvokeRunsStore()
+    const total = PERSIST_QUOTA_FALLBACK_CARDS + 3
+
+    // setSystemTime rather than advanceTimersByTime: the cards need distinct
+    // finishedAtMs values, but the 1s clock must not fire in between or the refusal
+    // would land on a snapshot of one card instead of the full one.
+    const base = Date.now()
+    for (let i = 0; i < total; i += 1) {
+      vi.setSystemTime(new Date(base + i * 1_000))
+      finishOne(store, `g.quota.${String(i).padStart(2, '0')}`)
+    }
+    expect(sessionStorage.getItem(FINISHED_STORAGE_KEY)).toBeNull()
+
+    const realSetItem = Storage.prototype.setItem
+    let refusalsLeft = 1
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+      function (this: Storage, key: string, value: string) {
+        if (key === FINISHED_STORAGE_KEY && refusalsLeft > 0) {
+          refusalsLeft -= 1
+          throw new DOMException('quota exceeded', 'QuotaExceededError')
+        }
+        return realSetItem.call(this, key, value)
+      },
+    )
+    try {
+      vi.advanceTimersByTime(1_000)   // one flush, refused once, retried once
+    } finally {
+      spy.mockRestore()
+    }
+    expect(refusalsLeft).toBe(0)
+
+    const stored = JSON.parse(sessionStorage.getItem(FINISHED_STORAGE_KEY) as string)
+    expect(Object.keys(stored)).toHaveLength(PERSIST_QUOTA_FALLBACK_CARDS)
+    expect(stored[`g.quota.${String(total - 1).padStart(2, '0')}`]).toBeDefined()
+    expect(stored['g.quota.00']).toBeUndefined()
+    // The write was given up on; the registry was not.
+    expect(store.finishedCount).toBe(total)
+    store.$dispose()
+  })
+
+  it('caps the inline banner at 60s regardless of the retention, and closes it at 0', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    const never = useAiInvokeRunsStore()
+    expect(never.inlineResultWindowMs).toBe(60_000)
+    never.$dispose()
+
+    setActivePinia(createPinia())
+    localStorage.setItem(RETENTION_MIRROR_KEY, '1440')
+    const long = useAiInvokeRunsStore()
+    expect(long.inlineResultWindowMs).toBe(60_000)
+    long.$dispose()
+
+    setActivePinia(createPinia())
+    localStorage.setItem(RETENTION_MIRROR_KEY, '0')
+    const immediate = useAiInvokeRunsStore()
+    expect(immediate.inlineResultWindowMs).toBe(0)
+    immediate.$dispose()
   })
 })

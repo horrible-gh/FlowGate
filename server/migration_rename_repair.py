@@ -36,6 +36,26 @@ record the on-disk name for each migration that was already applied under a
 same-number, same-slug variant of that name. Nothing is executed and nothing is
 skipped that has not demonstrably already run — a name is only ever accepted as
 "already applied" when the table proves it ran under the sibling spelling.
+
+flowgate.default.0452 adds the other half of that history. A number collision is not
+always fixed with a letter — sometimes the file *moves*, and then the number is
+exactly what changed. `080_workflow_sequence_provider.sql` moved to `081_…` when
+0413 T0007 resolved its collision with `080_ai_invoke_prompt_audit.sql`, and to
+`081a_…` when that ordinal turned out to be taken as well. A same-number match
+cannot see any of that, so the dev deployment re-ran the file and died on boot,
+twice in a row:
+
+    Starting Database Migrator
+    Database Migration Failed.Failed to apply migration
+    081a_workflow_sequence_provider.sql: duplicate column name: provider_id
+
+Its `migrations` table holds `080b_workflow_sequence_provider.sql` — a third
+spelling, assigned in yet another branch, which no hand-written rename table had
+ever seen. Chasing those one at a time is what produced two rejections, so the
+second pass in `find_renamed_migrations` matches on the slug alone and lets the
+file sets themselves say what moved where: an applied name whose file is gone,
+plus exactly one pending file with the same slug, is a rename. Anything
+ambiguous is left pending, which fails loudly rather than silently.
 """
 
 from __future__ import annotations
@@ -54,10 +74,19 @@ except ImportError:  # pragma: no cover - vendored layout guard
 # letters between them, so a match means "same number, same name".
 _LETTER_SUFFIX = re.compile(r"^(\d+)[A-Za-z]*_")
 
+# The whole ordinal, letters included. Only the second pass below uses this, and
+# only because there the number itself is what the rename changed.
+_ORDINAL = re.compile(r"^\d+[A-Za-z]*_")
+
 
 def migration_key(filename: str) -> str:
     """Collapse a migration filename to number + slug, ignoring the letter suffix."""
     return _LETTER_SUFFIX.sub(r"\1_", filename.strip()).lower()
+
+
+def migration_slug(filename: str) -> str:
+    """Drop the ordinal entirely, leaving the slug that says what the file does."""
+    return _ORDINAL.sub("", filename.strip()).lower()
 
 
 def find_renamed_migrations(applied, on_disk) -> list[tuple[str, str]]:
@@ -66,11 +95,42 @@ def find_renamed_migrations(applied, on_disk) -> list[tuple[str, str]]:
     Returns [(applied_as, on_disk_name), …] sorted by the on-disk name. A file
     that is already recorded, or that has no already-applied sibling, is absent —
     genuinely new migrations are left pending so the migrator still applies them.
+
+    Two passes, in this order.
+
+    1. **Same number, same slug** — `042a_…` beside `042_…`, a collision fixed by
+       appending or dropping a letter. This is the case 0358 was written for.
+    2. **Same slug, any number** — 0452, the module docstring's second failure
+       mode: the file moved to a different ordinal, so pass 1 is blind to it.
+
+    Pass 2 is deliberately narrow. Three conditions, all required:
+
+      * the already-applied name is **gone from disk**. A move is not a copy; if
+        both names are still shipped they are two different migrations and the
+        pending one genuinely has to run.
+      * exactly **one** applied name carries that slug, and
+      * exactly **one** pending file carries it.
+
+    Ambiguity therefore leaves the file pending. That is the safe direction: the
+    worst case is the boot failure this module exists to prevent, reported with
+    the offending file name attached, rather than a migration that never ran
+    being recorded as done.
     """
     applied = set(applied)
+    on_disk = set(on_disk)
+
     by_key: dict[str, list[str]] = {}
     for name in applied:
         by_key.setdefault(migration_key(name), []).append(name)
+
+    # Only a row whose file has disappeared can be the left-hand side of a move,
+    # and only a file with no row can be its right-hand side.
+    moved_from: dict[str, list[str]] = {}
+    for name in applied - on_disk:
+        moved_from.setdefault(migration_slug(name), []).append(name)
+    moved_to: dict[str, list[str]] = {}
+    for name in on_disk - applied:
+        moved_to.setdefault(migration_slug(name), []).append(name)
 
     pairs = []
     for name in sorted(on_disk):
@@ -79,6 +139,10 @@ def find_renamed_migrations(applied, on_disk) -> list[tuple[str, str]]:
         siblings = sorted(by_key.get(migration_key(name), []))
         if siblings:
             pairs.append((siblings[0], name))
+            continue
+        candidates = moved_from.get(migration_slug(name), [])
+        if len(candidates) == 1 and len(moved_to.get(migration_slug(name), [])) == 1:
+            pairs.append((candidates[0], name))
     return pairs
 
 

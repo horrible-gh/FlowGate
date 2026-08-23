@@ -143,10 +143,30 @@ export default {
   settings: {
     nav: {
       account: '계정',
+      ai_run_monitor: 'AI 실행 모니터',
       security: '보안 및 세션',
       system: '시스템',
       users: '프로젝트 관리',
       project: '프로젝트',
+    },
+    ai_run_monitor: {
+      title: 'AI 실행 모니터',
+      description: '헤더 AI 실행 모니터에 완료 카드를 얼마나 남길지 이 계정에만 적용해 설정합니다.',
+      retention: {
+        label: 'AI 완료 카드 유지 시간',
+        hint: '헤더 AI 실행 모니터에서 완료 카드가 남는 시간을 선택합니다.',
+        never: '사라지지 않음',
+        immediate: '바로 사라짐',
+        minutes: '{minutes}분',
+        hour: '{hours}시간',
+        hours: '{hours}시간',
+        loading: '불러오는 중…',
+        save: '저장',
+        saving: '저장 중…',
+        saved: '저장 완료',
+        load_failed: '설정을 불러오지 못했습니다.',
+        save_failed: '설정을 저장하지 못했습니다.',
+      },
     },
     security_sessions: {
       title: '보안 및 로그인 세션',
