@@ -2340,6 +2340,142 @@ def _chain_message(chain: dict, doc_id: str) -> Optional[str]:
     return sentence.format(doc_id=doc_id) if sentence else None
 
 
+def settle_completed_step(
+    *,
+    project: str,
+    group_id: Optional[str],
+    doc_id: str,
+    doc_type: str,
+    actor_user_id: str,
+    completed_seq: Optional[int],
+    target_seq: Optional[int],
+    user_paused_probe,
+) -> dict:
+    """What happens after a step's output is accepted (0414 L0008 §2.7).
+
+    Auto-approve -> target reached? -> user pause? -> continue. This used to live inline in
+    _continuation_self_chain, which was fine while there was one caller. There are two now:
+    a step with NO review gate settles here straight from the inbox (unchanged behaviour),
+    and a step that just earned a `pass` verdict settles here from the engine. Two copies of
+    this sequence would drift, and the drift would be silent.
+
+    ``user_paused_probe`` is the one thing the two callers cannot share. The inbox asks
+    ai_invoke_service.mark_user_paused, which needs the LIVE run still carrying the pause
+    flag; by the time the engine gets here the hop that carried it has already finished, so
+    it reads the durable paused row instead. The ORDER — pause checked after approval and
+    before the next hop — is identical either way, which is the part that matters
+    ("진행 중 단계는 끝까지" includes its approval, P0008 S4/S5).
+
+    Returns {"outcome": "completed" | "paused" | "continue" | "stopped", "stop_code", ...}.
+    Never raises: the submitted document is already saved, and only the CONTINUATION stops.
+    """
+    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
+
+    if (doc_type or "").upper() not in AUTO_COMPLETE_TYPES:
+        # Permission source of truth = the SAME resolver the live approve button and
+        # documents.create_next_approved use (workflow._get_user_permissions, the is_admin
+        # stub). The real RBAC tables (user_project_roles / role_permissions) are
+        # unpopulated on the live system, so permission_service.get_user_permissions
+        # returns ∅ for an is_admin approver → this auto-approve ALWAYS paused with "lacks
+        # document.approve" even though the human IS an approver. That is the reported
+        # "continuous run stops at the work instruction" bug (group 0086 TR0004 rework).
+        # documents.py:create_next_approved warns both approval paths must move together;
+        # this is the second path, previously left on the wrong (∅) resolver.
+        from modules.flow_gate.db import users as _db_users
+        from modules.flow_gate.workflow.routers.workflow import (
+            _get_user_permissions as _resolve_user_permissions,
+        )
+
+        actor_user = _db_users.get_by_id(actor_user_id) or {
+            "user_id": actor_user_id, "is_admin": 0,
+        }
+        approver_perms = _resolve_user_permissions(actor_user)
+        if "document.approve" not in approver_perms:
+            return {
+                "outcome": "stopped",
+                "stop_code": "approve_denied",
+                "reason": (
+                    "issuer lacks document.approve; awaiting human approval before continuing."
+                ),
+            }
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+        try:
+            transition_document_review(
+                doc_id=doc_id,
+                action="approve",
+                actor_user_id=actor_user_id,
+                user_permissions=approver_perms,
+            )
+        except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
+            return {
+                "outcome": "stopped",
+                "stop_code": "approve_failed",
+                "reason": f"auto-approve failed: {exc}",
+                "detail": str(exc),
+            }
+
+    # Target reached → stop the chain. Reached only AFTER the just-submitted document was
+    # auto-approved above, so the last step ends approved (point 2), not left submitted.
+    # 0414 L0008 §2.7: and since a `pass` verdict is what brings the engine here, the LAST
+    # step of a reviewed chain is reviewed too — the order is review, approve, finish.
+    if completed_seq is not None and target_seq is not None and completed_seq >= target_seq:
+        # 0252 L0009 §3: a pause that never got its boundary (the target landed first)
+        # must not survive chain termination — a leftover row would revive a ghost
+        # "paused" card on the next miniplayer bootstrap. Best-effort, like the signal.
+        try:
+            from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
+            if group_id:
+                _db_paused.delete_by_group(group_id)
+        except Exception:
+            import LogAssist.log as logger
+            logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
+        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
+        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
+        # never a notification-feed event. Best-effort: a logging failure must not turn the
+        # already-saved continuous run's clean stop into an error.
+        try:
+            from modules.flow_gate.workflow import event_logger as _event_logger
+            ended_doc = db_docs.get_by_id(doc_id) or {}
+            ended_pk = ended_doc.get("id")
+            if ended_pk is not None:
+                _event_logger.log_continuous_work_ended(
+                    project_id=project,
+                    actor_user_id=actor_user_id,
+                    document_id=ended_pk,
+                    doc_id=doc_id,
+                    group_id=ended_doc.get("group_id"),
+                    target_seq=target_seq,
+                )
+        except Exception as _sig_exc:  # noqa: BLE001 — best-effort state signal
+            import LogAssist.log as logger
+            logger.warning(
+                f"[inbox] continuous_work_ended signal failed (ignored): {_sig_exc}"
+            )
+        return {"outcome": "completed", "stop_code": "chain_completed"}
+
+    # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
+    # token would be minted, and BEFORE the advance-blocked pause so a user pause is never
+    # mis-reported as a generic block. The row is NOT deleted here; the resume path consumes
+    # it (L0009 §2.4). Fail-open on a lookup error: a pause probe must never stall a healthy
+    # unmanned chain with a 500.
+    try:
+        _user_paused = bool(user_paused_probe())
+    except Exception:
+        import LogAssist.log as logger
+        logger.warning("[inbox] boundary pause identity probe failed (ignored)")
+        _user_paused = False
+    if _user_paused:
+        return {
+            "outcome": "paused",
+            "stop_code": "user_paused",
+            "reason": (
+                "paused by user at the step boundary; resume from the miniplayer "
+                "(or the answer/ment-copy path) to continue."
+            ),
+        }
+    return {"outcome": "continue"}
+
+
 def _continuation_self_chain(
     request: Request,
     token_rec: dict,
@@ -2446,111 +2582,6 @@ def _continuation_self_chain(
         )
         return _stop("head_slot_mismatch")
 
-    # Auto-approve the just-submitted document so the head can advance — and do it BEFORE the
-    # target-reached check so the LAST step is left approved too (group 0086 TR0004 rework
-    # rev4 point 2: "최종승인 전까지이므로 마지막 작업도 승인한 상태가 되어야 함"). The continuous run
-    # runs up to the last sequence item; final approval (AC) remains a separate human gate.
-    from modules.flow_gate.documents.routers.documents import AUTO_COMPLETE_TYPES
-    if doc_type.upper() not in AUTO_COMPLETE_TYPES:
-        # Permission source of truth = the SAME resolver the live approve button and
-        # documents.create_next_approved use (workflow._get_user_permissions, the is_admin
-        # stub). The real RBAC tables (user_project_roles / role_permissions) are
-        # unpopulated on the live system, so permission_service.get_user_permissions
-        # returns ∅ for an is_admin approver → this auto-approve ALWAYS paused with "lacks
-        # document.approve" even though the human IS an approver. That is the reported
-        # "continuous run stops at the work instruction" bug (group 0086 TR0004 rework).
-        # documents.py:create_next_approved warns both approval paths must move together;
-        # this is the second path, previously left on the wrong (∅) resolver.
-        from modules.flow_gate.db import users as _db_users
-        from modules.flow_gate.workflow.routers.workflow import (
-            _get_user_permissions as _resolve_user_permissions,
-        )
-        actor_user = _db_users.get_by_id(actor_user_id) or {
-            "user_id": actor_user_id, "is_admin": 0,
-        }
-        approver_perms = _resolve_user_permissions(actor_user)
-        if "document.approve" not in approver_perms:
-            envelope["continuation_paused"] = True
-            envelope["continuation_reason"] = (
-                "issuer lacks document.approve; awaiting human approval before continuing."
-            )
-            return _stop("approve_denied")
-        from modules.flow_gate.workflow.pipeline_service import transition_document_review
-        try:
-            transition_document_review(
-                doc_id=canonical_doc_id,
-                action="approve",
-                actor_user_id=actor_user_id,
-                user_permissions=approver_perms,
-            )
-        except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
-            envelope["continuation_paused"] = True
-            envelope["continuation_reason"] = f"auto-approve failed: {exc}"
-            return _stop("approve_failed", detail=str(exc))
-
-    # Target reached → stop the chain. Reached only AFTER the just-submitted document was
-    # auto-approved above, so the last step ends approved (point 2), not left submitted.
-    if completed_seq is not None and completed_seq >= target_seq:
-        envelope["continuation_remaining"] = 0
-        envelope["continuation_done"] = True
-        # 0252 L0009 §3: a pause that never got its boundary (the target landed first)
-        # must not survive chain termination — a leftover row would revive a ghost
-        # "paused" card on the next miniplayer bootstrap. Best-effort, like the signal.
-        try:
-            from modules.flow_gate.db import ai_invoke_paused_chains as _db_paused
-            if chain_group:
-                _db_paused.delete_by_group(chain_group)
-        except Exception:
-            import LogAssist.log as logger
-            logger.warning("[inbox] paused-row cleanup on chain end failed (ignored)")
-        # R0001 group 0125 / NR0003 권고 1: record the explicit "연속작업 종료" signal that the
-        # system previously lacked entirely (NR0003 §발견 3). State-board aggregation only —
-        # never a notification-feed event. Best-effort: a logging failure must not turn the
-        # already-saved continuous run's clean stop into an error.
-        try:
-            from modules.flow_gate.workflow import event_logger as _event_logger
-            ended_doc = db_docs.get_by_id(canonical_doc_id) or {}
-            ended_pk = ended_doc.get("id")
-            if ended_pk is not None:
-                _event_logger.log_continuous_work_ended(
-                    project_id=project,
-                    actor_user_id=actor_user_id,
-                    document_id=ended_pk,
-                    doc_id=canonical_doc_id,
-                    group_id=ended_doc.get("group_id"),
-                    target_seq=target_seq,
-                )
-        except Exception as _sig_exc:  # noqa: BLE001 — best-effort state signal
-            import LogAssist.log as logger
-            logger.warning(
-                f"[inbox] continuous_work_ended signal failed (ignored): {_sig_exc}"
-            )
-        return _stop("chain_completed", item_seq=completed_seq)
-
-    # Boundary pause check (group 0252 L0009 §2.2): evaluated once, right before the next
-    # token would be minted, and BEFORE the advance-blocked pause below so a user pause is
-    # never mis-reported as a generic block. Runs AFTER the auto-approve so the finished
-    # step ends approved — "진행 중 단계는 끝까지" includes its approval (P0008 S4/S5). The
-    # row is NOT deleted here; the resume path consumes it (L0009 §2.4). Fail-open on a
-    # lookup error: a pause probe must never stall a healthy unmanned chain with a 500.
-    try:
-        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-        _user_paused = bool(
-            chain_group
-            and _ai_invoke.mark_user_paused(chain_group, token_rec.get("ai_run_id"))
-        )
-    except Exception:
-        import LogAssist.log as logger
-        logger.warning("[inbox] boundary pause identity probe failed (ignored)")
-        _user_paused = False
-    if _user_paused:
-        envelope["continuation_paused"] = True
-        envelope["continuation_reason"] = (
-            "paused by user at the step boundary; resume from the miniplayer "
-            "(or the answer/ment-copy path) to continue."
-        )
-        return _stop("user_paused", item_seq=completed_seq)
-
     # 0317 TR0011 (Q153 opt-1): HOW the chain continues depends on who drives it.
     #  • Engine-driven unmanned run (a live start_run worker exists for this group): do NOT
     #    hand the next token to the running worker — that single provider process would write
@@ -2561,7 +2592,16 @@ def _continuation_self_chain(
     #  • Copy-mention semi-manned run (no engine worker to re-spawn): keep minting next_token so
     #    the human's external AI self-continues exactly as before.
     from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-    if _ai_invoke.has_active_run(chain_group):
+
+    def _hand_off_to_engine(*, review_pending: bool) -> dict:
+        """Queue the next hop, tell the browser, and end this worker's step.
+
+        Both engine boundaries end here — the ordinary "this step is done, run the next one"
+        handoff and the 0414 review gate's "this step is done but has to be reviewed first".
+        They differ only in WHAT the engine does next, which is the gate's decision and not
+        the inbox's, so no new stop_code is minted for either: this is a normal hop handoff
+        and the miniplayer's existing grace window applies unchanged.
+        """
         # Snapshot the current hop before queueing the next one. The worker will emit its
         # ordinary ai_invoke_finished event before the replacement worker can start, so the
         # browser needs this explicit handoff marker to keep the chain-level monitor live
@@ -2584,15 +2624,19 @@ def _continuation_self_chain(
             "api_base_url": _inbox_api_base(request),
         })
         # No next_token: the worker stops after this hop; the engine re-spawns the next hop's
-        # worker (re-resolving its provider) once this one settles. The step just completed is
-        # already auto-approved above, so advance_workflow at re-spawn finds the next head.
+        # worker (re-resolving its provider) once this one settles.
         envelope["continuation_pending"] = True
         envelope["continuation_respawn"] = True
         # L0007 §2.12: the next hop is BY DEFINITION the slot after the one just filled, so
-        # this is stated rather than re-queried — and the worker can read where the chain went
-        # from the response alone instead of inferring it from the mention.
+        # this is stated rather than re-queried — the worker reads where the chain went from
+        # the response alone instead of inferring it from the mention. Under the review gate
+        # that is not true yet: the next hop reviews the slot just filled, and the chain only
+        # moves on once it passes, so no next slot is announced.
         envelope["continuation_completed_item_seq"] = completed_seq
-        envelope["continuation_next_item_seq"] = completed_seq + 1
+        if review_pending:
+            envelope["continuation_review_pending"] = True
+        else:
+            envelope["continuation_next_item_seq"] = completed_seq + 1
         # Reuse the existing lifecycle channel so deployed clients that do not know the
         # marker simply refresh the same running run, while MainPanel can distinguish this
         # from a real start through continuation_pending. Best-effort: the queue above is the
@@ -2627,6 +2671,7 @@ def _continuation_self_chain(
                         "continuation_completed_doc_id": canonical_doc_id,
                         "continuation_completed_item_seq": completed_seq,
                         "continuation_target_seq": target_seq,
+                        "continuation_review_pending": review_pending,
                     },
                     audience="*",
                     project=project,
@@ -2639,6 +2684,58 @@ def _continuation_self_chain(
                 f"[inbox] continuation handoff signal failed (ignored): {_handoff_exc}"
             )
         return _stop("hop_handoff", item_seq=completed_seq)
+
+    # 0414 L0008 §2.8: the [검수] gate goes HERE — after review mode and the head-slot check,
+    # immediately before the auto-approve. All four conditions must hold:
+    #   1. review mode is off. It already returned review_hold above, and it WINS: review
+    #      mode means "not go yet", and there is nothing to gate while the chain is not
+    #      allowed to advance at all (L0008 §4.3). The two maps still reach the paused row,
+    #      so turning review mode off and resuming starts reviewing.
+    #   2. the filled slot is known (head_slot_mismatch already returned above).
+    #   3. an engine run drives this group — somebody has to launch the review hop. A
+    #      copy-mention semi-manned chain has nobody, so it keeps today's behaviour instead
+    #      of silently deciding to review and then never reviewing.
+    #   4. this slot's review count is not 0.
+    # When it holds, the document is NOT auto-approved: it stays pending_review and the
+    # engine's gate takes it from here. Invariant R1 lives on this branch.
+    _review_counts, _reviewer_overrides = _ai_invoke.active_review_selection(chain_group)
+    if (
+        _ai_invoke.has_active_run(chain_group)
+        and _ai_invoke.resolve_review_count(_review_counts, completed_seq) != 0
+    ):
+        return _hand_off_to_engine(review_pending=True)
+
+    # Auto-approve the just-submitted document so the head can advance, then the
+    # target-reached check, then the boundary pause — one extracted helper now (L0008 §2.7),
+    # so a step that got here through a `pass` verdict and a step that was never reviewed at
+    # all are settled by exactly the same code.
+    settled = settle_completed_step(
+        project=project,
+        group_id=chain_group,
+        doc_id=canonical_doc_id,
+        doc_type=doc_type,
+        actor_user_id=actor_user_id,
+        completed_seq=completed_seq,
+        target_seq=target_seq,
+        user_paused_probe=lambda: bool(
+            chain_group and _ai_invoke.mark_user_paused(chain_group, token_rec.get("ai_run_id"))
+        ),
+    )
+    if settled["outcome"] == "stopped":
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = settled["reason"]
+        return _stop(settled["stop_code"], detail=settled.get("detail"))
+    if settled["outcome"] == "completed":
+        envelope["continuation_remaining"] = 0
+        envelope["continuation_done"] = True
+        return _stop(settled["stop_code"], item_seq=completed_seq)
+    if settled["outcome"] == "paused":
+        envelope["continuation_paused"] = True
+        envelope["continuation_reason"] = settled["reason"]
+        return _stop(settled["stop_code"], item_seq=completed_seq)
+
+    if _ai_invoke.has_active_run(chain_group):
+        return _hand_off_to_engine(review_pending=False)
 
     # Advance: mint the next step's token + continuous mention (carry the review flag so the
     # next step keeps its review latitude — R0001 [AI 검토 모드] stays on for the whole run).

@@ -83,11 +83,70 @@ LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's las
 RUN_LIST_LIMIT_DEFAULT = 20      # GET /ai-invoke/runs default page size (L0007 §2.10.3)
 RUN_LIST_LIMIT_MAX = 100         # GET /ai-invoke/runs clamp ceiling
 
+# ── 0414 L0008 §1: the [검수] gate's parameters and its seven stop codes ──────────────
+# Nothing about a review round is STORED. Rounds used, "which stage is running", whether a
+# rejection already happened — all of it is re-derived from document_reviews plus the
+# document's revision_no/doc_review_status on every read (§2.3), which is what makes a
+# restart, a cold [이어서 진행] and an in-flight hop boundary all agree for free.
+REVIEW_COUNT_VALUES = frozenset({-1, 0, 1, 2, 3})
+REVIEW_COUNT_DEFAULT = 0                 # no selection = this step is not reviewed
+# -1 ("until it passes") has NO ceiling: review and rework repeat until a `pass`
+# verdict. No round count hands the chain to a human. What keeps it from spinning is
+# the pair of loop breakers in _check_expected_progress — a rework that raised no new
+# revision, and the same findings coming back twice.
+REVIEW_ROUNDS_NO_LIMIT = -1              # resolve_round_limit's answer for count == -1
+REVIEW_STALL_ROUNDS = 2                  # this many identical issues digests = no progress
+REVIEW_REASON_MAX_FINDINGS = 20          # findings copied into the auto-rejection text
+# Deliberately equal to pipeline_service.AI_RESPONSE_MAX_LEN: the rejection and the response
+# to it sit side by side on the same screen, so one cap serves both.
+REVIEW_REASON_MAX_CHARS = 4000
+REVIEW_VERDICTS = frozenset({"pass", "issues", "hold"})
+WORK_HOP_KIND = "work"
+REVIEW_HOP_KIND = "review"
+REWORK_HOP_KIND = "rework"
+# A review/rework hop is mode="single" but it IS one of the chain's hops, so it takes the
+# chain's per-hop budget instead of the single-run formula. Both resolve to 3600 when no
+# pick was made, which is what a single run already got — no existing run moves (L0008 §5).
+CHAIN_MEMBER_HOP_KINDS = frozenset({REVIEW_HOP_KIND, REWORK_HOP_KIND})
+
+# L0008 §1.2. `review_hold` is deliberately NOT reused: that name already belongs to
+# [AI 검토 모드]'s stop, and a reviewer's `hold` VERDICT is a different event.
+# 0414 M0020 + the 0022-TR rejection: the gate no longer stops on a round COUNT at all.
+# A finite budget cannot be "exhausted" (its last round is reworked and then the step
+# advances), and -1 has no ceiling left to reach. BOTH codes stay because chains parked
+# before those changes still carry them, and their cards must keep rendering the same
+# sentence and notification. The cap code additionally became resumable (see
+# RESUMABLE_STOP_CODES below): with the round-count branch gone from resolve_review_gate,
+# resuming one just re-derives the gate like any fresh -1 chain.
+REVIEW_EXHAUSTED_STOP_CODE = "review_exhausted"          # legacy rows only, never emitted now
+REVIEW_CAP_REACHED_STOP_CODE = "review_cap_reached"      # legacy rows only, never emitted now
+REVIEW_VERDICT_HOLD_STOP_CODE = "review_verdict_hold"    # the reviewer returned hold
+REVIEW_STALLED_STOP_CODE = "review_stalled"              # no new revision, or repeated findings
+REVIEW_NO_VERDICT_STOP_CODE = "review_no_verdict"        # the review hop left no review row
+REVIEW_REJECT_DENIED_STOP_CODE = "review_reject_denied"  # issuer lacks document.reject
+REVIEW_REJECT_FAILED_STOP_CODE = "review_reject_failed"  # the reject transition raised
+REVIEW_STOP_CODES = frozenset({
+    REVIEW_EXHAUSTED_STOP_CODE, REVIEW_CAP_REACHED_STOP_CODE, REVIEW_VERDICT_HOLD_STOP_CODE,
+    REVIEW_STALLED_STOP_CODE, REVIEW_NO_VERDICT_STOP_CODE, REVIEW_REJECT_DENIED_STOP_CODE,
+    REVIEW_REJECT_FAILED_STOP_CODE,
+})
+
 # L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops
 # (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
 RESUMABLE_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
     "question_pending",
+    # 0414 L0008 §1.2: of the seven review stops, only this one answers "would re-running
+    # the hop have a chance?" with yes — the reviewer simply said nothing. Four of the
+    # remaining five need a person: a verdict says hold, the loop is not making progress,
+    # or a permission/transition is broken.
+    REVIEW_NO_VERDICT_STOP_CODE,
+    # 0414 0022-TR rejection review: resolve_review_gate no longer has a round-count branch
+    # at all, so a legacy review_cap_reached row answers "yes" too — resuming it re-derives
+    # the gate from the current reviews/revision rows exactly like a fresh -1 chain, and
+    # review+rework simply continues until a pass. REVIEW_EXHAUSTED_STOP_CODE stays out:
+    # nothing here has verified its resume path the way the cap row's was verified below.
+    REVIEW_CAP_REACHED_STOP_CODE,
 })
 # L0007 §2.11 — every stop code that must reach a human. The set is SPLIT by speaker: the
 # engine fires the three below (the inbox never sees them — no request arrives), the inbox
@@ -95,6 +154,10 @@ RESUMABLE_STOP_CODES = frozenset({
 # Disjoint by construction ⇒ a double notification is impossible.
 ENGINE_NOTIFY_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout",
+    # 0414 L0008 §1.2: every review stop is spoken by the ENGINE — the inbox never sees
+    # these branches (no request arrives). Putting them here and nowhere else keeps
+    # INBOX_NOTIFY_STOP_CODES disjoint, so a double notification stays impossible.
+    *REVIEW_STOP_CODES,
 })
 # "question_pending" (NR0003 후속 조치 제안 1/3) is deliberately NOT in this set: it means
 # the hop stopped because it is waiting on a human answer, not because it failed, so it
@@ -103,6 +166,9 @@ INBOX_NOTIFY_STOP_CODES = frozenset({
     "head_slot_mismatch", "approve_denied", "approve_failed", "advance_blocked",
 })
 NOTIFY_STOP_CODES = ENGINE_NOTIFY_STOP_CODES | INBOX_NOTIFY_STOP_CODES
+assert not (ENGINE_NOTIFY_STOP_CODES & INBOX_NOTIFY_STOP_CODES), (
+    "L0007 §2.11: the engine and inbox notification sets must stay disjoint"
+)
 
 # ── 홉 핸드오프의 내구성 (0406 T0022 작업 4) ──────────────────────────────────
 # 다음 홉의 의도는 프로세스 메모리 dict(_auto_resume) 에만 있었다. 서버가 재기동하면
@@ -1018,6 +1084,16 @@ def start_run(
     # above — never persisted outside the paused-chain row a pause snapshots it into. None (or
     # out of STEP_TIMEOUT_MIN_SEC..STEP_TIMEOUT_MAX_SEC) falls back to HOP_TIMEOUT_SEC.
     continuation_step_timeout_sec: Optional[int] = None,
+    # 0414 P0007: the [검수] tab's two session-scoped maps — mode-aware worker item_seq ->
+    # review count, and -> reviewer provider_id. They ride the RUN (never a token), exactly
+    # like the provider/note maps, and are snapshotted into the paused row so a resume or a
+    # hop handoff keeps reviewing with the same selection (DB0009).
+    continuation_review_count_overrides: Optional[dict] = None,
+    continuation_reviewer_overrides: Optional[dict] = None,
+    # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
+    # the chain counters do not move for it — this is what lets a card say WHAT is running
+    # instead of reporting a frozen progress number.
+    hop_kind: str = WORK_HOP_KIND,
 ) -> dict:
     """Admit and launch a run. mention_builder(raw_token, scratch_dir) builds the
     worker mention through the exact token_routes path so the prompt the AI reads
@@ -1347,9 +1423,17 @@ def start_run(
     else:
         # A single run is a degenerate one-hop chain. Returning the same payload
         # shape keeps clients simple without changing the run counters' meaning.
-        chain_id = run_id
-        chain_docs_target = docs_target
-        chain_docs_reached = 0
+        #
+        # 0414 L0008 §5 체인 카운터: unless the CALLER named a chain. A review/rework hop is
+        # mode="single" but belongs to a running chain, and overwriting chain_id with its own
+        # run_id would break the lease handoff (which requires a matching chain_id) and reset
+        # the miniplayer's progress to 0. An ordinary single run passes none of these three
+        # and still resolves to exactly the values above, so nothing existing moves.
+        chain_id = chain_id or run_id
+        if chain_docs_target is None:
+            chain_docs_target = docs_target
+        if chain_docs_reached is None:
+            chain_docs_reached = 0
     scratch = _create_scratch(project_id, run_id)
 
     doc = db_docs.get_by_id(doc_ref) or {}
@@ -1361,7 +1445,23 @@ def start_run(
 
     started_at = now_iso()
     timeout_sec = _resolve_timeout_sec(
-        mode, docs_target, target_to_end, continuation_step_timeout_sec
+        mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
+    )
+    # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
+    # response rather than after the fact — "I picked a reviewer, did it take?" has to be
+    # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
+    # for the instruction mode, applied to the same class of question).
+    review_count_overrides = (
+        continuation_review_count_overrides if mode == "continuous" else None
+    )
+    reviewer_overrides = (
+        continuation_reviewer_overrides if mode == "continuous" else None
+    )
+    hop_item_seq = _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None
+    hop_review_count = resolve_review_count(review_count_overrides, hop_item_seq)
+    hop_reviewer_provider_id = (
+        resolve_reviewer(reviewer_overrides, hop_item_seq, project_id)
+        if hop_review_count else None
     )
     run = {
         "run_id": run_id,
@@ -1512,7 +1612,16 @@ def start_run(
         "issue_builder": issue_builder,
         # Which workflow slot this hop is filling — rides the run into the record, the
         # notification and the stop row so "where did the chain die?" has an answer.
-        "hop_item_seq": _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None,
+        "hop_item_seq": hop_item_seq,
+        # 0414 P0007 / L0008 §2.9: the two [검수] maps ride the run hop to hop, exactly like
+        # the provider/note maps above. Dropped at ANY carrier, the chain reviews its first
+        # step and then silently stops reviewing — the failure shape L0008 §2.9 names.
+        "continuation_review_count_overrides": review_count_overrides,
+        "continuation_reviewer_overrides": reviewer_overrides,
+        "hop_kind": hop_kind,
+        "hop_review_count": hop_review_count,
+        "hop_reviewer_provider_id": hop_reviewer_provider_id,
+        "hop_reviewer_provider_name": _provider_name_of(project_id, hop_reviewer_provider_id),
         "attempts_used": 0,
         "attempts_max": NO_OUTPUT_MAX_ATTEMPTS if mode == "continuous" else 1,
         "retry_block_reason": None,
@@ -1567,6 +1676,15 @@ def start_run(
             "continuation_instruction_mode_fallback_applied"
         ],
         "hop_item_seq": run["hop_item_seq"],
+        # 0414 P0007 시작 응답: the selection as stored, plus what it resolved to for THIS
+        # hop. docs_target above is deliberately untouched — review rounds are not documents,
+        # so a reviewed chain and an unreviewed one report the same target.
+        "continuation_review_count_overrides": run["continuation_review_count_overrides"],
+        "continuation_reviewer_overrides": run["continuation_reviewer_overrides"],
+        "hop_kind": run["hop_kind"],
+        "hop_review_count": run["hop_review_count"],
+        "hop_reviewer_provider_id": run["hop_reviewer_provider_id"],
+        "hop_reviewer_provider_name": run["hop_reviewer_provider_name"],
         "worker_document_type": run["worker_document_type"],
         "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
@@ -1613,6 +1731,7 @@ def _resolve_timeout_sec(
     docs_target: int,
     target_to_end: bool,
     continuation_step_timeout_sec: Optional[int] = None,
+    hop_kind: str = WORK_HOP_KIND,
 ) -> int:
     """The run's time budget (L0007 §2.13 / P0006 [홉 예산]).
 
@@ -1627,7 +1746,9 @@ def _resolve_timeout_sec(
     in-range pick wins; anything else (not continuous, no pick, or an out-of-range value that
     somehow reached here) keeps the old fixed budget.
     """
-    if mode == "continuous":
+    # 0414 L0008 §5: a review/rework hop is mode="single" but belongs to the chain, so it
+    # takes the chain's per-hop budget rather than the single-run formula.
+    if mode == "continuous" or hop_kind in CHAIN_MEMBER_HOP_KINDS:
         if (
             continuation_step_timeout_sec is not None
             and STEP_TIMEOUT_MIN_SEC <= continuation_step_timeout_sec <= STEP_TIMEOUT_MAX_SEC
@@ -3505,6 +3626,35 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
                 f"{run.get('inbox_stop_detail') or 'unknown error'}")
     if stop_code == "review_hold":
         return "Review mode: waiting for the human go."
+    # 0414 L0008 §1.2 — one English sentence per code, read by the worker, stored on the
+    # record and shown on the card alike.
+    if stop_code == REVIEW_EXHAUSTED_STOP_CODE:
+        # Legacy (0414 M0020): only chains parked before that change carry this code.
+        return ("Every review round this step was given has been used and the reviewer "
+                "still reported issues. The document is left rejected with those findings; "
+                "a human must take it from here.")
+    if stop_code == REVIEW_CAP_REACHED_STOP_CODE:
+        # Legacy (0414 0022-TR rejection): "until it passes" has no round ceiling any
+        # more, so nothing emits this now; only chains parked earlier carry it. Resuming
+        # it is a normal resume — see REVIEW_CAP_REACHED_STOP_CODE in RESUMABLE_STOP_CODES.
+        return ("Review was set to run until it passes and was parked at the round "
+                "ceiling that setting used to carry. That ceiling is gone: resuming this "
+                "run lets review and rework repeat until a pass, same as any other -1 run.")
+    if stop_code == REVIEW_VERDICT_HOLD_STOP_CODE:
+        return ("The reviewer returned 'hold' — it could not judge this document. "
+                "A human must decide; the chain does not resume on its own.")
+    if stop_code == REVIEW_STALLED_STOP_CODE:
+        return ("The review loop stopped making progress: the rework hop raised no new "
+                "revision, or the same findings came back twice. A human must triage.")
+    if stop_code == REVIEW_NO_VERDICT_STOP_CODE:
+        return ("The review hop finished without recording a verdict. "
+                "The chain stopped and can be resumed.")
+    if stop_code == REVIEW_REJECT_DENIED_STOP_CODE:
+        return ("The chain issuer lacks document.reject, so the reviewer's issues could not "
+                "be turned into a rejection. The document is left unapproved.")
+    if stop_code == REVIEW_REJECT_FAILED_STOP_CODE:
+        return (f"The automatic rejection failed: "
+                f"{run.get('review_reject_detail') or 'unknown error'}")
     if stop_code == "group_lease_denied":
         # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
         denied_op = run.get("lease_denied_operation") or "a group change"
@@ -3729,6 +3879,11 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_instruction_mode=run.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
                     continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+                    # 0414: this refresh runs immediately after pause_run and overwrites every
+                    # column — omitting the two maps here would erase what pause_run just wrote.
+                    continuation_review_count_overrides=run.get(
+                        "continuation_review_count_overrides"),
+                    continuation_reviewer_overrides=run.get("continuation_reviewer_overrides"),
                 )
         except Exception:
             logger.warning(
@@ -3792,6 +3947,12 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_instruction_mode=run.get("continuation_instruction_mode"),
             continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
             continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+            # 0414 DB0009 W4 / L0008 §4.3: policy, not preference — same treatment as
+            # instruction_mode and the budget above, and for the same reason. A system stop
+            # that dropped the selection would resume the chain with the gate switched off,
+            # which is the one failure invariant R1 exists to prevent.
+            continuation_review_count_overrides=run.get("continuation_review_count_overrides"),
+            continuation_reviewer_overrides=run.get("continuation_reviewer_overrides"),
         )
     except Exception:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
@@ -3993,6 +4154,13 @@ def finished_payload(run: dict) -> dict:
         # actually in force while this run was going.
         "lease_blocked_others": list(run.get("lease_blocked_others") or []),
         "hop_item_seq": run.get("hop_item_seq"),
+        # 0414 L0008 §5: which KIND of hop this was. A review or rework hop registers no
+        # document, so without this a card can only report "0 documents" for a hop that did
+        # exactly what it was asked to do.
+        "hop_kind": run.get("hop_kind"),
+        "hop_review_count": run.get("hop_review_count"),
+        "hop_reviewer_provider_id": run.get("hop_reviewer_provider_id"),
+        "hop_reviewer_provider_name": run.get("hop_reviewer_provider_name"),
         "token_id": run.get("token_id"),
         "attempts_used": int(run.get("attempts_used") or 0),
         "attempts_max": run.get("attempts_max"),
@@ -4069,6 +4237,14 @@ def get_status(run_id: str) -> dict:
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
         "elapsed_ms": int((time.monotonic() - run["started_mono"]) * 1000),
+        # 0414 P0007 상태 응답 — the same review facts a live card needs mid-hop.
+        "hop_item_seq": run.get("hop_item_seq"),
+        "hop_kind": run.get("hop_kind"),
+        "hop_review_count": run.get("hop_review_count"),
+        "hop_reviewer_provider_id": run.get("hop_reviewer_provider_id"),
+        "hop_reviewer_provider_name": run.get("hop_reviewer_provider_name"),
+        "continuation_review_count_overrides": run.get("continuation_review_count_overrides"),
+        "continuation_reviewer_overrides": run.get("continuation_reviewer_overrides"),
         # 0359 P0006 [홉 예산]: a live card can now say how much of the budget is gone
         # without anyone re-deriving the formula from the server log.
         "timeout_sec": run.get("timeout_sec"),
@@ -4165,6 +4341,11 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # — this row is where the run object's memory ends, so the per-hop budget pick must
             # be written here or resume_chain has nothing to restore it from.
             continuation_step_timeout_sec=run.get("continuation_step_timeout_sec"),
+            # 0414 P0007 [정상] 일시정지→재개 왕복: the pause is where the run object's memory
+            # of the [검수] selection ends, so this row is the only thing that can hand it
+            # back to resume_chain.
+            continuation_review_count_overrides=run.get("continuation_review_count_overrides"),
+            continuation_reviewer_overrides=run.get("continuation_reviewer_overrides"),
         )
     except Exception:
         logger.warning("ai-invoke paused-row upsert failed for %s", run_id, exc_info=True)
@@ -4242,6 +4423,16 @@ def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     _write_handoff_row(group_id, payload, _active_run_for_group(group_id))
 
 
+def _carry(pending: dict, pending_key: str, run: dict, run_key: str):
+    """The queued value when the queue has one, otherwise the run's (0414 L0008 §2.9).
+
+    `is not None` rather than truthiness on purpose: chain_docs_reached=0 and
+    provider_pinned=False are real values, not "unset".
+    """
+    value = pending.get(pending_key)
+    return value if value is not None else run.get(run_key)
+
+
 def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
     """큐의 의도 + 이 홉의 세션 선택값 = 다음 홉을 그대로 되살릴 한 벌.
 
@@ -4266,15 +4457,33 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
         "locale": pending.get("locale") or run.get("continuation_locale") or "ko",
         "issued_to": pending.get("issued_to") or run.get("issued_to"),
         "api_base_url": pending.get("api_base_url") or run.get("api_base_url"),
-        "provider_overrides": run.get("continuation_provider_overrides"),
-        "base_provider_id": run.get("continuation_base_provider_id"),
-        "provider_pinned": run.get("continuation_provider_pinned"),
-        "note_overrides": run.get("continuation_note_overrides"),
-        "default_note": run.get("continuation_default_note"),
-        "step_timeout_sec": run.get("continuation_step_timeout_sec"),
-        "chain_id": run.get("chain_id"),
-        "chain_docs_target": run.get("chain_docs_target"),
-        "chain_docs_reached": run.get("chain_docs_reached"),
+        # 0414: the queued value wins when it has one. The inbox's payload never carries
+        # these (they ride the run), so a plain inbox handoff still reads them off the run
+        # exactly as before — but a gate bundle DOES carry them, and it must not be
+        # overwritten by a review/rework hop's run, which is mode="single" and holds None
+        # for every continuous-only field. That overwrite is precisely how a chain reviews
+        # its first step and then silently stops reviewing.
+        "provider_overrides": _carry(pending, "provider_overrides",
+                                     run, "continuation_provider_overrides"),
+        "base_provider_id": _carry(pending, "base_provider_id",
+                                   run, "continuation_base_provider_id"),
+        "provider_pinned": _carry(pending, "provider_pinned",
+                                  run, "continuation_provider_pinned"),
+        "note_overrides": _carry(pending, "note_overrides",
+                                 run, "continuation_note_overrides"),
+        "default_note": _carry(pending, "default_note", run, "continuation_default_note"),
+        "step_timeout_sec": _carry(pending, "step_timeout_sec",
+                                   run, "continuation_step_timeout_sec"),
+        # 0414 P0007 전달 지점 3·4: the two [검수] maps join the durable bundle. DB0009 §5-3
+        # calls omitting them the worst of the I3 violations — a lost provider means a
+        # pricier resume, a lost review selection means "approved with nobody reviewing it".
+        "review_count_overrides": _carry(pending, "review_count_overrides",
+                                         run, "continuation_review_count_overrides"),
+        "reviewer_overrides": _carry(pending, "reviewer_overrides",
+                                     run, "continuation_reviewer_overrides"),
+        "chain_id": _carry(pending, "chain_id", run, "chain_id"),
+        "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
+        "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
         "stop_run_id": run.get("run_id"),
     }
 
@@ -4328,6 +4537,11 @@ def _write_handoff_row(
             continuation_instruction_mode=bundle.get("instruction_mode"),
             continuation_auto_approve_item_seqs=bundle.get("auto_approve_item_seqs"),
             continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+            # 0414 DB0009 W2/W4: written on EVERY handoff settlement and every system park.
+            # These two run on every hop, so a miss here loses the selection from the second
+            # hop onward — the quietest possible way to break invariant R1.
+            continuation_review_count_overrides=bundle.get("review_count_overrides"),
+            continuation_reviewer_overrides=bundle.get("reviewer_overrides"),
         )
     except Exception:  # noqa: BLE001 — 기록은 보조 수단이지 진행 조건이 아니다
         logger.warning("ai-invoke handoff row write failed for %s", group_id, exc_info=True)
@@ -4448,24 +4662,41 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     # Carry the session override map AND the header default pin forward so the re-spawned hop
     # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
     # base pin is what an override-less step resolves to (0317 T0013 결함 ③).
+    # 0414: _carry, not a bare overwrite. A review/rework hop is mode="single", so its run
+    # holds None for every continuous-only field — clobbering the queued bundle with those
+    # would drop the provider pin, the notes, the budget AND the review selection the moment
+    # the chain ran its first review hop.
     pending = {
         **pending,
-        "provider_overrides": run.get("continuation_provider_overrides"),
-        "base_provider_id": run.get("continuation_base_provider_id"),
-        "provider_pinned": run.get("continuation_provider_pinned"),
+        "provider_overrides": _carry(pending, "provider_overrides",
+                                     run, "continuation_provider_overrides"),
+        "base_provider_id": _carry(pending, "base_provider_id",
+                                   run, "continuation_base_provider_id"),
+        "provider_pinned": _carry(pending, "provider_pinned",
+                                  run, "continuation_provider_pinned"),
         # 0346 T0005: carry the [전달멘트] note bundle forward the same way — the first-hop-only
         # gap is the exact regression shape this fix is guarding against (D0004 구현 시 반드시
         # 지켜야 할 제약 4).
-        "note_overrides": run.get("continuation_note_overrides"),
-        "default_note": run.get("continuation_default_note"),
+        "note_overrides": _carry(pending, "note_overrides",
+                                 run, "continuation_note_overrides"),
+        "default_note": _carry(pending, "default_note", run, "continuation_default_note"),
         # flowgate.default.0400 M0005: the per-hop budget pick carries forward the same way —
         # dropping it here would silently reset a re-spawned hop back to HOP_TIMEOUT_SEC.
-        "step_timeout_sec": run.get("continuation_step_timeout_sec"),
+        "step_timeout_sec": _carry(pending, "step_timeout_sec",
+                                   run, "continuation_step_timeout_sec"),
+        # 0414 P0007 전달 지점 5 / L0008 §2.9 지점 10.
+        "review_count_overrides": _carry(pending, "review_count_overrides",
+                                         run, "continuation_review_count_overrides"),
+        "reviewer_overrides": _carry(pending, "reviewer_overrides",
+                                     run, "continuation_reviewer_overrides"),
         # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
         # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
-        "chain_id": run.get("chain_id"),
-        "chain_docs_target": run.get("chain_docs_target"),
-        "chain_docs_reached": run.get("chain_docs_reached"),
+        "chain_id": _carry(pending, "chain_id", run, "chain_id"),
+        "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
+        "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
+        # The stop code this hop ended on, so the gate can tell "waiting on a human answer"
+        # apart from "the hop left nothing" without re-querying (L0008 §2.3).
+        "last_stop_code": run.get("stop_code"),
         # 0352 T0004 §3.5: the ai_direct per-item_seq auto-approve selection rides forward
         # the same way instruction_mode does, hop to hop — dropping it here would silently
         # revert a re-spawned hop to "select nothing", handing the AI an N/T the user picked
@@ -4477,7 +4708,10 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     # 오기 때문에 여기서야 다 모인다 — invariant I3.
     _write_handoff_row(group_id, pending, run)
     try:
-        _spawn_auto_resume(group_id, pending)
+        # 0414 L0008 §2.1 진입점 2: the gate decides what the next hop IS — review, rework,
+        # approve-and-continue, or stop. With no review selection it resolves to "work" and
+        # calls the same _spawn_auto_resume this line used to call directly.
+        started = run_review_gate(group_id, pending, run)
     except HTTPException as exc:
         logger.warning("ai-invoke auto-resume rejected for %s: %s",
                        group_id, getattr(exc, "detail", exc))
@@ -4487,6 +4721,8 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         logger.exception("ai-invoke auto-resume failed for %s", group_id)
         _park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
         return
+    if not started:
+        return          # the gate parked the chain; its durable row IS the resume card
     # 후속 홉이 실제로 떴다. **그때서야** 의도를 지운다.
     _clear_handoff_row(group_id, run.get("run_id"))
 
@@ -4515,6 +4751,10 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     chain_docs_target = pending.get("chain_docs_target")
     chain_docs_reached = pending.get("chain_docs_reached")
     auto_approve_item_seqs = pending.get("auto_approve_item_seqs")
+    # 0414 P0007 전달 지점 6: the next WORK hop re-reads the same two maps and resolves them
+    # against ITS own worker item_seq.
+    review_count_overrides = pending.get("review_count_overrides")
+    reviewer_overrides = pending.get("reviewer_overrides")
 
     parts = group_id.split(".")
     project_id = parts[0]
@@ -4571,6 +4811,740 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         chain_docs_reached=chain_docs_reached,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         continuation_step_timeout_sec=step_timeout_sec,
+        continuation_review_count_overrides=review_count_overrides,
+        continuation_reviewer_overrides=reviewer_overrides,
+    )
+
+
+# ── 0414 L0008: the [검수] gate ───────────────────────────────────────────────────────
+#
+# Three entry points call resolve_review_gate and they all get the same answer, because the
+# answer is DERIVED, never stored (§2.1/§2.3):
+#   1. the inbox self-chain boundary (_continuation_self_chain) — "is this slot reviewed?"
+#   2. the engine hop settlement (_maybe_auto_resume_hop) — "review / rework / approve / stop?"
+#   3. the human resume (resume_chain) — the same question after a restart, with no memory
+#
+# invariant R1 (0414 M0020 / CH0019): a step whose review count is not 0 never advances with
+# a reviewer's complaint left unanswered. It passed, or every round it was given was reviewed
+# AND reworked, or the chain stopped. There is no fourth path.
+# The earlier form of R1 — "never advances without a `pass`" — ended a spent budget by parking
+# the chain, which left the LAST round's findings recorded and never fixed. That is exactly
+# what M0020 refused ("지적을 두번했으면 당연히 수정도 두번해야지"), so a finite count is now a
+# budget of review+rework PAIRS: N 검수 · 지적마다 수정 · 마지막 수정 뒤 다음 단계.
+
+
+def _enabled_provider_chain(project_id: Optional[str]) -> list[dict]:
+    """The project's effective provider chain, or [] when it cannot be read."""
+    if not project_id:
+        return []
+    try:
+        return (ai_settings_service.resolve_effective(project_id) or {}).get("providers") or []
+    except Exception:  # noqa: BLE001 — start_run re-resolves and reports the real failure
+        logger.warning("review gate provider chain lookup failed for %s", project_id,
+                       exc_info=True)
+        return []
+
+
+def _provider_enabled(project_id: Optional[str], provider_id: Optional[str]) -> bool:
+    return bool(provider_id) and any(
+        p.get("id") == provider_id for p in _enabled_provider_chain(project_id)
+    )
+
+
+def _first_enabled_provider_id(project_id: Optional[str]) -> Optional[str]:
+    """The project default — first entry of the effective chain (L0008 §2.2)."""
+    chain = _enabled_provider_chain(project_id)
+    return chain[0].get("id") if chain else None
+
+
+def _provider_name_of(project_id: Optional[str], provider_id: Optional[str]) -> Optional[str]:
+    """Display name for a resolved provider id; the id itself when the name is unknown."""
+    if not provider_id:
+        return None
+    for provider in _enabled_provider_chain(project_id):
+        if provider.get("id") == provider_id:
+            return provider.get("name") or provider_id
+    return provider_id
+
+
+def _map_lookup(overrides: Optional[dict], item_seq: Optional[int]):
+    """Both key spellings, exactly as _resolve_continuation_hop_override accepts them."""
+    if not overrides or item_seq is None:
+        return None
+    return overrides.get(str(item_seq), overrides.get(item_seq))
+
+
+def resolve_review_count(review_count_overrides: Optional[dict], item_seq: Optional[int]) -> int:
+    """How many times this step's output is reviewed (L0008 §2.2).
+
+    0 for every step the user did not pick — count 0 never reaches storage, because P0007's
+    normalization already dropped it, so "absent" and "0" are the same fact. A value outside
+    REVIEW_COUNT_VALUES can only come from a hand-edited row (the write path is 422-guarded),
+    and is read as "no review" rather than crashing the chain.
+    """
+    raw = _map_lookup(review_count_overrides, item_seq)
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return REVIEW_COUNT_DEFAULT
+    if raw not in REVIEW_COUNT_VALUES:
+        logger.warning("review gate: ignoring out-of-range review count %r for item_seq %s",
+                       raw, item_seq)
+        return REVIEW_COUNT_DEFAULT
+    return raw
+
+
+def resolve_round_limit(count: int) -> int:
+    """How many review+rework rounds this step gets; REVIEW_ROUNDS_NO_LIMIT = no ceiling.
+
+    -1 is the user asking for "until it passes", and it is taken literally (0414 0022-TR
+    rejection): there is no round number at which the chain gives up and calls a human.
+    Only a `pass`, a `hold`, or a loop breaker ends it.
+    """
+    return REVIEW_ROUNDS_NO_LIMIT if count == -1 else int(count)
+
+
+def review_rounds_remain(rounds_used: int, limit: int) -> bool:
+    """Is another review round allowed? An unbounded budget always says yes."""
+    return limit == REVIEW_ROUNDS_NO_LIMIT or rounds_used < limit
+
+
+def resolve_reviewer(
+    reviewer_overrides: Optional[dict], item_seq: Optional[int], project_id: Optional[str]
+) -> Optional[str]:
+    """Who reviews this step (L0008 §2.2): the step's own pick, else the project default.
+
+    The step EXECUTOR's provider tiers are deliberately not consulted — a reviewer is chosen
+    to have the work read by someone else, and folding the executor in here would quietly
+    make that self-review.
+
+    A pick that is no longer enabled degrades to the default rather than removing the review:
+    a chain a person parked must stay resumable (P0007 [엣지] 재개 시 검수자 소멸). The 422
+    that refuses the same pick outright belongs to the fresh-request path only.
+    """
+    provider_id = _map_lookup(reviewer_overrides, item_seq)
+    if provider_id and _provider_enabled(project_id, provider_id):
+        return provider_id
+    if provider_id:
+        logger.warning(
+            "review gate: reviewer %s is no longer enabled for %s — "
+            "falling back to the project default reviewer for item_seq %s",
+            provider_id, project_id, item_seq,
+        )
+    return _first_enabled_provider_id(project_id)
+
+
+def _stored_provider_for_item_seq(doc_ref: Optional[str], item_seq: Optional[int]) -> Optional[str]:
+    """The provider persisted on that sequence row, if any."""
+    if not doc_ref or item_seq is None:
+        return None
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        for row in db_wfseq.get_sequence_items(seq["id"]) or []:
+            if row.get("item_seq") == item_seq:
+                return row.get("provider_id")
+    except Exception:  # noqa: BLE001 — a stored preference must never stall a hop
+        logger.warning("review gate stored provider lookup failed for %s", doc_ref, exc_info=True)
+    return None
+
+
+def resolve_step_executor(
+    bundle: dict, item_seq: Optional[int], project_id: Optional[str], doc_ref: Optional[str]
+) -> Optional[str]:
+    """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
+
+    Re-plays start_run's own priority order (step override → explicit pin → stored sequence
+    assignment → project default) ahead of time, because the rework hop is mode="single" and
+    start_run's continuous tiers would not run for it.
+    """
+    provider_id = _map_lookup(bundle.get("provider_overrides"), item_seq)
+    if provider_id and _provider_enabled(project_id, provider_id):
+        return provider_id
+    base_provider_id = bundle.get("base_provider_id")
+    if bundle.get("provider_pinned") and _provider_enabled(project_id, base_provider_id):
+        return base_provider_id
+    stored = _stored_provider_for_item_seq(doc_ref, item_seq)
+    if stored and _provider_enabled(project_id, stored):
+        return stored
+    return _first_enabled_provider_id(project_id)
+
+
+# doc_review_status values that mean "this output is not through the gate yet".
+REVIEW_PENDING_DOC_STATUSES = frozenset({"pending_review", "revised", "rejected"})
+
+
+def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
+    """The slot waiting on the gate — at most one per group (L0008 §2.3).
+
+    One running chain has one hop, which fills one document, so the search is simply "the
+    most recently FILLED slot": if its document is still unapproved it is the waiting slot,
+    and if it is already approved there is nothing waiting. Slots with no result document
+    yet are skipped rather than ending the scan — an ai_direct N/T head can sit empty ahead
+    of the report slot that was actually just filled.
+    """
+    if not doc_ref:
+        return None
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        items = db_wfseq.get_sequence_items(seq["id"]) or []
+    except Exception:  # noqa: BLE001 — an unreadable sequence falls back to the old flow
+        logger.warning("review gate slot lookup failed for %s", doc_ref, exc_info=True)
+        return None
+    for item in sorted(items, key=lambda i: i.get("item_seq") or 0, reverse=True):
+        result_doc_id = item.get("result_doc_id")
+        if not result_doc_id:
+            continue
+        doc = db_docs.get_by_id(result_doc_id) or {}
+        status = doc.get("doc_review_status") or ""
+        if status not in REVIEW_PENDING_DOC_STATUSES:
+            return None          # the newest filled slot is already approved → nothing waits
+        return {
+            "item_seq": item.get("item_seq"),
+            "doc_id": doc.get("doc_id") or result_doc_id,
+            "doc_type": (doc.get("type_code") or item.get("type") or "").upper(),
+            "revision_no": int(doc.get("revision_no") or 0),
+            "review_status": status,
+        }
+    return None
+
+
+def _review_findings(review: Optional[dict]) -> list:
+    """A review row's findings as a list — the column stores a JSON array string."""
+    findings = (review or {}).get("findings")
+    if isinstance(findings, str):
+        try:
+            findings = json.loads(findings)
+        except (TypeError, ValueError):
+            return []
+    return findings if isinstance(findings, list) else []
+
+
+def _normalize_ws(value) -> str:
+    return " ".join(str(value or "").split())
+
+
+def review_finding_digest(review: Optional[dict]) -> str:
+    """A deterministic fingerprint of one review's findings (L0008 §2.3).
+
+    Whitespace-normalized so a reflowed line is not mistaken for a new complaint. Two
+    consecutive `issues` verdicts with the SAME digest mean the rework changed nothing the
+    reviewer cares about, which is the practical safety net behind an unbounded -1.
+    """
+    parts = []
+    for finding in _review_findings(review):
+        if isinstance(finding, dict):
+            parts.append(_normalize_ws(finding.get("locus")) + "\u241f"
+                         + _normalize_ws(finding.get("note")))
+        else:
+            parts.append(_normalize_ws(finding))
+    return hashlib.sha256("\u241e".join(parts).encode("utf-8")).hexdigest()
+
+
+def _check_expected_progress(
+    bundle: dict, slot: dict, reviews: list[dict]
+) -> Optional[str]:
+    """Did the hop that just ran leave what it was supposed to leave? (L0008 §2.3)
+
+    Without this the gate re-reads `rounds_used == 0` after a review hop that recorded
+    nothing and launches another review hop — forever. This is the only thing standing
+    between the gate and that loop.
+
+    Skipped entirely on a COLD start (`last_stage` absent): a human pressing [이어서 진행]
+    after a restart has no previous hop to hold to account, and the DB derivation alone is
+    already correct for them.
+    """
+    last_stage = bundle.get("last_stage")
+    if not last_stage:
+        return None
+    if bundle.get("last_stop_code") == "question_pending":
+        return "question_pending"          # waiting on a human answer — do not spin the loop
+    if last_stage == REVIEW_HOP_KIND and len(reviews) <= int(bundle.get("rounds_before") or 0):
+        return REVIEW_NO_VERDICT_STOP_CODE
+    if last_stage == REWORK_HOP_KIND and int(slot.get("revision_no") or 0) <= int(
+        bundle.get("revision_before") or 0
+    ):
+        return REVIEW_STALLED_STOP_CODE
+    if (
+        len(reviews) >= REVIEW_STALL_ROUNDS
+        and (reviews[0].get("verdict") or "").lower() == "issues"
+        and review_finding_digest(reviews[0]) == review_finding_digest(reviews[1])
+    ):
+        return REVIEW_STALLED_STOP_CODE
+    return None
+
+
+def resolve_review_gate(bundle: dict) -> dict:
+    """What happens next for the slot this chain is standing on (L0008 §2.3).
+
+    Returns {stage: work|review|rework|stop, ...}. Every fact it reads is re-derived here
+    and now — rounds used is `len(document_reviews)`, "a rework landed" is
+    `document.revision_no > the last review's revision_no`, "already rejected" is
+    `doc_review_status`. Nothing about the loop's position is persisted, which is what makes
+    a restart, an auto-handoff and a manual resume converge on one answer.
+    """
+    slot = _pending_review_slot(bundle.get("doc_ref"))
+    if slot is None:
+        return {"stage": WORK_HOP_KIND}                      # nothing to review — old flow
+
+    count = resolve_review_count(bundle.get("review_count_overrides"), slot["item_seq"])
+    if count == 0:
+        return {"stage": WORK_HOP_KIND, "approve_first": True, "slot": slot, "count": 0}
+
+    limit = resolve_round_limit(count)
+    try:
+        reviews = db_reviews.list_by_doc(slot["doc_id"]) or []      # newest first
+    except Exception:  # noqa: BLE001
+        logger.warning("review gate could not read reviews for %s", slot["doc_id"],
+                       exc_info=True)
+        reviews = []
+    rounds_used = len(reviews)
+    latest = reviews[0] if rounds_used else None
+    common = {"slot": slot, "count": count, "limit": limit, "rounds_used": rounds_used}
+
+    blocked = _check_expected_progress(bundle, slot, reviews)
+    if blocked is not None:
+        return {"stage": "stop", "stop_code": blocked, **common}
+
+    if rounds_used == 0:
+        return {"stage": REVIEW_HOP_KIND, "round_no": 1, **common}
+
+    verdict = (latest.get("verdict") or "").lower()
+    if verdict == "pass":
+        return {"stage": WORK_HOP_KIND, "approve_first": True, **common}
+    if verdict == "hold":
+        return {"stage": "stop", "stop_code": REVIEW_VERDICT_HOLD_STOP_CODE, **common}
+
+    # verdict == "issues" from here. The rejection is idempotent: a document already in
+    # `rejected` (by this gate on an earlier pass, or by a human) is not rejected again.
+    reject_first = slot["review_status"] != "rejected"
+
+    if int(slot["revision_no"]) > int(latest.get("revision_no") or 0):
+        # The rework for this complaint already landed.
+        if review_rounds_remain(rounds_used, limit):
+            # -1 never leaves this branch: "until it passes" reviews the fresh revision
+            # too, round after round, for as long as the reviewer keeps finding issues.
+            return {"stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1,
+                    "reject_first": reject_first, **common}
+        # 0414 M0020 / CH0019: a finite count is a budget of review+rework PAIRS, and the
+        # last pair has just closed — every complaint this step produced was reworked, so
+        # the step is done. The reworked revision is approved and the chain moves on.
+        logger.info(
+            "review gate: item_seq %s advances after %s review+rework round(s); the finite "
+            "budget is spent and every finding was reworked",
+            slot["item_seq"], rounds_used,
+        )
+        return {"stage": WORK_HOP_KIND, "approve_first": True, **common}
+
+    # No rework has landed for this complaint yet. EVERY `issues` verdict earns its rework
+    # hop, the LAST round's included — 0414 M0020 "지적을 두번했으면 수정도 두번": a complaint
+    # that is only recorded and never fixed is not a review. So count=1 runs
+    # review → rework → advance, and count=2 runs review → rework → review → rework → advance.
+    return {"stage": REWORK_HOP_KIND, "round_no": rounds_used,
+            "reject_first": reject_first, **common}
+
+
+# The automatic rejection text. English on purpose: T0010 작업 4 forbids new Korean literals
+# in server modules, and build_review_mention's own review instructions are English in every
+# locale, so the rejection the same reviewer's findings produce matches what it reads.
+REVIEW_REJECT_HEADING = "## Automated review rejection"
+REVIEW_LOCUS_UNSPECIFIED = "(locus unspecified)"
+
+
+def build_auto_reject_reason(review: Optional[dict], slot: dict, api_base_url: Optional[str]) -> str:
+    """The rejection text, which IS the rework instruction (L0008 §2.6).
+
+    transition_document_review refuses an empty reason, and an `issues` verdict is allowed to
+    carry neither a comment nor findings — so the heading is unconditional and the reason can
+    never come out blank. Over-length is trimmed from the TAIL: the heading and the first
+    findings are the part a reworker needs, and the full set stays one GET away.
+    """
+    lines = [REVIEW_REJECT_HEADING]
+    comment = (review or {}).get("comment")
+    if comment and str(comment).strip():
+        lines += ["", str(comment).strip()]
+    findings = _review_findings(review)
+    shown = findings[:REVIEW_REASON_MAX_FINDINGS]
+    if shown:
+        lines.append("")
+        for finding in shown:
+            if isinstance(finding, dict):
+                locus = _normalize_ws(finding.get("locus")) or REVIEW_LOCUS_UNSPECIFIED
+                note = str(finding.get("note") or "").strip()
+            else:
+                locus, note = REVIEW_LOCUS_UNSPECIFIED, str(finding).strip()
+            lines.append(f"- {locus}: {note}")
+    if len(findings) > REVIEW_REASON_MAX_FINDINGS:
+        lines.append(
+            f"({len(findings) - REVIEW_REASON_MAX_FINDINGS} further finding(s) omitted here.)"
+        )
+    lines += ["", f"GET {(api_base_url or '').rstrip('/')}/document/{slot['doc_id']}/reviews"]
+    text = "\n".join(lines)
+    return text[:REVIEW_REASON_MAX_CHARS] if len(text) > REVIEW_REASON_MAX_CHARS else text
+
+
+def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
+    """Turn an `issues` verdict into a real rejection (L0008 §2.6).
+
+    Goes through pipeline_service.transition_document_review — the SINGLE writer of
+    doc_review_status — with the chain issuer's real permissions, resolved by the same
+    resolver the inbox auto-approve uses. Approval is never bypassed here and neither is
+    rejection: an issuer without document.reject stops the chain instead of forcing it.
+    """
+    actor_user_id = bundle.get("issued_to")
+    try:
+        from modules.flow_gate.db import users as db_users
+        from modules.flow_gate.workflow.routers.workflow import (
+            _get_user_permissions as _resolve_user_permissions,
+        )
+
+        actor = db_users.get_by_id(actor_user_id) or {"user_id": actor_user_id, "is_admin": 0}
+        permissions = _resolve_user_permissions(actor)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("review gate permission resolution failed for %s", actor_user_id)
+        return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE, "detail": str(exc)}
+    if "document.reject" not in permissions:
+        return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE,
+                "detail": "issuer lacks document.reject"}
+    reason = build_auto_reject_reason(review, slot, bundle.get("api_base_url"))
+    try:
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+
+        transition_document_review(
+            doc_id=slot["doc_id"],
+            action="reject",
+            actor_user_id=actor_user_id,
+            user_permissions=permissions,
+            comment=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 — the stored document is never touched
+        logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)
+        return {"ok": False, "stop_code": REVIEW_REJECT_FAILED_STOP_CODE, "detail": str(exc)}
+    return {"ok": True}
+
+
+def _latest_review_of(slot: dict) -> Optional[dict]:
+    try:
+        return db_reviews.get_latest_by_doc(slot["doc_id"])
+    except Exception:  # noqa: BLE001
+        logger.warning("review gate latest-review lookup failed for %s", slot["doc_id"],
+                       exc_info=True)
+        return None
+
+
+def _user_pause_row_pending(group_id: Optional[str]) -> bool:
+    """A user pause the engine must honour before it starts another hop.
+
+    mark_user_paused cannot answer here: it needs a LIVE run tagged pause_requested, and by
+    the time the gate runs the hop that carried that tag has already finished. The durable
+    row is what survives, and it is the same row resume_chain consumes.
+    """
+    if not group_id:
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+        row = db_paused.get_by_group(group_id)
+    except Exception:  # noqa: BLE001 — fail open: a probe must not stall a healthy chain
+        logger.warning("review gate user-pause probe failed for %s", group_id, exc_info=True)
+        return False
+    return row is not None and (row.get("stop_kind") or "user") == "user"
+
+
+def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str:
+    """Everything that follows a step FINISHING — the SAME helper the inbox uses (§2.7).
+
+    A second implementation of "approve → target reached? → user pause? → continue" would
+    drift from the first, so the reviewed path and the unreviewed path share one.
+
+    Two things bring a gated step here: a `pass` verdict, and (0414 M0020) a finite budget
+    whose last review+rework pair has closed. Both mean "this step is done", so both settle
+    identically — the document the second one approves is the reworked revision.
+    """
+    from modules.flow_gate.api import inbox_routes as _inbox
+
+    result = _inbox.settle_completed_step(
+        project=str(group_id).split(".", 1)[0],
+        group_id=group_id,
+        doc_id=slot["doc_id"],
+        doc_type=slot.get("doc_type") or "",
+        actor_user_id=bundle.get("issued_to"),
+        completed_seq=slot.get("item_seq"),
+        target_seq=bundle.get("target_seq"),
+        user_paused_probe=lambda: _user_pause_row_pending(group_id),
+    )
+    outcome = result.get("outcome")
+    if outcome == "continue":
+        return "continue"
+    stop_code = result.get("stop_code") or "approve_failed"
+    if outcome == "completed":
+        # The chain reached its target with the last step reviewed AND approved. No card:
+        # settle_completed_step already removed the paused row, so only the lease is left.
+        _clear_handoff_row(group_id, run.get("run_id"))
+        try:
+            db_group_ai_leases.release(group_id, run["run_id"])
+        except Exception:  # noqa: BLE001
+            logger.warning("review gate lease release failed for %s", group_id, exc_info=True)
+        return outcome
+    # user_paused keeps the human's own row (_write_handoff_row refuses to overwrite it);
+    # approve_denied / approve_failed get a system row so the chain is pickable again.
+    run["review_reject_detail"] = result.get("detail")
+    _park_handoff(run, bundle, stop_code)
+    return outcome
+
+
+def _queue_gate_bundle(group_id: str, bundle: dict) -> None:
+    """Record the next hop's intent BEFORE launching it (L0008 §2.4).
+
+    _finalize_run reads this queue to decide between begin_handoff and releasing the group
+    lease. Launch first and the lease is gone by the time the successor asks for it, so the
+    successor dies on 409 run_in_progress.
+    """
+    request_auto_resume(group_id, bundle)
+
+
+def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> None:
+    """Launch the review hop (L0008 §2.5).
+
+    mode="single" + action_scope="review" is not cosmetic: it is the combination that gives
+    the run _probe_doc_reviews as its judge ("did a review row appear?"). Anything else falls
+    back to the document oracle, which a review can never satisfy.
+
+    The token carries NO continuation_target_seq, so _continuation_self_chain does not run
+    for the verdict submission at all — a review structurally cannot approve its own target
+    or advance the chain.
+    """
+    from modules.flow_gate.services import workflow_decision_service
+
+    slot = gate["slot"]
+    parts = group_id.split(".")
+    project_id = parts[0]
+    module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
+    locale = bundle.get("locale") or "ko"
+    api_base_url = bundle.get("api_base_url")
+    issued_to = bundle.get("issued_to")
+    reviewer_id = resolve_reviewer(bundle.get("reviewer_overrides"), slot["item_seq"], project_id)
+    executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
+    if reviewer_id and reviewer_id == executor_id:
+        # Allowed — a person may deliberately pick it — but never silent (L0008 §2.2).
+        logger.warning(
+            "review gate: item_seq %s is being self-reviewed (reviewer and executor are both %s)",
+            slot["item_seq"], reviewer_id,
+        )
+
+    def _issue_review(ai_run_id: Optional[str] = None) -> dict:
+        issued = workflow_decision_service.request_review(
+            doc_id=slot["doc_id"],
+            issued_to=issued_to,
+            api_base_url=api_base_url,
+            locale=locale,
+            ai_run_id=ai_run_id,
+        )
+        mention = issued.get("mention") or ""
+        return {
+            "raw_token": issued["token"],
+            "token_id": issued["token_id"],
+            "scratch_dir": issued["scratch_dir"],
+            "mention": _append_engine_review_clause(mention, gate),
+        }
+
+    start_run(
+        project_id=project_id,
+        module=module,
+        group_id=group_id,
+        doc_ref=slot["doc_id"],
+        action_scope="review",
+        mode="single",
+        continuation_target_seq=None,
+        continuation_review_mode=False,
+        continuation_instruction_mode=bundle.get("instruction_mode"),
+        continuation_locale=locale,
+        issued_to=issued_to,
+        api_base_url=api_base_url,
+        mention_builder=lambda _raw, _scratch: None,
+        issue_builder=_issue_review,
+        provider_id=reviewer_id,
+        chain_id=bundle.get("chain_id"),
+        chain_docs_target=bundle.get("chain_docs_target"),
+        chain_docs_reached=bundle.get("chain_docs_reached"),
+        continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+        continuation_review_count_overrides=bundle.get("review_count_overrides"),
+        continuation_reviewer_overrides=bundle.get("reviewer_overrides"),
+        hop_kind=REVIEW_HOP_KIND,
+    )
+
+
+def _append_engine_review_clause(mention: str, gate: dict) -> str:
+    """The one clause an ENGINE-driven review hop adds to build_review_mention (L0008 §2.5).
+
+    build_review_mention itself is never touched — the human [멘트복사] path shares it, and
+    its body correctly tells that reader "a human decides afterward". On an unmanned chain
+    that premise is false, so the reviewer has to be told the verdict wires straight into an
+    automatic rejection and how many rounds are left. English, like the review instructions
+    it extends (T0010 작업 4: no new Korean literals in server modules).
+    """
+    if not mention:
+        return mention
+    count = gate.get("count")
+    round_no = gate.get("round_no")
+    limit = gate.get("limit")
+    budget = (
+        "until the document passes"
+        if count == -1
+        else f"round {round_no} of {limit}"
+    )
+    # 0414 M0020: every round's findings are reworked, the last round's included, so the
+    # clause no longer says "when a round remains". What the LAST reviewer of a finite budget
+    # does need to know is that nobody reviews the fix its findings produce — the chain moves
+    # on with it — so that round is told to name everything that still has to change.
+    last_round = count != -1 and round_no == limit
+    return mention + (
+        "\n\n## Automated follow-up\n---\n"
+        "This review runs inside an unmanned continuous chain, so no human reads your verdict "
+        "before it takes effect. 'issues' rejects the document automatically with your comment "
+        "and findings as the rejection reason, and hands it back to the step's own worker to "
+        f"fix — every round's findings get their fix, this round's included. This is {budget}"
+        + (" — there is no round ceiling: review and fix repeat until you return "
+           "'pass', so keep reviewing until the document is right."
+           if count == -1 else ".")
+        + (
+            " This is the LAST round: after the fix your findings produce, the chain moves on "
+            "to the next step without another review, so name everything that still has to "
+            "change." if last_round else ""
+        )
+        + " 'pass' approves the document and lets the chain move on; 'hold' stops the chain "
+        "for a human. Judge accordingly."
+    )
+
+
+def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> None:
+    """Launch the rework hop (L0008 §2.6).
+
+    The REWORKER is the step's own executor, not the reviewer — the reviewer reads, the
+    author fixes. The issuer is invoke_mention_service.issue_rework_request, the same one
+    the human [AI 수정] button uses, so the two can never drift into separate prompts.
+    """
+    from modules.flow_gate.services import invoke_mention_service
+
+    slot = gate["slot"]
+    parts = group_id.split(".")
+    project_id = parts[0]
+    module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
+    locale = bundle.get("locale") or "ko"
+    api_base_url = bundle.get("api_base_url")
+    issued_to = bundle.get("issued_to")
+    executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
+
+    def _issue_rework(ai_run_id: Optional[str] = None) -> dict:
+        return invoke_mention_service.issue_rework_request(
+            doc_id=slot["doc_id"],
+            issued_to=issued_to,
+            api_base_url=api_base_url,
+            locale=locale,
+            ai_run_id=ai_run_id,
+        )
+
+    start_run(
+        project_id=project_id,
+        module=module,
+        group_id=group_id,
+        doc_ref=slot["doc_id"],
+        # The TOKEN scope is what start_run receives (ai_invoke_routes maps rework->edit
+        # before calling it), and it is also what picks _probe_doc_revision as the judge:
+        # "did the revision number go up?" — the same fact §2.3 checks for review_stalled.
+        action_scope="edit",
+        mode="single",
+        continuation_target_seq=None,
+        continuation_review_mode=False,
+        continuation_instruction_mode=bundle.get("instruction_mode"),
+        continuation_locale=locale,
+        issued_to=issued_to,
+        api_base_url=api_base_url,
+        mention_builder=lambda _raw, _scratch: None,
+        issue_builder=_issue_rework,
+        provider_id=executor_id,
+        chain_id=bundle.get("chain_id"),
+        chain_docs_target=bundle.get("chain_docs_target"),
+        chain_docs_reached=bundle.get("chain_docs_reached"),
+        continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+        continuation_review_count_overrides=bundle.get("review_count_overrides"),
+        continuation_reviewer_overrides=bundle.get("reviewer_overrides"),
+        hop_kind=REWORK_HOP_KIND,
+    )
+
+
+def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
+    """Derive the gate and act on it (L0008 §2.4). True when a next hop actually started.
+
+    False means the chain was parked (a durable row + a released lease), so the caller must
+    NOT clear the handoff row it wrote — that row is now the [이어서 진행] card.
+    """
+    gate = resolve_review_gate(bundle)
+    slot = gate.get("slot")
+
+    # 10-1: the rejection happens first and independently of what comes next, so a
+    # "rounds exhausted" stop still leaves the reviewer's findings attached to the document.
+    if gate.get("reject_first") and slot is not None:
+        result = _auto_reject(slot, _latest_review_of(slot), bundle)
+        if not result.get("ok"):
+            run["review_reject_detail"] = result.get("detail")
+            _park_handoff(run, bundle, result["stop_code"])
+            return False
+
+    stage = gate.get("stage")
+    if stage == "stop":
+        _park_handoff(run, bundle, gate.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE)
+        return False
+
+    if stage == WORK_HOP_KIND:
+        if gate.get("approve_first") and slot is not None:
+            if _settle_gate_pass(group_id, slot, bundle, run) != "continue":
+                return False
+        # Deliberately NOT re-queued, unlike the two branches below: _finalize_run already
+        # ran begin_handoff for this boundary, and the work hop's own inbox self-chain is
+        # what queues the hop after it. Queueing here instead would leave a live entry
+        # behind a hop that produced nothing, and the engine would re-spawn it forever
+        # rather than stopping on no_output_exhausted.
+        _spawn_auto_resume(group_id, {**bundle, "last_stage": WORK_HOP_KIND})
+        return True
+
+    if stage in (REVIEW_HOP_KIND, REWORK_HOP_KIND):
+        # last_stage / rounds_before / revision_before live ONLY in the memory queue, never
+        # in the paused row (L0008 §2.9): a cold start after a restart must reach the DB
+        # derivation path, where the absence of these is exactly the right answer.
+        queued = {**bundle, "last_stage": stage}
+        if stage == REVIEW_HOP_KIND:
+            queued["rounds_before"] = int(gate.get("rounds_used") or 0)
+        else:
+            queued["revision_before"] = int((slot or {}).get("revision_no") or 0)
+        _queue_gate_bundle(group_id, queued)
+        try:
+            if stage == REVIEW_HOP_KIND:
+                _spawn_review_hop(group_id, queued, gate)
+            else:
+                _spawn_rework_hop(group_id, queued, gate)
+        except Exception:
+            clear_auto_resume(group_id)     # take the intent back out; the caller parks it
+            raise
+        return True
+
+    return False
+
+
+def active_review_selection(group_id: Optional[str]) -> tuple[Optional[dict], Optional[dict]]:
+    """This group's live [검수] selection, for the inbox boundary (L0008 §2.8).
+
+    The maps ride the RUN, not the token, so the inbox — which only ever sees a token —
+    has to ask the engine. (None, None) when no engine run is driving this group, which is
+    also the correct answer: a copy-mention chain has nothing to launch a review hop with.
+    """
+    run = _active_run_for_group(group_id)
+    if run is None:
+        return None, None
+    return (
+        run.get("continuation_review_count_overrides"),
+        run.get("continuation_reviewer_overrides"),
     )
 
 
@@ -4640,6 +5614,34 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
     return None
 
 
+def _resumable_reviewer_overrides(
+    project_id: str, reviewer_overrides: Optional[dict]
+) -> Optional[dict]:
+    """Drop reviewers the project no longer has, keep the rest (P0007 [엣지] 재개).
+
+    The counterpart of _resumable_base_provider, and the opposite of the fresh-request rule:
+    a NEW request naming a disabled reviewer is a visible 422, because the person is still
+    at the screen and can pick again. A resume has nobody to ask, so it degrades that ONE
+    entry to the project default reviewer and says so in the log — the review itself is
+    never dropped, only the pick.
+    """
+    if not reviewer_overrides:
+        return None
+    kept = {
+        item_seq: provider_id
+        for item_seq, provider_id in reviewer_overrides.items()
+        if _provider_enabled(project_id, provider_id)
+    }
+    dropped = sorted(set(reviewer_overrides) - set(kept))
+    if dropped:
+        logger.warning(
+            "paused chain reviewer(s) %s are no longer enabled — resuming with the project "
+            "default reviewer for item_seq %s",
+            sorted({reviewer_overrides[k] for k in dropped}), ", ".join(dropped),
+        )
+    return kept or None
+
+
 def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str = "ko") -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
@@ -4695,6 +5697,11 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                     continuation_instruction_mode=row.get("continuation_instruction_mode"),
                     continuation_auto_approve_item_seqs=row.get("continuation_auto_approve_item_seqs"),
                     continuation_step_timeout_sec=row.get("continuation_step_timeout_sec"),
+                    # 0414: "restore it whole" includes the [검수] selection — a failed resume
+                    # must not quietly turn the retry into an unreviewed chain.
+                    continuation_review_count_overrides=row.get(
+                        "continuation_review_count_overrides"),
+                    continuation_reviewer_overrides=row.get("continuation_reviewer_overrides"),
                 )
             except Exception:
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
@@ -4783,6 +5790,18 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
         note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
         default_note = (row.get("continuation_default_note") or "").strip() or None
         step_timeout_sec = row.get("continuation_step_timeout_sec")
+        # 0414 P0007 [엣지] 재개 시 검수자 소멸: load_json_map degrades corrupt or non-object
+        # text to None, so one damaged row loses its selection instead of blocking the resume.
+        # A reviewer that has since been switched off is dropped from the map — and ONLY from
+        # the map: the review COUNT survives, so that step is still reviewed, by the project
+        # default reviewer. A new request would be refused outright (422 reviewer_unavailable);
+        # a chain a person parked must never become a card that cannot restart.
+        review_count_overrides = db_paused.load_json_map(
+            row.get("continuation_review_count_overrides")
+        )
+        reviewer_overrides = _resumable_reviewer_overrides(
+            project_id, db_paused.load_json_map(row.get("continuation_reviewer_overrides"))
+        )
         try:
             return start_run(
                 project_id=project_id,
@@ -4809,6 +5828,8 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 chain_docs_reached=row.get("chain_docs_reached"),
                 continuation_auto_approve_item_seqs=resume_auto_approve_item_seqs,
                 continuation_step_timeout_sec=step_timeout_sec,
+                continuation_review_count_overrides=review_count_overrides,
+                continuation_reviewer_overrides=reviewer_overrides,
             )
         except HTTPException as exc:
             _restore_row()

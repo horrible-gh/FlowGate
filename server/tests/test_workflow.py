@@ -22,6 +22,14 @@ import pytest
 
 # Separate DB dependencies with TESTING=1
 os.environ.setdefault("TESTING", "1")
+# 0414 T0010: the two TestWorkflowDecideTransition cases import a route module, which builds
+# server/config.py Settings — and Settings has no defaults for these three. Every other suite
+# in server/tests already declares them at import time, so this file only passed when it
+# happened to run after one of them. Setting them here makes the file self-sufficient.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("DB_TYPE", "sqlite")
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

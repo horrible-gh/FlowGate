@@ -67,7 +67,13 @@ class FakePausedStore:
                continuation_instruction_mode=None, continuation_auto_approve_item_seqs=None,
                # flowgate.default.0400 M0005: the per-hop budget pick, same "rides every
                # upsert call, including system rows" treatment as instruction_mode above.
-               continuation_step_timeout_sec=None):
+               continuation_step_timeout_sec=None,
+               # 0414 DB0009 §5-3: named explicitly, not swallowed by **kwargs. A permissive
+               # double would pass while the real upsert silently dropped the [검수] selection
+               # — the exact class of miss DB0009 warns about, and the worst one, because a
+               # dropped review selection means "approved with nobody reviewing it".
+               continuation_review_count_overrides=None,
+               continuation_reviewer_overrides=None):
         self.rows[group_id] = {
             "id": 1, "group_id": group_id, "doc_ref": doc_ref, "mode": "continuous",
             "paused_by": paused_by, "paused_at": paused_at,
@@ -93,6 +99,12 @@ class FakePausedStore:
             "continuation_auto_approve_item_seqs": db_paused.dump_json_list(
                 continuation_auto_approve_item_seqs),
             "continuation_step_timeout_sec": continuation_step_timeout_sec,
+            # 0414: stored as normalized TEXT like the two maps above it, so the resume path
+            # is exercised through the production decoder rather than a friendlier dict.
+            "continuation_review_count_overrides": db_paused.dump_json_map(
+                continuation_review_count_overrides),
+            "continuation_reviewer_overrides": db_paused.dump_json_map(
+                continuation_reviewer_overrides),
         }
 
     def get_by_group(self, group_id):

@@ -351,6 +351,122 @@ def build_rejection_section(history: list[dict], last: Optional[str]) -> str:
     return "\n".join(parts)
 
 
+def build_rework_mention(
+    *,
+    doc_id: str,
+    group_id: str,
+    project_id: str,
+    scratch_dir: str,
+    raw_token: str,
+    api_base_url: str,
+    locale: str = "ko",
+    reject_reason: Optional[str] = None,
+    continuous: bool = False,
+    continuous_review_mode: bool = False,
+) -> Optional[str]:
+    """The [AI 수정] prompt: rejection history section + the standard edit mention.
+
+    0414 L0008 §2.6 pulled this out of ai_invoke_routes so the human [AI 수정] button and the
+    engine's automatic rework hop share ONE assembly. Kept in the route, the engine would
+    have grown a second copy, and two copies of a prompt always drift.
+
+    The edit mention it wraps is the ordinary one, which matters: it reads
+    doc_review_status == "rejected" and therefore offers edit_reason="rejected", and THAT is
+    what makes the submission fire the rejected -> revised transition. Without that
+    transition revision_no still climbs but the approval transition stays blocked. The same
+    mention also carries the current revision's review as a "Review feedback" section — and
+    right after an automatic rejection the revision has not moved, so it is always there.
+
+    ``reject_reason`` is the live, possibly-unsaved reason from the human reject dialog; the
+    engine passes none and the stored ``rejection_reason`` (which the auto-rejection just
+    wrote) is used instead.
+    """
+    from modules.flow_gate.api import token_routes as _token_routes
+    from modules.flow_gate.db import documents as db_documents
+
+    doc = db_documents.get_by_id(doc_id) or {}
+    history = doc.get("rejection_history") or []
+    if isinstance(history, str):
+        try:
+            history = json.loads(history) or []
+        except Exception:  # noqa: BLE001 — a malformed column must not block the rework
+            history = []
+    section = build_rejection_section(history, reject_reason or doc.get("rejection_reason"))
+    base = _token_routes._build_mention_for_token(
+        doc_ref=doc_id,
+        group_id=group_id,
+        project_id=project_id,
+        scratch_dir=scratch_dir,
+        raw_token=raw_token,
+        action_scope="edit",
+        locale=locale,
+        continuous=continuous,
+        continuous_review_mode=continuous_review_mode,
+        api_base_url=api_base_url,
+    )
+    if not base:
+        return None
+    return section + "\n" + base if section else base
+
+
+def issue_rework_request(
+    *,
+    doc_id: str,
+    issued_to: str,
+    api_base_url: str,
+    locale: str = "ko",
+    ai_run_id: Optional[str] = None,
+    reject_reason: Optional[str] = None,
+) -> dict:
+    """Mint an edit token bound to doc_id and build its rework mention (0414 L0008 §2.6).
+
+    The issue_builder contract start_run expects, so the engine's rework hop launches through
+    exactly the same path every other scope does. ``ai_run_id`` is not optional in practice:
+    a token that cannot name its own run is refused by the group lease that run is holding
+    (0393 B0001), which would make the rework hop fail against itself.
+
+    Raises
+    ------
+    LookupError  "doc_not_found:{doc_id}"
+    ValueError   "group_not_found:{doc_id}"
+    """
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.services import token_service
+
+    doc = db_documents.get_by_id(doc_id)
+    if doc is None:
+        raise LookupError(f"doc_not_found:{doc_id}")
+    group_id: Optional[str] = doc.get("group_id")
+    if not group_id:
+        raise ValueError(f"group_not_found:{doc_id}")
+    project_id: str = doc.get("project_id") or ""
+
+    issued = token_service.issue(
+        project=project_id,
+        group_id=group_id,
+        action_scope="edit",
+        doc_ref=doc_id,
+        issued_to=issued_to,
+        ai_run_id=ai_run_id,
+    )
+    mention = build_rework_mention(
+        doc_id=doc_id,
+        group_id=group_id,
+        project_id=project_id,
+        scratch_dir=issued["scratch_dir"],
+        raw_token=issued["raw_token"],
+        api_base_url=api_base_url,
+        locale=locale,
+        reject_reason=reject_reason,
+    )
+    return {
+        "raw_token": issued["raw_token"],
+        "token_id": issued["token_id"],
+        "scratch_dir": issued["scratch_dir"],
+        "mention": mention or "",
+    }
+
+
 def prepend_messages_section(mention_text: str, messages: list[str], locale: Optional[str]) -> str:
     """Port of prependMessagesSection (mentionMessages.ts) with the localized header."""
     body = MESSAGES_SEPARATOR.join(m.strip() for m in messages if m and m.strip())

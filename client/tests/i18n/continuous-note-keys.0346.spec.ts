@@ -80,7 +80,8 @@ async function openMessageTab() {
   })
   await flushPromises()
   const tabs = document.querySelectorAll('.cwd-tab')
-  expect(tabs.length, 'the dialog must show three option tabs').toBe(3)
+  // 0414 T0012 added the fourth [검수] tab; [전달멘트] keeps its third slot.
+  expect(tabs.length, 'the dialog must show four option tabs').toBe(4)
   ;(tabs[2] as HTMLButtonElement).click()
   await nextTick()
   return wrapper

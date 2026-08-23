@@ -566,9 +566,10 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
 
     // "기본 설정" is the default active tab (rev4 STATE1) — switch to "프로바이더".
-    // flowgate.default.0346 T0005 added a third [전달멘트] tab alongside these two.
+    // flowgate.default.0346 T0005 added a third [전달멘트] tab alongside these two, and
+    // 0414 T0012 added the fourth [검수] tab from the approved deck 45z739t7.
     const tabs = document.querySelectorAll('.cwd-tab')
-    expect(tabs).toHaveLength(3)
+    expect(tabs).toHaveLength(4)
     ;(tabs[1] as HTMLButtonElement).click()
     await flushPromises()
 

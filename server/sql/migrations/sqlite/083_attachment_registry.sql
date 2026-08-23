@@ -10,7 +10,7 @@
 -- rollback (DB0013 §3-3).
 --
 -- Numbering: this branch was cut at e272b11, where 080 was the next free ordinal. main has
--- since taken 080 twice (080_ai_invoke_prompt_audit / 080_workflow_sequence_provider) and
+-- since taken 080 twice (080a_ai_invoke_prompt_audit / 080b_workflow_sequence_provider) and
 -- 081/082 as well, so this file sits at 083 — the first ordinal no dialect directory on main
 -- uses. Everything is `IF NOT EXISTS`, which makes re-application on an already-migrated DB
 -- a no-op no matter where the file lands in the order (DB0013 §3-1 warning).

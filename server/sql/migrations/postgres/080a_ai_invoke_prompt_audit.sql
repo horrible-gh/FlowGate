@@ -1,4 +1,4 @@
--- 080_ai_invoke_prompt_audit.sql
+-- 080a_ai_invoke_prompt_audit.sql
 -- flowgate.default.0406 (B0001 -> M0019 -> N0020 -> NR0021 -> T0022 작업 3·5):
 -- "연속 작업(무인)에 멘트가 똑바로 안 들어간다"를 사후에 판정할 수 없던 공백을 메운다.
 --
@@ -23,15 +23,18 @@
 -- 가산 전용: 기존 열을 지우거나 이름을 바꾸지 않고, 백필도 하지 않는다. 이 마이그레이션
 -- 이전에 끝난 실행은 NULL/0 으로 읽히고, 그것이 "그때는 기록하지 않았다"는 사실이다.
 
--- MySQL 은 불리언을 TINYINT(1) 로 쓴다. sha256 은 64자 고정이라 CHAR(64).
-ALTER TABLE ai_invoke_runs ADD COLUMN worker_document_type VARCHAR(16) NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN continuation_instruction_mode_requested VARCHAR(64) NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN continuation_instruction_mode_normalized VARCHAR(32) NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN continuation_instruction_mode_fallback_applied TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ai_invoke_runs ADD COLUMN auto_handled_item_seqs TEXT NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_message_source VARCHAR(32) NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_common_default_applied TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_user_message_length INT NOT NULL DEFAULT 0;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_user_message_sha256 CHAR(64) NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_final_length INT NOT NULL DEFAULT 0;
-ALTER TABLE ai_invoke_runs ADD COLUMN prompt_final_sha256 CHAR(64) NULL;
+BEGIN;
+
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS worker_document_type TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS continuation_instruction_mode_requested TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS continuation_instruction_mode_normalized TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS continuation_instruction_mode_fallback_applied SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS auto_handled_item_seqs TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_message_source TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_common_default_applied SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_user_message_length INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_user_message_sha256 TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_final_length INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS prompt_final_sha256 TEXT;
+
+COMMIT;
