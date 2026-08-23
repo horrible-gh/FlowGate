@@ -565,6 +565,51 @@ def _split_conflict_chunks(content: str) -> list[dict]:
     return chunks
 
 
+def _conflict_task_section(kind: str, tr: dict) -> str:
+    """The mention's task paragraph — the one part a TR conflict cannot share (TR0019).
+
+    Everything else about a conflict is genuinely the same for both kinds: the same chunk
+    payload, the same bound endpoint, the same "no markers left" completion test. The task
+    is not. A merge asks "combine these two branches"; a revert asks "remove exactly what
+    this TR did and keep everything that landed on top", and an AI told to merge that will
+    happily keep both sides — which reads as a clean resolution and silently re-applies the
+    commit the person just asked to cancel.
+    """
+    if kind not in ("tr_revert", "tr_reapply"):
+        return (
+            "## Git conflict auto-resolve task\n"
+            "---\n"
+            "Resolve every conflict autonomously. Do not ask the user to choose chunks. "
+            "Produce complete file contents with all conflict markers removed, then call the bound resolve endpoint.\n\n"
+        )
+    code = tr.get("doc_code") or "a TR"
+    subject = tr.get("subject") or ""
+    if kind == "tr_revert":
+        goal = (
+            f"The group worktree is UNDOING the commit that {code} made when it was approved "
+            f"(\"{subject}\"), and later work touches the same lines.\n"
+            "Resolve every file so that ONLY that commit's changes are removed and every later "
+            "change survives byte for byte."
+        )
+    else:
+        goal = (
+            f"The group worktree is PUTTING BACK the commit that {code} made "
+            f"(\"{subject}\") after a rewind cancelled it, and other work has landed since.\n"
+            "Resolve every file so that only that commit's changes return and nothing written "
+            "after the cancel is lost."
+        )
+    return (
+        "## TR commit conflict — auto-resolve task\n"
+        "---\n"
+        "This is NOT a branch merge. Do not resolve it by keeping both sides.\n"
+        f"{goal}\n"
+        "Do not ask the user to choose chunks. Produce complete file contents with all conflict "
+        "markers removed, then call the bound resolve endpoint.\n"
+        "Your call ends at `resolved_pending_review`, not at a commit: a person reads the diff and "
+        "presses the commit button. Leave the tree in the state you would want them to read.\n\n"
+    )
+
+
 def _build_conflict_mention(
     *,
     group_id: str,
@@ -586,11 +631,15 @@ def _build_conflict_mention(
             "chunks": _split_conflict_chunks(content),
             "raw_content": content,
         })
+    kind = conflicts.get("kind") or "merge"
+    tr = conflicts.get("tr_conflict") or {}
     payload = {
         "group_id": group_id,
         "merge_id": merge_id,
+        "kind": kind,
         "branch": conflicts.get("branch"),
         "base_branch": conflicts.get("base_branch"),
+        "tr_conflict": conflicts.get("tr_conflict") or None,
         "files": chunks_payload,
     }
     return (
@@ -600,11 +649,8 @@ def _build_conflict_mention(
         f"group: {group_id}\n"
         "type: git_conflict\n"
         f"merge_id: {merge_id}\n\n"
-        "## Git conflict auto-resolve task\n"
-        "---\n"
-        "Resolve every conflict autonomously. Do not ask the user to choose chunks. "
-        "Produce complete file contents with all conflict markers removed, then call the bound resolve endpoint.\n\n"
-        "## Bound resolve endpoint\n"
+        + _conflict_task_section(kind, tr)
+        + "## Bound resolve endpoint\n"
         "---\n"
         f"POST {resolve_url}\n"
         f"Authorization: Bearer {raw_token}\n"

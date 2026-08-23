@@ -15,6 +15,7 @@ GET            /api/v1/projects/{project_id}/git/groups/{group_id}/diff (0326 NR
 GET/POST       /api/v1/groups/{group_id}/git/finalize
 POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/tr-commit
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
 
@@ -33,7 +34,7 @@ from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
-from modules.flow_gate.services import git_service, token_service
+from modules.flow_gate.services import git_service, token_service, tr_commit_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 
@@ -510,7 +511,11 @@ def post_merge_resolve_token(
             [f.model_dump() for f in body.files],
             bool(body.complete),
         )
-        if result.get("ok") and result.get("result", {}).get("status") == "merged":
+        # TR0019 — a TR conflict session ends the worker's job at `resolved_pending_review`,
+        # not at `merged`: the commit is a person's press. Both are "this token is done".
+        if result.get("ok") and result.get("result", {}).get("status") in (
+            "merged", "resolved_pending_review",
+        ):
             token_service.consume(auth["token_id"], auth["project"])
         return result
     except GitServiceError as exc:
@@ -523,6 +528,32 @@ def post_merge_abort(group_id: str, merge_id: int, user=Depends(get_current_user
     if denied:
         return denied
     try:
+        parked = git_service.tr_conflict_session(group_id)
+        if parked and int(parked.get("merge_id") or -1) == int(merge_id):
+            # TR0019 — same button and the same restore underneath, routed through the
+            # service that owns the ledger so the abandoned attempt gets its log line.
+            return tr_commit_service.abort_conflict_resolution(group_id, merge_id)
         return git_service.abort_merge(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/tr-commit")
+def post_tr_conflict_commit(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    """Commit a TR conflict session whose files are all resolved (TR0019).
+
+    Deliberately NOT part of `/resolve`. `/resolve` is reachable with the worker token an
+    AI holds, and this press must not be: a revert's two sides are "delete what this TR
+    did" and "the work that landed on top of it", so a marker-free file is not by itself
+    evidence that the revert is right. A merge conflict already has this seam — the AI
+    clears the markers, a person presses [병합] — and it matters more here, because after
+    this commit the workflow strip will say the step is cancelled and nothing downstream
+    re-examines that claim.
+    """
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return tr_commit_service.commit_conflict_resolution(group_id, merge_id)
     except GitServiceError as exc:
         return _guard(exc)

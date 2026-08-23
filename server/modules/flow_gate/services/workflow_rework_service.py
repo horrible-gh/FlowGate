@@ -24,6 +24,7 @@ from modules.flow_gate.documents.constants import (
     NON_SLOT_WORKFLOW_TYPES,
 )
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services.mutation_policy import (
     MutationPrincipal,
     assert_group_mutation_allowed,
@@ -368,11 +369,82 @@ def _reopen_in_transaction(
     return {"ok": True, "reopened": reopened, "return_point": return_point_payload(group_id)}
 
 
-def _rearm_git(project_id: str, group_id: str) -> None:
+# 0332 D0005 §4 — the rewind's audit trail also carries what happened to the source
+# commits. It is a SEPARATE event, not an item added to the `workflow_reopen` row that
+# §4 names: that row is written inside the rewind transaction, before the cancel has
+# run, and rewriting a committed audit row to backfill it is exactly the "edit the
+# history" this whole group refuses to do. The pair is joinable by (group_id, time),
+# and the type is new so nothing that reads `workflow_reopen` changes.
+EVT_TR_COMMIT_CANCEL = "workflow_reopen_tr_commit_cancel"
+
+
+def _log_cancel_event(
+    project_id: str, group_id: str, actor_user_id: Optional[str], cancel_result: Optional[dict]
+) -> None:
+    """Audit one cancel outcome — only when it actually has something to report.
+
+    A rewind of a group that never made a commit writes nothing here: an audit row
+    saying "nothing happened" on every rewind buries the ones that mean something.
+    """
+    if not cancel_result or not actor_user_id:
+        return
+    if not (
+        cancel_result.get("blocked_reason")
+        or cancel_result.get("canceled")
+        or cancel_result.get("skipped")
+    ):
+        return
+    try:
+        event_logger.log_event(
+            event_type=EVT_TR_COMMIT_CANCEL,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+            group_id=group_id,
+            metadata=dict(cancel_result),
+        )
+    except Exception as exc:  # pragma: no cover - audit stays best-effort
+        logger.warning(
+            "[workflow reopen] tr commit cancel audit failed for %s: %s", group_id, exc,
+            exc_info=True,
+        )
+
+
+def _rearm_git(
+    project_id: str,
+    group_id: str,
+    reopened_doc_ids: Optional[list[str]] = None,
+    actor_user_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Cancel the rewound TR commits, then re-arm the slot (0332 L0007 §2.1).
+
+    The order of the two halves is not cosmetic. ``reopen_group_git`` rebuilds a
+    terminal slot's worktree from base HEAD, and that new tree contains none of the TR
+    commits — cancel after re-arm and there is nothing left to cancel. The cancel also
+    releases the project git lock before returning, because the re-arm takes the same
+    lock and it is not re-entrant.
+
+    Returns the ``tr_commit_cancel`` payload (P0006 §3), or None when the cancel could
+    not produce one — the caller then omits the key entirely rather than shipping a
+    half-filled object. Either way the re-arm runs and the rewind stands: git does not
+    get to fail a rewind (D0005 K8).
+    """
+    cancel_result: Optional[dict] = None
+    try:
+        cancel_result = tr_commit_service.cancel_for_reopen(
+            group_id, reopened_doc_ids or []
+        )
+    except Exception as exc:
+        # L0007 §5 — the key is dropped, not half-filled, and the rewind still returns 200.
+        logger.warning(
+            "[workflow reopen] tr commit cancel failed for %s: %s", group_id, exc,
+            exc_info=True,
+        )
+    _log_cancel_event(project_id, group_id, actor_user_id, cancel_result)
     try:
         git_service.reopen_group_git(project_id, group_id)
     except Exception as exc:  # pragma: no cover - document transaction has committed
         logger.warning("[workflow reopen] git re-arm failed for %s: %s", group_id, exc, exc_info=True)
+    return cancel_result
 
 
 def reopen_to_target(
@@ -422,7 +494,11 @@ def reopen_to_target(
             run_id=run_id,
             preserve_ac=preserve_ac,
         )
-    _rearm_git(project_id, group_id)
+    cancel_result = _rearm_git(
+        project_id, group_id, result.get("reopened") or [], _actor_user_id(actor),
+    )
+    if cancel_result is not None:
+        result["tr_commit_cancel"] = cancel_result
     return result
 
 

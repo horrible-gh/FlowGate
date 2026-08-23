@@ -10,6 +10,7 @@ and never logs it.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from . import meta_cache
@@ -183,18 +184,64 @@ def list_states_of_project(project_id: str) -> list[dict]:
 
 # ── git_merge_session (+ files) ───────────────────────────────────────────────
 
-def create_session(group_id: str, files: list[str], finalize_action: str | None = None) -> int:
-    """Create an open merge session with its conflict file set (one transaction)."""
+# git_merge_session.kind (088). 'merge' is the finalize merge — the only kind that existed
+# before flowgate.default.0332 — and the two tr_* kinds are a rewind's cancel and a forward
+# restore's reapply hitting a conflict. A NULL column reads as 'merge': rows written before
+# 088 landed are all finalize merges, and nothing should have to backfill to be correct.
+SESSION_KIND_MERGE = "merge"
+SESSION_KIND_TR_REVERT = "tr_revert"
+SESSION_KIND_TR_REAPPLY = "tr_reapply"
+SESSION_KINDS = (SESSION_KIND_MERGE, SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY)
+TR_SESSION_KINDS = (SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY)
+
+
+def session_kind(session: Optional[dict]) -> str:
+    """The session's kind, with the pre-088 NULL read as 'merge'."""
+    return str((session or {}).get("kind") or SESSION_KIND_MERGE)
+
+
+def session_context(session: Optional[dict]) -> dict:
+    """The session's `context` JSON as a dict; {} for a merge session or unreadable text."""
+    raw = (session or {}).get("context")
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def create_session(
+    group_id: str,
+    files: list[str],
+    finalize_action: str | None = None,
+    *,
+    kind: str = SESSION_KIND_MERGE,
+    context: Optional[dict] = None,
+) -> int:
+    """Create an open conflict session with its conflict file set (one transaction).
+
+    `kind`/`context` (088) are what let a TR revert conflict live in this table beside the
+    finalize merge it has nothing else in common with: same row shape, same file list, same
+    merge_id the panel and the AI conflict token are already keyed on — and everything that
+    genuinely differs (which worktree, which ledger row, what commit ends it) inside `context`.
+    """
     if finalize_action is not None and finalize_action not in ACTION_VALUES:
         raise ValueError(f"invalid finalize action: {finalize_action!r}")
+    if kind not in SESSION_KINDS:
+        raise ValueError(f"invalid session kind: {kind!r}")
     now = now_iso()
     store = get_store()
+    context_json = json.dumps(context or {}, ensure_ascii=False)
     with store.transaction():
         store._execute(
             "INSERT INTO git_merge_session "
-            "(group_id, status, finalize_action, created_at, touched_at) "
-            "VALUES (?, 'open', ?, ?, ?)",
-            [group_id, finalize_action, now, now],
+            "(group_id, status, finalize_action, kind, context, created_at, touched_at) "
+            "VALUES (?, 'open', ?, ?, ?, ?, ?)",
+            [group_id, finalize_action, kind, context_json, now, now],
         )
         row = store._fetch_one(
             "SELECT merge_id FROM git_merge_session "
@@ -254,6 +301,19 @@ def close_session(merge_id: int, status: str) -> None:
     get_store()._execute(
         "UPDATE git_merge_session SET status = ?, closed_at = ? WHERE merge_id = ?",
         [status, now_iso(), merge_id],
+    )
+
+
+def set_session_context(merge_id: int, context: dict) -> None:
+    """Replace a session's `context` JSON (088).
+
+    Read-modify-write is the caller's job. `_execute` reports no rowcount
+    (see [[store-execute-has-no-rowcount]]), so a caller that has to know the write landed
+    reads the row back instead of trusting a return value that does not exist.
+    """
+    get_store()._execute(
+        "UPDATE git_merge_session SET context = ? WHERE merge_id = ?",
+        [json.dumps(context or {}, ensure_ascii=False), merge_id],
     )
 
 

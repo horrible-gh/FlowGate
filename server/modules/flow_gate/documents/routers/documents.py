@@ -1752,7 +1752,133 @@ def get_workflow_return_point(
     group_id = doc.get("group_id")
     if not group_id:
         raise HTTPException(status_code=400, detail="Document has no group")
-    return {"ok": True, "return_point": _return_point_payload(group_id)}
+    payload = {"ok": True, "return_point": _return_point_payload(group_id)}
+    # 0332 P0006 §2 — the rewind dialog opens on this call, so the commit preview rides
+    # along instead of getting an endpoint of its own (one group, one answer). It is
+    # additive and optional: if it cannot be assembled the key is simply absent, the
+    # dialog shows "확인할 수 없음" per step and the confirm button stays enabled —
+    # git state has never been allowed to block a rewind (D0005 §6.3).
+    try:
+        from modules.flow_gate.services import tr_commit_service as _tr_commit
+        payload["tr_commit_preview"] = _tr_commit.commit_preview(group_id)
+    except Exception:
+        _log.warning("tr commit preview failed for %s", group_id, exc_info=True)
+    return payload
+
+
+@router.post("/workflow/{doc_id}/return-point/cancel-commits")
+@require_permission("perm_document_update")
+def retry_cancel_tr_commits(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Re-run ONLY the TR commit cancel for this document's group (0332 P0006 §4).
+
+    What the [다시 시도] button on the rewind result screen calls. The rewind itself is
+    long committed, so this touches no document — it re-walks the return point's still
+    un-approved steps and tries their commits again. Guarded by ``document.update``
+    like reopen (this is the tail of a rewind, not a new approval), and behind the same
+    disposed/AI-running gates so a retry cannot slip into a group those close.
+    """
+    from modules.flow_gate.db import documents as _db_docs
+    from modules.flow_gate.services import tr_commit_service as _tr_commit
+
+    doc = _db_docs.get_by_id(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    project_id = doc.get("project_id")
+    group_id = doc.get("group_id")
+    if not project_id or not group_id:
+        raise HTTPException(status_code=400, detail="Document has no project/group")
+    try:
+        result = _tr_commit.cancel_retry(group_id)
+    except Exception:
+        # Same rule as the rewind: an unexpected failure here reports "nothing was
+        # attempted", it does not turn a read-and-retry button into a 500.
+        _log.warning("tr commit cancel retry failed for %s", group_id, exc_info=True)
+        result = _tr_commit.empty_cancel_result()
+    return {"ok": True, "tr_commit_cancel": result}
+
+
+@router.post("/workflow/{doc_id}/return-point/reapply-commits")
+@require_permission("perm_document_update")
+def retry_reapply_tr_commits(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Re-run ONLY the source restore for this document's group (0332 T0018 §3-5).
+
+    The mirror of :func:`retry_cancel_tr_commits`, and deliberately its twin down to the
+    guards: the same ``document.update`` permission, the same disposed / AI-running gates,
+    and the same rule that an unexpected failure reports "nothing was attempted" instead of
+    turning a retry button into a 500. Touches no document — the forward restore that
+    re-approved them is long committed; this only puts the source back.
+    """
+    from modules.flow_gate.db import documents as _db_docs
+    from modules.flow_gate.services import tr_commit_service as _tr_commit
+
+    doc = _db_docs.get_by_id(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    project_id = doc.get("project_id")
+    group_id = doc.get("group_id")
+    if not project_id or not group_id:
+        raise HTTPException(status_code=400, detail="Document has no project/group")
+    try:
+        result = _tr_commit.reapply_retry(group_id)
+    except Exception:
+        _log.warning("tr commit reapply retry failed for %s", group_id, exc_info=True)
+        result = _tr_commit.empty_restore_result()
+    return {"ok": True, "tr_commit_restore": result}
+
+
+# 0332 T0018 K11 — the forward restore's audit trail, a SEPARATE event for the same reason
+# `workflow_rework_service.EVT_TR_COMMIT_CANCEL` is one: the restore's own event row is
+# written inside the transaction, before git has run, and backfilling a committed audit row
+# is the history edit this whole group refuses to do.
+EVT_TR_COMMIT_REAPPLY = "workflow_restore_tr_commit_reapply"
+
+
+def _attach_tr_commit_restore(
+    payload: dict, project_id: str, group_id: str, restored: list[str], actor_user_id: str
+) -> None:
+    """Put the restored steps' source back and hang the outcome on the response.
+
+    Whole key or no key — the rule ``_rearm_git`` already applies to ``tr_commit_cancel``.
+    A half-filled object would have the screen announce that the source came back from a
+    call that never ran, and "the restore is final either way" (D0005 K8) only stays true
+    if the response never overstates what git did.
+    """
+    from modules.flow_gate.services import tr_commit_service as _tr_commit
+    from modules.flow_gate.workflow import event_logger as _event_logger
+
+    try:
+        result = _tr_commit.restore_for_return(group_id, restored)
+    except Exception:
+        _log.warning("tr commit reapply failed for %s", group_id, exc_info=True)
+        return
+    payload["tr_commit_restore"] = result
+
+    if not actor_user_id:
+        return
+    if not (result.get("blocked_reason") or result.get("reapplied") or result.get("skipped")):
+        # A restore of a group that never had a canceled commit writes nothing: an audit
+        # row saying "nothing happened" on every restore buries the ones that mean something.
+        return
+    try:
+        _event_logger.log_event(
+            event_type=EVT_TR_COMMIT_REAPPLY,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+            group_id=group_id,
+            metadata=dict(result),
+        )
+    except Exception:  # pragma: no cover - audit stays best-effort
+        _log.warning("tr commit reapply audit failed for %s", group_id, exc_info=True)
 
 
 @router.post("/workflow/restore")
@@ -1852,7 +1978,7 @@ def restore_workflow(
         except Exception as exc:  # pragma: no cover - best-effort event trail
             _log.warning("[workflow restore] event logging failed: %s", exc, exc_info=True)
 
-        return {
+        payload: dict[str, Any] = {
             "ok": True,
             "restored": restored,
             "stopped_at": stopped_at,
@@ -1861,6 +1987,18 @@ def restore_workflow(
             "root_status": root_status,
             "return_point_cleared": return_point_cleared,
         }
+
+    # 0332 T0018 K11 — the source half, and deliberately OUTSIDE the transaction above.
+    # git is slow and takes the project lock; the rewind direction already learned to split
+    # (`reopen_to_target` closes its transaction, then calls `_rearm_git`) and this is the
+    # same shape read the other way. Only the steps this call actually brought forward are
+    # in scope, and every existing key above keeps its name and meaning — a restore that
+    # predates this feature reads identically.
+    if restored:
+        _attach_tr_commit_restore(
+            payload, project_id, group_id, restored, current_user["user_id"],
+        )
+    return payload
 
 
 def _create_next_empty_document_for_auto_draft(

@@ -32,6 +32,7 @@ from modules.flow_gate.documents.constants import NON_SLOT_WORKFLOW_TYPES
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services.git_service import GitServiceError
 
 from ..pipeline_service import (
@@ -742,23 +743,41 @@ async def document_review_transition_endpoint(
             except Exception:
                 pass
 
-        return prev_review_status, result
+        # 0332 D0005 K1 — TR 승인 커밋 포인트. 자리가 여기인 이유 셋:
+        #   * 승인 전이는 이미 DB 에 커밋된 뒤다(pipeline_service 는 자기 트랜잭션을
+        #     열지 않는다). 그래서 git 이 무엇을 하든 승인은 이미 서 있다.
+        #   * 이 클로저는 이미 anyio.to_thread 안이라 동기 git 명령이 이벤트 루프를
+        #     막지 않는다 — 새로 to_thread 를 감는 자리가 없다.
+        #   * 경로형과 RPC형 승인이 둘 다 이 함수로 모이므로 한 줄이면 두 표면이 끝난다.
+        # 훅 자신이 "TR 인가 / git 이 켜져 있나"를 판단하고 절대 예외를 던지지 않는다.
+        tr_commit = (
+            tr_commit_service.on_document_approved(doc_id, result)
+            if action == "approve" else None
+        )
 
-    prev_review_status, result = await anyio.to_thread.run_sync(_transition_sync)
+        return prev_review_status, result, tr_commit
+
+    prev_review_status, result, tr_commit = await anyio.to_thread.run_sync(_transition_sync)
 
     # SSE broadcast (M026 §8-1 Phase 5-C)
     try:
         from modules.flow_gate.api.v1.events.publisher import broadcast_event, FlowEvent
         from modules.flow_gate.api.v1.events.event_types import EventType
+        payload: dict[str, Any] = {
+            "doc_id": doc_id,
+            "prev_status": prev_review_status,
+            "next_status": result.get("doc_review_status"),
+            "rejection_reason": body.comment if action == "reject" else None,
+            "rejection_history": _parse_rejection_history(result.get("rejection_history")),
+        }
+        # 0332 P0006 §1-7: the strip marker and the Git panel repaint off this event,
+        # so the commit result rides along instead of forcing a poll. Only present on a
+        # TR approval — every other event stays byte-identical.
+        if tr_commit is not None:
+            payload["metadata"] = {"tr_commit": tr_commit}
         await broadcast_event(FlowEvent(
             event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
-            payload={
-                "doc_id": doc_id,
-                "prev_status": prev_review_status,
-                "next_status": result.get("doc_review_status"),
-                "rejection_reason": body.comment if action == "reject" else None,
-                "rejection_history": _parse_rejection_history(result.get("rejection_history")),
-            },
+            payload=payload,
             audience="*",
             doc_id=doc_id,
             project=result.get("project_id"),
@@ -766,6 +785,10 @@ async def document_review_transition_endpoint(
     except Exception:
         pass  # SSE emission failure does not affect the transition result
 
+    # P0006 §1-8: the key exists only for a TR approval. A non-TR approval response is
+    # byte-identical to what it was before this feature, so no existing caller changes.
+    if tr_commit is not None:
+        return {"document": result, "tr_commit": tr_commit}
     return {"document": result}
 
 

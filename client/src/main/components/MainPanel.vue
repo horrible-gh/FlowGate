@@ -89,6 +89,7 @@
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
             :return-targets="getReturnTargets(tab.id)"
+            :slot-commits="getSlotCommits(tab.id)"
             @sequence-updated="() => { docHeaderRefs[tab.id]?.fetchDoc?.(tab.id); workPlanEditorRefs[tab.id]?.fetchPlan?.() }"
             @decide-workflow="openWorkflowDecisionForActive"
             @next-action="onProceedNextStep(tab.id)"
@@ -1115,8 +1116,13 @@
       :steps="timeMachineSteps"
       :loading="timeMachineLoading"
       :preselect-doc-id="timeMachinePreselectDocId"
+      :commit-preview="timeMachineCommitPreview"
+      :cancel-result="timeMachineCancelResult"
+      :retrying="timeMachineRetrying"
       @confirm="onTimeMachineConfirm"
-      @update:visible="(v: boolean) => { timeMachineVisible = v }"
+      @retry-cancel="onTimeMachineRetryCancel"
+      @open-git-panel="onTimeMachineOpenGitPanel"
+      @update:visible="onTimeMachineVisibleChange"
     />
 
     <!-- 0142 rework — forward-restore confirm (symmetric with the backward dialog above). -->
@@ -1325,7 +1331,10 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
-import { resolveClickedSlot, isRollbackTarget, returnTargetIndices, type SequenceSlot } from '../workflow/timeMachineSlot'
+import {
+  resolveClickedSlot, isRollbackTarget, returnTargetIndices, slotCommitMarks,
+  type SequenceSlot, type SlotCommitMark,
+} from '../workflow/timeMachineSlot'
 import { useFlowGateToken, splitGroupId, type RejectionHistoryItem, type RejectionContext } from '../composables/useFlowGateToken'
 import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
@@ -1986,6 +1995,18 @@ const timeMachineSteps = ref<TimeMachineStep[]>([])
 const timeMachineLoading = ref(false)
 // 0018 R0001 — strip-click time-machine pre-selects the clicked step's doc in the picker.
 const timeMachinePreselectDocId = ref<string | null>(null)
+// 0332 D0005 §6.3/§6.4 — what the rewind dialog says about source commits: the preview it
+// opens with, and the cancel result it turns into a result screen for. `null` result means
+// "no result screen" — either the rewind fully succeeded or it has not run yet.
+const timeMachineCommitPreview = ref<any | null>(null)
+const timeMachineCancelResult = ref<any | null>(null)
+const timeMachineRetrying = ref(false)
+// The document [다시 시도] resolves the group from. NOT timeMachineDocId: that may be the
+// AC doc, and reopen deletes it.
+const timeMachineCancelDocId = ref('')
+// The rewound step to open once the dialog actually closes. The success path closes
+// immediately; the result-screen path opens it when the user presses [닫기] (D0005 §6.4).
+const timeMachinePendingStep = ref<TimeMachineStep | null>(null)
 const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
 // 0142 R0001 — cached workflow sequence per return-point root, used to map a rewound step's
 // strip cell to its seq for the reverse time-machine highlight/click (getReturnTargets).
@@ -2405,6 +2426,15 @@ function getReturnTargets(tabId: string): number[] {
   return returnTargetIndices(cells, items, rp.current_min_seq, rp.front_seq)
 }
 
+// 0332 D0005 §6.1 — 칸마다의 소스 커밋 표식. 되돌리기 대상 계산과 같은 슬롯 해석을
+// 쓰므로(slotCommitMarks → resolveClickedSlot) 타입이 반복되는 시퀀스에서도 표식과 클릭이
+// 서로 다른 칸을 가리킬 수 없다. 시퀀스를 아직 못 받았으면 빈 배열 = 표식 없음.
+function getSlotCommits(tabId: string): (SlotCommitMark | null)[] {
+  const items = returnSequences[returnPointDocId(tabId)]
+  if (!items || items.length === 0) return []
+  return slotCommitMarks(getWorkflowViewState(tabId).stepStates, items)
+}
+
 async function refreshReturnPoint(tabId: string) {
   const docId = returnPointDocId(tabId)
   if (!docId || !getTabTypeCode(tabId)) return
@@ -2422,16 +2452,15 @@ async function refreshReturnPoint(tabId: string) {
       destination_min: null,
     }
     returnPoints[docId] = rp
-    // Fetch the sequence only when there is an actual return region to light up, so the strip
-    // can map each rewound step's seq to its cell (getReturnTargets). No region → drop the cache.
-    if (hasReturnRegion(rp)) {
-      try {
-        const seqRes = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
-        returnSequences[docId] = Array.isArray(seqRes.data?.sequence) ? seqRes.data.sequence : []
-      } catch {
-        delete returnSequences[docId]
-      }
-    } else {
+    // The sequence maps each strip cell to its slot — for the rewound steps' seq
+    // (getReturnTargets) and, since 0332 D0005 §6.1, for each cell's source-commit marker
+    // (getSlotCommits). The fetch used to be gated on there being a return region; the
+    // marker needs it on every document, so the gate moved INTO getReturnTargets (which
+    // already checks hasReturnRegion first) and the rewind behaviour is unchanged.
+    try {
+      const seqRes = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+      returnSequences[docId] = Array.isArray(seqRes.data?.sequence) ? seqRes.data.sequence : []
+    } catch {
       delete returnSequences[docId]
     }
   } catch {
@@ -2742,6 +2771,8 @@ async function openTimeMachine(acTabId: string) {
   timeMachinePreselectDocId.value = null  // AC reject opens the picker with no pre-selection
   timeMachineLoading.value = true
   timeMachineVisible.value = true
+  resetTimeMachineCancelState()
+  void loadCommitPreview(acTabId)
   try {
     const res = await getRequest<any[]>(`/api/v1/documents`, {
       project_id: projectId,
@@ -2812,36 +2843,173 @@ async function onWorkflowStepTimeMachine(tabId: string, payload: { index: number
   timeMachinePreselectDocId.value = clicked!.result_doc_id ?? null
   timeMachineLoading.value = false
   timeMachineVisible.value = true
+  resetTimeMachineCancelState()
+  void loadCommitPreview(rootDocId)
+}
+
+// 0332 D0005 §6.3 — the dialog opens with the group's commit state so each step line can
+// say what a rewind would revert. Fetched from the return-point call the dialog already
+// makes (P0006 §2 put the preview there rather than adding an endpoint). A failure leaves
+// it null on purpose: the lines then read "확인할 수 없음" and the confirm button stays
+// live, because git state has never been allowed to block a rewind.
+async function loadCommitPreview(docId: string) {
+  timeMachineCommitPreview.value = null
+  if (!docId) return
+  try {
+    const res = await getRequest<any>(
+      `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point`,
+    )
+    timeMachineCommitPreview.value = res.data?.tr_commit_preview ?? null
+  } catch {
+    timeMachineCommitPreview.value = null
+  }
+}
+
+function resetTimeMachineCancelState() {
+  timeMachineCancelResult.value = null
+  timeMachinePendingStep.value = null
+  timeMachineCancelDocId.value = ''
+  timeMachineRetrying.value = false
 }
 
 // Reopen the workflow at the chosen step: every step doc with seq >= target_seq
 // is reset to pending_review (docs preserved), the AC doc is deleted, and R
 // returns to wf_in_progress. Jump to the rolled-back step so the user can revise.
+// 0332 D0005 §6.4 — does this cancel result need the result screen, or is a toast enough?
+// A rewind that canceled everything (or had nothing to cancel) is finished business; a
+// blocked, skipped or stopped one has a next action attached and must stay on screen.
+function cancelNeedsResultScreen(cancel: any): boolean {
+  if (!cancel) return false
+  return !!cancel.blocked_reason
+    || !!cancel.stopped_reason
+    || (Array.isArray(cancel.skipped) && cancel.skipped.length > 0)
+}
+
+// The close-out the rewind always ends with: drop the stale AC tab, re-read the open
+// documents and land the user on the step they rewound to.
+function finishTimeMachine(acDocId: string, step: TimeMachineStep) {
+  // Only the ephemeral AC doc is deleted by reopen — close its (now stale) tab. A
+  // strip-triggered reopen originates from the root R (or a child), which reopen keeps,
+  // so its tab must NOT be closed (0018 R0001).
+  if (getTabTypeCode(acDocId) === 'AC') tabsStore.closeTab(acDocId)
+  for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
+  tabsStore.openTab({
+    id: step.docId,
+    title: step.title ? `${step.docId} — ${step.title}` : step.docId,
+    path: '',
+    type: 'md',
+    typeCode: step.typeCode ?? undefined,
+  })
+}
+
 async function onTimeMachineConfirm(payload: TimeMachineStep) {
   const acDocId = timeMachineDocId.value
   if (!acDocId) return
   try {
-    await postRequest(`/api/v1/documents/workflow/reopen`, {
+    const res = await postRequest<any>(`/api/v1/documents/workflow/reopen`, {
       doc_id: acDocId,
       target_seq: payload.seq,
     })
+    // 0332 — the rewind is committed no matter what the source cancel did, so the
+    // commit markers and the Git status panel are stale from here on either way.
+    refreshAfterCancel()
+    const cancel = res.data?.tr_commit_cancel ?? null
+    if (cancelNeedsResultScreen(cancel)) {
+      // Stay open and become the result screen. The step the user rewound to opens when
+      // they press [닫기] — closing is what "done here" means (D0005 §6.4).
+      timeMachineCancelResult.value = cancel
+      timeMachineCancelDocId.value = payload.docId
+      timeMachinePendingStep.value = payload
+      return
+    }
     timeMachineVisible.value = false
-    // Only the ephemeral AC doc is deleted by reopen — close its (now stale) tab. A
-    // strip-triggered reopen originates from the root R (or a child), which reopen keeps,
-    // so its tab must NOT be closed (0018 R0001).
-    if (getTabTypeCode(acDocId) === 'AC') tabsStore.closeTab(acDocId)
-    for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
-    tabsStore.openTab({
-      id: payload.docId,
-      title: payload.title ? `${payload.docId} — ${payload.title}` : payload.docId,
-      path: '',
-      type: 'md',
-      typeCode: payload.typeCode ?? undefined,
-    })
-    showToast(t('main.time_machine.toast_reopened'), 'success')
+    finishTimeMachine(acDocId, payload)
+    showToast(reopenToast(cancel), 'success')
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
     showToast(detail, 'danger')
+  }
+}
+
+// The success toast carries the cancel count — "되감았다"만으로는 소스가 어떻게 됐는지
+// 말하지 않는다(D0005 §6.4). A server that omitted the key (older build, preview failure)
+// falls back to the plain sentence this dialog has always shown.
+function reopenToast(cancel: any): string {
+  if (!cancel) return t('main.time_machine.toast_reopened')
+  const n = Array.isArray(cancel.canceled) ? cancel.canceled.length : 0
+  return n > 0
+    ? t('main.time_machine.toast_reopened_canceled', { n })
+    : t('main.time_machine.toast_reopened_nothing')
+}
+
+// 0332 D0005 §6.4 — "어느 경우든 갱신 신호로 워크플로 칸의 표식과 Git 상태 패널의 커밋
+// 목록이 함께 갱신된다." 둘은 서로 다른 통로다: 패널은 창 이벤트로, 칸의 표식은 시퀀스
+// 재조회로 갱신된다. 앞으로 복원(doWorkflowStepReturn)이 이미 쓰는 것과 같은 재조회다.
+function refreshAfterCancel() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+      detail: { project: projectStore.currentProjectId ?? null },
+    }))
+  }
+  if (activeTabId.value) void refreshReturnPoint(activeTabId.value)
+}
+
+// [다시 시도] — re-runs ONLY the cancel (P0006 §4). The rewind is already committed, so
+// nothing here touches a document; the result screen redraws in place.
+async function onTimeMachineRetryCancel() {
+  const docId = timeMachineCancelDocId.value
+  if (!docId || timeMachineRetrying.value) return
+  timeMachineRetrying.value = true
+  try {
+    const res = await postRequest<any>(
+      `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point/cancel-commits`,
+      {},
+    )
+    const cancel = res.data?.tr_commit_cancel ?? null
+    refreshAfterCancel()
+    if (cancelNeedsResultScreen(cancel)) {
+      timeMachineCancelResult.value = cancel
+      return
+    }
+    // The retry succeeded: this dialog has nothing left to say.
+    const step = timeMachinePendingStep.value
+    timeMachineVisible.value = false
+    timeMachineCancelResult.value = null
+    if (step) {
+      timeMachinePendingStep.value = null
+      finishTimeMachine(timeMachineDocId.value, step)
+    }
+    showToast(reopenToast(cancel), 'success')
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(detail, 'danger')
+  } finally {
+    timeMachineRetrying.value = false
+  }
+}
+
+// [Git 상태 패널 열기] — the merged-group case's only real next action. Reuses the event
+// the approval flow already opens that panel with; no second opener (0405 T0011).
+// 0332 TR0014 검토 — 이 창(scoped .modal-bg, z-index 1200)을 먼저 닫아야 한다. 관제소
+// 모달(GitActionMenu.vue, 공용 .modal-bg, z-index 1000)은 같은 body 직속 fixed 레이어를
+// 쓰므로, 이 창이 떠 있는 채로 열리면 그 아래 깔려 클릭도 못 받는다. 닫기는 [닫기]와
+// 같은 정리(onTimeMachineVisibleChange)를 거쳐야 되감긴 단계로의 이동도 그대로 산다.
+function onTimeMachineOpenGitPanel() {
+  onTimeMachineVisibleChange(false)
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('fg:git_status_open', {
+    detail: { project: projectStore.currentProjectId ?? null },
+  }))
+}
+
+function onTimeMachineVisibleChange(v: boolean) {
+  timeMachineVisible.value = v
+  if (v) return
+  timeMachineCancelResult.value = null
+  const step = timeMachinePendingStep.value
+  if (step) {
+    timeMachinePendingStep.value = null
+    finishTimeMachine(timeMachineDocId.value, step)
   }
 }
 
@@ -2893,6 +3061,30 @@ async function onWorkflowStepReturn(tabId: string, payload: { index: number; cod
   returnConfirmVisible.value = true
 }
 
+// 0332 T0018 K11 — what the forward restore did to the SOURCE, as one sentence appended
+// to the document sentence. Never replaces it: the documents came forward whatever git
+// said (D0005 K8), and a server that sends no `tr_commit_restore` (older build, restore
+// that touched no step) falls back to exactly the message this dialog always showed.
+function restoreSourceSentence(restore: any): string {
+  if (!restore) return ''
+  if (restore.blocked_reason) {
+    return t('main.time_machine.restore_source_blocked', {
+      reason: t(`main.time_machine.reason_${restore.blocked_reason}`),
+    })
+  }
+  // TR0019 — same split as the rewind result screen: a kept conflict has a button behind it.
+  if (restore.stopped_reason === 'conflict') {
+    return restore.conflict_session
+      ? t('main.time_machine.restore_source_conflict_parked')
+      : t('main.time_machine.restore_source_conflict')
+  }
+  const n = Array.isArray(restore.reapplied) ? restore.reapplied.length : 0
+  if (n > 0) return t('main.time_machine.restore_source_reapplied', { n })
+  // Nothing came back and nothing refused: there was nothing canceled to begin with.
+  // Saying so out loud is the difference between "정상" and "왜 아무 말이 없지".
+  return t('main.time_machine.restore_source_none')
+}
+
 // Confirmed forward restore: re-approve untouched steps up to the chosen one, stop at the
 // first changed document, then land the user on the step they returned to.
 async function doWorkflowStepReturn() {
@@ -2910,17 +3102,24 @@ async function doWorkflowStepReturn() {
     const data = res.data ?? {}
     for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
     await refreshReturnPoint(tabId)
+    // 0332 T0018 K11 — the restore may have put source commits back, so the workflow
+    // markers and the Git status panel are stale from here on. Same refresh the rewind
+    // side runs, for the same reason: without it the screen keeps showing the canceled
+    // state and the whole thing reads as "아무것도 안 변했다".
+    refreshAfterCancel()
     const restoredCount = Array.isArray(data.restored) ? data.restored.length : 0
+    const source = restoreSourceSentence(data.tr_commit_restore ?? null)
+    const say = (msg: string, kind: string) => showToast(source ? `${msg} ${source}` : msg, kind)
     // Messages name the document reached, not a raw step count (complaint #3).
     if (data.stopped_doc_id) {
       // Hit an edited step before reaching the clicked target — stop there, keep the return point.
-      showToast(t('main.time_machine.restore_stopped', { doc: shortDocCode(data.stopped_doc_id) }), 'warning')
+      say(t('main.time_machine.restore_stopped', { doc: shortDocCode(data.stopped_doc_id) }), 'warning')
     } else if (data.reached_front) {
-      showToast(t('main.time_machine.restore_done_full', { doc: shortDocCode(destinationDocId) }), 'success')
+      say(t('main.time_machine.restore_done_full', { doc: shortDocCode(destinationDocId) }), 'success')
     } else if (restoredCount > 0) {
-      showToast(t('main.time_machine.restore_done_partial', { doc: shortDocCode(destinationDocId) }), 'success')
+      say(t('main.time_machine.restore_done_partial', { doc: shortDocCode(destinationDocId) }), 'success')
     } else {
-      showToast(t('main.time_machine.restore_noop'), 'warning')
+      say(t('main.time_machine.restore_noop'), 'warning')
     }
     // "그쪽으로 갈수 있게" — land the user on the step they returned to.
     const landing = data.stopped_doc_id ?? destinationDocId
@@ -3655,112 +3854,112 @@ function onCreateWorkPlan(tabId: string, parentDocId: string) {
   workPlanCreateVisible.value = true
 }
 
-/**
- * 0405 P0004 — opens the dedicated proposal window only when the next type is WP. Every other
- * type returns false and falls straight through to the shared proceed list (no regression).
- */
-function openWorkPlanProposalIfWp(): boolean {
-  if (String(nextActionModalTypeCode.value || '').toUpperCase() !== 'WP') return false
-  workPlanCreateParentDocId.value = nextActionModalDocRef.value
-  workPlanCreateProjectId.value = nextActionModalProjectId.value
-  workPlanCreateGroupId.value = nextActionModalGroupId.value
-  workPlanProposalBusy.value = ''
-  workPlanProposalNotice.value = ''
+/**
+ * 0405 P0004 — opens the dedicated proposal window only when the next type is WP. Every other
+ * type returns false and falls straight through to the shared proceed list (no regression).
+ */
+function openWorkPlanProposalIfWp(): boolean {
+  if (String(nextActionModalTypeCode.value || '').toUpperCase() !== 'WP') return false
+  workPlanCreateParentDocId.value = nextActionModalDocRef.value
+  workPlanCreateProjectId.value = nextActionModalProjectId.value
+  workPlanCreateGroupId.value = nextActionModalGroupId.value
+  workPlanProposalBusy.value = ''
+  workPlanProposalNotice.value = ''
 
-  workPlanProposalVisible.value = true
-  return true
-}
-
-function workPlanProposalFailureText(failure: AdvanceFailure): string {
-  if (failure.code === 'sequence_exhausted') return t('main.work_plan_proposal_dialog.notice_sequence_exhausted')
-  if (failure.code === 'head_in_progress') return t('main.work_plan_proposal_dialog.notice_head_in_progress')
-  return failure.message || t('main.work_plan_proposal_dialog.notice_issue_failed')
-}
-
-/**
- * [Copy Mention] — issues a token carrying the scope and puts that mention on the clipboard.
- * The window does not close before the request: it closes only after the copy succeeds, and
- * on a 409 stays open with just the reason line swapped in.
- */
-async function onWorkPlanProposalCopyMention(scope: WorkPlanScope) {
-  const docRef = workPlanCreateParentDocId.value
-  if (!docRef || workPlanProposalBusy.value) return
-  workPlanProposalNotice.value = ''
-  workPlanProposalBusy.value = 'copy'
-  const outcome: { token: IssuedToken | null; error: AdvanceFailure | null } = { token: null, error: null }
-  try {
-    await copyMentionDeferred(
-      async () => {
-        const res = await advanceWithWorkPlanScope({
-          docId: docRef, workPlanScope: scope, refDocIds: [docRef],
-        })
-        outcome.token = res.token
-        outcome.error = res.error
-        if (!outcome.token) throw new ClipboardAbort()
-        return composeMention(outcome.token, [docRef])
-      },
-      {
-        tabId: nextActionModalTabId.value,
-        kind: 'next_step',
-        successToast: t('main.work_plan_proposal_dialog.copy_toast'),
-        aborted: () => outcome.token == null,
-      },
-    )
-  } finally {
-    workPlanProposalBusy.value = ''
-  }
-  if (outcome.error) {
-    workPlanProposalNotice.value = workPlanProposalFailureText(outcome.error)
-    return
-  }
-  if (outcome.token) workPlanProposalVisible.value = false
-}
-
-/**
- * [Invoke AI] — a single run that bypasses the shared continuous-work window. The server folds
- * work_plan_proposal into advance_workflow, so the text the AI reads here comes from the same
- * function as the text [Copy Mention] puts on the clipboard.
- */
-async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; providerId: string }) {
-  const docRef = workPlanCreateParentDocId.value
-  const project = workPlanCreateProjectId.value
-  const groupId = workPlanCreateGroupId.value
-  if (!docRef || !project || !groupId || workPlanProposalBusy.value) return
-  workPlanProposalNotice.value = ''
-  workPlanProposalBusy.value = 'ai'
-  const gParts = splitGroupId(groupId)
-  try {
-    await postRequest('/api/v1/ai-invoke/start', {
-      project,
-      ...(gParts?.module != null ? { module: gParts.module } : {}),
-      group: gParts?.groupCode ?? groupId,
-      doc_ref: docRef,
-      action_scope: 'work_plan_proposal',
-      mode: 'single',
-      provider_id: payload.providerId,
-      selected_docs: [docRef],
-      work_plan_scope: payload.scope,
-    })
-    workPlanProposalVisible.value = false
-  } catch (e: any) {
-    const data = e?.response?.data ?? {}
-    // The server message for 409 run_in_progress is in English. The screen already has its own
-    // wording for this reason, so it uses the reactive store state instead and leaves the reason
-    // string empty — this keeps a stray English line from slipping into the Korean-language screen.
-    if (data.code === 'run_in_progress') {
+  workPlanProposalVisible.value = true
+  return true
+}
 
-      workPlanProposalNotice.value = ''
-      workPlanProposalVisible.value = false
-      return
-    }
-    workPlanProposalNotice.value = data.message
-      || data.detail
-      || t('main.work_plan_proposal_dialog.notice_ai_failed')
-  } finally {
-    workPlanProposalBusy.value = ''
-  }
-}
-
+function workPlanProposalFailureText(failure: AdvanceFailure): string {
+  if (failure.code === 'sequence_exhausted') return t('main.work_plan_proposal_dialog.notice_sequence_exhausted')
+  if (failure.code === 'head_in_progress') return t('main.work_plan_proposal_dialog.notice_head_in_progress')
+  return failure.message || t('main.work_plan_proposal_dialog.notice_issue_failed')
+}
+
+/**
+ * [Copy Mention] — issues a token carrying the scope and puts that mention on the clipboard.
+ * The window does not close before the request: it closes only after the copy succeeds, and
+ * on a 409 stays open with just the reason line swapped in.
+ */
+async function onWorkPlanProposalCopyMention(scope: WorkPlanScope) {
+  const docRef = workPlanCreateParentDocId.value
+  if (!docRef || workPlanProposalBusy.value) return
+  workPlanProposalNotice.value = ''
+  workPlanProposalBusy.value = 'copy'
+  const outcome: { token: IssuedToken | null; error: AdvanceFailure | null } = { token: null, error: null }
+  try {
+    await copyMentionDeferred(
+      async () => {
+        const res = await advanceWithWorkPlanScope({
+          docId: docRef, workPlanScope: scope, refDocIds: [docRef],
+        })
+        outcome.token = res.token
+        outcome.error = res.error
+        if (!outcome.token) throw new ClipboardAbort()
+        return composeMention(outcome.token, [docRef])
+      },
+      {
+        tabId: nextActionModalTabId.value,
+        kind: 'next_step',
+        successToast: t('main.work_plan_proposal_dialog.copy_toast'),
+        aborted: () => outcome.token == null,
+      },
+    )
+  } finally {
+    workPlanProposalBusy.value = ''
+  }
+  if (outcome.error) {
+    workPlanProposalNotice.value = workPlanProposalFailureText(outcome.error)
+    return
+  }
+  if (outcome.token) workPlanProposalVisible.value = false
+}
+
+/**
+ * [Invoke AI] — a single run that bypasses the shared continuous-work window. The server folds
+ * work_plan_proposal into advance_workflow, so the text the AI reads here comes from the same
+ * function as the text [Copy Mention] puts on the clipboard.
+ */
+async function onWorkPlanProposalInvokeAi(payload: { scope: WorkPlanScope; providerId: string }) {
+  const docRef = workPlanCreateParentDocId.value
+  const project = workPlanCreateProjectId.value
+  const groupId = workPlanCreateGroupId.value
+  if (!docRef || !project || !groupId || workPlanProposalBusy.value) return
+  workPlanProposalNotice.value = ''
+  workPlanProposalBusy.value = 'ai'
+  const gParts = splitGroupId(groupId)
+  try {
+    await postRequest('/api/v1/ai-invoke/start', {
+      project,
+      ...(gParts?.module != null ? { module: gParts.module } : {}),
+      group: gParts?.groupCode ?? groupId,
+      doc_ref: docRef,
+      action_scope: 'work_plan_proposal',
+      mode: 'single',
+      provider_id: payload.providerId,
+      selected_docs: [docRef],
+      work_plan_scope: payload.scope,
+    })
+    workPlanProposalVisible.value = false
+  } catch (e: any) {
+    const data = e?.response?.data ?? {}
+    // The server message for 409 run_in_progress is in English. The screen already has its own
+    // wording for this reason, so it uses the reactive store state instead and leaves the reason
+    // string empty — this keeps a stray English line from slipping into the Korean-language screen.
+    if (data.code === 'run_in_progress') {
+
+      workPlanProposalNotice.value = ''
+      workPlanProposalVisible.value = false
+      return
+    }
+    workPlanProposalNotice.value = data.message
+      || data.detail
+      || t('main.work_plan_proposal_dialog.notice_ai_failed')
+  } finally {
+    workPlanProposalBusy.value = ''
+  }
+}
+
 function onWorkPlanCreated(payload: { docId: string; title: string }) {
   tabsStore.openTab({
     id: payload.docId,

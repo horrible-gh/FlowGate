@@ -93,6 +93,28 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # (0408). 0408 is the later arrival, so it moves to the next free ordinal
     # instead of taking a letter suffix.
     ("080_workflow_sequence_provider.sql", "081_workflow_sequence_provider.sql"),
+    # flowgate.default.0332: this group authored its ledger migration as 085 against a base whose
+    # newest file on disk was 083. origin/main has since merged 084_ai_invoke_provider_pin.sql and
+    # 085_conversation_backward_page_audit.sql, so 085 is taken and both of this group's files move
+    # up one — the later arrival takes the next free ordinal, the same rule 0413 T0007 applied to
+    # 080_workflow_sequence_provider.sql. Any database that already ran this branch under the old
+    # names (a developer checkout, the preview slot) is carried across by these lines; without
+    # them the MySQL dialect of the ledger file would re-run its `group_git_state` ADD COLUMNs,
+    # which carry no IF NOT EXISTS, and the boot migration would fail.
+    #
+    # T0021: a parallel group reached 086 first, so the ledger file moves once more, to
+    # 086a_tr_commit_ledger.sql — a letter suffix rather than the next free number, so it keeps its
+    # position between the sibling's 086 and this group's own 087/088. That makes **two** already-
+    # applied histories for one file (078/079's situation, module docstring above): databases that
+    # ran this branch before the first move hold `085_tr_commit_ledger.sql`, databases that ran it
+    # after hold `086_tr_commit_ledger.sql`, and no database holds both. Each history therefore
+    # gets its own entry converging directly on the final name — never chained through the
+    # intermediate 086, which would leave whichever side is not visited first pointing at a name
+    # no longer on disk. The reapply file keeps its existing 086 -> 087 history untouched: that is
+    # a different file, and 086_tr_commit_reapply.sql never collided with anything.
+    ("085_tr_commit_ledger.sql", "086a_tr_commit_ledger.sql"),
+    ("086_tr_commit_ledger.sql", "086a_tr_commit_ledger.sql"),
+    ("086_tr_commit_reapply.sql", "087_tr_commit_reapply.sql"),
 )
 
 

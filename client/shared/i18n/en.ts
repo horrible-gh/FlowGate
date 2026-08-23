@@ -1527,6 +1527,49 @@ export default {
       restore_done_partial: 'Returned up to {doc}.',
       restore_stopped: 'Stopped at {doc} — its content changed. Please review it.',
       restore_noop: 'Nothing to return.',
+      // 0332 T0018 K11 — the source half of the same sentence. Appended to the document
+      // sentence above, never replacing it: the documents came forward either way.
+      restore_source_reapplied: '{n} source commit(s) restored.',
+      restore_source_none: 'There was no source to restore.',
+      restore_source_blocked: 'The source was not restored — {reason}',
+      restore_source_conflict: 'Restoring the source conflicted and stopped. The worktree needs a look.',
+      // 0332 TR0019 — when the conflict was kept as a session. The older sentence above is
+      // only for the case where it could not be kept.
+      restore_source_conflict_parked: 'Restoring the source conflicted and stopped. The conflict was kept — carry on with [Resolve conflict] in the Git status panel.',
+      // 0332 D0005 §6.3 — each step line says what a rewind would revert, before the press.
+      commit_none: 'No source change',
+      commit_already_merged: 'Already merged',
+      commit_already_canceled: 'Already canceled',
+      commit_unknown: 'Cannot be checked',
+      // 0332 TR0014 review — no_worktree/git_inactive group_status also fails closed on the
+      // real cancel with a blocked_reason (L0007 §3); the preview must not show live hashes.
+      commit_no_worktree: 'No worktree',
+      commit_git_inactive: 'Git disabled',
+      cancel_summary_n: 'Confirming reverts {n} commit(s) with cancel commits.',
+      cancel_summary_none: 'There are no commits to cancel.',
+      cancel_summary_merged: 'Already merged — the source will not be rolled back.',
+      cancel_summary_no_worktree: 'This group has no worktree — the source will not be rolled back.',
+      cancel_summary_git_inactive: 'Git integration is off for this project — the source will not be rolled back.',
+      // 0332 D0005 §6.4 — after the rewind. A fully canceled one ends in a toast.
+      toast_reopened_canceled: 'Rewound — {n} commit(s) canceled.',
+      toast_reopened_nothing: 'Rewound — there were no commits to cancel.',
+      // If anything was left uncanceled the dialog becomes a result screen whose heading
+      // states first that the rewind itself is final.
+      result_title: 'The workflow was rewound. The source commits stand as follows.',
+      result_canceled: 'Canceled ({commit})',
+      reason_already_canceled: 'Already canceled',
+      reason_not_attempted: 'Not attempted',
+      reason_conflict: 'The revert conflicted and stopped here. Clean up in the worktree or carry on from this state.',
+      reason_conflict_parked: 'The revert conflicted and stopped here. The conflict was kept — carry on with [Resolve conflict] in the Git status panel.',
+      reason_already_merged: 'This commit is merged into base. It can only be canceled with [Unmerge] in the Git status panel.',
+      reason_dirty_worktree: 'The worktree has uncommitted changes. Clean it up and try again.',
+      reason_git_busy: 'Another git operation is in progress.',
+      reason_no_worktree: 'This group has no worktree.',
+      reason_git_inactive: 'Git integration is off for this project.',
+      btn_retry: 'Try again',
+      retrying: 'Trying again…',
+      btn_open_git_panel: 'Open Git status panel',
+      btn_close: 'Close',
     },
     review_action_bar: {
       status_revised: 'Revised',
@@ -1553,6 +1596,10 @@ export default {
       mark_revised_confirm_message: 'Move this document back to pending review. Continue?',
       error_approve_failed_log: '[ReviewActionBar] Approval failed',
       toast_approve_failed: 'Approval failed: {detail}',
+      // 0332 D0005 §6.5 — TR approval notices. All three start from "approved".
+      tr_commit_toast: 'Approved — commit {commit} recorded',
+      tr_commit_none_toast: 'Approved — no source change, so nothing was committed',
+      tr_commit_failed_toast: 'Approved — could not commit ({reason})',
       toast_mark_revised_success: 'Moved back to pending review.',
       toast_mark_revised_failed: 'Failed to complete revision: {detail}',
       btn_decide_workflow: 'Decide Workflow',
@@ -2292,6 +2339,12 @@ export default {
       decided_empty: 'All steps were deleted. Use [Edit Sequence] to add steps back.',
       time_machine_hint: 'Roll back to this step',
       time_machine_return_hint: 'Return to this step (original position)',
+      // 0332 D0005 §6.1 — the cell's commit marker hover, appended below the existing hint.
+      tr_commit_hint: 'Source commit for this step: {commit}',
+      tr_commit_canceled_hint: 'The source commit for this step is canceled (revert {commit})',
+      // 0332 T0018 K11 — the marker is back to "committed", and this line is what says
+      // the commit got there by a forward restore rather than by a fresh approval.
+      tr_commit_restored_hint: 'Source commit for this step: {commit} (restored by a forward return)',
       // 0403 NR0004 F4 — the work plan screen of a group with no workflow yet.
       no_sequence_yet: 'This group has no workflow yet. Use [Apply work plan] above to build the first sequence from this plan.',
     },
@@ -2572,6 +2625,43 @@ export default {
       resolve_inline: 'Resolve here',
       open: 'Open',
       slots_header: 'Active branch slots',
+      // 0332 D0005 §6.2 — this group's commits per slot. Counts always show; only the list folds.
+      tr_commits: {
+        badge: '{live} commits · {canceled} canceled',
+        canceled: 'Canceled',
+        no_source_change: 'No source change',
+        commit_failed: 'Could not commit ({reason})',
+        more: '{n} more',
+        reason_no_changes: 'no source change',
+        reason_artifacts_only: 'tool debris only',
+        reason_git_inactive: 'git disabled',
+        reason_no_worktree: 'no worktree',
+        reason_git_busy: 'git busy',
+        reason_commit_failed: 'commit failed',
+        // 0332 T0018 K11 — a step can now hold two live rows (committed, then reverted,
+        // then restored). Without this label they are the same line twice.
+        restored: 'Restored',
+        reapply_pending: 'Canceled source commits are still waiting to be restored.',
+        reapply_btn: 'Restore the source again',
+        reapply_busy: 'Restoring…',
+        reapply_done: '{n} source commit(s) restored.',
+        reapply_none: 'There was no source to restore.',
+        reapply_failed: 'The source could not be restored ({reason}).',
+        block_dirty_worktree: 'the worktree has uncommitted changes',
+        block_git_busy: 'another git operation is in progress',
+        block_already_merged: 'this group is already merged \u2014 use [Unmerge] first',
+        block_no_worktree: 'this group has no worktree',
+        block_git_inactive: 'git integration is off',
+        conflict_tr_revert: 'Undoing {code}\u2019s source commit hit a conflict ({n} file(s)).',
+        conflict_tr_reapply: 'Restoring {code}\u2019s source commit hit a conflict ({n} file(s)).',
+        conflict_review_ready: 'The resolved files are waiting to be committed.',
+        conflict_resolve_btn: 'Resolve conflict',
+        conflict_commit_btn: 'Commit the resolution',
+        conflict_abort_btn: 'Give up on the revert',
+        conflict_resolved_toast: 'Conflict resolved. Review it, then press [Commit the resolution].',
+        conflict_committed_toast: 'Left commit {commit}.',
+        conflict_aborted_toast: 'Gave up on the revert; the worktree is back as it was.',
+      },
       empty_slots: 'No branch slots are registered.',
       recovery_header: 'Recovery',
       push: 'Re-push',

@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import workflow_sequences as db_wfseq
+from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.workflow_decision_service import (
     provider_view_of,
@@ -160,6 +161,13 @@ def get_workflow_sequence(doc_id: str, request: Request):
     items = db_wfseq.get_sequence_items(seq["id"])
     provider_view = provider_view_of(doc.get("project_id"))
     head = db_wfseq.get_effective_head(seq["id"])
+    # 0332 D0005 §6.1: the workflow strip's per-cell commit marker. Resolved by slot
+    # identity (result_doc_id), so a repeated type marks the right cell, and looked up
+    # for the whole strip in ONE query. Never raises — an empty map just means the
+    # strip draws no markers and looks exactly as it did before.
+    commit_states = tr_commit_service.slot_commit_states(
+        [i.get("result_doc_id") for i in items if i.get("result_doc_id")]
+    )
 
     head_out = None
     if head:
@@ -178,7 +186,7 @@ def get_workflow_sequence(doc_id: str, request: Request):
         "doc_id":   doc_id,
         "doc_class": doc_class,
         "decided":  True,
-        "sequence": [_serialize_item(i, provider_view) for i in items],
+        "sequence": [_serialize_item(i, provider_view, commit_states) for i in items],
         "head":     head_out,
     })
 
@@ -198,8 +206,16 @@ def _resolve_doc_class(doc: dict) -> str:
     return "R"
 
 
-def _serialize_item(item: dict, provider_view: Optional[dict] = None) -> dict:
+def _serialize_item(
+    item: dict,
+    provider_view: Optional[dict] = None,
+    commit_states: Optional[dict] = None,
+) -> dict:
     return {
+        # 0332 D0005 §6.1 — the slot's source commit, or None. A slot whose TR changed
+        # no source carries None and the cell stays unmarked: "quiet" is the design,
+        # not a missing value.
+        "tr_commit": (commit_states or {}).get(item.get("result_doc_id")),
         "id":        item.get("id"),
         "item_seq":  item.get("item_seq"),
         "type":      item.get("type"),
