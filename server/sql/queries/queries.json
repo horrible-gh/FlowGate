@@ -139,6 +139,8 @@
         "delete_pending_items": "DELETE FROM workflow_sequence_items WHERE sequence_id = ? AND result_doc_id IS NULL",
         "get_max_item_seq": "SELECT COALESCE(MAX(item_seq), 0) AS max_seq FROM workflow_sequence_items WHERE sequence_id = ?",
         "get_sequence_item_by_result_doc_id": "SELECT * FROM workflow_sequence_items WHERE result_doc_id = ? LIMIT 1",
+        "get_sequence_item_by_id": "SELECT * FROM workflow_sequence_items WHERE id = ?",
+        "claim_item_result_doc_id": "UPDATE workflow_sequence_items SET result_doc_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND (result_doc_id IS NULL OR result_doc_id = ?)",
         "set_item_result_doc_id": "UPDATE workflow_sequence_items SET result_doc_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
     },
     "workflow_item_results": {

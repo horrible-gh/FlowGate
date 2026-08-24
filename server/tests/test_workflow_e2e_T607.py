@@ -693,7 +693,14 @@ def test_register_workflow_result_does_not_write_doc_review_status(monkeypatch):
     monkeypatch.setattr(db_docs, "get_by_id",
                         MagicMock(return_value={"doc_id": "DS0001", "doc_review_status": "pending_review"}))
     monkeypatch.setattr(db_wir, "insert_result", MagicMock())
-    monkeypatch.setattr(db_wfseq, "set_item_result_doc_id", MagicMock())
+    # 0457 T0005: the slot write is the conditional claim; report it as won.
+    monkeypatch.setattr(
+        db_wfseq,
+        "claim_item_result_doc_id",
+        MagicMock(side_effect=lambda item_id, result_doc_id: {
+            "id": item_id, "result_doc_id": result_doc_id,
+        }),
+    )
 
     register_workflow_result(
         item_id=1,

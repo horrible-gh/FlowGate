@@ -657,17 +657,31 @@ class TestRegisterWorkflowResultReviewTransition:
         mock_events.create = MagicMock(return_value={"id": 1})
         monkeypatch.setattr(el, "db_events", mock_events)
 
-        # workflow_sequences mock (for calling set_item_result_doc_id)
+        # workflow_sequences mock. 0457 T0005: the slot write is now the conditional
+        # claim, which returns the item row as it stands afterwards — this stand-in
+        # reports the claim as won so the registration proceeds.
         mock_wfseq = MagicMock()
-        mock_wfseq.set_item_result_doc_id = MagicMock()
+        mock_wfseq.claim_item_result_doc_id = MagicMock(
+            side_effect=lambda item_id, result_doc_id: {
+                "id": item_id, "result_doc_id": result_doc_id,
+            }
+        )
 
         import modules.flow_gate.db.workflow_sequences as db_wfseq_mod
-        monkeypatch.setattr(db_wfseq_mod, "set_item_result_doc_id", mock_wfseq.set_item_result_doc_id)
+        monkeypatch.setattr(
+            db_wfseq_mod, "claim_item_result_doc_id", mock_wfseq.claim_item_result_doc_id
+        )
 
         return mock_docs, updated_doc, mock_wfseq
 
-    def test_register_workflow_result_calls_set_item_result_doc_id(self, monkeypatch):
-        """register_workflow_result() must call set_item_result_doc_id (DB004 §6.3)."""
+    def test_register_workflow_result_claims_the_slot(self, monkeypatch):
+        """register_workflow_result() must write result_doc_id on the slot (DB004 §6.3).
+
+        0457 T0005: the write is the conditional claim rather than the unconditional
+        set_item_result_doc_id, so that a slot holding a different document is refused
+        instead of overwritten. What is asserted here is unchanged — this registration
+        does put its document into slot 1.
+        """
         from modules.flow_gate.workflow.pipeline_service import register_workflow_result
         doc = {
             "id": 1, "doc_id": "P001-G001-R0001", "project_id": "P001",
@@ -681,7 +695,7 @@ class TestRegisterWorkflowResultReviewTransition:
             registered_at="2026-01-01T00:00:00",
             actor_user_id="u001",
         )
-        mock_wfseq.set_item_result_doc_id.assert_called_once_with(1, "P001-G001-R0001")
+        mock_wfseq.claim_item_result_doc_id.assert_called_once_with(1, "P001-G001-R0001")
 
     def test_register_workflow_result_no_doc_review_write(self, monkeypatch):
         """register_workflow_result() does not write doc_review_status (DB004 §6.1)."""
@@ -817,6 +831,15 @@ class TestRegisterDocumentResultEndpoint:
         mock_wfseq_mod = MagicMock()
         import modules.flow_gate.db.workflow_sequences as db_wfseq_mod
         monkeypatch.setattr(db_wfseq_mod, "set_item_result_doc_id", MagicMock())
+        # 0457 T0005: registration claims the slot conditionally; the stand-in reports
+        # the slot as now holding the registered document (claim won).
+        monkeypatch.setattr(
+            db_wfseq_mod,
+            "claim_item_result_doc_id",
+            MagicMock(side_effect=lambda item_id, result_doc_id: {
+                "id": item_id, "result_doc_id": result_doc_id,
+            }),
+        )
 
         return mock_db_wseq, updated_doc
 

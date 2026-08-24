@@ -218,8 +218,56 @@ def is_orphaned_workflow_member(doc_id: str) -> bool:
     return get_sequence_for_member_doc(doc_id) is None
 
 
+def get_item_by_id(item_id: int) -> Optional[dict]:
+    """Return the workflow_sequence_items row by PK(id).
+
+    0457 T0005: the occupancy invariant in
+    :func:`modules.flow_gate.workflow.pipeline_service.register_workflow_result` has to
+    read back *which document a given slot holds*. Every other selector in this module
+    answers "which slot is the head" — a different question that must not be reused for
+    this one, which is exactly the substitution B0001 was made of.
+    """
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.get_sequence_item_by_id")
+    return store._fetch_one(sql, [item_id])
+
+
+def claim_item_result_doc_id(item_id: int, result_doc_id: str) -> Optional[dict]:
+    """Claim a slot for ``result_doc_id`` — only when it is empty or already holds it.
+
+    0457 B0001 / NR0003 §7-3: :func:`set_item_result_doc_id` overwrites unconditionally,
+    so a caller that resolved the wrong slot silently evicted the document sitting in it.
+
+    The guard cannot be a read-then-write in Python. Under PostgreSQL READ COMMITTED two
+    concurrent registrations would both read an empty slot and the later UPDATE would
+    win; under SQLite the same shape becomes a lock-upgrade error rather than a verdict.
+    So the condition travels *with* the UPDATE —
+    ``WHERE id = ? AND (result_doc_id IS NULL OR result_doc_id = ?)`` — which both engines
+    re-evaluate against the row as it stands when the write lock is granted. A losing
+    claim matches zero rows, so it leaves neither ``result_doc_id`` nor ``updated_at``
+    changed: a refused attempt is invisible in the data.
+
+    Returns the item row as it stands after the attempt (``None`` when no such item
+    exists). The claim succeeded iff that row's ``result_doc_id`` equals
+    ``result_doc_id``; the caller makes that comparison so it can name both documents in
+    the conflict it raises.
+    """
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.claim_item_result_doc_id")
+    store._execute(sql, [result_doc_id, item_id, result_doc_id])
+    return get_item_by_id(item_id)
+
+
 def set_item_result_doc_id(item_id: int, result_doc_id: Optional[str]) -> None:
-    """Set result_doc_id on the sequence item (register / clear a result document)."""
+    """Set result_doc_id on the sequence item unconditionally (register / clear).
+
+    Result *registration* goes through
+    :func:`modules.flow_gate.workflow.pipeline_service.register_workflow_result`, which
+    uses :func:`claim_item_result_doc_id` so it cannot evict another document. This
+    unconditional writer remains for the paths that legitimately overwrite: clearing a
+    slot (``result_doc_id=None``) on reopen, and filling a slot the caller has already
+    established is empty.
+    """
     store = get_store()
     sql = _sql(store, "workflow_sequences.set_item_result_doc_id")
     store._execute(sql, [result_doc_id, item_id])
