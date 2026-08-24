@@ -385,6 +385,92 @@ describe('aiInvokeRuns store', () => {
     expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
   })
 
+  // T0005 §2/§3 item 3 / §4 item 3: active-all's four resume-blocker fields must
+  // survive the snake_case -> camelCase normalization losslessly (both the blocked
+  // shape and the pre-existing true/null default for an ordinary paused row).
+  it('preserves the four resume-blocker fields from active-all onto the paused card', async () => {
+    const groupId = 'flowgate.default.0456.blocked'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [],
+        paused: [{
+          group_id: groupId,
+          doc_ref: `${groupId}.0001-B`,
+          paused_at: '2026-08-24T12:00:00+09:00',
+          resume_available: false,
+          resume_block_code: 'provider_unavailable',
+          resume_block_reason: 'The selected AI provider is not enabled for this project.',
+          resume_provider_name: 'Old CLI',
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      phase: 'paused',
+      resumeAvailable: false,
+      resumeBlockCode: 'provider_unavailable',
+      resumeBlockReason: 'The selected AI provider is not enabled for this project.',
+      resumeProviderName: 'Old CLI',
+    })
+  })
+
+  it('defaults an ordinary paused row to resumable with null blockers', async () => {
+    const groupId = 'flowgate.default.0456.plain'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [],
+        paused: [{
+          group_id: groupId,
+          doc_ref: `${groupId}.0001-B`,
+          paused_at: '2026-08-24T12:00:00+09:00',
+          resume_available: true,
+          resume_block_code: null,
+          resume_block_reason: null,
+          resume_provider_name: null,
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      phase: 'paused',
+      resumeAvailable: true,
+      resumeBlockCode: null,
+      resumeBlockReason: null,
+      resumeProviderName: null,
+    })
+  })
+
+  // T0005 §3 item 3: a stale resumeAvailable hint (a settings change raced the open
+  // card) must reach the caller as the server's own 422 -- never rewritten, never
+  // swallowed -- and the paused card must survive the rejection.
+  it('rejects with the original 422 provider_unavailable body and keeps the paused card', async () => {
+    const groupId = 'flowgate.default.0456.stale'
+    store.trackFinished({
+      run_id: 'run-stale', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
+    })
+    const rejection = {
+      response: {
+        status: 422,
+        data: {
+          code: 'provider_unavailable',
+          message: 'The selected AI provider is not enabled for this project.',
+        },
+      },
+    }
+    vi.mocked(postRequest).mockRejectedValueOnce(rejection)
+
+    await expect(store.resume(groupId)).rejects.toBe(rejection)
+
+    expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+  })
+
   it('retains system-stop identity from active-all bootstrap', async () => {
     const groupId = 'flowgate.default.0385'
     vi.mocked(getRequest).mockResolvedValueOnce({
