@@ -155,12 +155,15 @@ describe('WorkPlanCreateDialog', () => {
     await createButton(wrapper).trigger('click')
     await flushPromises()
 
+    // flowgate.default.0423 T0005 item 10: a checked type sends no value at all (the
+    // server fills it from workflow_type_counts, or 0 when there is none) — only an
+    // unchecked type (D here) is pinned to an explicit 0 (WorkPlanCreateDialog.vue onCreate()).
     expect(postRequest).toHaveBeenCalledWith('/api/v1/documents/work-plan', {
       parent_doc_id: 'flowgate.default.0402.0001-R',
       title: '작업계획 — 설계 1종 · 작업 1종',
       counted_types: ['DS', 'D', 'T'],
       provider_candidates: ['aip_opus'],
-      quantities: { DS: 1, D: 0, T: 1 },
+      quantities: { D: 0 },
       defaults: { provider_id: null, note: '' },
       type_providers: {},
     })

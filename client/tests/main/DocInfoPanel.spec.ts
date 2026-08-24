@@ -6,14 +6,20 @@ import type { StepState } from '@main/workflow/workflowViewState'
 
 // group 0022: the [질의 응답] panel fetches GET /api/v1/q/{docId} on mount and POSTs on
 // register/answer. Mock the api so tests control the payload and assert calls.
-const { getRequest, postRequest } = vi.hoisted(() => ({
+const { getRequest, postRequest, showToast } = vi.hoisted(() => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
+  showToast: vi.fn(),
 }))
 vi.mock('@shared/api', () => ({
   default: { get: vi.fn(), post: vi.fn(), head: vi.fn(), patch: vi.fn() },
   getRequest,
   postRequest,
+}))
+// 0457 T0009 §4: assert the recover-failure toast text directly instead of poking the
+// shared toasts singleton, matching AttachmentCard.serverError.0060.spec.ts.
+vi.mock('@main/components/common/useToast', () => ({
+  useToast: () => ({ showToast }),
 }))
 
 import DocInfoPanel from '@main/components/DocInfoPanel.vue'
@@ -25,6 +31,7 @@ beforeEach(() => {
   i18n.global.locale.value = 'en'
   getRequest.mockReset()
   postRequest.mockReset()
+  showToast.mockReset()
   getRequest.mockResolvedValue({ data: { qa: { items: [] } } })
   postRequest.mockResolvedValue({ data: { ok: true } })
 })
@@ -104,8 +111,10 @@ describe('DocInfoPanel status fallback', () => {
   })
 })
 
-describe('DocInfoPanel orphan recovery (flowgate.default.0374)', () => {
-  function mountOrphan(orphan: boolean) {
+describe('DocInfoPanel orphan recovery (flowgate.default.0374 / 0457 T0009)', () => {
+  type CandidateSlot = { item_seq: number; type: string; empty: boolean }
+
+  function mountOrphan(orphan: boolean, candidateSlots: CandidateSlot[] = []) {
     return mount(DocInfoPanel, {
       props: {
         docId: 'flowgate.default.0374.9999-TR',
@@ -113,6 +122,7 @@ describe('DocInfoPanel orphan recovery (flowgate.default.0374)', () => {
         reviewStatus: 'pending_review',
         rejectReason: null,
         orphan,
+        candidateSlots,
         stepStates: [] as StepState[],
         nextStepIndex: null,
         collapsed: false,
@@ -121,21 +131,149 @@ describe('DocInfoPanel orphan recovery (flowgate.default.0374)', () => {
     })
   }
 
+  const MATCHING_SLOT: CandidateSlot = { item_seq: 4, type: 'TR', empty: true }
+
   it('shows the orphan warning only for an unattached document', () => {
     expect(mountOrphan(true).find('.dip-orphan-warning').exists()).toBe(true)
     expect(mountOrphan(false).find('.dip-orphan-warning').exists()).toBe(false)
   })
 
-  it('reattaches to the current head and emits a refresh signal', async () => {
-    const wrapper = mountOrphan(true)
-    await wrapper.find('.dip-orphan-warning button').trigger('click')
+  it('reattaches to the matching empty candidate slot and emits a refresh signal', async () => {
+    const wrapper = mountOrphan(true, [MATCHING_SLOT])
+    const button = wrapper.find('.dip-orphan-warning button')
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click')
     await flushPromises()
 
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/documents/flowgate.default.0374.9999-TR/workflow/recover',
-      {},
+      { item_seq: 4 },
     )
     expect(wrapper.emitted('orphan-recovered')).toHaveLength(1)
+  })
+
+  it('disables the button and gives a reason (not a slot dump) when no candidate slot matches', async () => {
+    // A candidate exists but its type does not match this TR document.
+    const wrapper = mountOrphan(true, [{ item_seq: 4, type: 'NR', empty: true }])
+    const button = wrapper.find('.dip-orphan-warning button')
+    expect(button.attributes('disabled')).toBeDefined()
+
+    await button.trigger('click')
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+
+    expect(wrapper.find('.dip-orphan-warning p').text())
+      .toBe(i18n.global.t('main.doc_info_panel.orphan_no_slot_desc'))
+  })
+
+  it.each([
+    ['slot_type_not_recoverable', 'orphan_recover_error_slot_type_not_recoverable'],
+    ['not_orphaned', 'orphan_recover_error_not_orphaned'],
+    ['no_group_or_project', 'orphan_recover_error_no_group_or_project'],
+    ['no_available_slot', 'orphan_recover_error_no_available_slot'],
+    ['slot_occupied', 'orphan_recover_error_slot_occupied'],
+    ['slot_type_mismatch', 'orphan_recover_error_slot_type_mismatch'],
+    ['no_file_path', 'orphan_recover_error_no_file_path'],
+  ])('maps error.code=%s to its Korean-safe toast copy, never the server detail text', async (code, key) => {
+    postRequest.mockRejectedValueOnce({
+      response: { data: { error: { code, message: 'English server prose that must not reach the screen' } } },
+    })
+    const wrapper = mountOrphan(true, [MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe(i18n.global.t(`main.doc_info_panel.${key}`))
+    expect(message).not.toContain('English server prose')
+    expect(wrapper.emitted('orphan-recovered')).toBeUndefined()
+  })
+
+  it('falls back to the generic failure copy for an unknown or missing error.code', async () => {
+    postRequest.mockRejectedValueOnce({ response: { data: { detail: 'raw english detail' } } })
+    const wrapper = mountOrphan(true, [MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe(i18n.global.t('main.doc_info_panel.orphan_recover_failed'))
+    expect(message).not.toContain('raw english detail')
+  })
+})
+
+// 0457 TR0010 rev1 반려 §1: the block above's beforeEach pins locale to 'en', so it only
+// ever asserts the English translation of these keys — it cannot catch a missing/wrong
+// Korean string, and it never proves the server's English detail stays off screen when
+// Korean is the active locale. This block mounts under 'ko' and compares against the
+// LITERAL Korean copy copied out of shared/i18n/ko.ts (not i18n.global.t() re-derived
+// under the same locale, which would trivially match a wrong ko.ts string against itself).
+describe('DocInfoPanel orphan recovery — 한국어 안내 (0457 T0009 §3 완료 기준, TR0010 rev1)', () => {
+  beforeEach(() => {
+    i18n.global.locale.value = 'ko'
+  })
+
+  type CandidateSlot = { item_seq: number; type: string; empty: boolean }
+  function mountOrphanKo(candidateSlots: CandidateSlot[] = []) {
+    return mount(DocInfoPanel, {
+      props: {
+        docId: 'flowgate.default.0374.9999-TR',
+        typeCode: 'TR',
+        reviewStatus: 'pending_review',
+        rejectReason: null,
+        orphan: true,
+        candidateSlots,
+        stepStates: [] as StepState[],
+        nextStepIndex: null,
+        collapsed: false,
+      },
+      global: { plugins: [i18n] },
+    })
+  }
+  const MATCHING_SLOT: CandidateSlot = { item_seq: 4, type: 'TR', empty: true }
+
+  it('후보 칸이 없으면 버튼이 비활성화되고, 왜 안 되는지와 다음 행동(반려·보관)을 한국어로 보여준다', async () => {
+    const wrapper = mountOrphanKo([{ item_seq: 4, type: 'NR', empty: true }])
+    const button = wrapper.find('.dip-orphan-warning button')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.dip-orphan-warning p').text())
+      .toBe('타입이 일치하는 빈 칸이 없어 다시 연결할 수 없습니다. 반려하여 보관하세요.')
+  })
+
+  it.each([
+    ['slot_type_not_recoverable', '이 문서 종류는 워크플로 칸에 다시 연결할 수 없습니다.'],
+    ['not_orphaned', '문서가 이미 다른 칸에 연결되어 있어 다시 연결할 수 없습니다.'],
+    ['no_group_or_project', '문서에 그룹 정보가 없어 다시 연결할 수 없습니다.'],
+    ['no_available_slot', '연결할 수 있는 빈 칸을 찾지 못했습니다.'],
+    ['slot_occupied', '그 칸은 이미 다른 문서가 차지하고 있습니다.'],
+    ['slot_type_mismatch', '그 칸은 다른 문서 종류를 기다리고 있어 연결할 수 없습니다.'],
+    ['no_file_path', '문서 파일 경로가 없어 다시 연결할 수 없습니다.'],
+  ])('error.code=%s는 한국어 문구로 뜨고, 서버 영어 원문은 화면에 나타나지 않는다', async (code, koreanText) => {
+    postRequest.mockRejectedValueOnce({
+      response: { data: { error: { code, message: 'English server prose that must not reach the screen' } } },
+    })
+    const wrapper = mountOrphanKo([MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe(koreanText)
+    expect(message).not.toContain('English server prose')
+    expect(message).not.toContain('English')
+  })
+
+  it('알 수 없거나 없는 error.code는 서버 detail 없이 일반 실패 문구(한국어)로 대체한다', async () => {
+    postRequest.mockRejectedValueOnce({ response: { data: { detail: 'raw english detail' } } })
+    const wrapper = mountOrphanKo([MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe('문서를 다시 연결하지 못했습니다. 잠시 후 다시 시도하거나 반려하여 보관하세요.')
+    expect(message).not.toContain('raw english detail')
+    expect(message).not.toContain('english')
   })
 })
 

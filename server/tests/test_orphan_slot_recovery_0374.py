@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from modules.flow_gate.api.v1 import document_routes
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import workflow_sequences as db_wfseq
+from modules.flow_gate.services.mutation_policy import MutationPolicyError
 from modules.flow_gate.workflow import pipeline_service
 from modules.flow_gate.workflow.routers import workflow
 
@@ -139,13 +140,14 @@ def test_recovery_rejects_ac_as_non_slot_type(monkeypatch):
     orphan_check = MagicMock(return_value=True)
     monkeypatch.setattr(workflow.db_wfseq, "is_orphaned_workflow_member", orphan_check)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(MutationPolicyError) as exc:
         workflow.recover_orphaned_workflow_document_endpoint(
             DOC_ID, workflow.OrphanRecoveryRequest(), _admin()
         )
 
     assert exc.value.status_code == 409
-    assert "not a recoverable workflow slot type" in exc.value.detail
+    assert exc.value.error["code"] == "slot_type_not_recoverable"
+    assert "not a recoverable workflow slot type" in exc.value.error["message"]
     orphan_check.assert_not_called()
 
 
@@ -158,27 +160,29 @@ def test_recovery_rejects_filled_slot(monkeypatch):
     }
     _install_recovery(monkeypatch, target)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(MutationPolicyError) as exc:
         workflow.recover_orphaned_workflow_document_endpoint(
             DOC_ID, workflow.OrphanRecoveryRequest(), _admin()
         )
 
     assert exc.value.status_code == 409
-    assert "already filled" in exc.value.detail
+    assert exc.value.error["code"] == "slot_occupied"
+    assert "already filled" in exc.value.error["message"]
 
 
 def test_recovery_rejects_type_mismatch_with_expected_type(monkeypatch):
     target = {"id": 77, "item_seq": 4, "type": "NR", "result_doc_id": None}
     _install_recovery(monkeypatch, target)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(MutationPolicyError) as exc:
         workflow.recover_orphaned_workflow_document_endpoint(
             DOC_ID, workflow.OrphanRecoveryRequest(), _admin()
         )
 
     assert exc.value.status_code == 409
-    assert "expects type NR" in exc.value.detail
-    assert "document type is TR" in exc.value.detail
+    assert exc.value.error["code"] == "slot_type_mismatch"
+    assert "expects type NR" in exc.value.error["message"]
+    assert "document type is TR" in exc.value.error["message"]
 
 
 def test_recovery_requires_document_approve(monkeypatch):

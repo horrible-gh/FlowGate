@@ -214,6 +214,33 @@ def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
     return get_sequence_by_id(item["sequence_id"])
 
 
+def find_sequence_by_group_root(group_id: Optional[str]) -> Optional[dict]:
+    """Fall back to the group's R/B root document to find its workflow sequence.
+
+    An orphaned workflow member is by definition not any slot's result_doc_id, so
+    :func:`get_sequence_for_member_doc` never resolves it. This walks the group's
+    root documents instead — the same lookup the recover endpoint's item_seq-specified
+    path and the /relations orphan fallback both need, kept in one place so they cannot
+    drift (0457 T0009).
+    """
+    from . import documents as db_documents
+
+    if not group_id:
+        return None
+    roots = [
+        row for row in (db_documents.get_documents_by_group_id(group_id) or [])
+        if str(row.get("type_code") or "").upper() in {"R", "B"}
+    ]
+    for root in roots:
+        root_doc_id = root.get("doc_id")
+        if not root_doc_id:
+            continue
+        sequence = get_sequence_by_doc_id(root_doc_id)
+        if sequence is not None:
+            return sequence
+    return None
+
+
 def is_orphaned_workflow_member(doc_id: str) -> bool:
     """Return whether a workflow-planned group document is not attached to any slot.
 

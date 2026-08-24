@@ -340,7 +340,9 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
     const [url, body] = postRequest.mock.calls[0]
     expect(url).toBe('/api/v1/documents/work-plan')
     expect(body.provider_candidates).toEqual([])
-    expect(body.quantities).toEqual({ DS: 1, T: 0 })
+    // flowgate.default.0423 T0005 item 11: the checked type (DS) sends no value at all —
+    // only the unchecked type (T) is pinned to an explicit 0 (WorkPlanProposalDialog.vue onCreateEmpty()).
+    expect(body.quantities).toEqual({ T: 0 })
     wrapper.unmount()
   })
 
