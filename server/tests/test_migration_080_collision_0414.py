@@ -4,7 +4,7 @@ Two parallel branches both picked 080 as their next free migration number:
 0406's `080_ai_invoke_prompt_audit.sql` and 0408's
 `080_workflow_sequence_provider.sql`. `server/tests/test_migration_numbering.py`
 catches the ordinal collision itself; this file is the end-to-end proof that
-disambiguating them (080a/080b) does not repeat the 042/062-style boot failure
+disambiguating them (080a/080b) did not repeat the 042/062-style boot failure
 sqloader's DatabaseMigrator is prone to on any rename, because it recognises an
 applied migration only by its exact filename string.
 
@@ -26,10 +26,22 @@ That distinction matters for the fix: `080_ai_invoke_prompt_audit.sql` ->
 `080a_ai_invoke_prompt_audit.sql` is a pure letter-suffix rename, which
 `migration_rename_repair.reconcile_renamed_migrations` (keyed on number+slug,
 ignoring a trailing letter) already carries over with no static ledger entry.
-`081_workflow_sequence_provider.sql` -> `080b_workflow_sequence_provider.sql`
-changes the ordinal itself (081 -> 080), which that key does not treat as equal
-— only the explicit `migration_renames.RENAMES` entry this task adds prevents a
-repeat of M0016.
+`081_workflow_sequence_provider.sql` -> `081a_workflow_sequence_provider.sql`
+changes the ordinal itself, which that key does not treat as equal — only the
+explicit `migration_renames.RENAMES` entry this task adds prevents a repeat of
+M0016.
+
+flowgate.default.0452 moved the provider file once more. T0017 had parked it at
+`080b_workflow_sequence_provider.sql`; 0452 found that 081 — the ordinal T0007
+had originally moved it to — was independently claimed by 0410's
+`081_document_origin_snapshot.sql`, and settled the file at
+`081a_workflow_sequence_provider.sql`, keeping its place between 081 and 082.
+`080b_` is therefore a *third* already-applied history, not a destination, and
+this file tracks the same three histories `test_migration_numbering.py` §9 does.
+Merging 0414 and 0452 resurrected `080b_…sql` on disk beside `081a_…sql` — two
+files carrying the identical DDL — and the migrator ran the one with no ledger
+row, aborting the boot with `column "provider_id" … already exists`. A move is
+not a copy: only the final name may exist on disk.
 """
 from __future__ import annotations
 
@@ -54,13 +66,19 @@ from modules.flow_gate.db.migration_renames import (  # noqa: E402
 )
 
 _NEW_PROMPT_AUDIT = "080a_ai_invoke_prompt_audit.sql"
-_NEW_PROVIDER = "080b_workflow_sequence_provider.sql"
+_NEW_PROVIDER = "081a_workflow_sequence_provider.sql"
 
-# The two bare pre-cleanup names, plus the dev preview's third, differently
-# numbered history for the provider file (module docstring above).
+# The two bare pre-cleanup names, plus the provider file's two further histories
+# (module docstring above): the ordinal T0007 moved it to, and the letter suffix
+# T0017 parked it at before 0452 settled it at 081a.
 _BARE_PROMPT_AUDIT = "080_ai_invoke_prompt_audit.sql"
 _BARE_PROVIDER = "080_workflow_sequence_provider.sql"
 _OLD_NUMBERED_PROVIDER = "081_workflow_sequence_provider.sql"
+_OLD_LETTERED_PROVIDER = "080b_workflow_sequence_provider.sql"
+
+# Every name the provider migration has ever been applied under. None of them may
+# survive on disk — `test_migration_numbering.py` §9 guards the same list.
+_PROVIDER_HISTORIES = (_BARE_PROVIDER, _OLD_NUMBERED_PROVIDER, _OLD_LETTERED_PROVIDER)
 
 
 def _disk_migrations() -> list[str]:
@@ -136,56 +154,84 @@ def _dev_preview_state_db(tmp_path: Path, name: str) -> Path:
 
 
 def test_the_080_renames_are_in_the_ledger():
-    required = {
-        (_BARE_PROMPT_AUDIT, _NEW_PROMPT_AUDIT),
-        (_BARE_PROVIDER, _NEW_PROVIDER),
-        (_OLD_NUMBERED_PROVIDER, _NEW_PROVIDER),
-    }
+    required = {(_BARE_PROMPT_AUDIT, _NEW_PROMPT_AUDIT)}
+    required |= {(old, _NEW_PROVIDER) for old in _PROVIDER_HISTORIES}
     assert required <= set(RENAMES)
 
 
-def test_080a_and_080b_are_on_disk_and_the_bare_names_are_gone():
+def test_080a_and_081a_are_on_disk_and_every_older_name_is_gone():
+    """A move is not a copy — an older name left on disk gets applied a second time."""
     disk = set(_disk_migrations())
     assert {_NEW_PROMPT_AUDIT, _NEW_PROVIDER} <= disk
     assert _BARE_PROMPT_AUDIT not in disk
-    assert _BARE_PROVIDER not in disk
+    for stale in _PROVIDER_HISTORIES:
+        assert stale not in disk, (
+            f"{stale} is back on disk beside {_NEW_PROVIDER}. Both carry the same DDL, "
+            f"and the migrator applies whichever one has no ledger row."
+        )
 
 
 # ── the rejected boot, reproduced against the real migrator ──────────────────
 
 
-def test_the_rejected_boot_failure_reproduces_without_the_081_rename(tmp_path):
-    """Dynamic letter-suffix reconciliation alone rescues 080a but not 080b.
+@pytest.mark.parametrize(
+    "old_provider_name",
+    list(_PROVIDER_HISTORIES),
+    ids=["bare-080-history", "renumbered-081-history", "lettered-080b-history"],
+)
+def test_the_dynamic_pass_alone_now_carries_every_provider_history(
+    tmp_path, old_provider_name
+):
+    """M0016's boot failure no longer reproduces from any history, and why.
 
-    Runs the same two-step repair `config.py` `run_migrations` runs
-    (`reconcile_renamed_migrations`, the generic number+slug-keyed one) WITHOUT
-    first carrying over the static `RENAMES` ledger — i.e. the state of the
-    world before this task added the 081 -> 080b entry. 080a is rescued for
-    free; 080b is not, and the boot fails exactly as M0016 recorded it.
+    T0017 wrote this as the control proving the static `RENAMES` entry was
+    load-bearing: `reconcile_renamed_migrations` keyed on number+slug alone, so a
+    history whose ordinal differed from the on-disk name went unrescued and the
+    boot died on the already-present column. 0452 added a second pass keyed on the
+    slug with the ordinal dropped, which reaches exactly those cases, so the
+    dynamic repair now carries all three histories on its own.
+
+    What that second pass requires is the invariant this file's disk test guards:
+    the already-applied name must be **gone from disk**. Ship both names and they
+    are two different migrations again, the pending one runs, and M0016 comes
+    back — which is what merging 0414 and 0452 did by leaving 080b beside 081a.
     """
     from migration_rename_repair import reconcile_renamed_migrations
     from sqloader.migrator import DatabaseMigrator
     from sqloader.sqlite3 import SQLiteWrapper
 
-    db_path = _dev_preview_state_db(tmp_path, "unrepaired.db")
+    db_path = tmp_path / f"dynamic-only-{old_provider_name}.db"
+    _migrate_fresh(db_path)
+    _rewrite_ledger(
+        db_path,
+        {_NEW_PROMPT_AUDIT: _BARE_PROMPT_AUDIT, _NEW_PROVIDER: old_provider_name},
+    )
+    _plant_provider_row(db_path)
+    before = _provider_columns(db_path)
 
     db = SQLiteWrapper(str(db_path))
     migrator = DatabaseMigrator(db, str(_MIGRATIONS_DIR), auto_run=False)
-    reconcile_renamed_migrations(db, str(_MIGRATIONS_DIR))
+    carried = dict(reconcile_renamed_migrations(db, str(_MIGRATIONS_DIR)))
+    assert carried.get(old_provider_name) == _NEW_PROVIDER
 
-    with pytest.raises(Exception) as excinfo:
-        migrator.apply_migrations()
+    migrator.apply_migrations()  # must not raise
 
-    message = str(excinfo.value)
-    assert _NEW_PROVIDER in message
-    assert "duplicate column" in message.lower()
-    assert "provider_id" in message
+    assert _provider_columns(db_path) == before
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT provider_id, provider_display_name FROM workflow_sequence_items "
+            "WHERE sequence_id = 1 AND item_seq = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == ("anthropic:sonnet", "Sonnet 5")
 
 
 @pytest.mark.parametrize(
     "old_provider_name",
-    [_BARE_PROVIDER, _OLD_NUMBERED_PROVIDER],
-    ids=["bare-080-history", "renumbered-081-history"],
+    list(_PROVIDER_HISTORIES),
+    ids=["bare-080-history", "renumbered-081-history", "lettered-080b-history"],
 )
 def test_repair_lets_the_same_boot_finish_without_losing_a_column_or_row(
     tmp_path, old_provider_name
@@ -207,7 +253,7 @@ def test_repair_lets_the_same_boot_finish_without_losing_a_column_or_row(
     assert carried >= 2
 
     # Should not raise: the real migrator, constructed fresh, must see nothing
-    # pending for either 080a or 080b.
+    # pending for either 080a or the provider file.
     DatabaseMigrator(SQLiteWrapper(str(db_path)), str(_MIGRATIONS_DIR), auto_run=True)
 
     assert _provider_columns(db_path) == before
@@ -257,7 +303,7 @@ def test_two_consecutive_boots_after_carryover_is_a_full_noop(tmp_path):
     assert after_second_boot == after_first_boot
 
 
-def test_a_db_already_cleaned_up_to_080a_080b_is_untouched(tmp_path):
+def test_a_db_already_cleaned_up_to_080a_081a_is_untouched(tmp_path):
     db_path = tmp_path / "already_clean.db"
     _migrate_fresh(db_path)
 
@@ -281,7 +327,7 @@ def test_a_db_already_cleaned_up_to_080a_080b_is_untouched(tmp_path):
     assert after == before
 
 
-def test_a_brand_new_database_applies_every_sqlite_migration_including_080a_080b(tmp_path):
+def test_a_brand_new_database_applies_every_sqlite_migration_including_080a_081a(tmp_path):
     db_path = tmp_path / "fresh.db"
     _migrate_fresh(db_path)
 

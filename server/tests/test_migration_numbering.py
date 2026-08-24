@@ -54,7 +54,9 @@ REQUIRED_COLLISION_RENAMES = {
     ("079_ai_invoke_step_timeout.sql", "079a_ai_invoke_step_timeout.sql"),
     ("079_workflow_sequence_note_source.sql", "079b_workflow_sequence_note_source.sql"),
     ("080_ai_invoke_prompt_audit.sql", "080a_ai_invoke_prompt_audit.sql"),
-    ("080_workflow_sequence_provider.sql", "080b_workflow_sequence_provider.sql"),
+    # The provider file left 080 entirely; §9 below owns its three histories and the
+    # 081a they all converge on. Naming 080b here would contradict it.
+    ("080_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
 }
 
 # NNN, optionally followed by one lowercase letter. The letter is how a file that

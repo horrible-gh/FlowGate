@@ -118,6 +118,11 @@ RENAMES: tuple[tuple[str, str], ...] = (
     #           off that database's `migrations` table while diagnosing this rejection.
     #   081_…   databases migrated after T0007 but before this fix. This is what the stg
     #           deployment's PostgreSQL ledger holds.
+    #
+    # The 0406 side of the same collision is a pure letter-suffix rename on an unchanged
+    # ordinal, so `reconcile_renamed_migrations` carries it dynamically; the entry is kept
+    # anyway because that dynamic pass runs after this one and nothing else pins the pair.
+    ("080_ai_invoke_prompt_audit.sql", "080a_ai_invoke_prompt_audit.sql"),
     ("080_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
     ("080b_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
     ("081_workflow_sequence_provider.sql", "081a_workflow_sequence_provider.sql"),
