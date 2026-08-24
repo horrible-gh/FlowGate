@@ -191,7 +191,7 @@ def seed_data(tmp_db):
 
     projects.create({"project_id": PROJECT, "project_name": "CH Project"})
     users.create({"user_id": USER, "username": "c", "email": "c@e", "password": "x"})
-    for tc in ("B", "CH", "TR"):
+    for tc in ("B", "CH", "WP", "T", "TR"):
         _doc_type(tc)
     groups.create({"group_id": GROUP, "project_id": PROJECT, "module": "__ALL__", "title": "G"})
 
@@ -201,12 +201,29 @@ def seed_data(tmp_db):
     yield
 
 
-def _worker_token(doc_ref: str, tmp_path) -> str:
-    """The token a chat worker actually holds: edit scope, bound to its CH document."""
+def _seed_sequence(spine: str, items: list[tuple[str, int, str | None]]):
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.db.connection import get_store
+
+    store = get_store()
+    store._execute("INSERT INTO workflow_sequences (doc_id) VALUES (?)", [spine])
+    seq = db_wfseq.get_sequence_by_doc_id(spine)
+    for item_seq, (type_code, sort_order, result_doc_id) in enumerate(items, start=1):
+        store._execute(
+            "INSERT INTO workflow_sequence_items "
+            "(sequence_id,item_seq,type,label,doc_class,sort_order,result_doc_id) "
+            "VALUES (?,?,?,?,?,?,?)",
+            [seq["id"], item_seq, type_code, type_code, "B", sort_order, result_doc_id],
+        )
+    return seq
+
+
+def _worker_token(doc_ref: str, tmp_path, action_scope: str = "edit") -> str:
+    """Issue the same document-bound token used by chat/edit and new-document workers."""
     from modules.flow_gate.services import token_service
     with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
         result = token_service.issue(
-            project=PROJECT, group_id=GROUP, action_scope="edit",
+            project=PROJECT, group_id=GROUP, action_scope=action_scope,
             doc_ref=doc_ref, issued_to=USER,
         )
     return result["raw_token"]
@@ -283,3 +300,98 @@ def test_non_ch_document_still_accepts_worker_question(seed_data, tmp_path):
     assert resp.status_code == 200, resp.text
     assert resp.json()["doc_id"] == TRDOC
     assert _container_exists(TRDOC)
+
+
+def test_worker_question_skips_ch_predecessor_and_falls_back_to_spine(seed_data, tmp_path):
+    """Production shape: B + [CH(result, approved), WP(NULL)] stores on B, never CH."""
+    from modules.flow_gate.services import q_service
+
+    spine = "chprj-__ALL__-0261-B0010"
+    ch_doc = "chprj-__ALL__-0261-CH0011"
+    _mk_doc(spine, "B", 10, review_status="wf_in_progress")
+    _mk_doc(ch_doc, "CH", 11, review_status="approved")
+    _seed_sequence(spine, [("CH", 0, ch_doc), ("WP", 1, None)])
+
+    raw = _worker_token(spine, tmp_path, action_scope="new")
+    with patch("modules.flow_gate.api.v1.q_tapi_routes.has_permission", return_value=True):
+        resp = _client().post(
+            f"/api/v1/q/{spine}/questions",
+            json={"asker_kind": "ai", "questions": [{"body": "WP 범위는 어디까지인가?"}]},
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["doc_id"] == spine
+    assert _container_exists(spine)
+    assert not _container_exists(ch_doc)
+    assert q_service.get_qa_detail(ch_doc)["items"] == []
+
+
+def test_anchor_skips_latest_ch_and_uses_earlier_t(seed_data):
+    """[T(result), CH(result, approved), TR(NULL)] anchors on T, not the latest CH."""
+    from modules.flow_gate.services import q_service
+
+    spine = "chprj-__ALL__-0261-B0012"
+    t_doc = "chprj-__ALL__-0261-T0013"
+    ch_doc = "chprj-__ALL__-0261-CH0014"
+    _mk_doc(spine, "B", 12, review_status="wf_in_progress")
+    _mk_doc(t_doc, "T", 13, review_status="approved")
+    _mk_doc(ch_doc, "CH", 14, review_status="approved")
+    _seed_sequence(spine, [("T", 0, t_doc), ("CH", 1, ch_doc), ("TR", 2, None)])
+
+    assert q_service.resolve_question_anchor(spine) == t_doc
+
+
+def test_service_rejects_direct_ch_question(seed_data):
+    """The service boundary refuses CH even when a caller bypasses the Q route."""
+    from fastapi import HTTPException
+    from modules.flow_gate.services import q_service
+
+    with pytest.raises(HTTPException) as exc_info:
+        q_service.add_questions(CHDOC, [{"body": "hidden?"}], asker_kind="ai")
+
+    assert exc_info.value.status_code == 400
+    assert "no Q container" in str(exc_info.value.detail)
+    assert not _container_exists(CHDOC)
+
+
+def test_next_empty_ch_with_questions_rolls_back_document_and_q(seed_data, tmp_path, monkeypatch):
+    """The next-empty route propagates the service 400 and rolls back its CH transaction."""
+    from fastapi import HTTPException
+    from modules.flow_gate.db import documents as db_documents
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.documents.routers import documents as routes
+    from modules.flow_gate.services import q_service
+
+    spine = "chprj-__ALL__-0261-B0015"
+    _mk_doc(spine, "B", 15, review_status="wf_in_progress")
+    seq = _seed_sequence(spine, [("CH", 0, None)])
+    stored_path = tmp_path / "0016-CH_document.md"
+    created_doc_id = f"{GROUP}.0016-CH"
+
+    monkeypatch.setattr(routes.numbering_service, "reserve_document", lambda **_kwargs: "0016-CH")
+    monkeypatch.setattr(routes.storage_paths, "document_path", lambda **_kwargs: stored_path)
+    monkeypatch.setattr(routes.storage_paths, "to_storage_relative", lambda *_args, **_kwargs: str(stored_path))
+    monkeypatch.setattr(routes, "_get_project_branch", lambda _project_id: "main")
+    monkeypatch.setattr(routes, "_try_close_parent_on_child_created", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(routes, "_reject_if_group_ai_running", lambda _doc: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        routes.create_next_empty_document(
+            routes.NextEmptyDocumentCreate(
+                project_id=PROJECT,
+                group_id=GROUP,
+                prev_doc_id=spine,
+                type_code="CH",
+                title="Conversation",
+                module="__ALL__",
+                questions=[{"body": "hidden?"}],
+            ),
+            current_user={"user_id": USER},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert db_documents.get_by_id(created_doc_id) is None
+    assert q_service.get_qa_detail(created_doc_id)["items"] == []
+    assert not stored_path.exists()
+    assert db_wfseq.get_effective_head(seq["id"])["result_doc_id"] is None

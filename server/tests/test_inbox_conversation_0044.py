@@ -257,6 +257,42 @@ def test_ch_new_standalone_is_auto_approved(seed_data, tmp_path):
     assert rec["doc_review_status"] == "approved"
 
 
+def test_ch_new_with_questions_is_rejected_atomically(seed_data, tmp_path):
+    """Inbox preserves the CH service 400 and removes both the document and its file."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store
+
+    client = _build_client()
+    raw = _issue_token(tmp_path, "new", "testprj-__ALL__-0001-R0001")
+    stored_path = tmp_path / "docs" / "0006-CH_document.md"
+    doc_id = "testprj-__ALL__-0001.0006-CH"
+
+    with patch(
+        "modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
+        return_value="0006-CH",
+    ), patch(
+        "modules.flow_gate.api.inbox_routes.document_path",
+        return_value=stored_path,
+    ):
+        resp = client.post(
+            "/api/v1/inbox",
+            json={
+                "project": "testprj", "module": "__ALL__",
+                "group_name": "testprj-__ALL__-0001",
+                "action": "new", "prev_doc_id": "testprj-__ALL__-0001-R0001",
+                "doc_type": "CH", "content": "---\ntype: CH\n---\nhello",
+                "questions": [{"title": "Hidden", "body": "Should not persist?"}],
+            },
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+
+    assert resp.status_code == 400, resp.text
+    assert "no Q container" in resp.json()["error_message"]
+    assert db_docs.get_by_id(doc_id) is None
+    assert get_store()._db.fetch_one("SELECT 1 FROM questions WHERE doc_id = ?", [doc_id]) is None
+    assert not stored_path.exists()
+
+
 # ── §8 owner-targeted SSE on edit by a non-owner subject ───────────────────────
 def test_ch_edit_by_non_owner_broadcasts_to_owner(seed_data, tmp_path):
     # Legacy (hyphenated) harness uses the {TYPE}{seq4} doc-id form, like NR0001.
