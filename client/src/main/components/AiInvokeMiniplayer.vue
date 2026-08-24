@@ -94,9 +94,7 @@
 
           <div class="aiv-mini__meta">
             <template v-if="entry.phase === 'paused'">
-              <span>{{ entry.resumeAvailable
-                ? t('main.ai_miniplayer.state_paused')
-                : t('main.ai_miniplayer.state_paused_unavailable') }}</span>
+              <span>{{ t('main.ai_miniplayer.state_paused') }}</span>
             </template>
             <template v-else-if="entry.phase === 'finished'">
               <span>{{ outcomeLabel(entry) }}</span>
@@ -162,24 +160,6 @@
             <span v-if="entry.pausedAt">{{ entry.pausedAt }}</span>
             <span v-if="entry.stopLastMessageExcerpt">{{ entry.stopLastMessageExcerpt }}</span>
           </div>
-          <!-- T0005 §3 item 4: an explicit pin whose provider fell out of the project's
-               enabled chain is not a card the [재개] button can quietly relaunch — it must
-               say so, name the pin when known, and point at the fix (project AI settings),
-               never promise an in-card provider swap this feature does not have. -->
-          <div
-            v-if="entry.phase === 'paused' && !entry.resumeAvailable"
-            class="aiv-mini__meta aiv-mini__resume-blocked"
-            data-test="ai-miniplayer-resume-blocked"
-            role="alert"
-          >
-            <span v-if="entry.resumeBlockReason">
-              {{ t('main.ai_miniplayer.resume_blocked_reason', { reason: entry.resumeBlockReason }) }}
-            </span>
-            <span v-if="entry.resumeProviderName">
-              {{ t('main.ai_miniplayer.resume_blocked_provider', { name: entry.resumeProviderName }) }}
-            </span>
-            <span>{{ t('main.ai_miniplayer.resume_blocked_guidance') }}</span>
-          </div>
 
           <div class="aiv-mini__actions">
             <button
@@ -205,10 +185,7 @@
               v-if="entry.phase === 'paused'"
               type="button"
               class="btn btn-primary btn-sm"
-              data-test="ai-miniplayer-resume"
-              :disabled="busy.has(entry.groupId) || !entry.resumeAvailable"
-              :aria-disabled="busy.has(entry.groupId) || !entry.resumeAvailable"
-              :title="!entry.resumeAvailable ? entry.resumeBlockReason ?? undefined : undefined"
+              :disabled="busy.has(entry.groupId)"
               @click="doResume(entry)"
             >
               <AppIcon name="play" />
@@ -435,17 +412,8 @@ async function doResume(entry: AiInvokeRunEntry): Promise<void> {
   busy.add(entry.groupId)
   try {
     await store.resume(entry.groupId)
-  } catch (error: any) {
-    // T0005 §3 item 5: a stale resumeAvailable hint (a settings change raced the open
-    // card) surfaces here as a real 422 from the server. Its message IS the final
-    // explanation — show it verbatim, with no prefix/translation/substitution.
-    const status = error?.response?.status
-    const serverMessage = error?.response?.data?.message
-    if (status === 422 && typeof serverMessage === 'string' && serverMessage.trim() !== '') {
-      showToast(serverMessage, 'danger')
-    } else {
-      showToast(t('main.ai_miniplayer.error_resume_failed'), 'danger')
-    }
+  } catch {
+    showToast(t('main.ai_miniplayer.error_resume_failed'), 'danger')
   } finally {
     busy.delete(entry.groupId)
   }
@@ -861,13 +829,6 @@ watch(entries, list => {
 }
 
 .aiv-mini__release-error {
-  color: var(--danger);
-  white-space: normal;
-  line-height: 1.45;
-}
-
-.aiv-mini__resume-blocked {
-  flex-direction: column;
   color: var(--danger);
   white-space: normal;
   line-height: 1.45;

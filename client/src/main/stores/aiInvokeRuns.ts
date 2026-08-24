@@ -90,13 +90,6 @@ export interface AiInvokeRunEntry {
   stopRunId: string | null
   stopLastMessageExcerpt: string | null
   finishedAtMs: number | null
-  // T0005 §2: whether THIS paused card can actually resume under the current provider
-  // settings snapshot. A display hint from active-all only — resume() below still
-  // shows the server's own 422 message verbatim if this hint is stale (§3 item 5).
-  resumeAvailable: boolean
-  resumeBlockCode: string | null
-  resumeBlockReason: string | null
-  resumeProviderName: string | null
 }
 
 type InvokeSseDetail = {
@@ -270,12 +263,6 @@ function startedEntry(
     stopRunId: sameRun ? previous?.stopRunId ?? null : null,
     stopLastMessageExcerpt: sameRun ? previous?.stopLastMessageExcerpt ?? null : null,
     finishedAtMs: null,
-    // A live/running card carries no provider-settings blocker of its own — only a
-    // fetched paused row (pausedEntry below) ever sets these to a real block.
-    resumeAvailable: true,
-    resumeBlockCode: null,
-    resumeBlockReason: null,
-    resumeProviderName: null,
   }
 }
 
@@ -333,15 +320,6 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     stopRunId: nullableString(payload.stop_run_id),
     stopLastMessageExcerpt: nullableString(payload.stop_last_message_excerpt),
     finishedAtMs: null,
-    // T0005 §2/§3 item 3: preserve active-all's blocker fields losslessly. A response
-    // that predates this field (older deploy) has no key here at all, so the missing
-    // case defaults to the pre-existing behavior — resumable, no blocker.
-    resumeAvailable: payload.resume_available == null
-      ? (previous?.resumeAvailable ?? true)
-      : Boolean(payload.resume_available),
-    resumeBlockCode: nullableString(payload.resume_block_code),
-    resumeBlockReason: nullableString(payload.resume_block_reason),
-    resumeProviderName: nullableString(payload.resume_provider_name),
   }
 }
 

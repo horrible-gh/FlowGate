@@ -227,12 +227,6 @@ HOP_HANDOFF_INTERRUPTED_STOP_CODE = "hop_handoff_interrupted"
 # The queue was there but the follow-up hop could not be spawned (_spawn_auto_resume).
 HOP_HANDOFF_FAILED_STOP_CODE = "hop_handoff_failed"
 
-# T0005 SS2: the single literal a launch-time 422 and the active-all resume-state
-# preview must agree on, so a paused card advance warning and its later toast are
-# word-for-word the same sentence.
-PROVIDER_UNAVAILABLE_CODE = "provider_unavailable"
-PROVIDER_UNAVAILABLE_MESSAGE = "The selected AI provider is not enabled for this project."
-
 ANTHROPIC_VERSION = "2023-06-01"
 API_CALL_MAX_TIMEOUT_SEC = 600   # single model-call ceiling inside the run deadline
 API_MAX_TOKENS = 8192
@@ -1295,8 +1289,8 @@ def start_run(
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
             raise _http_error(
-                422, PROVIDER_UNAVAILABLE_CODE,
-                PROVIDER_UNAVAILABLE_MESSAGE,
+                422, "provider_unavailable",
+                "The selected AI provider is not enabled for this project.",
             )
         chain = [selected]
     elif stored_provider_active:
@@ -1306,8 +1300,8 @@ def start_run(
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
             raise _http_error(
-                422, PROVIDER_UNAVAILABLE_CODE,
-                PROVIDER_UNAVAILABLE_MESSAGE,
+                422, "provider_unavailable",
+                "The selected AI provider is not enabled for this project.",
             )
         chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
     elif mode == "continuous":
@@ -6346,13 +6340,10 @@ def _system_pause_row_is_stale(row: dict) -> bool:
 def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Optional[str]:
     """The stored header pin, but only while it is still usable (0365 DB0004 §5-2).
 
-    Called ONLY for an UNPINNED resume (resume_chain passes the pinned id straight
-    through to start_run instead, so start_run's 422 provider_unavailable stays the
-    sole authority over a pin — T0005 §3 item 1). start_run rejects an explicit pin
-    that is not in the project's enabled chain with a 422; for an unpinned resume there
-    is no such guard, so a stored provider that was deleted or switched off degrades to
-    "no pin" here — the resume then follows the normal doc-type assignment →
-    default-chain order instead of the paused card becoming un-resumable.
+    start_run rejects an explicit pin that is not in the project's enabled chain with a 422.
+    A chain the user parked must stay resumable, so a pin whose provider was deleted or
+    switched off degrades to "no pin" here — the resume then follows the normal doc-type
+    assignment → default-chain order instead of the paused card becoming un-resumable.
     """
     if not provider_id:
         return None
@@ -6368,52 +6359,6 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
         project_id, provider_id,
     )
     return None
-
-
-def _paused_row_resume_state(project_id: str, row: dict) -> dict:
-    """Read-only preview of §2's four active-all fields (T0005 §2, §3 item 1).
-
-    Mirrors the enabled-chain membership check start_run performs for a pinned launch
-    (the two 422 provider_unavailable raises above), but as a side-effect-free snapshot
-    for the paused-card list. This is a DISPLAY hint only — resume_chain still calls
-    start_run for the real launch, and start_run's own 422 stays the sole authority.
-    A settings-lookup failure here must not fail active-all, so it degrades to
-    "available" rather than wrongly blocking a card that may in fact still resume.
-    """
-    available = {
-        "resume_available": True,
-        "resume_block_code": None,
-        "resume_block_reason": None,
-        "resume_provider_name": None,
-    }
-    if not bool(row.get("continuation_provider_pinned")):
-        return available
-    provider_id = row.get("continuation_base_provider_id")
-    if not provider_id:
-        return available
-    try:
-        chain = ai_settings_service.resolve_effective(project_id).get("providers") or []
-    except Exception:  # noqa: BLE001 — a lookup failure must not fail active-all
-        logger.warning("resume-state provider check failed for %s", project_id, exc_info=True)
-        return available
-    if any(p.get("id") == provider_id for p in chain):
-        return available
-    name = None
-    try:
-        settings_view = ai_settings_service.get_project_settings(project_id, include_catalog=False)
-        for p in settings_view.get("providers") or []:
-            if p.get("id") == provider_id:
-                name = p.get("name")
-                break
-    except Exception:  # noqa: BLE001 — a missing display name is not a block on its own
-        logger.warning("resume-state provider name lookup failed for %s", project_id, exc_info=True)
-        name = None
-    return {
-        "resume_available": False,
-        "resume_block_code": PROVIDER_UNAVAILABLE_CODE,
-        "resume_block_reason": PROVIDER_UNAVAILABLE_MESSAGE,
-        "resume_provider_name": name,
-    }
 
 
 def _resumable_reviewer_overrides(
@@ -6747,7 +6692,6 @@ def active_all(user_id: str) -> dict:
                     row.get("group_id"), exc_info=True,
                 )
             continue
-        resume_state = _paused_row_resume_state(row["group_id"].split(".")[0], row)
         paused.append({
             "group_id": row["group_id"],
             "doc_ref": row["doc_ref"],
@@ -6771,13 +6715,6 @@ def active_all(user_id: str) -> dict:
             "stop_code": row.get("stop_code"),
             "stop_run_id": row.get("stop_run_id"),
             "stop_last_message_excerpt": row.get("stop_last_message_excerpt"),
-            # T0005 §2: whether THIS paused row can actually resume under the current
-            # provider settings snapshot — a display hint only, never a substitute for
-            # start_run's own 422 at execution time.
-            "resume_available": resume_state["resume_available"],
-            "resume_block_code": resume_state["resume_block_code"],
-            "resume_block_reason": resume_state["resume_block_reason"],
-            "resume_provider_name": resume_state["resume_provider_name"],
         })
     return {"ok": True, "runs": runs, "paused": paused}
 
