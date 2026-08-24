@@ -3458,7 +3458,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 notify_audience=actor_user_id,
             )
     except Exception as exc:
-        # storage rollback
+        # storage/DB rollback: q_service validation failures must not leave a half-created
+        # document, and their client-facing 4xx status must survive this route boundary.
         try:
             stored_path.unlink(missing_ok=True)
         except OSError:
@@ -3467,6 +3468,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             db_docs.delete(canonical_doc_id)
         except Exception:
             pass
+        if isinstance(exc, HTTPException):
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            return _fail(exc.status_code, detail)
         return _fail(500, f"DB registration error: {exc}")
 
     db_events.create({

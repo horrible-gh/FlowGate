@@ -234,22 +234,35 @@ def ensure_container(
 
 # ── Question anchor correction (B0001 / NR0003, group 0059) ──────────────────────
 
+def _resolve_non_ch_predecessor(
+    sequence_id: int,
+    exclude_item_id: Optional[int],
+) -> Optional[str]:
+    """Return the newest produced document that can visibly host Q&A.
+
+    Workflow predecessor helpers intentionally retain CH results for mention and UI context.
+    Question anchoring has the narrower contract, so it filters only in this service.
+    """
+    items = db_wfseq.get_sequence_items(sequence_id)
+    candidates = sorted(items, key=lambda item: item.get("sort_order") or 0, reverse=True)
+    for item in candidates:
+        if item.get("id") == exclude_item_id:
+            continue
+        result_doc_id = item.get("result_doc_id")
+        if not result_doc_id:
+            continue
+        result_doc = db_documents.get_by_id(result_doc_id)
+        if result_doc is not None and result_doc.get("type_code") != "CH":
+            return result_doc_id
+    return None
+
+
 def resolve_question_anchor(doc_id: str) -> str:
-    """Determine the 'current work-context' document to anchor an AI worker's question.
+    """Determine the visible work-context document for an AI worker's question.
 
-    A worker token is bound to the workflow spine (the R/B root that owns the sequence),
-    so questions registered with that token pile up on a far-upstream spine (e.g.
-    0044.0001-R) that the console user never looks at (B0001). Per NR0003 §8, correct the
-    question's location to the user's current work-context document:
-      (a) if the current head stage already has an artifact, use it (the TR/NR being written),
-          otherwise
-      (b) the immediately preceding instruction document (the T/N this stage reports on).
-    For the first stage with neither (no artifact yet) or a document with no sequence,
-    fall back to the spine itself.
-
-    This uses the same sequence helper as the predecessor resolution in Section 1
-    'Document information' (the ment), so the displayed work-context document and the
-    question anchor always match.
+    CH remains valid workflow and predecessor context, but it has no Q&A surface. A CH
+    candidate is therefore skipped here in favour of the newest earlier non-CH result,
+    with the original workflow spine as the final fallback.
     """
     seq = db_wfseq.get_sequence_by_doc_id(doc_id)
     if seq is None:
@@ -257,13 +270,15 @@ def resolve_question_anchor(doc_id: str) -> str:
     head = db_wfseq.get_effective_head(seq["id"])
     if head is None:
         return doc_id
-    # (a) if the head stage already has an artifact (e.g. a TR awaiting review), anchor to it.
+
     head_result = head.get("result_doc_id")
     if head_result:
-        return head_result
-    # (b) no artifact yet — anchor to the most recently produced instruction document (T/N).
-    pred = db_wfseq.get_predecessor_result_doc_id(seq["id"], head.get("id"))
-    return pred or doc_id
+        result_doc = db_documents.get_by_id(head_result)
+        if result_doc is not None and result_doc.get("type_code") != "CH":
+            return head_result
+
+    predecessor = _resolve_non_ch_predecessor(seq["id"], head.get("id"))
+    return predecessor or doc_id
 
 
 # ── Add question (human [+query] / AI registration §4 / AI artifact-accompanied §5) ──
@@ -287,6 +302,16 @@ def add_questions(
     if asker_kind not in ("human", "ai"):
         raise HTTPException(status_code=400, detail="asker_kind must be 'human' or 'ai'")
     normalized = _normalize_questions(questions)
+
+    target_doc = db_documents.get_by_id(doc_id)
+    if target_doc is not None and target_doc.get("type_code") == "CH":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This is a conversation (CH) document and has no Q container. "
+                "Ask the question directly in the conversation instead."
+            ),
+        )
 
     container = ensure_container(doc_id, project_id=project_id, created_by=created_by)
     qpk: int = container["id"]
