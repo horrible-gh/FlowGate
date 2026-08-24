@@ -671,6 +671,13 @@ class TestRegisterWorkflowResultReviewTransition:
         monkeypatch.setattr(
             db_wfseq_mod, "claim_item_result_doc_id", mock_wfseq.claim_item_result_doc_id
         )
+        # 0457 T0007: registration first asks whether the document already occupies
+        # some other slot (migration 090 makes two slots for one document a unique-index
+        # violation). None = it does not, which is the case every test here describes.
+        mock_wfseq.get_item_by_result_doc_id = MagicMock(return_value=None)
+        monkeypatch.setattr(
+            db_wfseq_mod, "get_item_by_result_doc_id", mock_wfseq.get_item_by_result_doc_id
+        )
 
         return mock_docs, updated_doc, mock_wfseq
 
@@ -839,6 +846,12 @@ class TestRegisterDocumentResultEndpoint:
             MagicMock(side_effect=lambda item_id, result_doc_id: {
                 "id": item_id, "result_doc_id": result_doc_id,
             }),
+        )
+        # 0457 T0007: registration first asks whether the document already occupies
+        # some other slot (migration 090 makes two slots for one document a unique-index
+        # violation). None = it does not, which is the case every test here describes.
+        monkeypatch.setattr(
+            db_wfseq_mod, "get_item_by_result_doc_id", MagicMock(return_value=None)
         )
 
         return mock_db_wseq, updated_doc

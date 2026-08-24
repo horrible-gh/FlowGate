@@ -138,7 +138,8 @@
         "get_sequence_head_pending": "SELECT wsi.*, d.doc_review_status AS result_doc_review_status FROM workflow_sequence_items wsi LEFT JOIN documents d ON wsi.result_doc_id = d.doc_id WHERE wsi.sequence_id = ? AND wsi.result_doc_id IS NULL ORDER BY wsi.sort_order ASC LIMIT 1",
         "delete_pending_items": "DELETE FROM workflow_sequence_items WHERE sequence_id = ? AND result_doc_id IS NULL",
         "get_max_item_seq": "SELECT COALESCE(MAX(item_seq), 0) AS max_seq FROM workflow_sequence_items WHERE sequence_id = ?",
-        "get_sequence_item_by_result_doc_id": "SELECT * FROM workflow_sequence_items WHERE result_doc_id = ? LIMIT 1",
+        "get_sequence_item_by_result_doc_id": "SELECT * FROM workflow_sequence_items WHERE result_doc_id = ? ORDER BY sort_order ASC, id ASC LIMIT 1",
+        "find_duplicate_result_doc_slots": "SELECT result_doc_id, sequence_id, id AS item_id, item_seq, sort_order FROM workflow_sequence_items WHERE result_doc_id IS NOT NULL AND result_doc_id IN (SELECT result_doc_id FROM workflow_sequence_items WHERE result_doc_id IS NOT NULL GROUP BY result_doc_id HAVING COUNT(*) > 1) ORDER BY result_doc_id ASC, sort_order ASC, id ASC",
         "get_sequence_item_by_id": "SELECT * FROM workflow_sequence_items WHERE id = ?",
         "claim_item_result_doc_id": "UPDATE workflow_sequence_items SET result_doc_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND (result_doc_id IS NULL OR result_doc_id = ?)",
         "set_item_result_doc_id": "UPDATE workflow_sequence_items SET result_doc_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"

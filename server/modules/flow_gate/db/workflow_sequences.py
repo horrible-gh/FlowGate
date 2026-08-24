@@ -150,13 +150,49 @@ def get_max_item_seq(sequence_id: int) -> int:
 # ── result_doc_id helpers ─────────────────────────────────────────────────────
 
 def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
-    """Return the workflow_sequence_items row by result_doc_id (reverse lookup).
+    """Return the workflow slot holding ``result_doc_id`` — the earliest one (reverse lookup).
 
-    DB004 §3.1: uses the idx_wfseq_items_result_doc index.
+    DB004 §3.1: served by the uq_wfseq_items_result_doc index (migration 090; before it,
+    the plain idx_wfseq_items_result_doc).
+
+    0457 T0007 / NR0003 §4.4: from migration 090 onward a non-NULL ``result_doc_id`` is
+    unique across the whole table, so at most one row can match and "the earliest" is
+    simply "the one". The ordering is not therefore decoration — it is what this function
+    answers on a database that predates the constraint. B0001 left 0454's ``0005-TR`` in
+    slots 4 and 6 at once, and the query used to be an unordered ``LIMIT 1``, so which slot
+    a document belonged to was whatever the engine happened to return first. It now sorts
+    by ``sort_order ASC`` and breaks a tie on ``id ASC``, which makes such a document
+    resolve to the *earlier* slot: the one it reached first, and the one every caller that
+    walks the sequence forward would already treat as its place.
+
+    Non-deterministic is the one thing this must not be. `is_orphaned_workflow_member`,
+    the Step 7.5 own-slot re-registration and `/relations` all branch on the answer, so an
+    unstable one makes a document look attached and detached on alternate reads.
     """
     store = get_store()
     sql = _sql(store, "workflow_sequences.get_sequence_item_by_result_doc_id")
     return store._fetch_one(sql, [result_doc_id])
+
+
+def find_duplicate_result_doc_slots() -> list[dict]:
+    """Return every slot whose non-NULL ``result_doc_id`` is shared with another slot.
+
+    0457 T0007 / NR0003 §7-1: the whole-table integrity check behind the
+    uq_wfseq_items_result_doc index (migration 090). One row per offending *slot*, not per
+    document, carrying ``result_doc_id`` · ``sequence_id`` · ``item_id`` · ``item_seq`` ·
+    ``sort_order`` — enough to name both sides of a collision without a second query, which
+    is what tracing the 0454 eviction needed. Ordered by document, then by the same
+    ``sort_order``/``id`` rule :func:`get_item_by_result_doc_id` uses, so the first row for
+    a document is the slot that lookup resolves to.
+
+    An empty list is the invariant holding. On a database migrated past 090 it can only be
+    empty, because the index refuses the second row; it stays here for the databases that
+    are not there yet, for verifying a repair, and as the pre-flight check before applying
+    the constraint at all.
+    """
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.find_duplicate_result_doc_slots")
+    return store._fetch_all(sql, [])
 
 
 def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:

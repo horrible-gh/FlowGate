@@ -701,6 +701,10 @@ def test_register_workflow_result_does_not_write_doc_review_status(monkeypatch):
             "id": item_id, "result_doc_id": result_doc_id,
         }),
     )
+    # 0457 T0007: registration first asks whether the document already occupies some other
+    # slot (migration 090 makes two slots for one document a unique-index violation).
+    # None = it does not, which is the case this test describes.
+    monkeypatch.setattr(db_wfseq, "get_item_by_result_doc_id", MagicMock(return_value=None))
 
     register_workflow_result(
         item_id=1,
