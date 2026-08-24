@@ -639,7 +639,7 @@ def test_G_same_document_may_re_register_into_its_own_slot(occupied_slot):
 
 def test_G_recover_with_item_seq_on_an_occupied_slot_answers_409(occupied_slot):
     """The `item_seq` recovery route refuses the same eviction, with data unchanged."""
-    from modules.flow_gate.services.mutation_policy import MutationPolicyError
+    from fastapi import HTTPException
     from modules.flow_gate.workflow.routers import workflow as wf_router
 
     slot = occupied_slot["slot"]
@@ -647,7 +647,7 @@ def test_G_recover_with_item_seq_on_an_occupied_slot_answers_409(occupied_slot):
 
     with patch.object(wf_router.db_wfseq, "is_orphaned_workflow_member", return_value=True), \
             patch.object(wf_router.storage_paths, "to_storage_relative", side_effect=lambda p, _: p):
-        with pytest.raises(MutationPolicyError) as excinfo:
+        with pytest.raises(HTTPException) as excinfo:
             wf_router.recover_orphaned_workflow_document_endpoint(
                 occupied_slot["intruder"],
                 wf_router.OrphanRecoveryRequest(item_seq=2),
@@ -655,8 +655,7 @@ def test_G_recover_with_item_seq_on_an_occupied_slot_answers_409(occupied_slot):
             )
 
     assert excinfo.value.status_code == 409
-    assert excinfo.value.error["code"] == "slot_occupied"
-    assert "already filled by" in excinfo.value.error["message"]
+    assert "already filled by" in excinfo.value.detail
     assert _item(slot) == before
     assert _ledger(slot) == ledger_before
 
@@ -665,7 +664,7 @@ def test_G_recover_maps_a_late_conflict_to_409_instead_of_500(occupied_slot, mon
     """The backstop: the pre-check reads the slot, the claim writes it, and the slot can
     change hands in between. Simulate that by feeding the route a stale (empty-looking)
     slot row — the refusal must still surface as 409, not as a server fault."""
-    from modules.flow_gate.services.mutation_policy import MutationPolicyError
+    from fastapi import HTTPException
     from modules.flow_gate.workflow.routers import workflow as wf_router
 
     slot = occupied_slot["slot"]
@@ -675,16 +674,15 @@ def test_G_recover_maps_a_late_conflict_to_409_instead_of_500(occupied_slot, mon
     with patch.object(wf_router.db_wfseq, "is_orphaned_workflow_member", return_value=True), \
             patch.object(wf_router.db_wfseq, "get_sequence_items", return_value=stale), \
             patch.object(wf_router.storage_paths, "to_storage_relative", side_effect=lambda p, _: p):
-        with pytest.raises(MutationPolicyError) as excinfo:
+        with pytest.raises(HTTPException) as excinfo:
             wf_router.recover_orphaned_workflow_document_endpoint(
                 occupied_slot["intruder"],
                 wf_router.OrphanRecoveryRequest(item_seq=2),
                 {"user_id": USER_ID, "is_admin": True},
             )
 
-    assert excinfo.value.status_code == 409, excinfo.value.error
-    assert excinfo.value.error["code"] == "slot_occupied"
-    assert occupied_slot["held"] in excinfo.value.error["message"]
+    assert excinfo.value.status_code == 409, excinfo.value.detail
+    assert occupied_slot["held"] in excinfo.value.detail
     assert _item(slot) == before
     assert _ledger(slot) == ledger_before
 

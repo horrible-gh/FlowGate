@@ -28,8 +28,8 @@
           <p class="dip-status-desc">{{ statusDesc }}</p>
           <div v-if="orphan" class="dip-orphan-warning">
             <AppIcon name="warning" />
-            <p>{{ t(recoverableSlot ? 'main.doc_info_panel.orphan_desc' : 'main.doc_info_panel.orphan_no_slot_desc') }}</p>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="recovering || !recoverableSlot" @click="recoverOrphan">
+            <p>{{ t('main.doc_info_panel.orphan_desc') }}</p>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="recovering" @click="recoverOrphan">
               {{ t(recovering ? 'main.doc_info_panel.orphan_recovering' : 'main.doc_info_panel.orphan_recover') }}
             </button>
           </div>
@@ -541,10 +541,6 @@ const props = defineProps<{
   qStatus?: string | null
   workflowSteps?: string[] | null
   orphan?: boolean
-  // 0457 T0009: item_seq/type/empty triples for the recover button — GET .../relations
-  // `workflow.candidate_slots`. Whichever the first typeCode-matching empty slot is (the
-  // array already arrives sort_order ASC) is the recover target.
-  candidateSlots?: Array<{ item_seq: number | null; type: string | null; empty: boolean }> | null
   selfIndex?: number | null
   stepStates: StepState[]
   nextStepIndex: number | null
@@ -1005,39 +1001,16 @@ watch(qaProjectId, (projectId) => {
 const { showToast } = useToast()
 const recovering = ref(false)
 
-// 0457 T0009 item 1: the recover endpoint's 409 body carries a stable error.code; map
-// each of the 7 known codes (the claim-time race collapses to the same slot_occupied
-// code as the pre-check) to its own Korean sentence. An unknown/missing code (e.g. the
-// group_disposed 409 or the mutation_policy 423, which are not this endpoint's own
-// codes, or a network failure) falls back to the generic orphan_recover_failed message
-// — never the server's English detail/message.
-const ORPHAN_RECOVER_FAILURE_KEYS: Record<string, string> = {
-  slot_type_not_recoverable: 'main.doc_info_panel.orphan_recover_failed_slot_type_not_recoverable',
-  not_orphaned: 'main.doc_info_panel.orphan_recover_failed_not_orphaned',
-  no_group_or_project: 'main.doc_info_panel.orphan_recover_failed_no_group_or_project',
-  no_available_slot: 'main.doc_info_panel.orphan_recover_failed_no_available_slot',
-  slot_occupied: 'main.doc_info_panel.orphan_recover_failed_slot_occupied',
-  slot_type_mismatch: 'main.doc_info_panel.orphan_recover_failed_slot_type_mismatch',
-  no_file_path: 'main.doc_info_panel.orphan_recover_failed_no_file_path',
-}
-
-const recoverableSlot = computed(() => {
-  const slots = props.candidateSlots ?? []
-  return slots.find((slot) => slot.type === props.typeCode && slot.empty) ?? null
-})
-
 async function recoverOrphan() {
-  const slot = recoverableSlot.value
-  if (!props.orphan || !slot || recovering.value) return
+  if (!props.orphan || recovering.value) return
   recovering.value = true
   try {
-    await postRequest('/api/v1/documents/' + encodeURIComponent(props.docId) + '/workflow/recover', { item_seq: slot.item_seq })
+    await postRequest('/api/v1/documents/' + encodeURIComponent(props.docId) + '/workflow/recover', {})
     showToast(t('main.doc_info_panel.orphan_recovered'), 'success')
     emit('orphan-recovered')
   } catch (e: any) {
-    const code = e?.response?.data?.error?.code as string | undefined
-    const key = (code && ORPHAN_RECOVER_FAILURE_KEYS[code]) || 'main.doc_info_panel.orphan_recover_failed'
-    showToast(t(key), 'danger')
+    const detail = e?.response?.data?.detail ?? String(e)
+    showToast(t('main.doc_info_panel.orphan_recover_failed', { detail }), 'danger')
   } finally {
     recovering.value = false
   }

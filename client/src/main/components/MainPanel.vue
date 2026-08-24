@@ -410,7 +410,6 @@
             :q-status="qStatuses[tab.id] ?? null"
             :workflow-steps="exposedValue(docHeaderRefs[tab.id]?.workflowSteps) ?? null"
             :orphan="exposedValue(docHeaderRefs[tab.id]?.workflowOrphan) === true"
-            :candidate-slots="exposedValue(docHeaderRefs[tab.id]?.workflowCandidateSlots) ?? []"
             :self-index="exposedValue(docHeaderRefs[tab.id]?.workflowSelfIndex) ?? null"
             :step-states="getWorkflowViewState(tab.id).stepStates"
             :next-step-index="getWorkflowViewState(tab.id).nextStepIndex"

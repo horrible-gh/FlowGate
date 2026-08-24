@@ -214,34 +214,6 @@ def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
     return get_sequence_by_id(item["sequence_id"])
 
 
-def find_sequence_by_group_root(group_id: str) -> Optional[dict]:
-    """Resolve a group's decided sequence through its R/B root document.
-
-    A document that is not registered as any slot's ``result_doc_id`` — an orphaned
-    workflow member, in particular — cannot be found by :func:`get_sequence_for_member_doc`,
-    which only looks at the sequence's own root or its produced children. This walks the
-    group's documents for the R/B root instead and resolves the sequence from that root,
-    the same lookup `recover_orphaned_workflow_document_endpoint` does for an explicit
-    ``item_seq`` (0457 T0009) — shared here so the recover endpoint and the relations
-    `candidate_slots` fallback (0457 T0009) do not duplicate it.
-    """
-    from modules.flow_gate.db import documents as db_documents
-
-    roots = [
-        row for row in (db_documents.get_documents_by_group_id(group_id) or [])
-        if str(row.get("type_code") or "").upper() in {"R", "B"}
-    ]
-    return next(
-        (
-            seq for root in roots
-            if root.get("doc_id")
-            for seq in [get_sequence_by_doc_id(root["doc_id"])]
-            if seq is not None
-        ),
-        None,
-    )
-
-
 def is_orphaned_workflow_member(doc_id: str) -> bool:
     """Return whether a workflow-planned group document is not attached to any slot.
 
