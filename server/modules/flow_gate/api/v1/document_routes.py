@@ -611,11 +611,23 @@ def _workflow_item_brief(item: Optional[dict]) -> Optional[dict]:
 _WORKFLOW_UNDECIDED = {
     "root_doc_id": None, "doc_class": None, "decided": False, "item_seq": None,
     "type": None, "label": None, "status": None, "prev_item": None, "next_item": None,
-    "orphan": False,
+    "orphan": False, "candidate_slots": [],
 }
 
 
-def _relations_workflow(doc_id: str) -> dict:
+def _workflow_candidate_slots(items: list) -> list:
+    """Reduce sequence items to the fields the recover-button contract needs (0457 T0009)."""
+    return [
+        {
+            "item_seq": item.get("item_seq"),
+            "type": item.get("type"),
+            "empty": not bool(item.get("result_doc_id")),
+        }
+        for item in items
+    ]
+
+
+def _relations_workflow(doc_id: str, doc: Optional[dict] = None) -> dict:
     """Which workflow slot this is; with no decision it returns a set of all-null values."""
     from modules.flow_gate.db import workflow_sequences as db_wfseq
 
@@ -627,14 +639,30 @@ def _relations_workflow(doc_id: str) -> dict:
         orphan = db_wfseq.is_orphaned_workflow_member(doc_id)
     except Exception:  # noqa: BLE001
         orphan = False
+    if not sequence and orphan:
+        # An orphaned document is by definition not registered as any slot's result, so
+        # the member lookup above always misses it. Resolve its sequence through the
+        # group's R/B root instead — the same fallback the recover endpoint uses for an
+        # explicit item_seq (0457 T0009).
+        try:
+            group_id = (doc or {}).get("group_id")
+            if not group_id:
+                found = db_docs.get_by_id(doc_id)
+                group_id = (found or {}).get("group_id")
+            if group_id:
+                sequence = db_wfseq.find_sequence_by_group_root(group_id)
+        except Exception:  # noqa: BLE001 — a relations lookup must not die over the workflow
+            sequence = None
     if not sequence:
         undecided = dict(_WORKFLOW_UNDECIDED)
         undecided["orphan"] = orphan
+        undecided["candidate_slots"] = []
         return undecided
     try:
         items = db_wfseq.get_sequence_items(sequence["id"]) or []
     except Exception:  # noqa: BLE001
         items = []
+    candidate_slots = _workflow_candidate_slots(items)
 
     root_doc_id = sequence.get("doc_id")
     mine_idx = None
@@ -649,7 +677,8 @@ def _relations_workflow(doc_id: str) -> dict:
             "doc_class": items[0].get("doc_class") if items else None,
             "decided": True,
             "item_seq": None, "type": None, "label": None, "status": None,
-            "prev_item": None, "next_item": None, "orphan": False,
+            "prev_item": None, "next_item": None, "orphan": orphan,
+            "candidate_slots": candidate_slots,
         }
     mine = items[mine_idx]
     return {
@@ -665,6 +694,7 @@ def _relations_workflow(doc_id: str) -> dict:
             items[mine_idx + 1] if mine_idx + 1 < len(items) else None
         ),
         "orphan": False,
+        "candidate_slots": candidate_slots,
     }
 
 
@@ -744,7 +774,7 @@ def get_document_relations(
         "target": _doc_brief(doc.get("target_id")),
         "referenced_by": referenced_by,
         "superseded_by": _doc_brief(doc.get("superseded_by")),
-        "workflow": _relations_workflow(doc_id),
+        "workflow": _relations_workflow(doc_id, doc),
         # Revision history only. The body of each revision is not served here.
         "revisions": [
             {
