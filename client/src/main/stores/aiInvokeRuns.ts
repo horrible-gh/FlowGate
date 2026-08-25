@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { deleteRequest, getRequest, postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import {
   MINUTE_MS,
   RETENTION_DEFAULT_MINUTES,
@@ -940,36 +940,6 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
-  async function releasePaused(groupId: string): Promise<void> {
-    // Group-keyed explicit cancel/release of a PAUSED CHAIN row (0459 T0007) --
-    // deliberately a separate call from cancel() above, which addresses a live run_id
-    // and never touches this DELETE endpoint.
-    const run = runsByGroup[groupId]
-    if (!run || run.phase !== 'paused') return
-    try {
-      const response = await deleteRequest<any>(
-        `/api/v1/ai-invoke/paused/${encodeURIComponent(groupId)}`,
-      )
-      const payload = response.data ?? {}
-      // Only the server confirming released/already_released counts as success -- an
-      // unexpected 2xx shape with neither flag set must not disappear the card either.
-      if (payload.released || payload.already_released) {
-        delete runsByGroup[groupId]
-        schedulePersist()
-      }
-    } catch (error: any) {
-      const status = error?.response?.status
-      if (status === 409) {
-        // Another session already resumed this chain, or a valid lease is held --
-        // never guess: reconcile with the server's authoritative state so the card
-        // either becomes the running card another session started, or is restored as
-        // still paused. The card is deliberately NOT deleted optimistically here.
-        void bootstrap()
-      }
-      throw error
-    }
-  }
-
   function dismiss(groupId: string): void {
     const run = runsByGroup[groupId]
     if (run && !ACTIVE_PHASES.includes(run.phase) && run.phase !== 'paused') {
@@ -1254,7 +1224,6 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     cancel,
     pause,
     resume,
-    releasePaused,
     dismiss,
     dismissAllFinished,
     sweepFinishedCards,

@@ -991,21 +991,6 @@ class FakePausedStore:
         row = self.rows.pop(group_id, None)
         return dict(row) if row else None
 
-    def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
-        # 0459 TR0008 rev1: resume_chain() consumes via this CAS predicate, tied to
-        # the exact row its ownership check read, instead of a bare group-only
-        # delete_and_return(group_id).
-        row = self.rows.get(group_id)
-        if row is None:
-            return None
-        normalized = stop_kind or "user"
-        if (row.get("paused_by") != paused_by
-                or row.get("paused_at") != paused_at
-                or (row.get("stop_kind") or "user") != normalized
-                or row.get("stop_run_id") != stop_run_id):
-            return None
-        return self.rows.pop(group_id)
-
     def delete_by_group(self, group_id):
         self.rows.pop(group_id, None)
 
@@ -1021,7 +1006,7 @@ class FakePausedStore:
 @pytest.fixture
 def paused(monkeypatch):
     store = FakePausedStore()
-    for name in ("upsert", "get_by_group", "exists", "delete_and_return", "release_owned",
+    for name in ("upsert", "get_by_group", "exists", "delete_and_return",
                  "delete_by_group", "delete_system_stop", "list_by_user"):
         monkeypatch.setattr(db_paused, name, getattr(store, name))
     return store
