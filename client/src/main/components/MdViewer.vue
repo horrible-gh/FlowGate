@@ -46,7 +46,7 @@ import { useI18n } from 'vue-i18n'
 import { Marked } from 'marked'
 import { getRequest, postRequest } from '@shared/api'
 import api from '@shared/api'
-import { fenceLeadingNextHeader, stripFrontmatter } from '@shared/utils/markdown'
+import { stripFrontmatter, stripLeadingNextHeader } from '@shared/utils/markdown'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import { copyToClipboard } from '../utils/clipboard'
@@ -90,7 +90,7 @@ mdRenderer.use({
   },
 })
 
-const renderedContent = computed(() => mdRenderer.parse(fenceLeadingNextHeader(stripFrontmatter(content.value || ''))) as string)
+const renderedContent = computed(() => mdRenderer.parse(stripLeadingNextHeader(stripFrontmatter(content.value || ''))) as string)
 
 // Shared honest write (B0001 / group 0221) — the former local copy is folded into
 // utils/clipboard. On failure offer the manual-copy fallback modal; toast only when it
