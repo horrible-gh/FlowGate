@@ -275,6 +275,115 @@ def delete_system_stop(group_id: str, stop_run_id: Optional[str]) -> None:
     )
 
 
+class ReleaseSuperseded:
+    """Sentinel distinct from ``None`` (0459 TR0008 rev2): the group's paused row
+    still EXISTS but no longer matches the caller's inspected snapshot -- a newer
+    user pause or system stop won the read/delete race, either before the pre-DELETE
+    compare ran or strictly between that compare and the DELETE itself. Wraps the
+    CURRENT surviving row so a caller can reconcile against it.
+
+    This must never be collapsed into the same outcome as a truly absent row: T0007
+    §5 permits the idempotent ``already_released`` success ONLY when nothing exists
+    for the group_id at all. A superseded row is still a live pause somebody else
+    owns -- treating it as "already gone" tells the UI to delete a card for a chain
+    that never left the table (the exact rev1 rejection).
+    """
+    __slots__ = ("row",)
+
+    def __init__(self, row: dict) -> None:
+        self.row = row
+
+
+def release_owned(
+    group_id: str,
+    *,
+    paused_by: Optional[str],
+    paused_at: Optional[str],
+    stop_kind: Optional[str],
+    stop_run_id: Optional[str],
+):
+    """Compare-and-swap delete for the explicit cancel/release API (0459 T0007).
+
+    Also reused by ``resume_chain()`` (0459 TR0008 rev1) to consume the exact row its
+    own ownership check just read, instead of a group-only ``delete_and_return`` that
+    would blindly take whatever row is live at consume time.
+
+    Deletes the row only when it still matches the caller's inspected snapshot --
+    ``paused_by``, ``paused_at``, ``stop_kind`` (NULL-safe via the same
+    ``COALESCE(..., 'user')`` reading as :func:`delete_system_stop`), ``stop_run_id``
+    (NULL-safe) -- via a WHERE predicate built from plain equality/IS NULL clauses, so
+    no SQLite/MySQL/PostgreSQL-specific null-safe operator is needed. A newer user
+    pause or system stop upserted between the caller's read and this call changes at
+    least one of those columns; the predicate then matches nothing and the newer row
+    survives untouched -- unlike a bare ``delete_by_group(group_id)``.
+
+    Returns a TRI-STATE result (0459 TR0008 rev2), and the two failure shapes are NOT
+    interchangeable:
+      * the deleted row (dict) on success;
+      * ``None`` when nothing exists for this group_id at all -- the only shape a
+        caller may report as an idempotent "already released" success;
+      * :class:`ReleaseSuperseded` wrapping the CURRENT row when a row exists but no
+        longer matches the snapshot -- a real conflict the caller must surface as
+        such, never as success.
+    """
+    store = get_store()
+    with store.transaction():
+        row = store._fetch_one(
+            "SELECT * FROM ai_invoke_paused_chains WHERE group_id = ?",
+            [group_id],
+        )
+        if row is None:
+            return None
+        normalized_stop_kind = stop_kind or "user"
+        clauses = ["group_id = ?", "COALESCE(stop_kind, 'user') = ?"]
+        params = [group_id, normalized_stop_kind]
+        for column, value in (("paused_by", paused_by), ("paused_at", paused_at),
+                              ("stop_run_id", stop_run_id)):
+            if value is None:
+                clauses.append(f"{column} IS NULL")
+            else:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        # This pre-DELETE compare is a fast-path short-circuit, NOT the atomicity
+        # guard (0459 TR0008 rev1 fix): it only rules out the case where the row was
+        # already stale when we read it. It cannot see a write that lands *between*
+        # this compare and the DELETE below. Either way the row it saw is a REAL,
+        # currently-existing row -- report it as superseded, not absent.
+        if (
+            row.get("paused_by") != paused_by
+            or row.get("paused_at") != paused_at
+            or (row.get("stop_kind") or "user") != normalized_stop_kind
+            or row.get("stop_run_id") != stop_run_id
+        ):
+            return ReleaseSuperseded(row)
+        store._execute(
+            "DELETE FROM ai_invoke_paused_chains WHERE " + " AND ".join(clauses),
+            params,
+        )
+        # _execute exposes no rowcount ([[store-execute-has-no-rowcount]]), so whether
+        # the DELETE above actually removed a row is confirmed the same way the rest
+        # of this codebase does a CAS write without rowcount (git_integration.py
+        # set_session_context): read the primary key back inside the SAME
+        # transaction. `store.transaction()` serializes concurrent writers to this
+        # row (SQLite's file lock / Postgres-MySQL's row lock acquired by our own
+        # DELETE), so nothing can upsert group_id between the DELETE and this
+        # read -- if a row is still here, our DELETE's WHERE predicate did not match
+        # anything, which only happens when a newer write landed between the SELECT
+        # above and the DELETE and changed one of the compared columns. Trusting the
+        # pre-DELETE compare alone (the rev0 bug) reported released=true for a row
+        # that in fact never left the table; folding this into the rev1 bare None
+        # (the rev1 bug) then reported already_released=true for the SAME still-live
+        # row. Reading the full row back (not just a presence flag) lets the caller
+        # reconcile against exactly what survived.
+        survivor = store._fetch_one(
+            "SELECT * FROM ai_invoke_paused_chains WHERE group_id = ?",
+            [group_id],
+        )
+        if survivor is not None:
+            return ReleaseSuperseded(survivor)
+        return row
+
+
 def list_all_system_stops() -> list[dict]:
     """Every system-parked row, whoever owns it (0406 T0022 item 4).
 

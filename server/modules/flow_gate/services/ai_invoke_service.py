@@ -6550,13 +6550,25 @@ def _resumable_reviewer_overrides(
     return kept or None
 
 
-def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str = "ko") -> dict:
+def resume_chain(
+    *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
+    is_admin: bool = False,
+) -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
     The ORDER is the overlap protection: (1) group lock → (2) active-run check →
     (3) atomic paused-row consumption → (4) start. A row consumed by another path
     (auto-resume, another session, an external worker) surfaces as resume_conflict,
     never as a second concurrent run.
+
+    0459 T0007 §2: only the user who paused the chain (``paused_by``) or an admin may
+    resume it -- a project-read-only teammate sending this group's id must not be able
+    to consume or relaunch somebody else's paused chain. The check reads the row and
+    the consumption below re-verifies the SAME snapshot via a compare-and-swap
+    (0459 TR0008 rev1 fix): a plain group-only delete after the authorization read
+    would let a newer row -- upserted by a *different* user between the two calls --
+    be consumed by the old owner's already-authorized request. Tying the delete to
+    the exact row the authorization check inspected closes that window.
     """
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.services import workflow_decision_service
@@ -6567,8 +6579,32 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             raise _http_error(409, "run_already_active",
                               "An active run already exists for this group.",
                               run_id=active["run_id"])
-        row = db_paused.delete_and_return(group_id)
-        if row is None:
+        pre_row = db_paused.get_by_group(group_id)
+        if pre_row is not None and not is_admin and pre_row.get("paused_by") != user_id:
+            raise _http_error(403, "paused_chain_forbidden",
+                              "Only the user who paused this chain (or an admin) may "
+                              "resume it.", group_id=group_id)
+        if pre_row is None:
+            row = None
+        else:
+            # CAS-consume the exact row the authorization check above just read --
+            # not a bare delete_and_return(group_id), which would happily take
+            # whatever row is live at THIS instant even if it is not the row that
+            # was authorized. A row that changed identity (newer paused_by/paused_at/
+            # stop_kind/stop_run_id) between the two reads fails the predicate and
+            # falls through to resume_conflict below, same as "nothing to consume".
+            row = db_paused.release_owned(
+                group_id,
+                paused_by=pre_row.get("paused_by"),
+                paused_at=pre_row.get("paused_at"),
+                stop_kind=pre_row.get("stop_kind"),
+                stop_run_id=pre_row.get("stop_run_id"),
+            )
+        # release_owned is tri-state (0459 TR0008 rev2): a bare None (nothing left to
+        # consume) and a ReleaseSuperseded (a newer row replaced the one this call was
+        # authorized against) both fall through to the SAME resume_conflict here --
+        # either way the row this call was authorized for is not the one to relaunch.
+        if row is None or isinstance(row, db_paused.ReleaseSuperseded):
             raise _http_error(409, "resume_conflict",
                               "This chain was already resumed by another path.",
                               group_id=group_id)
@@ -6765,6 +6801,91 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 409, "resume_advance_blocked", str(exc),
                 group_id=group_id, restored=True, resume_stage="advance",
             )
+
+
+def release_paused_chain(*, group_id: str, user_id: str, is_admin: bool = False) -> dict:
+    """Explicit user cancel/release of a group-keyed PAUSED CHAIN (0459 T0007).
+
+    Paused-row release ONLY -- never a live-run cancel (:func:`cancel_run`) and never
+    a lease force-release (:func:`force_release_group_lease`). Order mirrors
+    :func:`resume_chain` exactly so the two can never race into a double-consumption
+    or a lost row: (1) group lock → (2) active-run / valid-lease check → (3) pause-row
+    lookup + ownership judgement → (4) atomic compare-and-swap delete.
+
+    Deliberately narrow lease handling: a VALID lease means resume/start/handoff may
+    be mid-flight in another process (memory not finding the run here does not make
+    that lease an orphan -- only :func:`force_release_group_lease`'s own liveness
+    check gets to decide that), so this refuses with 409 and leaves both the pause row
+    and the lease untouched. An EXPIRED lease is invisible here for free --
+    ``db_group_ai_leases.get_active`` already reclaims it before answering.
+
+    0459 TR0008 rev1: the active-run and valid-lease branches raise DIFFERENT 409
+    codes (``run_already_active`` vs ``group_lease_active``) even though both stop
+    the release -- the caller's remedy differs (adopt the other session's run vs.
+    release the lease separately from the locked-group screen), and collapsing them
+    into one code left both the API caller and the miniplayer unable to tell which
+    applies.
+    """
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+    with _group_resume_lock(group_id):
+        active = _active_run_for_group(group_id)
+        if active is not None:
+            raise _http_error(409, "run_already_active",
+                              "An active run already exists for this group; the paused "
+                              "chain was already resumed elsewhere.",
+                              group_id=group_id, run_id=active["run_id"])
+        lease = db_group_ai_leases.get_active(group_id)
+        if lease is not None:
+            # Distinct code from the active-run branch above (0459 TR0008 rev1): a
+            # caller resuming elsewhere (run_already_active) and a caller that must
+            # separately release an orphaned lease (group_lease_active) need
+            # different follow-up actions, and both used to collapse into the same
+            # code, leaving neither the API caller nor the UI able to tell them apart.
+            raise _http_error(409, "group_lease_active",
+                              "A valid group lease is held; resume/start/handoff may be "
+                              "in progress. If the lease is actually orphaned, release it "
+                              "separately from the locked-group screen.",
+                              group_id=group_id, run_id=lease.get("run_id"))
+        row = db_paused.get_by_group(group_id)
+        if row is None:
+            # Nothing to release -- same-request replay after a prior success, or the
+            # chain already ended some other way. Idempotent 200, never 404 (T0007 §5).
+            return {"ok": True, "group_id": group_id, "released": False,
+                    "already_released": True}
+        if not is_admin and row.get("paused_by") != user_id:
+            raise _http_error(403, "paused_chain_forbidden",
+                              "Only the user who paused this chain (or an admin) may "
+                              "release it.", group_id=group_id)
+        deleted = db_paused.release_owned(
+            group_id,
+            paused_by=row.get("paused_by"),
+            paused_at=row.get("paused_at"),
+            stop_kind=row.get("stop_kind"),
+            stop_run_id=row.get("stop_run_id"),
+        )
+        if isinstance(deleted, db_paused.ReleaseSuperseded):
+            # 0459 TR0008 rev2: a newer user pause or system stop won the read/delete
+            # race -- the row THIS call inspected is gone, but a DIFFERENT row for the
+            # same group is still live in the table right now. T0007 §5 permits the
+            # idempotent already_released 200 ONLY when nothing exists for the group_id
+            # at all (the rev1 bug folded this case into that same success and told the
+            # store to delete a card for a chain that never left the table). Surface it
+            # as a real, non-success conflict instead so the caller reconciles against
+            # the CURRENT server state rather than optimistically dropping the card.
+            raise _http_error(
+                409, "release_conflict",
+                "This paused chain was replaced by a newer pause or system stop "
+                "before the release completed. Refresh to see the current state.",
+                group_id=group_id,
+            )
+        if deleted is None:
+            # Truly nothing left for this group_id -- same-request replay after a
+            # prior success, or the chain ended some other way. Idempotent 200.
+            return {"ok": True, "group_id": group_id, "released": False,
+                    "already_released": True}
+        return {"ok": True, "group_id": group_id, "released": True,
+                "already_released": False}
 
 
 def _open_q_doc_ids(group_id: str) -> list[str]:

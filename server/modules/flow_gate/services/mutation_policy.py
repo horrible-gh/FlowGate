@@ -271,15 +271,19 @@ _PERSONAL_PATHS = (
 
 
 def is_policy_control_path(path: str) -> bool:
-    """Run start/resume, cancel/pause, and the manual lease release all own the lease
-    lifecycle, so none of them may self-block (0401 T0004 item 2 adds the last one --
-    a lease's own release request must not be rejected BY that same lease)."""
+    """Run start/resume, cancel/pause, the manual lease release, and the explicit
+    paused-chain release all own the lease lifecycle, so none of them may self-block
+    (0401 T0004 item 2 adds the lease-release case; 0459 T0007 §2-7 adds the paused-
+    chain DELETE -- its own internal active-run/lease conflict judgement in
+    release_paused_chain still runs, this only keeps the group mutation lease
+    middleware from pre-empting it)."""
     if "ai-invoke" not in path:
         return False
     return bool(
         re.search(r"/(?:start|resume)$", path)
         or re.search(r"/(?:cancel|pause)$", path)
         or re.search(r"/leases/[^/]+/release$", path)
+        or re.search(r"/paused/[^/]+$", path)
     )
 
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { getRequest, postRequest } from '@shared/api'
+import { deleteRequest, getRequest, postRequest } from '@shared/api'
 import {
   FINISHED_CARD_TTL_MS,
   MAX_FINISHED_CARDS,
@@ -45,6 +45,7 @@ function finishOne(store: ReturnType<typeof useAiInvokeRunsStore>, groupId: stri
 vi.mock('@shared/api', () => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
+  deleteRequest: vi.fn(),
 }))
 
 const openTargetEntry = (
@@ -383,6 +384,162 @@ describe('aiInvokeRuns store', () => {
 
     expect(store.runsByGroup[groupId]?.phase).toBe('paused')
     expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+  })
+
+  // 0459 T0007 §2: group-keyed DELETE, separate from the run_id-keyed cancel() endpoint.
+  describe('releasePaused', () => {
+    it('does nothing for a non-paused card', async () => {
+      const groupId = 'flowgate.default.0459.release-not-paused'
+      store.trackStarted({ run_id: 'run-live', group_id: groupId, doc_ref: 'r' })
+
+      await store.releasePaused(groupId)
+
+      expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
+      expect(store.runsByGroup[groupId].phase).toBe('running')
+    })
+
+    it('calls the group-keyed DELETE endpoint and removes the card on released:true', async () => {
+      const groupId = 'flowgate.default.0459.release-ok'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId, released: true, already_released: false },
+      } as any)
+
+      await store.releasePaused(groupId)
+
+      expect(vi.mocked(deleteRequest)).toHaveBeenCalledWith(
+        `/api/v1/ai-invoke/paused/${encodeURIComponent(groupId)}`,
+      )
+      expect(store.runsByGroup[groupId]).toBeUndefined()
+    })
+
+    it('removes the card on the idempotent already_released:true response too', async () => {
+      const groupId = 'flowgate.default.0459.release-idempotent'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId, released: false, already_released: true },
+      } as any)
+
+      await store.releasePaused(groupId)
+
+      expect(store.runsByGroup[groupId]).toBeUndefined()
+    })
+
+    it('preserves the card and does not delete on an unexpected 2xx with neither flag set', async () => {
+      const groupId = 'flowgate.default.0459.release-weird-2xx'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId },
+      } as any)
+
+      await store.releasePaused(groupId)
+
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    })
+
+    it('preserves the card and rethrows on 403 ownership rejection', async () => {
+      const groupId = 'flowgate.default.0459.release-403'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      const rejection = {
+        response: { status: 403, data: { code: 'paused_chain_forbidden' } },
+      }
+      vi.mocked(deleteRequest).mockRejectedValueOnce(rejection)
+
+      await expect(store.releasePaused(groupId)).rejects.toBe(rejection)
+
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+      expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+    })
+
+    it('reconciles via bootstrap and rethrows on 409 run_already_active', async () => {
+      const groupId = 'flowgate.default.0459.release-409'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      const rejection = {
+        response: { status: 409, data: { code: 'run_already_active', run_id: 'run-live' } },
+      }
+      vi.mocked(deleteRequest).mockRejectedValueOnce(rejection)
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: {
+          ok: true,
+          runs: [{ run_id: 'run-live', group_id: groupId, status: 'running', doc_ref: 'r' }],
+          paused: [],
+        },
+      } as any)
+
+      await expect(store.releasePaused(groupId)).rejects.toBe(rejection)
+
+      expect(vi.mocked(getRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+      // Authoritative reconciliation replaced the paused card with the run another
+      // session actually started -- never an optimistic delete.
+      expect(store.runsByGroup[groupId]?.runId).toBe('run-live')
+      expect(store.runsByGroup[groupId]?.phase).toBe('running')
+    })
+
+    it('reconciles via bootstrap and rethrows on 409 group_lease_active', async () => {
+      // 0459 TR0008 rev1: the lease-conflict code is distinct from run_already_active
+      // (server contract), but the store's reconciliation strategy is the same for
+      // both -- never an optimistic delete, always an authoritative re-fetch.
+      const groupId = 'flowgate.default.0459.release-409-lease'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      const rejection = {
+        response: { status: 409, data: { code: 'group_lease_active', run_id: 'run-live' } },
+      }
+      vi.mocked(deleteRequest).mockRejectedValueOnce(rejection)
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: {
+          ok: true,
+          runs: [],
+          paused: [{ group_id: groupId, doc_ref: 'r', paused_at: '2026-08-25T10:00:00+09:00' }],
+        },
+      } as any)
+
+      await expect(store.releasePaused(groupId)).rejects.toBe(rejection)
+
+      expect(vi.mocked(getRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    })
+
+    it('preserves the card and rethrows on a network failure without bootstrapping', async () => {
+      const groupId = 'flowgate.default.0459.release-network'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      const failure = new Error('network down')
+      vi.mocked(deleteRequest).mockRejectedValueOnce(failure)
+
+      await expect(store.releasePaused(groupId)).rejects.toBe(failure)
+
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+      expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+    })
+
+    it('preserves the card and rethrows on a 5xx response without bootstrapping', async () => {
+      // Distinct from the network-failure case above -- this is a genuine HTTP
+      // response (status 500), not a rejected promise with no response object at all.
+      const groupId = 'flowgate.default.0459.release-5xx'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      const rejection = {
+        response: { status: 500, data: { code: 'internal_error', message: 'db unavailable' } },
+      }
+      vi.mocked(deleteRequest).mockRejectedValueOnce(rejection)
+
+      await expect(store.releasePaused(groupId)).rejects.toBe(rejection)
+
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+      expect(vi.mocked(getRequest)).not.toHaveBeenCalledWith('/api/v1/ai-invoke/active-all')
+    })
+
+    it('is a distinct API surface from the run_id-keyed cancel()', async () => {
+      const groupId = 'flowgate.default.0459.release-api-split'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId, released: true, already_released: false },
+      } as any)
+
+      await store.releasePaused(groupId)
+
+      expect(vi.mocked(postRequest)).not.toHaveBeenCalledWith(
+        expect.stringContaining('/cancel'), expect.anything(),
+      )
+    })
   })
 
   // T0005 §2/§3 item 3 / §4 item 3: active-all's four resume-blocker fields must
