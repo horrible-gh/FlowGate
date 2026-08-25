@@ -1375,8 +1375,27 @@ def _find_body_twin(
 
 def _submission_text(doc_path: Optional[str], content: Optional[str]) -> Optional[str]:
     if doc_path is not None:
-        return pathlib.Path(doc_path).read_text(encoding="utf-8")
+        # newline="" disables universal-newline decoding: a CRLF file has to
+        # reach the normalizer, the fingerprints and the writer as the CRLF
+        # bytes the caller actually sent. Translating them to LF here (and
+        # back on write) is a silent rewrite of a submission nobody asked to
+        # change — T0004 2.1's "already-correct input stays byte-for-byte".
+        with open(doc_path, "r", encoding="utf-8", newline="") as fh:
+            return fh.read()
     return content
+
+
+def _write_submission_body(stored_path: pathlib.Path, body: str) -> None:
+    """Persist a submission body verbatim — no newline translation.
+
+    ``Path.write_text(..., encoding="utf-8")`` opens in text mode, where every
+    "\\n" becomes os.linesep on write. On Windows that stores an LF body as CRLF
+    and an already-CRLF body as CRCRLF, so the bytes on disk stop being the
+    bytes the guards checked and a no-op CRLF resubmission is corrupted. The
+    read side (_submission_text) is symmetric: newline="" there too.
+    """
+    with open(stored_path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(body)
 
 
 def _doc_id_suffix(doc_id: str) -> str:
@@ -1427,7 +1446,10 @@ def _frontmatter_identity_mismatch(
     another document's identity. Missing identity fields are left to existing document
     validation; present conflicting fields are rejected.
     """
-    if not isinstance(text, str) or not text.lstrip().startswith("---"):
+    # BOM-aware: `text.lstrip().startswith("---")` is not, because U+FEFF is not
+    # whitespace, so a BOM-prefixed foreign frontmatter used to skip this guard
+    # entirely while the normalizer happily recognized the very same block.
+    if not _linter.looks_like_frontmatter(text):
         return None
     header, parse_error = _linter.parse_yaml_header(text)
     if parse_error or not isinstance(header, dict):
@@ -1487,6 +1509,128 @@ def _frontmatter_identity_mismatch(
             mismatches.append(f"target_id={declared_target_id!r} expected {expected_target_id!r}")
 
     return "; ".join(mismatches) if mismatches else None
+
+
+# T0004 task 2.3: a partial/unclosed --- frontmatter parse must no longer
+# fail-open as "no identity declared". This runs before the existing
+# identity-mismatch comparison so an ambiguous parse is rejected explicitly.
+_FRONTMATTER_MALFORMED_COPY = {
+    "ko": (
+        "제출한 본문의 YAML 프론트매터(--- ... ---)를 확실하게 해석할 수 없습니다. "
+        "닫히지 않았거나, 여러 key: value가 한 줄에 뭉쳐 들어와 일부만 인식됩니다. "
+        "문서는 등록되지 않았습니다. 프론트매터의 줄바꿈을 바로잡아 다시 제출하세요."
+    ),
+    "en": (
+        "The submitted body's YAML frontmatter (--- ... ---) could not be parsed "
+        "reliably. It may be unclosed, or several key: value pairs are collapsed "
+        "onto one line and only partially recognized. The document was not "
+        "registered. Fix the frontmatter's line breaks and resubmit."
+    ),
+    "ja": (
+        "送信された本文の YAML フロントマター（--- ... ---）を確実に解析できません。"
+        "閉じられていないか、複数の key: value が1行にまとまり一部しか認識されません。"
+        "文書は登録されていません。フロントマターの改行を直して再送してください。"
+    ),
+}
+
+
+def _frontmatter_submission_guard(
+    text: Optional[str],
+    *,
+    expected_project: str,
+    expected_module: str,
+    expected_group_id: str,
+    expected_doc_type: str,
+    expected_doc_id: Optional[str] = None,
+    expected_target_id: Optional[str] = None,
+    locale: str = "ko",
+) -> Optional[JSONResponse]:
+    """422 for an ambiguous/malformed --- frontmatter, 409 for a declared
+    identity conflict, else None (nothing to reject).
+
+    `_frontmatter_identity_mismatch` alone silently returns None (no
+    mismatch) both when there is genuinely no conflict AND when the parse
+    failed/partially succeeded — the two cases must not be conflated (NR0003:
+    a collapsed frontmatter line that starts with an unchecked key, e.g.
+    title, currently 200s with no identity fields ever compared). This runs
+    `frontmatter_parse_is_ambiguous` first so the ambiguous case is rejected
+    explicitly instead of falling through to "no mismatch found".
+    """
+    # Same BOM-aware test as the identity comparison below (and as the
+    # normalizer): all three must agree on what counts as frontmatter, or a
+    # BOM-prefixed malformed body walks past whichever one disagrees.
+    if not _linter.looks_like_frontmatter(text):
+        return None
+    if _linter.frontmatter_parse_is_ambiguous(text):
+        normalized_locale = template_provision.normalize_locale(locale)
+        return _fail(
+            422,
+            _FRONTMATTER_MALFORMED_COPY.get(normalized_locale)
+            or _FRONTMATTER_MALFORMED_COPY["ko"],
+        )
+    mismatch = _frontmatter_identity_mismatch(
+        text,
+        expected_project=expected_project,
+        expected_module=expected_module,
+        expected_group_id=expected_group_id,
+        expected_doc_type=expected_doc_type,
+        expected_doc_id=expected_doc_id,
+        expected_target_id=expected_target_id,
+    )
+    if mismatch is not None:
+        return _fail(
+            409,
+            "Frontmatter identity mismatch: submitted content declares another "
+            f"document identity ({mismatch}). Re-send with this "
+            "document's own content.",
+        )
+    return None
+
+
+def _normalize_submission_body(text: str, *, where: str) -> tuple[str, list[dict]]:
+    """Repair a collapsed next-document header. Best effort, never a gate.
+
+    T0004 2.3 asks for the error *kinds* to be split from the *policy*. Repair
+    is not a gate: an unexpected failure here must not turn an otherwise valid
+    submission into a 500. It must not be invisible either — it is logged, the
+    un-repaired original is returned, and the frontmatter gate below still runs
+    on that text, so a malformed body is still rejected rather than stored.
+    """
+    try:
+        return _linter.normalize_submission_header(text)
+    except Exception as exc:  # noqa: BLE001 — deliberate: see docstring
+        import LogAssist.log as logger
+
+        logger.error(
+            f"[inbox {where}] submission-header normalization failed "
+            f"({type(exc).__name__}: {exc}); continuing with the un-normalized body"
+        )
+        return text, []
+
+
+def _frontmatter_guard_internal_error(where: str, exc: BaseException) -> JSONResponse:
+    """The frontmatter guard IS the gate, so an internal failure stops here.
+
+    The previous ``except Exception: body_for_guards = <raw submission>`` around
+    this call swallowed every error out of the ambiguity verdict and the
+    identity comparison, restored the original body and went on to store it —
+    no log, no error response, malformed input silently accepted. That is the
+    fail-open T0004 2.3 explicitly prohibits. Failures here are observable and
+    terminal, and stay distinct from the repair failure above, which is not a
+    gate and does not reject anything.
+    """
+    import LogAssist.log as logger
+
+    logger.error(
+        f"[inbox {where}] frontmatter submission guard failed "
+        f"({type(exc).__name__}: {exc}); submission rejected, nothing was stored"
+    )
+    return _fail(
+        500,
+        "Internal error while validating the submitted frontmatter. Nothing was "
+        "registered. Retry the submission; if it keeps failing, report this "
+        "document id.",
+    )
 
 
 def _fail(status: int, message: str, help_url: str | None = None) -> JSONResponse:
@@ -3043,27 +3187,39 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         if not os.path.isfile(doc_path):
             return _fail(422, f"doc_path file does not exist: {doc_path}")
 
-    # ── Step 5.5: Frontmatter identity + duplicate-body guards ───────────────────
+    # ── Step 5.5: Header normalization + frontmatter identity guards ─────────────
+    # T0004 task 2.1/2.2: normalize the raw submission exactly once, right after
+    # it is read, and use ONLY this normalized string from here through storage —
+    # the identity/dup-body/TR-scope/title-extraction checks below, and the save
+    # itself, must never diverge from what change_summary later reports.
     body_for_guards: Optional[str] = None
+    normalizations: list[dict] = []
+    _raw_submission_text: Optional[str] = None
     try:
-        body_for_guards = _submission_text(doc_path, content)
-        identity_mismatch = _frontmatter_identity_mismatch(
+        _raw_submission_text = _submission_text(doc_path, content)
+    except OSError as exc:
+        return _fail(422, f"doc_path file could not be read: {exc}")
+    if _raw_submission_text is not None:
+        body_for_guards, normalizations = _normalize_submission_body(
+            _raw_submission_text, where="new"
+        )
+    _new_locale_for_guard = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
+    )
+    try:
+        frontmatter_fail = _frontmatter_submission_guard(
             body_for_guards,
             expected_project=project,
             expected_module=module,
             expected_group_id=group["group_id"],
             expected_doc_type=doc_type,
             expected_target_id=prev_doc_id,
+            locale=_new_locale_for_guard,
         )
-        if identity_mismatch is not None:
-            return _fail(
-                409,
-                "Frontmatter identity mismatch: submitted content declares another "
-                f"document identity ({identity_mismatch}). Re-send with this "
-                "document's own content.",
-            )
-    except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
-        body_for_guards = None
+    except Exception as exc:  # noqa: BLE001 — reported, then rejected; never ignored
+        return _frontmatter_guard_internal_error("new", exc)
+    if frontmatter_fail is not None:
+        return frontmatter_fail
 
     # Design documents must follow the active template now served by the help item.
     # This is a Step 5 validation, so dry-run and real submission make the same
@@ -3271,7 +3427,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # (0391 B0001 proposal 3+4, T0005 §5-1/§6) ──
     # Before the side effect (document-number reservation), and before the dry-run
     # branch, so a rejection leaves no trace.
-    _encoding_fields: dict[str, Optional[str]] = {"body": body_for_guards}
+    _encoding_fields: dict[str, Optional[str]] = {"body": _raw_submission_text}
     if title_override:
         _encoding_fields["title"] = title_override
     elif body_for_guards:
@@ -3312,6 +3468,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         new_checks.append("commit_message")
     if wp_plan is not None:
         new_checks.append("work_plan_body")
+    if normalizations:
+        new_checks.append("header_normalized")
     would_register: dict = {
         "action": "new",
         "doc_id": None,
@@ -3326,6 +3484,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if tr_scope_result is not None:
         new_checks.append("tr_scope")
         would_register["tr_scope"] = tr_scope_result
+    if normalizations:
+        would_register["normalizations"] = normalizations
     dry_resp = _maybe_dry_run(body, token_rec, would_register)
     if dry_resp is not None:
         return dry_resp
@@ -3366,10 +3526,27 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     os.unlink(doc_path)
                 except OSError:
                     pass
-        elif doc_path is not None:
-            shutil.move(str(doc_path), str(stored_path))
         else:
-            stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
+            # T0004 task 2.2: the canonical body is the single normalized string
+            # every guard above already checked — never the pre-normalization
+            # bytes, whether they arrived as `content` or as a `doc_path` file.
+            # Writing those directly (the previous shutil.move/write_text(content))
+            # let a collapsed header pass every check against the normalized text
+            # and then save the un-repaired original, silently diverging from what
+            # change_summary reports below.
+            # newline="" is not decoration: text mode translates every "\n" to
+            # os.linesep, so on Windows an LF body would land as CRLF and an
+            # already-CRLF body as CRCRLF. The stored bytes must be exactly the
+            # bytes that were normalized and checked.
+            _write_submission_body(
+                stored_path,
+                body_for_guards if body_for_guards is not None else (_raw_submission_text or ""),
+            )
+            if doc_path is not None:
+                try:
+                    os.unlink(doc_path)
+                except OSError:
+                    pass
     except OSError as exc:
         return _fail(500, f"Storage error: {exc}")
 
@@ -3636,6 +3813,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "stored_path": str(stored_path),
         "message": f"{canonical_doc_id} registered. You may end the session.",
     }
+    if normalizations:
+        resp_content["normalizations"] = normalizations
     # 0370 set 4 (P0002 scenario 15): counts the just-created file and attaches a change
     # summary. There is no old version to compare against, so before is null and
     # everything lands as an addition. The summary is not stored anywhere — it only
@@ -3805,11 +3984,25 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         if len(content_bytes) > _content_max():
             return _fail(422, f"content size exceeds the limit (max {_content_max()} bytes)")
 
-    # ── Step 5.5: Frontmatter identity + duplicate-body guards ──────────────────────
+    # ── Step 5.5: Header normalization + frontmatter identity guards ─────────────
+    # Mirrors _handle_new's Step 5.5 (T0004 task 2.2): normalize once and use the
+    # single normalized string for every guard below and the eventual save.
     edit_body_for_guards: Optional[str] = None
+    edit_normalizations: list[dict] = []
+    _edit_raw_submission_text: Optional[str] = None
     try:
-        edit_body_for_guards = _submission_text(doc_path, content)
-        identity_mismatch = _frontmatter_identity_mismatch(
+        _edit_raw_submission_text = _submission_text(doc_path, content)
+    except OSError as exc:
+        return _fail(422, f"doc_path file could not be read: {exc}")
+    if _edit_raw_submission_text is not None:
+        edit_body_for_guards, edit_normalizations = _normalize_submission_body(
+            _edit_raw_submission_text, where="edit"
+        )
+    _edit_locale_for_guard = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
+    )
+    try:
+        frontmatter_fail = _frontmatter_submission_guard(
             edit_body_for_guards,
             expected_project=project,
             expected_module=module,
@@ -3817,16 +4010,12 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             expected_doc_type=str(existing_doc.get("type_code") or ""),
             expected_doc_id=doc_id,
             expected_target_id=existing_doc.get("target_id") or existing_doc.get("triggered_by"),
+            locale=_edit_locale_for_guard,
         )
-        if identity_mismatch is not None:
-            return _fail(
-                409,
-                "Frontmatter identity mismatch: submitted content declares another "
-                f"document identity ({identity_mismatch}). Re-send with this "
-                "document's own content.",
-            )
-    except Exception:  # noqa: BLE001 — identity guard is defense-in-depth
-        edit_body_for_guards = None
+    except Exception as exc:  # noqa: BLE001 — reported, then rejected; never ignored
+        return _frontmatter_guard_internal_error("edit", exc)
+    if frontmatter_fail is not None:
+        return frontmatter_fail
 
     # Rejected design-document edits are the same authoring operation and must not
     # bypass the template structure check that applies to new submissions.
@@ -3985,7 +4174,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
     # (0391 B0001 proposal 3+4, T0005 §5-2/§6) ──
-    _edit_encoding_fields: dict[str, Optional[str]] = {"body": edit_body_for_guards}
+    _edit_encoding_fields: dict[str, Optional[str]] = {"body": _edit_raw_submission_text}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
     if rejection_response:
@@ -4018,6 +4207,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_checks.append("dup_body")
     if wp_plan is not None:
         edit_checks.append("work_plan_body")
+    if edit_normalizations:
+        edit_checks.append("header_normalized")
     edit_would_register: dict = {
         "action": "edit",
         "doc_id": doc_id,
@@ -4027,6 +4218,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if edit_tr_scope is not None:
         edit_checks.append("tr_scope")
         edit_would_register["tr_scope"] = edit_tr_scope
+    if edit_normalizations:
+        edit_would_register["normalizations"] = edit_normalizations
     dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
     if dry_resp is not None:
         return dry_resp
@@ -4081,10 +4274,17 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             # Same rule as new: atomically swaps in the standard form the validator
             # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
             work_plan_service.write_body_atomically(stored_path, wp_plan)
-        elif doc_path is not None:
-            shutil.copy2(str(doc_path), str(stored_path))
         else:
-            stored_path.write_text(content, encoding="utf-8")  # type: ignore[arg-type]
+            # T0004 task 2.2: same rule as _handle_new — write the single
+            # normalized string every guard above already checked, never the
+            # pre-normalization doc_path file / content bytes (see the matching
+            # comment in _handle_new's Step 6), and without newline translation
+            # so the stored bytes are the checked bytes.
+            _write_submission_body(
+                stored_path,
+                edit_body_for_guards if edit_body_for_guards is not None
+                else (_edit_raw_submission_text or ""),
+            )
     except OSError as exc:
             return _fail(500, f"Storage error: {exc}")
 
@@ -4373,6 +4573,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         "revision_no": new_revision_no,
         "message": f"{doc_id} registered. You may end the session.",
     }
+    if edit_normalizations:
+        resp_body["normalizations"] = edit_normalizations
     # 0370 set 4 (P0002 scenarios 14, 16): the "before save" to compare against is the
     # backup file Step 6a already dropped. So there is nothing new to save for the
     # summary's sake. If there is no backup (e.g. a copy failure), it just gives up on

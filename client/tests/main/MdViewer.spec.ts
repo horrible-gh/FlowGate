@@ -127,6 +127,187 @@ describe('MdViewer', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
+  it('removes the leading 7-field next-document header from the rendered body (T0004 2.4)', async () => {
+    const header = [
+      'next_type: T',
+      'next_type_detail: 작업지시',
+      'project: flowgate',
+      'module: default',
+      'group: 0458',
+      'title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀를 아주 길게 늘려 wrapping도 함께 확인하는 한글 제목',
+      'target_id: B0001',
+    ].join('\n')
+    const source = `${header}\n\n일반 문단은 줄바꿈이 있어도 하나로 이어져 보입니다.\n두 번째 줄입니다.`
+
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    // Not a paragraph, not a code box, not anywhere: none of the seven fields is on
+    // screen. rev1-rev4 put them in a <pre> and were rejected for exactly that.
+    expect(contentEl.querySelector('pre')).toBeNull()
+    for (const field of header.split('\n')) {
+      expect(contentEl.textContent).not.toContain(field)
+    }
+    expect(contentEl.textContent).not.toContain('next_type')
+    expect(contentEl.textContent).not.toContain('target_id')
+
+    // Ordinary prose keeps its existing soft-line-break paragraph behavior — the
+    // two lines below the header are still joined into one <p>, untouched.
+    const paragraphs = Array.from(contentEl.querySelectorAll('p')).map((p) => p.textContent)
+    expect(
+      paragraphs.some((t) => t?.includes('일반 문단은') && t?.includes('두 번째 줄입니다.')),
+    ).toBe(true)
+  })
+
+  it('copies the raw header text unchanged — the removal is display-only', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    const header = [
+      'next_type: T',
+      'next_type_detail: 작업지시',
+      'project: flowgate',
+      'module: default',
+      'group: 0458',
+      'title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀',
+      'target_id: B0001',
+    ].join('\n')
+    const source = `${header}\n\nBody.`
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+
+    await wrapper.find('.md-copy-btn--main').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenNthCalledWith(1, source)
+
+    await wrapper.find('.md-copy-btn--header').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenNthCalledWith(2, source)
+  })
+
+  it('shows nothing of the header of the rejected flowgate.test document (R0001 rev5)', async () => {
+    // Byte-for-byte content of test.test.0010.0001-R on http://flowgate.test/ —
+    // the document the header rejections were filed against. CRLF, a YAML
+    // frontmatter block, one blank line, then the seven fields. rev3 rendered this
+    // as a single run-together <p> (stripFrontmatter() leaves the blank line, so
+    // the leading-header gate never matched, and the CRLF lines never matched the
+    // per-line regex either); rev4 rendered it as a code box. Both were rejected —
+    // the header must not be on screen at all.
+    const fields = [
+      'next_type: R',
+      'next_type_detail: 요건정의',
+      'project: flowgate',
+      'module: default',
+      'group: 0010',
+      'title: 테스트',
+      'target_id: R0001',
+    ]
+    const source = [
+      '---',
+      'title: 0408 TR0021 rev1 provider tab verify',
+      'type: R',
+      'doc_id: test.test.0010.0001-R',
+      '---',
+      '',
+      ...fields,
+    ].join('\r\n')
+
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    // The document is nothing but frontmatter + header, so the rendered body is
+    // empty: no <pre>, no <p>, and none of the seven fields anywhere.
+    expect(contentEl.querySelector('pre')).toBeNull()
+    expect(contentEl.querySelector('p')).toBeNull()
+    expect((contentEl.textContent || '').trim()).toBe('')
+    for (const field of fields) {
+      expect(contentEl.textContent).not.toContain(field)
+    }
+  })
+
+  it('keeps both copy buttons byte-exact for that document (display-only removal)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    const source = [
+      '---',
+      'title: 0408 TR0021 rev1 provider tab verify',
+      'type: R',
+      'doc_id: test.test.0010.0001-R',
+      '---',
+      '',
+      'next_type: R',
+      'next_type_detail: 요건정의',
+      'project: flowgate',
+      'module: default',
+      'group: 0010',
+      'title: 테스트',
+      'target_id: R0001',
+    ].join('\r\n')
+
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+
+    await wrapper.find('.md-copy-btn--main').trigger('click')
+    await flushPromises()
+    // "Copy Markdown" = frontmatter stripped, everything else untouched — the
+    // seven header fields are still part of what the user copies.
+    expect(writeText).toHaveBeenNthCalledWith(1, source.slice(source.indexOf('---\r\n', 4) + 5))
+    expect(writeText.mock.calls[0][0]).toContain('next_type: R')
+    expect(writeText.mock.calls[0][0]).toContain('target_id: R0001')
+
+    await wrapper.find('.md-copy-btn--header').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenNthCalledWith(2, source)
+  })
+
+  it('removes a CRLF header that has no frontmatter above it', async () => {
+    const fields = [
+      'next_type: T',
+      'next_type_detail: 작업지시',
+      'project: flowgate',
+      'module: default',
+      'group: 0458',
+      'title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀',
+      'target_id: B0001',
+    ]
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: fields.join('\r\n') + '\r\n\r\n산문 한 줄.' },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    expect(contentEl.querySelector('pre')).toBeNull()
+    for (const field of fields) {
+      expect(contentEl.textContent).not.toContain(field)
+    }
+    // The prose below the header is all that is left, and it is intact.
+    expect(contentEl.textContent).toContain('산문 한 줄.')
+  })
+
+  it('leaves an already-multiline non-header document untouched', async () => {
+    const source = '# Title\n\nFirst line.\nSecond line joins it visually.'
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    expect(contentEl.querySelector('pre')).toBeNull()
+  })
+
   it('keeps copy and scrolling available but hides regeneration in read-only mode', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     setClipboard({ writeText })
