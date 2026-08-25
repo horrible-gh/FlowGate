@@ -96,6 +96,25 @@ BOILERPLATE_BLACKLIST = frozenset({
     "home", "menu", "search", "about", "contact", "register", "submit",
     "copyright", "all rights reserved", "read more", "learn more",
 })
+# flowgate.default.0462 T0005 — the TR commit point's ASCII fail-closed fallback. The
+# TR's own draft failed every check (missing / non-ASCII / oversized); this keeps the
+# document identifiable without a translate round-trip.
+TR_FALLBACK_SUBJECT = "chore: approve {doc_code}"
+# flowgate.default.0462 T0005 — a conventional-commit type prefix, e.g. "fix(git): " or
+# "feat: ". Matched so an already-conventional TR draft is not double-wrapped with a
+# second type (`conventional_subject("chore", "fix(git): x")` would read as noise).
+_CONVENTIONAL_SUBJECT_RE = re.compile(r"^[a-z][a-z0-9]*(\([^()\r\n]+\))?!?: \S")
+
+
+def is_conventional_subject(text: str) -> bool:
+    """flowgate.default.0462 T0005 §4-1 — is ``text`` already ``type(scope): summary``?
+
+    A capital type or a colon with no following space is not conventional and is passed
+    through to be wrapped, not mistaken for one already in the right shape.
+    """
+    return bool(_CONVENTIONAL_SUBJECT_RE.match(text or ""))
+
+
 # ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
 # Default subject for an explicit base-checkout commit: "fix: a.py, b.py", or the
 # abbreviated "fix: a.py and N more" when the joined list overflows COMMIT_SUBJECT_MAX.
@@ -387,7 +406,10 @@ def derive_commit_type(group_id: str) -> Optional[str]:
     return None
 
 
-def _commit_subject(commit_type: str, summary: str) -> str:
+def conventional_subject(commit_type: str, summary: str) -> str:
+    """``"{commit_type}: {summary}"`` — the one place every conventional-commit subject
+    is assembled. Public since flowgate.default.0462 T0005 §4-1: tr_commit_service uses
+    it too, so a TR draft and a finalize auto-title are typed the same way."""
     return f"{commit_type}: {summary}"
 
 
@@ -404,7 +426,7 @@ def build_auto_commit_message(group_id: str) -> str:
         if not title:
             return fallback
         commit_type = derive_commit_type(group_id) or "chore"
-        return _commit_subject(commit_type, title)
+        return conventional_subject(commit_type, title)
     except Exception:
         _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
         return fallback
@@ -488,14 +510,14 @@ def resolve_commit_message(group_id: str) -> tuple[str, str]:
         if title:
             # 2) ASCII title → existing auto-generation rule
             if _is_ascii(title):
-                subject = _commit_subject(ctype, title)
+                subject = conventional_subject(ctype, title)
                 if len(subject) <= COMMIT_SUBJECT_MAX:
                     return (subject, "auto_title")
             else:
                 # 3) non-ASCII title → translate
                 translated = _try_translate(project_id, title)
                 if translated:
-                    subject = _commit_subject(ctype, translated)
+                    subject = conventional_subject(ctype, translated)
                     if len(subject) <= COMMIT_SUBJECT_MAX:
                         return (subject, "translated")
 

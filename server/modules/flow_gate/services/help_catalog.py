@@ -970,8 +970,12 @@ def _content_submit(ctx: dict) -> dict:
             body["content"] = "<Fill this in>\n\n" + tr_scope_service.tr_section_placeholder(ctx["locale"])
             if str(doc_type).upper() == "TR":
                 body["commit_message"] = (
-                    "<Optional. English one-line commit subject summarizing this group's work, "
-                    "e.g. fix(git): preserve finalized commit subject>"
+                    "<This TR's own approval commit subject, used verbatim. Conventional "
+                    "commit format: type(scope): summary — e.g. "
+                    "'fix(git): preserve finalized commit subject' or "
+                    "'feat(workflow): add TR commit point'. Must be plain English (ASCII); "
+                    "non-English text is ignored and a fixed fallback is used instead. "
+                    "Leave empty and the commit becomes 'chore: approve <doc-code>'.>"
                 )
 
     is_work_plan = str(doc_type).upper() == WORK_PLAN_TYPE
