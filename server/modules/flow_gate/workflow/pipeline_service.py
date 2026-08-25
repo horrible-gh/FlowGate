@@ -541,11 +541,19 @@ def transition_document_review(
     user_permissions: set[str],
     comment: str | None = None,
     locale: str = "ko",
+    review_id: Any = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
     M026 §8-1: based on the DOC_REVIEW_TRANSITIONS rules.
     action: approve | reject | mark_revised
+
+    0458 NR0003 (B): `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
+    came from. It is optional and defaults to None, so every existing caller — the human
+    [반려] button above all — keeps writing exactly the item shape it wrote before. When it
+    IS given, the new rejection_history item carries the key, which is what lets the review
+    gate tell "this review row was already rejected" from "the document is momentarily not
+    in `rejected`" (the confusion that rejected one review twice).
     """
     doc = db_docs.get_by_id(doc_id)
     if not doc:
@@ -603,7 +611,7 @@ def transition_document_review(
         # unsafe). The four response fields start null — they are filled in when
         # the AI re-submits the rejected document through the inbox edit path
         # (see record_rejection_response below), not via any manual-input UI.
-        existing_history.append({
+        item: dict[str, Any] = {
             "rejection_id": new_rejection_id(),
             "reason": comment,
             "rejected_at": now_iso(),
@@ -612,7 +620,13 @@ def transition_document_review(
             "responded_at": None,
             "response_recorded_by": None,
             "response_revision_no": None,
-        })
+        }
+        if review_id is not None:
+            # 0458 NR0003 (B). Only the automatic review rejection passes this, so a human
+            # rejection never grows a key it did not have, and readers that do not know it
+            # (document_routes._parse_rejection_history, the client) ignore it.
+            item["review_id"] = review_id
+        existing_history.append(item)
         update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
 
     updated = db_docs.update(doc_id, update_fields)
