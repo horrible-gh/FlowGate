@@ -787,6 +787,43 @@ def resume_ai_invoke(body: dict, request: Request):
             user_id=user_id,
             api_base_url=_token_routes._build_api_base(request),
             locale=locale,
+            is_admin=bool(auth.get("is_admin")),
+        )
+    except HTTPException as exc:
+        return _err(exc)
+    return JSONResponse(status_code=200, content=result)
+
+
+@router.delete("/paused/{group_id}")
+def release_paused_ai_invoke(group_id: str, request: Request):
+    """Explicit user cancel/release of a group-keyed PAUSED CHAIN row (0459 T0007).
+
+    Paused-row release ONLY: this is neither a live-run cancel (POST
+    /{run_id}/cancel) nor a lease force-release (POST /leases/{group_id}/release) --
+    the name and the service it calls (release_paused_chain, never
+    force_release_group_lease) both say so. Declared ahead of GET /{run_id} for the
+    same path-shadowing reason as GET /leases and POST /leases/{group_id}/release.
+    """
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    project = group_id.split(".", 1)[0]
+    if db_projects.get_by_id(project) is None:
+        return JSONResponse(status_code=404, content={"code": "project_not_found",
+                                                      "message": f"Project not found: {project}"})
+    user_id = auth["issued_to"]
+    if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "perm_document_read required"})
+    try:
+        result = ai_invoke_service.release_paused_chain(
+            group_id=group_id,
+            user_id=user_id,
+            is_admin=bool(auth.get("is_admin")),
         )
     except HTTPException as exc:
         return _err(exc)

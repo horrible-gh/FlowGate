@@ -129,6 +129,23 @@ class FakePausedStore:
         row = self.rows.pop(group_id, None)
         return dict(row) if row else None
 
+    def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
+        # 0459 TR0008 rev1: resume_chain() now consumes via the same CAS predicate
+        # release_paused_chain() uses, tied to the exact row its ownership check
+        # read -- mirrors the production ai_invoke_paused_chains.release_owned
+        # contract so this fixture keeps exercising resume_chain through the real
+        # consumption path instead of a bare group-only delete.
+        row = self.rows.get(group_id)
+        if row is None:
+            return None
+        normalized = stop_kind or "user"
+        if (row.get("paused_by") != paused_by
+                or row.get("paused_at") != paused_at
+                or (row.get("stop_kind") or "user") != normalized
+                or row.get("stop_run_id") != stop_run_id):
+            return None
+        return self.rows.pop(group_id)
+
     def delete_by_group(self, group_id):
         self.rows.pop(group_id, None)
 
@@ -221,7 +238,7 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "_group_resume_locks", {})
 
     # Route every paused-store touch (service AND inbox hook) at the dict fake.
-    for name in ("upsert", "get_by_group", "exists", "delete_and_return",
+    for name in ("upsert", "get_by_group", "exists", "delete_and_return", "release_owned",
                  "delete_by_group", "delete_system_stop", "list_by_user"):
         monkeypatch.setattr(db_paused, name, getattr(paused, name))
 
