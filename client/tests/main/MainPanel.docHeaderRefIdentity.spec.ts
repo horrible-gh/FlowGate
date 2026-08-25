@@ -126,4 +126,40 @@ describe('MainPanel DocHeader ref identity (group 0064 regression)', () => {
     // i.e. the registry is not stuck on the dead pre-edit instance.
     expect(after).toBe(vm.docHeaderRefs[docTab.id])
   })
+
+  // 0460 TR0005 rev6 — the [헤더 수정]/[헤더 숨김] toggle inside the raw-content edit
+  // modal used to be ORed into DocHeader's v-if, so every click of that in-modal
+  // button also unmounted/remounted this background DocHeader (a fresh non-silent
+  // fetchDoc() blanks it before it pops back in — "disappears then reappears").
+  // DocHeader must stay unmounted for the WHOLE edit session, unaffected by which
+  // textarea mode the modal shows, and remount exactly once on close.
+  it('does not remount DocHeader when the in-modal header-edit-mode toggle flips', async () => {
+    const wrapper = mountPanel()
+    useTabsStore().openTab({ ...docTab })
+    await nextTick()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    await vm.openEditModal({ ...docTab })
+    await nextTick()
+    await flushPromises()
+    expect(vm.docHeaderRefs[docTab.id]).toBeUndefined()
+
+    vm.toggleHeaderEditMode()
+    await nextTick()
+    await flushPromises()
+    expect(vm.headerEditModeVisible).toBe(true)
+    expect(vm.docHeaderRefs[docTab.id]).toBeUndefined()
+
+    vm.toggleHeaderEditMode()
+    await nextTick()
+    await flushPromises()
+    expect(vm.headerEditModeVisible).toBe(false)
+    expect(vm.docHeaderRefs[docTab.id]).toBeUndefined()
+
+    vm.closeEditModal()
+    await nextTick()
+    await flushPromises()
+    expect(vm.docHeaderRefs[docTab.id]).toBeTruthy()
+  })
 })

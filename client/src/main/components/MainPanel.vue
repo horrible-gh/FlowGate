@@ -71,8 +71,18 @@
                — restores the header/workflow that rev5 wrongly hid: the thing the reviewer
                wanted gone was the redundant chat intro, never the document header itself
                ("where did you sell off the document header and workflow"). -->
+          <!-- 0460 TR0005 rev6 — `headerEditModeVisible` used to sit in this OR: it only
+               toggles which of the two textareas the raw-content edit modal shows (body-only
+               vs full-content-with-frontmatter), but being ORed in here meant every click of
+               that in-modal [헤더 수정]/[헤더 숨김] button also unmounted/remounted THIS
+               background DocHeader — a same-tab remount fires a fresh non-silent fetchDoc(),
+               which blanks the header (v-if="doc" renders nothing until the GET resolves)
+               before it pops back in ("disappears then reappears"). The doc-open/doc-close
+               unmount below is intentional and load-bearing (group 0064 NR0003's DocHeader
+               ref-identity regression exercises exactly that same-tab unmount→remount) —
+               only the extra churn from the in-modal toggle is removed. -->
           <DocHeader
-            v-if="tab.typeCode && (editTab?.id !== tab.id || headerEditModeVisible)"
+            v-if="tab.typeCode && editTab?.id !== tab.id"
             :ref="(el) => bindActiveRef(docHeaderRefs, tab.id, el)"
             :tab="tab"
             :read-only="aiRunDocumentLocked"
