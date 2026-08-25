@@ -1600,21 +1600,14 @@ def build_mention(
     else:
         s2_header = "Instruction to include next document header"
         next_type_detail = f"next_type_detail: {get_type_name(head_type, locale)}\n" if head_type else ""
-        # T0004 task 2.5: fence the 7-field block so downstream Markdown viewers
-        # (MdViewer and any other renderer of this mention) preserve its line
-        # breaks as-is instead of collapsing them as soft line breaks inside a
-        # normal paragraph (the group 0458 display bug R0001 reported). Only
-        # the wrapper is new -- the inner LF-per-field values are unchanged.
         s2_body = (
-            "```text\n"
             f"next_type: {next_type_value}\n"
             f"{next_type_detail}"
             f"project: {project}\n"
             f"module: {module}\n"
             f"group: {group}\n"
             "title: <Title here>\n"
-            f"target_id: {parent_doc_id}\n"
-            "```"
+            f"target_id: {parent_doc_id}"
         )
 
     # ── Work scope guard (R0013 / flowgate.default.0013.0001-R) ──────────────
