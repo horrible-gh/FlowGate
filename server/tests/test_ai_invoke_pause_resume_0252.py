@@ -25,12 +25,20 @@ import pytest
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+# T0005 §4-2: the /resume route imports token_routes for _build_api_base, which
+# pulls in config.settings -- unneeded by every other test in this file, so these
+# three are only required now that a route-level test exercises that path.
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("ALLOWED_ORIGIN", "")
+os.environ.setdefault("DB_TYPE", "sqlite")
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
-from fastapi import HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
+from modules.flow_gate.api.v1 import ai_invoke_routes as routes  # noqa: E402
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services import workflow_decision_service as wds  # noqa: E402
@@ -189,6 +197,13 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
                         lambda pid: {"ok": True, **chain_holder})
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: None)
+    # T0005 §2/§8-1: a secret-stripped config view distinct from the ENABLED-only
+    # chain_holder above -- lets a test give a display name to a provider that is no
+    # longer in the effective chain (disabled/removed), same as production's
+    # ai_settings_service.get_project_settings.
+    settings_holder = {"providers": []}
+    monkeypatch.setattr(svc.ai_settings_service, "get_project_settings",
+                        lambda pid, include_catalog=True: {"providers": settings_holder["providers"]})
     monkeypatch.setattr(svc.token_service, "issue", lambda **kw: {
         "raw_token": "tok_raw_test", "token_id": "tok_20260717_000001",
         "expires_at": "2026-07-18T00:00:00+00:00",
@@ -215,7 +230,7 @@ def fake_env(monkeypatch, tmp_path):
                         lambda run, event_type, payload: events.append((event_type, payload)))
 
     return {"docs": docs, "wfseq": wfseq, "paused": paused, "chain": chain_holder,
-            "events": events, "tmp": tmp_path}
+            "settings": settings_holder, "events": events, "tmp": tmp_path}
 
 
 def _start(fake_env, mode="continuous", target=3, cmd=None):
@@ -803,6 +818,51 @@ class TestPauseIdentityAndRestoreRegression:
             _wait_finished(res["run_id"])
 
 
+# ── /resume HTTP route (T0005 §3 item 2 / §4 item 2) ──────────────────────────
+
+class TestResumeRoute:
+    """The route wrapper owns nothing of its own -- it must pass resume_chain's 422
+    body through with its top-level {code, message} shape intact (T0005 §5), and a
+    launch failure must leave the paused row exactly as resume_chain restored it."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        app = FastAPI()
+        app.include_router(routes.router)
+        monkeypatch.setattr(
+            routes, "verify_bearer",
+            lambda request: {"_is_user_jwt": True, "issued_to": "usr_admin", "is_admin": False},
+        )
+        monkeypatch.setattr(routes, "has_permission", lambda *a, **kw: True)
+        monkeypatch.setattr(routes.db_projects, "get_by_id", lambda pid: {"project_id": pid})
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_unavailable_explicit_pin_422_preserves_top_level_message_and_restores_row(
+            self, fake_env, monkeypatch, client):
+        _seed_paused(fake_env, base_provider_id="aip_removed", provider_pinned=True)
+        _patch_advance(monkeypatch, fake_env["tmp"])
+        fake_env["chain"]["providers"] = [
+            _provider(f'"{PY}" -c "import sys; sys.stdin.read()"', pid="aip_default"),
+        ]
+
+        resp = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+
+        assert resp.status_code == 422
+        body = resp.json()
+        # The whole body IS {code, message} -- no envelope, nothing swallowed en route.
+        assert body["code"] == "provider_unavailable"
+        assert body["message"] == (
+            "The selected AI provider is not enabled for this project."
+        )
+        restored = fake_env["paused"].rows[GROUP]
+        assert restored["continuation_base_provider_id"] == "aip_removed"
+        assert restored["continuation_provider_pinned"] is True
+
+
 # ── active_all (L0009 §2.8 / P0008 S1) ────────────────────────────────────────
 
 class TestActiveAll:
@@ -874,6 +934,54 @@ class TestActiveAll:
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
+
+    # T0005 §2/§8-1: an explicit base-provider pin whose provider fell out of the
+    # project's current enabled chain must surface as a non-resumable card, with the
+    # exact 422 sentence start_run would give and (when findable) the pin's own name.
+    def test_flags_unavailable_pinned_provider_as_not_resumable(self, fake_env):
+        _seed_paused(fake_env, base_provider_id="aip_removed", provider_pinned=True)
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_default")]
+        # Gone from the enabled chain, but still on record in the secret-stripped
+        # config view (e.g. switched off, not deleted) -- the name must still resolve.
+        fake_env["settings"]["providers"] = [
+            _provider('"true"', pid="aip_removed", name="Old CLI"),
+            _provider('"true"', pid="aip_default", name="Default CLI"),
+        ]
+
+        mine = svc.active_all("usr_admin")
+
+        assert len(mine["paused"]) == 1
+        row = mine["paused"][0]
+        assert row["resume_available"] is False
+        assert row["resume_block_code"] == "provider_unavailable"
+        assert row["resume_block_reason"] == (
+            "The selected AI provider is not enabled for this project."
+        )
+        assert row["resume_provider_name"] == "Old CLI"
+
+    # Counterpart contract: an active pin and an ordinary unpinned paused row both
+    # default to resume_available=true/no blocker -- the new fields must not invent
+    # a false blocker. An active pin's name IS resolved from the same enabled-chain
+    # record that proved it still resolves (0006-TR rev1 review finding); only the
+    # genuinely unpinned row has no provider to name, so it stays null.
+    def test_active_pin_and_unpinned_rows_default_to_resumable(self, fake_env):
+        _seed_paused(fake_env, base_provider_id="aip_default", provider_pinned=True)
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_default")]
+
+        pinned_row = svc.active_all("usr_admin")["paused"][0]
+        assert pinned_row["resume_available"] is True
+        assert pinned_row["resume_block_code"] is None
+        assert pinned_row["resume_block_reason"] is None
+        assert pinned_row["resume_provider_name"] == "cli-1"
+
+        fake_env["paused"].delete_by_group(GROUP)
+        _seed_paused(fake_env)  # no pin at all
+
+        unpinned_row = svc.active_all("usr_admin")["paused"][0]
+        assert unpinned_row["resume_available"] is True
+        assert unpinned_row["resume_block_code"] is None
+        assert unpinned_row["resume_block_reason"] is None
+        assert unpinned_row["resume_provider_name"] is None
 
 
 # ── inbox boundary hook (L0009 §2.2) ─────────────────────────────────────────
