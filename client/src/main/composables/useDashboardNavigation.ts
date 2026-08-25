@@ -32,8 +32,12 @@ export function useDashboardNavigation() {
     const projectId = projectStore.currentProjectId
     if (!projectId || navigation.kind === 'none') return
     try {
-      let nodes = explorerStore.getCachedGroupTree(projectId)
-      if (!nodes) nodes = await explorerStore.fetchGroupTree(projectId, true)
+      // 0454 T0006 §4.2 — full variant on both the cache read and the fetch. A dashboard card
+      // or a 🔔 notification can point at a document or a group that is already final-approved
+      // or discarded; on the pruned tree the lookup below would miss and the user would get
+      // "navigation failed" for a target that exists.
+      let nodes = explorerStore.getCachedGroupTree(projectId, true)
+      if (!nodes) nodes = await explorerStore.fetchGroupTree(projectId, true, true)
 
       if (navigation.kind === 'document' && navigation.doc_id) {
         // 0316 T0004 / NR0003 recommendation 1 — the reveal+select (tree fetch, force-refetch on

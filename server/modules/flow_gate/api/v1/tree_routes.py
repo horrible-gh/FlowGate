@@ -253,10 +253,86 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     return {"deleted": body.path, "type": actual_type, "base_git": base_git}
 
 
+# ---------------------------------------------------------------------------
+# 0454 T0006 §1 — display-state pruning for the group tree
+# ---------------------------------------------------------------------------
+#
+# B0001 ("releasing the completed-hide toggle is slow"): the explorer hides terminal
+# (final-approved / discarded) groups by default, but the server shipped them anyway —
+# the whole subtree travelled the wire and got JSON-parsed on every load, SSE refresh and
+# retry, only for GroupExplorer to filter it back out. `include_terminal=false` drops that
+# freight at the source; `true` (the default, so every existing API caller is unaffected)
+# returns the flat payload byte-for-byte as before.
+
+# The two SERVER-derived terminal flags on a group node (process_service.get_group_tree).
+# A group is terminal when either is True; a missing or False flag is NOT terminal, so a
+# legacy payload that predates the fields hides nothing.
+_TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
+
+
+def prune_terminal_subtrees(nodes: list[dict]) -> list[dict]:
+    """Return `nodes` without terminal groups and everything reachable below them.
+
+    Pure and flat-in / flat-out, so it can be exercised on synthetic fixtures without a DB
+    (0454 T0006 §1.3). Properties it holds, each pinned by a test:
+
+    * A terminal root is a `node_type == "group"` node carrying `is_final_approved is True`
+      or `is_discarded is True`. Nothing else is a root.
+    * Removal follows `parent_id` to ARBITRARY depth — one parent->children index is built
+      in a single pass and walked, rather than assuming a group's only children are its own
+      direct documents. A nested subgroup (and its documents) goes with its terminal ancestor.
+    * A `visited` set bounds the walk, so cyclic or duplicated `parent_id` data terminates.
+    * The surviving nodes keep their ORIGINAL relative order and their original objects:
+      project / module / orphan nodes and non-terminal groups are untouched, no `parent_id`
+      is rewritten, and no node is dropped for any other reason. A module left empty by the
+      pruning still ships (registered-module display contract).
+    """
+    children_by_parent: dict[object, list[object]] = {}
+    terminal_roots: list[object] = []
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id is None:
+            continue
+        children_by_parent.setdefault(node.get("parent_id"), []).append(node_id)
+        if node.get("node_type") != "group":
+            continue
+        if any(node.get(flag) is True for flag in _TERMINAL_GROUP_FLAGS):
+            terminal_roots.append(node_id)
+
+    if not terminal_roots:
+        return list(nodes)
+
+    hidden: set = set()
+    stack = list(terminal_roots)
+    while stack:
+        current = stack.pop()
+        if current in hidden:
+            continue
+        hidden.add(current)
+        stack.extend(children_by_parent.get(current, ()))
+
+    return [node for node in nodes if node.get("id") not in hidden]
+
+
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
-def get_groups_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
+def get_groups_tree(
+    project_id: str,
+    branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)"),
+    include_terminal: bool = Query(
+        True,
+        description=(
+            "true (default) returns the full flat tree unchanged; false prunes "
+            "final-approved/discarded groups and every descendant"
+        ),
+    ),
+):
     """Return the group tree for the project."""
     tree = process_service.get_group_tree(project_id)
+    if not include_terminal:
+        # Same `{"data": {"nodes": [...]}}` envelope, same node objects — only the list is
+        # shorter. The dict is copied so the pruning never mutates what get_group_tree built.
+        tree = dict(tree)
+        tree["nodes"] = prune_terminal_subtrees(tree.get("nodes") or [])
     return {"data": tree}
 
 

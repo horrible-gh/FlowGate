@@ -165,6 +165,17 @@ export const useExplorerStore = defineStore('explorer', () => {
   const projectStore = useProjectStore()
   const currentBranch = computed(() => projectStore.currentBranch || 'main')
   const cacheKey = (pid: string, branch = currentBranch.value) => `${pid}:${branch}`
+  // 0454 T0006 §2.2 — the group tree now has TWO server variants per project+branch
+  // (`include_terminal=true|false`), so it needs its own key: the file tree's cacheKey()
+  // meaning is untouched. `full` / `pruned` rather than `true` / `false` so a key read out
+  // of a debugger or a test failure says which payload it holds. A pruned response must
+  // never be handed to a caller that asked for the full tree, or the other way round —
+  // hence the variant is part of the key, not a flag checked after the fact.
+  const groupTreeKey = (
+    pid: string,
+    includeTerminal: boolean,
+    branch = currentBranch.value,
+  ) => `${pid}:${branch}:${includeTerminal ? 'full' : 'pruned'}`
   const fileTreeCache = ref<Record<string, FileNode[]>>({})
   const groupTreeCache = ref<Record<string, GroupNode[]>>({})
   const workflowNodeStates = ref<Record<string, WorkflowNodeState>>({})
@@ -255,9 +266,18 @@ export const useExplorerStore = defineStore('explorer', () => {
   /** Fetch a project's group tree. `force` means "bypass the completed cache" — it does NOT
    *  mean "own a private request": a caller arriving while a fetch for the same project+branch
    *  is still running joins that fetch (and the single getTreeWithRetry retry inside it), and
-   *  receives the same resolved nodes or the same error. 0449 T0004 item 2. */
-  async function fetchGroupTree(pid: string, force = false): Promise<GroupNode[]> {
-    const key = cacheKey(pid)
+   *  receives the same resolved nodes or the same error. 0449 T0004 item 2.
+   *
+   *  `includeTerminal` (0454 T0006 §2.1) picks the SERVER variant: `true` (default, so every
+   *  pre-existing caller keeps its full-tree meaning) returns the whole flat tree; `false`
+   *  asks the server to prune final-approved/discarded groups and their descendants, which is
+   *  what the sidebar's default hidden state actually needs. It is always spelled out in the
+   *  URL — never left to the server default — so a request and its cache variant are
+   *  identifiable in a network log and in a test's captured URL. Cache AND inflight registry
+   *  are keyed per variant, so the two never share a completed array or join one another's
+   *  request; two callers on the SAME variant join as before. */
+  async function fetchGroupTree(pid: string, force = false, includeTerminal = true): Promise<GroupNode[]> {
+    const key = groupTreeKey(pid, includeTerminal)
     if (!force && groupTreeCache.value[key]) return groupTreeCache.value[key]
     if (isMockMode()) {
       await new Promise((r) => setTimeout(r, 100))
@@ -270,7 +290,7 @@ export const useExplorerStore = defineStore('explorer', () => {
       loadingGroup.value = true
       groupError.value = null
       try {
-        const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}`)
+        const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}&include_terminal=${includeTerminal ? 'true' : 'false'}`)
         const nodes = (res.data as any).data.nodes as GroupNode[]
         groupTreeCache.value[key] = nodes
         return groupTreeCache.value[key]
@@ -321,6 +341,10 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(fileTreeCache.value)) {
       if (key === pid || key.startsWith(`${pid}:`)) delete fileTreeCache.value[key]
     }
+    // 0454 T0006 §2.2 — group-tree keys are `${pid}:${branch}:full|pruned`, so this one
+    // prefix sweep drops BOTH display variants across EVERY branch of the project. Leaving
+    // one variant behind would let a stale full tree answer a cache read taken right after
+    // an invalidation the caller made precisely because the tree changed.
     for (const key of Object.keys(groupTreeCache.value)) {
       if (key === pid || key.startsWith(`${pid}:`)) delete groupTreeCache.value[key]
     }
@@ -539,8 +563,13 @@ export const useExplorerStore = defineStore('explorer', () => {
     return fileTreeCache.value[cacheKey(pid)]
   }
 
-  function getCachedGroupTree(pid: string): GroupNode[] | undefined {
-    return groupTreeCache.value[cacheKey(pid)]
+  /** 0454 T0006 §2.3 — read ONE display variant of the cached group tree. Returns exactly the
+   *  variant asked for (or undefined): a pruned tree is never returned to a caller that wants
+   *  the full one, so "the document isn't in the tree" can't come from reading the wrong copy.
+   *  Defaults to `true` for consumer compatibility, but every production caller passes its
+   *  intent explicitly rather than leaning on the default. */
+  function getCachedGroupTree(pid: string, includeTerminal = true): GroupNode[] | undefined {
+    return groupTreeCache.value[groupTreeKey(pid, includeTerminal)]
   }
 
   function setBaseDirtyFiles(pid: string, files: string[]) {
@@ -688,11 +717,15 @@ export const useExplorerStore = defineStore('explorer', () => {
       if (options.switchProject && pid !== projectStore.currentProjectId) {
         projectStore.setCurrentProject(pid)
       }
-      let nodes = getCachedGroupTree(pid)
-      if (!nodes) nodes = await fetchGroupTree(pid, true)
+      // 0454 T0006 §3.3 — a reveal outranks the sidebar's hide setting, so it works on the
+      // FULL variant throughout. The pruned variant is missing every terminal group by
+      // construction; looking the target up there and finding nothing would report "document
+      // not found" for a document that exists and is merely hidden.
+      let nodes = getCachedGroupTree(pid, true)
+      if (!nodes) nodes = await fetchGroupTree(pid, true, true)
       let node = nodes.find((n) => n.id === docId)
       if (!node) {
-        nodes = await fetchGroupTree(pid, true)
+        nodes = await fetchGroupTree(pid, true, true)
         node = nodes.find((n) => n.id === docId)
       }
       if (!node || node.node_type !== 'document') return null

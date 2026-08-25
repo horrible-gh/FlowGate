@@ -126,7 +126,9 @@ async function handleRequirementCreated(payload?: { docId?: string; openAfter?: 
 
   if (payload?.docId && pid) {
     try {
-      const nodes = await explorerStore.fetchGroupTree(pid, true)
+      // 0454 T0006 §4.2 — full variant: the just-created requirement has to be findable and
+      // openable here whatever the sidebar's hide toggle is set to.
+      const nodes = await explorerStore.fetchGroupTree(pid, true, true)
       const node = nodes.find((n) => n.id === payload.docId)
 
       if (node) {
@@ -163,7 +165,9 @@ async function handleRelatedDocCreated(payload: { docId: string; openAfter: bool
 
   if (payload.docId && pid) {
     try {
-      const nodes = await explorerStore.fetchGroupTree(pid, true)
+      // 0454 T0006 §4.2 — full variant, same reason as the requirement path above: a related
+      // document can be created into a group the sidebar is currently hiding.
+      const nodes = await explorerStore.fetchGroupTree(pid, true, true)
       const node = nodes.find((n) => n.id === payload.docId)
 
       if (node) {

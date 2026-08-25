@@ -1469,9 +1469,12 @@ async function fetchGitArchives() {
 async function refreshAfterGitArchive() {
   const projectId = gitArchiveProjectId.value
   if (!projectId) return
+  // invalidateProject drops BOTH display variants for the project; the prewarm below then
+  // rebuilds the full one (0454 T0006 §4.2), which is what this file's cached-tree readers
+  // (the overview cards and the empty-doc module lookup) go on to read.
   explorerStore.invalidateProject(projectId)
   await Promise.allSettled([
-    explorerStore.fetchGroupTree(projectId, true),
+    explorerStore.fetchGroupTree(projectId, true, true),
     explorerStore.fetchGitStatus(projectId),
     dashboardStore.fetchSummary(projectId),
   ])
@@ -3745,7 +3748,9 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
   nextEmptyDocPrevDocId.value = docRef
   nextEmptyDocType.value = docType
   nextEmptyDocModule.value = moduleName
-  const cachedNodes = explorerStore.getCachedGroupTree(project) || []
+  // 0454 T0006 §4 — full variant (module nodes are never pruned, so this lookup is
+  // variant-insensitive; it is spelled out so no reader has to work that out).
+  const cachedNodes = explorerStore.getCachedGroupTree(project, true) || []
   const moduleNode = cachedNodes.find(n => n.node_type === 'module' && n.label === moduleName)
   nextEmptyDocModuleTitle.value = moduleNode?.title ?? null
   nextEmptyDocModalVisible.value = true
@@ -4565,7 +4570,10 @@ const activeProjects = computed(() =>
 const totalDocs = computed(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return '—'
-  const nodes = explorerStore.getCachedGroupTree(pid)
+  // 0454 T0006 §4 — full variant: "total documents" counts the project's documents,
+  // including those inside completed / discarded groups. Reading the pruned variant here
+  // would quietly undercount the card the moment the sidebar is hiding anything.
+  const nodes = explorerStore.getCachedGroupTree(pid, true)
   if (!nodes) return '—'
   return nodes.filter((n) => n.node_type === 'document').length
 })
@@ -4592,7 +4600,10 @@ const isWorkingHeadType = (typeCode: string | null): boolean => {
 const workingGroups = computed<number | string>(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return '—'
-  const nodes = explorerStore.getCachedGroupTree(pid)
+  // 0454 T0006 §4 — full variant. This card excludes terminal heads itself (below), so
+  // the number comes out the same either way; asking for one variant explicitly keeps that
+  // exclusion THIS code's decision instead of a side effect of what the sidebar fetched.
+  const nodes = explorerStore.getCachedGroupTree(pid, true)
   if (!nodes) return '—'
   // Pick each group's last document = highest doc number among the document
   // nodes sharing the same immediate parent (group / subgroup). Numbers are
@@ -4616,7 +4627,8 @@ const workingGroups = computed<number | string>(() => {
 const typeDistribution = computed(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return []
-  const nodes = explorerStore.getCachedGroupTree(pid)
+  // 0454 T0006 §4 — full variant: the type distribution describes the whole project.
+  const nodes = explorerStore.getCachedGroupTree(pid, true)
   if (!nodes) return []
   const counts: Record<string, number> = {}
   nodes.forEach((n) => {
@@ -4821,6 +4833,29 @@ watch(() => projectStore.currentProjectId, (projectId) => {
   fetchQList()
   if (projectId) void dashboardStore.fetchSummary(projectId)
 }, { immediate: true })
+
+// 0454 T0006 §4 — the overview cards above (총 문서 수 / 진행 중 / 타입 분포) read the group tree
+// straight out of the store cache and never fetched it themselves: they lived off whatever
+// the sidebar explorer had already loaded. Now that the explorer's default (hidden) load asks
+// for the PRUNED variant, that free ride is gone — the full-variant cache those cards read
+// would be empty and every one of them would fall back to "—".
+//
+// So warm the full variant, but only where it is actually needed: while the overview panel is
+// on screen (it renders on `v-else` of `activeTab`, i.e. no tab open) and only when the full
+// variant is not cached yet. `force=false` — a tree already fetched by DocHeader, dashboard
+// navigation or a creation modal is reused and no second GET goes out. The explorer's own hot
+// path (initial load, SSE refresh, toggle) is untouched and still ships the pruned payload.
+watch(
+  () => [projectStore.currentProjectId, activeTabId.value] as const,
+  ([projectId]) => {
+    if (!projectId || activeTab.value) return
+    if (explorerStore.getCachedGroupTree(projectId, true)) return
+    void explorerStore.fetchGroupTree(projectId, false, true).catch(() => {
+      /* The cards already render "—" without a tree; a failed warm-up changes nothing. */
+    })
+  },
+  { immediate: true },
+)
 
 watch(() => props.overviewRefreshToken, () => {
   if (projectStore.currentProjectId) void fetchQList()

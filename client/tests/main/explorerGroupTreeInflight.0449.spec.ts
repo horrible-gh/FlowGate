@@ -14,6 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useExplorerStore } from '@main/stores/explorer'
 import { useProjectStore } from '@main/stores/project'
+import { buildLoadNodes } from './fixtures/groupTreeLoadShape'
 
 const { getRequest } = vi.hoisted(() => ({ getRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({ getRequest }))
@@ -28,41 +29,13 @@ const groupTreeOk = {
  * rev0's whole file answered on a single node. Joining is what completion criterion 3 asks
  * for **on the 4.8 MB shape**, and a one-node payload cannot show the thing that matters
  * there: that the joined caller gets the SAME array instance rather than a second parse of a
- * multi-megabyte body. It is built once at module load — 5,885 nodes, 1.25 MB serialized, the
+ * multi-megabyte body. It is built once at module load — 5,883 nodes, 1.25 MB serialized, the
  * same node counts as the server-side fixture in
  * test_explorer_tree_and_return_point_0449.py, which measures that shape at 4.86 MB under the
  * pre-0449 nesting — and reused.
  */
-function buildLoadNodes() {
-  const nodes: Array<Record<string, unknown>> = [
-    { id: 'project:p1', parent_id: null, node_type: 'project', label: 'P', permissions: ['read'] },
-  ]
-  for (let m = 0; m < 2; m += 1) {
-    const moduleId = `module:p1:m${m}`
-    nodes.push({ id: moduleId, parent_id: 'project:p1', node_type: 'module', label: `m${m}`, permissions: ['read'] })
-    for (let g = 0; g < 84; g += 1) {
-      const groupId = `p1.m${m}.${String(g).padStart(4, '0')}`
-      nodes.push({
-        id: groupId, parent_id: moduleId, node_type: 'group', label: `Group ${groupId}`,
-        is_final_approved: false, is_discarded: false, permissions: ['read'],
-      })
-      for (let d = 0; d < 34; d += 1) {
-        nodes.push({
-          id: `${groupId}.${String(d).padStart(4, '0')}-T`,
-          parent_id: groupId,
-          node_type: 'document',
-          label: `[T] document ${d} of ${groupId}`,
-          type_code: 'T',
-          has_md: true,
-          md_path: `work/${groupId}/${String(d).padStart(4, '0')}-T/document.md`,
-          permissions: ['read'],
-        })
-      }
-    }
-  }
-  return nodes
-}
-
+// buildLoadNodes() now lives in ./fixtures/groupTreeLoadShape (0454 T0004 §Vitest 회귀
+// 검증 item 1) — called with no options it reproduces this exact 5,883-node shape.
 const LOAD_NODES = buildLoadNodes()
 const groupTreeLoadOk = { data: { data: { nodes: LOAD_NODES } } }
 const timeout = () =>
@@ -205,7 +178,7 @@ describe('explorer store — concurrent forced group-tree fetches join one reque
 
 describe('explorer store — joining on the load-scale payload (criterion 3)', () => {
   it('the fixture really is the load shape', () => {
-    // Guards the guard, the same way the server fixture does. 5,885 nodes / 1.25 MB flat here;
+    // Guards the guard, the same way the server fixture does. 5,883 nodes / 1.25 MB flat here;
     // the server test measures the same node count at 4.86 MB under the pre-0449 nested shape,
     // and asserts that figure there rather than restating it from this side.
     expect(LOAD_NODES).toHaveLength(1 + 2 + 2 * 84 + 2 * 84 * 34)
@@ -226,7 +199,7 @@ describe('explorer store — joining on the load-scale payload (criterion 3)', (
 
     expect(getRequest).toHaveBeenCalledTimes(1)
     expect(a).toHaveLength(LOAD_NODES.length)
-    // The SAME array, not an equal copy: the joined caller never re-walked 5,885 nodes.
+    // The SAME array, not an equal copy: the joined caller never re-walked 5,883 nodes.
     expect(a).toBe(b)
   })
 

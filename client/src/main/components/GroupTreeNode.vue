@@ -40,6 +40,8 @@
         :node="child"
         :all-nodes="allNodes"
         :tree-nodes="treeNodes"
+        :children-index="childrenIndex"
+        :tree-children-index="treeChildrenIndex"
         :project-id="projectId"
         @open="$emit('open', $event)"
         @tree-changed="$emit('tree-changed', $event)"
@@ -146,6 +148,12 @@ const props = defineProps<{
   node: GroupNode
   allNodes: GroupNode[]
   treeNodes?: GroupNode[]
+  // 0454 T0004 — parent_id -> direct children[], built once in GroupExplorer.vue and
+  // passed down through every recursive instance UNCHANGED (never rebuilt per level).
+  // childrenIndex mirrors allNodes' scope (post hide/type-filter); treeChildrenIndex
+  // mirrors treeNodes' scope (pre-filter, for hasDocumentDescendant/isEmptyGroup).
+  childrenIndex: Map<string | null, GroupNode[]>
+  treeChildrenIndex?: Map<string | null, GroupNode[]>
   projectId: string
 }>()
 
@@ -207,10 +215,11 @@ const canIssueToken = computed(() => hasDocumentReadPermission())
 
 const isExpandable = computed(() => props.node.node_type !== 'document')
 
-// Member documents of this group, for the discard modal's impact chips.
+// Member documents of this group, for the discard modal's impact chips. Direct
+// children only, so an index lookup (not a full-array filter) is enough (0454 T0004).
 const disposeDocuments = computed(() =>
-  props.allNodes
-    .filter((n) => n.node_type === 'document' && n.parent_id === props.node.id)
+  (props.childrenIndex.get(props.node.id) ?? [])
+    .filter((n) => n.node_type === 'document')
     .map((n) => {
       const tc = n.type_code ?? ''
       const seq = (n.number ?? '').split('-')[0]
@@ -218,24 +227,30 @@ const disposeDocuments = computed(() =>
     }),
 )
 
-const children = computed(() =>
-  props.allNodes.filter((n) => n.parent_id === props.node.id),
-)
+const children = computed(() => props.childrenIndex.get(props.node.id) ?? [])
 
-const sourceNodes = computed(() => props.treeNodes ?? props.allNodes)
+const sourceChildrenIndex = computed(() => props.treeChildrenIndex ?? props.childrenIndex)
 
 const isEmptyGroup = computed(() => {
   if (props.node.node_type !== 'group') return false
   return !hasDocumentDescendant(props.node.id)
 })
 
+// 0454 T0004 — walks the SAME parent→child Map instance sourceChildrenIndex resolves
+// to (never rebuilt per call/level). A visited set stops a cyclic/malformed parent_id
+// chain from looping forever without affecting well-formed trees.
 function hasDocumentDescendant(nodeId: string): boolean {
-  const stack = sourceNodes.value.filter((n) => n.parent_id === nodeId)
+  const index = sourceChildrenIndex.value
+  const stack = [...(index.get(nodeId) ?? [])]
+  const visited = new Set<string>()
   while (stack.length > 0) {
     const child = stack.pop()
     if (!child) continue
+    if (visited.has(child.id)) continue
+    visited.add(child.id)
     if (child.node_type === 'document') return true
-    stack.push(...sourceNodes.value.filter((n) => n.parent_id === child.id))
+    const grandchildren = index.get(child.id)
+    if (grandchildren) stack.push(...grandchildren)
   }
   return false
 }
