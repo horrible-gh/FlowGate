@@ -127,6 +127,77 @@ describe('MdViewer', () => {
     expect(showToast).not.toHaveBeenCalled()
   })
 
+  it('renders the leading 7-field next-document header as separate lines (group 0458 display bug, T0004)', async () => {
+    const header = [
+      'next_type: T',
+      'next_type_detail: 작업지시',
+      'project: flowgate',
+      'module: default',
+      'group: 0458',
+      'title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀를 아주 길게 늘려 wrapping도 함께 확인하는 한글 제목',
+      'target_id: B0001',
+    ].join('\n')
+    const source = `${header}\n\n일반 문단은 줄바꿈이 있어도 하나로 이어져 보입니다.\n두 번째 줄입니다.`
+
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    const pre = contentEl.querySelector('pre')
+    expect(pre).not.toBeNull()
+    // All 7 fields, including the long Korean title, survive intact and in order.
+    expect(pre!.textContent).toBe(header)
+
+    // Ordinary prose keeps its existing soft-line-break paragraph behavior — the
+    // two lines below the header are still joined into one <p>, not split or fenced.
+    const paragraphs = Array.from(contentEl.querySelectorAll('p')).map((p) => p.textContent)
+    expect(
+      paragraphs.some((t) => t?.includes('일반 문단은') && t?.includes('두 번째 줄입니다.')),
+    ).toBe(true)
+  })
+
+  it('copies the raw header text unchanged despite the display-only fence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    const header = [
+      'next_type: T',
+      'next_type_detail: 작업지시',
+      'project: flowgate',
+      'module: default',
+      'group: 0458',
+      'title: 검수 행 식별 기반 중복 반려 차단과 재진입 멱등 회귀',
+      'target_id: B0001',
+    ].join('\n')
+    const source = `${header}\n\nBody.`
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+
+    await wrapper.find('.md-copy-btn--main').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenNthCalledWith(1, source)
+
+    await wrapper.find('.md-copy-btn--header').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenNthCalledWith(2, source)
+  })
+
+  it('leaves an already-multiline non-header document unfenced', async () => {
+    const source = '# Title\n\nFirst line.\nSecond line joins it visually.'
+    const wrapper = mount(MdViewer, {
+      props: { path: null, contentOverride: source },
+      global: { plugins: [i18n, createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+
+    const contentEl = wrapper.find('.md-viewer__content').element as HTMLElement
+    expect(contentEl.querySelector('pre')).toBeNull()
+  })
+
   it('keeps copy and scrolling available but hides regeneration in read-only mode', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     setClipboard({ writeText })
