@@ -436,16 +436,20 @@ async function doResume(entry: AiInvokeRunEntry): Promise<void> {
   try {
     await store.resume(entry.groupId)
   } catch (error: any) {
-    // T0005 §3 item 5: a stale resumeAvailable hint (a settings change raced the open
-    // card) surfaces here as a real 422 from the server. Its message IS the final
-    // explanation — show it verbatim, with no prefix/translation/substitution.
-    const status = error?.response?.status
-    const serverMessage = error?.response?.data?.message
-    if (status === 422 && typeof serverMessage === 'string' && serverMessage.trim() !== '') {
-      showToast(serverMessage, 'danger')
-    } else {
-      showToast(t('main.ai_miniplayer.error_resume_failed'), 'danger')
-    }
+    // The server's explanation is authoritative for every status. Legacy validation
+    // responses may carry only errors[].msg, so retain that compatibility fallback.
+    const data = error?.response?.data
+    const serverMessage = data?.message
+    const validationMessage = Array.isArray(data?.errors)
+      ? data.errors
+        .map((item: any) => typeof item?.msg === 'string' ? item.msg.trim() : '')
+        .filter(Boolean)
+        .join('; ')
+      : ''
+    const message = typeof serverMessage === 'string' && serverMessage.trim() !== ''
+      ? serverMessage
+      : validationMessage
+    showToast(message || t('main.ai_miniplayer.error_resume_failed'), 'danger')
   } finally {
     busy.delete(entry.groupId)
   }

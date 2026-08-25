@@ -493,6 +493,31 @@ class TestPauseRun:
             _wait_finished(res["run_id"])
 
 
+# ── validation message contract (0463 T0005 §2.1-4) ──────────────────────────
+
+class TestStartRunValidationMessages:
+    def test_missing_sequence_has_top_level_message(self, fake_env):
+        fake_env["wfseq"].sequence = None
+
+        with pytest.raises(HTTPException) as exc:
+            _start(fake_env)
+
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "validation_failed"
+        assert exc.value.detail["message"] == exc.value.detail["errors"][0]["msg"]
+
+    def test_zero_pending_worker_steps_has_top_level_message(self, fake_env):
+        for item in fake_env["wfseq"].items:
+            item["result_doc_id"] = f"d-{item['item_seq']}"
+
+        with pytest.raises(HTTPException) as exc:
+            _start(fake_env)
+
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "validation_failed"
+        assert exc.value.detail["message"] == exc.value.detail["errors"][0]["msg"]
+
+
 # ── resume_chain (L0009 §2.4) ─────────────────────────────────────────────────
 
 def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None, overrides=None,
@@ -572,17 +597,37 @@ class TestResumeChain:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
 
-    def test_nothing_to_resume_self_cleans(self, fake_env):
+    def test_nothing_to_resume_self_cleans_only_after_preflight_race(
+            self, fake_env, monkeypatch):
         _seed_paused(fake_env)
-        for item in fake_env["wfseq"].items:
-            item["result_doc_id"] = f"d-{item['item_seq']}"
-            item["result_doc_review_status"] = "approved"
+        fake_env["chain"]["providers"] = [_provider('"true"')]
+        # The shared preflight sees pending worker items. They disappear only in the
+        # lookup/delete window, which is now the sole meaning of nothing_to_resume.
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda _doc_ref: None)
+
         with pytest.raises(HTTPException) as exc:
             svc.resume_chain(group_id=GROUP, user_id="usr_admin",
                              api_base_url="http://x/api/v1")
+
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "nothing_to_resume"
-        assert GROUP not in fake_env["paused"].rows  # deliberate cleanup effect
+        assert GROUP not in fake_env["paused"].rows  # deliberate race cleanup effect
+
+    def test_preflight_lookup_failure_keeps_row(self, fake_env, monkeypatch):
+        _seed_paused(fake_env)
+        monkeypatch.setattr(
+            svc.db_wfseq,
+            "get_sequence_for_member_doc",
+            lambda _doc_ref: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                             api_base_url="http://x/api/v1")
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail["code"] == "resume_lookup_failed"
+        assert GROUP in fake_env["paused"].rows
 
     def test_failed_launch_restores_row(self, fake_env, monkeypatch):
         _seed_paused(fake_env)
@@ -862,6 +907,109 @@ class TestResumeRoute:
         assert restored["continuation_base_provider_id"] == "aip_removed"
         assert restored["continuation_provider_pinned"] is True
 
+    def test_zero_pending_worker_steps_422_has_top_level_message(
+            self, fake_env, client):
+        _seed_paused(fake_env, instruction_mode="auto_approved")
+        fake_env["wfseq"].items[1]["type"] = "N"
+        fake_env["wfseq"].items[2]["type"] = "T"
+        fake_env["chain"]["providers"] = [_provider('"true"')]
+
+        resp = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["code"] == "no_pending_worker_steps"
+        assert body["message"] == "no pending worker step at or below workflow item_seq 3"
+        assert GROUP in fake_env["paused"].rows
+
+    def test_route_validation_failed_keeps_errors_and_adds_message(self, client):
+        resp = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": "invalid"},
+            headers={"Authorization": "Bearer tok"},
+        )
+
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["code"] == "validation_failed"
+        assert body["message"] == body["errors"][0]["msg"]
+
+    def test_existing_403_contracts_remain_verbatim(
+            self, monkeypatch, client):
+        monkeypatch.setattr(
+            routes,
+            "verify_bearer",
+            lambda _request: {"_is_user_jwt": False, "issued_to": "usr_admin"},
+        )
+        session = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert session.status_code == 403
+        assert session.json() == {
+            "code": "user_session_required",
+            "message": "A user session is required.",
+        }
+
+        monkeypatch.setattr(
+            routes,
+            "verify_bearer",
+            lambda _request: {
+                "_is_user_jwt": True,
+                "issued_to": "usr_admin",
+                "is_admin": False,
+            },
+        )
+        monkeypatch.setattr(routes, "has_permission", lambda *a, **kw: False)
+        denied = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert denied.status_code == 403
+        assert denied.json() == {
+            "code": "permission_denied",
+            "message": "perm_document_read required",
+        }
+
+    def test_existing_404_and_409_contracts_remain_verbatim(
+            self, fake_env, monkeypatch, client):
+        monkeypatch.setattr(routes.db_projects, "get_by_id", lambda _pid: None)
+        missing = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert missing.status_code == 404
+        assert missing.json() == {
+            "code": "project_not_found",
+            "message": "Project not found: flowgate",
+        }
+
+        monkeypatch.setattr(routes.db_projects, "get_by_id", lambda pid: {"project_id": pid})
+        monkeypatch.setattr(
+            routes.ai_invoke_service,
+            "resume_chain",
+            lambda **_kw: (_ for _ in ()).throw(
+                HTTPException(
+                    status_code=409,
+                    detail={"code": "resume_conflict", "message": "resume raced"},
+                )
+            ),
+        )
+        conflict = client.post(
+            "/api/v1/ai-invoke/resume",
+            json={"group_id": GROUP},
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert conflict.status_code == 409
+        assert conflict.json() == {"code": "resume_conflict", "message": "resume raced"}
+
 
 # ── active_all (L0009 §2.8 / P0008 S1) ────────────────────────────────────────
 
@@ -934,6 +1082,41 @@ class TestActiveAll:
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
+
+    @staticmethod
+    def _assert_hint_matches_resume(fake_env, expected_code):
+        row = svc.active_all("usr_admin")["paused"][0]
+        assert row["resume_available"] is False
+        assert row["resume_block_code"] == expected_code
+        with pytest.raises(HTTPException) as exc:
+            svc.resume_chain(
+                group_id=GROUP, user_id="usr_admin", api_base_url="http://x/api/v1",
+            )
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == row["resume_block_code"]
+        assert exc.value.detail["message"] == row["resume_block_reason"]
+        assert GROUP in fake_env["paused"].rows
+
+    def test_no_pending_worker_steps_hint_matches_resume(self, fake_env):
+        _seed_paused(fake_env, instruction_mode="auto_approved")
+        fake_env["wfseq"].items[1]["type"] = "N"
+        fake_env["wfseq"].items[2]["type"] = "T"
+        fake_env["chain"]["providers"] = [_provider('"true"')]
+
+        self._assert_hint_matches_resume(fake_env, "no_pending_worker_steps")
+
+    def test_sequence_unavailable_hint_matches_resume(self, fake_env):
+        _seed_paused(fake_env)
+        fake_env["wfseq"].sequence = None
+        fake_env["chain"]["providers"] = [_provider('"true"')]
+
+        self._assert_hint_matches_resume(fake_env, "sequence_unavailable")
+
+    def test_no_enabled_provider_hint_matches_resume(self, fake_env):
+        _seed_paused(fake_env)
+        fake_env["chain"]["providers"] = []
+
+        self._assert_hint_matches_resume(fake_env, "no_enabled_provider")
 
     # T0005 §2/§8-1: an explicit base-provider pin whose provider fell out of the
     # project's current enabled chain must surface as a non-resumable card, with the
