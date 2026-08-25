@@ -417,3 +417,181 @@ def test_F_sequence_fully_consumed_has_no_available_slot():
     # The refused orphan document's own status is untouched too — it stays orphaned,
     # not silently marked as something else.
     assert _doc(orphan_doc) == doc_before
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HTTP envelope regressions — every 409 branch as an actual serialized response
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# C-F above call recover_orphaned_workflow_document_endpoint() as a plain Python
+# function and assert MutationPolicyError's .status_code/.error attributes directly.
+# That proves the exception carries the right shape, but not that FastAPI's actual
+# registered handler (server/routers/main.py:124-126, exception_handler(MutationPolicyError)
+# -> mutation_policy.mutation_error_response) really serializes it as HTTP 409 with a
+# {"error": {"code", "message"}} JSON body — a bare app.include_router() with no
+# handler registered would 500 on every one of these paths instead. TS0011 rev0's
+# rejection: only 3 of the 7 codes were covered anywhere, and none through real HTTP.
+# The tests below drive a real TestClient through a minimal app carrying only the
+# workflow router plus that one handler, covering all 8 of the endpoint's 409
+# branches (T0009 SS1's table, including the WorkflowSlotConflictError catch) —
+# including the three no earlier regression ever exercised at all: no_group_or_project,
+# no_file_path, and the late-conflict slot_occupied catch.
+
+
+def _http_app():
+    from fastapi import FastAPI
+    from modules.flow_gate.auth.middleware import get_current_user
+    from modules.flow_gate.services.mutation_policy import (
+        MutationPolicyError,
+        mutation_error_response,
+    )
+    from modules.flow_gate.workflow.routers import workflow as wf_router
+
+    app = FastAPI()
+    app.include_router(wf_router.router)
+
+    @app.exception_handler(MutationPolicyError)
+    async def _mutation_policy_handler(request, exc):
+        return mutation_error_response(exc)
+
+    app.dependency_overrides[get_current_user] = lambda: _admin()
+    return app
+
+
+def _http_recover(doc_id: str, item_seq: int | None = None):
+    from starlette.testclient import TestClient
+
+    body: dict = {} if item_seq is None else {"item_seq": item_seq}
+    return TestClient(_http_app()).post(
+        f"/api/v1/documents/{doc_id}/workflow/recover", json=body,
+    )
+
+
+def _assert_409_envelope(resp, code: str, message_contains: str) -> None:
+    assert resp.status_code == 409
+    payload = resp.json()
+    # The envelope is exactly {"error": {"code", "message"}} — no HTTPException.detail
+    # leaking alongside it, no extra keys either.
+    assert set(payload) == {"error"}
+    assert set(payload["error"]) == {"code", "message"}
+    assert payload["error"]["code"] == code
+    assert message_contains in payload["error"]["message"]
+
+
+def test_H_http_slot_type_not_recoverable_envelope():
+    gid = _make_group("h001", "0457 H — non-slot type")
+    ac_doc = _make_doc(gid, "AC0001", "AC", 1, "pending_review")
+
+    resp = _http_recover(ac_doc)
+
+    _assert_409_envelope(
+        resp, "slot_type_not_recoverable", "not a recoverable workflow slot type",
+    )
+
+
+def test_H_http_not_orphaned_envelope():
+    gid = _make_group("h002", "0457 H — already attached")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    attached_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    items = _make_sequence(root, [(1, "TR")])
+    _register(items[0]["id"], attached_doc)
+
+    resp = _http_recover(attached_doc, item_seq=1)
+
+    _assert_409_envelope(resp, "not_orphaned", "is not an orphaned workflow member")
+
+
+def test_H_http_no_group_or_project_envelope(monkeypatch):
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.workflow.routers import workflow as wf_router
+
+    gid = _make_group("h003", "0457 H — no group")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    orphan_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    _make_sequence(root, [(1, "TR")])
+    get_store()._execute(
+        "UPDATE documents SET group_id = NULL WHERE doc_id = ?", [orphan_doc],
+    )
+    # is_orphaned_workflow_member can only ever answer True when group_id is set (it
+    # looks up the group's R/B roots to find a decided sequence) — so the
+    # no_group_or_project branch, which sits right after that check, is unreachable
+    # through any real document row. Stub the orphan signal directly, same technique
+    # as the pre-existing G late-conflict regression in test_reject_resubmit_own_slot_0457.py.
+    monkeypatch.setattr(wf_router.db_wfseq, "is_orphaned_workflow_member", lambda _doc_id: True)
+
+    resp = _http_recover(orphan_doc)
+
+    _assert_409_envelope(resp, "no_group_or_project", "has no group or project")
+
+
+def test_H_http_no_available_slot_envelope():
+    gid = _make_group("h004", "0457 H — no matching item_seq")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    orphan_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    _make_sequence(root, [(1, "TR")])
+
+    resp = _http_recover(orphan_doc, item_seq=99)
+
+    _assert_409_envelope(resp, "no_available_slot", "does not identify an available slot")
+
+
+def test_H_http_slot_occupied_precheck_envelope():
+    gid = _make_group("h005", "0457 H — slot occupied precheck")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    filler_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    orphan_doc = _make_doc(gid, "TR0003", "TR", 3, "pending_review")
+    items = _make_sequence(root, [(1, "TR")])
+    _register(items[0]["id"], filler_doc)
+
+    resp = _http_recover(orphan_doc, item_seq=1)
+
+    _assert_409_envelope(resp, "slot_occupied", "already filled by")
+
+
+def test_H_http_slot_type_mismatch_envelope():
+    gid = _make_group("h006", "0457 H — type mismatch")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    orphan_doc = _make_doc(gid, "NR0002", "NR", 2, "pending_review")
+    _make_sequence(root, [(1, "TR")])
+
+    resp = _http_recover(orphan_doc, item_seq=1)
+
+    _assert_409_envelope(resp, "slot_type_mismatch", "expects type TR")
+
+
+def test_H_http_no_file_path_envelope():
+    from modules.flow_gate.db.connection import get_store
+
+    gid = _make_group("h007", "0457 H — missing file_path")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    orphan_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    _make_sequence(root, [(1, "TR")])
+    get_store()._execute(
+        "UPDATE documents SET file_path = NULL WHERE doc_id = ?", [orphan_doc],
+    )
+
+    resp = _http_recover(orphan_doc, item_seq=1)
+
+    _assert_409_envelope(resp, "no_file_path", "has no registered file path")
+
+
+def test_H_http_slot_occupied_late_conflict_envelope(monkeypatch):
+    """The pre-check reads a stale (empty-looking) slot list; the real DB row is
+    already filled, so the claim write itself refuses — mapped to HTTP 409
+    slot_occupied, not a 500, same fixture shape as test_G_recover_maps_a_late_conflict_
+    to_409_instead_of_500 in test_reject_resubmit_own_slot_0457.py but driven over
+    a real TestClient request instead of a direct function call."""
+    from modules.flow_gate.workflow.routers import workflow as wf_router
+
+    gid = _make_group("h008", "0457 H — late conflict")
+    root = _make_doc(gid, "B0001", "B", 1, "wf_in_progress")
+    filler_doc = _make_doc(gid, "TR0002", "TR", 2, "pending_review")
+    orphan_doc = _make_doc(gid, "TR0003", "TR", 3, "pending_review")
+    items = _make_sequence(root, [(1, "TR")])
+    _register(items[0]["id"], filler_doc)
+    stale = [dict(i, result_doc_id=None) for i in items]
+    monkeypatch.setattr(wf_router.db_wfseq, "get_sequence_items", lambda _seq_id: stale)
+
+    resp = _http_recover(orphan_doc, item_seq=1)
+
+    _assert_409_envelope(resp, "slot_occupied", "already filled by")

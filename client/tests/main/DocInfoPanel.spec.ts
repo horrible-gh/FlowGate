@@ -189,7 +189,7 @@ describe('DocInfoPanel orphan recovery (flowgate.default.0374 / 0457 T0009)', ()
     expect(wrapper.emitted('orphan-recovered')).toBeUndefined()
   })
 
-  it('falls back to the generic failure copy for an unknown or missing error.code', async () => {
+  it('falls back to the generic failure copy when error.code is missing entirely', async () => {
     postRequest.mockRejectedValueOnce({ response: { data: { detail: 'raw english detail' } } })
     const wrapper = mountOrphan(true, [MATCHING_SLOT])
     await wrapper.find('.dip-orphan-warning button').trigger('click')
@@ -199,6 +199,26 @@ describe('DocInfoPanel orphan recovery (flowgate.default.0374 / 0457 T0009)', ()
     const [message] = showToast.mock.calls[0]
     expect(message).toBe(i18n.global.t('main.doc_info_panel.orphan_recover_failed'))
     expect(message).not.toContain('raw english detail')
+  })
+
+  // TS0011 TC-4 gap (rejection rev0): the case above only ever sends a body with NO
+  // error.code key at all. ORPHAN_RECOVER_ERROR_KEYS[code] is also undefined for a
+  // code the map simply does not list — a distinct branch (string but not a lookup
+  // hit) that the missing-key input can never exercise. This sends a present-but-
+  // unrecognized code so that branch actually runs.
+  it('falls back to the generic failure copy for a present but unrecognized error.code', async () => {
+    postRequest.mockRejectedValueOnce({
+      response: { data: { error: { code: 'some_future_code_this_client_does_not_know', message: 'raw english server message' } } },
+    })
+    const wrapper = mountOrphan(true, [MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe(i18n.global.t('main.doc_info_panel.orphan_recover_failed'))
+    expect(message).not.toContain('raw english server message')
+    expect(message).not.toContain('some_future_code_this_client_does_not_know')
   })
 })
 
@@ -263,7 +283,7 @@ describe('DocInfoPanel orphan recovery — 한국어 안내 (0457 T0009 §3 완�
     expect(message).not.toContain('English')
   })
 
-  it('알 수 없거나 없는 error.code는 서버 detail 없이 일반 실패 문구(한국어)로 대체한다', async () => {
+  it('error.code가 아예 없으면 서버 detail 없이 일반 실패 문구(한국어)로 대체한다', async () => {
     postRequest.mockRejectedValueOnce({ response: { data: { detail: 'raw english detail' } } })
     const wrapper = mountOrphanKo([MATCHING_SLOT])
     await wrapper.find('.dip-orphan-warning button').trigger('click')
@@ -273,6 +293,26 @@ describe('DocInfoPanel orphan recovery — 한국어 안내 (0457 T0009 §3 완�
     const [message] = showToast.mock.calls[0]
     expect(message).toBe('문서를 다시 연결하지 못했습니다. 잠시 후 다시 시도하거나 반려하여 보관하세요.')
     expect(message).not.toContain('raw english detail')
+    expect(message).not.toContain('english')
+  })
+
+  // TS0011 TC-4 gap (rejection rev0): a present-but-unmapped error.code is a different
+  // branch than a missing one (ORPHAN_RECOVER_ERROR_KEYS[code] undefined either way,
+  // but only this input proves the lookup miss itself falls back correctly, not just
+  // the absent-key short-circuit).
+  it('알 수 없는(매핑에 없는) error.code도 서버 message 없이 일반 실패 문구(한국어)로 대체한다', async () => {
+    postRequest.mockRejectedValueOnce({
+      response: { data: { error: { code: 'some_future_code_this_client_does_not_know', message: 'raw english server message' } } },
+    })
+    const wrapper = mountOrphanKo([MATCHING_SLOT])
+    await wrapper.find('.dip-orphan-warning button').trigger('click')
+    await flushPromises()
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    const [message] = showToast.mock.calls[0]
+    expect(message).toBe('문서를 다시 연결하지 못했습니다. 잠시 후 다시 시도하거나 반려하여 보관하세요.')
+    expect(message).not.toContain('raw english server message')
+    expect(message).not.toContain('some_future_code_this_client_does_not_know')
     expect(message).not.toContain('english')
   })
 })
