@@ -1406,19 +1406,19 @@ def start_run(
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
         if resolved_target is None:
+            message = f"continuous run requires a decided workflow sequence on {doc_ref}"
             raise HTTPException(status_code=422, detail={
                 "code": "validation_failed",
-                "errors": [{"loc": "continuation_target_seq",
-                            "msg": "continuous run requires a decided workflow sequence "
-                                   f"on {doc_ref}"}],
+                "message": message,
+                "errors": [{"loc": "continuation_target_seq", "msg": message}],
             })
         docs_target = resolved_target
         if docs_target <= 0:
+            message = f"no pending worker step at or below workflow item_seq {target}"
             raise HTTPException(status_code=422, detail={
                 "code": "validation_failed",
-                "errors": [{"loc": "continuation_target_seq",
-                            "msg": "no pending worker step at or below workflow item_seq "
-                                   f"{target}"}],
+                "message": message,
+                "errors": [{"loc": "continuation_target_seq", "msg": message}],
             })
 
     # Allocate and lease before token issuance/worker spawn. The DB primary key makes two
@@ -6370,51 +6370,136 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
     return None
 
 
-def _paused_row_resume_state(project_id: str, row: dict) -> dict:
-    """Read-only preview of §2's four active-all fields (T0005 §2, §3 item 1).
+def _paused_row_resume_state(
+    project_id: str, row: dict, *, include_target: bool = False,
+) -> dict:
+    """Evaluate deterministic pause->resume admission without changing state.
 
-    Mirrors the enabled-chain membership check start_run performs for a pinned launch
-    (the two 422 provider_unavailable raises above), but as a side-effect-free snapshot
-    for the paused-card list. This is a DISPLAY hint only — resume_chain still calls
-    start_run for the real launch, and start_run's own 422 stays the sole authority.
-    A settings-lookup failure here must not fail active-all, so it degrades to
-    "available" rather than wrongly blocking a card that may in fact still resume.
+    active-all and resume_chain both call this evaluator. Only read-only facts that are
+    stable enough to decide at lookup time belong here: the decided sequence, pending
+    worker count, enabled provider chain, and an explicit provider pin. Lease admission,
+    worktree repair and advance/start side effects remain launch-time checks.
     """
-    available = {
-        "resume_available": True,
-        "resume_block_code": None,
-        "resume_block_reason": None,
-        "resume_provider_name": None,
-    }
-    if not bool(row.get("continuation_provider_pinned")):
-        return available
-    provider_id = row.get("continuation_base_provider_id")
-    if not provider_id:
-        return available
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+    def _state(
+        available: bool,
+        code: Optional[str] = None,
+        reason: Optional[str] = None,
+        provider_name: Optional[str] = None,
+        target_seq: Optional[int] = None,
+    ) -> dict:
+        result = {
+            "resume_available": available,
+            "resume_block_code": code,
+            "resume_block_reason": reason,
+            "resume_provider_name": provider_name,
+        }
+        if include_target:
+            result["_resume_target_seq"] = target_seq
+        return result
+
+    try:
+        sequence = db_wfseq.get_sequence_for_member_doc(row["doc_ref"])
+        items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+    except Exception:  # noqa: BLE001 — active-all stays available on transient lookup failure
+        logger.warning("resume-state sequence check failed for %s", row.get("group_id"), exc_info=True)
+        if include_target:
+            raise _http_error(
+                500,
+                "resume_lookup_failed",
+                "Could not read the workflow sequence to resume. Retry later.",
+            )
+        return _state(True)
+    if sequence is None:
+        return _state(
+            False,
+            "sequence_unavailable",
+            f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
+        )
+
+    target_seq = row.get("continuation_target_seq")
+    if target_seq is None:
+        target_seq = max(
+            (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
+            default=None,
+        )
+    if target_seq is None:
+        return _state(
+            False,
+            "sequence_unavailable",
+            f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
+        )
+
+    try:
+        docs_target = _continuation_docs_target(
+            row["doc_ref"],
+            int(target_seq),
+            continuation_instruction_mode=row.get("continuation_instruction_mode"),
+            continuation_auto_approve_item_seqs=db_paused.load_json_list(
+                row.get("continuation_auto_approve_item_seqs")
+            ),
+        )
+    except Exception:  # noqa: BLE001 — same fail-open preview / fail-safe resume split
+        logger.warning("resume-state worker-step check failed for %s", row.get("group_id"), exc_info=True)
+        if include_target:
+            raise _http_error(
+                500,
+                "resume_lookup_failed",
+                "Could not read the workflow sequence to resume. Retry later.",
+            )
+        return _state(True, target_seq=int(target_seq))
+    if docs_target is None:
+        return _state(
+            False,
+            "sequence_unavailable",
+            f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
+            target_seq=int(target_seq),
+        )
+    if docs_target <= 0:
+        return _state(
+            False,
+            "no_pending_worker_steps",
+            f"no pending worker step at or below workflow item_seq {int(target_seq)}",
+            target_seq=int(target_seq),
+        )
+
     try:
         chain = ai_settings_service.resolve_effective(project_id).get("providers") or []
-    except Exception:  # noqa: BLE001 — a lookup failure must not fail active-all
+    except Exception:  # noqa: BLE001 — start_run re-resolves and reports the real failure
         logger.warning("resume-state provider check failed for %s", project_id, exc_info=True)
-        return available
-    active = next((p for p in chain if p.get("id") == provider_id), None)
+        return _state(True, target_seq=int(target_seq))
+    if not chain:
+        return _state(
+            False,
+            "no_enabled_provider",
+            "No enabled AI provider for this project. Configure providers in AI settings.",
+            target_seq=int(target_seq),
+        )
+
+    provider_id = row.get("continuation_base_provider_id")
+    if not bool(row.get("continuation_provider_pinned")) or not provider_id:
+        return _state(True, target_seq=int(target_seq))
+    active = next((provider for provider in chain if provider.get("id") == provider_id), None)
     if active is not None:
-        return {**available, "resume_provider_name": active.get("name")}
+        return _state(True, provider_name=active.get("name"), target_seq=int(target_seq))
+
     name = None
     try:
         settings_view = ai_settings_service.get_project_settings(project_id, include_catalog=False)
-        for p in settings_view.get("providers") or []:
-            if p.get("id") == provider_id:
-                name = p.get("name")
+        for provider in settings_view.get("providers") or []:
+            if provider.get("id") == provider_id:
+                name = provider.get("name")
                 break
     except Exception:  # noqa: BLE001 — a missing display name is not a block on its own
         logger.warning("resume-state provider name lookup failed for %s", project_id, exc_info=True)
-        name = None
-    return {
-        "resume_available": False,
-        "resume_block_code": PROVIDER_UNAVAILABLE_CODE,
-        "resume_block_reason": PROVIDER_UNAVAILABLE_MESSAGE,
-        "resume_provider_name": name,
-    }
+    return _state(
+        False,
+        PROVIDER_UNAVAILABLE_CODE,
+        PROVIDER_UNAVAILABLE_MESSAGE,
+        provider_name=name,
+        target_seq=int(target_seq),
+    )
 
 
 def _resumable_reviewer_overrides(
@@ -6462,11 +6547,27 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             raise _http_error(409, "run_already_active",
                               "An active run already exists for this group.",
                               run_id=active["run_id"])
+        preview_row = db_paused.get_by_group(group_id)
+        if preview_row is None:
+            raise _http_error(409, "resume_conflict",
+                              "This chain was already resumed by another path.",
+                              group_id=group_id)
+        project_id = group_id.split(".", 1)[0]
+        preflight = _paused_row_resume_state(project_id, preview_row, include_target=True)
+        if not preflight["resume_available"]:
+            raise _http_error(
+                422,
+                preflight["resume_block_code"],
+                preflight["resume_block_reason"],
+                group_id=group_id,
+            )
+
         row = db_paused.delete_and_return(group_id)
         if row is None:
             raise _http_error(409, "resume_conflict",
                               "This chain was already resumed by another path.",
                               group_id=group_id)
+        target_seq = preflight["_resume_target_seq"]
 
         def _restore_row() -> None:
             # The resume did not happen — put the consumed row back so the paused
@@ -6511,16 +6612,9 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 logger.warning("paused-row restore failed for %s", group_id, exc_info=True)
 
         try:
-            target_seq = row.get("continuation_target_seq")
-            if target_seq is None:
-                # NULL target = "to the end" (DB0010 §2): resolve against the decided
-                # sequence, which must exist by now (documents were being produced).
-                seq = db_wfseq.get_sequence_for_member_doc(row["doc_ref"])
-                items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else []
-                target_seq = max(
-                    (i["item_seq"] for i in items or [] if i.get("item_seq") is not None),
-                    default=None,
-                )
+            # Preflight resolved the target before the row was consumed. Re-check only the
+            # next item here: if it disappeared in the narrow lookup/delete window, the
+            # existing nothing_to_resume self-cleaning contract remains authoritative.
             next_seq = _next_incomplete_item_seq(row["doc_ref"])
         except Exception:
             _restore_row()
@@ -6576,7 +6670,6 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             }
 
         parts = group_id.split(".")
-        project_id = parts[0]
         module = parts[1] if len(parts) > 2 and parts[1] != "none" else None
         # 0365 B0001: hand the paused chain's own selections back to start_run. Passing
         # nothing here is what made every resume fall through to the default chain's first

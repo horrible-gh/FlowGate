@@ -497,6 +497,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const handoffPollEligibleAt = new Map<string, number>()
   const handoffFinishedPayloads = new Map<string, Record<string, unknown>>()
   const handoffAdoptionTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
+  const pauseRefreshInFlight = new Set<string>()
   let lastPollAt = 0
   let bootstrapInFlight = false
   const bootstrapPending = ref(true)
@@ -624,6 +625,26 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     run.attemptNo = Number(payload.attempt_no ?? run.attemptNo)
   }
 
+  async function refreshPausedState(groupId: string): Promise<void> {
+    if (pauseRefreshInFlight.has(groupId)) return
+    pauseRefreshInFlight.add(groupId)
+    try {
+      const response = await getRequest<any>('/api/v1/ai-invoke/active-all')
+      const paused = Array.isArray(response.data?.paused) ? response.data.paused : []
+      const row = paused.find((item: any) => String(item?.group_id ?? '') === groupId)
+      const existing = runsByGroup[groupId]
+      // This targeted refresh never removes a just-settled card when an older active-all
+      // response misses it; it only adopts the server's authoritative preflight fields.
+      if (row && existing?.phase === 'paused') {
+        runsByGroup[groupId] = pausedEntry(row, existing)
+      }
+    } catch {
+      // Best effort: the next normal bootstrap will reconcile the same server fields.
+    } finally {
+      pauseRefreshInFlight.delete(groupId)
+    }
+  }
+
   function trackFinished(payload: Record<string, any>): void {
     if (!payload?.run_id || !payload?.group_id) return
     const groupId = String(payload.group_id)
@@ -717,6 +738,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       clearHandoffTracking(groupId)
     }
     schedulePersist()
+    if (userPaused) void refreshPausedState(groupId)
   }
 
   function markLost(groupId: string, runId?: string): void {

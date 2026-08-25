@@ -334,6 +334,105 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
+  it('refreshes active-all as soon as a pause settles and adopts its blocker', async () => {
+    const groupId = 'flowgate.default.0460'
+    let activeAllCalls = 0
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('active-all')) {
+        activeAllCalls += 1
+        return {
+          data: {
+            ok: true,
+            runs: [],
+            paused: [{
+              group_id: groupId,
+              doc_ref: `${groupId}.0001-B`,
+              resume_available: false,
+              resume_block_code: 'no_pending_worker_steps',
+              resume_block_reason: 'no pending worker step at or below workflow item_seq 3',
+            }],
+          },
+        }
+      }
+      return { data: {} }
+    })
+    const wrapper = mountPlayer()
+    await flushPromises()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-pause-refresh', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: 'run-pause-refresh', group_id: groupId, end_reason: 'user_paused',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(activeAllCalls).toBeGreaterThanOrEqual(1)
+    expect(store.runsByGroup[groupId]?.resumeBlockCode).toBe('no_pending_worker_steps')
+    expect(wrapper.find('[data-test="ai-miniplayer-resume"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('joins errors[].msg for a legacy validation_failed 422 without message', async () => {
+    const groupId = 'flowgate.default.0461'
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-validation', group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: 'run-validation', group_id: groupId, end_reason: 'user_paused',
+    })
+    postRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          code: 'validation_failed',
+          errors: [{ msg: 'sequence missing' }, { msg: 'worker step missing' }],
+        },
+      },
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+    await wrapper.find('[data-test="ai-miniplayer-resume"]').trigger('click')
+    await flushPromises()
+
+    expect(useToast().toasts.value.at(-1)).toMatchObject({
+      message: 'sequence missing; worker step missing',
+      type: 'danger',
+    })
+    wrapper.unmount()
+  })
+
+  it.each([
+    [404, 'The workflow head no longer exists.'],
+    [409, 'The paused chain changed before launch.'],
+  ])('shows a %i resume message verbatim', async (status, message) => {
+    const groupId = `flowgate.default.046${status === 404 ? '2' : '3'}`
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: `run-${status}`, group_id: groupId,
+      doc_ref: `${groupId}.0001-B`, mode: 'continuous',
+    })
+    store.trackFinished({
+      run_id: `run-${status}`, group_id: groupId, end_reason: 'user_paused',
+    })
+    postRequest.mockRejectedValueOnce({
+      response: { status, data: { code: 'resume_failed', message } },
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+    await wrapper.find('[data-test="ai-miniplayer-resume"]').trigger('click')
+    await flushPromises()
+
+    expect(useToast().toasts.value.at(-1)).toMatchObject({ message, type: 'danger' })
+    wrapper.unmount()
+  })
+
   it('shows the origin, code, run and timestamp of a system stop', async () => {
     const groupId = 'flowgate.default.0384'
     getRequest.mockImplementation(async (url: string) => {

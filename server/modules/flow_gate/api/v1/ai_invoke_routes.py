@@ -135,7 +135,18 @@ def _err(exc: HTTPException) -> JSONResponse:
 
 
 def _validation_failed(errors: list[dict]) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"code": "validation_failed", "errors": errors})
+    message = next(
+        (
+            str(error.get("msg")).strip()
+            for error in errors
+            if error.get("msg") is not None and str(error.get("msg")).strip()
+        ),
+        "Validation failed.",
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"code": "validation_failed", "message": message, "errors": errors},
+    )
 
 
 def _continuation_target_error(doc_ref: str, target_seq: int) -> Optional[dict]:
