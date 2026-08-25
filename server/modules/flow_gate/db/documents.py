@@ -856,6 +856,39 @@ def get_documents_by_ids(doc_ids: list) -> dict[str, dict]:
     return result
 
 
+def group_root_wf_done(group_id: str) -> bool:
+    """True when the group's workflow root (R/B) reached final approval (0459 T0005 §2-2).
+
+    The single DB reading of "this group is over". git_service's finalize state and the
+    ai-invoke stale-card cleanup both need it, and a service reaching into another
+    service's private ``_group_root_wf_done`` is how the two drift apart — so the query
+    lives here, next to the table it reads.
+    """
+    if not group_id:
+        return False
+    row = get_store()._fetch_one(
+        "SELECT 1 AS hit FROM documents "
+        "WHERE group_id = ? AND type_code IN ('R','B') AND doc_review_status = 'wf_done'",
+        [group_id],
+    )
+    return row is not None
+
+
+def groups_root_wf_done(group_ids: list) -> set:
+    """Batch form of :func:`group_root_wf_done` (0282 NR0003 finding 1): one IN query
+    instead of one probe per group, for callers that judge a whole screen of groups."""
+    if not group_ids:
+        return set()
+    placeholders = ", ".join("?" for _ in group_ids)
+    rows = get_store()._fetch_all(
+        "SELECT DISTINCT group_id FROM documents "
+        f"WHERE group_id IN ({placeholders}) "
+        "AND type_code IN ('R','B') AND doc_review_status = 'wf_done'",
+        list(group_ids),
+    )
+    return {r["group_id"] for r in rows}
+
+
 def has_open_result_for_target(target_id: str) -> tuple:
     linked = get_linked_result_documents(target_id)
     open_doc_ids = [d["doc_id"] for d in linked if d.get("status") == "open"]

@@ -1951,13 +1951,12 @@ _NONE_STATE = {
 
 
 def _group_root_wf_done(group_id: str) -> bool:
-    """True when the group's workflow root (R/B) reached final approval."""
-    row = get_store()._fetch_one(
-        "SELECT 1 AS hit FROM documents "
-        "WHERE group_id = ? AND type_code IN ('R','B') AND doc_review_status = 'wf_done'",
-        [group_id],
-    )
-    return row is not None
+    """True when the group's workflow root (R/B) reached final approval.
+
+    0459 T0005 §2-2: the query itself moved to db.documents so the ai-invoke stale-card
+    cleanup can ask the SAME question without importing this module's private helper.
+    Kept as a name because this file calls it from three finalize paths."""
+    return db_documents.group_root_wf_done(group_id)
 
 
 def _groups_root_wf_done(group_ids: list[str]) -> set[str]:
@@ -1965,16 +1964,7 @@ def _groups_root_wf_done(group_ids: list[str]) -> set[str]:
     instead of one probe per group. project_git_status ran the per-group probe
     inside its slot loop — 8 groups × 2 client calls = 12 of the 68 queries in
     the R0001 screen-load log, growing linearly with group count."""
-    if not group_ids:
-        return set()
-    placeholders = ", ".join("?" for _ in group_ids)
-    rows = get_store()._fetch_all(
-        "SELECT DISTINCT group_id FROM documents "
-        f"WHERE group_id IN ({placeholders}) "
-        "AND type_code IN ('R','B') AND doc_review_status = 'wf_done'",
-        list(group_ids),
-    )
-    return {r["group_id"] for r in rows}
+    return db_documents.groups_root_wf_done(group_ids)
 
 
 def _group_ac_doc_id(group_id: str) -> Optional[str]:
