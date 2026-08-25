@@ -5869,17 +5869,33 @@ def resolve_review_gate(bundle: dict) -> dict:
     if verdict == "hold":
         return {"stage": "stop", "stop_code": REVIEW_VERDICT_HOLD_STOP_CODE, **common}
 
-    # verdict == "issues" from here. The rejection is idempotent: a document already in
-    # `rejected` (by this gate on an earlier pass, or by a human) is not rejected again.
-    reject_first = slot["review_status"] != "rejected"
+    # verdict == "issues" from here, and TWO independent conditions gate the rejection:
+    #
+    #   * idempotency — a document already in `rejected` (by this gate on an earlier pass,
+    #     or by a human) is not rejected again;
+    #   * revision match — the complaint has to be about the revision standing there NOW.
+    #
+    # The second one is 0459 NR0003's second defect. `reject_first` used to read the status
+    # alone, so a rework that had already landed (revision_no past the review's, status
+    # `revised`) was pushed back to `rejected` just before the NEXT review round started.
+    # That round then passed, and the pass tried to approve a `rejected` document — a
+    # combination transition_rules deliberately does not list — so settle_completed_step
+    # returned approve_failed BEFORE its target check and the chain parked one approval
+    # short of `completed`. The fix is here, at the cause: an old verdict does not reject a
+    # new revision. `rejected + approve` stays absent from the transition table.
+    latest_revision = int(latest.get("revision_no") or 0)
+    slot_revision = int(slot["revision_no"])
+    reject_first = slot["review_status"] != "rejected" and slot_revision == latest_revision
 
-    if int(slot["revision_no"]) > int(latest.get("revision_no") or 0):
-        # The rework for this complaint already landed.
+    if slot_revision > latest_revision:
+        # The rework for this complaint already landed. Deliberately NO `reject_first`:
+        # the fresh revision keeps its `revised` status into the next round, which is what
+        # lets a later `pass` settle through the ordinary `revised + approve -> approved`
+        # transition and reach `completed`.
         if review_rounds_remain(rounds_used, limit):
             # -1 never leaves this branch: "until it passes" reviews the fresh revision
             # too, round after round, for as long as the reviewer keeps finding issues.
-            return {"stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1,
-                    "reject_first": reject_first, **common}
+            return {"stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1, **common}
         # 0414 M0020 / CH0019: a finite count is a budget of review+rework PAIRS, and the
         # last pair has just closed — every complaint this step produced was reworked, so
         # the step is done. The reworked revision is approved and the chain moves on.
@@ -6301,46 +6317,135 @@ def active_review_selection(group_id: Optional[str]) -> tuple[Optional[dict], Op
     )
 
 
+def _sequence_completion_state(doc_ref: Optional[str]) -> tuple[bool, Optional[int]]:
+    """``(a sequence was read, first incomplete item_seq)`` — 0459 T0005 §2-3.
+
+    ``_next_incomplete_item_seq`` collapses two very different facts into one ``None``:
+    "every slot is done" and "there is no sequence to look at". Resuming may treat both as
+    "nothing to resume", but DELETING a stopped chain's card may not — a missing or
+    unreadable sequence is no evidence at all. So the two facts are separated here and the
+    old name keeps its single-value contract on top.
+
+    Raises whatever the DB layer raises; callers that must not fail decide what an
+    unreadable sequence means to them.
+    """
+    if not doc_ref:
+        return False, None
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    if seq is None:
+        return False, None
+    items = db_wfseq.get_sequence_items(seq["id"]) or []
+    if not items:
+        return False, None          # a sequence with no slots proves nothing was finished
+    for item in sorted(items, key=lambda i: i.get("item_seq") or 0):
+        if item.get("result_doc_id") is None or item.get("result_doc_review_status") != "approved":
+            return True, item.get("item_seq")
+    return True, None
+
+
 def _next_incomplete_item_seq(doc_ref: str) -> Optional[int]:
     """First workflow slot that is not complete (L0009 §2.3). Completion uses the
     existing slot definition — result document exists AND is approved — exactly as
     ai_invoke_routes._continuation_target_error judges it."""
-    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
-    if seq is None:
-        return None
-    for item in sorted(
-        db_wfseq.get_sequence_items(seq["id"]) or [],
-        key=lambda i: i.get("item_seq") or 0,
-    ):
-        if item.get("result_doc_id") is None or item.get("result_doc_review_status") != "approved":
-            return item.get("item_seq")
-    return None
+    return _sequence_completion_state(doc_ref)[1]
+
+
+def _group_workflow_finished(group_id: Optional[str]) -> bool:
+    """Did this whole group already reach final approval? (0459 T0005 §2-2)
+
+    The same DB reading git_service's finalize state and the dashboard's terminal-group
+    filter use — R/B root at ``wf_done`` — reached through the public db.documents helper
+    rather than another service's private function. Never raises: a probe that cannot read
+    the table answers "not finished", which preserves the row.
+    """
+    if not group_id:
+        return False
+    try:
+        return bool(db_docs.group_root_wf_done(group_id))
+    except Exception:  # noqa: BLE001
+        logger.warning("group wf_done probe failed for %s", group_id, exc_info=True)
+        return False
 
 
 def _system_pause_row_is_stale(row: dict) -> bool:
-    """Whether a system stop no longer points at the workflow head it stopped on.
+    """Whether a system stop still describes work this group actually owes.
 
-    Finished run records retain ``hop_item_seq``. A workflow reopen changes the next
-    incomplete slot while the old group-level pause row otherwise survives forever.
-    Missing legacy evidence is treated conservatively as not stale.
+    Judged in this order, most conclusive first (0459 T0005 §2):
+
+      1. the group's R/B workflow root is ``wf_done`` — the group is over, so nothing it
+         parked can still be waiting on anybody;
+      2. a sequence WAS read and it has no incomplete slot left, or its next incomplete
+         slot is past the row's own ``continuation_target_seq`` — the stored scope is
+         finished, the same reading ``resume_chain`` calls ``nothing_to_resume``;
+      3. only if neither piece of completion evidence exists, the original head test:
+         the stop's ``hop_item_seq`` against the current next-incomplete slot.
+
+    Step 3 is why steps 1 and 2 had to come first. Review and rework hops run
+    ``mode="single"``, and only continuous runs record a ``hop_item_seq`` — so every card
+    a review hop parked reached ``stopped_seq is None`` and returned "not stale" forever,
+    which is 0459 NR0003's first defect (the 0457 ``approve_failed`` card).
+
+    Scoped and conservative throughout: only ``stop_kind='system'`` rows carrying a
+    ``stop_run_id`` are judged at all, a user pause is never touched, and an absent or
+    unreadable sequence is NOT "everything finished" — it is no evidence, so the row is
+    kept and a warning is logged. Never raises.
     """
     if (row.get("stop_kind") or "user") != "system" or not row.get("stop_run_id"):
         return False
+    group_id = row.get("group_id") or ""
+
+    # 1 — the whole group is finished.
+    if _group_workflow_finished(group_id):
+        return True
+
+    # 2 — the stored scope is finished.
+    try:
+        sequence_read, next_seq = _sequence_completion_state(row.get("doc_ref"))
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "system paused-row sequence lookup failed for %s",
+            group_id, exc_info=True,
+        )
+        sequence_read, next_seq = False, None
+    if sequence_read:
+        if next_seq is None:
+            return True
+        target_seq = row.get("continuation_target_seq")
+        if target_seq is not None:
+            try:
+                if int(next_seq) > int(target_seq):
+                    return True
+            except (TypeError, ValueError):
+                pass
+    else:
+        # Neither wf_done nor a readable sequence: keep the card. A chain whose sequence
+        # cannot be read is exactly the one a person still has to look at.
+        logger.warning(
+            "system paused-row kept for %s: no wf_done and no readable workflow sequence "
+            "for %s", group_id, row.get("doc_ref"),
+        )
+        return False
+
+    # 3 — the original head test, on the evidence it was written for.
     try:
         from modules.flow_gate.db import ai_invoke_runs as db_runs
 
         stopped = db_runs.get(row["stop_run_id"])
         stopped_seq = (stopped or {}).get("hop_item_seq")
-        if stopped_seq is None:
-            return False
-        current_seq = _next_incomplete_item_seq(row["doc_ref"])
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning(
             "system paused-row staleness lookup failed for %s",
-            row.get("group_id"), exc_info=True,
+            group_id, exc_info=True,
         )
         return False
-    return current_seq is None or int(current_seq) != int(stopped_seq)
+    if stopped_seq is None:
+        # A single-hop stop with no completion evidence above: real outstanding work,
+        # and nothing here can tell which slot it was. Missing evidence is not stale.
+        return False
+    try:
+        return int(next_seq) != int(stopped_seq)
+    except (TypeError, ValueError):
+        return False
 
 
 def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Optional[str]:
@@ -6530,13 +6635,25 @@ def _resumable_reviewer_overrides(
     return kept or None
 
 
-def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str = "ko") -> dict:
+def resume_chain(
+    *, group_id: str, user_id: str, api_base_url: str, locale: str = "ko",
+    is_admin: bool = False,
+) -> dict:
     """Resume a user-paused continuous chain from its next incomplete step (L0009 §2.4).
 
     The ORDER is the overlap protection: (1) group lock → (2) active-run check →
     (3) atomic paused-row consumption → (4) start. A row consumed by another path
     (auto-resume, another session, an external worker) surfaces as resume_conflict,
     never as a second concurrent run.
+
+    0459 T0007 §2: only the user who paused the chain (``paused_by``) or an admin may
+    resume it -- a project-read-only teammate sending this group's id must not be able
+    to consume or relaunch somebody else's paused chain. The check reads the row and
+    the consumption below re-verifies the SAME snapshot via a compare-and-swap
+    (0459 TR0008 rev1 fix): a plain group-only delete after the authorization read
+    would let a newer row -- upserted by a *different* user between the two calls --
+    be consumed by the old owner's already-authorized request. Tying the delete to
+    the exact row the authorization check inspected closes that window.
     """
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.services import workflow_decision_service
@@ -6547,13 +6664,20 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             raise _http_error(409, "run_already_active",
                               "An active run already exists for this group.",
                               run_id=active["run_id"])
-        preview_row = db_paused.get_by_group(group_id)
-        if preview_row is None:
+        pre_row = db_paused.get_by_group(group_id)
+        if pre_row is None:
             raise _http_error(409, "resume_conflict",
                               "This chain was already resumed by another path.",
                               group_id=group_id)
+        # 0459 T0007 SS2: ownership is judged BEFORE anything else this row could tell
+        # the caller -- a project-read-only teammate sending this group's id must not be
+        # able to consume, relaunch, OR preflight somebody else's paused chain.
+        if not is_admin and pre_row.get("paused_by") != user_id:
+            raise _http_error(403, "paused_chain_forbidden",
+                              "Only the user who paused this chain (or an admin) may "
+                              "resume it.", group_id=group_id)
         project_id = group_id.split(".", 1)[0]
-        preflight = _paused_row_resume_state(project_id, preview_row, include_target=True)
+        preflight = _paused_row_resume_state(project_id, pre_row, include_target=True)
         if not preflight["resume_available"]:
             raise _http_error(
                 422,
@@ -6562,8 +6686,24 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
                 group_id=group_id,
             )
 
-        row = db_paused.delete_and_return(group_id)
-        if row is None:
+        # CAS-consume the exact row the authorization and preflight checks above just
+        # read -- not a bare delete_and_return(group_id), which would happily take
+        # whatever row is live at THIS instant even if it is not the row that was
+        # authorized. A row that changed identity (newer paused_by/paused_at/stop_kind/
+        # stop_run_id) between the reads fails the predicate and falls through to
+        # resume_conflict below, same as "nothing to consume".
+        row = db_paused.release_owned(
+            group_id,
+            paused_by=pre_row.get("paused_by"),
+            paused_at=pre_row.get("paused_at"),
+            stop_kind=pre_row.get("stop_kind"),
+            stop_run_id=pre_row.get("stop_run_id"),
+        )
+        # release_owned is tri-state (0459 TR0008 rev2): a bare None (nothing left to
+        # consume) and a ReleaseSuperseded (a newer row replaced the one this call was
+        # authorized against) both fall through to the SAME resume_conflict here --
+        # either way the row this call was authorized for is not the one to relaunch.
+        if row is None or isinstance(row, db_paused.ReleaseSuperseded):
             raise _http_error(409, "resume_conflict",
                               "This chain was already resumed by another path.",
                               group_id=group_id)
@@ -6755,6 +6895,91 @@ def resume_chain(*, group_id: str, user_id: str, api_base_url: str, locale: str 
             )
 
 
+def release_paused_chain(*, group_id: str, user_id: str, is_admin: bool = False) -> dict:
+    """Explicit user cancel/release of a group-keyed PAUSED CHAIN (0459 T0007).
+
+    Paused-row release ONLY -- never a live-run cancel (:func:`cancel_run`) and never
+    a lease force-release (:func:`force_release_group_lease`). Order mirrors
+    :func:`resume_chain` exactly so the two can never race into a double-consumption
+    or a lost row: (1) group lock → (2) active-run / valid-lease check → (3) pause-row
+    lookup + ownership judgement → (4) atomic compare-and-swap delete.
+
+    Deliberately narrow lease handling: a VALID lease means resume/start/handoff may
+    be mid-flight in another process (memory not finding the run here does not make
+    that lease an orphan -- only :func:`force_release_group_lease`'s own liveness
+    check gets to decide that), so this refuses with 409 and leaves both the pause row
+    and the lease untouched. An EXPIRED lease is invisible here for free --
+    ``db_group_ai_leases.get_active`` already reclaims it before answering.
+
+    0459 TR0008 rev1: the active-run and valid-lease branches raise DIFFERENT 409
+    codes (``run_already_active`` vs ``group_lease_active``) even though both stop
+    the release -- the caller's remedy differs (adopt the other session's run vs.
+    release the lease separately from the locked-group screen), and collapsing them
+    into one code left both the API caller and the miniplayer unable to tell which
+    applies.
+    """
+    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+
+    with _group_resume_lock(group_id):
+        active = _active_run_for_group(group_id)
+        if active is not None:
+            raise _http_error(409, "run_already_active",
+                              "An active run already exists for this group; the paused "
+                              "chain was already resumed elsewhere.",
+                              group_id=group_id, run_id=active["run_id"])
+        lease = db_group_ai_leases.get_active(group_id)
+        if lease is not None:
+            # Distinct code from the active-run branch above (0459 TR0008 rev1): a
+            # caller resuming elsewhere (run_already_active) and a caller that must
+            # separately release an orphaned lease (group_lease_active) need
+            # different follow-up actions, and both used to collapse into the same
+            # code, leaving neither the API caller nor the UI able to tell them apart.
+            raise _http_error(409, "group_lease_active",
+                              "A valid group lease is held; resume/start/handoff may be "
+                              "in progress. If the lease is actually orphaned, release it "
+                              "separately from the locked-group screen.",
+                              group_id=group_id, run_id=lease.get("run_id"))
+        row = db_paused.get_by_group(group_id)
+        if row is None:
+            # Nothing to release -- same-request replay after a prior success, or the
+            # chain already ended some other way. Idempotent 200, never 404 (T0007 §5).
+            return {"ok": True, "group_id": group_id, "released": False,
+                    "already_released": True}
+        if not is_admin and row.get("paused_by") != user_id:
+            raise _http_error(403, "paused_chain_forbidden",
+                              "Only the user who paused this chain (or an admin) may "
+                              "release it.", group_id=group_id)
+        deleted = db_paused.release_owned(
+            group_id,
+            paused_by=row.get("paused_by"),
+            paused_at=row.get("paused_at"),
+            stop_kind=row.get("stop_kind"),
+            stop_run_id=row.get("stop_run_id"),
+        )
+        if isinstance(deleted, db_paused.ReleaseSuperseded):
+            # 0459 TR0008 rev2: a newer user pause or system stop won the read/delete
+            # race -- the row THIS call inspected is gone, but a DIFFERENT row for the
+            # same group is still live in the table right now. T0007 §5 permits the
+            # idempotent already_released 200 ONLY when nothing exists for the group_id
+            # at all (the rev1 bug folded this case into that same success and told the
+            # store to delete a card for a chain that never left the table). Surface it
+            # as a real, non-success conflict instead so the caller reconciles against
+            # the CURRENT server state rather than optimistically dropping the card.
+            raise _http_error(
+                409, "release_conflict",
+                "This paused chain was replaced by a newer pause or system stop "
+                "before the release completed. Refresh to see the current state.",
+                group_id=group_id,
+            )
+        if deleted is None:
+            # Truly nothing left for this group_id -- same-request replay after a
+            # prior success, or the chain ended some other way. Idempotent 200.
+            return {"ok": True, "group_id": group_id, "released": False,
+                    "already_released": True}
+        return {"ok": True, "group_id": group_id, "released": True,
+                "already_released": False}
+
+
 def _open_q_doc_ids(group_id: str) -> list[str]:
     """Group documents that still have at least one unanswered container item."""
     try:
@@ -6830,9 +7055,19 @@ def active_all(user_id: str) -> dict:
             # successful hop, and the stop badge stops meaning anything. In-flight handoffs
             # are hidden; a row past the grace really did break and falls through to a card.
             continue
-        if _system_pause_row_is_stale(row):
-            # Delete only the exact system-stop snapshot inspected above. A concurrent
-            # user pause or a newer stop for the group must survive this cleanup.
+        try:
+            stale = _system_pause_row_is_stale(row)
+        except Exception:  # noqa: BLE001 — one unreadable row must not blank the widget
+            logger.warning(
+                "system paused-row staleness check failed for %s",
+                row.get("group_id"), exc_info=True,
+            )
+            stale = False
+        if stale:
+            # Delete only the exact system-stop snapshot inspected above, by
+            # (group_id, stop_kind='system', stop_run_id). A user pause written since the
+            # read, or a newer system stop for the same group, fails that exact match and
+            # survives — which a group-only DELETE would not.
             try:
                 db_paused.delete_system_stop(row["group_id"], row.get("stop_run_id"))
             except Exception:
@@ -6840,6 +7075,8 @@ def active_all(user_id: str) -> dict:
                     "stale system paused-row cleanup failed for %s",
                     row.get("group_id"), exc_info=True,
                 )
+                # The delete failed, but the row IS stale: keeping it out of the response
+                # is still right, and the next active-all retries the delete.
             continue
         resume_state = _paused_row_resume_state(row["group_id"].split(".")[0], row)
         paused.append({

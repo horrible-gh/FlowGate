@@ -214,6 +214,24 @@
               <AppIcon name="play" />
               {{ t('main.ai_miniplayer.btn_resume') }}
             </button>
+            <!-- 0459 T0007: an explicit escape hatch for a paused-row the user wants to
+                 give up on -- available for BOTH user pauses and system stops, including
+                 a resume-blocked card (an unavailable pinned provider must not leave the
+                 card stuck forever). Never a live-run cancel, never a lease force-release
+                 -- confirm text (doReleasePaused) says so before the request goes out. -->
+            <button
+              v-if="entry.phase === 'paused'"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              data-test="ai-miniplayer-release-paused"
+              :disabled="busy.has(entry.groupId)"
+              :aria-disabled="busy.has(entry.groupId)"
+              :title="t('main.ai_miniplayer.btn_release_paused')"
+              @click="doReleasePaused(entry)"
+            >
+              <AppIcon name="stop-circle" />
+              {{ t('main.ai_miniplayer.btn_release_paused') }}
+            </button>
             <button
               v-if="entry.phase === 'running' || entry.phase === 'pause_requested'"
               type="button"
@@ -461,6 +479,49 @@ async function doCancel(entry: AiInvokeRunEntry): Promise<void> {
     await store.cancel(entry.groupId)
   } catch {
     showToast(t('main.ai_invoke_dialog.error_cancel_failed'), 'danger')
+  } finally {
+    busy.delete(entry.groupId)
+  }
+}
+
+async function doReleasePaused(entry: AiInvokeRunEntry): Promise<void> {
+  // 0459 T0007 §3 item 4: the confirm text differs by who/what parked the chain, and
+  // both variants say the same two things a live-run cancel confirm never has to:
+  // existing documents/run history are NOT deleted, and this is NOT a live-run cancel.
+  const confirmKey = entry.stopKind === 'system'
+    ? 'main.ai_miniplayer.release_confirm_system'
+    : 'main.ai_miniplayer.release_confirm_user'
+  if (!window.confirm(t(confirmKey))) return
+  busy.add(entry.groupId)
+  try {
+    await store.releasePaused(entry.groupId)
+    // store.releasePaused() only removes the card when the server actually confirmed
+    // released/already_released (0459 T0007 §1) -- an unexpected 2xx that leaves the
+    // card in place must not claim success here either.
+    if (!store.runsByGroup[entry.groupId]) {
+      showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
+    }
+  } catch (error: any) {
+    const status = error?.response?.status
+    const code = error?.response?.data?.code
+    if (status === 403) {
+      showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
+    } else if (status === 409 && code === 'group_lease_active') {
+      // 0459 TR0008 rev1: distinct from the resume-conflict toast below -- a held
+      // group lease needs a separate release from the locked-group screen, not a
+      // retry of this button.
+      showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
+    } else if (status === 409 && code === 'release_conflict') {
+      // 0459 TR0008 rev5: distinct from run_already_active below -- the chain was
+      // NOT resumed by anyone. A newer pause/system-stop row won the CAS race and
+      // is still sitting there paused. "already resumed elsewhere" would be false;
+      // store.releasePaused() already bootstrap()s the card back to that current row.
+      showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
+    } else if (status === 409) {
+      showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
+    } else {
+      showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
+    }
   } finally {
     busy.delete(entry.groupId)
   }

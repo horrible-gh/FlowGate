@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from . import dialect as _dialect
 from .connection import get_store, now_iso
 
 
@@ -273,6 +274,161 @@ def delete_system_stop(group_id: str, stop_run_id: Optional[str]) -> None:
         "AND stop_run_id = ?",
         [group_id, stop_run_id],
     )
+
+
+def _is_mariadb_snapshot_isolation_checkread(exc: Exception) -> bool:
+    """MySQL/MariaDB server error 1020 (``ER_CHECKREAD``), and nothing else.
+
+    Checked by raw error code, not by importing pymysql/MySQLdb: both drivers
+    surface this as ``(1020, "Record has changed since last read in table '...'")``
+    on ``exc.args`` because it is the wire-protocol error code the server sends, not
+    a driver-specific one -- SQLite and PostgreSQL never produce this code, so the
+    check is safe even when this process has no MySQL driver installed at all.
+    """
+    args = getattr(exc, "args", None)
+    return bool(args) and args[0] == 1020
+
+
+class ReleaseSuperseded:
+    """Sentinel distinct from ``None`` (0459 TR0008 rev2): the group's paused row
+    still EXISTS but no longer matches the caller's inspected snapshot -- a newer
+    user pause or system stop won the read/delete race, either before the pre-DELETE
+    compare ran or strictly between that compare and the DELETE itself. Wraps the
+    CURRENT surviving row so a caller can reconcile against it.
+
+    This must never be collapsed into the same outcome as a truly absent row: T0007
+    §5 permits the idempotent ``already_released`` success ONLY when nothing exists
+    for the group_id at all. A superseded row is still a live pause somebody else
+    owns -- treating it as "already gone" tells the UI to delete a card for a chain
+    that never left the table (the exact rev1 rejection).
+    """
+    __slots__ = ("row",)
+
+    def __init__(self, row: dict) -> None:
+        self.row = row
+
+
+def release_owned(
+    group_id: str,
+    *,
+    paused_by: Optional[str],
+    paused_at: Optional[str],
+    stop_kind: Optional[str],
+    stop_run_id: Optional[str],
+):
+    """Compare-and-swap delete for the explicit cancel/release API (0459 T0007).
+
+    Also reused by ``resume_chain()`` (0459 TR0008 rev1) to consume the exact row its
+    own ownership check just read, instead of a group-only ``delete_and_return`` that
+    would blindly take whatever row is live at consume time.
+
+    Deletes the row only when it still matches the caller's inspected snapshot --
+    ``paused_by``, ``paused_at``, ``stop_kind`` (NULL-safe via the same
+    ``COALESCE(..., 'user')`` reading as :func:`delete_system_stop`), ``stop_run_id``
+    (NULL-safe) -- via a WHERE predicate built from plain equality/IS NULL clauses, so
+    no SQLite/MySQL/PostgreSQL-specific null-safe operator is needed. A newer user
+    pause or system stop upserted between the caller's read and this call changes at
+    least one of those columns; the predicate then matches nothing and the newer row
+    survives untouched -- unlike a bare ``delete_by_group(group_id)``.
+
+    Returns a TRI-STATE result (0459 TR0008 rev2), and the two failure shapes are NOT
+    interchangeable:
+      * the deleted row (dict) on success;
+      * ``None`` when nothing exists for this group_id at all -- the only shape a
+        caller may report as an idempotent "already released" success;
+      * :class:`ReleaseSuperseded` wrapping the CURRENT row when a row exists but no
+        longer matches the snapshot -- a real conflict the caller must surface as
+        such, never as success.
+    """
+    store = get_store()
+    with store.transaction():
+        row = store._fetch_one(
+            "SELECT * FROM ai_invoke_paused_chains WHERE group_id = ?",
+            [group_id],
+        )
+        if row is None:
+            return None
+        normalized_stop_kind = stop_kind or "user"
+        clauses = ["group_id = ?", "COALESCE(stop_kind, 'user') = ?"]
+        params = [group_id, normalized_stop_kind]
+        for column, value in (("paused_by", paused_by), ("paused_at", paused_at),
+                              ("stop_run_id", stop_run_id)):
+            if value is None:
+                clauses.append(f"{column} IS NULL")
+            else:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        # This pre-DELETE compare is a fast-path short-circuit, NOT the atomicity
+        # guard (0459 TR0008 rev1 fix): it only rules out the case where the row was
+        # already stale when we read it. It cannot see a write that lands *between*
+        # this compare and the DELETE below. Either way the row it saw is a REAL,
+        # currently-existing row -- report it as superseded, not absent.
+        if (
+            row.get("paused_by") != paused_by
+            or row.get("paused_at") != paused_at
+            or (row.get("stop_kind") or "user") != normalized_stop_kind
+            or row.get("stop_run_id") != stop_run_id
+        ):
+            return ReleaseSuperseded(row)
+        try:
+            affected = store._execute_affected(
+                "DELETE FROM ai_invoke_paused_chains WHERE " + " AND ".join(clauses),
+                params,
+            )
+        except Exception as exc:
+            if not _is_mariadb_snapshot_isolation_checkread(exc):
+                raise
+            # MariaDB's default `innodb_snapshot_isolation=ON` (0459 TR0008 rev5,
+            # reproduced against a live MariaDB 12.2 instance) makes this DELETE do
+            # something Oracle MySQL and PostgreSQL never do: when its WHERE clause
+            # matched the row under this transaction's REPEATABLE READ snapshot, but a
+            # DIFFERENT, already-committed transaction changed that exact row first,
+            # MariaDB refuses to silently perform a current-read delete -- it raises
+            # ER_CHECKREAD (1020, "Record has changed since last read") instead of
+            # returning affected=0. That is not a real failure: it is MariaDB's own
+            # proof that this call lost the identical race the affected==0 branch
+            # below already handles, so treat it exactly the same way. (With
+            # `innodb_snapshot_isolation=OFF` the same race instead returns affected=0
+            # silently, which is why the branch below still exists and is still
+            # exercised on its own.)
+            affected = 0
+        if affected == 1:
+            # Only the transaction that physically deleted the inspected row may
+            # return it and become ``released=true``. This affected-row proof is what
+            # distinguishes the winner from a second process that read the same
+            # snapshot but reached the DELETE after the winner committed.
+            return row
+        if affected != 0:
+            raise RuntimeError(
+                f"paused-chain CAS deleted an impossible number of rows: {affected}"
+            )
+
+        # A zero-row CAS has two distinct meanings. If the key is absent, another
+        # release/resume transaction deleted the SAME snapshot first and this caller
+        # is the idempotent loser (None). If a row remains, an upsert replaced the
+        # inspected snapshot and the live row must be preserved and surfaced as a
+        # conflict. A post-DELETE absence by itself cannot identify the winner; the
+        # affected-row count above provides that missing ownership proof.
+        #
+        # This survivor lookup must be a LOCKING read (FOR UPDATE), not the plain
+        # consistent read every other query in this module uses. Under MySQL/InnoDB's
+        # default REPEATABLE READ, a plain SELECT reuses the snapshot this same
+        # transaction's very first read established -- the one that saw ``row`` above
+        # -- so if a DIFFERENT transaction deleted and committed that exact row in the
+        # meantime, this plain SELECT would still show it as present (stale-snapshot
+        # false positive), and we would wrongly report ReleaseSuperseded for a row
+        # that is actually gone instead of the idempotent None. FOR UPDATE forces
+        # InnoDB to perform a current read against the latest committed data
+        # regardless of the transaction's snapshot. SQLite has no FOR UPDATE syntax
+        # and needs none: it serializes writers, so by the time this transaction's own
+        # DELETE has run, no concurrent writer could still be racing it.
+        survivor_sql = "SELECT * FROM ai_invoke_paused_chains WHERE group_id = ?"
+        if getattr(store, "dialect", _dialect.SQLITE) != _dialect.SQLITE:
+            survivor_sql += " FOR UPDATE"
+        survivor = store._fetch_one(survivor_sql, [group_id])
+        if survivor is None:
+            return None
+        return ReleaseSuperseded(survivor)
 
 
 def list_all_system_stops() -> list[dict]:

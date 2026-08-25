@@ -16,8 +16,10 @@ import { useProjectStore } from '@main/stores/project'
 import { useExplorerStore } from '@main/stores/explorer'
 import { useToast } from '@main/components/common/useToast'
 
-const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
-vi.mock('@shared/api', () => ({ getRequest, postRequest }))
+const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => (
+  { getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }
+))
+vi.mock('@shared/api', () => ({ getRequest, postRequest, deleteRequest }))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 
@@ -1050,6 +1052,367 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
         .toBe(t('main.ai_miniplayer.error_release_lease_failed'))
       expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      wrapper.unmount()
+    })
+  })
+
+  // 0459 T0007: an explicit [취소/해제] on every paused card, distinct from [재개] and
+  // from the run_id-keyed cancel button on running/pause_requested cards.
+  describe('cancelling/releasing a paused chain', () => {
+    const GROUP = 'flowgate.default.0459.release-ui'
+
+    function mountUserPausedCard() {
+      const wrapper = mountPlayer()
+      const store = useAiInvokeRunsStore()
+      store.trackStarted({ run_id: 'run-rel', group_id: GROUP, doc_ref: `${GROUP}.0001-B`, mode: 'continuous' })
+      store.trackFinished({ run_id: 'run-rel', group_id: GROUP, end_reason: 'user_paused' })
+      return { wrapper, store }
+    }
+
+    function mountSystemStoppedCard() {
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{
+                group_id: GROUP,
+                doc_ref: `${GROUP}.0001-B`,
+                paused_at: '2026-08-25T10:00:00+09:00',
+                stop_kind: 'system',
+                stop_code: 'no_output_exhausted',
+                stop_run_id: 'aiv_old_chain',
+              }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+      const wrapper = mountPlayer()
+      const store = useAiInvokeRunsStore()
+      return { wrapper, store }
+    }
+
+    async function mountSystemStoppedCardAndBootstrap() {
+      const mounted = mountSystemStoppedCard()
+      await mounted.store.bootstrap()
+      await flushPromises()
+      return mounted
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('shows [취소/해제] on paused cards but not on running or finished ones', async () => {
+      const { wrapper, store } = mountUserPausedCard()
+      store.trackStarted({ run_id: 'run-running', group_id: 'flowgate.default.0459.release-running', doc_ref: 'r' })
+      store.trackStarted({ run_id: 'run-fin', group_id: 'flowgate.default.0459.release-fin', doc_ref: 'r' })
+      store.trackFinished({ run_id: 'run-fin', group_id: 'flowgate.default.0459.release-fin', outcome: 'complete' })
+      await flushPromises()
+      await openPopover(wrapper)
+
+      const buttons = wrapper.findAll('[data-test="ai-miniplayer-release-paused"]')
+      expect(buttons).toHaveLength(1)
+      expect(buttons[0].text()).toContain(t('main.ai_miniplayer.btn_release_paused'))
+      // [재개] stays offered alongside it -- release is additive, not a replacement.
+      expect(wrapper.find('[data-test="ai-miniplayer-resume"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('is available even on a resume-blocked card (unavailable pinned provider)', async () => {
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{
+                group_id: GROUP,
+                doc_ref: `${GROUP}.0001-B`,
+                paused_at: '2026-08-25T10:00:00+09:00',
+                resume_available: false,
+                resume_block_code: 'provider_unavailable',
+                resume_block_reason: 'blocked',
+              }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+      const wrapper = mountPlayer()
+      await useAiInvokeRunsStore().bootstrap()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      const releaseBtn = wrapper.find('[data-test="ai-miniplayer-release-paused"]')
+      expect(releaseBtn.exists()).toBe(true)
+      expect(releaseBtn.attributes('disabled')).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('shows the user-pause confirm text and sends no request when cancelled', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(confirmSpy).toHaveBeenCalledWith(t('main.ai_miniplayer.release_confirm_user'))
+      expect(deleteRequest).not.toHaveBeenCalled()
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows the system-stop confirm text for a system-stopped card', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const { wrapper } = await mountSystemStoppedCardAndBootstrap()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(confirmSpy).toHaveBeenCalledWith(t('main.ai_miniplayer.release_confirm_system'))
+      expect(deleteRequest).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('calls the DELETE endpoint after confirmation and drops the card on success', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true, released: true, already_released: false } })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(deleteRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/paused/${GROUP}`)
+      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('shows a success toast once the card is actually removed', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true, released: true, already_released: false } })
+      const { wrapper } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.release_paused_success'),
+        type: 'success',
+      })
+      wrapper.unmount()
+    })
+
+    it('does not show a success toast on an unexpected 2xx that leaves the card in place', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true } })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      const toastCountBefore = useToast().toasts.value.length
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      expect(useToast().toasts.value.length).toBe(toastCountBefore)
+      wrapper.unmount()
+    })
+
+    it('shows a forbidden toast and keeps the card on 403', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({ response: { status: 403, data: { code: 'paused_chain_forbidden' } } })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_forbidden'),
+        type: 'danger',
+      })
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows a resume-conflict toast and reconciles the still-paused card via bootstrap on 409 run_already_active', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({
+        response: { status: 409, data: { code: 'run_already_active', run_id: 'run-live' } },
+      })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      // The 409 handler's bootstrap() call is authoritative -- the server still reports
+      // this group as paused, so the reconciled card must survive as 'paused', not be
+      // optimistically deleted by the failed release.
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{ group_id: GROUP, doc_ref: `${GROUP}.0001-B`, paused_at: '2026-08-25T10:00:00+09:00' }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_resume_conflict'),
+        type: 'danger',
+      })
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows a distinct lease-conflict toast on 409 group_lease_active', async () => {
+      // 0459 TR0008 rev1: a held group lease is a different follow-up (release the
+      // lease separately) from another session's resume -- it must not collapse into
+      // the same toast as run_already_active above.
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({
+        response: { status: 409, data: { code: 'group_lease_active', run_id: 'run-live' } },
+      })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{ group_id: GROUP, doc_ref: `${GROUP}.0001-B`, paused_at: '2026-08-25T10:00:00+09:00' }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_lease_conflict'),
+        type: 'danger',
+      })
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows a distinct release-conflict toast (not "already resumed") on 409 release_conflict', async () => {
+      // 0459 TR0008 rev5: release_conflict means a NEWER pause/system-stop row won
+      // the CAS race -- the chain was never resumed by anyone, so it must not reuse
+      // the run_already_active/"already resumed elsewhere" toast above, and must not
+      // collapse into the group_lease_active toast either.
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({
+        response: { status: 409, data: { code: 'release_conflict' } },
+      })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{ group_id: GROUP, doc_ref: `${GROUP}.0001-B`, paused_at: '2026-08-25T10:05:00+09:00' }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      const toast = useToast().toasts.value.at(-1)
+      expect(toast).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_release_conflict'),
+        type: 'danger',
+      })
+      expect(toast?.message).not.toBe(t('main.ai_miniplayer.error_release_paused_resume_conflict'))
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows a generic failure toast and keeps the card on a network Error', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue(new Error('network down'))
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_failed'),
+        type: 'danger',
+      })
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('shows a generic failure toast and keeps the card on an actual 5xx response', async () => {
+      // Distinct from the network-Error case above -- this exercises the branch where
+      // axios DID get a response (an HTTPException-shaped 500), not just a rejected
+      // promise with no response at all.
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({
+        response: { status: 500, data: { code: 'internal_error', message: 'db unavailable' } },
+      })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_failed'),
+        type: 'danger',
+      })
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    it('disables both resume and release while a request is in flight, and prevents a double submit', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      let resolveDelete: (value: unknown) => void = () => {}
+      deleteRequest.mockReturnValue(new Promise(resolve => { resolveDelete = resolve }))
+      const { wrapper } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+
+      const releaseBtn = wrapper.find('[data-test="ai-miniplayer-release-paused"]')
+      await releaseBtn.trigger('click')
+      await nextTick()
+
+      expect(wrapper.find('[data-test="ai-miniplayer-release-paused"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test="ai-miniplayer-resume"]').attributes('disabled')).toBeDefined()
+
+      resolveDelete({ data: { ok: true, released: true, already_released: false } })
+      await flushPromises()
+      expect(deleteRequest).toHaveBeenCalledTimes(1)
       wrapper.unmount()
     })
   })

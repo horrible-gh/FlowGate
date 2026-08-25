@@ -145,6 +145,41 @@ class FlowGateStore:
             if hasattr(self._db, "commit"):
                 self._db.commit()
 
+    def _execute_affected(self, sql: str, params=None) -> int:
+        """Execute one write and return its actual affected-row count.
+
+        sqloader's three transaction adapters expose this through the live cursor:
+        SQLite returns that cursor from ``execute``; MySQL returns an integer but also
+        keeps ``transaction.cursor.rowcount``; PostgreSQL returns ``None`` and keeps
+        the count only on that cursor.  Running through ``transaction()`` therefore
+        gives one portable contract without dialect-specific SQL such as RETURNING,
+        ROW_COUNT(), or GET DIAGNOSTICS.
+
+        The count is read before the transaction context exits and closes its cursor.
+        A missing/negative count is not a successful write: callers using this method
+        need an exact CAS result, so fail closed instead of guessing from a later read.
+        """
+        txn = getattr(_tx_local, "txn", None)
+        if txn is None:
+            with self.transaction():
+                return self._execute_affected(sql, params)
+
+        sql = self._tr(sql)
+        _request_cache.invalidate()
+        result = txn.execute(sql, params or [])
+        rowcount = getattr(result, "rowcount", None)
+        if rowcount is None:
+            rowcount = getattr(getattr(txn, "cursor", None), "rowcount", None)
+        if rowcount is None and isinstance(result, int):
+            rowcount = result
+        try:
+            affected = int(rowcount)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("database driver did not expose affected row count") from exc
+        if affected < 0:
+            raise RuntimeError("database driver returned an unknown affected row count")
+        return affected
+
     def _fetch_one(self, sql: str, params=None) -> Optional[dict]:
         sql = self._tr(sql)
         txn = getattr(_tx_local, "txn", None)
