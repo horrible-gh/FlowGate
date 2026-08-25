@@ -62,16 +62,57 @@ def doc_code(doc: Optional[dict]) -> str:
 
 
 def commit_subject(doc: dict) -> str:
-    """L0007 §2.6 ``tr_commit_subject`` — ``0009-TR: 제목``, one line, clipped.
+    """flowgate.default.0462 T0005 §4-2 (supersedes L0007 §2.6's ``0009-TR: 제목`` rule)
+    — a conventional, ASCII-only commit subject for a TR approval.
 
-    Deliberately NOT translated: the document code in front already says what the commit
-    is, and a translate round-trip on every approval is not a cost this path can carry
-    (L0007 §2.6). The finalize subject rules are untouched.
+    Still NOT translated: no HTTP call, no 3s timeout, the L0007 §2.6 cost argument
+    stands. English instead comes from the TR's own ``commit_message`` draft (the
+    worker is asked for it in English, ``help_catalog.py``'s TR submit item) — the same
+    kind of draft ``git_service.resolve_commit_message()`` already prefers for the
+    finalize commit. Decision order, first match wins:
+
+    1. The draft, if it is non-empty, ASCII and within ``COMMIT_SUBJECT_MAX``: used as
+       the subject verbatim when it is already ``type(scope): summary``, otherwise
+       wrapped as ``{type}: {draft}`` with the type guessed from the group root doc.
+    2. Otherwise a fixed ASCII fallback, ``chore: approve {doc_code}`` — the document
+       stays identifiable without ever emitting non-ASCII text.
+
+    The document code no longer prefixes the subject when a draft is used (only the
+    fallback still carries it) — screens and the ledger read ``doc_code`` from the
+    document itself (:func:`doc_code`), never parsed back out of the commit message, so
+    dropping the prefix here changes nothing they show.
     """
-    title = (doc.get("title") or "").strip()
     code = doc_code(doc)
-    raw = f"{code}: {title}" if title else code
-    subject = git_service.normalize_subject(raw)
+    draft = git_service.normalize_subject(doc.get("commit_message"))
+    # stdlib str.isascii(), not git_service._is_ascii(): the two check the same
+    # thing, but _is_ascii is private to git_service and this would be its only
+    # caller outside that module (T0005 §4-2) — not worth crossing the module
+    # boundary for one already-duplicated one-liner.
+    if draft and draft.isascii() and len(draft) <= git_service.COMMIT_SUBJECT_MAX:
+        if git_service.is_conventional_subject(draft):
+            subject = draft
+        else:
+            try:
+                commit_type = git_service.derive_commit_type(doc.get("group_id")) or "chore"
+            except Exception:
+                # commit_subject() must never break an approval (module rule 1) —
+                # a type-guess failure just falls back to the generic type.
+                commit_type = "chore"
+            subject = git_service.conventional_subject(commit_type, draft)
+    elif code:
+        # Empty, non-ASCII and oversized drafts all fall through to here. The
+        # oversized case is the same treatment resolve_commit_message() already
+        # gives an oversized stored draft — "abnormal stored value (empty /
+        # oversized) → silently fall through" (git_service.py, resolve_commit_message)
+        # — so a draft that breaks the length rule is dropped, not truncated.
+        subject = git_service.TR_FALLBACK_SUBJECT.format(doc_code=code)
+    else:
+        try:
+            commit_type = git_service.derive_commit_type(doc.get("group_id")) or "chore"
+        except Exception:
+            commit_type = "chore"
+        subject = git_service.FIXED_FALLBACK_SUBJECT.format(commit_type=commit_type)
+    subject = git_service.normalize_subject(subject)
     return subject[:git_service.COMMIT_SUBJECT_MAX]
 
 
@@ -152,6 +193,18 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
         doc = document if document is not None else db_docs.get_by_id(doc_id)
         if not doc or (doc.get("type_code") or "").upper() != TR_TYPE_CODE:
             return None
+        if "commit_message" not in doc:
+            # flowgate.default.0462 T0005 §4-3 — the RPC approval route hands in the
+            # transition's result dict, which has no commit_message key at all (unlike
+            # a key present with value None, meaning "no draft was submitted"). Re-read
+            # the full row so commit_subject() sees the draft instead of every RPC
+            # approval silently landing on the fallback subject.
+            try:
+                refetched = db_docs.get_by_id(doc_id)
+            except Exception:
+                refetched = None
+            if refetched is not None:
+                doc = refetched
         group_id = doc.get("group_id")
         if not group_id:
             # No group means no worktree to commit into. Still a TR approval, so the

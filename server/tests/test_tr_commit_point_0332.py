@@ -301,8 +301,9 @@ def test_a_tr_approval_commits_and_leaves_one_live_row(real_store, monkeypatch):
 
     assert payload["committed"] is True
     assert payload["commit"] == "a1b2c3d"
-    # L0007 §2.6 — 제목은 짧은 코드 + 문서 제목이고 번역을 타지 않는다.
-    assert payload["subject"] == "0009-TR: 커밋 포인트 생성 작업레포트"
+    # flowgate.default.0462 T0005 §4-2 — L0007 §2.6 을 대체: 초안이 없으면(이 시드 문서의
+    # commit_message 는 NULL) ASCII 폴백이고, 번역은 여전히 타지 않는다.
+    assert payload["subject"] == "chore: approve 0009-TR"
     rows = db_ledger.list_by_group(_GROUP)
     assert [r["state"] for r in rows] == ["live"]
     assert rows[0]["commit_sha"] == "a1b2c3d" + "0" * 33
@@ -362,6 +363,108 @@ def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkey
     }
     # 그래도 커밋은 그대로 성공이다 — 경고이지 차단이 아니다.
     assert payload["committed"] is True
+
+
+# ── 3b. 승인 커밋 제목 규칙 (flowgate.default.0462 T0005) ─────────────────────
+
+def _draft_doc(commit_message=None, seq=9, title="커밋 포인트 생성 작업레포트"):
+    """``commit_subject()`` 는 dict 만 보므로 DB 없이도 결정 로직을 시험할 수 있다."""
+    return {
+        "doc_id": _TR_DOC, "seq": seq, "type_code": "TR", "title": title,
+        "commit_message": commit_message, "group_id": _GROUP,
+    }
+
+
+def test_a_conventional_ascii_draft_is_used_verbatim():
+    doc = _draft_doc(commit_message="fix(git): preserve finalized commit subject")
+    assert trc.commit_subject(doc) == "fix(git): preserve finalized commit subject"
+
+
+def test_a_non_conventional_ascii_draft_gets_the_derived_type_prefixed(real_store):
+    """`derive_commit_type()` 이 실제로 DB 를 읽고 돌려준 타입이 쓰인다 — 대역이 아니다."""
+    real_store._execute(
+        "INSERT INTO documents(doc_id, project_id, module, group_id, type_code, seq, "
+        "title, status, created_at, updated_at) VALUES (?, ?, 'default', ?, 'B', 1, "
+        "'버그', 'open', datetime('now'), datetime('now'))",
+        [f"{_GROUP}.0001-B", _PROJECT, _GROUP],
+    )
+    doc = _draft_doc(commit_message="preserve finalized commit subject")
+    assert trc.commit_subject(doc) == "fix: preserve finalized commit subject"
+
+
+def test_a_korean_draft_is_ignored_and_the_ascii_fallback_is_used():
+    doc = _draft_doc(commit_message="복구 API 오류 코드 정리")
+    subject = trc.commit_subject(doc)
+    assert subject == "chore: approve 0009-TR"
+    assert subject.isascii()
+
+
+def test_no_draft_falls_back_to_the_ascii_chore_subject():
+    doc = _draft_doc(commit_message=None)
+    assert trc.commit_subject(doc) == "chore: approve 0009-TR"
+
+
+def test_an_oversized_draft_falls_back_instead_of_being_clipped():
+    doc = _draft_doc(commit_message="x" * (svc.COMMIT_SUBJECT_MAX + 1))
+    assert trc.commit_subject(doc) == "chore: approve 0009-TR"
+
+
+def test_missing_commit_message_key_triggers_a_refetch_that_finds_the_draft(
+    real_store, monkeypatch,
+):
+    """T0005 §4-3 — RPC 승인 경로가 넘기는 dict 에는 commit_message 키 자체가 없다.
+    재조회가 실제로 도는지 본다."""
+    real_store._execute(
+        "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
+        ["fix(git): preserve finalized commit subject", _TR_DOC],
+    )
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": True, "commit": "abc1234", "commit_sha": "abc1234" + "0" * 33,
+        "subject": subject, "skipped_reason": None,
+        "excluded_artifacts": [], "committed_paths": [],
+    })
+    partial = {
+        "doc_id": _TR_DOC, "type_code": "TR", "group_id": _GROUP,
+        "title": "커밋 포인트 생성 작업레포트", "seq": 9,
+        # commit_message 키 자체가 없다 — RPC 경로(workflow.py:766)의 result dict 재현.
+    }
+
+    payload = trc.on_document_approved(_TR_DOC, partial)
+
+    assert payload["subject"] == "fix(git): preserve finalized commit subject"
+
+
+def test_a_commit_message_key_present_as_none_skips_the_refetch(real_store, monkeypatch):
+    """키가 있고 값이 None 이면 "초안 없음"이 확정된 정보다 — 재조회하지 않는다."""
+    real_store._execute(
+        "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
+        ["fix(git): preserve finalized commit subject", _TR_DOC],
+    )
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": True, "commit": "abc1234", "commit_sha": "abc1234" + "0" * 33,
+        "subject": subject, "skipped_reason": None,
+        "excluded_artifacts": [], "committed_paths": [],
+    })
+    partial = {
+        "doc_id": _TR_DOC, "type_code": "TR", "group_id": _GROUP,
+        "title": "커밋 포인트 생성 작업레포트", "seq": 9,
+        "commit_message": None,
+    }
+
+    payload = trc.on_document_approved(_TR_DOC, partial)
+
+    # DB 에는 영문 초안이 있어도, 넘겨받은 dict 가 "키 있음+None" 이므로 그 정보를 믿는다.
+    assert payload["subject"] == "chore: approve 0009-TR"
+
+
+def test_cancel_and_reapply_subjects_quote_the_new_style_subject():
+    original = "fix(git): preserve finalized commit subject"
+    assert svc.cancel_subject(original) == (
+        'Revert "fix(git): preserve finalized commit subject"'
+    )
+    assert svc.reapply_subject(original) == (
+        'Reapply "fix(git): preserve finalized commit subject"'
+    )
 
 
 # ── 4. 진짜 git 워크트리 ─────────────────────────────────────────────────────
@@ -494,6 +597,43 @@ def test_git_disabled_project_is_reported_not_raised(git_active, monkeypatch):
 
     assert result["committed"] is False
     assert result["skipped_reason"] == "git_inactive"
+
+
+@needs_git
+def test_the_approval_hook_produces_a_conventional_english_commit_in_real_git(
+    real_store, git_active, repo,
+):
+    """flowgate.default.0462 T0005 완료 기준 3 — 실제 승인 훅을 태워 커밋 제목을 실측한다
+    (초안이 있는 경우)."""
+    real_store._execute(
+        "UPDATE documents SET commit_message = ? WHERE doc_id = ?",
+        ["fix(git): preserve finalized commit subject", _TR_DOC],
+    )
+    (repo / "server").mkdir()
+    (repo / "server" / "real.py").write_text("y = 2\n", encoding="utf-8")
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["committed"] is True
+    subject = _git(["log", "-1", "--pretty=%s"], repo).strip()
+    assert subject == "fix(git): preserve finalized commit subject"
+    assert subject.isascii()
+
+
+@needs_git
+def test_the_approval_hook_falls_back_to_ascii_chore_when_no_draft(
+    real_store, git_active, repo,
+):
+    """완료 기준 3의 두 번째 실측 — 초안이 없는 경우."""
+    (repo / "server").mkdir()
+    (repo / "server" / "real.py").write_text("y = 3\n", encoding="utf-8")
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["committed"] is True
+    subject = _git(["log", "-1", "--pretty=%s"], repo).strip()
+    assert subject == "chore: approve 0009-TR"
+    assert subject.isascii()
 
 
 @needs_git
