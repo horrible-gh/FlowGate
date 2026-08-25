@@ -12,7 +12,15 @@ the Step 9 SSE broadcast (DOC_REVIEW_STATUS_CHANGED) is gated on
 never flipped back from the [Revision complete] rework toolbar to [Approve]/[Reject].
 
 These tests pin the relocated transition: it runs on every rejected resubmit,
-independent of the head, while register_workflow_result stays head-gated.
+independent of the head.
+
+0457 T0005 update: the registration is no longer head-gated either. B0046 left it
+behind on the head because "register_workflow_result still needs the head item id";
+0457 B0001 showed that was the wrong slot to hand it — see
+tests/test_reject_resubmit_own_slot_0457.py. The resubmit now re-registers into the
+slot the document itself is already in (get_item_by_result_doc_id), or into none. Both
+cases below still hold, and the second one is now true for a stronger reason: the N doc
+lands in the N slot because it is *its own*, not because the head happened to match.
 
 Mirrors the T820 self-contained SQLite harness (no sqloader).
 """
@@ -300,7 +308,7 @@ def test_timemachine_head_mismatch_still_transitions_to_revised(tmp_path):
 
 
 def test_normal_reject_rework_transitions_and_registers(tmp_path):
-    """Regression: in the normal flow (head matches the rejected doc), the resubmit
+    """Regression: in the normal flow (one slot, holding the rejected doc), the resubmit
     still transitions rejected→revised AND registers the workflow result."""
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import workflow_sequences as db_wfseq
@@ -332,7 +340,8 @@ def test_normal_reject_rework_transitions_and_registers(tmp_path):
 
     doc = db_docs.get_by_id(n_doc)
     assert doc["doc_review_status"] == "revised", doc["doc_review_status"]
-    # register_workflow_result ran (head matched) → the N slot now points at the resubmit.
+    # register_workflow_result ran (the doc's own slot was found) → the N slot still
+    # points at the resubmit, now re-registered rather than merely left in place.
     refreshed = db_wfseq.get_item_by_result_doc_id(n_doc)
     assert refreshed is not None and refreshed["type"] == "N"
 

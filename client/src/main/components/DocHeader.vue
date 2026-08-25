@@ -388,6 +388,10 @@ const hasGroup = computed(() => !!doc.value?.group_id)
 const mentionText = ref('')
 const workflowSteps = ref<string[] | null>(null)
 const workflowOrphan = ref(false)
+// 0457 T0009 §3: candidate empty slots for an orphaned document (item_seq/type/empty),
+// read alongside workflow.orphan so DocInfoPanel can target a specific slot instead of
+// blindly posting an empty recover body.
+const workflowCandidateSlots = ref<Array<{ item_seq: number; type: string; empty: boolean }>>([])
 const qAnswerStatus = ref<string | null>(null)
 
 const editingTitle = ref(false)
@@ -540,9 +544,12 @@ async function fetchWorkflowOrphan(id: string, generation: number): Promise<void
     const res = await getRequest<any>('/api/v1/document/' + encodeURIComponent(id) + '/relations')
     if (generation !== docFetchGeneration || props.tab.id !== id) return
     workflowOrphan.value = res.data?.workflow?.orphan === true
+    const slots = res.data?.workflow?.candidate_slots
+    workflowCandidateSlots.value = Array.isArray(slots) ? slots : []
   } catch {
     if (generation !== docFetchGeneration || props.tab.id !== id) return
     workflowOrphan.value = false
+    workflowCandidateSlots.value = []
   }
   emit('doc-updated', { docId: id })
 }
@@ -554,6 +561,7 @@ async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolea
     doc.value = null
     workflowSteps.value = null
     workflowOrphan.value = false
+    workflowCandidateSlots.value = []
     ownerName.value = null
     groupLabel.value = null
     groupTitle.value = ''
@@ -1279,6 +1287,7 @@ defineExpose({
   deciding,
   workflowSteps,
   workflowOrphan,
+  workflowCandidateSlots,
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,

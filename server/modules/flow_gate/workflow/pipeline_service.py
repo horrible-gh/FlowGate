@@ -29,6 +29,8 @@ from modules.flow_gate.storage import paths as storage_paths
 
 from .event_logger import (
     EVT_GROUP_APPROVED,
+    EVT_WORKFLOW_SLOT_CONFLICT,
+    log_event,
     log_group_approved,
     log_group_completion_candidate,
     log_state_changed,
@@ -46,6 +48,94 @@ _log = logging.getLogger(__name__)
 
 class TransitionError(Exception):
     """Attempted an invalid transition."""
+
+
+class WorkflowSlotConflictError(Exception):
+    """A workflow slot already holds a different document (0457 B0001 / NR0003 §7-3).
+
+    Carries the three identifiers an operator needs to trace a refused eviction — which
+    slot, what was in it, and what tried to take it — and exposes them in the same
+    ``{"error": {"code": ...}}`` shape as
+    :class:`modules.flow_gate.services.mutation_policy.MutationPolicyError`, so an API
+    layer can answer 409 without parsing an English sentence back apart.
+    """
+
+    code = "workflow_slot_occupied"
+
+    def __init__(
+        self,
+        *,
+        item_id: int,
+        existing_doc_id: str | None,
+        requested_doc_id: str,
+    ):
+        message = (
+            f"Workflow slot item_id={item_id} is already held by {existing_doc_id}; "
+            f"refusing to overwrite it with {requested_doc_id}."
+        )
+        super().__init__(message)
+        self.item_id = item_id
+        self.existing_doc_id = existing_doc_id
+        self.requested_doc_id = requested_doc_id
+        self.error = {
+            "code": self.code,
+            "message": message,
+            "item_id": item_id,
+            "existing_doc_id": existing_doc_id,
+            "requested_doc_id": requested_doc_id,
+        }
+
+    def body(self) -> dict:
+        return {"error": self.error}
+
+
+class WorkflowDocumentAlreadyLinkedError(WorkflowSlotConflictError):
+    """The document being registered already occupies a *different* slot (0457 T0007).
+
+    The sibling refusal to :class:`WorkflowSlotConflictError`, and the mirror image of it.
+    That one defends the target slot: it holds someone else's document, so do not evict it.
+    This one defends the document: it is already somebody's slot's result, so do not link
+    it to a second slot. B0001 produced exactly this shape — 0454's ``0005-TR`` sitting in
+    slots 4 and 6 at once — and migration 090's uq_wfseq_items_result_doc now refuses it at
+    the database. Raised here so the refusal arrives as an identified workflow conflict
+    rather than as a driver's IntegrityError, and so the check does not depend on which
+    engine is underneath.
+
+    Deliberately a *subclass*: every caller that already answers 409 to a refused slot
+    write answers 409 to this one without being taught about it, while ``code`` keeps the
+    two distinguishable for anyone who looks. The occupancy conflict keeps its own meaning
+    — it is still raised, unchanged, whenever the target slot holds another document.
+
+    ``existing_item_id`` names the slot that already holds the document; ``item_id`` is the
+    slot the caller was trying to write. ``existing_doc_id`` is None because the target
+    slot's occupant is not what is wrong here.
+    """
+
+    code = "workflow_document_already_linked"
+
+    def __init__(
+        self,
+        *,
+        item_id: int,
+        existing_item_id: int | None,
+        requested_doc_id: str,
+    ):
+        message = (
+            f"Document {requested_doc_id} already occupies workflow slot "
+            f"item_id={existing_item_id}; refusing to link it to item_id={item_id} as well."
+        )
+        Exception.__init__(self, message)
+        self.item_id = item_id
+        self.existing_item_id = existing_item_id
+        self.existing_doc_id = None
+        self.requested_doc_id = requested_doc_id
+        self.error = {
+            "code": self.code,
+            "message": message,
+            "item_id": item_id,
+            "existing_item_id": existing_item_id,
+            "requested_doc_id": requested_doc_id,
+        }
 
 
 class PermissionError(Exception):
@@ -709,6 +799,40 @@ def record_rejection_response(
 
 # ── Workflow result registration ──────────────────────────────────────────────
 
+def _log_workflow_slot_conflict(
+    conflict: WorkflowSlotConflictError, *, actor_user_id: str
+) -> None:
+    """Record a refused slot write in workflow_events (0457 NR0003 §7-4).
+
+    Takes either refusal — the slot is held by another document
+    (:class:`WorkflowSlotConflictError`) or the document already holds another slot
+    (:class:`WorkflowDocumentAlreadyLinkedError`, 0457 T0007). Both land under the same
+    ``workflow_slot_conflict`` event type; ``metadata.code`` tells them apart, so an
+    operator reconstructing an incident sees one stream of refused writes rather than two.
+
+    Best-effort on purpose: the caller is about to receive the conflict itself, so a
+    failure to write the audit row must not replace it with a different error.
+    """
+    try:
+        doc = db_docs.get_by_id(conflict.requested_doc_id) or {}
+        project_id = doc.get("project_id")
+        if not project_id:
+            return
+        log_event(
+            event_type=EVT_WORKFLOW_SLOT_CONFLICT,
+            project_id=project_id,
+            actor_user_id=actor_user_id,
+            group_id=doc.get("group_id"),
+            document_id=doc.get("id"),
+            metadata=conflict.error,
+        )
+    except Exception as exc:  # pragma: no cover - audit must never mask the conflict
+        _log.warning(
+            "[workflow] slot conflict audit event failed (item_id=%s, requested=%s): %s",
+            conflict.item_id, conflict.requested_doc_id, exc,
+        )
+
+
 def register_workflow_result(
     *,
     item_id: int,
@@ -717,9 +841,33 @@ def register_workflow_result(
     registered_at: str,
     actor_user_id: str,
 ) -> dict | None:
-    """Register a workflow result — INSERT into workflow_item_results and set result_doc_id.
+    """Register a workflow result — claim the slot, then INSERT into workflow_item_results.
 
     DB004 §6.3: set workflow_sequence_items.result_doc_id when registering a result doc.
+
+    0457 B0001 / NR0003 §7-3 — the occupancy invariant. A slot is claimable only when it
+    is empty or already holds ``registered_doc_id``; a slot holding a *different*
+    document raises :exc:`WorkflowSlotConflictError` and keeps what it has. Re-registering
+    the same document stays allowed, because that is what every rejected-resubmit
+    revision does to its own slot.
+
+    0457 T0007 / NR0003 §7-1 — the other half of the same invariant, now enforced by
+    uq_wfseq_items_result_doc (migration 090): one document, one slot. Linking a document
+    that already occupies a different slot raises
+    :exc:`WorkflowDocumentAlreadyLinkedError` even when the target slot is empty. Both
+    refusals leave the data and the ledger exactly as they were.
+
+    Two details of the order matter and are not incidental:
+
+    * The claim is a conditional UPDATE (``db.workflow_sequences.claim_item_result_doc_id``),
+      not a read followed by a write. Two callers racing for the same empty slot are
+      resolved by the database, so exactly one wins and the loser writes nothing at all.
+    * The claim runs **before** the ledger INSERT. The old order wrote
+      ``workflow_item_results`` first, so a registration that had no business happening
+      still left a row that reads like a successful one — that ledger is precisely what
+      NR0003 §3 had to untangle to date the eviction. Now a refused attempt leaves no
+      ledger row, and the refusal itself is what gets recorded (as a
+      ``workflow_slot_conflict`` event).
 
     .. deprecated:: T601
         The doc_review_status transition logic was removed from this function.
@@ -728,13 +876,59 @@ def register_workflow_result(
     """
     from modules.flow_gate.db import workflow_sequences as _db_wfseq
 
+    # 0457 T0007: the document may already be some other slot's result. Migration 090
+    # makes that a unique-index violation, which would surface as the driver's
+    # IntegrityError — engine-specific, and a 500 on paths that already know how to
+    # answer 409. Ask the reverse lookup first and refuse in the vocabulary the callers
+    # speak. Re-registering into the slot it is already in is not this case and stays
+    # allowed: that is what every rejected-resubmit revision does.
+    linked = _db_wfseq.get_item_by_result_doc_id(registered_doc_id)
+    if linked is not None and linked.get("id") != item_id:
+        already = WorkflowDocumentAlreadyLinkedError(
+            item_id=item_id,
+            existing_item_id=linked.get("id"),
+            requested_doc_id=registered_doc_id,
+        )
+        _log_workflow_slot_conflict(already, actor_user_id=actor_user_id)
+        raise already
+
+    # `item is None` means the row does not exist — there is no occupant to defend and
+    # the conditional UPDATE was a no-op, so this keeps the pre-0457 behaviour of
+    # recording the result rather than inventing a conflict against a missing slot.
+    #
+    # The lookup above is a check, not a lock, so a claim can still lose the same race the
+    # CAS below resolves — the constraint is what actually decides it. Re-read rather than
+    # inspect the driver's error: if the document ended up in a slot that is not this one,
+    # this call is the loser and gets the same refusal it would have got a moment earlier.
+    try:
+        item = _db_wfseq.claim_item_result_doc_id(item_id, registered_doc_id)
+    except Exception as claim_exc:
+        raced = _db_wfseq.get_item_by_result_doc_id(registered_doc_id)
+        if raced is None or raced.get("id") == item_id:
+            raise
+        already = WorkflowDocumentAlreadyLinkedError(
+            item_id=item_id,
+            existing_item_id=raced.get("id"),
+            requested_doc_id=registered_doc_id,
+        )
+        _log_workflow_slot_conflict(already, actor_user_id=actor_user_id)
+        raise already from claim_exc
+    occupant = (item or {}).get("result_doc_id")
+    if item is not None and occupant != registered_doc_id:
+        conflict = WorkflowSlotConflictError(
+            item_id=item_id,
+            existing_doc_id=occupant,
+            requested_doc_id=registered_doc_id,
+        )
+        _log_workflow_slot_conflict(conflict, actor_user_id=actor_user_id)
+        raise conflict
+
     db_wir.insert_result(
         item_id=item_id,
         registered_path=registered_path,
         registered_doc_id=registered_doc_id,
         registered_at=registered_at,
     )
-    _db_wfseq.set_item_result_doc_id(item_id, registered_doc_id)
 
     return db_docs.get_by_id(registered_doc_id)
 

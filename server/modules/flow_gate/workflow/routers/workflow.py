@@ -34,11 +34,13 @@ from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.services.mutation_policy import MutationPolicyError
 
 from ..pipeline_service import (
     PermissionError as WFPermissionError,
     TransitionError,
     create_group,
+    WorkflowSlotConflictError,
     register_workflow_result,
     transition_document,
     transition_document_review,
@@ -576,42 +578,33 @@ def recover_orphaned_workflow_document_endpoint(
 
     type_code = str(doc.get("type_code") or "").upper()
     if type_code in NON_SLOT_WORKFLOW_TYPES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Document type {type_code} is not a recoverable workflow slot type.",
+        raise MutationPolicyError(
+            409,
+            "slot_type_not_recoverable",
+            f"Document type {type_code} is not a recoverable workflow slot type.",
         )
 
     if not db_wfseq.is_orphaned_workflow_member(doc_id):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Document {doc_id} is not an orphaned workflow member.",
+        raise MutationPolicyError(
+            409,
+            "not_orphaned",
+            f"Document {doc_id} is not an orphaned workflow member.",
         )
 
     group_id = doc.get("group_id")
     project_id = doc.get("project_id")
     if not group_id or not project_id:
-        raise HTTPException(
-            status_code=409,
-            detail="The orphaned document has no group or project and cannot be recovered.",
+        raise MutationPolicyError(
+            409,
+            "no_group_or_project",
+            "The orphaned document has no group or project and cannot be recovered.",
         )
 
     target = None
     if body.item_seq is None:
         target = db_wfseq.get_pending_head_by_group(group_id, project_id)
     else:
-        roots = [
-            row for row in (db_docs.get_documents_by_group_id(group_id) or [])
-            if str(row.get("type_code") or "").upper() in {"R", "B"}
-        ]
-        sequence = next(
-            (
-                seq for root in roots
-                if root.get("doc_id")
-                for seq in [db_wfseq.get_sequence_by_doc_id(root["doc_id"])]
-                if seq is not None
-            ),
-            None,
-        )
+        sequence = db_wfseq.find_sequence_by_group_root(group_id)
         if sequence is not None:
             target = next(
                 (
@@ -623,14 +616,16 @@ def recover_orphaned_workflow_document_endpoint(
 
     if target is None:
         requested = "the current workflow head" if body.item_seq is None else f"item_seq={body.item_seq}"
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot recover {doc_id}: {requested} does not identify an available slot.",
+        raise MutationPolicyError(
+            409,
+            "no_available_slot",
+            f"Cannot recover {doc_id}: {requested} does not identify an available slot.",
         )
     if target.get("result_doc_id"):
-        raise HTTPException(
-            status_code=409,
-            detail=(
+        raise MutationPolicyError(
+            409,
+            "slot_occupied",
+            (
                 f"Cannot recover {doc_id}: workflow slot item_seq={target.get('item_seq')} "
                 f"is already filled by {target.get('result_doc_id')}."
             ),
@@ -639,9 +634,10 @@ def recover_orphaned_workflow_document_endpoint(
     expected_type = str(target.get("type") or "").upper()
     actual_type = str(doc.get("type_code") or "").upper()
     if expected_type != actual_type:
-        raise HTTPException(
-            status_code=409,
-            detail=(
+        raise MutationPolicyError(
+            409,
+            "slot_type_mismatch",
+            (
                 f"Cannot recover {doc_id}: workflow slot item_seq={target.get('item_seq')} "
                 f"expects type {expected_type}, but the document type is {actual_type}."
             ),
@@ -649,18 +645,34 @@ def recover_orphaned_workflow_document_endpoint(
 
     file_path = doc.get("file_path")
     if not file_path:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot recover {doc_id}: the document has no registered file path.",
+        raise MutationPolicyError(
+            409,
+            "no_file_path",
+            f"Cannot recover {doc_id}: the document has no registered file path.",
         )
 
-    registered = register_workflow_result(
-        item_id=target["id"],
-        registered_path=storage_paths.to_storage_relative(file_path, project_id),
-        registered_doc_id=doc_id,
-        registered_at=now_iso(),
-        actor_user_id=current_user["user_id"],
-    )
+    # 0457 T0005: the occupancy check above reads the slot, this claims it, and between
+    # the two another registration can land. register_workflow_result refuses to evict
+    # in that case; surface the refusal as the same 409 the pre-check would have given
+    # instead of a 500. The pre-check stays — it answers before any write and can name
+    # item_seq, which the exception (slot id only) cannot.
+    try:
+        registered = register_workflow_result(
+            item_id=target["id"],
+            registered_path=storage_paths.to_storage_relative(file_path, project_id),
+            registered_doc_id=doc_id,
+            registered_at=now_iso(),
+            actor_user_id=current_user["user_id"],
+        )
+    except WorkflowSlotConflictError as exc:
+        raise MutationPolicyError(
+            409,
+            "slot_occupied",
+            (
+                f"Cannot recover {doc_id}: workflow slot item_seq={target.get('item_seq')} "
+                f"is already filled by {exc.existing_doc_id}."
+            ),
+        ) from exc
     return {
         "document": registered,
         "item_seq": target.get("item_seq"),

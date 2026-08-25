@@ -4195,30 +4195,56 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # below is gated on doc_review_status == 'revised' — no DOC_REVIEW_STATUS_CHANGED was
     # broadcast, leaving the reviewer's action bar stuck on the [Revision complete] rework toolbar
     # instead of flipping back to Approve/Reject. Separate the transition out of the head guard
-    # so it always runs on a rejected resubmit (NR0003 candidate 2). register_workflow_result
-    # still needs the head item id, so only IT stays head-gated.
+    # so it always runs on a rejected resubmit (NR0003 candidate 2).
+    #
+    # 0457 B0001 / NR0003 §1: the other half — the re-registration — is no longer gated on
+    # the head either, because the head was the wrong question to ask. B0046 left it here
+    # reasoning that register_workflow_result "needs the head item id"; it needs *a slot
+    # id*, and the correct one is the slot this document is already in. Asking
+    # get_in_progress_head_by_group (the one selector ordered by updated_at DESC rather
+    # than sort_order) returned the most recently touched slot, and when a plan pours two
+    # sets the sequence holds two slots of the same type — so the `head.type == doc_type`
+    # check passed on a stranger's slot and the resubmit evicted the document sitting
+    # there. A resubmit belongs in its own slot or in none: get_item_by_result_doc_id is
+    # the reverse lookup that answers exactly that, and when it answers nothing (the doc
+    # was never registered, or a reopen detached it) the registration is simply skipped —
+    # the transition below still runs, so 'revised' and the Step 9 SSE are unaffected.
+    #
+    # The registration is deliberately NOT wrapped in a catch-all any more. A conflict
+    # here means something tried to take a slot that is not its own; swallowing it into a
+    # log line is how B0001 stayed invisible for a day. It fails the request.
     if edit_reason == "rejected":
         from modules.flow_gate.db import workflow_sequences as _db_wfseq
         from modules.flow_gate.workflow.pipeline_service import (
             TransitionError,
+            WorkflowSlotConflictError,
             record_rejection_response,
             register_workflow_result,
             transition_document_review,
         )
         import LogAssist.log as logger
-        doc_type_code = existing_doc.get("type_code", "").upper()
-        try:
-            head_item = _db_wfseq.get_in_progress_head_by_group(group["group_id"], project)
-            if head_item is not None and head_item.get("type") == doc_type_code:
+        own_item = _db_wfseq.get_item_by_result_doc_id(doc_id)
+        if own_item is not None:
+            try:
                 register_workflow_result(
-                    item_id=head_item["id"],
+                    item_id=own_item["id"],
                     registered_path=to_storage_relative(stored_path, project),
                     registered_doc_id=doc_id,
                     registered_at=now,
                     actor_user_id=actor_user_id,
                 )
-        except Exception as _rwr_exc:
-            logger.warning(f"[inbox edit] Step 7.5 register_workflow_result failed (ignored): {_rwr_exc}")
+            except WorkflowSlotConflictError as _slot_exc:
+                # Reached only if the slot changed hands between the reverse lookup and
+                # the claim. Answer 409 rather than letting it read as a server fault,
+                # and name both documents so the eviction attempt is legible without
+                # opening the log. The token is not consumed (Step 8 is below), so the
+                # worker can retry once the slot is sorted out.
+                return _fail(
+                    409,
+                    f"Cannot re-register {doc_id}: workflow slot item_id="
+                    f"{_slot_exc.item_id} is held by {_slot_exc.existing_doc_id}. "
+                    "The rejected document was not attached to another document's slot.",
+                )
         # DB004 §6.1: the doc_review_status transition is the caller's responsibility and is
         # INDEPENDENT of the workflow head — transition_document_review reads only the doc's
         # own doc_review_status. Run it unconditionally so a rejected resubmit always advances

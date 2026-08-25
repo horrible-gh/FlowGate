@@ -58,6 +58,16 @@ EVT_TEST_RUN_REPAIR_EXHAUSTED = "test_run_repair_exhausted"
 #   one row per hop, so unrelated to 0118's per-step flood, and it is **not** raised onto the
 #   notification feed — it records normal behaviour, not an incident needing human action.
 EVT_CONTINUATION_HEAD_AUTO_HANDLED = "continuation_head_auto_handled"
+# EVT_WORKFLOW_SLOT_CONFLICT — flowgate.default.0457 B0001 / NR0003 §7-4. A registration
+#   that tried to put a document into a slot another document already holds, and was
+#   refused. Before 0457 the opposite happened — the eviction went through and left no
+#   event at all, so the only way to learn a document had been pushed out of its slot was
+#   to read the workflow_item_results ledger afterwards and notice the slot had changed
+#   hands (NR0003 §3). This records the attempt itself, with the slot and both document
+#   ids. It fires only on a refused write, so it cannot flood; it is deliberately NOT in
+#   dashboard_service._NOTIFICATION_EVENT_TYPES — the caller already gets a 409/exception,
+#   and this row exists for the operator reconstructing what happened afterwards.
+EVT_WORKFLOW_SLOT_CONFLICT = "workflow_slot_conflict"
 
 
 def log_event(

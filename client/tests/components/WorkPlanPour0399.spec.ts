@@ -451,6 +451,7 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
     expect(body.items).toContainEqual({
       type: 'DB', label: 'DB', note: '',
       source_doc_id: WP_DOC_ID, source_revision_no: 1,
+      provider_id: null, provider_display_name: null,
     })
   })
 
@@ -487,17 +488,28 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
     expect(url).toBe('/api/v1/workflow/sequence')
     expect(body.doc_id).toBe(OWNER_DOC_ID)
     expect(body.expected_workflow_tag).toBe('seq451-r73510-i6')
+    // WorkflowDecisionModal.vue applyPour()/save() always carries provider_id/
+    // provider_display_name through each row (defaulting to null when the pour
+    // payload has none), alongside note/source.
     expect(body.items).toEqual([
-      { type: 'P', label: '프로토콜설계', note: '', source_doc_id: null, source_revision_no: null },
+      {
+        type: 'P', label: '프로토콜설계', note: '', source_doc_id: null, source_revision_no: null,
+        provider_id: null, provider_display_name: null,
+      },
       {
         type: 'P', label: '프로토콜설계', note: '레거시 API 호환 확인',
         source_doc_id: WP_DOC_ID, source_revision_no: 1,
+        provider_id: null, provider_display_name: null,
       },
       {
         type: 'T', label: '작업지시', note: '테스트 포함 구현',
         source_doc_id: WP_DOC_ID, source_revision_no: 1,
+        provider_id: null, provider_display_name: null,
       },
-      { type: 'TR', label: '작업레포트', note: '', source_doc_id: null, source_revision_no: null },
+      {
+        type: 'TR', label: '작업레포트', note: '', source_doc_id: null, source_revision_no: null,
+        provider_id: null, provider_display_name: null,
+      },
     ])
   })
 
@@ -531,6 +543,7 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
             id: 1, item_seq: 5, type: 'P', label: '프로토콜설계', doc_class: 'R',
             sort_order: 0, status: 'pending', note: '남아 있던 멘트',
             source_doc_id: WP_DOC_ID, source_revision_no: 1,
+            provider_id: null, provider_display_name: null,
           },
         ],
       },
@@ -547,6 +560,7 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
     expect(body.items).toEqual([{
       type: 'P', label: '프로토콜설계', note: '남아 있던 멘트',
       source_doc_id: WP_DOC_ID, source_revision_no: 1,
+      provider_id: null, provider_display_name: null,
     }])
   })
 

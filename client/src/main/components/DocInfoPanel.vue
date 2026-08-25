@@ -28,8 +28,8 @@
           <p class="dip-status-desc">{{ statusDesc }}</p>
           <div v-if="orphan" class="dip-orphan-warning">
             <AppIcon name="warning" />
-            <p>{{ t('main.doc_info_panel.orphan_desc') }}</p>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="recovering" @click="recoverOrphan">
+            <p>{{ recoverableSlot ? t('main.doc_info_panel.orphan_desc') : t('main.doc_info_panel.orphan_no_slot_desc') }}</p>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="recovering || !recoverableSlot" @click="recoverOrphan">
               {{ t(recovering ? 'main.doc_info_panel.orphan_recovering' : 'main.doc_info_panel.orphan_recover') }}
             </button>
           </div>
@@ -541,6 +541,9 @@ const props = defineProps<{
   qStatus?: string | null
   workflowSteps?: string[] | null
   orphan?: boolean
+  // 0457 T0009 §3: candidate empty workflow slots (item_seq/type/empty), used to decide
+  // whether the recover button can target a real slot instead of posting a blind {}.
+  candidateSlots?: Array<{ item_seq: number; type: string; empty: boolean }>
   selfIndex?: number | null
   stepStates: StepState[]
   nextStepIndex: number | null
@@ -1001,16 +1004,44 @@ watch(qaProjectId, (projectId) => {
 const { showToast } = useToast()
 const recovering = ref(false)
 
+// 0457 T0009 §3: the first candidate slot whose type matches this document and is
+// still empty. candidate_slots already arrives sort_order ASC (server side), so the
+// first match IS the earliest recoverable slot — no separate sort_order field to read.
+const recoverableSlot = computed(() => {
+  const wanted = (props.typeCode ?? '').toUpperCase()
+  if (!wanted) return null
+  const slots = props.candidateSlots ?? []
+  return slots.find((slot) => (slot.type ?? '').toUpperCase() === wanted && slot.empty === true) ?? null
+})
+
+// 0457 T0009 §1/§3: the server now names every recover-refusal reason with a stable
+// error.code ({error:{code,message}}); map each to Korean/English/Japanese copy and
+// never surface the server's English message string on screen.
+const ORPHAN_RECOVER_ERROR_KEYS: Record<string, string> = {
+  slot_type_not_recoverable: 'main.doc_info_panel.orphan_recover_error_slot_type_not_recoverable',
+  not_orphaned: 'main.doc_info_panel.orphan_recover_error_not_orphaned',
+  no_group_or_project: 'main.doc_info_panel.orphan_recover_error_no_group_or_project',
+  no_available_slot: 'main.doc_info_panel.orphan_recover_error_no_available_slot',
+  slot_occupied: 'main.doc_info_panel.orphan_recover_error_slot_occupied',
+  slot_type_mismatch: 'main.doc_info_panel.orphan_recover_error_slot_type_mismatch',
+  no_file_path: 'main.doc_info_panel.orphan_recover_error_no_file_path',
+}
+
 async function recoverOrphan() {
-  if (!props.orphan || recovering.value) return
+  if (!props.orphan || recovering.value || !recoverableSlot.value) return
   recovering.value = true
   try {
-    await postRequest('/api/v1/documents/' + encodeURIComponent(props.docId) + '/workflow/recover', {})
+    await postRequest(
+      '/api/v1/documents/' + encodeURIComponent(props.docId) + '/workflow/recover',
+      { item_seq: recoverableSlot.value.item_seq },
+    )
     showToast(t('main.doc_info_panel.orphan_recovered'), 'success')
     emit('orphan-recovered')
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(t('main.doc_info_panel.orphan_recover_failed', { detail }), 'danger')
+    const code = e?.response?.data?.error?.code
+    const key = (typeof code === 'string' && ORPHAN_RECOVER_ERROR_KEYS[code])
+      || 'main.doc_info_panel.orphan_recover_failed'
+    showToast(t(key), 'danger')
   } finally {
     recovering.value = false
   }

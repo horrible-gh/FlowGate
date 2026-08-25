@@ -242,9 +242,17 @@ def test_anchor_a_report_doc_when_in_progress(seed_data):
     """(a) If a produced TR document exists (awaiting review), redirect to that document."""
     from modules.flow_gate.services import q_service
     # 'B0002' spine with the TR step already linked to an in-progress TR doc.
+    #
+    # The T slot gets its own instruction document rather than reusing TDOC, which the
+    # test above already put in another sequence's slot. A document belongs to exactly one
+    # slot — from 0457 migration 090 that is a unique index, so sharing one here seeded a
+    # state the product cannot reach and the insert is now refused. tdoc2 mirrors what the
+    # end-to-end tests below already do for their own spines.
     spine2 = "anchorprj-__ALL__-0059-B0002"
+    tdoc2 = "anchorprj-__ALL__-0059-T0012"
     _mk_doc(spine2, "B", 2, review_status="wf_in_progress")
-    _seed_sequence(spine2, [("T", 0, TDOC), ("TR", 1, TRDOC)])
+    _mk_doc(tdoc2, "T", 12, review_status="approved")
+    _seed_sequence(spine2, [("T", 0, tdoc2), ("TR", 1, TRDOC)])
     assert q_service.resolve_question_anchor(spine2) == TRDOC
 
 
