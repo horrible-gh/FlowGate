@@ -1338,6 +1338,7 @@ export default {
       error_release_paused_forbidden: 'このチェーンを一時停止したユーザー(または管理者)以外は解除できません。',
       error_release_paused_resume_conflict: '別のセッションですでに再開されたため解除できませんでした。',
       error_release_paused_lease_conflict: 'グループのロック(lease)が使用中のため解除できませんでした。別途ロック解除が必要な場合があります。',
+      error_release_paused_release_conflict: '解除が完了する前により新しい一時停止またはシステム停止情報に置き換えられたため解除できませんでした。最新の状態に更新しました。',
       error_release_paused_failed: '停止カードの解除に失敗しました。',
       release_paused_success: '一時停止したチェーンの再開情報を解除しました。',
     },

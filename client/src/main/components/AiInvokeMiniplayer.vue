@@ -507,6 +507,12 @@ async function doReleasePaused(entry: AiInvokeRunEntry): Promise<void> {
       // group lease needs a separate release from the locked-group screen, not a
       // retry of this button.
       showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
+    } else if (status === 409 && code === 'release_conflict') {
+      // 0459 TR0008 rev5: distinct from run_already_active below -- the chain was
+      // NOT resumed by anyone. A newer pause/system-stop row won the CAS race and
+      // is still sitting there paused. "already resumed elsewhere" would be false;
+      // store.releasePaused() already bootstrap()s the card back to that current row.
+      showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
     } else if (status === 409) {
       showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
     } else {

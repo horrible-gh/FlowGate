@@ -1217,6 +1217,44 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       wrapper.unmount()
     })
 
+    it('shows a distinct release-conflict toast (not "already resumed") on 409 release_conflict', async () => {
+      // 0459 TR0008 rev5: release_conflict means a NEWER pause/system-stop row won
+      // the CAS race -- the chain was never resumed by anyone, so it must not reuse
+      // the run_already_active/"already resumed elsewhere" toast above, and must not
+      // collapse into the group_lease_active toast either.
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({
+        response: { status: 409, data: { code: 'release_conflict' } },
+      })
+      const { wrapper, store } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{ group_id: GROUP, doc_ref: `${GROUP}.0001-B`, paused_at: '2026-08-25T10:05:00+09:00' }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      const toast = useToast().toasts.value.at(-1)
+      expect(toast).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_release_conflict'),
+        type: 'danger',
+      })
+      expect(toast?.message).not.toBe(t('main.ai_miniplayer.error_release_paused_resume_conflict'))
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
     it('shows a generic failure toast and keeps the card on a network Error', async () => {
       vi.spyOn(window, 'confirm').mockReturnValue(true)
       deleteRequest.mockRejectedValue(new Error('network down'))

@@ -6,9 +6,9 @@ Covers the server half of NR0003 방향 C / WP T#2:
     NULL-safe on ``paused_at``/``stop_run_id``, race survival (a row upserted after the
     caller's read is never taken), a control case proving a bare ``delete_by_group``
     would have destroyed that newer row, AND (0459 TR0008 rev1) a write that lands
-    strictly between the initial SELECT and the DELETE statement itself -- the exact
-    0-row-affected race the rev0 review rejection flagged, since ``_execute`` exposes
-    no rowcount and the earlier double always cleared its row unconditionally.
+    strictly between the initial SELECT and the DELETE statement itself, plus two
+    processes deleting the same snapshot -- the exact zero-row CAS races now proved
+    by the production store's affected-row contract instead of a post-SELECT guess.
   * Service layer (``ai_invoke_service.release_paused_chain``): owner/admin-only,
     403 + row preserved for a third party, idempotent 200 (``already_released``) on
     repeat or on an absent row (never 404), 409 ``run_already_active`` when an active
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -52,7 +53,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from modules.flow_gate.api.v1 import ai_invoke_routes as routes  # noqa: E402
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
+from modules.flow_gate.db import dialect as _dialect  # noqa: E402
 from modules.flow_gate.db import group_ai_leases as db_leases  # noqa: E402
+from modules.flow_gate.db.connection import FlowGateStore  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 from modules.flow_gate.services import mutation_policy  # noqa: E402
 
@@ -66,6 +69,40 @@ ADMIN = "usr_admin"
 # ══════════════════════════════════════════════════════════════════════════════════════
 # Doubles
 # ══════════════════════════════════════════════════════════════════════════════════════
+
+class _RowcountCursor:
+    def __init__(self, rowcount):
+        self.rowcount = rowcount
+
+
+class _RowcountTransaction:
+    def __init__(self, execute_shape, rowcount):
+        self.cursor = _RowcountCursor(rowcount)
+        self._shape = execute_shape
+
+    def execute(self, _sql, _params):
+        if self._shape == "cursor":       # SQLite transaction adapter
+            return self.cursor
+        if self._shape == "integer":      # MySQL transaction adapter
+            return self.cursor.rowcount
+        return None                       # PostgreSQL transaction adapter
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _RowcountDb:
+    db_type = None
+
+    def __init__(self, execute_shape, rowcount):
+        self.txn = _RowcountTransaction(execute_shape, rowcount)
+
+    def begin_transaction(self):
+        return self.txn
+
 
 class FakePausedStore:
     """Dict-backed stand-in for the service-level tests. ``release_owned`` copies the
@@ -134,9 +171,10 @@ class _MiniStore:
     def _fetch_one(self, sql, params):
         return dict(self._row) if self._row else None
 
-    def _execute(self, sql, params):
+    def _execute_affected(self, sql, params):
         self.executed.append((" ".join(sql.split()), list(params)))
         self._row = None
+        return 1
 
     class _Txn:
         def __enter__(self):
@@ -152,9 +190,9 @@ class _MiniStore:
 class _RacingMiniStore:
     """Like ``_MiniStore``, but models a concurrent upsert landing strictly BETWEEN
     ``release_owned``'s initial SELECT and its DELETE statement (0459 TR0008 rev1) --
-    the exact window the rev0 review flagged: ``_execute`` reports no rowcount, so a
-    DELETE built from a snapshot that goes stale in that window must be provably
-    caught, not just assumed to have succeeded because the earlier read matched.
+    the exact window the rev0 review flagged. The DELETE's actual affected-row count
+    must be zero when its predicate reaches a replacement row; a later SELECT only
+    decides whether that zero means absent or superseded.
 
     ``_execute`` mutates ``self._row`` to the racing row the instant it runs (as if
     the other writer's COMMIT landed right as this DELETE reaches the table), THEN
@@ -172,7 +210,7 @@ class _RacingMiniStore:
     def _fetch_one(self, sql, params):
         return dict(self._row) if self._row else None
 
-    def _execute(self, sql, params):
+    def _execute_affected(self, sql, params):
         self.executed.append((" ".join(sql.split()), list(params)))
         self._row = dict(self._racing_row)
         normalized_stop_kind = self._row.get("stop_kind") or "user"
@@ -184,6 +222,8 @@ class _RacingMiniStore:
         )
         if matches:
             self._row = None
+            return 1
+        return 0
 
     class _Txn:
         def __enter__(self):
@@ -194,6 +234,20 @@ class _RacingMiniStore:
 
     def transaction(self):
         return self._Txn()
+
+
+class _SameSnapshotDeleteLoserMiniStore(_MiniStore):
+    """Models another process deleting the identical snapshot first.
+
+    This transaction's SELECT still saw the row, but its conditional DELETE reaches
+    the database after the winner commits: affected rows is zero and the key is now
+    absent. Post-SELECT absence alone cannot distinguish this loser from the winner.
+    """
+
+    def _execute_affected(self, sql, params):
+        self.executed.append((" ".join(sql.split()), list(params)))
+        self._row = None
+        return 0
 
 
 @pytest.fixture
@@ -233,6 +287,33 @@ def _seed_lease(run_id="aiv_lease_run", *, expired=False):
 # ══════════════════════════════════════════════════════════════════════════════════════
 # DB layer: release_owned compare-and-swap
 # ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestAffectedRowsStoreContract:
+    @pytest.mark.parametrize("execute_shape", ["cursor", "integer", "none"])
+    @pytest.mark.parametrize("rowcount", [0, 1])
+    def test_transaction_cursor_exposes_exact_count_for_all_adapter_shapes(
+            self, execute_shape, rowcount):
+        """SQLite/MySQL/PostgreSQL sqloader adapters return cursor/int/None.
+
+        The production store normalizes all three through the still-open transaction
+        cursor, so release_owned never infers delete ownership from a later SELECT.
+        """
+        store = FlowGateStore.__new__(FlowGateStore)
+        store._db = _RowcountDb(execute_shape, rowcount)
+        store._sq = None
+
+        affected = store._execute_affected("DELETE FROM t WHERE id = ?", ["x"])
+
+        assert affected == rowcount
+
+    def test_unknown_rowcount_fails_closed(self):
+        store = FlowGateStore.__new__(FlowGateStore)
+        store._db = _RowcountDb("none", -1)
+        store._sq = None
+
+        with pytest.raises(RuntimeError, match="unknown affected row count"):
+            store._execute_affected("DELETE FROM t WHERE id = ?", ["x"])
+
 
 class TestReleaseOwnedDbLayer:
     def _matching_row(self, **overrides):
@@ -291,6 +372,27 @@ class TestReleaseOwnedDbLayer:
         assert result is None
         assert store.executed == []
 
+    def test_same_snapshot_delete_loser_is_not_reported_as_released(self, monkeypatch):
+        """Production DB contract for the multi-process same-snapshot race.
+
+        Both transactions read the identical row; another process deletes and commits
+        first. Our DELETE then affects zero rows and the follow-up SELECT is absent.
+        The old post-SELECT-only implementation returned the stale row (released=true)
+        here. The affected-row contract must identify this caller as the loser.
+        """
+        row = self._matching_row()
+        store = _SameSnapshotDeleteLoserMiniStore(row)
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        result = db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert result is None
+        assert store._row is None
+        assert len(store.executed) == 1
+
     def test_a_newer_user_pause_written_under_the_read_survives(self, monkeypatch):
         # The caller (release_paused_chain) read the OLD snapshot earlier; by the time
         # this call's own SELECT runs, a newer user pause has landed (a later paused_at).
@@ -347,9 +449,8 @@ class TestReleaseOwnedDbLayer:
         upsert that lands AFTER the initial SELECT (so the pre-DELETE Python compare
         still sees the old, matching snapshot) but BEFORE the DELETE statement
         actually reaches the table must not be reported as a successful delete.
-        ``_execute`` has no rowcount, so this can only be caught by re-reading the
-        primary key inside the same transaction -- which is exactly what the fix
-        adds and this test pins."""
+        The production affected-row operation must return zero; the same-transaction
+        re-read then identifies the surviving replacement and this test pins both."""
         initial = self._matching_row()
         racing = self._matching_row(paused_at="2026-08-25T10:05:00+09:00")
         store = _RacingMiniStore(initial, racing, expected_snapshot={
@@ -371,6 +472,283 @@ class TestReleaseOwnedDbLayer:
         assert result.row == racing
         # The newer row that raced in survives untouched.
         assert store._row == racing
+
+
+class _MySQLRepeatableReadMiniStore:
+    """Models MySQL/InnoDB's default REPEATABLE READ semantics for the survivor
+    re-read (0459 TR0008 rev4 review): a PLAIN SELECT in this transaction reuses the
+    snapshot its first read established and cannot see a DIFFERENT transaction's
+    DELETE + COMMIT that lands after that snapshot was taken, no matter how much
+    later it runs. Only a locking read (``FOR UPDATE``) performs InnoDB's "current
+    read" and sees the real, latest committed state. ``dialect`` reports MYSQL so
+    ``release_owned`` is exercised on the path that must add ``FOR UPDATE``.
+    """
+
+    dialect = _dialect.MYSQL
+
+    def __init__(self, snapshot_row, *, current_row):
+        # snapshot_row: what this transaction's first read saw, and what any LATER
+        # plain read in this same transaction keeps seeing under REPEATABLE READ.
+        # current_row: the REAL, latest committed state -- what a locking read sees.
+        self._snapshot_row = dict(snapshot_row) if snapshot_row else None
+        self._current_row = dict(current_row) if current_row else None
+        self.executed: list[tuple[str, list]] = []
+
+    def _fetch_one(self, sql, params):
+        normalized = " ".join(sql.split())
+        if normalized.endswith("FOR UPDATE"):
+            # A locking read always sees the latest committed data, bypassing this
+            # transaction's REPEATABLE READ snapshot.
+            return dict(self._current_row) if self._current_row else None
+        return dict(self._snapshot_row) if self._snapshot_row else None
+
+    def _execute_affected(self, sql, params):
+        # DELETE is itself a locking write in InnoDB: it always evaluates its WHERE
+        # predicate against the CURRENT committed row, never this transaction's
+        # snapshot -- so it only "takes" the row when nothing has changed it.
+        self.executed.append((" ".join(sql.split()), list(params)))
+        if self._current_row is not None and self._current_row == self._snapshot_row:
+            self._current_row = None
+            return 1
+        return 0
+
+    class _Txn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def transaction(self):
+        return self._Txn()
+
+
+class TestReleaseOwnedMySQLRepeatableReadIsolation:
+    """0459 TR0008 rev4 review: the survivor re-read after a zero-row CAS must be a
+    locking read, or MySQL's default REPEATABLE READ makes it report a row that a
+    DIFFERENT, already-committed transaction deleted as still superseding this call
+    -- exactly the ``already_released`` vs ``ReleaseSuperseded`` collapse T0007 §5
+    forbids in the other direction.
+    """
+
+    def _matching_row(self, **overrides):
+        row = {
+            "group_id": GROUP, "paused_by": OWNER, "paused_at": "2026-08-25T10:00:00+09:00",
+            "stop_kind": "user", "stop_run_id": None,
+        }
+        row.update(overrides)
+        return row
+
+    def test_a_row_another_transaction_already_deleted_is_not_reported_superseded(
+            self, monkeypatch):
+        """The exact staleness trap: our own DELETE affects zero rows because a
+        DIFFERENT transaction deleted the SAME snapshot and committed first. A plain
+        re-read would still show the pre-delete snapshot under REPEATABLE READ; the
+        locking re-read must see the row is actually gone and report the idempotent
+        None, never ReleaseSuperseded for a row that no longer exists."""
+        row = self._matching_row()
+        store = _MySQLRepeatableReadMiniStore(row, current_row=None)
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        result = db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert result is None
+        assert len(store.executed) == 1
+
+    def test_a_row_a_different_upsert_actually_replaced_still_reports_superseded(
+            self, monkeypatch):
+        """Mirror case: the latest committed row genuinely differs (a real newer
+        pause/system-stop), so the locking re-read must still surface it as a
+        conflict rather than silently dropping it."""
+        row = self._matching_row()
+        newer = self._matching_row(paused_at="2026-08-25T10:05:00+09:00")
+        store = _MySQLRepeatableReadMiniStore(row, current_row=newer)
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        result = db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert isinstance(result, db_paused.ReleaseSuperseded)
+        assert result.row == newer
+
+    def test_survivor_lookup_is_a_locking_read_on_mysql(self, monkeypatch):
+        """Pins the actual SQL shape directly, independent of the behavioral proof
+        above: the survivor re-read must carry ``FOR UPDATE`` so InnoDB performs a
+        current read instead of reusing this transaction's REPEATABLE READ snapshot."""
+        seen_sql = []
+        row = self._matching_row()
+        store = _MySQLRepeatableReadMiniStore(row, current_row=None)
+        real_fetch_one = store._fetch_one
+
+        def spying_fetch_one(sql, params):
+            seen_sql.append(" ".join(sql.split()))
+            return real_fetch_one(sql, params)
+
+        store._fetch_one = spying_fetch_one
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert any(sql.endswith("FOR UPDATE") for sql in seen_sql)
+
+    def test_sqlite_survivor_lookup_never_adds_for_update(self, monkeypatch):
+        """SQLite has no ``FOR UPDATE`` syntax (it raises a hard syntax error) and
+        needs none: it serializes writers, so by the time this transaction's own
+        DELETE has run, no concurrent writer could still be racing it. A store double
+        reporting no ``dialect`` attribute at all -- exactly like every other
+        in-memory double in this module, and the production fallback in
+        ``FlowGateStore.dialect`` -- must never receive the MySQL/PostgreSQL-only
+        clause, or every SQLite-backed test in this file would break."""
+        seen_sql = []
+        row = self._matching_row()
+        store = _SameSnapshotDeleteLoserMiniStore(row)
+        real_fetch_one = store._fetch_one
+
+        def spying_fetch_one(sql, params):
+            seen_sql.append(" ".join(sql.split()))
+            return real_fetch_one(sql, params)
+
+        store._fetch_one = spying_fetch_one
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert not any("FOR UPDATE" in sql for sql in seen_sql)
+
+
+class _DriverOperationalError(Exception):
+    """Stands in for pymysql/MySQLdb's ``OperationalError`` without importing either
+    driver: both expose the failure as ``exc.args == (server_error_code, message)``
+    because it is the wire-protocol code the MySQL/MariaDB server sends, not
+    something either driver invents."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(code, message)
+
+
+class _CheckreadRaisingMiniStore:
+    """Models MariaDB's default ``innodb_snapshot_isolation=ON`` (0459 TR0008 rev5,
+    reproduced against a live MariaDB 12.2 instance): the CAS DELETE itself raises
+    MySQL error 1020 (``ER_CHECKREAD``) instead of quietly returning affected=0 when
+    its WHERE clause matched this transaction's snapshot but a DIFFERENT,
+    already-committed transaction changed that exact row first.
+    """
+
+    dialect = _dialect.MYSQL
+
+    def __init__(self, snapshot_row, *, current_row, error_code=1020,
+                 error_message="Record has changed since last read in table 'x'"):
+        self._snapshot_row = dict(snapshot_row) if snapshot_row else None
+        self._current_row = dict(current_row) if current_row else None
+        self._error_code = error_code
+        self._error_message = error_message
+        self.executed: list[tuple[str, list]] = []
+
+    def _fetch_one(self, sql, params):
+        normalized = " ".join(sql.split())
+        if normalized.endswith("FOR UPDATE"):
+            return dict(self._current_row) if self._current_row else None
+        return dict(self._snapshot_row) if self._snapshot_row else None
+
+    def _execute_affected(self, sql, params):
+        self.executed.append((" ".join(sql.split()), list(params)))
+        raise _DriverOperationalError(self._error_code, self._error_message)
+
+    class _Txn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def transaction(self):
+        return self._Txn()
+
+
+class TestReleaseOwnedMariaDBCheckreadOnDelete:
+    """0459 TR0008 rev5: MariaDB's snapshot-isolation DML guard can make the CAS
+    DELETE itself fail instead of silently returning zero affected rows -- this must
+    be treated exactly like the ordinary affected==0 CAS-loser path, not surfaced as
+    an unhandled 500, and never used to swallow an unrelated driver error.
+    """
+
+    def _matching_row(self, **overrides):
+        row = {
+            "group_id": GROUP, "paused_by": OWNER, "paused_at": "2026-08-25T10:00:00+09:00",
+            "stop_kind": "user", "stop_run_id": None,
+        }
+        row.update(overrides)
+        return row
+
+    def test_checkread_on_a_same_snapshot_loser_is_treated_as_the_idempotent_none(
+            self, monkeypatch):
+        row = self._matching_row()
+        store = _CheckreadRaisingMiniStore(row, current_row=None)
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        result = db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert result is None
+        assert len(store.executed) == 1
+
+    def test_checkread_when_a_different_row_survives_still_reports_superseded(
+            self, monkeypatch):
+        row = self._matching_row()
+        newer = self._matching_row(paused_at="2026-08-25T10:05:00+09:00")
+        store = _CheckreadRaisingMiniStore(row, current_row=newer)
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        result = db_paused.release_owned(
+            GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+            stop_kind="user", stop_run_id=None,
+        )
+
+        assert isinstance(result, db_paused.ReleaseSuperseded)
+        assert result.row == newer
+
+    def test_an_unrelated_driver_error_is_never_swallowed(self, monkeypatch):
+        """The 1020 catch must be exact -- a real failure (lock wait timeout, a
+        connection drop, anything that is not this specific snapshot-isolation guard)
+        must still propagate as a real error, not get silently reinterpreted as a
+        CAS loss."""
+        row = self._matching_row()
+        store = _CheckreadRaisingMiniStore(
+            row, current_row=None, error_code=1205,
+            error_message="Lock wait timeout exceeded; try restarting transaction",
+        )
+        monkeypatch.setattr(db_paused, "get_store", lambda: store)
+
+        with pytest.raises(_DriverOperationalError):
+            db_paused.release_owned(
+                GROUP, paused_by=OWNER, paused_at=row["paused_at"],
+                stop_kind="user", stop_run_id=None,
+            )
+
+
+class TestIsMariadbSnapshotIsolationCheckread:
+    def test_matches_only_error_code_1020(self):
+        assert db_paused._is_mariadb_snapshot_isolation_checkread(
+            _DriverOperationalError(1020, "Record has changed since last read")) is True
+        assert db_paused._is_mariadb_snapshot_isolation_checkread(
+            _DriverOperationalError(1205, "Lock wait timeout exceeded")) is False
+
+    def test_tolerates_exceptions_with_no_or_empty_args(self):
+        assert db_paused._is_mariadb_snapshot_isolation_checkread(Exception()) is False
+        assert db_paused._is_mariadb_snapshot_isolation_checkread(RuntimeError("plain")) is False
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -481,30 +859,125 @@ class TestReleaseVsActiveRunAndLease:
 
 
 class TestReleaseVsResumeOrdering:
-    def test_release_wins_then_concurrent_resume_gets_resume_conflict(self, env):
-        env["store"].put()
+    def test_release_wins_real_lock_contention_then_resume_conflicts(
+            self, env, monkeypatch):
+        """Both service calls are live concurrently; release holds the shared lock."""
+        store = env["store"]
+        store.put()
+        release_inside_cas = threading.Event()
+        allow_release = threading.Event()
+        resume_started = threading.Event()
+        resume_done = threading.Event()
+        outcomes = {}
+        real_release_owned = store.release_owned
 
-        release_result = svc.release_paused_chain(group_id=GROUP, user_id=OWNER,
-                                                   is_admin=False)
-        assert release_result["released"] is True
+        def _blocking_release_owned(*args, **kwargs):
+            release_inside_cas.set()
+            assert allow_release.wait(5), "test did not unblock release CAS"
+            return real_release_owned(*args, **kwargs)
 
-        with pytest.raises(HTTPException) as exc:
-            svc.resume_chain(group_id=GROUP, user_id=OWNER, api_base_url="http://x/api/v1")
-        assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "resume_conflict"
+        monkeypatch.setattr(db_paused, "release_owned", _blocking_release_owned)
 
-    def test_resume_wins_then_concurrent_release_gets_run_already_active(self, env):
-        env["store"].put()
-        # Simulates a resume that already consumed the row and started a run: the row
-        # is gone and the run registry now carries the new run for this group.
-        env["store"].rows.pop(GROUP, None)
-        svc._runs["aiv_resumed"] = _active_run("aiv_resumed")
+        def _release():
+            try:
+                outcomes["release"] = svc.release_paused_chain(
+                    group_id=GROUP, user_id=OWNER, is_admin=False)
+            except Exception as exc:  # pragma: no cover - asserted below
+                outcomes["release_error"] = exc
 
-        with pytest.raises(HTTPException) as exc:
-            svc.release_paused_chain(group_id=GROUP, user_id=OWNER, is_admin=False)
-        assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "run_already_active"
-        assert exc.value.detail["run_id"] == "aiv_resumed"
+        def _resume():
+            resume_started.set()
+            try:
+                outcomes["resume"] = svc.resume_chain(
+                    group_id=GROUP, user_id=OWNER, api_base_url="http://x/api/v1")
+            except Exception as exc:
+                outcomes["resume_error"] = exc
+            finally:
+                resume_done.set()
+
+        release_thread = threading.Thread(target=_release)
+        resume_thread = threading.Thread(target=_resume)
+        release_thread.start()
+        assert release_inside_cas.wait(5)
+        resume_thread.start()
+        assert resume_started.wait(5)
+        assert not resume_done.wait(0.1), "resume bypassed the group serialization lock"
+        allow_release.set()
+        release_thread.join(5)
+        resume_thread.join(5)
+
+        assert not release_thread.is_alive()
+        assert not resume_thread.is_alive()
+        assert outcomes["release"]["released"] is True
+        exc = outcomes["resume_error"]
+        assert isinstance(exc, HTTPException)
+        assert exc.status_code == 409
+        assert exc.detail["code"] == "resume_conflict"
+        assert GROUP not in store.rows
+
+    def test_resume_wins_real_lock_contention_and_preserves_started_run_and_lease(
+            self, env, monkeypatch):
+        """Resume creates run+lease while holding the lock; live release waits."""
+        store = env["store"]
+        store.put()
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc",
+                            lambda doc_ref: {"id": 1})
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items",
+                            lambda seq_id: [{"item_seq": 3, "result_doc_id": None,
+                                             "result_doc_review_status": None}])
+        resume_started_run = threading.Event()
+        allow_resume = threading.Event()
+        release_started = threading.Event()
+        release_done = threading.Event()
+        outcomes = {}
+
+        def _blocking_start_run(**_kwargs):
+            svc._runs["aiv_resumed"] = _active_run("aiv_resumed")
+            _seed_lease("aiv_resumed")
+            resume_started_run.set()
+            assert allow_resume.wait(5), "test did not unblock resumed start"
+            return {"ok": True, "run_id": "aiv_resumed"}
+
+        monkeypatch.setattr(svc, "start_run", _blocking_start_run)
+
+        def _resume():
+            try:
+                outcomes["resume"] = svc.resume_chain(
+                    group_id=GROUP, user_id=OWNER, api_base_url="http://x/api/v1")
+            except Exception as exc:  # pragma: no cover - asserted below
+                outcomes["resume_error"] = exc
+
+        def _release():
+            release_started.set()
+            try:
+                outcomes["release"] = svc.release_paused_chain(
+                    group_id=GROUP, user_id=OWNER, is_admin=False)
+            except Exception as exc:
+                outcomes["release_error"] = exc
+            finally:
+                release_done.set()
+
+        resume_thread = threading.Thread(target=_resume)
+        release_thread = threading.Thread(target=_release)
+        resume_thread.start()
+        assert resume_started_run.wait(5)
+        release_thread.start()
+        assert release_started.wait(5)
+        assert not release_done.wait(0.1), "release bypassed the group serialization lock"
+        allow_resume.set()
+        resume_thread.join(5)
+        release_thread.join(5)
+
+        assert not resume_thread.is_alive()
+        assert not release_thread.is_alive()
+        assert outcomes["resume"] == {"ok": True, "run_id": "aiv_resumed"}
+        exc = outcomes["release_error"]
+        assert isinstance(exc, HTTPException)
+        assert exc.status_code == 409
+        assert exc.detail["code"] == "run_already_active"
+        assert exc.detail["run_id"] == "aiv_resumed"
+        assert GROUP not in store.rows
+        assert db_leases._memory[GROUP]["run_id"] == "aiv_resumed"
 
 
 class TestReleaseConflictVsSupersededRow:

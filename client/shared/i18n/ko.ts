@@ -1340,6 +1340,7 @@ export default {
       error_release_paused_forbidden: '다른 사용자가 일시정지한 체인은 해제할 수 없습니다. 관리자만 가능합니다.',
       error_release_paused_resume_conflict: '다른 세션에서 이미 재개되어 해제할 수 없습니다.',
       error_release_paused_lease_conflict: '그룹 잠금(lease)이 사용 중이어서 해제할 수 없습니다. 잠금 해제가 별도로 필요할 수 있습니다.',
+      error_release_paused_release_conflict: '해제가 완료되기 전에 더 최신 정지 정보로 대체되어 해제할 수 없습니다. 최신 상태로 새로고침했습니다.',
       error_release_paused_failed: '정지 카드 해제에 실패했습니다.',
       release_paused_success: '정지된 체인의 재개 정보를 해제했습니다.',
     },
