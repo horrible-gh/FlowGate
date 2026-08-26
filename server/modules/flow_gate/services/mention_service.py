@@ -1461,6 +1461,120 @@ def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
 
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
+def identifiable_review_row_id(value) -> Optional[object]:
+    """The value if it can BE a `document_reviews.id`, else None (0458 T0007 §2.2-1).
+
+    Mirrors the inbox boundary's rule at the producing end — the same
+    `pipeline_service.is_review_row_id` check the receiving side applies (0458 T0008): the
+    column is a positive integer, so a bool is not row 1, a blank/whitespace-only string
+    names nothing, and neither does a non-numeric string. Without this, a value this
+    function itself never PRODUCES (e.g. "abc") could still be accepted from a future
+    caller. The value itself is returned unchanged — an int stays an int in the JSON
+    example the worker copies back.
+    """
+    from modules.flow_gate.workflow.pipeline_service import is_review_row_id
+
+    if not is_review_row_id(value):
+        return None
+    return value
+
+
+def resolve_current_review_and_row_id(
+    current_review: Optional[dict], doc_id: str, revision_no: int
+) -> tuple:
+    """Pair the review content the mention prints with its row id (0458 T0007 §2.2-1, T0008 rev4).
+
+    The mention is the producer of the `review_id` field, so the id has to be resolved HERE,
+    inside the mention builder, rather than hoped for from whoever assembled `current_review`
+    — that dict is a display bundle (verdict, findings, comment) and, on the real path
+    (`token_routes._load_current_revision_review`), carries no id.
+
+    Two steps, in this order:
+
+      1. `current_review["id"]`, when the caller does carry it. A caller that supplies it is
+         vouching that the content and the id came from the same read, so it is returned
+         unchanged together with that same `current_review` — no query, and nothing here may
+         second-guess it.
+      2. otherwise ONE query for the document's latest review row, accepted only when it
+         targets the revision this mention is about. Earlier attempts at this fix (0458 T0008
+         rev1-rev3) ran this SELECT independently of the caller's own read and then tried to
+         prove, after the fact, that it landed on the physical row the caller displayed — first
+         by matching `revision_no` alone, then by `reviewed_at`, then by every field the
+         mention prints (`verdict`/`comment`/`findings`/`reviewed_at`). All three share the same
+         flaw: `document_reviews` has no uniqueness constraint tying those fields to one row,
+         `reviewed_at` is JST second-precision (`connection.now_iso()`, `timespec="seconds"`),
+         and a second review row for the same revision can be byte-identical to the first in
+         everything a human can see while still carrying a different id — comparing two
+         independent reads can never expose that, because the two reads never share a
+         transaction. The fix that removes the race instead of narrowing it is to stop reading
+         twice: this function does not compare its own SELECT against `current_review` at all.
+         `current_review` here is only a "there is a rejection to show" signal from the caller;
+         the content actually printed and the id actually sent both come from this one query,
+         so they can never disagree about which row they name. `token_routes.py` stays
+         untouched (T0007 §1 does not assign it) — once this function runs, the caller's bundle
+         is used only to decide whether to look, and, on failure, as the fallback display; it is
+         never trusted as the printed content when this query succeeds.
+
+    Returns `(resolved_review, row_id)` when a usable row is found — the caller MUST print
+    `resolved_review`, not the bundle it passed in, or the printed content and the id could once
+    again name different rows. Returns `(None, None)` when there is no current review to answer,
+    the row cannot be read, or it cannot be matched to `revision_no` — the caller keeps its own
+    bundle for display and omits `review_id`. An invented id is the one outcome that must never
+    happen: it would attach this response to nothing, or worse, to somebody else's rejection.
+    """
+    if not current_review:
+        return None, None
+    row_id = identifiable_review_row_id(current_review.get("id"))
+    if row_id is not None:
+        return current_review, row_id
+    try:
+        from modules.flow_gate.db import document_reviews as db_reviews
+
+        row = db_reviews.get_latest_by_doc(doc_id or "")
+    except Exception:  # noqa: BLE001 — a mention must never fail over an optional field
+        logger.warning("review row id lookup failed for %s", doc_id, exc_info=True)
+        return None, None
+    if not isinstance(row, dict):
+        return None, None
+    try:
+        if int(row.get("revision_no") or 0) != int(revision_no or 0):
+            return None, None
+    except (TypeError, ValueError):
+        return None, None
+    row_id = identifiable_review_row_id(row.get("id"))
+    if row_id is None:
+        return None, None
+    resolved_review = {
+        "revision_no": int(revision_no or 0),
+        "verdict": row.get("verdict"),
+        "findings": _parse_review_findings(row.get("findings")),
+        "comment": row.get("comment"),
+        "reviewed_at": row.get("reviewed_at"),
+    }
+    return resolved_review, row_id
+
+
+def _parse_review_findings(raw) -> list:
+    """Normalize a `document_reviews.findings` value to the list form `current_review` carries.
+
+    `get_latest_by_doc` returns the raw DB row, where `findings` is still the JSON array
+    string `insert_review` stored; `current_review` (built by
+    `token_routes._load_current_revision_review`) already parsed it into a list. Comparing
+    the two content-equal instead of format-equal needs both in the same shape first --
+    mirrors the parsing `_load_current_revision_review` does, kept local here rather than
+    imported so the fix stays inside `mention_service.py` (T0007 section 1 scope).
+    """
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
 def build_mention(
     *,
     # Parent document information
@@ -1544,6 +1658,18 @@ def build_mention(
     # ON is the pre-flight Q-registration phase, not "go". All "create the next document"
     # guidance (the new-document section) is removed so the worker only registers Qs.
     review_continuous = continuous and continuous_review_mode and not is_edit
+
+    # Pair what this mention PRINTS about the current review with the row id it answers, from
+    # ONE query (0458 T0007 §2.2-1, T0008 rev4) — before the printing block below, so both that
+    # block and the artifact template's review_id use the same resolved content. Only for the
+    # rejection-rework path: a normal edit answers no rejection and must not even look.
+    review_row_id = None
+    if is_edit and edit_reason == "rejected" and current_review:
+        resolved_review, review_row_id = resolve_current_review_and_row_id(
+            current_review, parent_canonical_doc_id or parent_doc_id, parent_revision_no
+        )
+        if resolved_review is not None:
+            current_review = resolved_review
 
     # ── Section 1: document information ──────────────────────────────────────
     # Anchor at the step's predecessor (head_doc_*) when supplied for a new hand-off;
@@ -1727,6 +1853,18 @@ def build_mention(
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
                 template_provision.normalize_locale(locale)
             ]
+            # 0458 T0007 §2.2-1: name the review row this response answers. Without it the
+            # server can only attach the response to the LAST rejection_history item, so a
+            # human rejection (or another review row's) landing after the one being answered
+            # takes the answer instead. `review_row_id` was resolved above, from the SAME
+            # query that produced the `current_review` this mention prints above ("## Review
+            # feedback") — worker and server agree on the target by construction, because the
+            # printed content and this id can never come from different rows (0458 T0008 rev4).
+            # Unidentifiable → the field is omitted rather than invented, and
+            # record_rejection_response keeps its legacy latest-item behaviour instead of
+            # matching against a made-up identifier.
+            if review_row_id is not None:
+                post_body["review_id"] = review_row_id
         post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
         commit_hint = ""
         # 0299: a resubmission (edit) goes through the work-scope check too. If the rework

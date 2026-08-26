@@ -13,7 +13,7 @@ import pathlib
 import re
 import shutil
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import anyio.to_thread
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -3681,6 +3681,76 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     return JSONResponse(content=resp_content, status_code=201)
 
 
+def _submitted_review_id(body: dict) -> Optional[Any]:
+    """The `document_reviews` row a rejected resubmission says it is answering (0458 T0007).
+
+    Takes the whole body, not the value, because the FIELD'S ABSENCE is itself one of the
+    three answers (§2.2-2/§2.2-6):
+
+      * no `review_id` key → ``None``, the only input that puts record_rejection_response on
+        its legacy latest-item policy. That policy exists for one reason — a rework mention
+        minted before this field did — and nothing else may borrow it.
+      * a value that can name a row → passed through VERBATIM, so the recorder receives
+        exactly what the worker sent. The column is an integer and the mention prints one,
+        but a body that round-tripped it as "244" names the same row;
+        pipeline_service.rejection_review_key folds the two together.
+      * a value that cannot name a row → UNIDENTIFIABLE_REVIEW_ID. A bool (``True`` is not
+        row 1), a blank or whitespace-only string, an explicit null, a float, a list, or a
+        non-numeric string (0458 T0008: `document_reviews.id` is a positive integer, so
+        "abc" cannot be one — even if some malformed stored history item also spells its
+        `review_id` "abc"). The submission made a claim about which rejection it answers
+        and the claim is broken; the recorder then records NOTHING. Folding these back to
+        ``None`` — what the first cut of this function did — hands them the latest-item
+        fallback, and one malformed value silently overwrites a different review row's
+        answer.
+    """
+    from modules.flow_gate.workflow.pipeline_service import (
+        UNIDENTIFIABLE_REVIEW_ID,
+        is_review_row_id,
+    )
+
+    if not isinstance(body, dict) or "review_id" not in body:
+        return None
+    value = body.get("review_id")
+    if is_review_row_id(value):
+        return value
+    return UNIDENTIFIABLE_REVIEW_ID
+
+
+def _attach_rejection_response(
+    *,
+    doc_id: str,
+    response_text: Optional[str],
+    review_id: Optional[Any],
+    actor_user_id: str,
+    revision_no: Optional[int],
+) -> None:
+    """Step 7.5's rejection-response half — the boundary into pipeline_service (T0007 §2.2-2).
+
+    One callable so the forwarding is a fact a test can hold rather than a line buried in a
+    600-line handler: the submitted `review_id` reaches record_rejection_response unchanged,
+    and a blank response still records nothing. Best-effort like the rest of Step 7.5 — the
+    document is already saved and an annotation failure must never undo that.
+    """
+    if not response_text:
+        return
+    from modules.flow_gate.workflow.pipeline_service import record_rejection_response
+    import LogAssist.log as logger
+
+    try:
+        record_rejection_response(
+            doc_id=doc_id,
+            response_text=response_text,
+            recorded_by=actor_user_id,
+            revision_no=revision_no,
+            review_id=review_id,
+        )
+    except Exception as _rr_exc:  # noqa: BLE001
+        logger.warning(
+            f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}"
+        )
+
+
 def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: edit (D020 §3-4-2)."""
 
@@ -3724,9 +3794,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     content: Optional[str] = body.get("content")
     # P0005/T0006: when re-submitting a rejected document, the AI may include its
     # response to the rejection alongside the body. The body stays the body; this
-    # text is recorded against the latest rejection so reviewers can see how the
-    # AI addressed their comment. Only meaningful for edit_reason="rejected".
+    # text is recorded against a rejection so reviewers can see how the AI addressed
+    # their comment. Only meaningful for edit_reason="rejected".
     rejection_response: Optional[str] = body.get("rejection_response")
+    # 0458 T0007 §2.2-2: and WHICH rejection it answers — the document_reviews row id the
+    # rework mention printed. Optional: an older mention omits the field entirely and the
+    # recorder falls back to its legacy latest-item policy. A field that IS there but names
+    # no row is a different case and records nothing; the boundary keeps the two apart, so
+    # the whole body goes in rather than the value.
+    rejection_review_id = _submitted_review_id(body)
 
     # ── Step 2: Authentication ─────────────────────────────────────────────────────────
     try:
@@ -4201,7 +4277,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         from modules.flow_gate.db import workflow_sequences as _db_wfseq
         from modules.flow_gate.workflow.pipeline_service import (
             TransitionError,
-            record_rejection_response,
             register_workflow_result,
             transition_document_review,
         )
@@ -4233,18 +4308,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         except (TransitionError, ValueError, PermissionError) as _tr_exc:
             logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
-        # P0005/T0006: attach the AI's rejection response (if supplied) to the latest
-        # rejection. Independent of the workflow head.
-        if rejection_response:
-            try:
-                record_rejection_response(
-                    doc_id=doc_id,
-                    response_text=rejection_response,
-                    recorded_by=actor_user_id,
-                    revision_no=new_revision_no,
-                )
-            except Exception as _rr_exc:
-                logger.warning(f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}")
+        # P0005/T0006: attach the AI's rejection response (if supplied) to the rejection it
+        # answers. Independent of the workflow head.
+        _attach_rejection_response(
+            doc_id=doc_id,
+            response_text=rejection_response,
+            review_id=rejection_review_id,
+            actor_user_id=actor_user_id,
+            revision_no=new_revision_no,
+        )
 
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(

@@ -22,6 +22,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -2115,3 +2116,415 @@ class TestSettleExtraction:
         pause_at = source.index("user_paused_probe()")
         assert approve_at < target_at < pause_at, (
             "the last step must end approved, and a pause is checked after that (P0008 S4/S5)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# 0458 T0007 §3.1 — the failure detail survives all the way to the sentence a human reads
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+
+class TestApproveAndAdvanceStopDetail:
+    """`approve_failed` / `advance_blocked` used to read ONE detail key — the inbox's.
+
+    The AI review gate has a live run to hang its failure on, so it stores the exception on
+    `review_reject_detail` (_settle_gate_pass); the inbox self-chain has only an envelope and
+    goes through stop_reason_text(..., detail=...), which lands on `inbox_stop_detail`. With
+    only the second key read, every gate-side failure printed "unknown error" while the real
+    cause sat one key away (0003-NR §11-1).
+    """
+
+    def test_approve_failed_carries_the_review_gates_own_detail(self):
+        run = {"review_reject_detail": "Invalid review transition: rejected -> approve"}
+        assert svc._stop_reason_text("approve_failed", run) == (
+            "Auto-approval failed: Invalid review transition: rejected -> approve"
+        )
+
+    def test_advance_blocked_carries_the_review_gates_own_detail(self):
+        run = {"review_reject_detail": "sequence exhausted"}
+        assert svc._stop_reason_text("advance_blocked", run) == (
+            "Could not advance to the next step: sequence exhausted"
+        )
+
+    def test_the_gate_detail_outranks_the_inbox_one_when_both_are_set(self):
+        """A run can carry both keys — an earlier inbox stop, then this gate's own failure.
+        The gate's is the one describing THIS stop, so it wins."""
+        run = {"review_reject_detail": "gate said why",
+               "inbox_stop_detail": "an older inbox stop"}
+        assert svc._stop_reason_text("approve_failed", run) == "Auto-approval failed: gate said why"
+        assert svc._stop_reason_text("advance_blocked", run) == (
+            "Could not advance to the next step: gate said why"
+        )
+
+    def test_the_inbox_self_chains_detail_is_untouched(self):
+        """stop_reason_text() builds a run dict with `inbox_stop_detail` only, which is the
+        exact shape test_inbox_chain_stop_0359's two detail tests assert. The new key must
+        not change a word of it."""
+        assert svc.stop_reason_text("approve_failed", detail="head already advanced") == (
+            "Auto-approval failed: head already advanced"
+        )
+        assert svc.stop_reason_text("advance_blocked", detail="sequence exhausted") == (
+            "Could not advance to the next step: sequence exhausted"
+        )
+
+    def test_only_a_missing_detail_falls_back_to_unknown_error(self):
+        for run in ({}, {"review_reject_detail": None, "inbox_stop_detail": None},
+                    {"review_reject_detail": "", "inbox_stop_detail": ""}):
+            assert svc._stop_reason_text("approve_failed", run) == (
+                "Auto-approval failed: unknown error")
+            assert svc._stop_reason_text("advance_blocked", run) == (
+                "Could not advance to the next step: unknown error")
+
+    def test_the_fixed_english_prefixes_and_the_stop_contract_are_unchanged(self):
+        run = {"review_reject_detail": "boom"}
+        assert svc._stop_reason_text("approve_failed", run).startswith("Auto-approval failed:")
+        assert svc._stop_reason_text("advance_blocked", run).startswith(
+            "Could not advance to the next step:")
+        # Neither code is resumable — a human has to clean these up (L0007 §4.2).
+        assert not svc.is_resumable("approve_failed")
+        assert not svc.is_resumable("advance_blocked")
+
+    # ── the storage half: the gate must PUT the detail on the run before it parks ──
+
+    def _settle(self, monkeypatch, result):
+        parked = {}
+        monkeypatch.setattr(inbox_routes, "settle_completed_step", lambda **_kw: result)
+        monkeypatch.setattr(
+            svc, "_park_handoff",
+            lambda run, pending, stop_code: parked.update(run=run, stop_code=stop_code),
+        )
+        run = {"group_id": GROUP, "run_id": "run_detail"}
+        slot = {"doc_id": SPINE, "doc_type": "TR", "item_seq": 5}
+        outcome = svc._settle_gate_pass(GROUP, slot, bundle(), run)
+        return outcome, run, parked
+
+    def test_the_gate_stores_the_settle_failures_detail_before_parking(self, monkeypatch):
+        outcome, run, parked = self._settle(monkeypatch, {
+            "outcome": "stopped",
+            "stop_code": "approve_failed",
+            "reason": "auto-approve failed: Invalid review transition",
+            "detail": "Invalid review transition",
+        })
+        assert outcome == "stopped"
+        assert parked["stop_code"] == "approve_failed"
+        assert run["review_reject_detail"] == "Invalid review transition"
+        # ...and the parked run renders the sentence with that detail, not "unknown error".
+        assert svc._stop_reason_text("approve_failed", parked["run"]) == (
+            "Auto-approval failed: Invalid review transition"
+        )
+
+    def test_a_stopped_settle_with_no_detail_key_still_stores_its_reason(self, monkeypatch):
+        """approve_denied carries `reason` and no `detail`. Storing None there would be the
+        same information loss one branch further along, so the contract is detail-or-reason."""
+        _outcome, run, parked = self._settle(monkeypatch, {
+            "outcome": "stopped",
+            "stop_code": "approve_denied",
+            "reason": "issuer lacks document.approve; awaiting human approval before continuing.",
+        })
+        assert parked["stop_code"] == "approve_denied"
+        assert run["review_reject_detail"] == (
+            "issuer lacks document.approve; awaiting human approval before continuing."
+        )
+
+    def test_an_advance_blocked_settle_would_be_stored_the_same_way(self, monkeypatch):
+        """settle_completed_step is the ONLY entry point through which this gate can reach
+        either code, so one storage line covers both — no advance path parks empty-handed."""
+        _outcome, run, parked = self._settle(monkeypatch, {
+            "outcome": "stopped",
+            "stop_code": "advance_blocked",
+            "detail": "sequence exhausted",
+        })
+        assert parked["stop_code"] == "advance_blocked"
+        assert svc._stop_reason_text("advance_blocked", run) == (
+            "Could not advance to the next step: sequence exhausted"
+        )
+
+    def test_a_continuing_settle_parks_nothing_and_stores_nothing(self, monkeypatch):
+        outcome, run, parked = self._settle(monkeypatch, {"outcome": "continue"})
+        assert outcome == "continue"
+        assert parked == {}
+        assert "review_reject_detail" not in run
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# 0458 T0007 §3.1 / §4-1 — the REAL order: finalize closes the run, THEN the gate stops it
+#
+# The worker tail is `_finalize_run(run)` and then `_maybe_auto_resume_hop(run)`. Finalize
+# sees the queued next hop, so it decides `hop_handoff` — "this hop produced its document;
+# the next hop starts in a new worker" — and with that verdict it writes the ai_invoke_runs
+# row, fires the finished payload the miniplayer keeps, and settles the failure
+# notification. ONLY AFTER all of that does the gate run, and only there can the auto
+# approval fail. Fixing _stop_reason_text alone left every one of those three surfaces
+# holding the handoff sentence while the durable row said `approve_failed`, so the human
+# still never saw the exception.
+#
+# Nothing below mocks _park_handoff or hand-feeds a dict to _stop_reason_text: the tests
+# drive the two functions the worker calls, in the order the worker calls them, and read the
+# surfaces a person actually reads.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+
+APPROVE_FAILURE = {
+    "outcome": "stopped",
+    "stop_code": "approve_failed",
+    "reason": "auto-approve failed: Invalid review transition: rejected -> approve",
+    "detail": "Invalid review transition: rejected -> approve",
+}
+APPROVE_FAILED_SENTENCE = (
+    "Auto-approval failed: Invalid review transition: rejected -> approve"
+)
+HANDOFF_SENTENCE = "This hop produced its document; the next hop starts in a new worker."
+
+
+@pytest.fixture
+def lifecycle(monkeypatch, world, paused, tmp_path):
+    """The worker tail with only the OUTSIDE world stubbed — records, feed, SSE, leases.
+
+    `world` and `paused` already stand in for the sequence/document/review tables and the
+    paused-chain table, so what runs here is the production code path from _finalize_run
+    through _maybe_auto_resume_hop, run_review_gate, _settle_gate_pass and _park_handoff.
+    """
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+    from modules.flow_gate.workflow import event_logger
+
+    seen = {"records": [], "notified": [], "events": [], "leases": []}
+    stored: dict[str, dict] = {}
+
+    def _upsert(row):
+        stored[row["run_id"]] = dict(row)
+        seen["records"].append(dict(row))
+
+    monkeypatch.setattr(db_runs, "upsert", _upsert)
+    monkeypatch.setattr(db_runs, "maybe_purge", lambda: None)
+    monkeypatch.setattr(db_runs, "get",
+                        lambda run_id: dict(stored[run_id]) if run_id in stored else None)
+    monkeypatch.setattr(event_logger, "log_continuous_work_failed",
+                        lambda **kw: seen["notified"].append(kw))
+    monkeypatch.setattr(svc, "_broadcast",
+                        lambda run, event_type, payload: seen["events"].append(
+                            (event_type, dict(payload))))
+    for name in ("begin_handoff", "release"):
+        monkeypatch.setattr(svc.db_group_ai_leases, name,
+                            lambda *a, _n=name, **kw: seen["leases"].append(_n))
+    seen["stored"] = stored
+    seen["scratch"] = tmp_path
+    yield seen
+    svc.clear_auto_resume(GROUP)
+
+
+def _live_run(tmp_path, **overrides):
+    """A hop that has just exited, exactly as the worker holds it when it calls finalize."""
+    run = _run(
+        status="running",
+        outcome="none",
+        end_reason="exited",
+        project_id="flowgate",
+        scratch_dir=str(tmp_path / "scratch"),
+        started_mono=time.monotonic(),
+        cancel_event=None,
+        stop_code=None,
+        resumable=False,
+        failure_signal_sent=False,
+        # no review selection anywhere, so the gate resolves to "approve and continue" —
+        # the branch that calls settle_completed_step (L0008 §2.3, count 0).
+        continuation_review_count_overrides=None,
+        continuation_reviewer_overrides=None,
+        # finished_payload reads these straight off the run.
+        reached_doc_ids=["doc-5"],
+        exit_code=0,
+        last_message_received=True,
+        last_message="done",
+        provider_id="aip_step5",
+        provider={"id": "aip_step5", "name": "Claude Sonnet 5"},
+        attempt_no=1,
+        attempts_used=1,
+        fallback_history=[],
+        source_dirty=None,
+    )
+    run.update(overrides)
+    return run
+
+
+def _drive_the_tail(monkeypatch, lifecycle, settle_result, **run_over):
+    """_finalize_run → _maybe_auto_resume_hop, the two calls the worker makes in that order."""
+    monkeypatch.setattr(inbox_routes, "settle_completed_step", lambda **_kw: settle_result)
+    run = _live_run(lifecycle["scratch"], **run_over)
+    # The inbox self-chain queued the next hop while this one was still running — the ONLY
+    # reason finalize resolves `hop_handoff` instead of an ordinary ending.
+    svc.request_auto_resume(GROUP, {**_pending(), "review_count_overrides": None,
+                                    "reviewer_overrides": None})
+    svc._finalize_run(run)
+    after_finalize = dict(run)
+    svc._maybe_auto_resume_hop(run)
+    return run, after_finalize
+
+
+class TestGateStopReachesEverySurfaceAfterFinalize:
+    def test_finalize_really_does_settle_the_handoff_verdict_first(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """The premise, asserted rather than assumed: by the time the gate is even consulted,
+        a full stop verdict has already been computed, persisted and broadcast."""
+        world.fill(5, "doc-5")
+        _run_dict, after_finalize = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        assert after_finalize["stop_code"] == "hop_handoff"
+        assert after_finalize["stop_reason"] == HANDOFF_SENTENCE
+        assert lifecycle["records"][0]["stop_code"] == "hop_handoff"
+        assert lifecycle["records"][0]["stop_reason"] == HANDOFF_SENTENCE
+        assert lifecycle["events"][0][0] == "ai_invoke_finished"
+        assert lifecycle["events"][0][1]["stop_reason"] == HANDOFF_SENTENCE
+
+    def test_the_gates_failure_replaces_that_verdict_on_the_run(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        assert run["stop_code"] == "approve_failed"
+        assert run["stop_reason"] == APPROVE_FAILED_SENTENCE
+        assert run["resumable"] is False       # re-derived, not left over from the handoff
+
+    def test_the_persisted_record_ends_on_the_real_exception(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """The row a human opens tomorrow. It was written before the gate ran, so the repair
+        is a SECOND write to the same run_id — not an extra row, and not the handoff text."""
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        stored = lifecycle["stored"][run["run_id"]]
+        assert stored["stop_code"] == "approve_failed"
+        assert stored["stop_reason"] == APPROVE_FAILED_SENTENCE
+        assert stored["resumable"] is False
+        assert "unknown error" not in (stored["stop_reason"] or "")
+        assert set(lifecycle["stored"]) == {run["run_id"]}
+        assert [r["stop_code"] for r in lifecycle["records"]] == [
+            "hop_handoff", "approve_failed",
+        ]
+
+    def test_the_card_is_told_again_with_the_real_stop(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """The miniplayer is sitting on a `hop_handoff` payload waiting for a successor hop
+        that is never coming. A second finished event — same run_id — is what replaces it."""
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        finished = [p for kind, p in lifecycle["events"] if kind == "ai_invoke_finished"]
+        assert len(finished) == 2
+        assert finished[-1]["run_id"] == run["run_id"]
+        assert finished[-1]["stop_code"] == "approve_failed"
+        assert finished[-1]["stop_reason"] == APPROVE_FAILED_SENTENCE
+        assert ("group_view_refresh", {"group_id": GROUP,
+                                       "reason": "ai_invoke_finished"}) in lifecycle["events"]
+
+    def test_the_notification_feed_gets_the_exception_not_a_bare_code(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """§2.11's set split leaves approve_failed to the inbox — which never sees this stop,
+        because no request arrives: the engine settled the step itself. Nobody spoke at all
+        before this. Exactly one notification, and it carries the sentence."""
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        assert len(lifecycle["notified"]) == 1
+        signal = lifecycle["notified"][0]
+        assert signal["run_id"] == run["run_id"]
+        assert signal["error"] == APPROVE_FAILED_SENTENCE
+        assert signal["extra"]["stop_code"] == "approve_failed"
+        assert signal["extra"]["stop_reason"] == APPROVE_FAILED_SENTENCE
+
+    def test_the_paused_card_the_user_sees_carries_the_same_sentence(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """active_all is the refresh-proof bootstrap: after the browser reloads, THIS is the
+        only place the stop exists. The row has a stop_code column and no stop_reason one, so
+        the payload reads the sentence back off the run that parked it."""
+        world.fill(5, "doc-5")
+        _run_dict, _after = _drive_the_tail(monkeypatch, lifecycle, APPROVE_FAILURE)
+
+        payload = svc.active_all(USER)
+        assert len(payload["paused"]) == 1
+        card = payload["paused"][0]
+        assert card["stop_kind"] == "system"
+        assert card["stop_code"] == "approve_failed"
+        assert card["stop_reason"] == APPROVE_FAILED_SENTENCE
+
+    def test_an_advance_failure_travels_the_same_way(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, {
+            "outcome": "stopped",
+            "stop_code": "advance_blocked",
+            "detail": "sequence exhausted",
+        })
+        sentence = "Could not advance to the next step: sequence exhausted"
+
+        assert run["stop_reason"] == sentence
+        assert lifecycle["stored"][run["run_id"]]["stop_reason"] == sentence
+        assert lifecycle["notified"][0]["error"] == sentence
+        assert svc.active_all(USER)["paused"][0]["stop_reason"] == sentence
+
+    def test_a_denied_approval_keeps_its_own_words_too(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """approve_denied carries `reason` and no `detail`; §4.3 gives it a fixed sentence of
+        its own. What matters here is that the run stops saying "handoff"."""
+        world.fill(5, "doc-5")
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, {
+            "outcome": "stopped",
+            "stop_code": "approve_denied",
+            "reason": "issuer lacks document.approve; awaiting human approval before continuing.",
+        })
+
+        assert run["stop_code"] == "approve_denied"
+        assert run["stop_reason"] != HANDOFF_SENTENCE
+        assert lifecycle["stored"][run["run_id"]]["stop_code"] == "approve_denied"
+        assert svc.active_all(USER)["paused"][0]["stop_reason"] == run["stop_reason"]
+
+    def test_a_settle_that_continues_leaves_the_handoff_verdict_alone(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """The ordinary hop: the gate approves and the next worker starts. Nothing is parked,
+        so nothing is re-decided — one record write, one finished event, no notification."""
+        world.fill(5, "doc-5")
+        monkeypatch.setattr(svc, "_spawn_auto_resume", lambda g, b: None)
+        run, _after = _drive_the_tail(monkeypatch, lifecycle, {"outcome": "continue"})
+
+        assert run["stop_code"] == "hop_handoff"
+        assert len(lifecycle["records"]) == 1
+        assert len([k for k, _p in lifecycle["events"] if k == "ai_invoke_finished"]) == 1
+        assert lifecycle["notified"] == []
+
+    def test_a_park_that_changes_nothing_writes_nothing_twice(
+        self, monkeypatch, world, paused, lifecycle
+    ):
+        """A run that ALREADY ended on the code it is parked with — a cancel, an
+        inbox-tagged stop — must not get a second record write, a second finished event or a
+        second notification. Re-settlement corrects a verdict; it does not repeat one."""
+        world.fill(5, "doc-5")
+        run = _live_run(lifecycle["scratch"])
+        run["stop_code"] = "timeout"
+        run["stop_reason"] = svc._stop_reason_text("timeout", run)
+        run["status"] = "finished"
+        before_records = len(lifecycle["records"])
+
+        svc._park_handoff(run, _pending(), "timeout")
+
+        assert len(lifecycle["records"]) == before_records
+        assert lifecycle["events"] == []
+        assert lifecycle["notified"] == []
+
+    def test_the_worker_tail_still_calls_these_two_in_this_order(self):
+        """The premise of every test above, guarded at the source: finalize first, then the
+        auto-resume that reaches the gate. If that ever inverts, the re-settlement is dead
+        code and these assertions would keep passing against a shape production dropped."""
+        import inspect
+
+        source = inspect.getsource(svc._worker)
+        finalize_at = source.index("_finalize_run(run)")
+        resume_at = source.index("_maybe_auto_resume_hop(run)")
+        assert finalize_at < resume_at
+        park_source = inspect.getsource(svc._park_handoff)
+        assert "_resettle_stop_after_park(run, stop_code)" in park_source
