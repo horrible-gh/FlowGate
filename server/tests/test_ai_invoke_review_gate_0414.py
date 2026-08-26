@@ -1418,8 +1418,14 @@ class TestHopLaunchContract:
                                         svc.REVIEW_HOP_KIND) == 10800
         assert svc._resolve_timeout_sec("single", 0, False, None,
                                         svc.REVIEW_HOP_KIND) == svc.HOP_TIMEOUT_SEC
-        # an ordinary single run is untouched: 1 document -> RUN_TIMEOUT_BASE_SEC
-        assert svc._resolve_timeout_sec("single", 1, False, 10800) == svc.RUN_TIMEOUT_BASE_SEC
+        # 0446 T0010 §3-1: an in-range explicit pick outranks the mode branch NOW,
+        # whatever the mode — this stale assertion predates that change (it used to
+        # read "an ordinary single run is untouched: 1 document -> RUN_TIMEOUT_BASE_SEC",
+        # which 0446 deliberately overturned so a rejection rework is no longer stuck at
+        # exactly 3600 with no way to ask for more). Only the no-pick case still falls
+        # through to the per-document formula.
+        assert svc._resolve_timeout_sec("single", 1, False, 10800) == 10800
+        assert svc._resolve_timeout_sec("single", 1, False, None) == svc.RUN_TIMEOUT_BASE_SEC
 
     def test_the_rework_hop_runs_as_the_step_executor_with_the_revision_probe(
             self, world, launched, monkeypatch):
@@ -1696,3 +1702,262 @@ class TestSettleExtraction:
         pause_at = source.index("user_paused_probe()")
         assert approve_at < target_at < pause_at, (
             "the last step must end approved, and a pause is checked after that (P0008 S4/S5)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.1/2.3 — the review_id anchor AND the current-revision guard, combined (A1-A9)
+#
+# One document_reviews ROW makes at most one automatic rejection -- even across a human
+# mark_revised that leaves the revision unchanged (A6, RED on main before this change).
+# _auto_reject and transition_document_review run for REAL here (real_gate_exec below):
+# a fake _auto_reject (as gate_exec uses) would make every one of these tests vacuous,
+# since the whole point is whether a SECOND gate call sees what the FIRST call's real
+# write left in rejection_history.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+_REAL_AUTO_REJECT = svc._auto_reject
+
+
+@pytest.fixture
+def real_gate_exec(monkeypatch, world, gate_exec):
+    """gate_exec's spawn captures, with _auto_reject restored to the real function and
+    just enough of transition_document_review's dependencies patched (state-preserving,
+    T0005 2.3) that it writes review_id-tagged rejection_history into world.docs."""
+    from modules.flow_gate.workflow import pipeline_service as ps
+    from modules.flow_gate.workflow.routers import workflow as wf_router
+
+    def _update(doc_id, fields):
+        doc = world.docs.setdefault(doc_id, {})
+        doc.update(fields)
+        return doc
+
+    monkeypatch.setattr(svc.db_docs, "update", _update)
+    monkeypatch.setattr(db_users, "get_by_id", lambda uid: {"user_id": uid, "is_admin": 1})
+    monkeypatch.setattr(wf_router, "_get_user_permissions",
+                        lambda user: {"document.approve", "document.reject",
+                                       "document.update", "own.draft"})
+    monkeypatch.setattr(ps, "log_state_changed", lambda **kw: {"id": 1})
+    monkeypatch.setattr(ps, "_require_document_body_for_approval",
+                        lambda doc, locale="ko": None)
+
+    def _real_auto_reject(slot, review, b):
+        gate_exec["rejected"].append(slot["doc_id"])
+        return _REAL_AUTO_REJECT(slot, review, b)
+
+    monkeypatch.setattr(svc, "_auto_reject", _real_auto_reject)
+    return gate_exec
+
+
+def _history_of(world, doc_id):
+    raw = world.docs[doc_id].get("rejection_history")
+    if raw is None:
+        return []
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+class TestT0005ReviewIdAnchor:
+    """A1-A9 (T0005 3항)."""
+
+    def test_a1_one_rejection_per_review_row_then_round_two_after_rework(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "fix x"}])
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert world.docs["doc-5"]["doc_review_status"] == "rejected"
+        assert len(_history_of(world, "doc-5")) == 1
+
+        world.rework("doc-5", 1)   # ('rejected','submit') -> 'revised', revision_no 1
+        real_gate_exec["rejected"].clear()
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "review" and gate["round_no"] == 2
+        assert "reject_first" not in gate
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == [], "_auto_reject total stays at 1"
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a2_two_review_rows_each_earn_their_own_rejection(self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "a"}])
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+
+        world.review("doc-5", "issues", revision_no=1,
+                     findings=[{"locus": "§2", "note": "b"}])
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is True
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+
+        history = _history_of(world, "doc-5")
+        assert len(history) == 2
+        ids = sorted(int(item["review_id"]) for item in history)
+        reviews = sorted(int(r["id"]) for r in world.reviews["doc-5"])
+        assert ids == reviews
+        assert len({item["review_id"] for item in history}) == 2, "one item per row"
+
+    def test_a3_a_pass_after_rework_finds_the_document_still_revised(self, world, real_gate_exec):
+        from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
+
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        world.review("doc-5", "pass", revision_no=1)
+
+        assert world.docs["doc-5"]["doc_review_status"] == "revised"
+        assert get_doc_review_rule("revised", "approve") == "approved"
+        assert get_doc_review_rule("rejected", "approve") is None
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["parked"] == []
+        assert real_gate_exec["settled"] == ["doc-5"]
+        assert len(real_gate_exec["work"]) == 1
+
+    def test_a4_a_cold_resume_onto_the_landed_rework_does_not_inflate_the_count(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        real_gate_exec["rejected"].clear()
+
+        # A bundle with no last_stage IS the cold-resume shape already (P0007/L0008 2.9) --
+        # re-derive it twice, exactly as a restart followed by a resume would.
+        gate1 = svc.resolve_review_gate(bundle())
+        gate2 = svc.resolve_review_gate(bundle())
+        assert gate1["stage"] == gate2["stage"] == "review" and gate1["round_no"] == 2
+        assert real_gate_exec["rejected"] == []
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a5_two_consecutive_run_review_gate_calls_on_the_same_state_stay_idempotent(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"], "the second call rejects nothing new"
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a6_mark_revised_at_the_same_revision_does_not_re_reject(self, world, real_gate_exec):
+        """The money test (T0005): RED on main before the review_id anchor. A human's
+        mark_revised puts the document back at pending_review WITHOUT bumping the
+        revision -- exactly the state a landed rework does NOT produce -- so the old
+        status-only + revision-match guard alone re-opens it for a second rejection."""
+        from modules.flow_gate.workflow import pipeline_service as ps
+
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "x"}])
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert world.docs["doc-5"]["doc_review_status"] == "rejected"
+        assert world.docs["doc-5"]["revision_no"] == 0
+        real_gate_exec["rejected"].clear()
+
+        ps.transition_document_review(
+            doc_id="doc-5", action="mark_revised", actor_user_id=USER,
+            user_permissions={"document.update", "own.draft"},
+        )
+        assert world.docs["doc-5"]["doc_review_status"] == "pending_review"
+        assert world.docs["doc-5"]["revision_no"] == 0, "revision is UNCHANGED -- the A6 trap"
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework"
+        assert gate["reject_first"] is False, (
+            "the same review row already produced one rejection; mark_revised must not "
+            "re-open it for a second")
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == [], "no second _auto_reject call"
+        assert len(_history_of(world, "doc-5")) == 1, "history stays at one entry"
+
+    def test_a7_a_human_rejection_is_never_re_rejected_and_its_history_is_preserved(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5", status="rejected")
+        world.docs["doc-5"]["rejection_history"] = json.dumps([{
+            "rejection_id": "rej_human0001", "reason": "human says fix Y",
+            "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+            "ai_response": None, "responded_at": None,
+            "response_recorded_by": None, "response_revision_no": None,
+        }])
+        world.review("doc-5", "issues", revision_no=0)
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is False
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == []
+        history = _history_of(world, "doc-5")
+        assert len(history) == 1
+        assert history[0]["reason"] == "human says fix Y"
+        assert "review_id" not in history[0]
+
+    def test_a8_byte_identical_reasons_from_two_different_rows_both_reject(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "same note"}], comment="same comment")
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        real_gate_exec["rejected"].clear()
+
+        world.review("doc-5", "issues", revision_no=1,
+                     findings=[{"locus": "§1", "note": "same note"}], comment="same comment")
+        r1 = dict(world.reviews["doc-5"][1])   # the round-1 row, oldest
+        r2 = dict(world.reviews["doc-5"][0])   # the round-2 row, newest
+        reason1 = svc.build_auto_reject_reason(r1, {"doc_id": "doc-5"}, API_BASE)
+        reason2 = svc.build_auto_reject_reason(r2, {"doc_id": "doc-5"}, API_BASE)
+        assert reason1 == reason2, "the premise: two rows, byte-identical reason text"
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is True, (
+            "a different row's identical text must not be read as already applied")
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+
+        history = _history_of(world, "doc-5")
+        assert len(history) == 2
+        assert {item["review_id"] for item in history} == {r1["id"], r2["id"]}
+
+    def test_a9_a_keyless_legacy_item_suppresses_by_reason_but_a_null_keyed_item_never_does(
+            self, world, real_gate_exec):
+        # -- 9a: an OLD item with no review_id key at all, exact-reason match suppresses --
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "x"}], comment="c")
+        gate0 = svc.resolve_review_gate(bundle())
+        legacy_reason = svc.build_auto_reject_reason(
+            svc._latest_review_of(gate0["slot"]), gate0["slot"], API_BASE)
+        world.docs["doc-5"]["rejection_history"] = json.dumps([{
+            "rejection_id": "rej_legacy001", "reason": legacy_reason,
+            "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+            "ai_response": None, "responded_at": None,
+            "response_recorded_by": None, "response_revision_no": None,
+        }])
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["reject_first"] is False, "exact reason match on a KEYLESS item suppresses"
+        svc.run_review_gate(GROUP, bundle(), _run())
+        assert real_gate_exec["rejected"] == []
+
+        # -- 9b: items that DO carry the key, but an unusable value, never suppress --
+        for bad_value in (None, "", "   "):
+            world.reviews.pop("doc-7", None)
+            world.fill(7, "doc-7", status="pending_review", revision_no=0)
+            world.review("doc-7", "issues", revision_no=0,
+                         findings=[{"locus": "§1", "note": "y"}], comment="c2")
+            gate0b = svc.resolve_review_gate(bundle(review_count_overrides={"7": 2}))
+            reason_b = svc.build_auto_reject_reason(
+                svc._latest_review_of(gate0b["slot"]), gate0b["slot"], API_BASE)
+            world.docs["doc-7"]["rejection_history"] = json.dumps([{
+                "rejection_id": "rej_bad0001", "review_id": bad_value, "reason": reason_b,
+                "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+                "ai_response": None, "responded_at": None,
+                "response_recorded_by": None, "response_revision_no": None,
+            }])
+            real_gate_exec["rejected"].clear()
+            gate_b = svc.resolve_review_gate(bundle(review_count_overrides={"7": 2}))
+            assert gate_b["reject_first"] is True, (
+                f"review_id={bad_value!r} present-but-invalid must not suppress")

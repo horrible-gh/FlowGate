@@ -5759,8 +5759,56 @@ def _pending_review_slot(doc_ref: Optional[str]) -> Optional[dict]:
             "doc_type": (doc.get("type_code") or item.get("type") or "").upper(),
             "revision_no": int(doc.get("revision_no") or 0),
             "review_status": status,
+            # T0005 2.1.1: the accumulated FACT of which review rows were already turned
+            # into an automatic rejection. `review_status` above is a momentary value a
+            # landed rework overwrites (`rejected + submit -> revised`); this one only
+            # grows, so it survives that transition and lets the gate tell "already
+            # rejected once" from "not in rejected status right now".
+            "rejection_history": _parse_rejection_history(doc.get("rejection_history")),
         }
     return None
+
+
+def _parse_rejection_history(raw) -> list:
+    """documents.rejection_history as a list of dict items (T0005 2.1.1).
+
+    The column is free-form JSON text. Absent, unparseable, or not-a-list all mean the
+    SAME thing here: an empty history. A malformed column degrades the review_id guard
+    back to "nothing recorded yet" -- it must never break the gate.
+    """
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+def _review_key(value) -> str:
+    """One comparable form for a `document_reviews.id` (T0005 2.1.2).
+
+    The column is a positive integer, but it round-trips through the rejection_history
+    JSON and can come back as "244". Comparing normalized strings makes 244 and "244"
+    one key. Values that cannot identify a review row -- None, bool, an empty or
+    whitespace-only string, a non-numeric string -- all fold to "", which matches nothing.
+    """
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value) if value > 0 else ""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or not text.isdecimal():
+            return ""
+        try:
+            return text if int(text) > 0 else ""
+        except ValueError:
+            return ""
+    return ""
 
 
 def _review_findings(review: Optional[dict]) -> list:
@@ -5885,7 +5933,18 @@ def resolve_review_gate(bundle: dict) -> dict:
     # new revision. `rejected + approve` stays absent from the transition table.
     latest_revision = int(latest.get("revision_no") or 0)
     slot_revision = int(slot["revision_no"])
-    reject_first = slot["review_status"] != "rejected" and slot_revision == latest_revision
+    # T0005 2.1.4: a THIRD condition joins status and revision-match by AND — this exact
+    # review row must not already have produced a rejection. Status alone is not enough
+    # (I3: `rejected` still means "not again", but a landed rework leaves `revised` behind,
+    # which does NOT mean "not yet" — that value is precisely what a fixed complaint looks
+    # like right before the NEXT review round starts). Without this third term, a human
+    # mark_revised back to `pending_review` at the SAME revision (A6) would pass both
+    # existing checks and re-reject a review row already recorded in rejection_history.
+    reject_first = (
+        slot["review_status"] != "rejected"
+        and slot_revision == latest_revision
+        and not _review_already_rejected(latest, slot, bundle.get("api_base_url"))
+    )
 
     if slot_revision > latest_revision:
         # The rework for this complaint already landed. Deliberately NO `reject_first`:
@@ -5953,6 +6012,42 @@ def build_auto_reject_reason(review: Optional[dict], slot: dict, api_base_url: O
     return text[:REVIEW_REASON_MAX_CHARS] if len(text) > REVIEW_REASON_MAX_CHARS else text
 
 
+def _review_already_rejected(
+    review: Optional[dict], slot: dict, api_base_url: Optional[str]
+) -> bool:
+    """Has THIS review row already been turned into a rejection? (T0005 2.1.3)
+
+    The unit of a rejection is one `document_reviews` row, not the document's momentary
+    status. `('rejected', 'submit') -> 'revised'` erases the status the old guard read
+    alone, so every landed rework could re-open the same complaint for a second rejection.
+
+    Two item shapes answer the question, checked per item in stored order:
+
+    * items that CARRY the `review_id` key are matched by that id and by nothing else --
+      two different review rows with byte-identical findings are two separate rejections,
+      as they should be (A8). A `review_id` key present but null/blank/whitespace/invalid
+      names no row: it must not fall through to the legacy reason match below (A9), or a
+      LATER review row that happens to render the same text would be swallowed by it.
+    * items with NO `review_id` key at all are the pre-T0005 shape, matched by their exact
+      `reason` against the text this review would produce. `build_auto_reject_reason` is
+      pure, so the same row always renders the same string, and a human-written reason
+      never equals one (every automatic reason opens with REVIEW_REJECT_HEADING).
+    """
+    review_key = _review_key((review or {}).get("id"))
+    legacy_reason = None
+    for item in slot.get("rejection_history") or []:
+        if "review_id" in item:
+            item_key = _review_key(item.get("review_id"))
+            if review_key and item_key == review_key:
+                return True
+            continue        # a different (or unidentifiable) review row -- never fall through
+        if legacy_reason is None:
+            legacy_reason = build_auto_reject_reason(review, slot, api_base_url)
+        if str(item.get("reason") or "") == legacy_reason:
+            return True
+    return False
+
+
 def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
     """Turn an `issues` verdict into a real rejection (L0008 §2.6).
 
@@ -5986,6 +6081,12 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
             actor_user_id=actor_user_id,
             user_permissions=permissions,
             comment=reason,
+            # T0005 2.1.5: the review row this rejection is FOR, so the stored history item
+            # carries a `review_id` key the next gate pass can match against
+            # (_review_already_rejected above). A missing review, or a row without an id,
+            # passes None -- the pre-existing behaviour: the item is written without the
+            # key and falls back to legacy reason matching for it.
+            review_id=(review or {}).get("id"),
         )
     except Exception as exc:  # noqa: BLE001 — the stored document is never touched
         logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)

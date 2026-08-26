@@ -1461,6 +1461,113 @@ def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
 
 # ── R018 prompt builder ───────────────────────────────────────────────────────
 
+def _resolve_review_for_response(doc_id: str, revision_no: int) -> tuple:
+    """The single authoritative review row a rejection response will name (T0005 2.2.1).
+
+    The mention is the producer of the `review_id` field, so the id has to be resolved
+    HERE rather than hoped for from whoever assembled the caller's `current_review` --
+    that dict is a display bundle (verdict, findings, comment) built independently
+    (token_routes._load_current_revision_review) and carries no id.
+
+    One query, `document_reviews.get_latest_by_doc`, decides BOTH the content this
+    mention prints and the id the artifact POST sends -- never two independent reads
+    compared after the fact. `document_reviews` has no uniqueness constraint tying
+    verdict/comment/findings/reviewed_at to one row, so a second review row for the same
+    revision can be byte-identical to the first while carrying a different id; comparing
+    two independent reads can never expose that, because the two reads never share a
+    transaction. Reading once removes the race instead of narrowing it.
+
+    A row that matches the revision is still not automatically the rejection being
+    answered. Only an `issues` verdict can ever have produced an automatic rejection
+    (resolve_review_gate only rejects on `issues` -- a `pass`/`hold` row cannot be the
+    source of any rejection_history item, however coincidentally its id might collide),
+    and even an `issues` row may not be the one on record: a human can reject via
+    `mark_revised`/the reject button ahead of (or instead of) the automatic gate, which
+    appends a KEYLESS history item while a current-revision `issues` row still sits in
+    `document_reviews`. Attaching that row's id to a response meant for the keyless human
+    rejection sends `record_rejection_response` looking for a keyed item that does not
+    exist, and it silently drops the response instead of falling back to the legacy
+    latest-item policy (rejection review feedback, group 0466 TR0006 rev0). So the row is
+    trusted only when the document's OWN most recent `rejection_history` entry -- the
+    rejection actually open right now -- already carries this exact row's id.
+
+    Returns `(resolved_review, row_id)` when a usable row is found targeting exactly
+    `revision_no` AND anchoring the document's latest rejection_history item -- the
+    caller MUST print `resolved_review`, not its own bundle, or the printed content and
+    the id could again name different rows. Returns `(None, None)` in every other case
+    (row unreadable/absent, wrong revision, non-`issues` verdict, or not the row that
+    produced the open rejection) -- the caller keeps its own bundle for display and omits
+    `review_id` entirely, which is exactly what lets the legacy `history[-1]` fallback in
+    `record_rejection_response` answer a keyless rejection. An invented id must never
+    happen: it would attach a response to nothing, or to somebody else's rejection.
+    """
+    from modules.flow_gate.workflow.pipeline_service import (
+        is_review_row_id,
+        parse_rejection_history,
+        rejection_review_key,
+    )
+
+    try:
+        from modules.flow_gate.db import document_reviews as db_reviews
+
+        row = db_reviews.get_latest_by_doc(doc_id or "")
+    except Exception:  # noqa: BLE001 -- a mention must never fail over an optional field
+        logger.warning("review row id lookup failed for %s", doc_id, exc_info=True)
+        return None, None
+    if not isinstance(row, dict):
+        return None, None
+    try:
+        if int(row.get("revision_no") or 0) != int(revision_no or 0):
+            return None, None
+    except (TypeError, ValueError):
+        return None, None
+    row_id = row.get("id")
+    if not is_review_row_id(row_id):
+        return None, None
+    if str(row.get("verdict") or "").strip().lower() != "issues":
+        # A pass/hold row never produced an automatic rejection; any rejection open on
+        # this revision has to be a human/keyless one, so this row cannot be its anchor.
+        return None, None
+    try:
+        from modules.flow_gate.db import documents as db_documents
+
+        doc = db_documents.get_by_id(doc_id or "")
+    except Exception:  # noqa: BLE001 -- same "never fail an optional field" rule as above
+        logger.warning("rejection_history lookup failed for %s", doc_id, exc_info=True)
+        return None, None
+    if not isinstance(doc, dict):
+        return None, None
+    history = parse_rejection_history(doc.get("rejection_history"))
+    if not history:
+        return None, None
+    last_item = history[-1]
+    if not isinstance(last_item, dict) or "review_id" not in last_item:
+        # Keyless -- a human rejection, or a pre-T0005 automatic one. Either way this
+        # row did not produce it; the legacy latest-item fallback answers it instead.
+        return None, None
+    if rejection_review_key(last_item.get("review_id")) != rejection_review_key(row_id):
+        return None, None
+    raw_findings = row.get("findings")
+    findings: list = []
+    if isinstance(raw_findings, str):
+        try:
+            parsed = json.loads(raw_findings)
+            if isinstance(parsed, list):
+                findings = parsed
+        except (TypeError, ValueError):
+            findings = []
+    elif isinstance(raw_findings, list):
+        findings = raw_findings
+    resolved_review = {
+        "revision_no": int(revision_no or 0),
+        "verdict": row.get("verdict"),
+        "findings": findings,
+        "comment": row.get("comment"),
+        "reviewed_at": row.get("reviewed_at"),
+    }
+    return resolved_review, row_id
+
+
 def build_mention(
     *,
     # Parent document information
@@ -1544,6 +1651,18 @@ def build_mention(
     # ON is the pre-flight Q-registration phase, not "go". All "create the next document"
     # guidance (the new-document section) is removed so the worker only registers Qs.
     review_continuous = continuous and continuous_review_mode and not is_edit
+
+    # Pair what this mention PRINTS about the current review with the row id it answers,
+    # from ONE query (T0005 2.2.1) -- before the printing block below, so both that block
+    # and the artifact template's review_id use the same resolved content. Only for the
+    # rejection-rework path: a normal edit answers no rejection and must not even look.
+    review_row_id = None
+    if is_edit and edit_reason == "rejected" and current_review:
+        resolved_review, review_row_id = _resolve_review_for_response(
+            parent_canonical_doc_id or parent_doc_id, parent_revision_no
+        )
+        if resolved_review is not None:
+            current_review = resolved_review
 
     # ── Section 1: document information ──────────────────────────────────────
     # Anchor at the step's predecessor (head_doc_*) when supplied for a new hand-off;
@@ -1734,6 +1853,16 @@ def build_mention(
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
                 template_provision.normalize_locale(locale)
             ]
+            # T0005 2.2.1: name the review row this response answers. Without it the
+            # server can only attach the response to the LAST rejection_history item, so
+            # a human rejection (or another review row's) landing after the one being
+            # answered takes the answer instead. `review_row_id` was resolved above, from
+            # the SAME query that produced the `current_review` this mention prints in
+            # "## Review feedback" -- worker and server agree on the target by
+            # construction. Unidentifiable -> the field is omitted rather than invented,
+            # and record_rejection_response keeps its legacy latest-item behaviour.
+            if review_row_id is not None:
+                post_body["review_id"] = review_row_id
         post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
         commit_hint = ""
         # 0299: a resubmission (edit) goes through the work-scope check too. If the rework

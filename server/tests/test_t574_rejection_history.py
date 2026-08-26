@@ -519,6 +519,13 @@ from modules.flow_gate.workflow.pipeline_service import (
     record_rejection_response,
     AI_RESPONSE_MAX_LEN,
 )
+# T0005 2.1.5/2.2.2-2.2.6: the review_id anchor plumbing under test below.
+from modules.flow_gate.api import inbox_routes
+from modules.flow_gate.workflow.pipeline_service import (
+    is_review_row_id,
+    rejection_review_key,
+    UNIDENTIFIABLE_REVIEW_ID,
+)
 
 
 def _patch_store_everywhere(db_conn, monkeypatch):
@@ -704,3 +711,473 @@ class TestBackfillMigration037:
         conn.executescript(MIGRATION_037.read_text(encoding="utf-8"))
         raw = conn.execute("SELECT rejection_history FROM documents WHERE doc_id='D_EMPTY'").fetchone()[0]
         assert json.loads(raw) == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.1.2/2.2.2/2.2.3 — the review_id normalization primitives, standalone
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestIsReviewRowId:
+    @pytest.mark.parametrize("value", [1, 244, "244", " 244 ", "1"])
+    def test_valid_row_ids(self, value):
+        assert is_review_row_id(value) is True
+
+    @pytest.mark.parametrize("value", [
+        True, False, None, "", "   ", "abc", 0, -1, 3.5, [1], "0", "-5",
+        "1" * 5000,   # Python 3.11+ refuses int() beyond a few thousand digits
+        "²",       # .isdigit() is True for this but int() cannot parse it
+    ])
+    def test_invalid_values(self, value):
+        assert is_review_row_id(value) is False
+
+
+class TestRejectionReviewKey:
+    def test_int_and_string_fold_to_the_same_key(self):
+        assert rejection_review_key(244) == rejection_review_key("244") == "244"
+
+    @pytest.mark.parametrize("value", [None, True, "", "   ", "abc", 0, -1, 3.5, [1]])
+    def test_unusable_values_fold_to_empty(self, value):
+        assert rejection_review_key(value) == ""
+
+    def test_unidentifiable_marker_folds_to_empty(self):
+        assert rejection_review_key(UNIDENTIFIABLE_REVIEW_ID) == ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.1.5 — transition_document_review stores review_id only when it is given and valid
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestTransitionDocumentReviewStoresReviewId:
+    def test_a_valid_review_id_is_stored_on_the_new_item(self, db_conn, monkeypatch):
+        _patch_pipeline(db_conn, monkeypatch)
+        result = transition_document_review(
+            doc_id="D001", action="reject", actor_user_id="u001",
+            user_permissions=ADMIN_PERMS, comment="reason", review_id=101,
+        )
+        history = json.loads(result["rejection_history"])
+        assert history[0]["review_id"] == 101
+
+    def test_the_default_omits_the_key_entirely(self, db_conn, monkeypatch):
+        """A human [반려] never passes review_id — the item must not grow a key it never
+        had, so an older reader (the client, document_routes) sees exactly what it always
+        saw."""
+        _patch_pipeline(db_conn, monkeypatch)
+        result = transition_document_review(
+            doc_id="D001", action="reject", actor_user_id="u001",
+            user_permissions=ADMIN_PERMS, comment="reason",
+        )
+        history = json.loads(result["rejection_history"])
+        assert "review_id" not in history[0]
+
+    @pytest.mark.parametrize("bad_id", [True, "", "   ", 3.5, [1]])
+    def test_an_unusable_review_id_is_not_stored(self, db_conn, monkeypatch, bad_id):
+        _patch_pipeline(db_conn, monkeypatch)
+        result = transition_document_review(
+            doc_id="D001", action="reject", actor_user_id="u001",
+            user_permissions=ADMIN_PERMS, comment="reason", review_id=bad_id,
+        )
+        history = json.loads(result["rejection_history"])
+        assert "review_id" not in history[0]
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.2.3-2.2.6 — record_rejection_response targets the NAMED review row
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestRecordRejectionResponseByReviewId:
+    def _history(self, db_conn):
+        return json.loads(
+            db_conn.execute(
+                "SELECT rejection_history FROM documents WHERE doc_id='D001'"
+            ).fetchone()[0]
+        )
+
+    def _reject(self, comment: str, review_id=None):
+        return transition_document_review(
+            doc_id="D001", action="reject", actor_user_id="u001",
+            user_permissions=ADMIN_PERMS, comment=comment, review_id=review_id,
+        )
+
+    def test_matches_the_named_row_not_the_last_item(self, db_conn, monkeypatch):
+        """A later, keyless (human) rejection must not steal the response meant for an
+        earlier, named review row — the exact bug an unconditional history[-1] would be."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("review row 101", review_id=101)
+        _reopen(db_conn)
+        self._reject("human rejection, no row")  # lands AFTER, carries no review_id
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="addressed row 101", recorded_by="u001",
+            revision_no=1, review_id=101,
+        )
+        assert item is not None
+        items = self._history(db_conn)
+        assert items[0]["ai_response"] == "addressed row 101"
+        assert items[1]["ai_response"] is None, "the later keyless item stays untouched"
+
+    def test_string_and_int_review_id_name_the_same_row(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("c", review_id=244)
+        item = record_rejection_response(
+            doc_id="D001", response_text="resp", recorded_by="u001",
+            revision_no=1, review_id="244",
+        )
+        assert item is not None
+        assert self._history(db_conn)[0]["ai_response"] == "resp"
+
+    def test_first_matching_duplicate_wins(self, db_conn, monkeypatch):
+        """Defensive case: one review row should make one rejection, but if two items
+        somehow carry the same review_id, the FIRST written one collects the response."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("first", review_id=7)
+        _reopen(db_conn)
+        self._reject("second, same row", review_id=7)
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="resp", recorded_by="u001",
+            revision_no=1, review_id=7,
+        )
+        assert item is not None
+        items = self._history(db_conn)
+        assert items[0]["ai_response"] == "resp"
+        assert items[1]["ai_response"] is None
+
+    def test_unmatched_review_id_records_nothing(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("c", review_id=7)
+        assert record_rejection_response(
+            doc_id="D001", response_text="resp", recorded_by="u001",
+            revision_no=1, review_id=999,
+        ) is None
+        assert self._history(db_conn)[0]["ai_response"] is None
+
+    @pytest.mark.parametrize("bad_id", [True, "", "   ", 3.5, [1], UNIDENTIFIABLE_REVIEW_ID])
+    def test_invalid_explicit_review_id_records_nothing(self, db_conn, monkeypatch, bad_id):
+        """A broken claim is NOT an absent one — it must not fall through to the legacy
+        latest-item policy and silently overwrite a different rejection's response."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("c", review_id=7)
+        assert record_rejection_response(
+            doc_id="D001", response_text="resp", recorded_by="u001",
+            revision_no=1, review_id=bad_id,
+        ) is None
+        assert self._history(db_conn)[0]["ai_response"] is None
+
+    def test_absent_review_id_still_uses_the_legacy_latest_item_policy(self, db_conn, monkeypatch):
+        """The ONE legacy case: no field at all (a pre-T0005 mention, or an internal
+        caller with no review row to name) — unaffected by an earlier item's review_id."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        self._reject("row 5", review_id=5)
+        _reopen(db_conn)
+        self._reject("no row id")
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="legacy resp", recorded_by="u001", revision_no=2,
+        )
+        assert item is not None
+        items = self._history(db_conn)
+        assert items[-1]["ai_response"] == "legacy resp"
+        assert items[0]["ai_response"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.2.2 — the inbox boundary that reads the worker's review_id claim off the body
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestSubmittedReviewIdBoundary:
+    def test_absent_field_returns_none(self):
+        assert inbox_routes._submitted_review_id({"other": 1}) is None
+
+    def test_valid_int_passes_through_verbatim(self):
+        assert inbox_routes._submitted_review_id({"review_id": 55}) == 55
+
+    def test_valid_numeric_string_passes_through_verbatim(self):
+        assert inbox_routes._submitted_review_id({"review_id": "55"}) == "55"
+
+    @pytest.mark.parametrize("bad", [True, False, "", "   ", None, 3.5, [1], "abc"])
+    def test_unidentifiable_values_return_the_marker(self, bad):
+        assert inbox_routes._submitted_review_id({"review_id": bad}) is UNIDENTIFIABLE_REVIEW_ID
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.2.2-2.2.3 — the real _handle_edit boundary (rejection review feedback, group
+# 0466 TR0006 rev0): TestSubmittedReviewIdBoundary above proves only the tiny extraction
+# helper; TestRecordRejectionResponseByReviewId above calls record_rejection_response
+# directly. Neither exercises the actual POST /api/v1/inbox "edit" path that threads a
+# worker-submitted review_id from the JSON body, through _handle_edit's
+# _submitted_review_id() call, to record_rejection_response — a dropped or mutated id
+# anywhere on that path would still pass every test above. This class drives the real
+# FastAPI route (a fresh sqlite file DB + full schema, mirroring
+# test_inbox_timemachine_reject_0046.py's harness) end to end.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+import sys as _sys
+import tempfile as _tempfile
+from contextlib import contextmanager as _contextmanager
+
+_E2E_SERVER_DIR = Path(__file__).resolve().parents[1]
+_E2E_SCHEMA_DIR = _E2E_SERVER_DIR / "sql" / "migrations" / "sqlite"
+_E2E_QUERIES_JSON = _E2E_SERVER_DIR / "sql" / "queries" / "queries.json"
+
+_E2E_QUERIES: dict[str, str] = {}
+if _E2E_QUERIES_JSON.exists():
+    _raw_q = json.loads(_E2E_QUERIES_JSON.read_text(encoding="utf-8"))
+    for _section, _entries in _raw_q.items():
+        if isinstance(_entries, dict):
+            for _key, _sql in _entries.items():
+                if isinstance(_sql, str):
+                    _E2E_QUERIES[f"{_section}.{_key}"] = _sql.replace("%s", "?")
+
+
+class _E2EMockDB:
+    def __init__(self, db_path: str):
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def execute(self, sql: str, params=None):
+        self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    def fetch_one(self, sql: str, params=None):
+        row = self._conn.execute(sql, params or []).fetchone()
+        return dict(row) if row else None
+
+    def fetch_all(self, sql: str, params=None):
+        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+
+    @_contextmanager
+    def begin_transaction(self):
+        yield _E2EMockTxn(self._conn)
+
+    def close(self):
+        self._conn.close()
+
+
+class _E2EMockTxn:
+    def __init__(self, conn):
+        self._conn = conn
+        self._last_cursor = None
+
+    def execute(self, sql: str, params=None):
+        self._last_cursor = self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    def fetch_one(self):
+        if self._last_cursor is None:
+            return None
+        row = self._last_cursor.fetchone()
+        return dict(row) if row else None
+
+    def fetch_all(self):
+        if self._last_cursor is None:
+            return []
+        return [dict(r) for r in self._last_cursor.fetchall()]
+
+
+_E2E_PROJECT_ID = "trid0466"
+_E2E_GROUP_ID = "trid0466-__ALL__-0006"
+_E2E_USER_ID = "usr_trid0466"
+
+
+@pytest.fixture(scope="module")
+def e2e_db():
+    _sys.path.insert(0, str(_E2E_SERVER_DIR))
+    with _tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    mock_db = _E2EMockDB(db_path)
+    for sql_file in sorted(_E2E_SCHEMA_DIR.glob("*.sql")):
+        try:
+            mock_db._conn.executescript(sql_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    mock_db._conn.commit()
+    yield mock_db
+    mock_db.close()
+    os.unlink(db_path)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def e2e_store(e2e_db):
+    from modules.flow_gate.db import connection as conn_mod
+
+    original_store = conn_mod.STORE
+
+    class _PatchedStore(conn_mod.FlowGateStore):
+        def __init__(self):
+            self._db = e2e_db
+            self._sq = None
+
+        def _sql(self, key: str) -> str:
+            if key in _E2E_QUERIES:
+                return _E2E_QUERIES[key]
+            raise KeyError(f"Query not found: {key}")
+
+    conn_mod.STORE = _PatchedStore()
+    yield
+    conn_mod.STORE = original_store
+
+
+@pytest.fixture(scope="module", autouse=True)
+def e2e_seed(e2e_db, e2e_store):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import groups as db_groups
+    from modules.flow_gate.db import projects, users
+    from modules.flow_gate.db.connection import get_store, now_iso
+
+    now = now_iso()
+    projects.create({"project_id": _E2E_PROJECT_ID, "project_name": "TR0006 e2e"})
+    users.create({
+        "user_id": _E2E_USER_ID, "username": "trid0466worker",
+        "email": "trid0466@test.com", "password": "hashed",
+    })
+    store = get_store()
+    store._execute(
+        "INSERT OR IGNORE INTO roles (role_id, role_name, created_at, updated_at) VALUES (?,?,?,?)",
+        ["role_worker", "Worker", now, now],
+    )
+    for perm in ("document.create", "document.read", "document.update", "document.reject"):
+        store._execute(
+            "INSERT OR IGNORE INTO permissions (permission_id, permission_name, created_at) VALUES (?,?,?)",
+            [perm, perm, now],
+        )
+        store._execute(
+            "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?,?)",
+            ["role_worker", perm],
+        )
+    store._execute(
+        "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) VALUES (?,?,?,?)",
+        [_E2E_USER_ID, _E2E_PROJECT_ID, "role_worker", now],
+    )
+    db_groups.create({
+        "group_id": _E2E_GROUP_ID, "project_id": _E2E_PROJECT_ID,
+        "module": "__ALL__", "title": "TR0006 e2e group",
+    })
+    for code, name in (("R", "Requirement"), ("N", "Notice")):
+        store._execute(
+            "INSERT OR IGNORE INTO document_types "
+            "(project_id, type_code, type_name, series, is_system, is_active, sort_order, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [None, code, name, "work", 1, 1, 0, now, now],
+        )
+
+
+def _e2e_client():
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    app = FastAPI()
+    app.include_router(inbox_routes.router)
+    return TestClient(app)
+
+
+def _e2e_make_edit_token(tmp_path, doc_id: str) -> str:
+    from modules.flow_gate.services import token_service
+    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "s_edit"):
+        result = token_service.issue(
+            project=_E2E_PROJECT_ID, group_id=_E2E_GROUP_ID,
+            action_scope="edit", doc_ref=doc_id, issued_to=_E2E_USER_ID,
+        )
+    return result["raw_token"]
+
+
+def _e2e_create_rejected_doc(doc_id: str, seq: int, stored_path: Path, rejection_history: list):
+    from modules.flow_gate.db import documents as db_docs
+    stored_path.parent.mkdir(parents=True, exist_ok=True)
+    stored_path.write_text("# Original (rejected)")
+    db_docs.create({
+        "doc_id": doc_id, "project_id": _E2E_PROJECT_ID, "type_code": "N", "seq": seq,
+        "title": doc_id, "group_id": _E2E_GROUP_ID, "module": "__ALL__",
+        "owner_id": _E2E_USER_ID, "file_path": str(stored_path), "revision_no": 0,
+    })
+    db_docs.update(doc_id, {
+        "doc_review_status": "rejected",
+        "rejection_history": json.dumps(rejection_history, ensure_ascii=False),
+    })
+
+
+def _e2e_post_edit(raw: str, doc_id: str, *, review_id=None, content: str = "# Reworked"):
+    body = {
+        "project": _E2E_PROJECT_ID, "module": "__ALL__", "group": "0006",
+        "action": "edit", "doc_id": doc_id, "edit_reason": "rejected",
+        "content": content, "rejection_response": "addressed the review comments",
+    }
+    if review_id is not None:
+        body["review_id"] = review_id
+    with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True):
+        return _e2e_client().post(
+            "/api/v1/inbox", json=body,
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+
+
+class TestRejectionResponseThroughRealInboxEdit:
+    """Drives POST /api/v1/inbox (action=edit, edit_reason=rejected) for real — the
+    review_id the worker's mention told it to send is not the last history item, so a
+    dropped/mutated id anywhere in _handle_edit would either update the wrong item or
+    silently record nothing, and this test would catch either."""
+
+    def test_integer_review_id_reaches_the_named_non_last_item(self, tmp_path):
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = f"{_E2E_GROUP_ID}-N0001"
+        stored = tmp_path / "docs" / f"{doc_id}_document.md"
+        history = [
+            {"rejection_id": "rej_a", "reason": "row 41", "review_id": 41,
+             "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
+            {"rejection_id": "rej_b", "reason": "row 55, the current one", "review_id": 55,
+             "rejected_at": "2026-08-02T00:00:00", "ai_response": None},
+        ]
+        _e2e_create_rejected_doc(doc_id, 1, stored, history)
+        raw = _e2e_make_edit_token(tmp_path, doc_id)
+
+        resp = _e2e_post_edit(raw, doc_id, review_id=55)
+        assert resp.status_code == 200, resp.text
+
+        updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
+        assert updated[0]["ai_response"] is None, "the OTHER row must stay untouched"
+        assert updated[1]["ai_response"] == "addressed the review comments"
+
+    def test_json_round_tripped_string_review_id_names_the_same_row(self, tmp_path):
+        """The mention prints an int; a worker's JSON round trip can hand it back as a
+        string. The real boundary must fold "55" and 55 to the same history item."""
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = f"{_E2E_GROUP_ID}-N0002"
+        stored = tmp_path / "docs" / f"{doc_id}_document.md"
+        history = [
+            {"rejection_id": "rej_c", "reason": "row 41", "review_id": 41,
+             "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
+            {"rejection_id": "rej_d", "reason": "row 55, the current one", "review_id": 55,
+             "rejected_at": "2026-08-02T00:00:00", "ai_response": None},
+        ]
+        _e2e_create_rejected_doc(doc_id, 2, stored, history)
+        raw = _e2e_make_edit_token(tmp_path, doc_id)
+
+        resp = _e2e_post_edit(raw, doc_id, review_id="55")
+        assert resp.status_code == 200, resp.text
+
+        updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
+        assert updated[0]["ai_response"] is None
+        assert updated[1]["ai_response"] == "addressed the review comments"
+
+    def test_absent_review_id_field_still_updates_the_last_item_legacy_path(self, tmp_path):
+        """A pre-T0005 worker mention sends no review_id at all — _handle_edit must still
+        pass the field's ABSENCE (None) through, not synthesize one, so the legacy
+        history[-1] policy in record_rejection_response fires."""
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = f"{_E2E_GROUP_ID}-N0003"
+        stored = tmp_path / "docs" / f"{doc_id}_document.md"
+        history = [
+            {"rejection_id": "rej_e", "reason": "human rejection, no row",
+             "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
+        ]
+        _e2e_create_rejected_doc(doc_id, 3, stored, history)
+        raw = _e2e_make_edit_token(tmp_path, doc_id)
+
+        resp = _e2e_post_edit(raw, doc_id, review_id=None)
+        assert resp.status_code == 200, resp.text
+
+        updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
+        assert updated[0]["ai_response"] == "addressed the review comments"
