@@ -704,3 +704,472 @@ class TestBackfillMigration037:
         conn.executescript(MIGRATION_037.read_text(encoding="utf-8"))
         raw = conn.execute("SELECT rejection_history FROM documents WHERE doc_id='D_EMPTY'").fetchone()[0]
         assert json.loads(raw) == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# 0458 T0007 §3.2 — the response lands on the rejection it answers, not on the last one
+#
+# `history[-1]` was the whole targeting policy. It is right exactly while nothing else is
+# appended between the rejection and its answer — and a human rejection, or a second review
+# row's automatic one, is appended precisely there. The answer then annotated a complaint
+# the worker never read.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+from modules.flow_gate.workflow.pipeline_service import (  # noqa: E402
+    UNIDENTIFIABLE_REVIEW_ID,
+    rejection_review_key,
+)
+
+
+def _item(review_id: Any = "__absent__", *, reason: str = "reason") -> dict:
+    """A rejection_history item shaped exactly like transition_document_review writes it."""
+    item: dict[str, Any] = {
+        "rejection_id": new_rejection_id(),
+        "reason": reason,
+        "rejected_at": "2026-08-01T00:00:00+09:00",
+        "rejected_by": "u001",
+        "ai_response": None,
+        "responded_at": None,
+        "response_recorded_by": None,
+        "response_revision_no": None,
+    }
+    if review_id != "__absent__":
+        item["review_id"] = review_id
+    return item
+
+
+def _seed_history(db_conn, items: list) -> None:
+    db_conn.execute(
+        "UPDATE documents SET rejection_history = ?, doc_review_status='rejected' "
+        "WHERE doc_id='D001'",
+        (json.dumps(items, ensure_ascii=False),),
+    )
+    db_conn.commit()
+
+
+def _read_history(db_conn) -> list:
+    return json.loads(
+        db_conn.execute(
+            "SELECT rejection_history FROM documents WHERE doc_id='D001'"
+        ).fetchone()[0]
+    )
+
+
+class TestRejectionReviewKey:
+    def test_an_integer_and_its_json_round_trip_are_one_key(self):
+        assert rejection_review_key(244) == rejection_review_key("244") == "244"
+        assert rejection_review_key(" 244 ") == "244"
+
+    def test_nothing_that_cannot_name_a_row_becomes_a_key(self):
+        for value in (None, True, False, "", "   ", UNIDENTIFIABLE_REVIEW_ID):
+            assert rejection_review_key(value) == "", value
+
+    def test_a_non_numeric_string_never_becomes_a_key(self):
+        """0458 T0008: the column is a positive integer, so "abc" (and a float or a
+        digit-plus-noise string) cannot name a row no matter how a stored value spells it."""
+        for value in ("abc", "244a", "3.5", "-1", "0"):
+            assert rejection_review_key(value) == "", value
+
+    def test_a_unicode_digit_string_int_cannot_parse_never_becomes_a_key(self):
+        """0458 T0008 rev3 rework: `str.isdigit()` is True for Unicode digit characters
+        `int()` still cannot parse — the superscript "²" is the sharpest example
+        (`"²".isdigit()` is True, `int("²")` raises ValueError). The old
+        `text.isdigit() and int(text) > 0` check let that ValueError escape unhandled
+        instead of returning False; a submitted `review_id` this shape must fold to no key,
+        not raise."""
+        for value in ("²", "²⁴⁴", "½"):
+            assert rejection_review_key(value) == "", value
+
+    def test_an_overlong_digit_string_never_becomes_a_key(self):
+        """0458 T0008 rev3 rework: even a string of ordinary ASCII digits can make `int()`
+        raise if it is absurdly long — Python 3.11+ caps str-to-int conversion at a few
+        thousand digits to block algorithmic-complexity abuse. `isdigit()`/`isdecimal()` say
+        nothing about length, so this is a second, independent way the naive check could
+        raise instead of returning False for a value that plainly cannot name a row."""
+        assert rejection_review_key("9" * 5000) == ""
+
+
+class TestRecordRejectionResponseTargeting:
+    def test_a_later_review_rows_rejection_does_not_take_the_answer(self, db_conn, monkeypatch):
+        """§3.2-3: history = [244 (the target), 245 (appended after it)]."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244, reason="fix the scope"),
+                                _item(245, reason="fix the tests")])
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="Scope rewritten.",
+            recorded_by="u001", revision_no=3, review_id=244,
+        )
+        assert item is not None
+        items = _read_history(db_conn)
+        assert len(items) == 2                       # no entry appended
+        assert items[0]["review_id"] == 244
+        assert items[0]["ai_response"] == "Scope rewritten."
+        assert items[0]["response_recorded_by"] == "u001"
+        assert items[0]["response_revision_no"] == 3
+        assert items[0]["responded_at"] is not None
+        assert items[1]["ai_response"] is None       # the trailing item is untouched
+        assert items[1]["responded_at"] is None
+
+    def test_a_human_rejection_appended_after_the_target_does_not_take_it(self, db_conn, monkeypatch):
+        """§3.2-3, second shape: the trailing item carries no `review_id` key at all —
+        exactly what the human [반려] button writes."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244, reason="fix the scope"),
+                                _item(reason="and the title is wrong")])
+
+        record_rejection_response(
+            doc_id="D001", response_text="Scope rewritten.",
+            recorded_by="u001", revision_no=3, review_id=244,
+        )
+        items = _read_history(db_conn)
+        assert len(items) == 2
+        assert items[0]["ai_response"] == "Scope rewritten."
+        assert items[1]["ai_response"] is None
+        assert "review_id" not in items[1]
+
+    @pytest.mark.parametrize("stored", [244, "244"])
+    @pytest.mark.parametrize("submitted", [244, "244"])
+    def test_an_integer_and_its_string_name_the_same_row(self, db_conn, monkeypatch,
+                                                         stored, submitted):
+        """§3.2-4: the column is an integer; the value comes back through two JSON hops."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(stored), _item(245)])
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=submitted,
+        ) is not None
+        items = _read_history(db_conn)
+        assert items[0]["ai_response"] == "done"
+        assert items[1]["ai_response"] is None
+
+    def test_an_id_that_matches_nothing_records_nothing(self, db_conn, monkeypatch):
+        """§3.2-5: no fallback to the last item. Losing a stale submission's response beats
+        writing it onto a rejection it does not answer."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(245), _item(246)])
+        before = _read_history(db_conn)
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=244,
+        ) is None
+        assert _read_history(db_conn) == before
+
+    def test_items_that_cannot_name_their_own_row_are_never_a_match(self, db_conn, monkeypatch):
+        """§3.2-5, the identifier-less shapes: a `review_id` key holding null / "" / "   "
+        identifies no row, so an explicit target must not settle for one."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(None), _item(""), _item("   ")])
+        before = _read_history(db_conn)
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=244,
+        ) is None
+        assert _read_history(db_conn) == before
+
+    @pytest.mark.parametrize(
+        "review_id",
+        [True, False, "", "   ", 3.5, [], {}, UNIDENTIFIABLE_REVIEW_ID],
+        ids=["true", "false", "blank", "spaces", "float", "list", "dict", "sentinel"],
+    )
+    def test_a_broken_claim_records_nothing_and_never_borrows_the_legacy_fallback(
+        self, db_conn, monkeypatch, review_id
+    ):
+        """§2.2-6 read strictly: the latest-item policy belongs to a mention that names NO
+        review row. A submission that names one with a value that cannot be one has made a
+        claim, and a broken claim is answered with silence — not with somebody else's
+        rejection. `True` is neither row 1 nor the key "True"; a blank string names nothing.
+
+        This is the regression the first cut got backwards: it folded all of these to None,
+        which handed each of them the fallback and let one malformed value overwrite the
+        answer of an unrelated review row."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244), _item(245)])
+        before = _read_history(db_conn)
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=review_id,
+        ) is None
+        assert _read_history(db_conn) == before        # not one byte of history moved
+
+    def test_a_broken_claim_cannot_match_an_item_whose_own_id_is_blank(self, db_conn, monkeypatch):
+        """The sharp edge of the same rule. `rejection_review_key(True)` is the empty key, and
+        so is the key of an item stored with `review_id: ""`. Compare them and `true` in the
+        body answers THAT item — a rejection it has nothing to do with. The claim has to be
+        rejected before any comparison happens."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(""), _item(244)])
+        before = _read_history(db_conn)
+
+        for review_id in (True, "", "   "):
+            assert record_rejection_response(
+                doc_id="D001", response_text="done", recorded_by="u001",
+                revision_no=2, review_id=review_id,
+            ) is None, review_id
+            assert _read_history(db_conn) == before, review_id
+
+    def test_a_non_numeric_string_cannot_match_even_an_identically_malformed_stored_value(
+        self, db_conn, monkeypatch
+    ):
+        """0458 T0008 rework: `document_reviews.id` is a positive integer, so "abc" cannot
+        name a row — not even when a free-form/legacy history item happens to carry the exact
+        same malformed string as its own `review_id`. Comparing two non-numeric strings for
+        equality is not the same as either of them naming a real row; the claim must be
+        rejected before any comparison, exactly like the bool/blank cases above."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item("abc"), _item(244)])
+        before = _read_history(db_conn)
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id="abc",
+        ) is None
+        assert _read_history(db_conn) == before
+
+    @pytest.mark.parametrize("review_id", ["²", "²⁴⁴", "9" * 5000])
+    def test_a_value_int_cannot_parse_records_nothing_without_raising(
+        self, db_conn, monkeypatch, review_id
+    ):
+        """0458 T0008 rev3 rework: a Unicode digit string `int()` cannot parse ("²" passes
+        `str.isdigit()` but `int("²")` raises ValueError) and an absurdly long ASCII-digit
+        string (Python 3.11+'s str-to-int conversion limit also raises ValueError) must both
+        be treated the same as any other value that cannot name a row — folded to no match,
+        not propagated as an unhandled exception through this boundary."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244), _item(245)])
+        before = _read_history(db_conn)
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=review_id,
+        ) is None
+        assert _read_history(db_conn) == before
+
+    def test_omitting_the_id_keeps_the_legacy_latest_item_policy(self, db_conn, monkeypatch):
+        """§3.2-6: a mention minted before this field existed still works, and so does every
+        internal caller that has no review row to name."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(reason="first"), _item(reason="second")])
+
+        record_rejection_response(
+            doc_id="D001", response_text="answered the latest",
+            recorded_by="u001", revision_no=2,
+        )
+        items = _read_history(db_conn)
+        assert items[0]["ai_response"] is None
+        assert items[1]["ai_response"] == "answered the latest"
+
+    def test_the_same_id_twice_overwrites_only_its_own_item(self, db_conn, monkeypatch):
+        """§3.2-6: idempotence is per target, not per history."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244), _item(245)])
+
+        record_rejection_response(doc_id="D001", response_text="first",
+                                  recorded_by="u001", revision_no=1, review_id=244)
+        record_rejection_response(doc_id="D001", response_text="second",
+                                  recorded_by="u001", revision_no=2, review_id="244")
+        items = _read_history(db_conn)
+        assert len(items) == 2
+        assert items[0]["ai_response"] == "second"
+        assert items[0]["response_revision_no"] == 2
+        assert items[1]["ai_response"] is None
+
+    def test_a_duplicated_id_only_answers_the_first_item(self, db_conn, monkeypatch):
+        """§3.2-7: one review row makes one rejection, so a second item carrying the same id
+        is a ghost. The answer belongs to the item that was written first."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244, reason="the real one"),
+                                _item(244, reason="the ghost")])
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, review_id=244,
+        )
+        items = _read_history(db_conn)
+        assert item["reason"] == "the real one"
+        assert items[0]["ai_response"] == "done"
+        assert items[1]["ai_response"] is None
+
+    def test_the_no_op_and_truncation_contracts_survive_an_explicit_id(self, db_conn, monkeypatch):
+        """§2.2-7: a blank response still records nothing, the ceiling still truncates, and
+        neither ever appends a history entry."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(244)])
+
+        assert record_rejection_response(
+            doc_id="D001", response_text="   ", recorded_by="u001",
+            revision_no=1, review_id=244,
+        ) is None
+        assert _read_history(db_conn)[0]["ai_response"] is None
+
+        item = record_rejection_response(
+            doc_id="D001", response_text="x" * (AI_RESPONSE_MAX_LEN + 50),
+            recorded_by="u001", revision_no=1, review_id=244,
+        )
+        assert len(item["ai_response"]) == AI_RESPONSE_MAX_LEN
+        assert len(_read_history(db_conn)) == 1
+
+    def test_a_malformed_history_is_still_a_safe_no_op(self, db_conn, monkeypatch):
+        """Non-list and non-dict members degrade to "record nothing", with or without an id."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        for raw in ('{"a": 1}', "[1, 2, 3]", "{not json", "[]", "null"):
+            db_conn.execute(
+                "UPDATE documents SET rejection_history = ? WHERE doc_id='D001'", (raw,)
+            )
+            db_conn.commit()
+            assert record_rejection_response(
+                doc_id="D001", response_text="done", recorded_by="u001",
+                revision_no=1, review_id=244,
+            ) is None, raw
+
+
+class TestInboxForwardsTheReviewId:
+    """§3.2-2 — the boundary between the submitted body and the recorder."""
+
+    def _spy(self, monkeypatch):
+        calls = []
+        import modules.flow_gate.workflow.pipeline_service as ps
+
+        monkeypatch.setattr(ps, "record_rejection_response",
+                            lambda **kwargs: calls.append(kwargs))
+        return calls
+
+    def test_the_submitted_id_reaches_the_recorder_unchanged(self, monkeypatch):
+        from modules.flow_gate.api import inbox_routes
+
+        calls = self._spy(monkeypatch)
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="I fixed the scope.",
+            review_id=inbox_routes._submitted_review_id({"review_id": 244}),
+            actor_user_id="u001", revision_no=3,
+        )
+        assert calls == [{
+            "doc_id": "D001",
+            "response_text": "I fixed the scope.",
+            "recorded_by": "u001",
+            "revision_no": 3,
+            "review_id": 244,
+        }]
+
+    def test_a_string_id_is_forwarded_as_the_string_it_arrived_as(self, monkeypatch):
+        from modules.flow_gate.api import inbox_routes
+
+        calls = self._spy(monkeypatch)
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="done",
+            review_id=inbox_routes._submitted_review_id({"review_id": "244"}),
+            actor_user_id="u001", revision_no=3,
+        )
+        assert calls[0]["review_id"] == "244"
+
+    def test_a_body_without_the_field_forwards_none(self, monkeypatch):
+        """The ONLY input that reaches the legacy latest-item policy: no field at all."""
+        from modules.flow_gate.api import inbox_routes
+
+        calls = self._spy(monkeypatch)
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="done",
+            review_id=inbox_routes._submitted_review_id({"action": "edit"}),
+            actor_user_id="u001", revision_no=3,
+        )
+        assert calls[0]["review_id"] is None
+
+    def test_the_boundary_tells_an_absent_field_from_a_broken_one(self):
+        """§2.2-2: three outcomes, not two. Absent → None (legacy fallback). Usable →
+        verbatim. Present-but-unusable → the marker, which records nothing downstream. A
+        bool must never come back as None here: that is what let `"review_id": true`
+        answer an unrelated rejection."""
+        from modules.flow_gate.api import inbox_routes
+
+        assert inbox_routes._submitted_review_id({}) is None
+        assert inbox_routes._submitted_review_id({"action": "edit"}) is None
+        assert inbox_routes._submitted_review_id({"review_id": 244}) == 244
+        assert inbox_routes._submitted_review_id({"review_id": "244"}) == "244"
+        assert inbox_routes._submitted_review_id({"review_id": " 244 "}) == " 244 "
+        for value in (
+            None, True, False, "", "   ", 3.5, [], {}, "\t\n", "abc", "244a", "-1", "0",
+            "²", "²⁴⁴", "9" * 5000,  # 0458 T0008 rev3: Unicode digits and overlong digit
+        ):                                                     # strings must not raise
+            assert inbox_routes._submitted_review_id({"review_id": value}) is (
+                UNIDENTIFIABLE_REVIEW_ID
+            ), value
+
+    def test_a_broken_id_stops_at_the_recorder_leaving_the_history_alone(
+        self, db_conn, monkeypatch
+    ):
+        """The storage half of the line above, end to end: the body's value walks the real
+        boundary into the real recorder against a real history, and nothing is written."""
+        _patch_store_everywhere(db_conn, monkeypatch)
+        from modules.flow_gate.api import inbox_routes
+
+        _seed_history(db_conn, [_item(244), _item(245)])
+        before = _read_history(db_conn)
+
+        for value in (True, "", "   ", 3.5, None):
+            inbox_routes._attach_rejection_response(
+                doc_id="D001", response_text="done",
+                review_id=inbox_routes._submitted_review_id({"review_id": value}),
+                actor_user_id="u001", revision_no=3,
+            )
+            assert _read_history(db_conn) == before, value
+
+        # …while the SAME path with the field absent still lands on the latest item, and the
+        # same path with a real id lands on that id's item.
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="legacy",
+            review_id=inbox_routes._submitted_review_id({}),
+            actor_user_id="u001", revision_no=3,
+        )
+        assert _read_history(db_conn)[1]["ai_response"] == "legacy"
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="targeted",
+            review_id=inbox_routes._submitted_review_id({"review_id": "244"}),
+            actor_user_id="u001", revision_no=3,
+        )
+        items = _read_history(db_conn)
+        assert items[0]["ai_response"] == "targeted"
+        assert items[1]["ai_response"] == "legacy"
+
+    def test_a_blank_response_never_reaches_the_recorder(self, monkeypatch):
+        from modules.flow_gate.api import inbox_routes
+
+        calls = self._spy(monkeypatch)
+        for text in (None, ""):
+            inbox_routes._attach_rejection_response(
+                doc_id="D001", response_text=text, review_id=244,
+                actor_user_id="u001", revision_no=3,
+            )
+        assert calls == []
+
+    def test_a_recorder_failure_never_breaks_the_saved_submission(self, monkeypatch):
+        import modules.flow_gate.workflow.pipeline_service as ps
+        from modules.flow_gate.api import inbox_routes
+
+        def _boom(**_kwargs):
+            raise RuntimeError("history column is gone")
+
+        monkeypatch.setattr(ps, "record_rejection_response", _boom)
+        inbox_routes._attach_rejection_response(
+            doc_id="D001", response_text="done", review_id=244,
+            actor_user_id="u001", revision_no=3,
+        )   # no raise
+
+    def test_the_edit_handler_actually_goes_through_that_boundary(self):
+        """A helper nothing calls proves nothing. Step 7.5 must reach the recorder through
+        it, and must read the id off the request body."""
+        import inspect
+
+        from modules.flow_gate.api import inbox_routes
+
+        source = inspect.getsource(inbox_routes._handle_edit)
+        assert "_attach_rejection_response(" in source
+        assert "_submitted_review_id(body)" in source, (
+            "the whole body must go in — the boundary decides on the field's PRESENCE"
+        )
+        assert "record_rejection_response" not in source, (
+            "the handler must call the recorder through the boundary, not around it"
+        )

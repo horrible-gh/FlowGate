@@ -631,11 +631,19 @@ def transition_document_review(
     user_permissions: set[str],
     comment: str | None = None,
     locale: str = "ko",
+    review_id: Any = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
     M026 §8-1: based on the DOC_REVIEW_TRANSITIONS rules.
     action: approve | reject | mark_revised
+
+    0458 NR0003 (B): `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
+    came from. It is optional and defaults to None, so every existing caller — the human
+    [반려] button above all — keeps writing exactly the item shape it wrote before. When it
+    IS given, the new rejection_history item carries the key, which is what lets the review
+    gate tell "this review row was already rejected" from "the document is momentarily not
+    in `rejected`" (the confusion that rejected one review twice).
     """
     doc = db_docs.get_by_id(doc_id)
     if not doc:
@@ -693,7 +701,7 @@ def transition_document_review(
         # unsafe). The four response fields start null — they are filled in when
         # the AI re-submits the rejected document through the inbox edit path
         # (see record_rejection_response below), not via any manual-input UI.
-        existing_history.append({
+        item: dict[str, Any] = {
             "rejection_id": new_rejection_id(),
             "reason": comment,
             "rejected_at": now_iso(),
@@ -702,7 +710,13 @@ def transition_document_review(
             "responded_at": None,
             "response_recorded_by": None,
             "response_revision_no": None,
-        })
+        }
+        if review_id is not None:
+            # 0458 NR0003 (B). Only the automatic review rejection passes this, so a human
+            # rejection never grows a key it did not have, and readers that do not know it
+            # (document_routes._parse_rejection_history, the client) ignore it.
+            item["review_id"] = review_id
+        existing_history.append(item)
         update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
 
     updated = db_docs.update(doc_id, update_fields)
@@ -745,26 +759,124 @@ def transition_document_review(
 AI_RESPONSE_MAX_LEN = 4000
 
 
+class _UnidentifiableReviewId:
+    """The submission DID name a review row — with a value that cannot be one.
+
+    0458 T0007 §2.2-2/§2.2-6. `True`, `""`, `"   "`, an explicit `null`, a float, a list:
+    each is a claim about which rejection is being answered, and each is a broken one. It
+    is deliberately NOT the same thing as sending no `review_id` at all, because only the
+    latter is the old mention the latest-item fallback exists for. Folding a broken claim
+    into "absent" is how one bad value ends up answering somebody else's rejection.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "<unidentifiable review_id>"
+
+
+UNIDENTIFIABLE_REVIEW_ID = _UnidentifiableReviewId()
+
+
+def is_review_row_id(value: Any) -> bool:
+    """True only when `value` could BE a `document_reviews.id` (0458 T0008 rework).
+
+    The column is an autoincrement primary key — a positive integer, never a bool
+    (`isinstance(True, int)` is True in Python, so bool is excluded first) and never an
+    arbitrary string. A JSON round trip can turn 244 into "244", so a string is accepted
+    too, but ONLY when every character left after stripping is a digit and the value it
+    names is >= 1. "abc" is not a row no matter how many callers happen to agree on it.
+
+    Two traps in the string branch that `str.isdigit()` alone does not close (0458 T0008
+    rev3 rework): `str.isdigit()` is True for Unicode digit characters `int()` cannot
+    parse at all (e.g. the superscript "²" — `"²".isdigit()` is True but
+    `int("²")` raises ValueError), and even a string of ordinary ASCII digits can
+    still make `int()` raise if it is absurdly long (Python 3.11+ caps str-to-int
+    conversion at a few thousand digits to block algorithmic-complexity abuse). Either way
+    the caller handed this function a value that cannot be treated as a row id, so both
+    must resolve to False, never propagate an exception through a boundary that submitters
+    control. `str.isdecimal()` is exactly the predicate `int()` honors for a pure-digit
+    string, so it is used instead of `isdigit()`; the `try/except` below is the second,
+    independent guard for the long-string case, since `isdecimal()` says nothing about
+    length.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or not text.isdecimal():
+            return False
+        try:
+            return int(text) > 0
+        except ValueError:
+            return False
+    return False
+
+
+def rejection_review_key(value: Any) -> str:
+    """One comparable form for a `document_reviews.id` stored in rejection_history.
+
+    0458 T0007 §2.2-3. The column is an integer, but it round-trips through the
+    rejection_history JSON and through an inbox request body, so it can come back as
+    "244". Normalizing to a stripped string makes 244 and "244" one key. Values that
+    cannot identify a review row — None, a bool (True would otherwise read as the key
+    "True"), an empty or whitespace-only string, a non-numeric string, a float, the
+    UNIDENTIFIABLE_REVIEW_ID marker — fold to the empty key, which matches nothing and is
+    never an explicit target (0458 T0008: a non-numeric string could otherwise match an
+    equally malformed stored value and answer a rejection it has nothing to do with).
+    """
+    if not is_review_row_id(value):
+        return ""
+    return str(value).strip()
+
+
 def record_rejection_response(
     *,
     doc_id: str,
     response_text: str | None,
     recorded_by: str,
     revision_no: int | None,
+    review_id: Any = None,
 ) -> dict | None:
-    """Annotate the most recent rejection with how the AI addressed it.
+    """Annotate the rejection this response answers with how the AI addressed it.
 
     Reviewer intent (TR0007 rework): the AI's response to a rejection arrives
     *with the inbox re-submission* of the rejected document — the body stays the
-    body, and this records, against the latest rejection_history item, what the AI
+    body, and this records, against a rejection_history item, what the AI
     did about the reviewer's comment. There is no separate manual-input UI/API.
 
-    Single-latest policy: re-submitting overwrites the same item idempotently.
-    Returns the updated item, or None if there is nothing to record (blank
-    response, missing document, or no rejection history to attach to).
+    Which item (0458 T0007 §2.2-3~6):
+
+    * ``review_id`` given and identifying → the item carrying that same `review_id`,
+      compared through :func:`rejection_review_key` so 244 and "244" are one row. If
+      several items carry it (a defensive case — one review row makes one rejection),
+      the FIRST one written wins; the later duplicates are ghosts and must not collect
+      the answer. If NO item carries it, nothing is recorded and ``None`` comes back:
+      a stale or mistaken submission losing its response is strictly better than it
+      overwriting a different rejection's.
+    * ``review_id`` given but unable to name a row — a bool, a blank string, an explicit
+      null, UNIDENTIFIABLE_REVIEW_ID from the inbox boundary → nothing is recorded and
+      ``None`` comes back. A broken claim is NOT an absent one, so it must not reach the
+      fallback below: the whole point of that rule is that one malformed value cannot
+      quietly answer a different rejection.
+    * ``review_id`` absent — the default, i.e. the pre-0458 mention that has no such field
+      and every internal caller that has no review row to name → the legacy latest-item
+      policy, unchanged (§2.2-6). Compatibility only; it never covers for an explicit id.
+
+    Re-submitting with the same target overwrites that one item idempotently — no new
+    history entry is ever appended. Returns the updated item, or None if there is
+    nothing to record (blank response, missing document, no history, an explicit
+    ``review_id`` that names no item, or one that cannot name any item).
     """
     text = (response_text or "").strip()
     if not text:
+        return None
+    if review_id is not None and not rejection_review_key(review_id):
+        # Field present, value unusable (§2.2-2). Decided BEFORE the document is read:
+        # there is no reading of this submission under which some item should be updated,
+        # and the legacy fallback below must never see it.
         return None
     if len(text) > AI_RESPONSE_MAX_LEN:
         text = text[:AI_RESPONSE_MAX_LEN]
@@ -784,7 +896,31 @@ def record_rejection_response(
     if not history:
         return None
 
-    target = history[-1]
+    if review_id is None:
+        # THE one legacy case (§2.2-6): no field at all — a mention minted before
+        # `review_id` existed, and every internal caller with no review row to name. Every
+        # other shape was resolved above, so this branch can no longer be reached by a
+        # submission that named a row and named it wrong.
+        target = history[-1]
+    else:
+        # An explicit, usable target (the guard above proved the key is non-empty). Scan
+        # FORWARD so the first item written for this review row wins if a defensive
+        # duplicate exists (§2.2-4), and never fall back to the last item when nothing
+        # matches (§2.2-5) — no item, no record. Position in the array and the reason text
+        # are both ignored: only the stored identifier decides.
+        wanted = rejection_review_key(review_id)
+        target = next(
+            (item for item in history
+             if isinstance(item, dict)
+             and "review_id" in item
+             and rejection_review_key(item.get("review_id")) == wanted),
+            None,
+        )
+        if target is None:
+            return None
+    if not isinstance(target, dict):
+        return None
+
     target["ai_response"] = text
     target["responded_at"] = now_iso()
     target["response_recorded_by"] = recorded_by
