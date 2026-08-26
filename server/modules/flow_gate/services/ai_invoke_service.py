@@ -1108,10 +1108,55 @@ def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
     return bool(scope_oracle_run) and mode == "single" and action_scope == "edit"
 
 
+def _review_hop_recovery_open(mode: Optional[str], action_scope: Optional[str],
+                              scope_oracle_run: Optional[bool],
+                              hop_kind: Optional[str]) -> bool:
+    """flowgate.default.0466 T0007 §3.1.1: may an ENGINE-spawned review hop with no verdict
+    reopen a second attempt in the SAME round?
+
+    Deliberately a second, narrower predicate rather than a widening of
+    `_scope_oracle_retry_open`'s edit-only condition (T0007 explicitly forbids that).
+    `hop_kind == REVIEW_HOP_KIND` is the whole narrowing: `start_run`'s `hop_kind` parameter
+    defaults to `WORK_HOP_KIND`, and `_spawn_review_hop` is the ONLY caller anywhere in the
+    codebase that ever passes `REVIEW_HOP_KIND` — a person's plain single review call
+    (`POST /ai-invoke` with action_scope='review') never does, so it stays one-shot exactly
+    as before. (`chain_id` is NOT part of this predicate: `start_run` defaults every
+    single-mode run's chain_id to its own run_id — `chain_id = chain_id or run_id` — so a
+    plain single call already carries a non-empty chain_id and checking it would narrow
+    nothing.)
+    """
+    return (
+        bool(scope_oracle_run)
+        and mode == "single"
+        and action_scope == "review"
+        and hop_kind == REVIEW_HOP_KIND
+    )
+
+
 def _scope_oracle_retry_run(run: dict) -> bool:
-    """The same question asked of a live run dict — `scope_oracle_run` rides on it (§3-1)."""
+    """The same question asked of a live run dict — `scope_oracle_run` rides on it (§3-1).
+
+    0466 T0007 §3.1.1: ORs in `_review_hop_recovery_open` above, so every no-output-retry
+    consumer (`_retry_eligible`, `_recheck_no_output`, the docs_target=0 guard) treats an
+    ENGINE-spawned review hop's no-verdict outcome exactly like a scope-oracle edit/rework
+    run — same recheck-before-retry, same "output is output" guard — without duplicating any
+    of that machinery for review specifically.
+    """
     return _scope_oracle_retry_open(
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run")
+    ) or _review_hop_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"),
+    )
+
+
+def _review_hop_recovery_run(run: dict) -> bool:
+    """`_review_hop_recovery_open` asked of a live run dict, standalone (T0007 §2.3/§3.1.5) —
+    used where the caller must tell a review-hop recovery apart from an edit/rework
+    scope-oracle retry (they resolve their retry PROVIDER differently)."""
+    return _review_hop_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"),
     )
 
 
@@ -1726,6 +1771,7 @@ def start_run(
             if chain and (
                 mode == "continuous"
                 or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+                or _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
             )
             else None
         ),
@@ -1734,6 +1780,7 @@ def start_run(
             if chain and (
                 mode == "continuous"
                 or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+                or _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
             )
             else None
         ),
@@ -1817,8 +1864,15 @@ def start_run(
         # say one thing while the engine does another. continuation_restart_max_attempts is
         # None outside continuous mode, so _resolve_restart_max_attempts falls back to
         # reproducing the previous fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior for it.
+        # flowgate.default.0466 T0007 §2.4: review no-verdict recovery is a SEPARATE, fixed
+        # cap — first attempt plus exactly one retry — deliberately independent of the
+        # general continuous-chain "재시작 횟수" pick (which may be 0 or -1). It is checked
+        # BEFORE the continuous/edit branch below so a review hop never inherits either the
+        # user's restart pick or the plain single-run cap of 1.
         "attempts_max": (
-            _resolve_restart_max_attempts(continuation_restart_max_attempts)
+            2
+            if _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
+            else _resolve_restart_max_attempts(continuation_restart_max_attempts)
             if mode == "continuous"
             or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
             else 1
@@ -2814,7 +2868,18 @@ def _retry_provider_chain(run: dict) -> list[dict]:
         attempts_max = NO_OUTPUT_MAX_ATTEMPTS
     if attempts_max != -1 and attempts_used >= attempts_max:
         return []
-    selected_provider_id = run.get("continuation_selected_provider_id")
+    if _review_hop_recovery_run(run):
+        # T0007 §2.3/§3.1.5: retry the provider that ACTUALLY STARTED this attempt
+        # (`run["provider_id"]`, set by `_execute_provider_chain` even when it had to walk
+        # past an earlier startup failure in the SAME attempt), never the original
+        # priority-tier head. A reviewer-override hop's chain is already a single provider
+        # so this is a no-op for it; an unpinned review hop's chain can hold several, and
+        # the no-verdict retry must not re-walk that tier a second time.
+        selected_provider_id = (
+            run.get("provider_id") or run.get("continuation_selected_provider_id")
+        )
+    else:
+        selected_provider_id = run.get("continuation_selected_provider_id")
     if not selected_provider_id:
         return []
     try:
@@ -5233,6 +5298,51 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
     }
 
 
+def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
+    """T0007 §3.2.2: the most useful NON-EMPTY diagnostic for a review hop that recorded no
+    verdict, tried in this order.
+
+    `run.get("last_message")` is usually EMPTY for exactly the incident shape T0007 names —
+    a provider that hit a usage limit and died before writing anything — so the plain
+    `excerpt(run.get("last_message"))` every other stop uses would silently collapse to
+    None and leave the paused card with nothing but the generic stop sentence. Falling
+    through stderr/stdout/timeout diagnosis before the last resort keeps the excerpt
+    non-empty for exactly the cases those signals actually exist for, without inventing any
+    new stored field — everything read here already lives on the run from L0007's own
+    per-attempt observations.
+    """
+    run = run or {}
+    message = excerpt(run.get("last_message"))
+    if message:
+        return message
+    history = run.get("fallback_history") or []
+    if history:
+        detail = excerpt((history[-1] or {}).get("detail"))
+        if detail:
+            return detail
+    stderr_tail = excerpt(run.get("stderr_tail"))
+    if stderr_tail:
+        return stderr_tail
+    stdout_tail = excerpt(run.get("stdout_tail"))
+    if stdout_tail:
+        return stdout_tail
+    timeout_diagnosis = excerpt(run.get("timeout_diagnosis"))
+    if timeout_diagnosis:
+        return timeout_diagnosis
+    provider_name = (
+        run.get("continuation_selected_provider_name")
+        or (run.get("provider") or {}).get("name")
+        or run.get("continuation_selected_provider_id")
+        or "the reviewer"
+    )
+    # Never empty: even with no message, tail or diagnosis anywhere, the provider/attempt/
+    # exit-code sentence T0007 §3.2.3 requires is always constructible.
+    return excerpt(
+        f'"{provider_name}" exited {run.get("exit_code")} on attempt '
+        f'{int(run.get("attempts_used") or 0)} without recording a review verdict.'
+    )
+
+
 def _write_handoff_row(
     group_id: Optional[str],
     pending: dict,
@@ -5273,7 +5383,10 @@ def _write_handoff_row(
             stop_kind="system",
             stop_code=stop_code,
             stop_run_id=bundle.get("stop_run_id"),
-            stop_last_message_excerpt=excerpt((run or {}).get("last_message")),
+            stop_last_message_excerpt=(
+                _review_no_verdict_excerpt(run) if stop_code == REVIEW_NO_VERDICT_STOP_CODE
+                else excerpt((run or {}).get("last_message"))
+            ),
             continuation_base_provider_id=bundle.get("base_provider_id"),
             continuation_provider_pinned=bundle.get("provider_pinned"),
             continuation_provider_overrides=bundle.get("provider_overrides"),
@@ -6174,7 +6287,7 @@ def _queue_gate_bundle(group_id: str, bundle: dict) -> None:
     request_auto_resume(group_id, bundle)
 
 
-def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> None:
+def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     """Launch the review hop (L0008 §2.5).
 
     mode="single" + action_scope="review" is not cosmetic: it is the combination that gives
@@ -6219,7 +6332,11 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> None:
             "mention": _append_engine_review_clause(mention, gate),
         }
 
-    start_run(
+    # flowgate.default.0466 T0007 §3.3.3: resume_chain's cold [이어서 진행] path spawns this
+    # same hop directly (not through run_review_gate), and its caller relays start_run's
+    # own result dict back to the route the way every other start_run entry point does.
+    # run_review_gate itself never reads the return value, so this is a pure addition.
+    return start_run(
         project_id=project_id,
         module=module,
         group_id=group_id,
@@ -6288,7 +6405,7 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
     )
 
 
-def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> None:
+def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     """Launch the rework hop (L0008 §2.6).
 
     The REWORKER is the step's own executor, not the reviewer — the reviewer reads, the
@@ -6315,7 +6432,7 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> None:
             ai_run_id=ai_run_id,
         )
 
-    start_run(
+    return start_run(
         project_id=project_id,
         module=module,
         group_id=group_id,
@@ -6883,6 +7000,91 @@ def resume_chain(
                 db_paused.load_json_list(row.get("continuation_auto_approve_item_seqs"))
             )
         )
+        # 0414 P0007 [엣지] 재개 시 검수자 소멸: load_json_map degrades corrupt or non-object
+        # text to None, so one damaged row loses its selection instead of blocking the resume.
+        # A reviewer that has since been switched off is dropped from the map — and ONLY from
+        # the map: the review COUNT survives, so that step is still reviewed, by the project
+        # default reviewer. A new request would be refused outright (422 reviewer_unavailable);
+        # a chain a person parked must never become a card that cannot restart.
+        review_count_overrides = db_paused.load_json_map(
+            row.get("continuation_review_count_overrides")
+        )
+        reviewer_overrides = _resumable_reviewer_overrides(
+            project_id, db_paused.load_json_map(row.get("continuation_reviewer_overrides"))
+        )
+        # Needed by resolve_step_executor if the gate below resolves to a REWORK hop — moved
+        # up from the plain "new" path below so both paths read the same resolved values.
+        gate_provider_pinned = bool(row.get("continuation_provider_pinned"))
+        gate_base_provider_id = (
+            row.get("continuation_base_provider_id")
+            if gate_provider_pinned
+            else _resumable_base_provider(project_id, row.get("continuation_base_provider_id"))
+        )
+        gate_provider_overrides = db_paused.load_json_map(
+            row.get("continuation_provider_overrides")
+        )
+
+        # flowgate.default.0466 T0007 §3.3.3/A11: a row parked by REVIEW_NO_VERDICT_STOP_CODE
+        # (or a legacy REVIEW_CAP_REACHED_STOP_CODE row that still needs another round) targets
+        # a document that is still `pending_review` — `get_effective_head` refuses to advance
+        # past it (`head_in_progress`), so the plain "new"-token path below can never resume
+        # one. Re-derive the SAME gate `run_review_gate` would and dispatch to the SAME
+        # review/rework spawn it uses, cold, exactly the way `resolve_review_gate` already
+        # cold-derives everything else — no `last_stage`/`rounds_before` to restore, the DB
+        # review-row count IS the round count. A gate that resolves to a plain work step
+        # (nothing pending, or count=0) falls through unchanged to the existing "new" path.
+        gate_bundle = {
+            "doc_ref": row["doc_ref"],
+            "review_count_overrides": review_count_overrides,
+            "reviewer_overrides": reviewer_overrides,
+            "locale": locale,
+            "issued_to": user_id,
+            "api_base_url": api_base_url,
+            "instruction_mode": resume_instruction_mode,
+            "auto_approve_item_seqs": resume_auto_approve_item_seqs,
+            "chain_id": row.get("chain_id"),
+            "chain_docs_target": row.get("chain_docs_target"),
+            "chain_docs_reached": row.get("chain_docs_reached"),
+            "step_timeout_sec": row.get("continuation_step_timeout_sec"),
+            "provider_overrides": gate_provider_overrides,
+            "base_provider_id": gate_base_provider_id,
+            "provider_pinned": gate_provider_pinned,
+        }
+        try:
+            gate = resolve_review_gate(gate_bundle)
+        except Exception:
+            _restore_row()
+            logger.exception("ai-invoke resume gate lookup failed for %s", group_id)
+            raise _http_error(500, "resume_lookup_failed",
+                              "Could not read the review gate to resume. Retry later.")
+        if gate.get("stage") in (REVIEW_HOP_KIND, REWORK_HOP_KIND):
+            queued = {**gate_bundle, "last_stage": gate["stage"]}
+            if gate["stage"] == REVIEW_HOP_KIND:
+                queued["rounds_before"] = int(gate.get("rounds_used") or 0)
+            else:
+                queued["revision_before"] = int((gate.get("slot") or {}).get("revision_no") or 0)
+            _queue_gate_bundle(group_id, queued)
+            spawn = _spawn_review_hop if gate["stage"] == REVIEW_HOP_KIND else _spawn_rework_hop
+            try:
+                return spawn(group_id, queued, gate)
+            except HTTPException as exc:
+                clear_auto_resume(group_id)
+                _restore_row()
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                if exc.status_code == 409:
+                    raise _http_error(
+                        409, "resume_launch_failed",
+                        str(detail.get("message") or exc.detail or "Resume launch failed."),
+                        group_id=group_id, restored=True, resume_stage="gate",
+                        cause_code=detail.get("code"),
+                    )
+                raise
+            except Exception:
+                clear_auto_resume(group_id)
+                _restore_row()
+                logger.exception("ai-invoke resume review-gate spawn failed for %s", group_id)
+                raise _http_error(500, "resume_launch_failed",
+                                  "Could not relaunch the review gate. Retry later.")
 
         def _issue_resume(ai_run_id: Optional[str] = None) -> dict:
             # Same advance_workflow path as the continuous first hop / every inbox
@@ -6916,31 +7118,18 @@ def resume_chain(
         # nothing here is what made every resume fall through to the default chain's first
         # (most expensive) provider — the same loss the per-hop re-spawn path already fixed
         # for auto-resume in 0317 T0013 (NR0003 §2-5).
-        provider_pinned = bool(row.get("continuation_provider_pinned"))
-        base_provider_id = (
-            row.get("continuation_base_provider_id")
-            if provider_pinned
-            else _resumable_base_provider(project_id, row.get("continuation_base_provider_id"))
-        )
-        provider_overrides = db_paused.load_json_map(
-            row.get("continuation_provider_overrides")
-        )
+        # provider_pinned / base_provider_id / provider_overrides were already resolved above
+        # (gate_provider_pinned / gate_base_provider_id / gate_provider_overrides), before the
+        # gate-dispatch check (T0007 §3.3.3) — this plain "new" path reuses the same values.
+        provider_pinned = gate_provider_pinned
+        base_provider_id = gate_base_provider_id
+        provider_overrides = gate_provider_overrides
         note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
         default_note = (row.get("continuation_default_note") or "").strip() or None
         step_timeout_sec = row.get("continuation_step_timeout_sec")
         restart_max_attempts = row.get("continuation_restart_max_attempts")
-        # 0414 P0007 [엣지] 재개 시 검수자 소멸: load_json_map degrades corrupt or non-object
-        # text to None, so one damaged row loses its selection instead of blocking the resume.
-        # A reviewer that has since been switched off is dropped from the map — and ONLY from
-        # the map: the review COUNT survives, so that step is still reviewed, by the project
-        # default reviewer. A new request would be refused outright (422 reviewer_unavailable);
-        # a chain a person parked must never become a card that cannot restart.
-        review_count_overrides = db_paused.load_json_map(
-            row.get("continuation_review_count_overrides")
-        )
-        reviewer_overrides = _resumable_reviewer_overrides(
-            project_id, db_paused.load_json_map(row.get("continuation_reviewer_overrides"))
-        )
+        # review_count_overrides / reviewer_overrides were already resolved above, before the
+        # gate-dispatch check (T0007 §3.3.3) — this plain "new" path reuses the same values.
         try:
             return start_run(
                 project_id=project_id,

@@ -1113,9 +1113,13 @@ def _e2e_post_edit(raw: str, doc_id: str, *, review_id=None, content: str = "# R
 
 class TestRejectionResponseThroughRealInboxEdit:
     """Drives POST /api/v1/inbox (action=edit, edit_reason=rejected) for real — the
-    review_id the worker's mention told it to send is not the last history item, so a
-    dropped/mutated id anywhere in _handle_edit would either update the wrong item or
-    silently record nothing, and this test would catch either."""
+    named review_id sits BEFORE a later, different item (a distinct review_id in one
+    test, a keyless human item in the other), so history[-1] is never the target. If
+    _handle_edit dropped/mutated the submitted id anywhere, record_rejection_response
+    would fall through to its legacy history[-1] policy and update the wrong (later)
+    row instead of the named one — these tests assert only the non-last target
+    changes and the later item stays untouched, which the old history[-1]-is-the-
+    target shape could not distinguish from the legacy fallback."""
 
     def test_integer_review_id_reaches_the_named_non_last_item(self, tmp_path):
         from modules.flow_gate.db import documents as db_docs
@@ -1125,8 +1129,10 @@ class TestRejectionResponseThroughRealInboxEdit:
         history = [
             {"rejection_id": "rej_a", "reason": "row 41", "review_id": 41,
              "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
-            {"rejection_id": "rej_b", "reason": "row 55, the current one", "review_id": 55,
+            {"rejection_id": "rej_b", "reason": "row 55, the target", "review_id": 55,
              "rejected_at": "2026-08-02T00:00:00", "ai_response": None},
+            {"rejection_id": "rej_x", "reason": "row 70, later and different",
+             "review_id": 70, "rejected_at": "2026-08-03T00:00:00", "ai_response": None},
         ]
         _e2e_create_rejected_doc(doc_id, 1, stored, history)
         raw = _e2e_make_edit_token(tmp_path, doc_id)
@@ -1135,12 +1141,17 @@ class TestRejectionResponseThroughRealInboxEdit:
         assert resp.status_code == 200, resp.text
 
         updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
-        assert updated[0]["ai_response"] is None, "the OTHER row must stay untouched"
+        assert updated[0]["ai_response"] is None, "the earlier row must stay untouched"
         assert updated[1]["ai_response"] == "addressed the review comments"
+        assert updated[2]["ai_response"] is None, (
+            "the later (last) row must stay untouched -- a fall-through to the "
+            "legacy history[-1] policy would wrongly land here"
+        )
 
     def test_json_round_tripped_string_review_id_names_the_same_row(self, tmp_path):
         """The mention prints an int; a worker's JSON round trip can hand it back as a
-        string. The real boundary must fold "55" and 55 to the same history item."""
+        string. The real boundary must fold "55" and 55 to the same history item, and
+        a later KEYLESS (human-rejection-shaped) item must still stay untouched."""
         from modules.flow_gate.db import documents as db_docs
 
         doc_id = f"{_E2E_GROUP_ID}-N0002"
@@ -1148,8 +1159,10 @@ class TestRejectionResponseThroughRealInboxEdit:
         history = [
             {"rejection_id": "rej_c", "reason": "row 41", "review_id": 41,
              "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
-            {"rejection_id": "rej_d", "reason": "row 55, the current one", "review_id": 55,
+            {"rejection_id": "rej_d", "reason": "row 55, the target", "review_id": 55,
              "rejected_at": "2026-08-02T00:00:00", "ai_response": None},
+            {"rejection_id": "rej_y", "reason": "later human rejection, no row",
+             "rejected_at": "2026-08-03T00:00:00", "ai_response": None},
         ]
         _e2e_create_rejected_doc(doc_id, 2, stored, history)
         raw = _e2e_make_edit_token(tmp_path, doc_id)
@@ -1160,6 +1173,10 @@ class TestRejectionResponseThroughRealInboxEdit:
         updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
         assert updated[0]["ai_response"] is None
         assert updated[1]["ai_response"] == "addressed the review comments"
+        assert updated[2]["ai_response"] is None, (
+            "the later keyless (last) row must stay untouched -- a fall-through to "
+            "the legacy history[-1] policy would wrongly land here"
+        )
 
     def test_absent_review_id_field_still_updates_the_last_item_legacy_path(self, tmp_path):
         """A pre-T0005 worker mention sends no review_id at all — _handle_edit must still

@@ -1214,6 +1214,228 @@ class TestCarriers:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0466 T0007 A11 — [이어서 진행] on a review_no_verdict / cap_reached park
+# must re-derive and re-launch the review/rework gate COLD, not the plain "new" advance
+# path — advance_workflow refuses a still-pending_review head with head_in_progress, so
+# resume_chain has to detect that shape itself before ever reaching _issue_resume.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestResumeReviewGateDispatch0466:
+    def _seed_park(self, monkeypatch, paused, *, last_stage, rounds_before=None,
+                   revision_before=None, doc_ref="doc-5", stop_code=None):
+        """Park a row exactly the way run_review_gate really does — through the REAL
+        _park_handoff/_write_handoff_row — so the resume test exercises the same row shape
+        production code writes, not a hand-built fixture row."""
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        stop_code = stop_code or svc.REVIEW_NO_VERDICT_STOP_CODE
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref=doc_ref, last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None)
+        extra = {"last_stage": last_stage}
+        if rounds_before is not None:
+            extra["rounds_before"] = rounds_before
+        if revision_before is not None:
+            extra["revision_before"] = revision_before
+        svc._park_handoff(run, bundle(**extra), stop_code)
+        assert paused.rows[GROUP]["stop_code"] == stop_code
+        return run
+
+    def test_a_no_verdict_park_resumes_into_round_two_of_the_same_review(
+            self, world, paused, monkeypatch):
+        """A11-1/A11-3: round 1's issues+rework already landed (revision 1); round 2's
+        review hop left no verdict. [이어서 진행] must relaunch round_no=2 on the SAME
+        document/revision — never a 3rd round, never a plain 'new' advance."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        self._seed_park(monkeypatch, paused, last_stage=svc.REVIEW_HOP_KIND, rounds_before=1)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: pytest.fail("a no-verdict review park must not dispatch rework"))
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+
+        assert result == {"ok": True}
+        assert spawned["gate"]["round_no"] == 2
+        assert spawned["gate"]["rounds_used"] == 1
+        assert spawned["bundle"]["last_stage"] == svc.REVIEW_HOP_KIND
+        assert spawned["bundle"]["rounds_before"] == 1
+        assert spawned["bundle"]["doc_ref"] == SPINE
+        # The old review_no_verdict stop row was CAS-consumed; `_queue_gate_bundle` (the
+        # same "intent, then launch" ordering `run_review_gate` itself uses) wrote a fresh
+        # queuing row in its place — not the stale stop, a hop-handoff-shaped one.
+        assert paused.rows[GROUP]["stop_code"] != svc.REVIEW_NO_VERDICT_STOP_CODE
+
+    def test_a_round_one_no_verdict_park_resumes_into_round_one_not_two(
+            self, world, paused, monkeypatch):
+        """Cold-derive from the DB alone (no last_stage/rounds_before restored): a FIRST
+        review round that left no verdict must still relaunch round_no=1, count=2 unspent."""
+        world.fill(5, "doc-5")               # no review rows at all yet
+        self._seed_park(monkeypatch, paused, last_stage=svc.REVIEW_HOP_KIND, rounds_before=0)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert spawned["gate"]["round_no"] == 1
+        assert spawned["gate"]["rounds_used"] == 0
+
+    def test_a_pending_rework_resumes_via_the_rework_hop_not_a_fresh_advance(
+            self, world, paused, monkeypatch):
+        """The legacy REVIEW_CAP_REACHED_STOP_CODE path can cold-resolve to ANY stage — this
+        proves the dispatch is not hard-coded to review-only: an outstanding 'issues' verdict
+        with no rework landed yet must relaunch the REWORK hop instead."""
+        world.fill(5, "doc-5", status="rejected", revision_no=0)
+        world.review("doc-5", "issues", revision_no=0)
+        self._seed_park(monkeypatch, paused, last_stage=svc.REWORK_HOP_KIND, revision_before=0,
+                        stop_code=svc.REVIEW_CAP_REACHED_STOP_CODE)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: pytest.fail("an unreworked issues verdict must dispatch rework"))
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        assert spawned["bundle"]["last_stage"] == svc.REWORK_HOP_KIND
+        assert spawned["bundle"]["revision_before"] == 0
+
+    def test_the_review_and_reviewer_maps_reach_the_dispatched_gate_bundle(
+            self, world, paused, monkeypatch):
+        """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
+        bundle exactly like the plain 'new' resume path already proves in TestCarriers —
+        including the disabled-reviewer-degrades-but-count-survives edge (P0007 [엣지])."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None,
+                   continuation_reviewer_overrides={"5": "aip_gone"})
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        svc._park_handoff(
+            run,
+            bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1,
+                  reviewer_overrides={"5": "aip_gone"}),
+            svc.REVIEW_NO_VERDICT_STOP_CODE,
+        )
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert spawned["bundle"]["review_count_overrides"] == {"5": 2}
+        # The disabled reviewer is dropped from the MAP; the review itself is never dropped.
+        assert spawned["bundle"]["reviewer_overrides"] is None
+        assert svc.resolve_reviewer(
+            spawned["bundle"]["reviewer_overrides"], 5, "flowgate") == "aip_default"
+
+    def test_a_plain_work_hop_resume_is_unaffected(self, world, paused, monkeypatch):
+        """Control: a chain paused with nothing pending review (e.g. no_output_exhausted on
+        a WORK hop) must keep taking the ordinary advance_workflow 'new' path unchanged."""
+        world.fill(5, "doc-5", status="approved", revision_no=1)   # already through the gate
+        svc._write_handoff_row(GROUP, _pending(), _run())
+        captured: dict = {}
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 7)
+        monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: pytest.fail("nothing is pending review — must not dispatch"))
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        assert captured["action_scope"] == "new"
+        assert captured["mode"] == "continuous"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0466 T0007 A10 §3.2 — the review_no_verdict stop card's failure detail:
+# the excerpt must not collapse to nothing just because last_message happens to be empty,
+# which is exactly the usage-limit-crash shape T0007 names.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestReviewNoVerdictExcerpt0466:
+    def _park(self, monkeypatch, paused, run_overrides):
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        base = dict(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None, attempts_used=2, exit_code=1)
+        base.update(run_overrides)
+        run = _run(**base)
+        svc._park_handoff(run, bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1),
+                          svc.REVIEW_NO_VERDICT_STOP_CODE)
+        return paused.rows[GROUP]["stop_last_message_excerpt"]
+
+    def test_last_message_wins_when_present(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {"last_message": "usage limit reached"})
+        assert excerpt == "usage limit reached"
+
+    def test_falls_back_to_the_last_attempts_own_failure_detail(self, paused, monkeypatch):
+        """last_message is empty (the incident shape) — the archived attempt's own
+        `_no_output_detail` (provider/exit/elapsed) is the next best diagnostic."""
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{"provider_id": "aip_rev", "reason": "no_output",
+                                  "detail": "worker exited 1 after 12s without registering "
+                                            "a document", "exit_code": 1}],
+        })
+        assert "worker exited 1 after 12s" in excerpt
+
+    def test_falls_back_to_stderr_when_no_message_or_history(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "stderr_tail": "Error: usage limit exceeded for this billing period",
+        })
+        assert "usage limit exceeded" in excerpt
+
+    def test_falls_back_to_stdout_when_no_message_history_or_stderr(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "stdout_tail": "provider reported: quota exhausted, try again later",
+        })
+        assert "quota exhausted" in excerpt
+
+    def test_falls_back_to_timeout_diagnosis(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "timeout_diagnosis": "no output for 900s before the watchdog killed the process",
+        })
+        assert "watchdog killed the process" in excerpt
+
+    def test_last_resort_is_never_empty_and_names_provider_attempt_and_exit(
+            self, paused, monkeypatch):
+        """Nothing anywhere — the excerpt must still name provider/attempt/exit, never
+        collapse to None (which would leave the card with only the generic stop sentence)."""
+        excerpt = self._park(monkeypatch, paused, {
+            "provider": {"id": "aip_rev", "name": "Codex GPT-5.6 Sol"},
+            "continuation_selected_provider_name": "Codex GPT-5.6 Sol",
+            "exit_code": 1,
+        })
+        assert excerpt is not None and excerpt.strip() != ""
+        assert "Codex GPT-5.6 Sol" in excerpt
+        assert "2" in excerpt          # attempts_used
+
+    def test_a_non_review_stop_keeps_the_plain_last_message_excerpt(self, paused, monkeypatch):
+        """The fallback chain is scoped to REVIEW_NO_VERDICT_STOP_CODE only — every other
+        stop code keeps reading straight from last_message, unchanged."""
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        run = _run(mode="continuous", last_message=None,
+                   stderr_tail="should not leak into a no_output_exhausted excerpt")
+        svc._park_handoff(run, _pending(), "no_output_exhausted")
+        assert paused.rows[GROUP]["stop_last_message_excerpt"] is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
 # L0008 §2.4 — the gate's execution: queue first, then launch; park instead of advancing
 # ══════════════════════════════════════════════════════════════════════════════════════
 

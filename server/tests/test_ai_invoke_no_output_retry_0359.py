@@ -168,9 +168,41 @@ class FakeDocs:
                 "revision_no": self.revision_no}
 
 
+class FakeReviews:
+    """flowgate.default.0466 T0007: `document_reviews` rows for a review hop's own scope
+    oracle (`_probe_doc_reviews`), with the same scripted-late-arrival shape `FakeDocs`
+    gives the edit/rework oracle above."""
+
+    def __init__(self):
+        self.rows: dict[str, list[dict]] = {}
+        self._late_verdict_in: int | None = None
+
+    def arm_late_verdict(self, after_calls: int = 1) -> None:
+        """A verdict row lands after `after_calls` more reads — the review-scope twin of
+        `FakeDocs.arm_late_revision` (L0007 §5 / T0007 §3.1.3's re-probe-before-retry)."""
+        self._late_verdict_in = after_calls
+
+    def list_by_doc(self, doc_id):
+        if self._late_verdict_in is not None:
+            if self._late_verdict_in <= 0:
+                self.rows.setdefault(doc_id, []).append(
+                    {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
+                     "verdict": "pass", "revision_no": 0, "findings": "[]"})
+                self._late_verdict_in = None
+            else:
+                self._late_verdict_in -= 1
+        return list(self.rows.get(doc_id, []))
+
+    def add_verdict(self, doc_id, verdict="pass"):
+        self.rows.setdefault(doc_id, []).append(
+            {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
+             "verdict": verdict, "revision_no": 0, "findings": "[]"})
+
+
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     docs = FakeDocs()
+    reviews = FakeReviews()
     paused = FakePausedStore()
     chain_holder = {"providers": [P1, P2, P3], "source": "system"}
     records: list[dict] = []
@@ -183,6 +215,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", docs.get_documents_by_group_id)
     monkeypatch.setattr(svc.db_docs, "get_group_max_seq", docs.get_group_max_seq)
     monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
+    monkeypatch.setattr(svc.db_reviews, "list_by_doc", reviews.list_by_doc)
     # No question ever pending by default (NR0003 후속 조치 제안 1) — individual tests
     # override this to exercise the pending-question guard. The anchor mock defaults to
     # identity; the guard tests below supply their own anchor + container fakes to prove
@@ -230,8 +263,8 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "_broadcast",
                         lambda run, event_type, payload: events.append((event_type, payload)))
 
-    return {"docs": docs, "paused": paused, "chain": chain_holder, "records": records,
-            "signals": signals, "events": events, "tmp": tmp_path}
+    return {"docs": docs, "reviews": reviews, "paused": paused, "chain": chain_holder,
+            "records": records, "signals": signals, "events": events, "tmp": tmp_path}
 
 
 def _start(env, *, target=2, provider_id=None, provider_pinned=None,
@@ -280,6 +313,61 @@ def _start_rework(env, **kw):
         mention_builder=lambda raw, scratch: "## prompt\n",
         **kw,
     )
+
+
+def _start_review(env, *, chain_id="run_chain_review", **kw):
+    """A review hop exactly as `_spawn_review_hop` starts one (flowgate.default.0466 T0007).
+
+    `hop_kind=REVIEW_HOP_KIND` + a `chain_id` is what `_review_hop_recovery_open` checks for
+    — that combination is the ENGINE's own signature (T0007 §3.1.1), never a plain human
+    single review call (which carries neither).
+    """
+    return svc.start_run(
+        project_id="flowgate",
+        module="default",
+        group_id=GROUP,
+        doc_ref=DOC_REF,
+        action_scope="review",
+        mode="single",
+        continuation_target_seq=None,
+        continuation_review_mode=False,
+        continuation_instruction_mode=None,
+        continuation_locale=None,
+        issued_to="usr_admin",
+        api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+        mention_builder=lambda raw, scratch: "## prompt\n",
+        chain_id=chain_id,
+        hop_kind=svc.REVIEW_HOP_KIND,
+        **kw,
+    )
+
+
+def _scripted_review_worker(env, monkeypatch, script):
+    """The review-scope twin of `_scripted_rework_worker` (T0007 §3.1).
+
+    Entries are (last_message, exit_code, action) with action in (None, "verdict",
+    "late_verdict"). Unlike the edit/rework fakes, a REAL non-zero exit code is scriptable
+    here — A10-1's usage-limit shape is `started_ok` (the provider DID start) with a
+    non-zero exit and, often, NO last_message at all, which is exactly what makes
+    `_review_no_verdict_excerpt`'s fallback chain necessary.
+    """
+    launches: list[str] = []
+
+    def _fake(provider, prompt, run):
+        index = len(launches)
+        launches.append(provider["id"])
+        message, exit_code, action = script[min(index, len(script) - 1)]
+        run["exit_code"] = exit_code
+        run["last_message"] = message
+        run["last_message_received"] = bool(message)
+        if action == "verdict":
+            env["reviews"].add_verdict(DOC_REF)
+        elif action == "late_verdict":
+            env["reviews"].arm_late_verdict(1)
+        return "started_ok", None
+
+    monkeypatch.setattr(svc, "_cli_execute", _fake)
+    return launches
 
 
 def _wait_finished(run_id, timeout=30.0):
@@ -1207,6 +1295,135 @@ class TestSingleReworkNoOutputRecovery0446:
         assert run["scope_oracle_run"] is False
         assert run["stop_code"] is None
         assert env["signals"] == []
+
+
+# ── flowgate.default.0466 T0007: review-hop no-verdict recovery (A10) ────────────────────
+class TestReviewHopNoVerdictRecovery0466:
+    """A10: an ENGINE-spawned review hop (`hop_kind=REVIEW_HOP_KIND`, inside a chain) may
+    reopen exactly ONE more attempt on the SAME reviewer when its first attempt leaves no
+    `document_reviews` row — capped at 2 total attempts regardless of the general
+    continuous-chain restart pick, and never re-walking the provider priority tiers."""
+
+    def test_a_usage_limit_first_attempt_recovers_on_the_second_and_records_one_verdict(
+            self, env, monkeypatch):
+        """A10-1/A10-2: started_ok, non-zero exit, no message, no review row on attempt 1 —
+        the shape T0007 names — then a real verdict lands on attempt 2. Same reviewer both
+        times, exactly 2 attempts, exactly one review row, no failure signal."""
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),          # usage-limit crash: nothing written, non-zero exit
+            (None, 0, "verdict"),     # the rescue
+        ])
+        res = _start_review(env, provider_id="aip_2")
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2", "aip_2"]              # same reviewer both attempts
+        assert run["attempts_used"] == 2
+        # A10 §2.4: a FIXED cap, independent of NO_OUTPUT_MAX_ATTEMPTS/attempts_max=1 a plain
+        # single run would otherwise get for action_scope="review".
+        assert run["attempts_max"] == 2
+        assert run["outcome"] == "complete"
+        assert run["docs_reached"] == 0          # a review token registers no document, ever
+        assert len(env["reviews"].rows[DOC_REF]) == 1
+        assert run["stop_code"] is None          # eventual success — no failure to report
+        assert env["signals"] == []
+
+        switches = [p for t, p in env["events"] if t == "ai_invoke_provider_switched"]
+        assert len(switches) == 1
+        assert (switches[0]["reason"], switches[0]["retry_kind"]) == ("no_output", "no_output")
+
+    def test_two_no_verdict_attempts_exhaust_the_fixed_cap_without_a_third(
+            self, env, monkeypatch):
+        """A10-3 (worker half): both attempts leave no review row — exactly 2 attempts, never
+        a third, and the run's own attempts_max stays the review-only fixed cap."""
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),
+            (None, 1, None),
+        ])
+        res = _start_review(env, provider_id="aip_2")
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == 2
+        assert run["attempts_max"] == 2
+        assert run["outcome"] == "none"
+        assert run["docs_reached"] == 0
+        assert DOC_REF not in env["reviews"].rows or env["reviews"].rows[DOC_REF] == []
+
+    def test_a_late_verdict_between_judge_and_retry_cancels_the_second_attempt(
+            self, env, monkeypatch):
+        """T0007 §3.1.3: the recheck right before opening attempt 2 must ask the oracle
+        again — a verdict that lands in that exact window must not be reviewed twice."""
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, "late_verdict"),
+        ])
+        res = _start_review(env, provider_id="aip_2")
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2"]              # the recheck cancelled attempt 2
+        assert run["attempts_used"] == 1
+        assert run["outcome"] == "complete"
+        assert len(env["reviews"].rows[DOC_REF]) == 1
+
+    def test_no_override_review_hop_locks_onto_whichever_provider_actually_started(
+            self, env, monkeypatch):
+        """T0007 §2.3/§3.1.5: with no explicit reviewer pin the chain keeps every provider (so
+        a startup failure can still fall through within the FIRST attempt), but once one has
+        actually started, the no-verdict retry must reuse exactly that one — never re-walk the
+        tiers back to the provider that failed to spawn."""
+        launches: list[str] = []
+
+        def _fake(provider, prompt, run):
+            launches.append(provider["id"])
+            if provider["id"] == "aip_1":
+                return "spawn_failed", "could not start"
+            index = sum(1 for p in launches if p == "aip_2")
+            if index == 1:
+                run["exit_code"] = 1
+                run["last_message"] = None
+                run["last_message_received"] = False
+                return "started_ok", None
+            env["reviews"].add_verdict(DOC_REF)
+            run["exit_code"] = 0
+            run["last_message"] = None
+            run["last_message_received"] = False
+            return "started_ok", None
+
+        monkeypatch.setattr(svc, "_cli_execute", _fake)
+        res = _start_review(env)          # no provider_id — full chain [aip_1, aip_2, aip_3]
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_1", "aip_2", "aip_2"]
+        assert run["outcome"] == "complete"
+        assert run["attempts_used"] == 2
+
+    def test_a_plain_single_review_call_without_the_engine_signature_stays_one_shot(
+            self, env, monkeypatch):
+        """Control group (T0007 §3.1.1): a human's plain single review call never sets
+        `hop_kind=REVIEW_HOP_KIND` — `ai_invoke_routes` starts every review run with
+        `hop_kind` at its `start_run` default (`WORK_HOP_KIND`); only `_spawn_review_hop`
+        ever passes `REVIEW_HOP_KIND` — so it must keep the pre-existing one-shot behaviour,
+        exactly like the review control group already pinned in
+        test_ai_invoke_review_gate_0414.py. (`chain_id` is deliberately NOT the signal here:
+        `start_run` defaults every single run's chain_id to its own run_id, so it is always
+        truthy and cannot tell the two apart — see `_review_hop_recovery_open`.)
+        """
+        launches = _scripted_review_worker(env, monkeypatch, [(None, 1, None)])
+        res = svc.start_run(
+            project_id="flowgate", module="default", group_id=GROUP, doc_ref=DOC_REF,
+            action_scope="review", mode="single",
+            continuation_target_seq=None, continuation_review_mode=False,
+            continuation_instruction_mode=None, continuation_locale=None,
+            issued_to="usr_admin", api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+            mention_builder=lambda raw, scratch: "## prompt\n",
+            provider_id="aip_2",
+            # No hop_kind — exactly what ai_invoke_routes.py sends for a plain review call.
+        )
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2"]
+        assert run["attempts_used"] == 1
+        assert run["attempts_max"] == 1
+        assert run["outcome"] == "none"
 
 
 class TestExcerpt:
