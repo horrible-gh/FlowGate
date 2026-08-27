@@ -31,7 +31,10 @@ describe('NewRequirementModal — use group name as title', () => {
     })
     // Seed an existing group with no R/B child so it is an eligible group option.
     const explorer = useExplorerStore()
-    explorer.groupTreeCache['flowgate:main'] = [
+    // 0454 T0006 §2.2 — group-tree cache keys are `${project}:${branch}:full|pruned`. This
+  // dialog reads the FULL variant (its group list must not shrink because the sidebar is
+  // hiding completed groups), so that is the variant seeded here.
+  explorer.groupTreeCache['flowgate:main:full'] = [
       {
         id: 'flowgate.default.0111',
         parent_id: 'default',

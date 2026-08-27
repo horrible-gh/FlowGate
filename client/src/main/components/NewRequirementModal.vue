@@ -264,7 +264,10 @@ const owners = ['admin', 'copilot', 'reviewer']
 
 const groupOptions = computed(() => {
   const pid = projectStore.currentProjectId
-  const nodes = pid ? explorerStore.getCachedGroupTree(pid) ?? [] : []
+  // 0454 T0006 §4.2 — full variant. The "group without an R/B yet" judgement below reads the
+  // group's sibling documents; on a pruned tree a hidden group and its documents are both
+  // absent, so the filter would silently answer over a smaller universe than it means to.
+  const nodes = pid ? explorerStore.getCachedGroupTree(pid, true) ?? [] : []
   const groups = nodes.filter((node) => (
     node.node_type === 'group'
     && !nodes.some((candidate) => (
@@ -370,7 +373,7 @@ onMounted(async () => {
   const pid = projectStore.currentProjectId
   if (pid) {
     try {
-      await explorerStore.fetchGroupTree(pid)
+      await explorerStore.fetchGroupTree(pid, false, true)
     } catch {
       /* Group list is supplementary UI info; do not block the creation flow. */
     }

@@ -835,6 +835,33 @@ def parse_rejection_history(raw: Any) -> list:
     return []
 
 
+def resolve_rejection_target(
+    history: list, *, rejection_id: str | None = None, review_id: Any = None,
+) -> dict | None:
+    """Resolve one rejection using the recorder's authoritative targeting contract."""
+    if not history:
+        return None
+    if rejection_id is not None:
+        return next(
+            (item for item in history
+             if isinstance(item, dict) and item.get("rejection_id") == rejection_id),
+            None,
+        )
+    if review_id is None:
+        target = history[-1]
+        return target if isinstance(target, dict) else None
+    wanted = rejection_review_key(review_id)
+    if not wanted:
+        return None
+    return next(
+        (item for item in history
+         if isinstance(item, dict)
+         and "review_id" in item
+         and rejection_review_key(item.get("review_id")) == wanted),
+        None,
+    )
+
+
 def record_rejection_response(
     *,
     doc_id: str,
@@ -842,33 +869,34 @@ def record_rejection_response(
     recorded_by: str,
     revision_no: int | None,
     review_id: Any = None,
+    rejection_id: str | None = None,
 ) -> dict | None:
     """Annotate the rejection this response answers with how the AI addressed it.
 
     Reviewer intent (TR0007 rework): the AI's response to a rejection arrives
-    *with the inbox re-submission* of the rejected document -- the body stays the
-    body, and this records, against a rejection_history item, what the AI did
-    about the reviewer's comment. There is no separate manual-input UI/API.
+    *with the inbox re-submission* of the rejected document — the body stays the
+    body, and this records, against a rejection_history item, what the AI
+    did about the reviewer's comment. There is no separate manual-input UI/API.
 
-    Which item (T0005 2.2.3-2.2.6):
+    Which item (0458 T0007 §2.2-3~6):
 
-    * ``review_id`` given and identifying -> the item carrying that same `review_id`,
-      compared through :func:`rejection_review_key` so 244 and "244" are one row. Scanned
-      forward: if several items carry it (a defensive case -- one review row should make
-      one rejection), the FIRST one written wins and later duplicates stay untouched. If
-      NO item carries it, nothing is recorded and ``None`` comes back -- a stale or
-      mistaken submission losing its response is strictly better than it overwriting a
-      different rejection's.
-    * ``review_id`` given but unable to name a row (a bool, a blank string, an explicit
-      null, UNIDENTIFIABLE_REVIEW_ID) -> nothing is recorded and ``None`` comes back. A
-      broken claim is NOT an absent one, so it must not reach the legacy fallback below --
-      the whole point of that rule is that one malformed value cannot quietly answer a
-      different rejection.
-    * ``review_id`` absent (the default) -> the legacy latest-item policy, unchanged: the
-      pre-T0005 mention has no such field, and neither does an internal caller with no
-      review row to name.
+    * ``review_id`` given and identifying → the item carrying that same `review_id`,
+      compared through :func:`rejection_review_key` so 244 and "244" are one row. If
+      several items carry it (a defensive case — one review row makes one rejection),
+      the FIRST one written wins; the later duplicates are ghosts and must not collect
+      the answer. If NO item carries it, nothing is recorded and ``None`` comes back:
+      a stale or mistaken submission losing its response is strictly better than it
+      overwriting a different rejection's.
+    * ``review_id`` given but unable to name a row — a bool, a blank string, an explicit
+      null, UNIDENTIFIABLE_REVIEW_ID from the inbox boundary → nothing is recorded and
+      ``None`` comes back. A broken claim is NOT an absent one, so it must not reach the
+      fallback below: the whole point of that rule is that one malformed value cannot
+      quietly answer a different rejection.
+    * ``review_id`` absent — the default, i.e. the pre-0458 mention that has no such field
+      and every internal caller that has no review row to name → the legacy latest-item
+      policy, unchanged (§2.2-6). Compatibility only; it never covers for an explicit id.
 
-    Re-submitting with the same target overwrites that one item idempotently -- no new
+    Re-submitting with the same target overwrites that one item idempotently — no new
     history entry is ever appended. Returns the updated item, or None if there is
     nothing to record (blank response, missing document, no history, an explicit
     ``review_id`` that names no item, or one that cannot name any item).
@@ -876,10 +904,9 @@ def record_rejection_response(
     text = (response_text or "").strip()
     if not text:
         return None
-    if review_id is not None and not rejection_review_key(review_id):
-        # Field present, value unusable (2.2.4). Decided BEFORE the document is even
-        # read: there is no reading of this submission under which some item should be
-        # updated, and the legacy fallback below must never see it.
+    if rejection_id is None and review_id is not None and not rejection_review_key(review_id):
+        # A rejection_id, when supplied, is the authoritative opaque target. Only validate
+        # the legacy review-row target when no rejection_id can decide the item.
         return None
     if len(text) > AI_RESPONSE_MAX_LEN:
         text = text[:AI_RESPONSE_MAX_LEN]
@@ -892,28 +919,10 @@ def record_rejection_response(
     if not history:
         return None
 
-    if review_id is None:
-        # THE one legacy case (2.2.6): no field at all. Every other shape was resolved
-        # above, so this branch can no longer be reached by a submission that named a
-        # row and named it wrong.
-        target = history[-1]
-    else:
-        # An explicit, usable target (the guard above proved the key is non-empty). Scan
-        # FORWARD so the first item written for this review row wins over a defensive
-        # duplicate, and never fall back to the last item when nothing matches (2.2.5) --
-        # no item, no record. Position in the array and the reason text are both
-        # ignored: only the stored identifier decides.
-        wanted = rejection_review_key(review_id)
-        target = next(
-            (item for item in history
-             if isinstance(item, dict)
-             and "review_id" in item
-             and rejection_review_key(item.get("review_id")) == wanted),
-            None,
-        )
-        if target is None:
-            return None
-    if not isinstance(target, dict):
+    target = resolve_rejection_target(
+        history, rejection_id=rejection_id, review_id=review_id,
+    )
+    if target is None:
         return None
 
     target["ai_response"] = text

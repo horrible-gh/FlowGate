@@ -61,6 +61,8 @@ def test_list_read_write_read_none_shapes(monkeypatch, token_rec, expected_kind,
     assert body["kind"] == expected_kind
     assert [tool["name"] for tool in body["tools"]] == expected_names
     assert body["detail_url"].endswith("/help/tools/{name}")
+    scratch_notes = [note for note in body["notes"] if "0382" in note]
+    assert bool(scratch_notes) is (expected_kind == "read_write")
 
 
 def test_query_locale_precedes_x_locale_and_invalid_folds_ko(monkeypatch):
@@ -90,7 +92,9 @@ def test_detail_read_and_write_contracts(monkeypatch, name):
     assert tool["request_fields"]
     assert tool["errors"]
     assert tool["cautions"]
-    assert len(body["notes"]) == (4 if name == "write" else 3)
+    assert len(body["notes"]) == (5 if name == "write" else 3)
+    if name == "write":
+        assert any("scratch directory" in note and "0382" in note for note in body["notes"])
 
 
 def test_detail_unknown_is_404_before_availability_check(monkeypatch):

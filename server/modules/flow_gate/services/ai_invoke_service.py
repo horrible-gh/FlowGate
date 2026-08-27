@@ -208,6 +208,19 @@ NOTIFY_STOP_CODES = ENGINE_NOTIFY_STOP_CODES | INBOX_NOTIFY_STOP_CODES
 assert not (ENGINE_NOTIFY_STOP_CODES & INBOX_NOTIFY_STOP_CODES), (
     "L0007 §2.11: the engine and inbox notification sets must stay disjoint"
 )
+# 0466 T0007 §3.2.5 × 0458 T0007 §2.1 (merge): a park corrects THREE surfaces -- the
+# stored record, the finished event and, when the stop is one this speaker owns, the
+# notification. The first two apply to every park; the third does not. All seven
+# REVIEW_STOP_CODES are members of ENGINE_NOTIFY_STOP_CODES (L194-199), so announcing a park
+# with the full NOTIFY_STOP_CODES would also raise a "continuous work failed" for
+# `review_verdict_hold` -- a hop waiting on a human answer, not a failure, by the same
+# reasoning that keeps `question_pending` out of the set entirely -- and for `review_stalled`
+# / `review_reject_denied` / `review_reject_failed`, none of which T0007 asked to speak here.
+# `review_no_verdict` is the one review stop that must, because the reviewer left no row and
+# nothing else reports that.
+PARK_NOTIFY_STOP_CODES = (
+    (NOTIFY_STOP_CODES - REVIEW_STOP_CODES) | {REVIEW_NO_VERDICT_STOP_CODE}
+)
 
 # ── Hop handoff durability (0406 T0022 work item 4) ─────────────────────────
 # The next hop's intent lived only in a process-memory dict (_auto_resume). A server
@@ -4552,11 +4565,22 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == "approve_denied":
         return ("The token issuer lacks document.approve; a human must approve before "
                 "continuing.")
-    if stop_code == "approve_failed":
-        return f"Auto-approval failed: {run.get('inbox_stop_detail') or 'unknown error'}"
-    if stop_code == "advance_blocked":
-        return (f"Could not advance to the next step: "
-                f"{run.get('inbox_stop_detail') or 'unknown error'}")
+    if stop_code in ("approve_failed", "advance_blocked"):
+        # 0458 T0007 §2.1: ONE detail lookup for both codes, and it reads BOTH keys the
+        # two producers write. The inbox self-chain reaches this table through
+        # stop_reason_text(..., detail=...) and lands on `inbox_stop_detail`; the engine's
+        # review gate stores the very same sentence on `review_reject_detail`
+        # (_settle_gate_pass, below) because it has a live run to hang it on instead of an
+        # envelope. Reading only the second key turned every gate-side failure into
+        # "unknown error" while the real exception sat one key away — the diagnostic loss
+        # 0003-NR §11-1 reported. Order is review-gate-first: when both are set the gate's
+        # is the one that describes THIS stop.
+        detail = (run.get("review_reject_detail")
+                  or run.get("inbox_stop_detail")
+                  or "unknown error")
+        if stop_code == "approve_failed":
+            return f"Auto-approval failed: {detail}"
+        return f"Could not advance to the next step: {detail}"
     if stop_code == "review_hold":
         return "Review mode: waiting for the human go."
     # 0414 L0008 §1.2 — one English sentence per code, read by the worker, stored on the
@@ -4896,10 +4920,14 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
 def _persist_run_record(run: dict) -> None:
     """Write the one durable row for this hop (L0007 §2.10.1).
 
-    Exactly once, at finalize — while a run is alive, memory is the truth. NR0003 §4: before
-    this, a run that ended while the browser happened to be looking at another project left
-    nothing behind at all; the only copy of the worker's explanation was a scratch file the
-    server deletes after seven days.
+    At finalize — while a run is alive, memory is the truth. NR0003 §4: before this, a run
+    that ended while the browser happened to be looking at another project left nothing behind
+    at all; the only copy of the worker's explanation was a scratch file the server deletes
+    after seven days.
+
+    0458 T0007 §2.1: and once more from _resettle_stop_after_park when a post-finalize review
+    gate overrules the stop this row was written with. The upsert is keyed on run_id, so the
+    second write corrects the same row rather than adding one.
     """
     try:
         from modules.flow_gate.db import ai_invoke_runs as db_runs
@@ -4981,18 +5009,33 @@ def _persist_run_record(run: dict) -> None:
         logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
 
 
-def _notify_chain_failure_if_needed(run: dict) -> None:
+def _notify_chain_failure_if_needed(
+    run: dict,
+    *,
+    notify_codes: frozenset = ENGINE_NOTIFY_STOP_CODES,
+    error_text: Optional[str] = None,
+) -> None:
     """Put the stop somewhere a human will still find it tomorrow (L0007 §2.11).
 
     NR0003 §4: the worker's explanation existed and was even delivered — over SSE, to a browser
     that was looking at a different project in that second, with no way to look back. This
     writes the same fact to the notification feed, which survives not watching.
+
+    0458 T0007 §2.1: `notify_codes` names which stops this speaker owns. It stays
+    ENGINE_NOTIFY_STOP_CODES for the finalize call — the §2.11 split (engine set vs inbox set,
+    disjoint by construction) is what keeps a double notification impossible there. The one
+    caller that widens it is _resettle_stop_after_park, and only because the stop it announces
+    (`approve_failed` / `advance_blocked` raised by the engine's own review gate) reaches nobody
+    else: the inbox owns those two codes but never sees this branch — no request arrives, the
+    engine settled the step itself. `failure_signal_sent` still caps a run at one notification
+    however many speakers look at it. `error_text` replaces the attempts-and-last-message
+    sentence for a stop whose real explanation is the §4.3 one in `stop_reason`.
     """
     # 0446 T0008 §3-8: scope-oracle rework runs speak here too. `question_pending` is still
     # absent from ENGINE_NOTIFY_STOP_CODES, so a hop waiting on a human answer stays silent.
     if run.get("mode") != "continuous" and not _scope_oracle_retry_run(run):
         return
-    if run.get("stop_code") not in ENGINE_NOTIFY_STOP_CODES:
+    if run.get("stop_code") not in notify_codes:
         return
     if run.get("failure_signal_sent"):
         return
@@ -5009,9 +5052,12 @@ def _notify_chain_failure_if_needed(run: dict) -> None:
             group_id=run["group_id"],
             run_id=run["run_id"],
             target_seq=run.get("continuation_target_seq"),
-            error=_failure_error_text(run),
+            error=error_text or _failure_error_text(run),
             extra={
                 "stop_code": run.get("stop_code"),
+                # 0458 T0007 §2.1: the §4.3 sentence rides along, so the feed carries the same
+                # exception detail the card shows instead of a bare code.
+                "stop_reason": run.get("stop_reason"),
                 "token_id": run.get("token_id"),
                 "item_seq": run.get("hop_item_seq"),
                 "provider_id": run.get("provider_id"),
@@ -5614,6 +5660,62 @@ def _clear_handoff_row(group_id: Optional[str], stop_run_id: Optional[str]) -> N
         logger.warning("ai-invoke handoff row cleanup failed for %s", group_id, exc_info=True)
 
 
+def _resettle_stop_after_park(run: dict, stop_code: str) -> None:
+    """Decide the run's stop a SECOND time, because the gate ran after finalize (0458 T0007 §2.1).
+
+    The order is the whole problem. `_finalize_run` goes first and, seeing a queued next hop,
+    closes the run out as `hop_handoff` — "this hop produced its document; the next hop starts
+    in a new worker". It writes the `ai_invoke_runs` row, fires the finished payload the
+    miniplayer keeps, and settles the failure notification. ONLY THEN does
+    `_maybe_auto_resume_hop` reach the review gate, and only there can the auto-approval or the
+    advance actually fail. Parking a durable row with `stop_code=approve_failed` while those
+    three surfaces still say "handoff" is precisely the diagnostic loss 0003-NR §11-1 reported:
+    the stored run claimed the chain moved on, and the real exception — sitting in
+    `review_reject_detail` since `_settle_gate_pass` — reached no one.
+
+    So the stop is re-derived from the SAME two functions finalize used (`is_resumable`,
+    `_stop_reason_text`, which now reads that detail) and the same surfaces are refreshed: the
+    persisted record, the finished event, the human notification. Consistency, not a second
+    opinion — one stop code, one sentence, everywhere.
+
+    A park that does not change the verdict returns having touched nothing, which is what keeps
+    the record write, the finished event and the notification exactly-once for the ordinary
+    case (a run that already ended on this very code — a cancel, an inbox-tagged stop — and is
+    only being parked so the chain stays resumable).
+    """
+    if not run or not run.get("run_id"):
+        return
+    if run.get("status") != "finished":
+        # Not finalized yet, so nothing has been written to correct: whatever _finalize_run
+        # computes next is the first and only verdict. No park path reaches here today.
+        return
+    before_code = run.get("stop_code")
+    before_reason = run.get("stop_reason")
+    run["stop_code"] = stop_code
+    run["resumable"] = is_resumable(stop_code)
+    run["stop_reason"] = _stop_reason_text(stop_code, run)
+    if run["stop_code"] == before_code and run["stop_reason"] == before_reason:
+        return
+    _persist_run_record(run)
+    # The engine speaks for this stop: approve_failed / advance_blocked belong to the inbox's
+    # set, but the inbox never saw this one — the gate settled the step with no request in
+    # flight. `error_text` is the §4.3 sentence rather than the attempts-and-last-message
+    # default, because for these two codes the exception IS the news.
+    _notify_chain_failure_if_needed(
+        run,
+        notify_codes=PARK_NOTIFY_STOP_CODES,
+        error_text=run.get("stop_reason"),
+    )
+    # Same pair, same order as _finalize_run: the record is durable before the browser is told
+    # to re-read. The card is holding a `hop_handoff` payload right now and is waiting for the
+    # successor hop that is never coming; this is what replaces it with the real stop.
+    _broadcast(run, "ai_invoke_finished", finished_payload(run))
+    _broadcast(run, "group_view_refresh", {
+        "group_id": run["group_id"],
+        "reason": "ai_invoke_finished",
+    })
+
+
 def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
     """Terminus of every branch that decides not to spawn the next hop (0406 T0022 item 4).
 
@@ -5649,8 +5751,9 @@ def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
     run["stop_code"] = stop_code
     run["resumable"] = is_resumable(stop_code)
     _write_handoff_row(group_id, pending, run, stop_code=stop_code)
-    if stop_code == REVIEW_NO_VERDICT_STOP_CODE:
-        _notify_chain_failure_if_needed(run)
+    # 0458 T0007 §2.1: the durable row is only ONE of the surfaces this stop has to reach.
+    # The run itself was closed out before the gate ever ran, so re-decide it here too.
+    _resettle_stop_after_park(run, stop_code)
     if not group_id:
         return
     try:
@@ -6205,6 +6308,23 @@ def _check_expected_progress(
     return None
 
 
+def _log_review_annotation_failure(kind: str, slot: dict, bundle: dict, error) -> None:
+    """Best-effort durable signal; observability must not replace the original outcome."""
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        doc = db_docs.get_by_id(slot["doc_id"]) or {}
+        group_id = bundle.get("group_id") or doc.get("group_id")
+        project_id = doc.get("project_id") or (str(group_id).split(".", 1)[0] if group_id else "__SYSTEM__")
+        event_logger.log_review_annotation_failed(
+            kind=kind, project_id=project_id,
+            actor_user_id=bundle.get("issued_to") or "u-system", group_id=group_id,
+            document_id=doc.get("id"), doc_id=slot["doc_id"], error=error,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("review gate could not persist annotation %s failure", kind, exc_info=True)
+
+
 def resolve_review_gate(bundle: dict) -> dict:
     """What happens next for the slot this chain is standing on (L0008 §2.3).
 
@@ -6225,10 +6345,12 @@ def resolve_review_gate(bundle: dict) -> dict:
     limit = resolve_round_limit(count)
     try:
         reviews = db_reviews.list_by_doc(slot["doc_id"]) or []      # newest first
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.warning("review gate could not read reviews for %s", slot["doc_id"],
                        exc_info=True)
-        reviews = []
+        _log_review_annotation_failure("read", slot, bundle, exc)
+        return {"stage": "stop", "stop_code": "review_history_unreadable",
+                "slot": slot, "count": count, "limit": limit, "detail": str(exc)}
     rounds_used = len(reviews)
     latest = reviews[0] if rounds_used else None
     common = {"slot": slot, "count": count, "limit": limit, "rounds_used": rounds_used}
@@ -6246,20 +6368,24 @@ def resolve_review_gate(bundle: dict) -> dict:
     if verdict == "hold":
         return {"stage": "stop", "stop_code": REVIEW_VERDICT_HOLD_STOP_CODE, **common}
 
-    # verdict == "issues" from here, and TWO independent conditions gate the rejection:
+    # verdict == "issues" from here, and THREE facts gate the rejection. Two of them ask
+    # the same idempotency question at different resolutions (0458 NR0003 I1):
     #
-    #   * idempotency — a document already in `rejected` (by this gate on an earlier pass,
-    #     or by a human) is not rejected again;
-    #   * revision match — the complaint has to be about the revision standing there NOW.
+    #   * the document is in `rejected` right now — by a human, or by an earlier pass of
+    #     this gate — so there is nothing left to reject;
+    #   * this exact review row is already in the rejection history. The status alone was
+    #     not enough (I3): `rejected` still means "not again", but `revised` does NOT mean
+    #     "not yet", because that is precisely the value a landed rework leaves behind.
     #
-    # The second one is 0459 NR0003's second defect. `reject_first` used to read the status
-    # alone, so a rework that had already landed (revision_no past the review's, status
-    # `revised`) was pushed back to `rejected` just before the NEXT review round started.
-    # That round then passed, and the pass tried to approve a `rejected` document — a
-    # combination transition_rules deliberately does not list — so settle_completed_step
-    # returned approve_failed BEFORE its target check and the chain parked one approval
-    # short of `completed`. The fix is here, at the cause: an old verdict does not reject a
-    # new revision. `rejected + approve` stays absent from the transition table.
+    # The third is revision match — 0459 NR0003's second defect. The complaint has to be
+    # about the revision standing there NOW. `reject_first` used to read the status alone,
+    # so a rework that had already landed (revision_no past the review's, status `revised`)
+    # was pushed back to `rejected` just before the NEXT review round started. That round
+    # then passed, and the pass tried to approve a `rejected` document — a combination
+    # transition_rules deliberately does not list — so settle_completed_step returned
+    # approve_failed BEFORE its target check and the chain parked one approval short of
+    # `completed`. An old verdict does not reject a new revision, and `rejected + approve`
+    # stays absent from the transition table.
     latest_revision = int(latest.get("revision_no") or 0)
     slot_revision = int(slot["revision_no"])
     # T0005 2.1.4: a THIRD condition joins status and revision-match by AND — this exact
@@ -6276,10 +6402,13 @@ def resolve_review_gate(bundle: dict) -> dict:
     )
 
     if slot_revision > latest_revision:
-        # The rework for this complaint already landed. Deliberately NO `reject_first`:
-        # the fresh revision keeps its `revised` status into the next round, which is what
-        # lets a later `pass` settle through the ordinary `revised + approve -> approved`
-        # transition and reach `completed`.
+        # The rework for this complaint already landed (I2). Reaching here IS the proof that
+        # the complaint was rejected and then fixed, so this branch decides the NEXT round
+        # only and carries no reject_first at all (0458 NR0003 §8 방향 A). Carrying it was
+        # what re-rejected the already-fixed review, drove `revised -> rejected`, and made
+        # the following `pass` fail its own approval: the fresh revision keeps its `revised`
+        # status into the next round, which is what lets a later `pass` settle through the
+        # ordinary `revised + approve -> approved` transition and reach `completed`.
         if review_rounds_remain(rounds_used, limit):
             # -1 never leaves this branch: "until it passes" reviews the fresh revision
             # too, round after round, for as long as the reviewer keeps finding issues.
@@ -6396,10 +6525,13 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
         permissions = _resolve_user_permissions(actor)
     except Exception as exc:  # noqa: BLE001
         logger.exception("review gate permission resolution failed for %s", actor_user_id)
+        _log_review_annotation_failure("write", slot, bundle, exc)
         return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE, "detail": str(exc)}
     if "document.reject" not in permissions:
+        detail = "issuer lacks document.reject"
+        _log_review_annotation_failure("write", slot, bundle, detail)
         return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE,
-                "detail": "issuer lacks document.reject"}
+                "detail": detail}
     reason = build_auto_reject_reason(review, slot, bundle.get("api_base_url"))
     try:
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
@@ -6419,6 +6551,7 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — the stored document is never touched
         logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)
+        _log_review_annotation_failure("write", slot, bundle, exc)
         return {"ok": False, "stop_code": REVIEW_REJECT_FAILED_STOP_CODE, "detail": str(exc)}
     return {"ok": True}
 
@@ -6488,7 +6621,15 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
         return outcome
     # user_paused keeps the human's own row (_write_handoff_row refuses to overwrite it);
     # approve_denied / approve_failed get a system row so the chain is pickable again.
-    run["review_reject_detail"] = result.get("detail")
+    #
+    # 0458 T0007 §2.1-3: ONE storage contract for every stopped outcome this gate can
+    # reach — the exception string when settle_completed_step names one (`detail`), and
+    # otherwise the sentence it does carry (`reason`), so a stop is never parked with the
+    # reason it knows thrown away. `_stop_reason_text` reads this key back for
+    # approve_failed and advance_blocked alike; settle_completed_step is also the only
+    # entry point through which this gate can reach either code, so no advance path is
+    # left storing nothing.
+    run["review_reject_detail"] = result.get("detail") or result.get("reason")
     _park_handoff(run, bundle, stop_code)
     return outcome
 
@@ -7549,6 +7690,34 @@ def _handoff_row_in_flight(row: dict) -> bool:
     return age < HOP_HANDOFF_GRACE_SEC
 
 
+def _paused_row_stop_reason(row: dict) -> Optional[str]:
+    """The §4.3 sentence behind a parked chain's stop code (0458 T0007 §2.1).
+
+    The paused row stores the code; the run that parked it stores the words — including the
+    exception detail an `approve_failed` carries, now that _resettle_stop_after_park writes
+    the gate's verdict back onto that run. `stop_run_id` is the join.
+
+    The two codes must still agree. A row whose code was rewritten after the run was persisted
+    — `startup_recover_handoffs` turning `hop_handoff` into `hop_handoff_interrupted` is the
+    live example — would otherwise be captioned with the previous stop's sentence, which is
+    worse than no sentence. Best-effort throughout: a card with no explanation still beats a
+    bootstrap that 500s.
+    """
+    run_id = row.get("stop_run_id")
+    if not run_id:
+        return None
+    try:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        record = db_runs.get(run_id) or {}
+    except Exception:  # noqa: BLE001
+        logger.warning("paused-chain stop reason lookup failed for %s", run_id, exc_info=True)
+        return None
+    if (record.get("stop_code") or "") != (row.get("stop_code") or ""):
+        return None
+    return record.get("stop_reason")
+
+
 def active_all(user_id: str) -> dict:
     """Global widget bootstrap (P0008 S1): every live run the user started plus every
     chain the user paused — the refresh-proof source the miniplayer restores from."""
@@ -7626,6 +7795,14 @@ def active_all(user_id: str) -> dict:
             # system stops, so it can only have been a person (DB0008 §2.3).
             "stop_kind": row.get("stop_kind") or "user",
             "stop_code": row.get("stop_code"),
+            # 0458 T0007 §2.1: and WHY, in words. A code cannot carry an exception string, and
+            # `ai_invoke_paused_chains` has no column for one (the T forbids a schema change),
+            # so the sentence is read back from the run that parked the row. The miniplayer
+            # already reads `stop_reason` off this payload (aiInvokeRuns.ts, the paused-row
+            # normalizer) and falls through to it whenever the build has no translated
+            # sentence for the code — which is every code but one. The server simply never
+            # sent it, so a parked chain's card had the code and nothing else.
+            "stop_reason": _paused_row_stop_reason(row),
             "stop_run_id": row.get("stop_run_id"),
             "stop_last_message_excerpt": row.get("stop_last_message_excerpt"),
             # T0005 §2: whether THIS paused row can actually resume under the current

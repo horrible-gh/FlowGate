@@ -18,6 +18,7 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import workflow_sequences as db_wfseq
+from modules.flow_gate.documents.constants import is_server_assembled_type
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import mention_service
@@ -266,6 +267,38 @@ def _issue_token(
     # token so the unmanned self-chain honors it on every hop (group 0099 B0001).
     req_locale = request.headers.get("x-locale") or "ko"
     is_continuous = body.continuation_target_seq is not None
+
+    # 0441 T0004 item 3: this is the direct-issue fallback for an ordinary action_scope='new'
+    # token — "here is a token, go write the next document". When the workflow head is a type
+    # the server assembles (TSR, from a test run) there is no document for a person to write,
+    # so the token would only ever be spent on a submission the inbox now refuses. Refused
+    # here too, matching /workflow/advance, so no dead token is ever minted.
+    #
+    # 0441 TR0005 rev10: this used to skip the check whenever `is_continuous` was true, on the
+    # theory that an unmanned chain reaching a TSR head is always handed a test_run-scoped
+    # token by advance_workflow instead. That theory does not hold *here*: advance_workflow
+    # mints its token via a direct in-process call to token_service.issue (see
+    # workflow_decision_service.py), never through this HTTP route, so this endpoint is never
+    # the legitimate carrier of that hand-off regardless of what the caller puts on the wire.
+    # A caller hitting this route directly could set action_scope='new' and tack on any
+    # continuation_target_seq to flip is_continuous=true and walk straight past the guard to
+    # token_service.issue(action_scope='new') — the exact hand-written-TSR token this gate
+    # exists to deny. The check now applies whenever the wire scope is 'new', continuous or
+    # not; continuation-mode requests for an ordinary (non-server-assembled) head are untouched.
+    if resolved_action_scope == "new" and group_id:
+        try:
+            _head = db_wfseq.get_pending_head_by_group(group_id, body.project)
+        except Exception:  # noqa: BLE001 — stores without workflow support keep the legacy path
+            _head = None
+        _head_type = str((_head or {}).get("type") or "").upper()
+        if is_server_assembled_type(_head_type):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{_head_type} is assembled by the server from a test run and cannot be "
+                    "written by hand. Run the test on the approved TS document."
+                ),
+            )
 
     # 0352 T0004 §2/§3.4: a fresh selection arriving here is validated (422) the same way
     # /workflow/advance and /ai-invoke/start do — this endpoint is the fallback direct-issue

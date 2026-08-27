@@ -8,6 +8,26 @@ AUTO_COMPLETE_TYPES = frozenset({"M", "CH"})
 # These types still require a human approval action; they are not auto-complete.
 FILELESS_APPROVABLE_TYPES = frozenset({"AC"})
 
+# ── Server-assembled document types (0441 T0004 item 3 / NR0003 recommendation A) ──
+# Types the SERVER builds out of a machine result instead of anybody writing them. A TSR
+# is assembled by test_run_service.assemble_tsr() from a finished test run, so no human
+# and no worker may author one: /documents/next-empty, an inbox action:new submission and
+# the ordinary action_scope='new' token hand-off all refuse these types. The official
+# assembly path calls document_service directly and goes through none of those gates, so
+# it is unaffected.
+#
+# This is the single source of truth for that policy. workflow_decision_service
+# .SERVER_ASSEMBLED_REPORT_TYPES and WORK_PLAN_LOCKED_TYPES below both READ this set
+# rather than restating it — before 0441 the same "TSR" literal sat in three files and
+# only one of them was ever consulted when a document was actually created.
+SERVER_ASSEMBLED_DOC_TYPES = frozenset({"TSR"})
+
+
+def is_server_assembled_type(type_code: str | None) -> bool:
+    """Whether ``type_code`` names a document only the server itself may create."""
+    return str(type_code or "").strip().upper() in SERVER_ASSEMBLED_DOC_TYPES
+
+
 # Records that are intentionally outside workflow_sequence_items result slots.
 NON_SLOT_WORKFLOW_TYPES = AUTO_COMPLETE_TYPES | frozenset({"Q", "A", "AC"})
 # The work plan (WP) is deliberately **NOT** in this set. D0007 §7 required stating where a
@@ -57,8 +77,10 @@ WORK_PLAN_STEP_TYPES = frozenset(
     set(WORK_PLAN_COUNTABLE_ORDER) | set(WORK_PLAN_PAIR_MAP.values())
 )
 
-# Steps the server assembles itself — no provider, no note (DS0006 §2-7).
-WORK_PLAN_LOCKED_TYPES = frozenset({"TSR"})
+# Steps the server assembles itself — no provider, no note (DS0006 §2-7). Same set as
+# SERVER_ASSEMBLED_DOC_TYPES above, read from it rather than restated (0441 T0004 item 3):
+# "the server builds this row" and "nobody may author this document" are one fact.
+WORK_PLAN_LOCKED_TYPES = SERVER_ASSEMBLED_DOC_TYPES
 
 # ── One-line note length cap — canonical (0406 T0022 item 6 / M0019) ─────────
 # The same value was pinned separately in work_plan_service, work_plan_sequence_service and

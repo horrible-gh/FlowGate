@@ -309,6 +309,8 @@ interface DocDetail {
   workflow_head_doc_title?: string | null
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
+  // 0441 TR0005 rev2: group-scoped (not document-scoped) "a test run is in flight" flag.
+  group_test_run?: { active?: boolean; run_id?: string | null; doc_id?: string | null; status?: string | null } | null
   next_step_exists?: boolean
   // TR scope-verification verdict (0299 D0004 §6). The server expands it from meta.
   // The key itself is absent if the doc isn't in scope or predates verification.
@@ -934,7 +936,12 @@ async function loadGroupContext() {
   const gid = doc.value?.group_id
   if (!pid || !gid) return
   try {
-    const nodes = await explorerStore.fetchGroupTree(pid)
+    // 0454 T0006 §4.2 — full variant, unconditionally. The document whose header this is may
+    // well live in a final-approved or discarded group; asking for the pruned tree would come
+    // back without that group and without its member documents, blanking the header's group
+    // name and its document list exactly where the group is finished. Independent of the
+    // sidebar's hide toggle: this is not the sidebar.
+    const nodes = await explorerStore.fetchGroupTree(pid, false, true)
     const groupNode = nodes.find((n) => n.id === gid && n.node_type === 'group')
     groupName.value = groupNode?.label ?? groupName.value ?? gid
     groupDocuments.value = nodes
@@ -1213,6 +1220,15 @@ const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
+// 0441 TR0005 rev4 (rejection: opening an R document during a TS run revived its action bar):
+// testRun above is bound to THIS document, so it stays null on every sibling tab while a
+// run is executing. Keep the group value unknown until detail explicitly answers. Returning
+// false while doc is still null bypasses MainPanel's fail-closed fallback and briefly enables
+// every action on a newly opened sibling document.
+const groupTestRunActive = computed<boolean | undefined>(() => {
+  const active = doc.value?.group_test_run?.active
+  return typeof active === 'boolean' ? active : undefined
+})
 // TR scope-verification verdict (0299 D0004 §6). Since 0390 TR0005, eligibility is no
 // longer based on document type but on server-side tool_registry.MUTATING_STEP_TYPES
 // membership (T/TR/TSR/TS) -- if the doc isn't that type or predates verification, the
@@ -1274,6 +1290,7 @@ defineExpose({
   aiReview,
   aiReviewHistory,
   testRun,
+  groupTestRunActive,
   trScope,
   fetchDoc,
   applyReviewTransition,

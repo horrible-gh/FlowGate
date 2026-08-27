@@ -38,9 +38,11 @@ from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents.constants import (
     HEAD_TYPE_GUARD_EXEMPT_TYPES,
     WORK_PLAN_TYPE,
+    is_server_assembled_type,
 )
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services import git_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_commit_service
@@ -1792,6 +1794,29 @@ _WORKFLOW_HEAD_MISMATCH_COPY = {
     ),
 }
 
+# 0441 T0004 item 3 (NR0003 §2): refusal copy for a manual action:new submission of a
+# type the SERVER assembles. head==submitted passed the Step 5.8 guard unchallenged, so
+# this is its own check with its own sentence — the worker has to be told the run assembles
+# the report, not that it picked the wrong type.
+_SERVER_ASSEMBLED_NEW_COPY = {
+    "ko": (
+        "{doc_type}는 테스트 실행 결과로 서버가 조립하는 문서입니다. 직접 작성해 등록할 수 "
+        "없습니다. 문서는 등록되지 않았습니다. 승인된 테스트시나리오(TS) 문서로 테스트를 "
+        "실행하면 서버가 {doc_type}를 만들어 워크플로에 등록합니다."
+    ),
+    "en": (
+        "{doc_type} is assembled by the server from a test run. It cannot be written and "
+        "submitted by hand. The document was not registered. Run the test on the approved "
+        "test-scenario (TS) document and the server will create the {doc_type} and register "
+        "it in the workflow."
+    ),
+    "ja": (
+        "{doc_type} はテスト実行の結果からサーバーが組み立てる文書です。手作業で作成して登録 "
+        "することはできません。文書は登録されていません。承認済みのテストシナリオ(TS)文書で "
+        "テストを実行すれば、サーバーが {doc_type} を作成してワークフローに登録します。"
+    ),
+}
+
 _TR_SCOPE_FALLBACK_COPY = {
     "ko": "TR 작업범위 검증 반려",
     "en": "TR scope validation rejected",
@@ -3091,6 +3116,24 @@ def _build_change_summary(**kwargs) -> dict:
         return {"changed": None, "error": "summary unavailable"}
 
 
+def _record_change_summary(doc_id: str, revision_no: int, summary: dict, actor_user_id: str | None) -> None:
+    """Best-effort durable copy of the response summary; save success stays independent."""
+    try:
+        from modules.flow_gate.workflow import event_logger
+        doc = db_docs.get_by_id(doc_id) or {}
+        core = {key: summary.get(key) for key in
+                ("changed", "lines_added", "lines_removed", "error") if key in summary}
+        core.update({"doc_id": doc_id, "revision_no": revision_no})
+        event_logger.log_event(
+            event_type=event_logger.EVT_CHANGE_SUMMARY_RECORDED,
+            project_id=doc.get("project_id") or "__SYSTEM__", actor_user_id=actor_user_id or "u-system",
+            group_id=doc.get("group_id"), document_id=doc.get("id"), metadata=core,
+        )
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[inbox] change summary event failed (ignored): {exc}")
+
+
 def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: new (D020 §3-3-2)."""
 
@@ -3334,6 +3377,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # — a violation-detection feature dropping a normal submission with a 500 is worse
     # than the original incident it guards against.
     tr_scope_result: Optional[dict] = None
+    worktree_untracked: Optional[dict] = None
     # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
     # point through Step 5.9. Priority: the token's continuation_locale (unmanned
     # worker) > the request's x-locale header > ko (same order as 0355 L0007 §2-1,
@@ -3391,6 +3435,25 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 422,
                 tr_scope_result.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
             )
+
+        worktree_untracked = git_service.worktree_untracked_summary(
+            project, group["group_id"]
+        )
+
+    # ── Step 5.75: Server-assembled type guard (0441 T0004 item 3) ─────────
+    # A TSR is built by test_run_service.assemble_tsr() out of a finished run and is
+    # registered through document_service directly — it never arrives here. So an
+    # action:new submission naming one is, by construction, somebody writing it by hand.
+    # Step 5.8 below cannot catch it: it only compares head type against submitted type,
+    # and in the reported case both were TSR, so the manual document sailed through and
+    # took the slot the run was going to fill (NR0003 §2). Placed before Step 5.8 and
+    # before every side effect (numbering, storage, the document row), so a refusal —
+    # dry-run or real — leaves the group exactly as it was.
+    if is_server_assembled_type(doc_type):
+        return _fail(
+            409,
+            _SERVER_ASSEMBLED_NEW_COPY[_locale].format(doc_type=doc_type.upper()),
+        )
 
     # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
     # Compare before the shared dry-run branch and before numbering/storage so a
@@ -3484,6 +3547,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if tr_scope_result is not None:
         new_checks.append("tr_scope")
         would_register["tr_scope"] = tr_scope_result
+    if worktree_untracked is not None:
+        would_register["worktree_untracked"] = worktree_untracked
     if normalizations:
         would_register["normalizations"] = normalizations
     dry_resp = _maybe_dry_run(body, token_rec, would_register)
@@ -3840,6 +3905,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             after_path=stored_path,
             after_revision_no=0,
         )
+    if worktree_untracked is not None:
+        resp_content["worktree_untracked"] = worktree_untracked
+    _record_change_summary(canonical_doc_id, 0, resp_content["change_summary"], token_rec.get("issued_to"))
     # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
@@ -3861,23 +3929,27 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
 
 def _submitted_review_id(body: dict) -> Optional[Any]:
-    """The `document_reviews` row a rejected resubmission says it is answering (T0005 2.2.2).
+    """The `document_reviews` row a rejected resubmission says it is answering (0458 T0007).
 
     Takes the whole body, not the value, because the FIELD'S ABSENCE is itself one of the
-    three answers:
+    three answers (§2.2-2/§2.2-6):
 
-      * no `review_id` key -> ``None``, the only input that puts record_rejection_response
-        on its legacy latest-item policy -- a rework mention minted before this field
-        existed, and nothing else may borrow that fallback.
-      * a value that can name a row -> passed through VERBATIM, so the recorder receives
+      * no `review_id` key → ``None``, the only input that puts record_rejection_response on
+        its legacy latest-item policy. That policy exists for one reason — a rework mention
+        minted before this field did — and nothing else may borrow it.
+      * a value that can name a row → passed through VERBATIM, so the recorder receives
         exactly what the worker sent. The column is an integer and the mention prints one,
         but a body that round-tripped it as "244" names the same row;
         pipeline_service.rejection_review_key folds the two together.
-      * a value that cannot name a row -> UNIDENTIFIABLE_REVIEW_ID. A bool, a blank or
-        whitespace-only string, an explicit null, a float, a list, or a non-numeric
-        string is a broken claim about which rejection is being answered, not an absent
-        one -- folding it back to ``None`` would hand it the latest-item fallback and let
-        one malformed value silently overwrite a different review row's answer.
+      * a value that cannot name a row → UNIDENTIFIABLE_REVIEW_ID. A bool (``True`` is not
+        row 1), a blank or whitespace-only string, an explicit null, a float, a list, or a
+        non-numeric string (0458 T0008: `document_reviews.id` is a positive integer, so
+        "abc" cannot be one — even if some malformed stored history item also spells its
+        `review_id` "abc"). The submission made a claim about which rejection it answers
+        and the claim is broken; the recorder then records NOTHING. Folding these back to
+        ``None`` — what the first cut of this function did — hands them the latest-item
+        fallback, and one malformed value silently overwrites a different review row's
+        answer.
     """
     from modules.flow_gate.workflow.pipeline_service import (
         UNIDENTIFIABLE_REVIEW_ID,
@@ -3890,6 +3962,47 @@ def _submitted_review_id(body: dict) -> Optional[Any]:
     if is_review_row_id(value):
         return value
     return UNIDENTIFIABLE_REVIEW_ID
+
+
+def _submitted_rejection_id(body: dict) -> Optional[str]:
+    """Return the explicit opaque rejection target, preserving legacy absence."""
+    if not isinstance(body, dict) or "rejection_id" not in body:
+        return None
+    value = body.get("rejection_id")
+    if isinstance(value, str):
+        return value.strip() or None
+    # An explicit malformed value must match nothing rather than borrow a fallback.
+    return "__unidentifiable_rejection_id__"
+
+
+def _attach_rejection_response(
+    *,
+    doc_id: str,
+    response_text: Optional[str],
+    review_id: Optional[Any],
+    actor_user_id: str,
+    revision_no: Optional[int],
+    rejection_id: Optional[str] = None,
+) -> None:
+    """Compatibility seam retained for direct recorder-boundary unit tests.
+
+    The inbox request path no longer calls this helper: rejected-resubmission validation
+    prepares the updated history before storage and Step 7 writes it in the revision CAS.
+    A blank response still records nothing; direct callers receive recorder failures
+    unchanged.
+    """
+    if not response_text:
+        return
+    from modules.flow_gate.workflow.pipeline_service import record_rejection_response
+
+    return record_rejection_response(
+        doc_id=doc_id,
+        response_text=response_text,
+        recorded_by=actor_user_id,
+        revision_no=revision_no,
+        review_id=review_id,
+        rejection_id=rejection_id,
+    )
 
 
 def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
@@ -3938,11 +4051,13 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # text is recorded against a rejection so reviewers can see how the AI addressed
     # their comment. Only meaningful for edit_reason="rejected".
     rejection_response: Optional[str] = body.get("rejection_response")
-    # T0005 2.2.2: and WHICH rejection it answers -- the document_reviews row id the
-    # rework mention printed. Optional: an older mention omits the field entirely and
-    # the recorder falls back to its legacy latest-item policy. A field that IS there
-    # but names no row is a different case and records nothing.
+    # 0458 T0007 §2.2-2: and WHICH rejection it answers — the document_reviews row id the
+    # rework mention printed. Optional: an older mention omits the field entirely and the
+    # recorder falls back to its legacy latest-item policy. A field that IS there but names
+    # no row is a different case and records nothing; the boundary keeps the two apart, so
+    # the whole body goes in rather than the value.
     rejection_review_id = _submitted_review_id(body)
+    rejection_id_value = _submitted_rejection_id(body)
 
     # ── Step 2: Authentication ─────────────────────────────────────────────────────────
     try:
@@ -3979,6 +4094,44 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             422,
             f"Modification not allowed for status: {existing_doc.get('status')}",
         )
+
+    # T0007: rejected resubmissions must prove both their response and target before
+    # any file, revision, workflow state, event, or token can change.  Prepare the
+    # updated history now; Step 7 folds it into the same CAS as the revision bump.
+    rejection_history_update: Optional[str] = None
+    if edit_reason == "rejected":
+        response_text = (rejection_response or "").strip()
+        if not response_text:
+            return _fail(422, "rejection_response is required for a rejected resubmission.")
+        history: list = []
+        raw_history = existing_doc.get("rejection_history")
+        if raw_history:
+            try:
+                history = json.loads(raw_history) if isinstance(raw_history, str) else raw_history
+                if not isinstance(history, list):
+                    history = []
+            except (json.JSONDecodeError, TypeError):
+                history = []
+        from modules.flow_gate.workflow.pipeline_service import (
+            AI_RESPONSE_MAX_LEN,
+            resolve_rejection_target,
+        )
+        target = resolve_rejection_target(
+            history,
+            rejection_id=rejection_id_value,
+            review_id=rejection_review_id,
+        )
+        if target is None:
+            return _fail(
+                409,
+                "The submitted rejection target does not match the current rejection history. "
+                "Refresh the document and retry.",
+            )
+        target["ai_response"] = response_text[:AI_RESPONSE_MAX_LEN]
+        target["responded_at"] = now_iso()
+        target["response_recorded_by"] = actor_user_id
+        target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
+        rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
         return _fail(422, f"Referenced document {linked_doc_id} does not exist")
@@ -4159,6 +4312,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # already has a document, so a pass/warning updates that document's meta in Step
     # 7.1; a rejection returns without changing the document.
     edit_tr_scope: Optional[dict] = None
+    edit_worktree_untracked: Optional[dict] = None
     # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
     # point through Step 5.9 — same rule as the new path (Step 5.7 above).
     _locale = template_provision.normalize_locale(
@@ -4211,6 +4365,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
     # (0391 B0001 proposal 3+4, T0005 §5-2/§6) ──
+        edit_worktree_untracked = git_service.worktree_untracked_summary(
+            project, group["group_id"]
+        )
+
     _edit_encoding_fields: dict[str, Optional[str]] = {"body": _edit_raw_submission_text}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
@@ -4255,6 +4413,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if edit_tr_scope is not None:
         edit_checks.append("tr_scope")
         edit_would_register["tr_scope"] = edit_tr_scope
+    if edit_worktree_untracked is not None:
+        edit_would_register["worktree_untracked"] = edit_worktree_untracked
     if edit_normalizations:
         edit_would_register["normalizations"] = edit_normalizations
     dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
@@ -4340,11 +4500,18 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     new_file_path_rel = to_storage_relative(stored_path, project)
     store = get_store()
     now = now_iso()
-    store._execute(
-        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-        "file_path = ? WHERE doc_id = ? AND revision_no = ?",
-        [now, new_file_path_rel, doc_id, current_revision_no],
-    )
+    if rejection_history_update is not None:
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+            "file_path = ?, rejection_history = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, new_file_path_rel, rejection_history_update, doc_id, current_revision_no],
+        )
+    else:
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, new_file_path_rel, doc_id, current_revision_no],
+        )
     refreshed = db_docs.get_by_id(doc_id)
     if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
         # CAS conflict → rollback
@@ -4455,7 +4622,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         from modules.flow_gate.workflow.pipeline_service import (
             TransitionError,
             WorkflowSlotConflictError,
-            record_rejection_response,
             register_workflow_result,
             transition_document_review,
         )
@@ -4496,22 +4662,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         except (TransitionError, ValueError, PermissionError) as _tr_exc:
             logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
-        # P0005/T0006: attach the AI's rejection response (if supplied) to the rejection
-        # it answers. Independent of the workflow head.
-        if rejection_response:
-            try:
-                record_rejection_response(
-                    doc_id=doc_id,
-                    response_text=rejection_response,
-                    recorded_by=actor_user_id,
-                    revision_no=new_revision_no,
-                    # T0005 2.2.2: the submitted id reaches the recorder unchanged. None
-                    # means the field was absent (legacy fallback); UNIDENTIFIABLE_REVIEW_ID
-                    # means it was present but unusable (record nothing).
-                    review_id=rejection_review_id,
-                )
-            except Exception as _rr_exc:
-                logger.warning(f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}")
+        # T0007: the response was already written atomically with the revision CAS.
 
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(
@@ -4646,6 +4797,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             before_path=backup_path_str,
             before_revision_no=current_revision_no,
         )
+    if edit_worktree_untracked is not None:
+        resp_body["worktree_untracked"] = edit_worktree_untracked
+    _record_change_summary(doc_id, new_revision_no, resp_body["change_summary"], token_rec.get("issued_to"))
     return JSONResponse(content=resp_body)
 
 

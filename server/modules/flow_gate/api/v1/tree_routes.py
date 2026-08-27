@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import threading
 import zipfile
 from urllib.parse import quote
 
@@ -253,11 +254,297 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     return {"deleted": body.path, "type": actual_type, "base_git": base_git}
 
 
+# ---------------------------------------------------------------------------
+# 0454 T0006 §1 — display-state pruning for the group tree
+# ---------------------------------------------------------------------------
+#
+# B0001 ("releasing the completed-hide toggle is slow"): the explorer hides terminal
+# (final-approved / discarded) groups by default, but the server shipped them anyway —
+# the whole subtree travelled the wire and got JSON-parsed on every load, SSE refresh and
+# retry, only for GroupExplorer to filter it back out. `include_terminal=false` drops that
+# freight at the source; `true` (the default, so every existing API caller is unaffected)
+# returns the flat payload byte-for-byte as before.
+
+# The two SERVER-derived terminal flags on a group node (process_service.get_group_tree).
+# A group is terminal when either is True; a missing or False flag is NOT terminal, so a
+# legacy payload that predates the fields hides nothing.
+_TERMINAL_GROUP_FLAGS = ("is_final_approved", "is_discarded")
+
+# 0454 T0007 review — the overview cards (MainPanel.vue) used to warm the FULL group tree on
+# every default-screen entry just to read three numbers off it, which the review found doubles
+# the default (hidden) entry's transfer/parse cost past the pre-pruning baseline: pruned
+# (735,105 bytes) + full (1,713,209 bytes) > full alone (rev0 finding). rev1 fixed the transfer
+# cost with a SEPARATE `/groups/tree/overview_summary` route, but that route called
+# process_service.get_group_tree() on its own, so the default overview screen (GroupExplorer's
+# tree fetch + this route, both mounted together) ran the full DB tree-building path TWICE per
+# load; and nothing refetched rev1's cache when a refresh invalidated it, so the cards went stale
+# until an unrelated project/tab switch happened to reload them (both rev1 review findings).
+#
+# rev2 folded build_overview_summary's result into the `/groups/tree` envelope itself so both
+# problems above went away — but that made `include_terminal=true` (the default) stop being
+# byte-identical to the pre-T0006 API for every existing caller, which is exactly what T0006
+# §1.1 ("그대로 반환한다") and the completion criteria ("기본 API 호환 ... 유지된다") rule out.
+# The review on rev2 called this out.
+#
+# rev3 put `/groups/tree/overview_summary` back as its own route, so `/groups/tree` reverted to
+# exactly the pre-T0006 `{"data": {"nodes": [...]}}` envelope for every variant, and shared the
+# raw node list between the two routes through `_get_raw_tree_nodes` — but rev3's version of that
+# function memoized `process_service.get_group_tree()` per project for a flat 5-second TTL, which
+# the rev3 review correctly rejected on two counts: the cache was checked and released BEFORE the
+# DB call ran (so two requests landing on an empty cache both missed and both ran the DB path —
+# the exact rev1 regression rev3 claimed was fixed), and nothing invalidated the cache on a write
+# (so a just-created document could be missing from the response for up to 5 seconds afterward).
+#
+# rev4 replaced the TTL cache with a plain single-flight JOIN — concurrent callers for the same
+# project_id shared the one `process_service.get_group_tree()` call actually in flight, discarded
+# the moment it returned — but the review on rev4 found the join itself did not know about writes
+# EITHER: a caller that arrived after a document was created could still join a fetch that had
+# started (and, worse, could still be running) before that write, and hand back pre-write nodes
+# to a `force=true` caller that exists specifically to find the just-created document
+# (DashboardView.vue's `handleRequirementCreated` / `handleRelatedDocCreated`) — rev4's join did
+# not distinguish "this caller needs a guaranteed-fresh read" from "any recent-enough read will
+# do". And because the tree route and the separate overview-summary route were fetched from two
+# INDEPENDENT Vue watchers (GroupExplorer.vue and MainPanel.vue) reacting to the same trigger
+# (project switch, SSE refresh, manual refresh), nothing guaranteed the two requests actually
+# overlapped — a sequential arrival (the second landing only after the first had already
+# returned) left rev4's own test suite documenting two separate `get_group_tree` calls per screen
+# load, the exact rev1 regression T0006 §1.3 rules out.
+#
+# rev5 removes both gaps at their root instead of tuning the join window:
+#
+# 1. `include_summary` (see `get_groups_tree` below) folds the overview aggregate into the SAME
+#    `/groups/tree` response as an OPT-IN query flag, defaulting to `False` — every caller that
+#    does not pass it (every pre-existing caller, since the flag did not exist before this
+#    revision) gets the exact `{"data": {"nodes": [...]}}` envelope T0006 §1.1 requires. This is
+#    NOT rev2's design: rev2 added the key unconditionally to the default variant every existing
+#    caller already receives; here the key only ever appears on a request that explicitly asks
+#    for it. GroupExplorer.vue is now the ONLY caller that asks for it, on the exact same fetch
+#    call that already serves the sidebar tree — so there is no second request left to race or to
+#    duplicate the DB read: one HTTP round trip produces both artifacts, in every arrival order.
+#    `get_groups_tree_overview_summary` and MainPanel's own fetch are removed as now-dead code.
+# 2. `_get_raw_tree_nodes` below now takes the SAME `force` flag `fetchGroupTree`'s callers
+#    already pass client-side (explorer.ts already threads it through the URL as of this
+#    revision). `force=True` means, precisely, "I need a read that starts no earlier than THIS
+#    request" — which is exactly what a caller that just awaited a write's own response needs
+#    (DashboardView.vue's two reveal-after-create calls both pass `force=true` already, for that
+#    reason, since 0454 T0006). A forced fetch therefore NEVER joins an already-in-flight one,
+#    however recent — it always starts its own `process_service.get_group_tree()` call, which
+#    cannot have begun before the caller's own request arrived, and therefore cannot have begun
+#    before any write that request's own caller had already observed complete (the client only
+#    issues the follow-up GET after awaiting the write's HTTP response). A forced fetch still
+#    REGISTERS itself as the current in-flight entry, so a non-forced caller arriving while it
+#    runs still shares it — sharing is only given up on the side that actually needs the
+#    guarantee, not globally. There is no window, of any duration, in which a `force=true` caller
+#    can be handed nodes older than a write its own request causally followed.
+_WORKING_HEAD_TYPES = ("T", "N", "TS")
+
+_raw_tree_lock = threading.Lock()
+_raw_tree_inflight: dict[str, "_RawTreeFetch"] = {}
+
+
+class _RawTreeFetch:
+    """A `process_service.get_group_tree()` call in flight for one project_id, that later
+    NON-FORCED callers for the SAME project_id join instead of starting a redundant call of their
+    own (see `_get_raw_tree_nodes`). Discarded the moment the call finishes — this is a join
+    point, not a cache."""
+
+    __slots__ = ("done", "nodes", "error")
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.nodes: list[dict] | None = None
+        self.error: Exception | None = None
+
+
+def _get_raw_tree_nodes(project_id: str, force: bool = False) -> list[dict]:
+    """`process_service.get_group_tree(project_id)["nodes"]`, with concurrent NON-FORCED callers
+    for the same project_id joining a single in-flight DB read instead of each starting their
+    own. `force=True` (rev5) opts a caller OUT of joining — see the module note above — but it
+    still becomes the new in-flight entry, so later callers (forced or not) may join IT.
+
+    Never mutated by callers (`prune_terminal_subtrees` and `build_overview_summary` both only
+    read their input), so the SAME list — and the same node objects — can be handed to every
+    joiner without copying.
+    """
+    with _raw_tree_lock:
+        fetch = _raw_tree_inflight.get(project_id)
+        joined = fetch is not None and not force
+        if not joined:
+            fetch = _raw_tree_inflight[project_id] = _RawTreeFetch()
+
+    if joined:
+        fetch.done.wait()
+        if fetch.error is not None:
+            raise fetch.error
+        return fetch.nodes  # type: ignore[return-value]
+
+    try:
+        fetch.nodes = process_service.get_group_tree(project_id).get("nodes") or []
+    except Exception as exc:
+        fetch.error = exc
+        raise
+    finally:
+        with _raw_tree_lock:
+            # Only retire OUR OWN entry. A `force=True` caller arriving while this fetch was
+            # still running may already have installed a fresher `_RawTreeFetch` in our place —
+            # popping unconditionally would delete that newer entry instead and strand its own
+            # waiters.
+            if _raw_tree_inflight.get(project_id) is fetch:
+                _raw_tree_inflight.pop(project_id, None)
+        fetch.done.set()
+    return fetch.nodes
+
+
+def _is_working_head_type(type_code: str | None) -> bool:
+    if not type_code:
+        return False
+    if type_code in _WORKING_HEAD_TYPES:
+        return True
+    return len(type_code) >= 2 and type_code.endswith("R")  # xR series (NR / TR / TSR / ...)
+
+
+def build_overview_summary(nodes: list[dict]) -> dict:
+    """Project-wide totals for the overview cards, mirroring MainPanel.vue's prior
+    client-side computation exactly (including reading is_final_approved/is_discarded off the
+    picked document node, which are group-only fields and so never exclude anything — an
+    existing MainPanel behavior this function reproduces rather than changes).
+    """
+    total_documents = 0
+    type_counts: dict[str, int] = {}
+    last_doc_by_parent: dict[object, dict] = {}
+    for node in nodes:
+        if node.get("node_type") != "document":
+            continue
+        total_documents += 1
+        type_code = node.get("type_code")
+        if type_code:
+            type_counts[type_code] = type_counts.get(type_code, 0) + 1
+        parent_id = node.get("parent_id")
+        if parent_id is None:
+            continue
+        current = last_doc_by_parent.get(parent_id)
+        if current is None or (node.get("number") or "") > (current.get("number") or ""):
+            last_doc_by_parent[parent_id] = node
+
+    working_groups = 0
+    for doc in last_doc_by_parent.values():
+        if doc.get("is_final_approved") or doc.get("is_discarded"):
+            continue
+        if _is_working_head_type(doc.get("type_code")):
+            working_groups += 1
+
+    return {
+        "total_documents": total_documents,
+        "working_groups": working_groups,
+        "type_distribution": [
+            {"type": type_code, "count": count} for type_code, count in type_counts.items()
+        ],
+    }
+
+
+def prune_terminal_subtrees(nodes: list[dict]) -> list[dict]:
+    """Return `nodes` without terminal groups and everything reachable below them.
+
+    Pure and flat-in / flat-out, so it can be exercised on synthetic fixtures without a DB
+    (0454 T0006 §1.3). Properties it holds, each pinned by a test:
+
+    * A terminal root is a `node_type == "group"` node carrying `is_final_approved is True`
+      or `is_discarded is True`. Nothing else is a root.
+    * Removal follows `parent_id` to ARBITRARY depth — one parent->children index is built
+      in a single pass and walked, rather than assuming a group's only children are its own
+      direct documents. A nested subgroup (and its documents) goes with its terminal ancestor.
+    * A `visited` set bounds the walk, so cyclic or duplicated `parent_id` data terminates.
+    * The surviving nodes keep their ORIGINAL relative order and their original objects:
+      project / module / orphan nodes and non-terminal groups are untouched, no `parent_id`
+      is rewritten, and no node is dropped for any other reason. A module left empty by the
+      pruning still ships (registered-module display contract).
+    """
+    children_by_parent: dict[object, list[object]] = {}
+    terminal_roots: list[object] = []
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id is None:
+            continue
+        children_by_parent.setdefault(node.get("parent_id"), []).append(node_id)
+        if node.get("node_type") != "group":
+            continue
+        if any(node.get(flag) is True for flag in _TERMINAL_GROUP_FLAGS):
+            terminal_roots.append(node_id)
+
+    if not terminal_roots:
+        return list(nodes)
+
+    hidden: set = set()
+    stack = list(terminal_roots)
+    while stack:
+        current = stack.pop()
+        if current in hidden:
+            continue
+        hidden.add(current)
+        stack.extend(children_by_parent.get(current, ()))
+
+    return [node for node in nodes if node.get("id") not in hidden]
+
+
 @router.get("/projects/{project_id}/groups/tree", response_class=JSONResponse)
-def get_groups_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
-    """Return the group tree for the project."""
-    tree = process_service.get_group_tree(project_id)
-    return {"data": tree}
+def get_groups_tree(
+    project_id: str,
+    branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)"),
+    include_terminal: bool = Query(
+        True,
+        description=(
+            "true (default) returns the full flat tree unchanged; false prunes "
+            "final-approved/discarded groups and every descendant"
+        ),
+    ),
+    include_summary: bool = Query(
+        False,
+        description=(
+            "false (default) — envelope is exactly {\"data\": {\"nodes\": [...]}}, unchanged for "
+            "every pre-existing caller. true adds an `overview_summary` key alongside `nodes` in "
+            "the SAME response, computed from the raw (unpruned) node list regardless of "
+            "include_terminal — see build_overview_summary."
+        ),
+    ),
+    force: bool = Query(
+        False,
+        description=(
+            "false (default) — this read MAY join another request's raw-tree fetch that is "
+            "already in flight for the same project. true guarantees a read that starts no "
+            "earlier than THIS request (never joins an in-flight fetch) — for a caller that must "
+            "see the effect of a write it already knows completed. See _get_raw_tree_nodes."
+        ),
+    ),
+):
+    """Return the group tree for the project.
+
+    T0006 §1.1 / §1.2: the envelope is `{"data": {"nodes": [...]}}` for both `include_terminal`
+    variants when `include_summary` is left at its default `False` — `include_terminal=true` (the
+    default, so every pre-existing caller is unaffected) returns
+    `process_service.get_group_tree(project_id)`'s flat `nodes` unchanged in content, order and
+    object fields, and `false` prunes terminal subtrees from the same node list and the same
+    envelope shape; neither ever reintroduces nested `children`.
+
+    `include_summary=true` (0454 T0007 rev5) is an OPT-IN addition, not a change to what any
+    existing caller receives — no caller before this revision could pass it, so the default
+    response for every one of them is untouched. It is how the MainPanel overview cards' totals
+    now travel: GroupExplorer.vue is the only caller that passes it, on the SAME request that
+    already serves the sidebar tree, so one HTTP round trip (and, thanks to `_get_raw_tree_nodes`,
+    at most one `process_service.get_group_tree()` call) produces both `nodes` and
+    `overview_summary` regardless of arrival order relative to any other tree fetch — see the
+    module note above `_get_raw_tree_nodes` for why a separate route/request pair could not give
+    that guarantee.
+
+    `force=true` (0454 T0007 rev5) is the SERVER half of the client's existing `force` fetch
+    parameter (explorer.ts fetchGroupTree) — see `_get_raw_tree_nodes`'s docstring for the
+    freshness guarantee it carries.
+    """
+    raw_nodes = _get_raw_tree_nodes(project_id, force=force)
+    nodes = raw_nodes if include_terminal else prune_terminal_subtrees(raw_nodes)
+    data: dict = {"nodes": nodes}
+    if include_summary:
+        data["overview_summary"] = build_overview_summary(raw_nodes)
+    return {"data": data}
 
 
 @router.post("/groups/{group_id}/dispose", response_class=JSONResponse)

@@ -36,6 +36,24 @@ def get_running_by_doc(doc_id: str) -> Optional[dict]:
     )
 
 
+def get_active_by_group(group_id: str) -> Optional[dict]:
+    """The most recent still-running/cancelling run of ANY document in a group.
+
+    0441 TR0005 rev2 (rejection: every OTHER document of the group must go inert too):
+    ``get_running_by_doc`` answers the per-document admission gate, so it can only lock
+    the tab the run was started from. The action bar has to go inert on every document of
+    the group, so the same 'running'/'cancelling' predicate is asked group-wide here.
+    """
+    if not group_id:
+        return None
+    return get_store()._fetch_one(
+        "SELECT tr.* FROM test_runs tr JOIN documents d ON d.doc_id = tr.doc_id "
+        "WHERE d.group_id = ? AND tr.status IN ('running', 'cancelling') "
+        "ORDER BY tr.created_at DESC LIMIT 1",
+        [group_id],
+    )
+
+
 def insert_run(
     *,
     doc_id: str,

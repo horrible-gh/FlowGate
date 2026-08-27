@@ -783,6 +783,97 @@ class TestInboxEdit:
             "revision_no": 0,
         })
 
+    def _post_edit(self, tmp_path, doc_id: str, **fields):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from modules.flow_gate.api import inbox_routes
+
+        raw = self._make_edit_token(tmp_path, doc_id)
+        payload = {
+            "project": "testprj", "module": "__ALL__", "group": "0001",
+            "action": "edit", "doc_id": doc_id, "content": "# Revised Content",
+        }
+        payload.update(fields)
+        with patch(
+            "modules.flow_gate.rbac.permission_service.has_permission", return_value=True,
+        ), patch(
+            "modules.flow_gate.db.workflow_sequences.get_item_by_result_doc_id",
+            return_value=None,
+        ):
+            app = FastAPI()
+            app.include_router(inbox_routes.router)
+            return TestClient(app).post(
+                "/api/v1/inbox", json=payload,
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+
+    def test_rejected_resubmission_prevalidation_is_atomic_and_idempotent(
+        self, seed_data, tmp_path,
+    ):
+        import json
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = "testprj-__ALL__-0001-NR0468"
+        stored = tmp_path / "docs_rejection" / f"{doc_id}_document.md"
+        self._create_target_doc(doc_id, stored)
+        history = [{
+            "rejection_id": "rej_0468", "review_id": 468,
+            "reason": "fix this", "ai_response": None,
+        }]
+        db_docs.update(doc_id, {
+            "doc_review_status": "rejected",
+            "rejection_history": json.dumps(history),
+        })
+
+        before = db_docs.get_by_id(doc_id)
+        before_body = stored.read_text()
+        for fields, status in (
+            ({"edit_reason": "rejected"}, 422),
+            ({"edit_reason": "rejected", "rejection_response": "   "}, 422),
+            ({"edit_reason": "rejected", "rejection_response": "done", "rejection_id": "missing"}, 409),
+            ({"edit_reason": "rejected", "rejection_response": "done", "review_id": "bad"}, 409),
+        ):
+            response = self._post_edit(tmp_path, doc_id, **fields)
+            assert response.status_code == status, response.text
+            after = db_docs.get_by_id(doc_id)
+            assert after["revision_no"] == before["revision_no"]
+            assert after["file_path"] == before["file_path"]
+            assert after["rejection_history"] == before["rejection_history"]
+            assert stored.read_text() == before_body
+
+        golden = (
+            {"rejection_response": "legacy review target", "review_id": 468},
+            {"rejection_response": "fully legacy latest target"},
+            {"rejection_response": "first response", "rejection_id": "rej_0468"},
+            {"rejection_response": "second response", "rejection_id": "rej_0468"},
+        )
+        for fields in golden:
+            response = self._post_edit(
+                tmp_path, doc_id, edit_reason="rejected", **fields,
+            )
+            assert response.status_code == 200, response.text
+        final = db_docs.get_by_id(doc_id)
+        final_history = json.loads(final["rejection_history"])
+        assert len(final_history) == 1
+        assert final_history[0]["ai_response"] == "second response"
+        assert final_history[0]["response_revision_no"] == 4
+
+    def test_rejected_resubmission_empty_history_is_409_without_change(
+        self, seed_data, tmp_path,
+    ):
+        from modules.flow_gate.db import documents as db_docs
+
+        doc_id = "testprj-__ALL__-0001-NR0469"
+        stored = tmp_path / "docs_rejection" / f"{doc_id}_document.md"
+        self._create_target_doc(doc_id, stored)
+        db_docs.update(doc_id, {"doc_review_status": "rejected", "rejection_history": "[]"})
+        response = self._post_edit(
+            tmp_path, doc_id, edit_reason="rejected", rejection_response="done",
+        )
+        assert response.status_code == 409, response.text
+        assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+        assert stored.read_text() == "# Original Content"
+
     def test_edit_content_backup(self, seed_data, tmp_path):
         """edit content branch -> backup created + revision_no increments."""
         from modules.flow_gate.api import inbox_routes

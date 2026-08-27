@@ -3191,6 +3191,35 @@ def _worktree_untracked_paths(wt_path: Path) -> list[str]:
     return sorted(p for p in (proc.stdout or "").split("\0") if p)
 
 
+def _worktree_untracked_summary_for_path(wt_path: Path) -> dict:
+    """Classify raw untracked paths with the exact rule used by staging."""
+    raw = _worktree_untracked_paths(wt_path)
+    kept, artifacts = path_exclusion_rules.partition_paths(raw)
+    return {
+        "total_count": len(raw),
+        "excluded_artifact_count": len(artifacts),
+        "staged_new_file_count": len(kept),
+    }
+
+
+def worktree_untracked_summary(project_id: str, group_id: str) -> Optional[dict]:
+    """Best-effort submission-time view of a live git worktree's untracked files."""
+    try:
+        cfg = db_git.get_config(project_id)
+        state = db_git.get_state(group_id)
+        if not cfg or not cfg.get("enabled") or not state:
+            return None
+        if not state.get("worktree_registered") or not state.get("branch"):
+            return None
+        wt_path = _group_worktree_path(project_id, group_id, state["branch"])
+        if wt_path is None:
+            return None
+        return _worktree_untracked_summary_for_path(wt_path)
+    except Exception:
+        _log.warning("worktree untracked summary failed for %s", group_id, exc_info=True)
+        return None
+
+
 def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
     """Stage a worktree's leftover edits under the tool-debris rule — the shared half.
 
@@ -3273,11 +3302,14 @@ def _absorb_worker_edits(
     return artifacts
 
 
-def _artifact_payload(artifacts: Sequence[str]) -> dict:
-    """The finalize result/event shape for excluded tool debris (0382 proposal 1)."""
+def _artifact_payload(
+    artifacts: Sequence[str], staged_new_file_count: int = 0,
+) -> dict:
+    """Finalize visibility for both excluded and accepted untracked files."""
     return {
         "excluded_artifact_count": len(artifacts),
         "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
+        "staged_new_file_count": staged_new_file_count,
     }
 
 
@@ -4181,6 +4213,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # 0382 proposal 1: paths the absorb commit refused to swallow. Reported on every
         # exit path below — a silently-dropped list is what let 261 files through.
         excluded_artifacts: list[str] = []
+        staged_new_file_count = 0
 
         def finalize_subject() -> str:
             nonlocal resolved_subject
@@ -4224,6 +4257,11 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     details={"files": _dirty_files(wt_path)},
                 )
         elif _dirty(wt_path):
+            # Count accepted untracked paths before staging consumes that state. The
+            # classifier is shared with submission-time visibility and staging itself.
+            staged_new_file_count = _worktree_untracked_summary_for_path(
+                wt_path
+            )["staged_new_file_count"]
             # 0382 B0001: NOT `git add -A`. See _absorb_worker_edits — the unfiltered
             # form is how 261 test-scratch files reached main inside an unrelated
             # commit, invisible to every screen that could have caught them.
@@ -4247,12 +4285,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id,
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
-                **_artifact_payload(excluded_artifacts),
+                **_artifact_payload(excluded_artifacts, staged_new_file_count),
             })
             return {"ok": True, "result": {
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
                 "pushed": False, "merge_id": None, "conflict_files": [],
-                **_artifact_payload(excluded_artifacts),
+                **_artifact_payload(excluded_artifacts, staged_new_file_count),
             }}
 
         # Publish the work branch to origin ONLY for a bare push. A merge lands
@@ -4277,6 +4315,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             return _finalize_result(
                 group_id, project_id, action, "pushed",
                 pushed=True, artifacts=excluded_artifacts,
+                staged_new_file_count=staged_new_file_count,
             )
 
         if action == "commit_only":
@@ -4287,6 +4326,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             return _finalize_result(
                 group_id, project_id, "commit_only", "waiting",
                 artifacts=excluded_artifacts,
+                staged_new_file_count=staged_new_file_count,
             )
 
         # action == "merge" / "merge_only"
@@ -4345,14 +4385,14 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                 "project": project_id, "group_id": group_id,
                 "action": action, "status": "merged", "merge_commit": merge_commit,
                 "pushed": wants_push,
-                **_artifact_payload(excluded_artifacts),
+                **_artifact_payload(excluded_artifacts, staged_new_file_count),
             })
             return {
                 "ok": True,
                 "result": {
                     "action": action, "status": "merged", "merge_commit": merge_commit,
                     "pushed": wants_push, "merge_id": None, "conflict_files": [],
-                    **_artifact_payload(excluded_artifacts),
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
                 },
             }
 
@@ -4396,7 +4436,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             "result": {
                 "action": action, "status": "conflict", "merge_commit": None,
                 "pushed": False, "merge_id": merge_id, "conflict_files": files,
-                **_artifact_payload(excluded_artifacts),
+                **_artifact_payload(excluded_artifacts, staged_new_file_count),
             },
         }
     finally:
@@ -4406,19 +4446,20 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
 def _finalize_result(
     group_id: str, project_id: str, action: str, status: str, *,
     pushed: bool = False, artifacts: Sequence[str] = (),
+    staged_new_file_count: int = 0,
 ) -> dict:
     if status in ("pushed", "merged"):
         _emit("git_finalize_done", project_id, group_id, {
             "project": project_id, "group_id": group_id,
             "action": action, "status": status, "merge_commit": None,
-            **_artifact_payload(artifacts),
+            **_artifact_payload(artifacts, staged_new_file_count),
         })
     return {
         "ok": True,
         "result": {
             "action": action, "status": status, "merge_commit": None,
             "pushed": pushed, "merge_id": None, "conflict_files": [],
-            **_artifact_payload(artifacts),
+            **_artifact_payload(artifacts, staged_new_file_count),
         },
     }
 

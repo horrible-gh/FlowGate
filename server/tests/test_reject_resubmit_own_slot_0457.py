@@ -299,7 +299,12 @@ def _make_doc(gid: str, code: str, type_code: str, seq: int, review_status: str,
         "title": code, "group_id": gid, "module": MODULE, "owner_id": USER_ID,
         "file_path": file_path, "revision_no": 0,
     })
-    db_docs.update(doc_id, {"doc_review_status": review_status})
+    updates = {"doc_review_status": review_status}
+    if review_status == "rejected":
+        updates["rejection_history"] = json.dumps([
+            {"rejection_id": f"rej-{doc_id}", "reason": "needs rework"}
+        ])
+    db_docs.update(doc_id, updates)
     return doc_id
 
 
@@ -387,7 +392,7 @@ def _post_resubmit(raw: str, doc_id: str, group_code: str, body: str = "# Rework
             json={
                 "project": PROJECT_ID, "module": MODULE, "group": group_code,
                 "action": "edit", "doc_id": doc_id, "edit_reason": "rejected",
-                "content": body,
+                "content": body, "rejection_response": "addressed review feedback",
             },
             headers={"Authorization": f"Bearer {raw}"},
         )

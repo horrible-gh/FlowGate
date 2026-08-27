@@ -648,6 +648,26 @@ def _advance_after_auth(
                 "group_not_found",
                 {"error": "group_not_found", "doc_id": doc_id_val},
             )
+        # 0441 T0004 item 3: the head is a type the SERVER assembles (TSR). Advancing would
+        # mint a 'new' token telling somebody to write it by hand, so advance_workflow
+        # refuses. 409 for the same reason as head_in_progress — the request is well formed,
+        # the workflow state is simply not one this action applies to. The detail names the
+        # action that DOES apply so the action bar can say it in a toast.
+        if msg.startswith("server_assembled_head:"):
+            parts = msg.split(":", 2)
+            head_type_val = parts[1] if len(parts) > 1 else None
+            return _refused(
+                409,
+                "server_assembled_head",
+                {
+                    "error": "server_assembled_head",
+                    "head_type": head_type_val,
+                    "detail": (
+                        f"{head_type_val} is assembled by the server from a test run and "
+                        "cannot be written by hand. Run the test on the approved TS document."
+                    ),
+                },
+            )
         return _refused(400, msg.split(":", 1)[0], {"error": msg})
 
     log("advanced", status=201)

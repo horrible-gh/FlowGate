@@ -141,6 +141,13 @@ def test_debris_only_worktree_produces_no_commit_and_no_error(repo):
 
 # ── 계약 3': 뺀 목록이 결과 모양에 실린다 ────────────────────────────────────
 
+def test_submission_untracked_summary_failure_is_non_fatal(monkeypatch):
+    monkeypatch.setattr(
+        svc.db_git, "get_config", lambda _project: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+    assert svc.worktree_untracked_summary("flowgate", "flowgate.default.0468") is None
+
+
 def test_artifact_payload_reports_count_and_list():
     payload = svc._artifact_payload(["a/.test-tmp-1/x", "b/.test-tmp-1/y"])
     assert payload["excluded_artifact_count"] == 2
@@ -207,3 +214,50 @@ def test_partition_keeps_order_and_separates_debris():
     ])
     assert kept == ["server/a.py", "client/b.vue"]
     assert artifacts == ["server/.test-tmp-0313/x", ".env"]
+
+
+@needs_git
+def test_plain_untracked_file_is_visible_when_absorbed(repo):
+    """Unknown shapes are legitimate work, but must no longer be silently staged."""
+    note = repo / "server" / "scratch_debug_note.md"
+    note.parent.mkdir()
+    note.write_text("debug\n", encoding="utf-8")
+
+    before = svc._worktree_untracked_summary_for_path(repo)
+    assert before == {
+        "total_count": 1,
+        "excluded_artifact_count": 0,
+        "staged_new_file_count": 1,
+    }
+
+    excluded = svc._absorb_worker_edits(repo, "test: visible new file", None)
+    payload = svc._artifact_payload(
+        excluded, before["staged_new_file_count"]
+    )
+    assert excluded == []
+    assert "server/scratch_debug_note.md" in _committed_paths(repo)
+    assert payload["staged_new_file_count"] == 1
+
+
+@needs_git
+def test_submission_and_finalize_untracked_counts_share_one_classifier(repo):
+    real = repo / "server" / "feature_note.md"
+    real.parent.mkdir()
+    real.write_text("work\n", encoding="utf-8")
+    debris = repo / "server" / ".test-tmp-0468" / "dump.txt"
+    debris.parent.mkdir()
+    debris.write_text("dump\n", encoding="utf-8")
+
+    submission = svc._worktree_untracked_summary_for_path(repo)
+    excluded = svc._absorb_worker_edits(repo, "test: shared classifier", None)
+    finalize = svc._artifact_payload(
+        excluded, submission["staged_new_file_count"]
+    )
+
+    assert submission == {
+        "total_count": 2,
+        "excluded_artifact_count": 1,
+        "staged_new_file_count": 1,
+    }
+    assert finalize["excluded_artifact_count"] == submission["excluded_artifact_count"]
+    assert finalize["staged_new_file_count"] == submission["staged_new_file_count"]

@@ -212,6 +212,7 @@ def _edit_body(**over) -> dict:
         "doc_id": "flowgate.default.0050.0003-NR",
         "edit_reason": "rejected",
         "content": "revised",
+        "rejection_response": "addressed review feedback",
     }
     b.update(over)
     return _body(b)
@@ -225,6 +226,9 @@ def _patch_edit_validation(monkeypatch, token_rec):
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *a, **k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
         "doc_id": _id, "status": "open", "revision_no": 1, "file_path": "x.md",
+        "rejection_history": json.dumps([
+            {"rejection_id": f"rej-{_id}", "reason": "needs rework"}
+        ]),
     })
     monkeypatch.setattr(inbox_routes.document_service, "is_final_approved", lambda _d: False)
     monkeypatch.setattr(inbox_routes.document_service, "is_document_editable", lambda *a, **k: True)

@@ -151,7 +151,10 @@ const currentDoc = ref<DocDetail | null>(null)
 
 const groupOptions = computed(() => {
   const pid = projectStore.currentProjectId
-  const nodes = pid ? explorerStore.getCachedGroupTree(pid) ?? [] : []
+  // 0454 T0006 §4.2 — full variant: this dropdown's meaning ("every group of the project")
+  // must not narrow because the sidebar happens to be hiding completed ones. Paired with the
+  // full fetch in onMounted below, so the read hits a cache the same variant filled.
+  const nodes = pid ? explorerStore.getCachedGroupTree(pid, true) ?? [] : []
   const groups = nodes.filter((n) => n.node_type === 'group')
   return groups.map((g) => ({
     id: g.id,
@@ -179,7 +182,7 @@ onMounted(async () => {
   const pid = projectStore.currentProjectId ?? currentDoc.value?.project_id ?? ''
   if (pid) {
     try {
-      await explorerStore.fetchGroupTree(pid)
+      await explorerStore.fetchGroupTree(pid, false, true)
     } catch {
       /* Ignore on group list load failure */
     }

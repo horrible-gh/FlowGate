@@ -68,6 +68,12 @@ EVT_CONTINUATION_HEAD_AUTO_HANDLED = "continuation_head_auto_handled"
 #   dashboard_service._NOTIFICATION_EVENT_TYPES — the caller already gets a 409/exception,
 #   and this row exists for the operator reconstructing what happened afterwards.
 EVT_WORKFLOW_SLOT_CONFLICT = "workflow_slot_conflict"
+# 0468 T0013: an "annotation" is the automatic-review linkage between a
+# document_reviews row and the rejection_history item produced from it.
+EVT_REVIEW_ANNOTATION_READ_FAILED = "review_annotation_read_failed"
+EVT_REVIEW_ANNOTATION_WRITE_FAILED = "review_annotation_write_failed"
+EVT_DEPLOYMENT_STARTED = "deployment_started"
+EVT_CHANGE_SUMMARY_RECORDED = "change_summary_recorded"
 
 
 def log_event(
@@ -397,6 +403,42 @@ def log_test_run_repair_exhausted(
         metadata=meta,
     )
 
+
+def log_review_annotation_failed(
+    *, kind: str, project_id: str, actor_user_id: str, group_id: str | None,
+    document_id: int | None, doc_id: str, error: BaseException | str,
+) -> dict:
+    """Persist an automatic-review annotation read/write failure."""
+    event_type = (EVT_REVIEW_ANNOTATION_READ_FAILED if kind == "read"
+                  else EVT_REVIEW_ANNOTATION_WRITE_FAILED)
+    return log_event(
+        event_type=event_type, project_id=project_id, actor_user_id=actor_user_id,
+        group_id=group_id, document_id=document_id,
+        metadata={
+            "annotation_operation": kind,
+            "doc_id": doc_id,
+            "exception_class": error.__class__.__name__ if isinstance(error, BaseException) else "Error",
+            "error": str(error),
+        },
+    )
+
+
+def count_review_annotation_failures(*, since: str | None = None) -> dict:
+    """Count annotation failures in workflow_events, optionally from an ISO timestamp."""
+    from modules.flow_gate.db.connection import get_store
+
+    sql = ("SELECT event_type, COUNT(*) AS n FROM workflow_events "
+           "WHERE event_type IN (?, ?)")
+    params: list[Any] = [EVT_REVIEW_ANNOTATION_READ_FAILED, EVT_REVIEW_ANNOTATION_WRITE_FAILED]
+    if since:
+        sql += " AND created_at >= ?"
+        params.append(since)
+    sql += " GROUP BY event_type"
+    rows = get_store()._fetch_all(sql, params)
+    counts = {row["event_type"]: int(row["n"]) for row in rows}
+    read = counts.get(EVT_REVIEW_ANNOTATION_READ_FAILED, 0)
+    write = counts.get(EVT_REVIEW_ANNOTATION_WRITE_FAILED, 0)
+    return {"read_failed": read, "write_failed": write, "total": read + write, "since": since}
 
 def log_group_completion_candidate(
     *,
