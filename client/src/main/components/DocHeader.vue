@@ -936,7 +936,12 @@ async function loadGroupContext() {
   const gid = doc.value?.group_id
   if (!pid || !gid) return
   try {
-    const nodes = await explorerStore.fetchGroupTree(pid)
+    // 0454 T0006 §4.2 — full variant, unconditionally. The document whose header this is may
+    // well live in a final-approved or discarded group; asking for the pruned tree would come
+    // back without that group and without its member documents, blanking the header's group
+    // name and its document list exactly where the group is finished. Independent of the
+    // sidebar's hide toggle: this is not the sidebar.
+    const nodes = await explorerStore.fetchGroupTree(pid, false, true)
     const groupNode = nodes.find((n) => n.id === gid && n.node_type === 'group')
     groupName.value = groupNode?.label ?? groupName.value ?? gid
     groupDocuments.value = nodes

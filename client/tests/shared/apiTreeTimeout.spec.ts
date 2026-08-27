@@ -30,6 +30,11 @@ const LONG_TIMEOUT_MS = 130_000
 // The exact URLs the explorer store builds (src/main/stores/explorer.ts).
 const FILE_TREE_URL = '/api/v1/projects/flowgate/files/tree?branch=main'
 const GROUP_TREE_URL = '/api/v1/projects/flowgate/groups/tree?branch=main'
+// 0454 T0006 §2.1 — the store now always spells the display variant out in the query. The
+// policy matches on `/groups/tree`, so the extra parameter must not slip a tree GET back onto
+// the 30s default; both variants are asserted below rather than assumed.
+const GROUP_TREE_URL_FULL = '/api/v1/projects/flowgate/groups/tree?branch=main&include_terminal=true'
+const GROUP_TREE_URL_PRUNED = '/api/v1/projects/flowgate/groups/tree?branch=main&include_terminal=false'
 const GROUP_BRANCH_TREE_URL = '/api/v1/projects/flowgate/git/groups/flowgate.default.0283/tree'
 
 const originalAdapter = api.defaults.adapter
@@ -68,6 +73,11 @@ describe('shared/api timeout policy', () => {
 
   it('gives the group-tree GET the long ceiling', async () => {
     expect(await appliedTimeout(GROUP_TREE_URL)).toBe(LONG_TIMEOUT_MS)
+  })
+
+  it('keeps the ceiling on BOTH include_terminal variants (0454 T0006)', async () => {
+    expect(await appliedTimeout(GROUP_TREE_URL_FULL)).toBe(LONG_TIMEOUT_MS)
+    expect(await appliedTimeout(GROUP_TREE_URL_PRUNED)).toBe(LONG_TIMEOUT_MS)
   })
 
   it('keeps the group-branch tree GET on the long ceiling via the existing /git/ rule', async () => {

@@ -47,7 +47,10 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
       return Promise.resolve({ data: { data: { nodes: [] } } })
     })
     const explorer = useExplorerStore()
-    explorer.groupTreeCache['flowgate:main'] = [
+    // 0454 T0006 §2.2 — group-tree cache keys are `${project}:${branch}:full|pruned`. This
+  // dialog reads the FULL variant (its group list must not shrink because the sidebar is
+  // hiding completed groups), so that is the variant seeded here.
+  explorer.groupTreeCache['flowgate:main:full'] = [
       {
         id: GROUP,
         parent_id: 'default',

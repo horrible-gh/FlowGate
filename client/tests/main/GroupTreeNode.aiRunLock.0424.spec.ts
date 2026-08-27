@@ -40,6 +40,11 @@ function mountGroup() {
       node,
       allNodes: [node],
       treeNodes: [node],
+      // 0454 T0004 — childrenIndex/treeChildrenIndex are now required/optional props
+      // carrying the parent->children Map GroupExplorer.vue builds; this single-node
+      // fixture has no children, so an empty Map is the correct index for it.
+      childrenIndex: new Map(),
+      treeChildrenIndex: new Map(),
       projectId: 'flowgate',
     },
     global: {

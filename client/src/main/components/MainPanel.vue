@@ -1482,9 +1482,12 @@ async function fetchGitArchives() {
 async function refreshAfterGitArchive() {
   const projectId = gitArchiveProjectId.value
   if (!projectId) return
+  // invalidateProject drops BOTH display variants for the project; the prewarm below then
+  // rebuilds the full one (0454 T0006 §4.2), which is what this file's cached-tree readers
+  // (the overview cards and the empty-doc module lookup) go on to read.
   explorerStore.invalidateProject(projectId)
   await Promise.allSettled([
-    explorerStore.fetchGroupTree(projectId, true),
+    explorerStore.fetchGroupTree(projectId, true, true),
     explorerStore.fetchGitStatus(projectId),
     dashboardStore.fetchSummary(projectId),
   ])
@@ -3909,7 +3912,9 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
   nextEmptyDocPrevDocId.value = docRef
   nextEmptyDocType.value = docType
   nextEmptyDocModule.value = moduleName
-  const cachedNodes = explorerStore.getCachedGroupTree(project) || []
+  // 0454 T0006 §4 — full variant (module nodes are never pruned, so this lookup is
+  // variant-insensitive; it is spelled out so no reader has to work that out).
+  const cachedNodes = explorerStore.getCachedGroupTree(project, true) || []
   const moduleNode = cachedNodes.find(n => n.node_type === 'module' && n.label === moduleName)
   nextEmptyDocModuleTitle.value = moduleNode?.title ?? null
   nextEmptyDocModalVisible.value = true
@@ -4743,9 +4748,12 @@ const activeProjects = computed(() =>
 const totalDocs = computed(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return '—'
-  const nodes = explorerStore.getCachedGroupTree(pid)
-  if (!nodes) return '—'
-  return nodes.filter((n) => n.node_type === 'document').length
+  // 0454 T0007 rev2 review fix — reads the overview summary the sidebar's own tree fetch
+  // cached (see explorerStore.fetchGroupTree). Still counts every document in the project,
+  // including ones inside completed / discarded groups.
+  const summary = explorerStore.getCachedGroupOverviewSummary(pid)
+  if (!summary) return '—'
+  return summary.total_documents
 })
 
 // "in-progress workflows": total active workflows for the project (overall in-progress load).
@@ -4761,50 +4769,32 @@ const inProgressWorkflows = computed<number | string>(() => {
 // counted). Completed groups (final-approved / discarded heads) are excluded
 // since the card means "in progress". The card label is just "in progress" — the
 // parenthetical definition is not shown on the card.
-const WORKING_HEAD_TYPES = new Set(['T', 'N', 'TS'])
-const isWorkingHeadType = (typeCode: string | null): boolean => {
-  if (!typeCode) return false
-  if (WORKING_HEAD_TYPES.has(typeCode)) return true
-  return typeCode.length >= 2 && typeCode.endsWith('R') // xR series
-}
+//
+// 0454 T0007 review fix — this used to be computed here client-side (WORKING_HEAD_TYPES /
+// isWorkingHeadType) off the full group tree; that logic moved server-side into
+// build_overview_summary / _is_working_head_type (tree_routes.py), which this computed now
+// just reads the result of. Left as dead code by that move — vue-tsc's noUnusedLocals catches
+// exactly this (rev2 fix: removed here instead of left unused).
 const workingGroups = computed<number | string>(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return '—'
-  const nodes = explorerStore.getCachedGroupTree(pid)
-  if (!nodes) return '—'
-  // Pick each group's last document = highest doc number among the document
-  // nodes sharing the same immediate parent (group / subgroup). Numbers are
-  // zero-padded ("0001".."0078") so a string compare is the correct order.
-  const lastDocByParent = new Map<string, (typeof nodes)[number]>()
-  for (const n of nodes) {
-    if (n.node_type !== 'document' || !n.parent_id) continue
-    const cur = lastDocByParent.get(n.parent_id)
-    if (!cur || (n.number ?? '') > (cur.number ?? '')) {
-      lastDocByParent.set(n.parent_id, n)
-    }
-  }
-  let count = 0
-  for (const doc of lastDocByParent.values()) {
-    if (doc.is_final_approved || doc.is_discarded) continue
-    if (isWorkingHeadType(doc.type_code)) count++
-  }
-  return count
+  // 0454 T0007 review fix — reads the lightweight overview summary instead of the full
+  // group tree. working_groups is computed server-side by build_overview_summary using the
+  // exact same last-doc-per-parent rule as before (see tree_routes.py).
+  const summary = explorerStore.getCachedGroupOverviewSummary(pid)
+  if (!summary) return '—'
+  return summary.working_groups
 })
 
 const typeDistribution = computed(() => {
   const pid = projectStore.currentProjectId
   if (!pid) return []
-  const nodes = explorerStore.getCachedGroupTree(pid)
-  if (!nodes) return []
-  const counts: Record<string, number> = {}
-  nodes.forEach((n) => {
-    if (n.node_type === 'document' && n.type_code) {
-      counts[n.type_code] = (counts[n.type_code] ?? 0) + 1
-    }
-  })
-  return Object.entries(counts)
-    .map(([type, count]) => ({ type, count }))
-    .sort((a, b) => b.count - a.count)
+  // 0454 T0007 review fix — reads the lightweight overview summary instead of the full
+  // group tree; type_distribution arrives in the same (first-seen) order the old client-side
+  // scan produced, so this sort keeps the exact same result.
+  const summary = explorerStore.getCachedGroupOverviewSummary(pid)
+  if (!summary) return []
+  return [...summary.type_distribution].sort((a, b) => b.count - a.count)
 })
 
 const typeDistMax = computed(() =>
@@ -4999,6 +4989,32 @@ watch(() => projectStore.currentProjectId, (projectId) => {
   fetchQList()
   if (projectId) void dashboardStore.fetchSummary(projectId)
 }, { immediate: true })
+
+// 0454 T0007 — the overview cards below (총 문서 수 / 진행 중 / 타입 분포) read
+// `explorerStore.getCachedGroupOverviewSummary`. This file no longer drives that cache itself —
+// see explorer.ts's fetchGroupTree docstring (rev5): every group-tree fetch now asks the server
+// for `overview_summary` and writes it into the same cache as a side effect, so GroupExplorer.vue
+// (the sidebar) already keeps it current on every trigger that matters here — project switch,
+// toggle, SSE/manual refresh, `fg:group_tree_changed` — without this file issuing a request of
+// its own.
+//
+// rev0 warmed the FULL group tree here on every default-screen entry, landing on top of the
+// sidebar's own pruned default fetch and doubling the transfer cost the display-state pruning
+// was meant to cut (review finding on rev0). rev1 replaced that with a dedicated
+// `fetchGroupOverviewSummary` call to a separate lightweight endpoint — smaller on the wire, but
+// it reran the server's full get_group_tree DB path a second time per page load, and nothing
+// refetched it when `invalidateProject` cleared it on an SSE/manual refresh, so the cards went
+// stale until an unrelated project/tab switch happened to retrigger the old watcher here (both
+// were rev1 review findings). rev2 folded the aggregate into the SAME `/groups/tree` response
+// GroupExplorer (the sidebar) already fetches, which fixed both — but it also changed what
+// `/groups/tree` returns to every pre-existing caller, breaking the T0006 §1.1 compatibility
+// promise (review finding on rev2). rev3 put the aggregate back on its own route and had THIS
+// file fetch it directly, on the same triggers as the sidebar's own tree load — but the two were
+// still two independent requests from two independent Vue watchers, so nothing guaranteed they
+// overlapped: a sequential arrival cost a second full `get_group_tree` DB call every time (rev4
+// review finding). rev5 removes the second request entirely instead of tuning its timing —
+// GroupExplorer's OWN tree fetch now carries the aggregate, and this file just reads the cache
+// it fills.
 
 watch(() => props.overviewRefreshToken, () => {
   if (projectStore.currentProjectId) void fetchQList()

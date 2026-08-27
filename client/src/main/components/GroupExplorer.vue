@@ -185,6 +185,8 @@
               :node="node"
               :all-nodes="filteredNodes"
               :tree-nodes="nodes"
+              :children-index="filteredIndex.childrenByParent"
+              :tree-children-index="nodesIndex.childrenByParent"
               :project-id="projectId ?? ''"
               @open="openDocument"
               @tree-changed="handleTreeChanged"
@@ -207,6 +209,7 @@ import { useLayoutStore } from '../stores/layout'
 import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
 import AppIcon from '@shared/AppIcon.vue'
+import { buildTreeIndex, collectDescendantIds } from '../utils/groupTreeIndex'
 
 const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
 defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()
@@ -407,20 +410,37 @@ function persistShowFinalApproved() {
   }
 }
 
+// 0454 T0006 §3.2 — flipping the ref is no longer enough. Now that the server prunes terminal
+// subtrees for the hidden variant, the payload on screen does not CONTAIN the completed /
+// discarded groups the user just asked to see, so the toggle has to go back to the server for
+// the other variant. `reload()` reads the ref (already updated above), keeps the rendered tree
+// mounted while the new one is in flight (stale-while-revalidate), applies the existing
+// tree/error policy on failure so the retry affordance stays, and its request-generation guard
+// stops a late response from an earlier toggle state landing on top of the newest one.
 function toggleFinalApproved() {
   showFinalApprovedGroups.value = !showFinalApprovedGroups.value
   persistShowFinalApproved()
+  void reload()
 }
+
+// 0454 T0004 — one parent→child/id→node index per `nodes.value` change, shared by
+// baseNodes' hidden-descendant walk, isInsideFinalApprovedGroup's ancestor climb, and
+// (via filteredIndex/nodesIndex below) every recursive GroupTreeNode instance.
+const nodesIndex = computed(() => buildTreeIndex(nodes.value))
 
 // True when the node sits inside a hidden terminal group — final-approved (AC) or
 // discarded (DC) — i.e. the node itself or any ancestor group carries either flag.
-function isInsideFinalApprovedGroup(nodeId: string, list: GroupNode[]): boolean {
-  let node: GroupNode | undefined = list.find((n) => n.id === nodeId)
+function isInsideFinalApprovedGroup(nodeId: string, byId: Map<string, GroupNode>): boolean {
+  let node = byId.get(nodeId)
+  // T0004 구현지시 §2 — 비정상 순환 parent_id에서 무한루프가 되지 않도록 방문 집합을 둔다(정상 데이터의 결과에는 영향 없음).
+  const visited = new Set<string>()
   while (node) {
+    if (visited.has(node.id)) break
+    visited.add(node.id)
     if (node.node_type === 'group' && (node.is_final_approved === true || node.is_discarded === true)) return true
     const parentId = node.parent_id
     if (!parentId) break
-    node = list.find((n) => n.id === parentId)
+    node = byId.get(parentId)
   }
   return false
 }
@@ -430,7 +450,6 @@ function isInsideFinalApprovedGroup(nodeId: string, list: GroupNode[]): boolean 
 // group nodes and every descendant document/subgroup; project and module nodes
 // are kept even when they become empty.
 const baseNodes = computed<GroupNode[]>(() => {
-  const hidden = new Set<string>()
   // 0449 T0004 item 1 / NR0003 "최종승인 숨김 판정": is_final_approved is a SERVER-derived
   // terminal flag, so while a refresh is failing the copy we hold may predate a reopen that
   // already flipped it back to false. Keeping the tree but still hiding on that stale flag
@@ -438,26 +457,22 @@ const baseNodes = computed<GroupNode[]>(() => {
   // "can't get to the group". So while refreshError stands, nothing is hidden on the terminal
   // flags; the toggle resumes governing as soon as a refresh succeeds.
   const trustTerminalFlags = !refreshError.value
+  const hiddenRoots: string[] = []
   nodes.value.forEach((n) => {
     if (n.node_type !== 'group') return
     // One toggle hides/reveals BOTH terminal kinds — final-approved (AC) and
     // discarded (DC). Two separate toggles caused "show all groups → only AC
     // appears, DC stays hidden" (review r4). Default hidden, like AC.
     if (trustTerminalFlags && !showFinalApprovedGroups.value && (n.is_final_approved === true || n.is_discarded === true)) {
-      hidden.add(n.id)
+      hiddenRoots.push(n.id)
     }
   })
-  if (hidden.size === 0) return nodes.value
-  let changed = true
-  while (changed) {
-    changed = false
-    nodes.value.forEach((n) => {
-      if (!hidden.has(n.id) && n.parent_id && hidden.has(n.parent_id)) {
-        hidden.add(n.id)
-        changed = true
-      }
-    })
-  }
+  if (hiddenRoots.length === 0) return nodes.value
+  // 0454 T0004 — one BFS through the parent→child index replaces the "re-scan the full
+  // array until nothing changes" fixed-point loop; a visited set (inside
+  // collectDescendantIds) guards against cyclic parent_id data without touching the
+  // result for well-formed trees.
+  const hidden = collectDescendantIds(nodesIndex.value.childrenByParent, hiddenRoots)
   return nodes.value.filter((n) => !hidden.has(n.id))
 })
 
@@ -473,23 +488,42 @@ const displayTypes = computed(() =>
   availableTypes.value.length > 0 ? availableTypes.value : ['R', 'DS', 'T'],
 )
 
+// 0454 T0004 — id→node index over baseNodes (NOT nodes.value: the filter's ancestor
+// walk must stay inside the post-hide array), rebuilt only when baseNodes changes.
+const baseIndex = computed(() => buildTreeIndex(baseNodes.value))
+
 const filteredNodes = computed(() => {
   const base = baseNodes.value
   if (activeFilter.value === 'all') return base
+  const { byId } = baseIndex.value
+  // Set-membership match instead of a bare `===`: the ancestor-walk below is type-count-
+  // agnostic (Set.has), so it already generalizes to more than one selected type without any
+  // algorithm change — see 0454 T0004 TR's multi-type oracle comparison. activeFilter is still
+  // a single string today (no new filter UI in this scope), so this Set always holds exactly
+  // one entry and observable behavior is unchanged.
+  const matchTypes = new Set([activeFilter.value])
   const visibleIds = new Set<string>()
   base.forEach((n) => {
-    if (n.node_type === 'document' && n.type_code === activeFilter.value) {
+    if (n.node_type === 'document' && n.type_code != null && matchTypes.has(n.type_code)) {
       visibleIds.add(n.id)
       let parentId = n.parent_id
-      while (parentId) {
+      // T0004 구현지시 §2 — 비정상 순환 parent_id에서 무한루프가 되지 않도록 방문 집합을 둔다. visibleIds
+      // 자체가 이번 순회에서 이미 오른 조상까지 포함하므로 별도 Set 없이 이걸로 순환을 끊는다(정상
+      // 데이터의 결과에는 영향 없음 — 앞선 문서가 같은 조상을 이미 올렸다면 조기 종료만 할 뿐 결과는 같다).
+      while (parentId && !visibleIds.has(parentId)) {
         visibleIds.add(parentId)
-        const parent = base.find((p) => p.id === parentId)
+        const parent = byId.get(parentId)
         parentId = parent?.parent_id ?? null
       }
     }
   })
   return base.filter((n) => visibleIds.has(n.id))
 })
+
+// 0454 T0004 — the same index shape as nodesIndex, built off filteredNodes (the array
+// GroupTreeNode actually renders), passed down as the children-index prop so no
+// recursive instance re-filters the full array to find its own children.
+const filteredIndex = computed(() => buildTreeIndex(filteredNodes.value))
 
 const rootNodes = computed(() => filteredNodes.value.filter((n) => n.parent_id === null))
 
@@ -525,13 +559,32 @@ function expandAncestors(targetNodeId: string, nextNodes: GroupNode[]) {
 // on the retained ones — a reveal request must not be dropped just because the GET failed.
 function applyReveal(revealNodeId: string, list: GroupNode[]) {
   activeFilter.value = 'all'
+  // `list` may be the freshly fetched array (about to become nodes.value) or the
+  // retained one after a failed refresh — build the id index off THIS array so it
+  // never mixes with nodesIndex's (which still reflects the previous nodes.value).
+  const { byId } = buildTreeIndex(list)
   // User action wins over the hide setting: if the reveal target lives in a
   // final-approved group, force the toggle on so it is visible (D0002 §7).
-  if (!showFinalApprovedGroups.value && isInsideFinalApprovedGroup(revealNodeId, list)) {
+  if (!showFinalApprovedGroups.value && isInsideFinalApprovedGroup(revealNodeId, byId)) {
     showFinalApprovedGroups.value = true
     persistShowFinalApproved()
   }
   expandAncestors(revealNodeId, list)
+}
+
+// 0454 T0006 §3.2 — request generation. Every group-tree load this component starts takes the
+// next number; only the newest one is allowed to write `nodes`/`loading`/`error`. Without it a
+// fast off→on→off toggle (or a toggle overlapping an SSE refresh) could let the SLOWER, older
+// request land last and paint the wrong display variant — the full tree under a "hidden"
+// toggle, or the pruned tree under a "shown" one. The captured value is compared, not the ref,
+// so the check does not depend on when the response happens to arrive.
+let treeRequestSeq = 0
+
+/** The server display variant this component should be looking at right now. A reveal always
+ *  wins over the hide setting (D0002 §7 / T0006 §3.3), so it asks for the full tree; every
+ *  other load follows the toggle the user (or localStorage) chose. */
+function wantedIncludeTerminal(revealNodeId?: string): boolean {
+  return revealNodeId ? true : showFinalApprovedGroups.value
 }
 
 async function reload(revealNodeId?: string) {
@@ -548,16 +601,24 @@ async function reload(revealNodeId?: string) {
   // (NR0003 E1, reproduced at 2 failed GETs). A retry after a silent failure is silent as
   // well (the nodes are still there), so persistent failure keeps the tree, not loses it.
   const silent = nodes.value.length > 0
+  const pid = props.projectId
+  const includeTerminal = wantedIncludeTerminal(revealNodeId)
+  const seq = ++treeRequestSeq
   if (!silent) loading.value = true
   else error.value = false
   try {
-    const nextNodes = await explorerStore.fetchGroupTree(props.projectId, true)
+    const nextNodes = await explorerStore.fetchGroupTree(pid, true, includeTerminal)
+    // Superseded: a newer load (a further toggle, a project switch, an SSE refresh) owns the
+    // screen now. Dropping the result here is the whole point — its `nodes` describe a
+    // display state the user has already moved on from.
+    if (seq !== treeRequestSeq || pid !== props.projectId) return
     // Reveal/expand/toggle decisions belong to the response that actually succeeded.
     if (revealNodeId) applyReveal(revealNodeId, nextNodes)
     nodes.value = nextNodes
     error.value = false
     refreshError.value = false
   } catch {
+    if (seq !== treeRequestSeq || pid !== props.projectId) return
     if (silent) {
       // Stale-while-revalidate: nodes.value is left untouched, so the tree below the notice
       // is exactly what it was. The reveal still runs — against the retained list — so the
@@ -568,7 +629,9 @@ async function reload(revealNodeId?: string) {
       error.value = true
     }
   } finally {
-    loading.value = false
+    // Only the newest request may clear the spinner; a superseded one finishing first would
+    // otherwise uncover an empty tree while the current request is still running.
+    if (seq === treeRequestSeq) loading.value = false
   }
 }
 
@@ -607,6 +670,10 @@ function openDocument(node: GroupNode) {
 
 watch(() => props.projectId, async (pid) => {
   // Re-read the per-project show-final-approved setting whenever the project changes.
+  // 0454 T0006 §3.1 — this MUST stay ahead of the fetch below: the restored value decides
+  // which server variant the very first request asks for. A stored "shown" project has to
+  // start on include_terminal=true, or its completed groups would be missing from the
+  // initial paint even though the toggle already reads as on.
   loadShowFinalApproved(pid)
   // A search is scoped to one project; switching projects clears the stale query.
   clearSearch()
@@ -617,12 +684,17 @@ watch(() => props.projectId, async (pid) => {
   loading.value = true
   error.value = false
   refreshError.value = false
+  const includeTerminal = showFinalApprovedGroups.value
+  const seq = ++treeRequestSeq
   try {
-    nodes.value = await explorerStore.fetchGroupTree(pid, true)
+    const nextNodes = await explorerStore.fetchGroupTree(pid, true, includeTerminal)
+    if (seq !== treeRequestSeq || pid !== props.projectId) return
+    nodes.value = nextNodes
   } catch {
+    if (seq !== treeRequestSeq || pid !== props.projectId) return
     error.value = true
   } finally {
-    loading.value = false
+    if (seq === treeRequestSeq) loading.value = false
   }
 }, { immediate: true })
 
