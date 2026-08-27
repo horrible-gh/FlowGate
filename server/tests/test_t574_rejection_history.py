@@ -1146,7 +1146,7 @@ class TestInboxForwardsTheReviewId:
             )
         assert calls == []
 
-    def test_a_recorder_failure_never_breaks_the_saved_submission(self, monkeypatch):
+    def test_a_recorder_failure_propagates_instead_of_becoming_success(self, monkeypatch):
         import modules.flow_gate.workflow.pipeline_service as ps
         from modules.flow_gate.api import inbox_routes
 
@@ -1154,10 +1154,11 @@ class TestInboxForwardsTheReviewId:
             raise RuntimeError("history column is gone")
 
         monkeypatch.setattr(ps, "record_rejection_response", _boom)
-        inbox_routes._attach_rejection_response(
-            doc_id="D001", response_text="done", review_id=244,
-            actor_user_id="u001", revision_no=3,
-        )   # no raise
+        with pytest.raises(RuntimeError, match="history column is gone"):
+            inbox_routes._attach_rejection_response(
+                doc_id="D001", response_text="done", review_id=244,
+                actor_user_id="u001", revision_no=3,
+            )
 
     def test_the_edit_handler_actually_goes_through_that_boundary(self):
         """A helper nothing calls proves nothing. Step 7.5 must reach the recorder through
@@ -1167,12 +1168,12 @@ class TestInboxForwardsTheReviewId:
         from modules.flow_gate.api import inbox_routes
 
         source = inspect.getsource(inbox_routes._handle_edit)
-        assert "_attach_rejection_response(" in source
+        assert "resolve_rejection_target(" in source
         assert "_submitted_review_id(body)" in source, (
             "the whole body must go in — the boundary decides on the field's PRESENCE"
         )
         assert "record_rejection_response" not in source, (
-            "the handler must call the recorder through the boundary, not around it"
+            "the handler must prepare the response for the atomic CAS, not call the recorder"
         )
 
 

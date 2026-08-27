@@ -3916,31 +3916,25 @@ def _attach_rejection_response(
     revision_no: Optional[int],
     rejection_id: Optional[str] = None,
 ) -> None:
-    """Step 7.5's rejection-response half — the boundary into pipeline_service (T0007 §2.2-2).
+    """Compatibility seam retained for direct recorder-boundary unit tests.
 
-    One callable so the forwarding is a fact a test can hold rather than a line buried in a
-    600-line handler: the submitted `review_id` reaches record_rejection_response unchanged,
-    and a blank response still records nothing. Best-effort like the rest of Step 7.5 — the
-    document is already saved and an annotation failure must never undo that.
+    The inbox request path no longer calls this helper: rejected-resubmission validation
+    prepares the updated history before storage and Step 7 writes it in the revision CAS.
+    A blank response still records nothing; direct callers receive recorder failures
+    unchanged.
     """
     if not response_text:
         return
     from modules.flow_gate.workflow.pipeline_service import record_rejection_response
-    import LogAssist.log as logger
 
-    try:
-        record_rejection_response(
-            doc_id=doc_id,
-            response_text=response_text,
-            recorded_by=actor_user_id,
-            revision_no=revision_no,
-            review_id=review_id,
-            rejection_id=rejection_id,
-        )
-    except Exception as _rr_exc:  # noqa: BLE001
-        logger.warning(
-            f"[inbox edit] Step 7.5 record_rejection_response failed (ignored): {_rr_exc}"
-        )
+    return record_rejection_response(
+        doc_id=doc_id,
+        response_text=response_text,
+        recorded_by=actor_user_id,
+        revision_no=revision_no,
+        review_id=review_id,
+        rejection_id=rejection_id,
+    )
 
 
 def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
@@ -4032,6 +4026,44 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             422,
             f"Modification not allowed for status: {existing_doc.get('status')}",
         )
+
+    # T0007: rejected resubmissions must prove both their response and target before
+    # any file, revision, workflow state, event, or token can change.  Prepare the
+    # updated history now; Step 7 folds it into the same CAS as the revision bump.
+    rejection_history_update: Optional[str] = None
+    if edit_reason == "rejected":
+        response_text = (rejection_response or "").strip()
+        if not response_text:
+            return _fail(422, "rejection_response is required for a rejected resubmission.")
+        history: list = []
+        raw_history = existing_doc.get("rejection_history")
+        if raw_history:
+            try:
+                history = json.loads(raw_history) if isinstance(raw_history, str) else raw_history
+                if not isinstance(history, list):
+                    history = []
+            except (json.JSONDecodeError, TypeError):
+                history = []
+        from modules.flow_gate.workflow.pipeline_service import (
+            AI_RESPONSE_MAX_LEN,
+            resolve_rejection_target,
+        )
+        target = resolve_rejection_target(
+            history,
+            rejection_id=rejection_id_value,
+            review_id=rejection_review_id,
+        )
+        if target is None:
+            return _fail(
+                409,
+                "The submitted rejection target does not match the current rejection history. "
+                "Refresh the document and retry.",
+            )
+        target["ai_response"] = response_text[:AI_RESPONSE_MAX_LEN]
+        target["responded_at"] = now_iso()
+        target["response_recorded_by"] = actor_user_id
+        target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
+        rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
         return _fail(422, f"Referenced document {linked_doc_id} does not exist")
@@ -4393,11 +4425,18 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     new_file_path_rel = to_storage_relative(stored_path, project)
     store = get_store()
     now = now_iso()
-    store._execute(
-        "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-        "file_path = ? WHERE doc_id = ? AND revision_no = ?",
-        [now, new_file_path_rel, doc_id, current_revision_no],
-    )
+    if rejection_history_update is not None:
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+            "file_path = ?, rejection_history = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, new_file_path_rel, rejection_history_update, doc_id, current_revision_no],
+        )
+    else:
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
+            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, new_file_path_rel, doc_id, current_revision_no],
+        )
     refreshed = db_docs.get_by_id(doc_id)
     if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
         # CAS conflict → rollback
@@ -4548,16 +4587,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         except (TransitionError, ValueError, PermissionError) as _tr_exc:
             logger.warning(f"[inbox edit] Step 7.5 transition skipped ({doc_id}): {_tr_exc}")
-        # P0005/T0006: attach the AI's rejection response (if supplied) to the rejection it
-        # answers. Independent of the workflow head.
-        _attach_rejection_response(
-            doc_id=doc_id,
-            response_text=rejection_response,
-            review_id=rejection_review_id,
-            actor_user_id=actor_user_id,
-            revision_no=new_revision_no,
-            rejection_id=rejection_id_value,
-        )
+        # T0007: the response was already written atomically with the revision CAS.
 
     # ── Step 8: Token consumption ────────────────────────────────────────────────────
     token_service.consume(

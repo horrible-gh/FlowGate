@@ -832,6 +832,33 @@ def rejection_review_key(value: Any) -> str:
     return str(value).strip()
 
 
+def resolve_rejection_target(
+    history: list, *, rejection_id: str | None = None, review_id: Any = None,
+) -> dict | None:
+    """Resolve one rejection using the recorder's authoritative targeting contract."""
+    if not history:
+        return None
+    if rejection_id is not None:
+        return next(
+            (item for item in history
+             if isinstance(item, dict) and item.get("rejection_id") == rejection_id),
+            None,
+        )
+    if review_id is None:
+        target = history[-1]
+        return target if isinstance(target, dict) else None
+    wanted = rejection_review_key(review_id)
+    if not wanted:
+        return None
+    return next(
+        (item for item in history
+         if isinstance(item, dict)
+         and "review_id" in item
+         and rejection_review_key(item.get("review_id")) == wanted),
+        None,
+    )
+
+
 def record_rejection_response(
     *,
     doc_id: str,
@@ -896,32 +923,10 @@ def record_rejection_response(
     if not history:
         return None
 
-    if rejection_id is not None:
-        # The server-issued opaque rejection id is authoritative. An explicit unknown id
-        # never falls back to review_id or to the latest item.
-        target = next(
-            (item for item in history
-             if isinstance(item, dict) and item.get("rejection_id") == rejection_id),
-            None,
-        )
-        if target is None:
-            return None
-    elif review_id is None:
-        # Fully legacy mentions name neither identifier and keep the latest-item policy.
-        target = history[-1]
-    else:
-        # Pre-rejection_id mentions still target the automatic-review source row.
-        wanted = rejection_review_key(review_id)
-        target = next(
-            (item for item in history
-             if isinstance(item, dict)
-             and "review_id" in item
-             and rejection_review_key(item.get("review_id")) == wanted),
-            None,
-        )
-        if target is None:
-            return None
-    if not isinstance(target, dict):
+    target = resolve_rejection_target(
+        history, rejection_id=rejection_id, review_id=review_id,
+    )
+    if target is None:
         return None
 
     target["ai_response"] = text
