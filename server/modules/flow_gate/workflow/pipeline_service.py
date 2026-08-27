@@ -638,12 +638,12 @@ def transition_document_review(
     M026 §8-1: based on the DOC_REVIEW_TRANSITIONS rules.
     action: approve | reject | mark_revised
 
-    0458 NR0003 (B): `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
-    came from. It is optional and defaults to None, so every existing caller — the human
-    [반려] button above all — keeps writing exactly the item shape it wrote before. When it
-    IS given, the new rejection_history item carries the key, which is what lets the review
-    gate tell "this review row was already rejected" from "the document is momentarily not
-    in `rejected`" (the confusion that rejected one review twice).
+    T0005 2.1.5: `review_id` is the `document_reviews.id` an AUTOMATIC review rejection
+    came from. Optional, defaults to None, so every existing caller -- the human [반려]
+    button above all -- keeps writing exactly the item shape it wrote before. When given
+    and identifiable, the new rejection_history item carries the key, which is what lets
+    the review gate tell "this review row was already rejected" from "the document is
+    momentarily not in `rejected`" apart.
     """
     doc = db_docs.get_by_id(doc_id)
     if not doc:
@@ -688,14 +688,7 @@ def transition_document_review(
         update_fields["meta"] = json.dumps(existing_meta, ensure_ascii=False)
     if action == "reject" and comment:
         update_fields["rejection_reason"] = comment  # Compatibility: keep the latest reason
-        existing_history: list = []
-        if doc.get("rejection_history"):
-            try:
-                existing_history = json.loads(doc["rejection_history"])
-                if not isinstance(existing_history, list):
-                    existing_history = []
-            except (json.JSONDecodeError, TypeError):
-                existing_history = []
+        existing_history: list = parse_rejection_history(doc.get("rejection_history"))
         # P0005/T0006: assign a time-sortable rejection_id at creation so the AI
         # response can later be attached to this exact item (index/time alone is
         # unsafe). The four response fields start null — they are filled in when
@@ -711,10 +704,10 @@ def transition_document_review(
             "response_recorded_by": None,
             "response_revision_no": None,
         }
-        if review_id is not None:
-            # 0458 NR0003 (B). Only the automatic review rejection passes this, so a human
-            # rejection never grows a key it did not have, and readers that do not know it
-            # (document_routes._parse_rejection_history, the client) ignore it.
+        if is_review_row_id(review_id):
+            # T0005 2.1.5: only a valid row id earns the key. A human rejection never
+            # passes review_id, so it never grows a key it did not have; readers that do
+            # not know it (the client, older rejection_history items) simply ignore it.
             item["review_id"] = review_id
         existing_history.append(item)
         update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
@@ -760,13 +753,13 @@ AI_RESPONSE_MAX_LEN = 4000
 
 
 class _UnidentifiableReviewId:
-    """The submission DID name a review row — with a value that cannot be one.
+    """The submission DID name a review row -- with a value that cannot be one.
 
-    0458 T0007 §2.2-2/§2.2-6. `True`, `""`, `"   "`, an explicit `null`, a float, a list:
-    each is a claim about which rejection is being answered, and each is a broken one. It
-    is deliberately NOT the same thing as sending no `review_id` at all, because only the
-    latter is the old mention the latest-item fallback exists for. Folding a broken claim
-    into "absent" is how one bad value ends up answering somebody else's rejection.
+    T0005 2.2.2/2.2.4. `True`, `""`, `"   "`, an explicit `null`, a float, a list: each is
+    a claim about which rejection is being answered, and each is a broken one. Deliberately
+    NOT the same thing as sending no `review_id` at all -- only the latter is the old
+    mention the legacy latest-item fallback exists for. Folding a broken claim into
+    "absent" is how one bad value ends up answering somebody else's rejection.
     """
 
     __slots__ = ()
@@ -779,26 +772,18 @@ UNIDENTIFIABLE_REVIEW_ID = _UnidentifiableReviewId()
 
 
 def is_review_row_id(value: Any) -> bool:
-    """True only when `value` could BE a `document_reviews.id` (0458 T0008 rework).
+    """True only when `value` could BE a `document_reviews.id` (T0005 2.2.2).
 
-    The column is an autoincrement primary key — a positive integer, never a bool
+    The column is an autoincrement primary key -- a positive integer, never a bool
     (`isinstance(True, int)` is True in Python, so bool is excluded first) and never an
     arbitrary string. A JSON round trip can turn 244 into "244", so a string is accepted
-    too, but ONLY when every character left after stripping is a digit and the value it
-    names is >= 1. "abc" is not a row no matter how many callers happen to agree on it.
-
-    Two traps in the string branch that `str.isdigit()` alone does not close (0458 T0008
-    rev3 rework): `str.isdigit()` is True for Unicode digit characters `int()` cannot
-    parse at all (e.g. the superscript "²" — `"²".isdigit()` is True but
-    `int("²")` raises ValueError), and even a string of ordinary ASCII digits can
-    still make `int()` raise if it is absurdly long (Python 3.11+ caps str-to-int
-    conversion at a few thousand digits to block algorithmic-complexity abuse). Either way
-    the caller handed this function a value that cannot be treated as a row id, so both
-    must resolve to False, never propagate an exception through a boundary that submitters
-    control. `str.isdecimal()` is exactly the predicate `int()` honors for a pure-digit
-    string, so it is used instead of `isdigit()`; the `try/except` below is the second,
-    independent guard for the long-string case, since `isdecimal()` says nothing about
-    length.
+    too, but only when every character left after stripping is a decimal digit and the
+    value it names is >= 1 -- `str.isdecimal()` is the predicate `int()` honors for a pure
+    ASCII-digit string, closing both the Unicode-digit trap (a superscript digit character
+    is `.isdigit()`-true but `int()` rejects it) and, with the `try/except`, the
+    absurdly-long-digit-string trap (`int()` refuses beyond a few thousand digits). Either
+    way the caller handed this function a value that cannot be a row id, so it resolves to
+    False rather than propagating an exception through a boundary submitters control.
     """
     if isinstance(value, bool):
         return False
@@ -818,18 +803,36 @@ def is_review_row_id(value: Any) -> bool:
 def rejection_review_key(value: Any) -> str:
     """One comparable form for a `document_reviews.id` stored in rejection_history.
 
-    0458 T0007 §2.2-3. The column is an integer, but it round-trips through the
+    T0005 2.2.3. The column is an integer, but it round-trips through the
     rejection_history JSON and through an inbox request body, so it can come back as
     "244". Normalizing to a stripped string makes 244 and "244" one key. Values that
-    cannot identify a review row — None, a bool (True would otherwise read as the key
-    "True"), an empty or whitespace-only string, a non-numeric string, a float, the
-    UNIDENTIFIABLE_REVIEW_ID marker — fold to the empty key, which matches nothing and is
-    never an explicit target (0458 T0008: a non-numeric string could otherwise match an
-    equally malformed stored value and answer a rejection it has nothing to do with).
+    cannot identify a review row -- None, a bool, an empty/whitespace-only string, a
+    non-numeric string, a float, the UNIDENTIFIABLE_REVIEW_ID marker -- fold to the empty
+    key, which matches nothing and is never an explicit target.
     """
     if not is_review_row_id(value):
         return ""
     return str(value).strip()
+
+
+def parse_rejection_history(raw: Any) -> list:
+    """documents.rejection_history as a list of dict items.
+
+    The column is free-form JSON text. Absent, unparseable, not-a-list, or a list with
+    non-dict entries all degrade to as much of an empty/clean history as can be salvaged
+    -- a malformed column must never raise past this boundary or break a caller that only
+    wants to know what happened before.
+    """
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    return []
 
 
 def resolve_rejection_target(
@@ -912,14 +915,7 @@ def record_rejection_response(
     if not doc:
         return None
 
-    history: list = []
-    if doc.get("rejection_history"):
-        try:
-            history = json.loads(doc["rejection_history"])
-            if not isinstance(history, list):
-                history = []
-        except (json.JSONDecodeError, TypeError):
-            history = []
+    history: list = parse_rejection_history(doc.get("rejection_history"))
     if not history:
         return None
 

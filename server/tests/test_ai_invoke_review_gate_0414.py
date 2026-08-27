@@ -1060,6 +1060,7 @@ class FakePausedStore:
             "continuation_auto_approve_item_seqs": db_paused.dump_json_list(
                 kw.get("continuation_auto_approve_item_seqs")),
             "continuation_step_timeout_sec": kw.get("continuation_step_timeout_sec"),
+            "continuation_restart_max_attempts": kw.get("continuation_restart_max_attempts"),
             # Stored as normalized TEXT, exactly like the real columns, so the read path is
             # exercised through the production decoder.
             "continuation_review_count_overrides": db_paused.dump_json_map(
@@ -1300,6 +1301,683 @@ class TestCarriers:
         })
         assert captured["continuation_review_count_overrides"] == {"5": 2}
         assert captured["continuation_reviewer_overrides"] == {"5": "aip_rev"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0466 T0007 A11 — [이어서 진행] on a review_no_verdict / cap_reached park
+# must re-derive and re-launch the review/rework gate COLD, not the plain "new" advance
+# path — advance_workflow refuses a still-pending_review head with head_in_progress, so
+# resume_chain has to detect that shape itself before ever reaching _issue_resume.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestResumeReviewGateDispatch0466:
+    @pytest.fixture(autouse=True)
+    def _quiet_resettle_surfaces(self, monkeypatch):
+        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        run record and re-broadcasts the finished payload. The tests in this class hand
+        `_park_handoff` a deliberately partial run dict because they assert ONE surface --
+        the durable paused row / the notify scope -- so the other two are stubbed out here.
+        Those two surfaces have their own end-to-end coverage in
+        TestGateStopReachesEverySurfaceAfterFinalize below, which drives a full run.
+        """
+        monkeypatch.setattr(svc, "_persist_run_record", lambda run: None)
+        monkeypatch.setattr(svc, "finished_payload", lambda run: {})
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+
+    def _seed_park(self, monkeypatch, paused, *, last_stage, rounds_before=None,
+                   revision_before=None, doc_ref="doc-5", stop_code=None):
+        """Park a row exactly the way run_review_gate really does — through the REAL
+        _park_handoff/_write_handoff_row — so the resume test exercises the same row shape
+        production code writes, not a hand-built fixture row."""
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        stop_code = stop_code or svc.REVIEW_NO_VERDICT_STOP_CODE
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref=doc_ref, last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None)
+        extra = {"last_stage": last_stage}
+        if rounds_before is not None:
+            extra["rounds_before"] = rounds_before
+        if revision_before is not None:
+            extra["revision_before"] = revision_before
+        svc._park_handoff(run, bundle(**extra), stop_code)
+        assert paused.rows[GROUP]["stop_code"] == stop_code
+        return run
+
+    def test_a_no_verdict_park_resumes_into_round_two_of_the_same_review(
+            self, world, paused, monkeypatch):
+        """A11-1/A11-3: round 1's issues+rework already landed (revision 1); round 2's
+        review hop left no verdict. [이어서 진행] must relaunch round_no=2 on the SAME
+        document/revision — never a 3rd round, never a plain 'new' advance."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        self._seed_park(monkeypatch, paused, last_stage=svc.REVIEW_HOP_KIND, rounds_before=1)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: pytest.fail("a no-verdict review park must not dispatch rework"))
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+
+        assert result == {"ok": True}
+        assert spawned["gate"]["round_no"] == 2
+        assert spawned["gate"]["rounds_used"] == 1
+        assert spawned["bundle"]["last_stage"] == svc.REVIEW_HOP_KIND
+        assert spawned["bundle"]["rounds_before"] == 1
+        assert spawned["bundle"]["doc_ref"] == SPINE
+        # The old review_no_verdict stop row was CAS-consumed; `_queue_gate_bundle` (the
+        # same "intent, then launch" ordering `run_review_gate` itself uses) wrote a fresh
+        # queuing row in its place — not the stale stop, a hop-handoff-shaped one.
+        assert paused.rows[GROUP]["stop_code"] != svc.REVIEW_NO_VERDICT_STOP_CODE
+
+    def test_a_round_one_no_verdict_park_resumes_into_round_one_not_two(
+            self, world, paused, monkeypatch):
+        """Cold-derive from the DB alone (no last_stage/rounds_before restored): a FIRST
+        review round that left no verdict must still relaunch round_no=1, count=2 unspent."""
+        world.fill(5, "doc-5")               # no review rows at all yet
+        self._seed_park(monkeypatch, paused, last_stage=svc.REVIEW_HOP_KIND, rounds_before=0)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert spawned["gate"]["round_no"] == 1
+        assert spawned["gate"]["rounds_used"] == 0
+
+    def test_a_pending_rework_resumes_via_the_rework_hop_not_a_fresh_advance(
+            self, world, paused, monkeypatch):
+        """The legacy REVIEW_CAP_REACHED_STOP_CODE path can cold-resolve to ANY stage — this
+        proves the dispatch is not hard-coded to review-only: an outstanding 'issues' verdict
+        with no rework landed yet must relaunch the REWORK hop instead."""
+        world.fill(5, "doc-5", status="rejected", revision_no=0)
+        world.review("doc-5", "issues", revision_no=0)
+        self._seed_park(monkeypatch, paused, last_stage=svc.REWORK_HOP_KIND, revision_before=0,
+                        stop_code=svc.REVIEW_CAP_REACHED_STOP_CODE)
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: pytest.fail("an unreworked issues verdict must dispatch rework"))
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        assert spawned["bundle"]["last_stage"] == svc.REWORK_HOP_KIND
+        assert spawned["bundle"]["revision_before"] == 0
+
+    def test_the_review_and_reviewer_maps_reach_the_dispatched_gate_bundle(
+            self, world, paused, monkeypatch):
+        """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
+        bundle exactly like the plain 'new' resume path already proves in TestCarriers —
+        including the disabled-reviewer-degrades-but-count-survives edge (P0007 [엣지])."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None,
+                   continuation_reviewer_overrides={"5": "aip_gone"})
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        svc._park_handoff(
+            run,
+            bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1,
+                  reviewer_overrides={"5": "aip_gone"}),
+            svc.REVIEW_NO_VERDICT_STOP_CODE,
+        )
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert spawned["bundle"]["review_count_overrides"] == {"5": 2}
+        # The disabled reviewer is dropped from the MAP; the review itself is never dropped.
+        assert spawned["bundle"]["reviewer_overrides"] is None
+        assert svc.resolve_reviewer(
+            spawned["bundle"]["reviewer_overrides"], 5, "flowgate") == "aip_default"
+
+    def test_a_plain_work_hop_resume_is_unaffected(self, world, paused, monkeypatch):
+        """Control: a chain paused with nothing pending review (e.g. no_output_exhausted on
+        a WORK hop) must keep taking the ordinary advance_workflow 'new' path unchanged."""
+        world.fill(5, "doc-5", status="approved", revision_no=1)   # already through the gate
+        svc._write_handoff_row(GROUP, _pending(), _run())
+        captured: dict = {}
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 7)
+        monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: pytest.fail("nothing is pending review — must not dispatch"))
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        assert captured["action_scope"] == "new"
+        assert captured["mode"] == "continuous"
+
+    def test_the_dispatched_gate_bundle_carries_target_seq_and_note_policy(
+            self, world, paused, monkeypatch):
+        """T0007 §3.3.1: the cold-resume gate bundle is not a one-shot dispatch payload — it
+        is QUEUED (`_queue_gate_bundle`) and becomes the bundle `run_review_gate` reads back
+        once the resumed hop records its verdict (§2.9, `_finalize_run` → auto-resume queue).
+        `target_seq`/`note_overrides`/`default_note`/`restart_max_attempts` all have to be in
+        it NOW, at dispatch time, not just the fields `resolve_review_gate` itself reads —
+        the earlier shape of this code built the bundle by hand and left all four out."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None,
+                   continuation_target_seq=9,
+                   continuation_note_overrides={"5": "double-check the table"},
+                   continuation_default_note="be terse",
+                   continuation_restart_max_attempts=3)
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        svc._park_handoff(run, bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1),
+                          svc.REVIEW_NO_VERDICT_STOP_CODE)
+
+        dispatched = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: dispatched.update(bundle=dict(b)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        queued_bundle = dispatched["bundle"]
+        assert queued_bundle["target_seq"] == 9
+        assert queued_bundle["note_overrides"] == {"5": "double-check the table"}
+        assert queued_bundle["default_note"] == "be terse"
+        assert queued_bundle["restart_max_attempts"] == 3
+
+    def test_the_resumed_bundle_survives_verdict_settlement_without_crashing(
+            self, world, paused, monkeypatch):
+        """The defect this closes did not fail at dispatch — `_spawn_review_hop` launched
+        fine either way. It failed LATER: once the resumed round-2 review lands a verdict,
+        `_finalize_run` re-reads the exact bundle queued at dispatch time and feeds it back
+        into `run_review_gate` (§2.9). A `pass` verdict then routes it through
+        `_settle_gate_pass` (reads `bundle.get("target_seq")`, silently None) and
+        `_spawn_auto_resume` (reads `pending["target_seq"]` — a HARD index, so a missing key
+        is not silently None, it is a `KeyError` that kills the chain outright). This test
+        drives that exact sequence end to end instead of stopping at dispatch."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None,
+                   continuation_target_seq=9,
+                   continuation_note_overrides={"5": "double-check the table"},
+                   continuation_default_note="be terse",
+                   continuation_restart_max_attempts=3)
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        svc._park_handoff(run, bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1),
+                          svc.REVIEW_NO_VERDICT_STOP_CODE)
+
+        dispatched = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: dispatched.update(bundle=dict(b)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        queued_bundle = dispatched["bundle"]
+
+        # The resumed round-2 review lands a `pass` verdict at revision 1.
+        world.review("doc-5", "pass", revision_no=1)
+
+        settled = {}
+        monkeypatch.setattr(
+            svc, "_settle_gate_pass",
+            lambda g, slot, b, r: settled.update(bundle=dict(b)) or "continue")
+        spawn_pending = {}
+        monkeypatch.setattr(
+            svc, "_spawn_auto_resume",
+            lambda g, pending: spawn_pending.update(pending))
+
+        started = svc.run_review_gate(GROUP, queued_bundle, run)
+        assert started is True
+        # `_settle_gate_pass` must see the real target, not a silently-None one.
+        assert settled["bundle"]["target_seq"] == 9
+        # `_spawn_auto_resume` must receive the same target_seq without a KeyError, plus the
+        # note/restart policy the resumed chain is still carrying.
+        assert spawn_pending["target_seq"] == 9
+        assert spawn_pending["note_overrides"] == {"5": "double-check the table"}
+        assert spawn_pending["default_note"] == "be terse"
+        assert spawn_pending["restart_max_attempts"] == 3
+
+    def test_spawn_auto_resume_does_not_crash_on_the_resumed_bundle(
+            self, world, paused, monkeypatch):
+        """Direct reproduction of the reported defect: `_spawn_auto_resume` hard-indexes
+        `pending["target_seq"]` (not `.get`) — a bundle missing that key does not degrade,
+        it raises `KeyError` and the chain dies. Calling it directly on the exact shape
+        `run_review_gate`'s WORK_HOP_KIND branch builds (`{**bundle, "last_stage": ...}`)
+        proves the resumed bundle survives that hard index."""
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None,
+                   continuation_target_seq=9,
+                   continuation_note_overrides={"5": "double-check the table"},
+                   continuation_default_note="be terse",
+                   continuation_restart_max_attempts=3)
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        svc._park_handoff(run, bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1),
+                          svc.REVIEW_NO_VERDICT_STOP_CODE)
+
+        dispatched = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: dispatched.update(bundle=dict(b)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+        svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        queued_bundle = dispatched["bundle"]
+
+        captured: dict = {}
+        monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"ok": True})
+
+        svc._spawn_auto_resume(GROUP, {**queued_bundle, "last_stage": svc.WORK_HOP_KIND})
+        assert captured["continuation_target_seq"] == 9
+        assert captured["continuation_note_overrides"] == {"5": "double-check the table"}
+        assert captured["continuation_default_note"] == "be terse"
+        assert captured["continuation_restart_max_attempts"] == 3
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0466 T0007 A10 §3.2 — the review_no_verdict stop card's failure detail:
+# the excerpt must not collapse to nothing just because last_message happens to be empty,
+# which is exactly the usage-limit-crash shape T0007 names.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestReviewNoVerdictExcerpt0466:
+    @pytest.fixture(autouse=True)
+    def _quiet_resettle_surfaces(self, monkeypatch):
+        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        run record and re-broadcasts the finished payload. The tests in this class hand
+        `_park_handoff` a deliberately partial run dict because they assert ONE surface --
+        the durable paused row / the notify scope -- so the other two are stubbed out here.
+        Those two surfaces have their own end-to-end coverage in
+        TestGateStopReachesEverySurfaceAfterFinalize below, which drives a full run.
+        """
+        monkeypatch.setattr(svc, "_persist_run_record", lambda run: None)
+        monkeypatch.setattr(svc, "finished_payload", lambda run: {})
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+
+    def _park(self, monkeypatch, paused, run_overrides):
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        base = dict(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None, attempts_used=2, exit_code=1)
+        base.update(run_overrides)
+        run = _run(**base)
+        svc._park_handoff(run, bundle(last_stage=svc.REVIEW_HOP_KIND, rounds_before=1),
+                          svc.REVIEW_NO_VERDICT_STOP_CODE)
+        return paused.rows[GROUP]["stop_last_message_excerpt"]
+
+    def test_last_message_wins_when_present(self, paused, monkeypatch):
+        """The core is last_message, but the provider/attempt/exit head is ALWAYS present
+        too (A10-3) — this is composition, not a bare substitution of the sources."""
+        excerpt = self._park(monkeypatch, paused, {"last_message": "usage limit reached"})
+        assert "usage limit reached" in excerpt
+        assert "attempt 2" in excerpt
+
+    def test_falls_back_to_the_last_attempts_own_failure_detail(self, paused, monkeypatch):
+        """last_message is empty (the incident shape) and there is no current-attempt
+        stderr/stdout/timeout either — the archived PREVIOUS attempt's own
+        `_no_output_detail` (provider/exit/elapsed) is the next best diagnostic."""
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{"provider_id": "aip_rev", "reason": "no_output",
+                                  "detail": "worker exited 1 after 12s without registering "
+                                            "a document", "exit_code": 1}],
+        })
+        assert "worker exited 1 after 12s" in excerpt
+
+    def test_falls_back_to_stderr_when_no_message_or_history(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "stderr_tail": "Error: usage limit exceeded for this billing period",
+        })
+        assert "usage limit exceeded" in excerpt
+
+    def test_the_final_attempts_stderr_outranks_an_earlier_archived_attempts_detail(
+            self, paused, monkeypatch):
+        """A10-3's real shape: TWO attempts happened (`fallback_history` holds attempt 1's
+        entry, archived when the retry kicked in), and the SECOND — final, unretried —
+        attempt is the one that actually hit the provider's usage limit, which lands in
+        THIS run's own `stderr_tail`/`last_message`, not in the history entry. Returning
+        history[-1] first (the earlier shape of this function) would hide the real error
+        behind attempt 1's generic "worker exited ... without registering a document"
+        sentence — exactly the regression T0007 rejected."""
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{"provider_id": "aip_rev", "reason": "no_output",
+                                  "detail": "worker exited 1 after 12s without registering "
+                                            "a document", "exit_code": 1}],
+            "stderr_tail": "Error: usage limit exceeded for this billing period",
+        })
+        assert "usage limit exceeded" in excerpt
+        assert "attempt 2" in excerpt
+        assert "worker exited 1 after 12s" not in excerpt
+
+    def test_falls_back_to_stdout_when_no_message_history_or_stderr(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "stdout_tail": "provider reported: quota exhausted, try again later",
+        })
+        assert "quota exhausted" in excerpt
+
+    def test_falls_back_to_timeout_diagnosis(self, paused, monkeypatch):
+        excerpt = self._park(monkeypatch, paused, {
+            "timeout_diagnosis": "no output for 900s before the watchdog killed the process",
+        })
+        assert "watchdog killed the process" in excerpt
+
+    def test_last_resort_is_never_empty_and_names_provider_attempt_and_exit(
+            self, paused, monkeypatch):
+        """Nothing anywhere — the excerpt must still name provider/attempt/exit, never
+        collapse to None (which would leave the card with only the generic stop sentence)."""
+        excerpt = self._park(monkeypatch, paused, {
+            "provider": {"id": "aip_rev", "name": "Codex GPT-5.6 Sol"},
+            "continuation_selected_provider_name": "Codex GPT-5.6 Sol",
+            "exit_code": 1,
+        })
+        assert excerpt is not None and excerpt.strip() != ""
+        assert "Codex GPT-5.6 Sol" in excerpt
+        assert "2" in excerpt          # attempts_used
+
+    def test_a_non_review_stop_keeps_the_plain_last_message_excerpt(self, paused, monkeypatch):
+        """The fallback chain is scoped to REVIEW_NO_VERDICT_STOP_CODE only — every other
+        stop code keeps reading straight from last_message, unchanged."""
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        run = _run(mode="continuous", last_message=None,
+                   stderr_tail="should not leak into a no_output_exhausted excerpt")
+        svc._park_handoff(run, _pending(), "no_output_exhausted")
+        assert paused.rows[GROUP]["stop_last_message_excerpt"] is None
+
+    def test_the_started_providers_name_outranks_a_stale_chain_head_after_startup_fallback(
+            self, paused, monkeypatch):
+        """A10-5's real shape: an override-less review hop's chain head (aip_1) fails to
+        start, `_execute_provider_chain` falls back and actually starts aip_2, and BOTH
+        attempts run on aip_2. `continuation_selected_provider_name` is set once from
+        chain[0] before the walk and is never updated afterward — it still reads "aip_1" —
+        while `run["provider"]` was moved to aip_2 by the fallback (L2620-2626). The card
+        must blame the provider that actually ran and produced this exit_code/attempts_used,
+        not the one that never started."""
+        excerpt = self._park(monkeypatch, paused, {
+            "continuation_selected_provider_name": "aip_1",
+            "continuation_selected_provider_id": "aip_1",
+            "provider": {"id": "aip_2", "name": "aip_2"},
+            "stderr_tail": "Error: usage limit exceeded for this billing period",
+        })
+        assert '"aip_2"' in excerpt
+        assert "aip_1" not in excerpt
+
+    def test_stderr_and_stdout_tails_are_redacted_before_reaching_the_card(
+            self, paused, monkeypatch):
+        """T0007 §3.2.3: stderr_tail/stdout_tail are the provider process's raw, unfiltered
+        output, so nothing upstream scrubs them before they reach here. A provider that
+        echoes its own outgoing Authorization header (or a bare Bearer token) on failure
+        must not have that value ride verbatim into stop_last_message_excerpt."""
+        excerpt = self._park(monkeypatch, paused, {
+            "stderr_tail": "call failed: Authorization: Bearer sk-live-abcdef123456 rejected",
+        })
+        assert "sk-live-abcdef123456" not in excerpt
+        assert "[redacted]" in excerpt
+
+        excerpt2 = self._park(monkeypatch, paused, {
+            "stdout_tail": "outgoing request used Bearer eyJhbGciOiJIUzI1NiJ9.secret.tok",
+        })
+        assert "eyJhbGciOiJIUzI1NiJ9.secret.tok" not in excerpt2
+        assert "[redacted]" in excerpt2
+
+    def test_last_message_is_redacted_too(self, paused, monkeypatch):
+        """rev3 review finding: `last_message` was left out of rev2's redaction even though
+        it is exactly as raw as stderr_tail/stdout_tail for a `claude`-kind attempt —
+        `_recover_cli_last_message` sets it to the CLI's full trimmed stdout, not a parsed
+        answer field (L3587-3588), so a provider echoing its own outgoing Authorization
+        call lands the same way here as in the tail fields."""
+        excerpt = self._park(monkeypatch, paused, {
+            "last_message": "call failed: Authorization: Bearer sk-live-abcdef123456 rejected",
+        })
+        assert "sk-live-abcdef123456" not in excerpt
+        assert "[redacted]" in excerpt
+
+    def test_a_bare_unlabeled_raw_token_echo_is_redacted_too(self, paused, monkeypatch):
+        """rev4 review finding #2: `_redact_secrets`'s two regexes only strip a token
+        wearing an `Authorization:`/`Bearer ` label. The run's own raw task token reaches
+        the provider process unlabeled, as the `FLOWGATE_TOKEN` env var (L3477) — a
+        process that echoes its own environment or a bare env dump on failure leaks the
+        value with neither label, past both regexes. `_known_run_raw_tokens` (built from
+        every token `_note_issued_raw_token` saw this run issue) catches it by exact
+        literal value instead, independent of any label."""
+        excerpt = self._park(monkeypatch, paused, {
+            "last_message": "env dump: FLOWGATE_TOKEN=tok_raw_9f8e7d6c5b4a3f2e1d rejected",
+            "_issued_raw_tokens": {"tok_raw_9f8e7d6c5b4a3f2e1d"},
+        })
+        assert "tok_raw_9f8e7d6c5b4a3f2e1d" not in excerpt
+        assert "[redacted]" in excerpt
+
+    def test_an_earlier_attempts_reissued_token_is_redacted_from_the_archived_detail(
+            self, paused, monkeypatch):
+        """A review-hop retry may reissue a FRESH token for attempt 2 (`_prepare_retry_
+        token`), so attempt 1's own raw token is no longer `run["raw_token"]` by the time
+        this function runs — it only survives via `_note_issued_raw_token`'s running set.
+        A leak of the OLDER, already-rotated token in the archived fallback detail must
+        still be caught."""
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{
+                "provider_id": "aip_rev", "reason": "no_output",
+                "detail": "worker exited 1 after 12s without registering a document; "
+                          "last message: FLOWGATE_TOKEN=tok_raw_attempt1_old leaked",
+                "exit_code": 1,
+            }],
+            "raw_token": "tok_raw_attempt2_new",
+            "_issued_raw_tokens": {"tok_raw_attempt1_old", "tok_raw_attempt2_new"},
+        })
+        assert "tok_raw_attempt1_old" not in excerpt
+        assert "[redacted]" in excerpt
+
+    def test_an_archived_earlier_attempts_message_is_redacted_when_it_becomes_the_core(
+            self, paused, monkeypatch):
+        """rev3: the fallback_history[-1] detail this function falls back to is
+        `_no_output_detail`'s sentence (L3005-3016), which embeds attempt 1's own
+        `last_message` verbatim — so a secret in an EARLIER, archived attempt's message
+        must be caught here too, not just a secret in the current attempt's own fields."""
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{
+                "provider_id": "aip_rev", "reason": "no_output",
+                "detail": "worker exited 1 after 12s without registering a document; "
+                          "last message: token leaked as Bearer eyJhbGciOiJIUzI1NiJ9.abc",
+                "exit_code": 1,
+            }],
+        })
+        assert "eyJhbGciOiJIUzI1NiJ9.abc" not in excerpt
+        assert "[redacted]" in excerpt
+
+    def test_a_short_full_prompt_echoed_verbatim_is_redacted(self, paused, monkeypatch):
+        """rev5 review finding: neither regex nor `known_tokens` touches the PROMPT itself
+        — T0007 §3.2.3 separately bans exposing it ("전체 프롬프트를 노출하지 마라"). A CLI
+        worker that rejects its own stdin ("invalid input, got: <prompt>" is the shape a
+        parse error takes) echoes this run's exact `run["mention"]` text back, and a SHORT
+        prompt fits whole inside `LAST_MESSAGE_EXCERPT_BYTES` — nothing about the existing
+        byte caps trims it away on its own."""
+        prompt = ("@flowgate please review flowgate.default.0466.0005-T revision 3 against "
+                  "the acceptance criteria in section 4 and record your verdict.")
+        excerpt = self._park(monkeypatch, paused, {
+            "last_message": f"error: could not parse instruction: {prompt}",
+            "_issued_prompts": {prompt},
+        })
+        assert prompt not in excerpt
+        assert "[redacted prompt]" in excerpt
+
+    def test_a_truncated_prompt_echo_is_redacted_by_its_longest_present_prefix(
+            self, paused, monkeypatch):
+        """The provider's own output can get cut off before it finishes echoing stdin back
+        — the leaked text is then only a PREFIX of the prompt, never a full literal match.
+        Stdin is written to the child exactly once, front to back, so the longest prefix of
+        the prompt still present verbatim is exactly what leaked, and it alone must go."""
+        prompt = "line one of the instruction\n" + ("filler content " * 50) + "line last"
+        leaked_prefix = prompt[:120]
+        excerpt = self._park(monkeypatch, paused, {
+            "stderr_tail": f"fatal: unexpected input near: {leaked_prefix}<TRUNCATED>",
+            "_issued_prompts": {prompt},
+        })
+        assert leaked_prefix not in excerpt
+        assert "[redacted prompt]" in excerpt
+
+    def test_a_short_shared_prefix_below_the_floor_is_left_alone(self, paused, monkeypatch):
+        """A few characters of accidental overlap between the prompt and an unrelated
+        failure message ("the ", "please ") is not a genuine echo — redacting on that would
+        mangle ordinary provider prose for no privacy benefit. `_PROMPT_ECHO_MIN_LEN` is the
+        same floor `_BEARER_TOKEN_RE` already uses for a bare token."""
+        excerpt = self._park(monkeypatch, paused, {
+            "stderr_tail": "the request could not be completed: quota exceeded",
+            "_issued_prompts": {"the request was very specific about formatting rules"},
+        })
+        assert "[redacted prompt]" not in excerpt
+        assert "quota exceeded" in excerpt
+
+    def test_an_earlier_attempts_rotated_prompt_is_redacted_from_the_archived_detail(
+            self, paused, monkeypatch):
+        """Mirrors `test_an_earlier_attempts_reissued_token_is_redacted_from_the_archived_
+        detail`: a review-hop retry rebuilds `run["mention"]` in place for attempt 2
+        (L3048), so attempt 1's own prompt text no longer lives there by the time this
+        function runs — it only survives via `_note_issued_prompt`'s running set. A leak of
+        that OLDER, already-rotated prompt in the archived fallback detail must still be
+        caught."""
+        old_prompt = "review flowgate.default.0466.0005-T revision 2, round 1"
+        excerpt = self._park(monkeypatch, paused, {
+            "fallback_history": [{
+                "provider_id": "aip_rev", "reason": "no_output",
+                "detail": f"worker exited 1 after 12s; rejected input: {old_prompt}",
+                "exit_code": 1,
+            }],
+            "mention": "review flowgate.default.0466.0005-T revision 2, round 2",
+            "_issued_prompts": {old_prompt,
+                                "review flowgate.default.0466.0005-T revision 2, round 2"},
+        })
+        assert old_prompt not in excerpt
+        assert "[redacted prompt]" in excerpt
+
+    def test_a_full_prompt_echo_with_an_embedded_credential_is_fully_redacted(
+            self, paused, monkeypatch):
+        """rev6 review finding: an issued FlowGate prompt routinely embeds this run's own
+        `Authorization: Bearer <token>` as task context. rev5 redacted headers/tokens FIRST
+        and only then binary-searched the already-mutated string for a prefix of the
+        ORIGINAL prompt — once the embedded credential was rewritten in place, no prefix of
+        the original text extending past it could still match, so only the portion before
+        the credential was recognized as the echoed prompt and erased; the confidential
+        suffix that followed `Bearer <token>` in the prompt survived verbatim. The prompt
+        search must run against the unmutated text so the whole echoed block — credential
+        and all — is found and erased as one unit."""
+        confidential_suffix = ("also attach the private acceptance-criteria notes for "
+                               "0466 section 4 that must not leave this chain")
+        prompt = (f"@flowgate please review flowgate.default.0466.0005-T using "
+                  f"Authorization: Bearer tok_prompt_embedded_9f8e7d6c5b4a — "
+                  f"{confidential_suffix}")
+        excerpt = self._park(monkeypatch, paused, {
+            "last_message": f"error: could not parse instruction: {prompt}",
+            "_issued_prompts": {prompt},
+        })
+        assert confidential_suffix not in excerpt
+        assert "tok_prompt_embedded_9f8e7d6c5b4a" not in excerpt
+        assert "[redacted prompt]" in excerpt
+
+    def test_an_overlapping_retained_prompt_pair_is_redacted_regardless_of_set_order(
+            self, paused, monkeypatch):
+        """rev7 review finding: `_issued_prompts` is a set, and a reissued retry commonly
+        reuses the whole prior prompt text and appends more — so two RETAINED prompts can
+        legitimately be one a literal prefix of the other. Iterating that set in whatever
+        order Python happens to hash it into is not a security boundary: if the shorter
+        prompt is processed first, its own binary search finds it fully present (it's a
+        prefix of what actually echoed) and erases only that short span — leaving the
+        confidential suffix that follows it in the longer prompt exposed, and the longer
+        prompt's own turn then finds nothing left to match. Longest-first processing must
+        erase the whole echoed block before the shorter prefix ever gets a turn, regardless
+        of which order the set happens to yield the two prompts in."""
+        confidential_suffix = ("also attach the private acceptance-criteria notes for 0466 "
+                               "section 4 that must not leave this chain")
+        short_prompt = ("@flowgate please review flowgate.default.0466.0005-T revision 3 "
+                        "fully")
+        long_prompt = f"{short_prompt} -- {confidential_suffix}"
+        excerpt = self._park(monkeypatch, paused, {
+            "last_message": f"error: could not parse instruction: {long_prompt}",
+            "_issued_prompts": {short_prompt, long_prompt},
+        })
+        assert confidential_suffix not in excerpt
+        assert short_prompt not in excerpt
+        assert "[redacted prompt]" in excerpt
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0466 TR0008 rev8 review finding — `_park_handoff`'s notify call is
+# scoped to REVIEW_NO_VERDICT_STOP_CODE. T0007 §3.2.5 only asks for a failure signal on
+# that one stop code; the other six REVIEW_STOP_CODES are all members of
+# ENGINE_NOTIFY_STOP_CODES too (L194-199), so calling `_notify_chain_failure_if_needed`
+# unconditionally would also fire on review_verdict_hold/review_stalled/
+# review_reject_denied/review_reject_failed — none of which T0007 asked for, and the
+# first of which is "waiting on a human answer, not a failure" by the same reasoning
+# `question_pending` is kept out of the notify set entirely.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestParkHandoffNotifyScope0466:
+    @pytest.fixture(autouse=True)
+    def _quiet_resettle_surfaces(self, monkeypatch):
+        """0466 x 0458 merge: `_park_handoff` now re-decides the run's stop through
+        `_resettle_stop_after_park` (0458 T0007 2.1), which also refreshes the persisted
+        run record and re-broadcasts the finished payload. The tests in this class hand
+        `_park_handoff` a deliberately partial run dict because they assert ONE surface --
+        the durable paused row / the notify scope -- so the other two are stubbed out here.
+        Those two surfaces have their own end-to-end coverage in
+        TestGateStopReachesEverySurfaceAfterFinalize below, which drives a full run.
+        """
+        monkeypatch.setattr(svc, "_persist_run_record", lambda run: None)
+        monkeypatch.setattr(svc, "finished_payload", lambda run: {})
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+
+    def _park_and_capture(self, monkeypatch, paused, stop_code):
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        from modules.flow_gate.workflow import event_logger
+
+        signals: list[dict] = []
+        monkeypatch.setattr(event_logger, "log_continuous_work_failed",
+                            lambda **kw: signals.append(kw) or {})
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   scope_oracle_run=True, project_id="flowgate",
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None, attempts_used=2, exit_code=1)
+        svc._park_handoff(run, _pending(), stop_code)
+        return signals
+
+    def test_review_no_verdict_still_notifies(self, paused, monkeypatch):
+        signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_NO_VERDICT_STOP_CODE)
+        assert len(signals) == 1
+
+    def test_review_verdict_hold_does_not_notify(self, paused, monkeypatch):
+        """The reviewer's own finding: `review_verdict_hold` is a human-decision stop, the
+        same shape as `question_pending` (L4991-4993 "waiting on a human answer, not
+        because it failed") — an unconditional notify call would wrongly fire on every
+        ordinary reviewer hold."""
+        signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_VERDICT_HOLD_STOP_CODE)
+        assert signals == []
+
+    def test_review_stalled_does_not_notify(self, paused, monkeypatch):
+        signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_STALLED_STOP_CODE)
+        assert signals == []
+
+    def test_review_reject_denied_does_not_notify(self, paused, monkeypatch):
+        signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_REJECT_DENIED_STOP_CODE)
+        assert signals == []
+
+    def test_review_reject_failed_does_not_notify(self, paused, monkeypatch):
+        signals = self._park_and_capture(monkeypatch, paused, svc.REVIEW_REJECT_FAILED_STOP_CODE)
+        assert signals == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -2159,6 +2837,265 @@ class TestSettleExtraction:
         pause_at = source.index("user_paused_probe()")
         assert approve_at < target_at < pause_at, (
             "the last step must end approved, and a pause is checked after that (P0008 S4/S5)")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# T0005 2.1/2.3 — the review_id anchor AND the current-revision guard, combined (A1-A9)
+#
+# One document_reviews ROW makes at most one automatic rejection -- even across a human
+# mark_revised that leaves the revision unchanged (A6, RED on main before this change).
+# _auto_reject and transition_document_review run for REAL here (real_gate_exec below):
+# a fake _auto_reject (as gate_exec uses) would make every one of these tests vacuous,
+# since the whole point is whether a SECOND gate call sees what the FIRST call's real
+# write left in rejection_history.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+_REAL_AUTO_REJECT = svc._auto_reject
+
+
+@pytest.fixture
+def real_gate_exec(monkeypatch, world, gate_exec):
+    """gate_exec's spawn captures, with _auto_reject restored to the real function and
+    just enough of transition_document_review's dependencies patched (state-preserving,
+    T0005 2.3) that it writes review_id-tagged rejection_history into world.docs."""
+    from modules.flow_gate.workflow import pipeline_service as ps
+    from modules.flow_gate.workflow.routers import workflow as wf_router
+
+    def _update(doc_id, fields):
+        doc = world.docs.setdefault(doc_id, {})
+        doc.update(fields)
+        return doc
+
+    monkeypatch.setattr(svc.db_docs, "update", _update)
+    monkeypatch.setattr(db_users, "get_by_id", lambda uid: {"user_id": uid, "is_admin": 1})
+    monkeypatch.setattr(wf_router, "_get_user_permissions",
+                        lambda user: {"document.approve", "document.reject",
+                                       "document.update", "own.draft"})
+    monkeypatch.setattr(ps, "log_state_changed", lambda **kw: {"id": 1})
+    monkeypatch.setattr(ps, "_require_document_body_for_approval",
+                        lambda doc, locale="ko": None)
+
+    def _real_auto_reject(slot, review, b):
+        gate_exec["rejected"].append(slot["doc_id"])
+        return _REAL_AUTO_REJECT(slot, review, b)
+
+    monkeypatch.setattr(svc, "_auto_reject", _real_auto_reject)
+    return gate_exec
+
+
+def _history_of(world, doc_id):
+    raw = world.docs[doc_id].get("rejection_history")
+    if raw is None:
+        return []
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+class TestT0005ReviewIdAnchor:
+    """A1-A9 (T0005 3항)."""
+
+    def test_a1_one_rejection_per_review_row_then_round_two_after_rework(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "fix x"}])
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert world.docs["doc-5"]["doc_review_status"] == "rejected"
+        assert len(_history_of(world, "doc-5")) == 1
+
+        world.rework("doc-5", 1)   # ('rejected','submit') -> 'revised', revision_no 1
+        real_gate_exec["rejected"].clear()
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "review" and gate["round_no"] == 2
+        assert "reject_first" not in gate
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == [], "_auto_reject total stays at 1"
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a2_two_review_rows_each_earn_their_own_rejection(self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "a"}])
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+
+        world.review("doc-5", "issues", revision_no=1,
+                     findings=[{"locus": "§2", "note": "b"}])
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is True
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+
+        history = _history_of(world, "doc-5")
+        assert len(history) == 2
+        ids = sorted(int(item["review_id"]) for item in history)
+        reviews = sorted(int(r["id"]) for r in world.reviews["doc-5"])
+        assert ids == reviews
+        assert len({item["review_id"] for item in history}) == 2, "one item per row"
+
+    def test_a3_a_pass_after_rework_finds_the_document_still_revised(self, world, real_gate_exec):
+        from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
+
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        world.review("doc-5", "pass", revision_no=1)
+
+        assert world.docs["doc-5"]["doc_review_status"] == "revised"
+        assert get_doc_review_rule("revised", "approve") == "approved"
+        assert get_doc_review_rule("rejected", "approve") is None
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["parked"] == []
+        assert real_gate_exec["settled"] == ["doc-5"]
+        assert len(real_gate_exec["work"]) == 1
+
+    def test_a4_a_cold_resume_onto_the_landed_rework_does_not_inflate_the_count(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        real_gate_exec["rejected"].clear()
+
+        # A bundle with no last_stage IS the cold-resume shape already (P0007/L0008 2.9) --
+        # re-derive it twice, exactly as a restart followed by a resume would.
+        gate1 = svc.resolve_review_gate(bundle())
+        gate2 = svc.resolve_review_gate(bundle())
+        assert gate1["stage"] == gate2["stage"] == "review" and gate1["round_no"] == 2
+        assert real_gate_exec["rejected"] == []
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a5_two_consecutive_run_review_gate_calls_on_the_same_state_stay_idempotent(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0)
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"], "the second call rejects nothing new"
+        assert len(_history_of(world, "doc-5")) == 1
+
+    def test_a6_mark_revised_at_the_same_revision_does_not_re_reject(self, world, real_gate_exec):
+        """The money test (T0005): RED on main before the review_id anchor. A human's
+        mark_revised puts the document back at pending_review WITHOUT bumping the
+        revision -- exactly the state a landed rework does NOT produce -- so the old
+        status-only + revision-match guard alone re-opens it for a second rejection."""
+        from modules.flow_gate.workflow import pipeline_service as ps
+
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "x"}])
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert world.docs["doc-5"]["doc_review_status"] == "rejected"
+        assert world.docs["doc-5"]["revision_no"] == 0
+        real_gate_exec["rejected"].clear()
+
+        ps.transition_document_review(
+            doc_id="doc-5", action="mark_revised", actor_user_id=USER,
+            user_permissions={"document.update", "own.draft"},
+        )
+        assert world.docs["doc-5"]["doc_review_status"] == "pending_review"
+        assert world.docs["doc-5"]["revision_no"] == 0, "revision is UNCHANGED -- the A6 trap"
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework"
+        assert gate["reject_first"] is False, (
+            "the same review row already produced one rejection; mark_revised must not "
+            "re-open it for a second")
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == [], "no second _auto_reject call"
+        assert len(_history_of(world, "doc-5")) == 1, "history stays at one entry"
+
+    def test_a7_a_human_rejection_is_never_re_rejected_and_its_history_is_preserved(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5", status="rejected")
+        world.docs["doc-5"]["rejection_history"] = json.dumps([{
+            "rejection_id": "rej_human0001", "reason": "human says fix Y",
+            "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+            "ai_response": None, "responded_at": None,
+            "response_recorded_by": None, "response_revision_no": None,
+        }])
+        world.review("doc-5", "issues", revision_no=0)
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is False
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == []
+        history = _history_of(world, "doc-5")
+        assert len(history) == 1
+        assert history[0]["reason"] == "human says fix Y"
+        assert "review_id" not in history[0]
+
+    def test_a8_byte_identical_reasons_from_two_different_rows_both_reject(
+            self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "same note"}], comment="same comment")
+        svc.run_review_gate(GROUP, bundle(), _run())
+        world.rework("doc-5", 1)
+        real_gate_exec["rejected"].clear()
+
+        world.review("doc-5", "issues", revision_no=1,
+                     findings=[{"locus": "§1", "note": "same note"}], comment="same comment")
+        r1 = dict(world.reviews["doc-5"][1])   # the round-1 row, oldest
+        r2 = dict(world.reviews["doc-5"][0])   # the round-2 row, newest
+        reason1 = svc.build_auto_reject_reason(r1, {"doc_id": "doc-5"}, API_BASE)
+        reason2 = svc.build_auto_reject_reason(r2, {"doc_id": "doc-5"}, API_BASE)
+        assert reason1 == reason2, "the premise: two rows, byte-identical reason text"
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["stage"] == "rework" and gate["reject_first"] is True, (
+            "a different row's identical text must not be read as already applied")
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+
+        history = _history_of(world, "doc-5")
+        assert len(history) == 2
+        assert {item["review_id"] for item in history} == {r1["id"], r2["id"]}
+
+    def test_a9_a_keyless_legacy_item_suppresses_by_reason_but_a_null_keyed_item_never_does(
+            self, world, real_gate_exec):
+        # -- 9a: an OLD item with no review_id key at all, exact-reason match suppresses --
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "x"}], comment="c")
+        gate0 = svc.resolve_review_gate(bundle())
+        legacy_reason = svc.build_auto_reject_reason(
+            svc._latest_review_of(gate0["slot"]), gate0["slot"], API_BASE)
+        world.docs["doc-5"]["rejection_history"] = json.dumps([{
+            "rejection_id": "rej_legacy001", "reason": legacy_reason,
+            "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+            "ai_response": None, "responded_at": None,
+            "response_recorded_by": None, "response_revision_no": None,
+        }])
+
+        gate = svc.resolve_review_gate(bundle())
+        assert gate["reject_first"] is False, "exact reason match on a KEYLESS item suppresses"
+        svc.run_review_gate(GROUP, bundle(), _run())
+        assert real_gate_exec["rejected"] == []
+
+        # -- 9b: items that DO carry the key, but an unusable value, never suppress --
+        for bad_value in (None, "", "   "):
+            world.reviews.pop("doc-7", None)
+            world.fill(7, "doc-7", status="pending_review", revision_no=0)
+            world.review("doc-7", "issues", revision_no=0,
+                         findings=[{"locus": "§1", "note": "y"}], comment="c2")
+            gate0b = svc.resolve_review_gate(bundle(review_count_overrides={"7": 2}))
+            reason_b = svc.build_auto_reject_reason(
+                svc._latest_review_of(gate0b["slot"]), gate0b["slot"], API_BASE)
+            world.docs["doc-7"]["rejection_history"] = json.dumps([{
+                "rejection_id": "rej_bad0001", "review_id": bad_value, "reason": reason_b,
+                "rejected_at": "2026-08-26T00:00:00+09:00", "rejected_by": USER,
+                "ai_response": None, "responded_at": None,
+                "response_recorded_by": None, "response_revision_no": None,
+            }])
+            real_gate_exec["rejected"].clear()
+            gate_b = svc.resolve_review_gate(bundle(review_count_overrides={"7": 2}))
+            assert gate_b["reject_first"] is True, (
+                f"review_id={bad_value!r} present-but-invalid must not suppress")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
