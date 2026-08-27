@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from fastapi import HTTPException
 
@@ -1887,6 +1887,8 @@ def start_run(
         "inbox_stop_code": None,
         "failure_signal_sent": False,
     }
+    _note_issued_raw_token(run, run.get("raw_token"))
+    _note_issued_prompt(run, mention)
     with _runs_lock:
         _runs[run_id] = run
 
@@ -2241,6 +2243,139 @@ def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) ->
     if len(encoded) <= max_bytes:
         return cleaned
     return encoded[: max(0, max_bytes - 3)].decode("utf-8", errors="ignore") + "…"
+
+
+_AUTH_HEADER_RE = re.compile(r"(?i)authorization\s*:\s*[^\s,;]+(?:\s+[^\s,;]+)?")
+_BEARER_TOKEN_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{6,}")
+# rev5: below this length, a shared prefix between the prompt and the raw output is too
+# likely to be ordinary shared prose ("the ", "please ") rather than a genuine echo — the
+# same floor `_BEARER_TOKEN_RE` uses for a bare token.
+_PROMPT_ECHO_MIN_LEN = 40
+
+
+def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] = None,
+                    known_prompts: Optional[Iterable[str]] = None) -> Optional[str]:
+    """flowgate.default.0466 T0007 §3.2.3: `stderr_tail`/`stdout_tail` are the provider
+    process's raw, unfiltered output — unlike `last_message`, nothing upstream of this
+    scrubs them. A provider that echoes its own outgoing `Authorization: Bearer ...` call
+    (or any bare `Bearer <token>` fragment) on failure must not have that value ride
+    verbatim into `stop_last_message_excerpt`, which `active_all`/the miniplayer show to
+    every user with chain visibility, not just whoever owns the credential.
+
+    rev4 (review finding): the two regexes above only catch a token wearing an
+    `Authorization:`/`Bearer ` label. The run's own raw task token never wears one — it
+    reaches the provider process unlabeled, as the `FLOWGATE_TOKEN` env var (L3477) — so a
+    process that dumps its own environment or echoes that value bare on failure slips past
+    both patterns untouched. `known_tokens` is the run's actual raw token(s) (this attempt's
+    current one plus every earlier attempt's, from `_note_issued_raw_token`); each is erased
+    by exact literal match, independent of any label.
+
+    rev5 (review finding): none of the above touches the PROMPT itself — T0007 §3.2.3 bans
+    that separately from a credential ("토큰·Authorization·전체 프롬프트·무제한 stdout을
+    노출하지 마라"). A CLI worker that rejects its own stdin ("invalid input, got: <prompt>"
+    is the shape a parse error takes) echoes the exact text this run wrote to the child's
+    stdin — `run["mention"]`, set at issue time (L1843) and again on every reissued retry
+    (L3048) — into `last_message`/`stderr_tail`/`stdout_tail` untouched by either regex or
+    `known_tokens`, and a SHORT prompt fits whole inside `LAST_MESSAGE_EXCERPT_BYTES`, so
+    `excerpt()` alone never trims it away. `known_prompts` is every prompt text this run has
+    written to a provider's stdin — the current attempt's and every earlier (possibly
+    already-rotated) attempt's, from `_note_issued_prompt`, the same rotation problem
+    `known_tokens` already solves. Each is erased like a known token when it appears whole.
+    Stdin was written to the child exactly once, front to back, so a provider that only
+    echoes back part of what it read (its own output got cut off first) still echoes a
+    PREFIX of the prompt, never an arbitrary interior slice — the loop below binary-searches
+    for the longest such prefix still present verbatim (each shorter prefix of a present
+    prefix is also present, so "is prompt[:k] in text" is monotonic and halves correctly)
+    and erases that instead.
+
+    rev6 (review finding): the prompt search MUST run against the ORIGINAL text, before the
+    header/token substitutions below ever touch it — an issued FlowGate prompt routinely
+    embeds this run's own `Authorization: Bearer <token>`/raw-token material as task context,
+    and a provider that echoes it back echoes it unmodified. Doing header/token redaction
+    first (the rev5 order) rewrites that embedded credential in-place, so no prefix of the
+    ORIGINAL prompt beyond the credential can still be found verbatim in the mutated string —
+    the binary search then tops out at the substring before the credential, and the
+    confidential suffix that followed `Bearer <token>` in the prompt survives untouched. Doing
+    the prompt search/removal FIRST sidesteps this entirely: the match is against the
+    unmutated text, so whatever prefix truly echoed — credential and all — is found and
+    erased as one block, before there is anything left for the header/token regexes to
+    rewrite out from under it. Header/token redaction still runs afterward, unchanged, to
+    catch credential material that appears outside of what got echoed as prompt.
+
+    rev7 (review finding): `known_prompts` is a SET, and retry/reissue tracking (see
+    `_note_issued_prompt`) deliberately keeps every earlier attempt's prompt around alongside
+    the current one — so two retained prompts can legitimately overlap, one a literal prefix
+    of the other (a reissued retry commonly reuses the whole prior prompt text and appends
+    more). Iterating a set in whatever order Python happens to hash it into is not a security
+    boundary. If the SHORTER prompt P is processed before the longer P+S and the provider
+    echoed the full P+S, the binary search against P finds all of P present and
+    `redacted.replace(prompt[:match_len], ...)` erases exactly that P-length span — leaving
+    the confidential suffix S sitting right after it in the output. Worse, P+S's own turn
+    then finds nothing: the P-prefix of P+S it binary-searches for no longer exists verbatim
+    in `redacted` (that span was just replaced), so its match tops out at 0 and it erases
+    nothing. Processing LONGEST prompts first closes this: a longer retained prompt is
+    searched and erased as one whole block before any shorter prompt that happens to be one
+    of its prefixes gets a turn, so the shorter prompt's own search — now run against text
+    that already has that whole span replaced — correctly finds nothing left to do instead of
+    carving out a partial, suffix-leaking match.
+    """
+    if not text:
+        return text
+    redacted = text
+    for prompt in sorted((p for p in known_prompts or () if p), key=len, reverse=True):
+        if len(prompt) < _PROMPT_ECHO_MIN_LEN:
+            continue
+        lo, hi, match_len = _PROMPT_ECHO_MIN_LEN, len(prompt), 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if prompt[:mid] in redacted:
+                match_len = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if match_len >= _PROMPT_ECHO_MIN_LEN:
+            redacted = redacted.replace(prompt[:match_len], "[redacted prompt]")
+    redacted = _AUTH_HEADER_RE.sub("Authorization: [redacted]", redacted)
+    redacted = _BEARER_TOKEN_RE.sub("Bearer [redacted]", redacted)
+    for token in known_tokens or ():
+        if token and len(token) >= 6:
+            redacted = redacted.replace(token, "[redacted]")
+    return redacted
+
+
+def _note_issued_raw_token(run: dict, token: Optional[str]) -> None:
+    """Remember every raw task token this run has handed a provider process (T0007 rev4
+    §3.2.3), so a later `_redact_secrets` call can scrub an unlabeled echo of it.
+
+    Deliberately NOT one of the explicit fields `_persist_run_record`/`finished_payload`
+    copy out of `run` — both build their own whitelisted dicts rather than serializing
+    `run` wholesale, so this stays process-memory-only and is never persisted or broadcast.
+    """
+    if not token:
+        return
+    run.setdefault("_issued_raw_tokens", set()).add(token)
+
+
+def _known_run_raw_tokens(run: dict) -> set[str]:
+    return {t for t in run.get("_issued_raw_tokens") or () if t}
+
+
+def _note_issued_prompt(run: dict, mention: Optional[str]) -> None:
+    """Remember every prompt text this run has handed a provider process's stdin — the
+    initial one and each reissued retry's (T0007 rev5 §3.2.3), mirroring
+    `_note_issued_raw_token`. A rotated-out EARLIER attempt's own prompt can still be the
+    thing echoed into ITS archived `fallback_history` detail, so redacting only the
+    CURRENT `run["mention"]` (which a reissue overwrites in place, L3048) would miss it —
+    same rotation problem the raw-token set already solves. Process-memory-only, same as
+    the token set: never one of `_persist_run_record`/`finished_payload`'s explicit fields.
+    """
+    if not mention:
+        return
+    run.setdefault("_issued_prompts", set()).add(mention)
+
+
+def _known_run_prompts(run: dict) -> set[str]:
+    return {p for p in run.get("_issued_prompts") or () if p}
 
 
 def _resolve_continuation_hop_provider(
@@ -2753,7 +2888,29 @@ def _retry_eligible(run: dict) -> bool:
         # token cannot register a document at all. For that run the count is not a low
         # number — it is not a measurement.
         return False
-    if peek_auto_resume(run.get("group_id")) is not None:
+    review_hop_recovery = _review_hop_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"),
+    )
+    if peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
+        # flowgate.default.0466 T0007: this check predates the review gate (0359 L0007
+        # §2.4) and reads a queue entry as proof THIS hop already produced a document and
+        # handed off — true for the continuous chains it was written for, where
+        # `request_auto_resume` is only ever called from the inbox AFTER a submission. But
+        # `run_review_gate`'s review/rework dispatch (0414 L0008 §2.4, "queue first, then
+        # launch") calls `_queue_gate_bundle` — the SAME `request_auto_resume` — BEFORE
+        # spawning the hop at all, so a review hop reliably finds its own dispatcher's
+        # queue entry sitting here on attempt 1, before it has run at all, and this check
+        # silently ate every retry: A10's `attempts_max=2` never got past 1 in production
+        # (confirmed by driving the real `run_review_gate` → `_spawn_review_hop` →
+        # `_worker` path, not just the worker or the gate alone). A review hop's own token
+        # structurally cannot register a document (§2.5: "a review token carries NO
+        # continuation_target_seq" and `docs_target` is pinned to 0), so its worker can
+        # never be the reason a NEW queue entry appears mid-run — every entry it can ever
+        # see here is the pre-spawn one, and reading that as "already handed off" is
+        # simply wrong for this hop kind. `_scope_oracle_retry_open` (rework) keeps the
+        # existing behavior: a rework's `edit` token DOES submit a document mid-run, so a
+        # queue entry appearing there can be the real thing this check exists to catch.
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
@@ -2974,7 +3131,9 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if run.get("group_id"):
         db_group_ai_leases.update_token(run["group_id"], run["run_id"], run["token_id"])
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
+    _note_issued_raw_token(run, run.get("raw_token"))
     run["mention"] = mention
+    _note_issued_prompt(run, mention)
     run["prompt_final_length"], run["prompt_final_sha256"] = prompt_digest(mention)
     if issue.get("worker_document_type"):
         run["worker_document_type"] = issue.get("worker_document_type")
@@ -5299,48 +5458,81 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
 
 
 def _review_no_verdict_excerpt(run: Optional[dict]) -> Optional[str]:
-    """T0007 §3.2.2: the most useful NON-EMPTY diagnostic for a review hop that recorded no
-    verdict, tried in this order.
+    """T0007 §3.2.2/A10-3: the excerpt a human uses to judge WHY a review hop recorded no
+    verdict, and it must show both the provider/attempt/exit context AND the actual failure
+    core (a usage-limit message, stderr, stdout or a timeout diagnosis) together — neither
+    alone is enough to act on.
 
-    `run.get("last_message")` is usually EMPTY for exactly the incident shape T0007 names —
-    a provider that hit a usage limit and died before writing anything — so the plain
-    `excerpt(run.get("last_message"))` every other stop uses would silently collapse to
-    None and leave the paused card with nothing but the generic stop sentence. Falling
-    through stderr/stdout/timeout diagnosis before the last resort keeps the excerpt
-    non-empty for exactly the cases those signals actually exist for, without inventing any
-    new stored field — everything read here already lives on the run from L0007's own
-    per-attempt observations.
+    Returning "the first non-empty source" (the earlier shape of this function) is wrong
+    here: `run["fallback_history"]` always has a truthy `detail` for every attempt this hop
+    already retried past (`_no_output_detail` unconditionally constructs a generic "worker
+    exited ... without registering a document" sentence, even with no message), so it would
+    win over the CURRENT — final — attempt's own `stderr_tail`/`stdout_tail`, which is
+    exactly where the incident's real usage-limit text lives. The core below is therefore
+    picked from the LATEST attempt's own signals first, the archived (earlier-attempt)
+    detail only as a last resort before the fully-generic sentence, and it is always
+    composed onto the provider/attempt/exit head rather than substituted for it.
+
+    `last_message`/`stderr_tail`/`stdout_tail` can all carry raw, unfiltered process output
+    (§3.2.3): `_recover_cli_last_message` sets `last_message` to the CLI's full trimmed
+    stdout for a `claude`-kind attempt, not just a parsed "final answer" field, so a provider
+    that echoes its own outgoing `Authorization: Bearer ...` call on failure lands that value
+    in `last_message` exactly as readily as in `stderr_tail`/`stdout_tail`. All three are
+    routed through `_redact_secrets` before `excerpt()`. The archived-attempt fallback below
+    reads the SAME `last_message` back out — `_no_output_detail` embeds it verbatim into the
+    `fallback_history[-1]["detail"]` sentence (§2.6) — so that value is redacted too;
+    `timeout_diagnosis` is a watchdog-composed sentence (`_resolve_timeout_diagnostics`, pure
+    f-strings over counters) that never carries process output, so it is left as-is.
+
+    rev4: `_redact_secrets`'s two regexes only strip a token wearing an `Authorization:`/
+    `Bearer ` label. The run's own raw task token rides to the provider process unlabeled
+    (the `FLOWGATE_TOKEN` env var), so every core source below also gets the run's own known
+    raw token(s) — this attempt's current one and every earlier attempt's, tracked by
+    `_note_issued_raw_token` — for literal-value redaction, independent of any label.
+
+    rev5: every prompt text this run has written to a provider's stdin — this attempt's
+    current `run["mention"]` and every earlier (possibly already-rotated) attempt's, from
+    `_note_issued_prompt` — redacts every core source below, plus the archived-attempt
+    fallback (an earlier attempt's OWN prompt could just as easily be echoed into ITS
+    archived detail), exactly like `known_tokens`.
     """
     run = run or {}
-    message = excerpt(run.get("last_message"))
-    if message:
-        return message
-    history = run.get("fallback_history") or []
-    if history:
-        detail = excerpt((history[-1] or {}).get("detail"))
-        if detail:
-            return detail
-    stderr_tail = excerpt(run.get("stderr_tail"))
-    if stderr_tail:
-        return stderr_tail
-    stdout_tail = excerpt(run.get("stdout_tail"))
-    if stdout_tail:
-        return stdout_tail
-    timeout_diagnosis = excerpt(run.get("timeout_diagnosis"))
-    if timeout_diagnosis:
-        return timeout_diagnosis
+    known_tokens = _known_run_raw_tokens(run)
+    known_prompts = _known_run_prompts(run)
+    core = (
+        excerpt(_redact_secrets(run.get("last_message"), known_tokens, known_prompts))
+        or excerpt(_redact_secrets(run.get("stderr_tail"), known_tokens, known_prompts))
+        or excerpt(_redact_secrets(run.get("stdout_tail"), known_tokens, known_prompts))
+        or excerpt(run.get("timeout_diagnosis"))
+    )
+    if not core:
+        history = run.get("fallback_history") or []
+        if history:
+            core = excerpt(_redact_secrets((history[-1] or {}).get("detail"),
+                                           known_tokens, known_prompts))
+    # T0007 rev2: `continuation_selected_provider_name` is the CHAIN HEAD picked before this
+    # attempt ran (0435 T0004) and is never updated afterward. When an override-less review
+    # hop's startup fell back past that head, `_execute_provider_chain` moved
+    # `run["provider"]`/`run["provider_id"]` to whichever provider actually started
+    # (L2620-2626) — that is the provider whose exit_code/attempts_used this sentence
+    # describes, so it must win. The two only diverge on a startup fallback; with no
+    # fallback `run["provider"]` is chain[0] too (L2512-2513), so this reorder is a no-op
+    # for every other shape.
     provider_name = (
-        run.get("continuation_selected_provider_name")
-        or (run.get("provider") or {}).get("name")
+        (run.get("provider") or {}).get("name")
+        or run.get("continuation_selected_provider_name")
         or run.get("continuation_selected_provider_id")
         or "the reviewer"
     )
     # Never empty: even with no message, tail or diagnosis anywhere, the provider/attempt/
     # exit-code sentence T0007 §3.2.3 requires is always constructible.
-    return excerpt(
+    head = (
         f'"{provider_name}" exited {run.get("exit_code")} on attempt '
         f'{int(run.get("attempts_used") or 0)} without recording a review verdict.'
     )
+    if core and core not in head:
+        return excerpt(f"{head} {core}")
+    return excerpt(head)
 
 
 def _write_handoff_row(
@@ -5425,16 +5617,40 @@ def _clear_handoff_row(group_id: Optional[str], stop_run_id: Optional[str]) -> N
 def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
     """Terminus of every branch that decides not to spawn the next hop (0406 T0022 item 4).
 
-    Two things must happen.
+    Three things must happen.
       1. Leave a durable row, distinguishing the reason via stop_code, so the user can
          resume the chain from the same place. No branch disappears silently.
-      2. Release the lease the handoff switched to releasing. _finalize_run only calls
+      2. Correct the run's OWN stop_code and, ONLY when the reason is
+         `REVIEW_NO_VERDICT_STOP_CODE`, fire the failure signal (T0007 §3.2.5 — that
+         section is entirely about review_no_verdict; nothing in T0007 asks for the other
+         six REVIEW_STOP_CODES to speak here). `_finalize_run` could only tag this hop
+         `hop_handoff` — a gate bundle was already queued before it even spawned (L0008
+         §2.4 "queue first, then launch"), so `respawn_pending` was true and the real
+         reason (e.g. `review_no_verdict`) was not knowable yet. `_notify_chain_failure_
+         if_needed` re-reads `run["stop_code"]` to decide whether to speak at all, so
+         without this correction a review hop that exhausts its retries here writes a
+         paused row but never raises the one required 🔔 failure signal. The check is
+         NOT redundant with that function's own `stop_code in ENGINE_NOTIFY_STOP_CODES`
+         gate: all seven REVIEW_STOP_CODES are members of that set (line ~199), so
+         calling unconditionally here would also notify on `review_verdict_hold` /
+         `review_stalled` / `review_reject_denied` / `review_reject_failed` — none of
+         which T0007 asked for, and the first of which is "waiting on a human answer,
+         not a failure" by the exact same reasoning `question_pending` is kept silent
+         (see the comment above `_notify_chain_failure_if_needed`). Every OTHER caller of
+         this function already passes a stop_code (`hop_handoff_failed`, `cancelled`,
+         `approve_denied`, ...) that isn't in `ENGINE_NOTIFY_STOP_CODES`, or a mode that
+         isn't continuous/scope-oracle, so this stays a no-op for them regardless.
+      3. Release the lease the handoff switched to releasing. _finalize_run only calls
          begin_handoff and skips release when it sees a queue, so without this the
          group's next run is blocked until the lease expires. release only deletes rows
          whose run_id matches, so calling it twice is safe (restart reclaim included).
     """
     group_id = run.get("group_id")
+    run["stop_code"] = stop_code
+    run["resumable"] = is_resumable(stop_code)
     _write_handoff_row(group_id, pending, run, stop_code=stop_code)
+    if stop_code == REVIEW_NO_VERDICT_STOP_CODE:
+        _notify_chain_failure_if_needed(run)
     if not group_id:
         return
     try:
@@ -7023,6 +7239,12 @@ def resume_chain(
         gate_provider_overrides = db_paused.load_json_map(
             row.get("continuation_provider_overrides")
         )
+        # Needed by both the gate-dispatch bundle below and the plain "new" fallback further
+        # down — resolved once, here, so the two paths can never drift into two different
+        # answers for the same paused row.
+        gate_note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
+        gate_default_note = (row.get("continuation_default_note") or "").strip() or None
+        gate_restart_max_attempts = row.get("continuation_restart_max_attempts")
 
         # flowgate.default.0466 T0007 §3.3.3/A11: a row parked by REVIEW_NO_VERDICT_STOP_CODE
         # (or a legacy REVIEW_CAP_REACHED_STOP_CODE row that still needs another round) targets
@@ -7033,8 +7255,19 @@ def resume_chain(
         # cold-derives everything else — no `last_stage`/`rounds_before` to restore, the DB
         # review-row count IS the round count. A gate that resolves to a plain work step
         # (nothing pending, or count=0) falls through unchanged to the existing "new" path.
+        #
+        # This bundle is exactly what `run_review_gate`/`_settle_gate_pass`/`_spawn_auto_resume`
+        # read from later — a `pass` verdict on the resumed hop settles through THIS SAME
+        # dict via the auto-resume queue (§2.9), so every field those callees hard-index
+        # (`target_seq`) or silently carry forward (`note_overrides`, `default_note`,
+        # `restart_max_attempts`) has to be here now, not just the fields the gate itself
+        # reads. Omitting them does not fail loudly at dispatch time — the review/rework hop
+        # launches fine — it fails later, either as a `KeyError` in `_spawn_auto_resume` once
+        # the verdict lands and the chain tries to advance past this step, or as a silently
+        # dropped handoff note / restart budget.
         gate_bundle = {
             "doc_ref": row["doc_ref"],
+            "target_seq": target_seq,
             "review_count_overrides": review_count_overrides,
             "reviewer_overrides": reviewer_overrides,
             "locale": locale,
@@ -7049,6 +7282,9 @@ def resume_chain(
             "provider_overrides": gate_provider_overrides,
             "base_provider_id": gate_base_provider_id,
             "provider_pinned": gate_provider_pinned,
+            "note_overrides": gate_note_overrides,
+            "default_note": gate_default_note,
+            "restart_max_attempts": gate_restart_max_attempts,
         }
         try:
             gate = resolve_review_gate(gate_bundle)
@@ -7124,10 +7360,10 @@ def resume_chain(
         provider_pinned = gate_provider_pinned
         base_provider_id = gate_base_provider_id
         provider_overrides = gate_provider_overrides
-        note_overrides = db_paused.load_json_map(row.get("continuation_note_overrides"))
-        default_note = (row.get("continuation_default_note") or "").strip() or None
+        note_overrides = gate_note_overrides
+        default_note = gate_default_note
         step_timeout_sec = row.get("continuation_step_timeout_sec")
-        restart_max_attempts = row.get("continuation_restart_max_attempts")
+        restart_max_attempts = gate_restart_max_attempts
         # review_count_overrides / reviewer_overrides were already resolved above, before the
         # gate-dispatch check (T0007 §3.3.3) — this plain "new" path reuses the same values.
         try:

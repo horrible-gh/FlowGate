@@ -62,6 +62,13 @@ class FakePausedStore:
 
     def upsert(self, *, group_id, doc_ref, paused_by, paused_at,
                continuation_target_seq, docs_target, docs_reached,
+               # flowgate.default.0466 T0007: no test in this file drove a real
+               # `_write_handoff_row` call before the A10 integrated-gate tests — every
+               # earlier one only inspected `run` dict state. Named explicitly, not
+               # swallowed by **kwargs, for the same reason the DB0009 fields below are:
+               # a permissive double would silently pass while dropping the chain identity
+               # `_write_handoff_row` always sends (L5382-5440).
+               chain_id=None, chain_docs_target=None, chain_docs_reached=0,
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
@@ -88,6 +95,8 @@ class FakePausedStore:
             "group_id": group_id, "doc_ref": doc_ref, "paused_by": paused_by,
             "paused_at": paused_at, "continuation_target_seq": continuation_target_seq,
             "docs_target": docs_target, "docs_reached": docs_reached,
+            "chain_id": chain_id, "chain_docs_target": chain_docs_target,
+            "chain_docs_reached": chain_docs_reached,
             "stop_kind": stop_kind, "stop_code": stop_code, "stop_run_id": stop_run_id,
             "stop_last_message_excerpt": stop_last_message_excerpt,
             "continuation_base_provider_id": continuation_base_provider_id,
@@ -120,6 +129,27 @@ class FakePausedStore:
 
     def exists(self, group_id):
         return group_id in self.rows
+
+    def release_owned(self, group_id, *, paused_by, paused_at, stop_kind, stop_run_id):
+        # flowgate.default.0466 T0007 rev4 (review finding #3 / A11): resume_chain()'s
+        # CAS-consume, needed so the new integrated A10-3-then-resume test can drive a
+        # real [이어서 진행] on the row a real park just wrote, instead of a row a test
+        # hand-built and fed straight to _park_handoff.
+        row = self.rows.get(group_id)
+        if row is None:
+            return None
+        normalized = stop_kind or "user"
+        if (row.get("paused_by") != paused_by
+                or row.get("paused_at") != paused_at
+                or (row.get("stop_kind") or "user") != normalized
+                or row.get("stop_run_id") != stop_run_id):
+            return None
+        return self.rows.pop(group_id)
+
+    def delete_system_stop(self, group_id, stop_run_id):
+        row = self.rows.get(group_id)
+        if row and row.get("stop_kind") == "system" and row.get("stop_run_id") == stop_run_id:
+            self.rows.pop(group_id, None)
 
 
 class FakeDocs:
@@ -185,18 +215,24 @@ class FakeReviews:
     def list_by_doc(self, doc_id):
         if self._late_verdict_in is not None:
             if self._late_verdict_in <= 0:
-                self.rows.setdefault(doc_id, []).append(
-                    {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
-                     "verdict": "pass", "revision_no": 0, "findings": "[]"})
+                self.rows.setdefault(doc_id, []).insert(
+                    0, {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
+                        "verdict": "pass", "revision_no": 0, "findings": "[]"})
                 self._late_verdict_in = None
             else:
                 self._late_verdict_in -= 1
         return list(self.rows.get(doc_id, []))
 
-    def add_verdict(self, doc_id, verdict="pass"):
-        self.rows.setdefault(doc_id, []).append(
-            {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
-             "verdict": verdict, "revision_no": 0, "findings": "[]"})
+    def add_verdict(self, doc_id, verdict="pass", revision_no=0):
+        # flowgate.default.0466 T0007 rev4: newest first, like the real
+        # document_reviews.list_by_doc contract `resolve_review_gate` relies on
+        # (`latest = reviews[0]`) — a plain append put the FIRST verdict ever added
+        # permanently at index 0, which was invisible while no test ever added a second
+        # one for the same doc_id, but silently wrong the moment a real round-1 verdict
+        # and a round-2 verdict coexist (review finding #3).
+        self.rows.setdefault(doc_id, []).insert(
+            0, {"id": len(self.rows.get(doc_id, [])) + 1, "doc_id": doc_id,
+                "verdict": verdict, "revision_no": revision_no, "findings": "[]"})
 
 
 @pytest.fixture
@@ -254,7 +290,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.storage_paths, "to_storage_relative",
                         lambda path, project=None: str(path))
     for name in ("upsert", "get_by_group", "delete_by_group", "delete_and_return",
-                 "exists", "list_by_user"):
+                 "exists", "list_by_user", "release_owned", "delete_system_stop"):
         monkeypatch.setattr(db_paused, name, getattr(paused, name))
     monkeypatch.setattr(db_runs, "upsert", lambda row: records.append(dict(row)))
     monkeypatch.setattr(db_runs, "maybe_purge", lambda: None)
@@ -378,6 +414,20 @@ def _wait_finished(run_id, timeout=30.0):
             return run
         time.sleep(0.02)
     raise AssertionError(f"run {run_id} did not finish within {timeout}s")
+
+
+def _wait_until(predicate, timeout=5.0, message="condition"):
+    """Poll `predicate` until it is truthy (flowgate.default.0466 T0007 A10 integrated
+    tests). `_worker` runs on a background thread and calls `_maybe_auto_resume_hop`
+    strictly AFTER `_wait_finished` can already observe `status == "finished"` (L2601-2604),
+    so anything that only happens inside that tail call — a real park, a real gate
+    settlement — needs its own wait instead of racing `_wait_finished`'s return."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"{message} did not become true within {timeout}s")
 
 
 def _scripted_worker(env, monkeypatch, script):
@@ -1424,6 +1474,194 @@ class TestReviewHopNoVerdictRecovery0466:
         assert run["attempts_used"] == 1
         assert run["attempts_max"] == 1
         assert run["outcome"] == "none"
+
+
+# ── flowgate.default.0466 T0007 rev2 review finding #2: A10-1/A10-3 at the INTEGRATED
+# boundary. Every test above only proves the run's OWN attempts/outcome; production never
+# reaches `review_no_verdict` that way — `_worker`'s tail call to `_maybe_auto_resume_hop`
+# (L2601-2604) pops the bundle `run_review_gate`'s review branch queues BEFORE the hop is
+# spawned (L2539-2544) and re-resolves the SAME gate for real once the hop ends. A
+# standalone `_start_review()` call with nothing queued never exercises that re-entry —
+# `_maybe_auto_resume_hop` finds nothing to pop and returns immediately — so it can never
+# reach `_park_handoff`/`resolve_review_gate`'s stop branch, no matter how the worker itself
+# behaves. These two tests queue that bundle first, exactly as the real dispatch does, so
+# the worker's real result has to survive the same finalization-to-gate handoff production
+# uses. ──
+class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
+    ITEM_SEQ = 5
+    # An UNFILLED slot past the review slot, so a later [이어서 진행] on this same group
+    # (the new resume test below) has a real pending worker step to target — production
+    # never parks a review-only sequence with nothing else left to do, and
+    # `_paused_row_resume_state`'s `docs_target` check would otherwise refuse the resume
+    # with `no_pending_worker_steps` (flowgate.default.0466 T0007 rev4 review finding #3).
+    NEXT_ITEM_SEQ = 6
+
+    def _wire_pending_slot(self, env, monkeypatch):
+        """Makes `_pending_review_slot(DOC_REF)` resolve for real (L5878-5918) — the other
+        tests in this file never need this because they never call `resolve_review_gate`."""
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda s: [
+            {"item_seq": self.ITEM_SEQ, "type": "TR", "result_doc_id": DOC_REF},
+            {"item_seq": self.NEXT_ITEM_SEQ, "type": "TR", "result_doc_id": None},
+        ])
+        monkeypatch.setattr(svc.db_docs, "get_by_id", lambda doc_id: {
+            **env["docs"].get_by_id(doc_id),
+            "doc_review_status": "pending_review",
+            "type_code": "TR",
+        })
+
+    def _queue_first_dispatch(self, env):
+        """What `run_review_gate`'s review branch queues before spawning the hop
+        (L6539-6544) — `last_stage`/`rounds_before` are exactly what `_check_expected_
+        progress` reads back on the re-entry call.
+
+        flowgate.default.0466 T0007 rev4 (review finding #3): T0007 §4 A10-1 spells out
+        `count=2`, "1회차 issues와 rework가 착지한 뒤 2회차 review의 첫 attempt가..." — a
+        REAL round 2, not a bare first-and-only round mislabeled as one. Round 1's `issues`
+        verdict is seeded for real (the doc's own `revision_no`, still at `FakeDocs`'
+        default of 3, already stands ABOVE that verdict's `revision_no=0`, i.e. round 1's
+        rework already landed), and `round_no`/`rounds_used` are read back from an ACTUAL
+        `resolve_review_gate` call on that state — not hand-picked — so a regression in the
+        round-1-to-round-2 transition itself would fail this precondition assertion before
+        the rest of the test even runs."""
+        env["reviews"].add_verdict(DOC_REF, verdict="issues", revision_no=0)
+        gate = svc.resolve_review_gate({
+            "doc_ref": DOC_REF, "review_count_overrides": {str(self.ITEM_SEQ): 2},
+        })
+        assert gate["stage"] == svc.REVIEW_HOP_KIND and gate["round_no"] == 2, (
+            "precondition: round 1's landed issues+rework must really resolve to round 2, "
+            f"got {gate!r}")
+        svc.request_auto_resume(GROUP, {
+            "doc_ref": DOC_REF, "issued_to": "usr_admin", "chain_id": "run_chain_review",
+            "target_seq": self.NEXT_ITEM_SEQ,
+            "last_stage": svc.REVIEW_HOP_KIND, "rounds_before": gate["rounds_used"],
+            "review_count_overrides": {str(self.ITEM_SEQ): 2},
+        })
+
+    def test_two_no_verdict_attempts_really_park_through_the_real_gate(self, env, monkeypatch):
+        """A10-3, integrated: both attempts leave no review row, so the real re-entered
+        `resolve_review_gate` must see `len(reviews) <= rounds_before` and stop with
+        `review_no_verdict` — a real paused row, not a fabricated `_park_handoff` call."""
+        self._wire_pending_slot(env, monkeypatch)
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),
+            (None, 1, None),
+        ])
+        self._queue_first_dispatch(env)
+
+        res = _start_review(env, provider_id="aip_2")
+        run = _wait_finished(res["run_id"])
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == 2
+        assert run["outcome"] == "none"
+
+        _wait_until(
+            lambda: env["paused"].rows.get(GROUP, {}).get("stop_code")
+            not in (None, svc.HOP_HANDOFF_STOP_CODE),
+            message="the group parking for real",
+        )
+        parked = env["paused"].rows[GROUP]
+        assert parked["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
+        assert parked["stop_kind"] == "system"
+        card = parked["stop_last_message_excerpt"]
+        assert card and "attempt 2" in card
+        # Exactly one system row for the group: the in-hop A10 retry (attempt 1 -> 2) never
+        # wrote a second paused row of its own — only the final gate re-entry did.
+        assert len(env["paused"].rows) == 1
+        # Round/rejection state is unchanged: round 2 never recorded a review row of its
+        # own, so only round 1's seeded `issues` verdict is present — rounds_used stays 1.
+        assert [r["verdict"] for r in env["reviews"].rows[DOC_REF]] == ["issues"]
+        # T0007 rev4 §3.2.5: exactly one failure signal on final failure — never zero.
+        assert len(env["signals"]) == 1
+        signal = env["signals"][0]
+        assert signal["extra"]["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
+        assert signal["extra"]["attempts_used"] == 2
+
+    def test_a_verdict_on_the_second_attempt_really_reaches_the_real_gate_as_a_pass(
+            self, env, monkeypatch):
+        """A10-1, integrated: attempt 2 lands a verdict, so the real re-entered
+        `resolve_review_gate` must see the review row (`rounds_used == 1`) and take the
+        `pass` path — never `review_no_verdict` — and hand the real slot/doc off to
+        `_settle_gate_pass`. That settlement's own approval machinery is a separately
+        tested boundary (TestGateExecution in test_ai_invoke_review_gate_0414.py), so it —
+        and the following work hop's spawn — are the only two calls stubbed here, matching
+        that file's own isolation convention; everything upstream of them is real."""
+        self._wire_pending_slot(env, monkeypatch)
+        settled = []
+        monkeypatch.setattr(
+            svc, "_settle_gate_pass",
+            lambda g, slot, b, r: settled.append(slot["doc_id"]) or "continue")
+        monkeypatch.setattr(svc, "_spawn_auto_resume", lambda g, b: None)
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),
+            (None, 0, "verdict"),
+        ])
+        self._queue_first_dispatch(env)
+
+        res = _start_review(env, provider_id="aip_2")
+        run = _wait_finished(res["run_id"])
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == 2
+        assert run["outcome"] == "complete"
+
+        _wait_until(lambda: bool(settled), message="the real gate settling the landed pass")
+        assert settled == [DOC_REF]
+        # No failure signal on a successful recovery (T0007 §3.2.5): the failed FIRST
+        # attempt must not park or notify the chain that went on to pass on the second.
+        assert env["signals"] == []
+        # The gate resolved the SAME verdict the worker just recorded, not a stale park.
+        parked = env["paused"].rows.get(GROUP)
+        assert parked is None or parked["stop_code"] != svc.REVIEW_NO_VERDICT_STOP_CODE
+
+    def test_the_real_round_two_park_above_resumes_into_round_two_again(
+            self, env, monkeypatch):
+        """A11-1, chained onto A10-3 above instead of a separately hand-seeded row
+        (flowgate.default.0466 T0007 rev4 review finding #3): T0007 §4 A11-1 says "위 A10-3의
+        2회차 정지 행을 [이어서 진행]으로 재개하면" — THE row A10-3 parks, not a lookalike one
+        built by calling `_park_handoff` directly with a hand-made run. This test produces
+        that row exactly the way `test_two_no_verdict_attempts_really_park_through_the_real_
+        gate` above does — real worker, real two-attempt exhaustion, real
+        `_maybe_auto_resume_hop` → `run_review_gate` → `_park_handoff` — and then calls the
+        real `svc.resume_chain` on it."""
+        self._wire_pending_slot(env, monkeypatch)
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),
+            (None, 1, None),
+        ])
+        self._queue_first_dispatch(env)
+
+        res = _start_review(env, provider_id="aip_2")
+        _wait_finished(res["run_id"])
+        _wait_until(
+            lambda: env["paused"].rows.get(GROUP, {}).get("stop_code")
+            not in (None, svc.HOP_HANDOFF_STOP_CODE),
+            message="the group parking for real",
+        )
+        parked = env["paused"].rows[GROUP]
+        assert parked["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
+
+        spawned = {}
+        monkeypatch.setattr(
+            svc, "_spawn_review_hop",
+            lambda g, b, gate: spawned.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: pytest.fail("a no-verdict review park must not dispatch rework"))
+
+        result = svc.resume_chain(
+            group_id=GROUP, user_id="usr_admin",
+            api_base_url="http://127.0.0.1:1/flowgate/api/v1")
+
+        assert result == {"ok": True}
+        # round_no=2 again — never 3, never a fresh round 1, and count=2 (from the real
+        # round-1 history) is not treated as spent just because round 2 left no verdict.
+        assert spawned["gate"]["round_no"] == 2
+        assert spawned["gate"]["rounds_used"] == 1
+        assert spawned["bundle"]["last_stage"] == svc.REVIEW_HOP_KIND
+        assert spawned["bundle"]["rounds_before"] == 1
+        assert spawned["bundle"]["doc_ref"] == DOC_REF
+        # The stale review_no_verdict stop was CAS-consumed, not left behind as a duplicate.
+        assert env["paused"].rows[GROUP]["stop_code"] != svc.REVIEW_NO_VERDICT_STOP_CODE
+
 
 
 class TestExcerpt:
