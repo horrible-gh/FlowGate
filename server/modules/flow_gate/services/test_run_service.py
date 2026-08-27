@@ -741,6 +741,36 @@ def load_test_run_embed(doc_id: str) -> tuple[Optional[dict], list[dict]]:
     return latest, history
 
 
+def load_group_test_run(group_id: Optional[str]) -> dict:
+    """Group-wide "a test is running right now" signal for the document detail payload.
+
+    0441 TR0005 rev2. The per-document ``test_run`` embed above only ever describes the
+    document being fetched, so a sibling document's action bar had no way to know a run
+    was in flight and stayed fully clickable. This block is computed from the group the
+    fetched document belongs to, exactly like the workflow head fields next to it, so
+    every tab of the group receives the same answer.
+
+    0441 TR0005 rev10: a query failure returns ``active=None``, not ``active=False``. The
+    client (DocHeader.vue's ``groupTestRunActive``) only treats a strict boolean as an
+    answer and otherwise reports "unconfirmed", which MainPanel then fail-closes to locked.
+    Answering ``False`` here was indistinguishable from "confirmed: no run in this group" —
+    a transient DB error mid-run would unlock every sibling document's action bar for as
+    long as the error persisted, defeating the whole point of this display-only extra.
+    """
+    try:
+        row = db_test_runs.get_active_by_group(group_id or "")
+    except Exception:  # noqa: BLE001 - a display-only extra must never break document GET
+        return {"active": None, "run_id": None, "doc_id": None, "status": None}
+    if not row:
+        return {"active": False, "run_id": None, "doc_id": None, "status": None}
+    return {
+        "active": True,
+        "run_id": row.get("run_id"),
+        "doc_id": row.get("doc_id"),
+        "status": row.get("status"),
+    }
+
+
 def execute_run(run: dict) -> None:
     # Safety net (0163 / B0001 family): the inner executor finalizes the run row on every
     # *expected* path (setup_failed / passed / failed), but an unexpected exception anywhere

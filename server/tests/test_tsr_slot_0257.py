@@ -200,6 +200,31 @@ def test_first_run_still_creates_the_report(env):
     assert len(env["rec"].created) == 1
 
 
+# ── 0441 T0004: 수동 TSR 차단이 공식 조립 경로에는 닿지 않는다 ──────────────────────
+
+def test_manual_tsr_ban_does_not_reach_the_official_assembly(env):
+    """0441 T0004 item 3 — TSR is now refused at every MANUAL creation gate
+    (``/documents/next-empty``, inbox ``action:new``, the ordinary ``'new'`` token). The
+    ban is about who is writing the document, not about the type existing: this path is the
+    server writing it from a finished run, and it must keep working exactly as before.
+
+    Asserted together on purpose. ``is_server_assembled_type('TSR')`` being true is the
+    precondition that makes the assertion meaningful — without it this would just be
+    ``test_first_run_still_creates_the_report`` again, passing for the wrong reason.
+    """
+    from modules.flow_gate.documents.constants import is_server_assembled_type
+
+    assert is_server_assembled_type("TSR") is True
+
+    tsr_doc_id = env["svc"].assemble_tsr(TS_DOC, _run(run_id="trun_official"), CASES)
+
+    assert tsr_doc_id == "flowgate.default.0257.0101-TSR"
+    assert len(env["rec"].created) == 1
+    assert env["rec"].created[0]["type_code"] == "TSR"
+    # 번호도 문서도 하나뿐 — 수동 생성이 깨뜨렸던 바로 그 유일성이다.
+    assert len(env["rec"].reserved) == 1
+
+
 # ── NR0003 필수 회귀 (c): 동일 run 완료 재호출은 새 번호를 소비하지 않는다 ──────────
 
 def test_same_run_completion_retry_reuses_the_recorded_report(env):

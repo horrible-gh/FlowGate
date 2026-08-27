@@ -38,6 +38,7 @@ from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents.constants import (
     HEAD_TYPE_GUARD_EXEMPT_TYPES,
     WORK_PLAN_TYPE,
+    is_server_assembled_type,
 )
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
@@ -1792,6 +1793,29 @@ _WORKFLOW_HEAD_MISMATCH_COPY = {
     ),
 }
 
+# 0441 T0004 item 3 (NR0003 §2): refusal copy for a manual action:new submission of a
+# type the SERVER assembles. head==submitted passed the Step 5.8 guard unchallenged, so
+# this is its own check with its own sentence — the worker has to be told the run assembles
+# the report, not that it picked the wrong type.
+_SERVER_ASSEMBLED_NEW_COPY = {
+    "ko": (
+        "{doc_type}는 테스트 실행 결과로 서버가 조립하는 문서입니다. 직접 작성해 등록할 수 "
+        "없습니다. 문서는 등록되지 않았습니다. 승인된 테스트시나리오(TS) 문서로 테스트를 "
+        "실행하면 서버가 {doc_type}를 만들어 워크플로에 등록합니다."
+    ),
+    "en": (
+        "{doc_type} is assembled by the server from a test run. It cannot be written and "
+        "submitted by hand. The document was not registered. Run the test on the approved "
+        "test-scenario (TS) document and the server will create the {doc_type} and register "
+        "it in the workflow."
+    ),
+    "ja": (
+        "{doc_type} はテスト実行の結果からサーバーが組み立てる文書です。手作業で作成して登録 "
+        "することはできません。文書は登録されていません。承認済みのテストシナリオ(TS)文書で "
+        "テストを実行すれば、サーバーが {doc_type} を作成してワークフローに登録します。"
+    ),
+}
+
 _TR_SCOPE_FALLBACK_COPY = {
     "ko": "TR 작업범위 검증 반려",
     "en": "TR scope validation rejected",
@@ -3391,6 +3415,21 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 422,
                 tr_scope_result.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
             )
+
+    # ── Step 5.75: Server-assembled type guard (0441 T0004 item 3) ─────────
+    # A TSR is built by test_run_service.assemble_tsr() out of a finished run and is
+    # registered through document_service directly — it never arrives here. So an
+    # action:new submission naming one is, by construction, somebody writing it by hand.
+    # Step 5.8 below cannot catch it: it only compares head type against submitted type,
+    # and in the reported case both were TSR, so the manual document sailed through and
+    # took the slot the run was going to fill (NR0003 §2). Placed before Step 5.8 and
+    # before every side effect (numbering, storage, the document row), so a refusal —
+    # dry-run or real — leaves the group exactly as it was.
+    if is_server_assembled_type(doc_type):
+        return _fail(
+            409,
+            _SERVER_ASSEMBLED_NEW_COPY[_locale].format(doc_type=doc_type.upper()),
+        )
 
     # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
     # Compare before the shared dry-run branch and before numbering/storage so a

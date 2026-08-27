@@ -201,6 +201,28 @@ PROTECTED = [
         ],
     },
     {
+        "file": "modules/flow_gate/api/inbox_routes.py",
+        "symbols": [
+            "_SERVER_ASSEMBLED_NEW_COPY",
+            # The census matches the resolved LITERAL, not the constant name, so the ko
+            # branch's own three source lines are registered as well.
+            "테스트 실행 결과로 서버가 조립하는 문서입니다",
+            "승인된 테스트시나리오(TS) 문서로 테스트를",
+            "만들어 워크플로에 등록합니다",
+        ],
+        "reason": (
+            "0441 T0004 item 3: the ko branch of _SERVER_ASSEMBLED_NEW_COPY, the refusal a "
+            "worker reads when it tries to submit a hand-written TSR. Category A "
+            "(locale-dictionary): the en and ja branches carry the same sentence and are "
+            "scanned for leakage by test_server_korean_leak_0355.py as usual. Registered "
+            "rather than added to the file's line cap, so this T contributes zero to the "
+            "census budget."
+        ),
+        "tests": [
+            "tests/test_server_assembled_tsr_0441.py::test_inbox_new_tsr_refusal_speaks_the_workers_locale",
+        ],
+    },
+    {
         "file": "templates/flow_gate/group_detail.html",
         "symbols": ["다음 예상 액션", "멘트복사"],
         "reason": (
