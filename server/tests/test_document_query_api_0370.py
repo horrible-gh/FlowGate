@@ -672,7 +672,7 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
     """
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.db import documents as db_docs
-    from modules.flow_gate.services import token_service
+    from modules.flow_gate.services import git_service, token_service
     from modules.flow_gate.storage import paths as storage_paths
 
     doc_id = "testprj-__ALL__-0370-TR0005"
@@ -695,7 +695,11 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
 
     with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True), \
             patch.object(token_service, "verify", return_value=token_rec), \
-            patch.object(token_service, "consume", return_value=None):
+            patch.object(token_service, "consume", return_value=None), \
+            patch.object(git_service, "worktree_untracked_summary", return_value={
+                "total_count": 3, "excluded_artifact_count": 2,
+                "staged_new_file_count": 1,
+            }):
         app = FastAPI()
         app.include_router(inbox_routes.router)
         resp = TestClient(app).post(
@@ -712,6 +716,10 @@ def test_inbox_edit_response_carries_the_change_summary(tmp_path, storage_root):
     data = resp.json()
     # 기존 필드는 값까지 그대로다 — change_summary 는 그 옆에 나란히 붙는다.
     assert data["ok"] is True and data["revision_no"] == 1
+    assert data["worktree_untracked"] == {
+        "total_count": 3, "excluded_artifact_count": 2,
+        "staged_new_file_count": 1,
+    }
     summary = data["change_summary"]
     assert summary["changed"] is True
     assert summary["before"]["revision_no"] == 0 and summary["after"]["revision_no"] == 1
@@ -821,6 +829,7 @@ def test_inbox_new_response_carries_the_change_summary(tmp_path, storage_root):
         ["1. 새 구간"], ["2. 둘째 구간"],
     ]
     assert summary["sections_removed"] == [] and summary["sections_unchanged"] == 0
+    assert "worktree_untracked" not in data, "N is not a source-mutating document type"
     assert f"@r0#L" in summary["sections_added"][0]["ref"]
     # 요약은 응답에만 있다 — 표도 컬럼도 늘리지 않았다.
     from modules.flow_gate.db import documents as db_docs

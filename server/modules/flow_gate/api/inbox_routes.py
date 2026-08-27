@@ -41,6 +41,7 @@ from modules.flow_gate.documents.constants import (
 )
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate.services import git_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import tr_commit_service
@@ -3352,6 +3353,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # — a violation-detection feature dropping a normal submission with a 500 is worse
     # than the original incident it guards against.
     tr_scope_result: Optional[dict] = None
+    worktree_untracked: Optional[dict] = None
     # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
     # point through Step 5.9. Priority: the token's continuation_locale (unmanned
     # worker) > the request's x-locale header > ko (same order as 0355 L0007 §2-1,
@@ -3409,6 +3411,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 422,
                 tr_scope_result.get("notice") or _TR_SCOPE_FALLBACK_COPY[_locale],
             )
+
+        worktree_untracked = git_service.worktree_untracked_summary(
+            project, group["group_id"]
+        )
 
     # ── Step 5.8: Workflow-head type guard (0374 T0004) ────────────────────
     # Compare before the shared dry-run branch and before numbering/storage so a
@@ -3502,6 +3508,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if tr_scope_result is not None:
         new_checks.append("tr_scope")
         would_register["tr_scope"] = tr_scope_result
+    if worktree_untracked is not None:
+        would_register["worktree_untracked"] = worktree_untracked
     if normalizations:
         would_register["normalizations"] = normalizations
     dry_resp = _maybe_dry_run(body, token_rec, would_register)
@@ -3858,6 +3866,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             after_path=stored_path,
             after_revision_no=0,
         )
+    if worktree_untracked is not None:
+        resp_content["worktree_untracked"] = worktree_untracked
     _record_change_summary(canonical_doc_id, 0, resp_content["change_summary"], token_rec.get("issued_to"))
     # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
@@ -4263,6 +4273,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # already has a document, so a pass/warning updates that document's meta in Step
     # 7.1; a rejection returns without changing the document.
     edit_tr_scope: Optional[dict] = None
+    edit_worktree_untracked: Optional[dict] = None
     # T0004 task 1-5 / NR0003 finding 2,4,5: the normalized locale shared from this
     # point through Step 5.9 — same rule as the new path (Step 5.7 above).
     _locale = template_provision.normalize_locale(
@@ -4315,6 +4326,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     # ── Step 5.9: block real registration of corrupted text + body-fingerprint match
     # (0391 B0001 proposal 3+4, T0005 §5-2/§6) ──
+        edit_worktree_untracked = git_service.worktree_untracked_summary(
+            project, group["group_id"]
+        )
+
     _edit_encoding_fields: dict[str, Optional[str]] = {"body": _edit_raw_submission_text}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
@@ -4359,6 +4374,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if edit_tr_scope is not None:
         edit_checks.append("tr_scope")
         edit_would_register["tr_scope"] = edit_tr_scope
+    if edit_worktree_untracked is not None:
+        edit_would_register["worktree_untracked"] = edit_worktree_untracked
     if edit_normalizations:
         edit_would_register["normalizations"] = edit_normalizations
     dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
@@ -4741,6 +4758,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             before_path=backup_path_str,
             before_revision_no=current_revision_no,
         )
+    if edit_worktree_untracked is not None:
+        resp_body["worktree_untracked"] = edit_worktree_untracked
     _record_change_summary(doc_id, new_revision_no, resp_body["change_summary"], token_rec.get("issued_to"))
     return JSONResponse(content=resp_body)
 

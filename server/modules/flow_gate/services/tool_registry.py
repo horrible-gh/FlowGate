@@ -64,6 +64,7 @@ NOTES = {
         "no_disk_edit": "디스크의 프로젝트 소스를 직접 편집하지 마세요. 소스의 조회와 변경은 모두 이 도구를 거칩니다.",
         "read_only": "이 단계는 조사 전용입니다. write / patch / remove 를 호출하지 마세요.",
         "report_changes": "write/patch/remove가 성공하면 변경한 소스 파일을 작업 레포트에 요약해 남기세요.",
+        "scratch_rule": "조사·디버깅용 임시 파일, 덤프, 노트는 write/patch로 프로젝트 소스 트리에 남기지 말고 멘트에 동봉된 이 작업 토큰의 scratch 디렉터리에 두세요. 0382에서 소스 트리의 흔적이 finalize 흡수 커밋을 거쳐 main에 들어간 전례를 막기 위한 규정입니다.",
         "see_detail": "사용법 상세는 GET /flowgate/api/v1/help/tools/{name} 으로 도구별로 확인하세요.",
         "see_detail_items": "사용법 상세는 GET /flowgate/api/v1/help/items/source_tools/{name} 으로 도구별로 확인하세요.",
         "none_scope": "이 작업 단계에는 원격 소스 도구가 배정되지 않았습니다. 소스 트리에 접근하지 말고 배정된 문서 작업만 수행하세요.",
@@ -76,6 +77,7 @@ NOTES = {
         "no_disk_edit": "ディスク上のプロジェクトソースを直接編集しないでください。ソースの参照と変更はすべてこのツールを通します。",
         "read_only": "この段階は調査専用です。write / patch / remove を呼ばないでください。",
         "report_changes": "write / patch / remove が成功したら、変更したソースファイルを作業レポートに要約して残してください。",
+        "scratch_rule": "調査・デバッグ用の一時ファイル、ダンプ、メモは write / patch でプロジェクトソースツリーに残さず、メントに記載されたこの作業トークンの scratch ディレクトリに置いてください。0382でソースツリーの残骸が finalize の吸収コミットを経て main に入った前例を防ぐための規則です。",
         "see_detail": "使い方の詳細は GET /flowgate/api/v1/help/tools/{name} でツールごとに確認してください。",
         "see_detail_items": "使い方の詳細は GET /flowgate/api/v1/help/items/source_tools/{name} でツールごとに確認してください。",
         "none_scope": "この作業段階にはリモートソースツールが割り当てられていません。ソースツリーに触れず、割り当てられた文書作業のみ行ってください。",
@@ -88,6 +90,7 @@ NOTES = {
         "no_disk_edit": "Do not edit the project source on disk directly — every source read and change goes through these tools.",
         "read_only": "This step is investigation-only for source access. Do not call write, patch, or remove.",
         "report_changes": "After write, patch, or remove succeeds, summarize the changed source files in the task report.",
+        "scratch_rule": "Put investigation/debugging temporary files, dumps, and notes in this work token's scratch directory supplied in the ment; never leave them in the project source tree via write or patch. This prevents a repeat of incident 0382, where source-tree debris entered main through the finalize absorb commit.",
         "see_detail": "For usage detail, call GET /flowgate/api/v1/help/tools/{name} per tool.",
         "see_detail_items": "For usage detail, call GET /flowgate/api/v1/help/items/source_tools/{name} per tool.",
         "none_scope": "No remote source tool is assigned to this step. Do not touch the project source tree; carry out only the document work you were given.",
@@ -308,7 +311,7 @@ def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
 def _list_notes(kind: str, locale: str, reason: Optional[str], user_jwt: bool) -> list[str]:
     notes = NOTES[locale]
     if kind == "read_write":
-        keys = ("path_rule", "auth_rule", "no_disk_edit", "report_changes", "see_detail")
+        keys = ("path_rule", "auth_rule", "no_disk_edit", "scratch_rule", "report_changes", "see_detail")
     elif kind == "read":
         keys = ("path_rule", "auth_rule", "no_disk_edit", "read_only", "see_detail")
     elif user_jwt:
@@ -400,7 +403,7 @@ def build_tool_detail(name: str, locale: str, base_url: str) -> dict:
 def detail_notes(name: str, locale: str) -> list[str]:
     keys = ["path_rule", "auth_rule", "no_disk_edit"]
     if name in WRITE_TOOLS:
-        keys.append("report_changes")
+        keys.extend(("scratch_rule", "report_changes"))
     return [NOTES[locale][key] for key in keys]
 
 
