@@ -784,6 +784,42 @@ def test_inbox_edit_summary_failure_does_not_fail_the_save(tmp_path, storage_roo
     assert data["change_summary"] == {"changed": None, "error": "summary unavailable"}
 
 
+def test_inbox_new_tr_response_carries_worktree_untracked(tmp_path):
+    """action=new has its own response block; prove the positive TR contract there."""
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import git_service, token_service
+
+    scratch = tmp_path / "scratch_new_tr"
+    scratch.mkdir(parents=True, exist_ok=True)
+    token_rec = {
+        "token_id": "tok_test_0370_new_tr", "project": PROJECT, "action_scope": "new",
+        "doc_ref": DOC_R, "issued_to": "usr_test_001", "scratch_dir": str(scratch),
+    }
+    content = "## 작업 결과\n\n신규 TR 응답 검증.\n\n## 변경 파일\n\n없음\n"
+    expected = {
+        "total_count": 5, "excluded_artifact_count": 3,
+        "staged_new_file_count": 2,
+    }
+
+    with patch("modules.flow_gate.rbac.permission_service.has_permission", return_value=True), \
+            patch.object(token_service, "verify", return_value=token_rec), \
+            patch.object(token_service, "consume", return_value=None), \
+            patch.object(git_service, "worktree_untracked_summary", return_value=expected):
+        app = FastAPI()
+        app.include_router(inbox_routes.router)
+        resp = TestClient(app).post(
+            "/api/v1/inbox",
+            json={
+                "project": PROJECT, "module": MODULE, "group_name": GROUP,
+                "prev_doc_id": DOC_R, "action": "new", "doc_type": "TR",
+                "title": "0370 신규 TR 미추적 요약 확인", "content": content,
+            },
+            headers={"Authorization": "Bearer dummy-token"},
+        )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["worktree_untracked"] == expected
+
 def test_inbox_new_response_carries_the_change_summary(tmp_path, storage_root):
     """진짜 inbox 신규 등록을 한 번 돌려 응답에 요약이 붙는지 본다(P0002 시나리오 15).
 
