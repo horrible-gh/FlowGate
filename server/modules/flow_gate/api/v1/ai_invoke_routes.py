@@ -36,6 +36,31 @@ from modules.flow_gate.utils.id_validators import (
 router = APIRouter(prefix="/api/v1/ai-invoke", tags=["AiInvoke"])
 
 
+def _operator_facing_api_base(request: Request) -> str:
+    """The OPERATOR-FACING API base for this request — never a CLI target.
+
+    Named, rather than calling ``token_routes._build_api_base`` inline, because
+    the two bases in this flow are easy to confuse and 0472 B0001 is what happens
+    when they are: the operator base (the origin the browser reached us on, no
+    explicit port in this deployment) was passed through to the CLI worker, which
+    then called ``http://127.0.0.1/flowgate/api/v1`` — outside the reverse proxy's
+    ``Host: flowgate.stg`` route, so every worker request got an empty 200 back
+    and no chat ever arrived.
+
+    Every ``api_base_url=`` in this module is this operator base and nothing else.
+    It is what a person would see in a copied mention. The AGENT-FACING base the
+    CLI process actually dials is derived from it downstream, in one place:
+    ``ai_invoke_service._resolve_agent_api_base`` (``FLOWGATE_AGENT_API_BASE``
+    when set, otherwise loopback keeping the explicit operator port or
+    ``settings.FLOWGATE_PORT``), applied at CLI launch by
+    ``_canonicalize_cli_prompt``. Do not rewrite the base here, and do not hand
+    this value to a subprocess as ``FLOWGATE_API_BASE``.
+    """
+    from modules.flow_gate.api import token_routes as _token_routes
+
+    return _token_routes._build_api_base(request)
+
+
 class AiInvokeStartRequest(BaseModel):
     project: str
     module: Optional[str] = None
@@ -447,7 +472,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 group_name=group_id,
                 raw_token=raw_token,
                 token_id=token_service.inspect_for_replay(raw_token)["token_id"],
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 # 0293: the AI turn header carries the provider. Unlike the copy path,
                 # here the server knows who is being invoked — but only when the run
                 # cannot fall back to a different provider (see the helper's docstring).
@@ -520,7 +545,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued = workflow_decision_service.request_review(
                 doc_id=body.doc_ref,
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 ref_doc_ids=None,
                 locale=locale,
                 ai_run_id=ai_run_id,
@@ -542,7 +567,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued = workflow_decision_service.request_sequence_edit(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 locale=locale,
                 ai_run_id=ai_run_id,
             )
@@ -558,7 +583,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued = work_plan_service.request_work_plan_fill(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 scope=body.work_plan_scope or {
                     "quantity_type_codes": [],
                     "step_keys": [],
@@ -583,7 +608,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 ref_doc_ids=body.selected_docs,
                 locale=locale,
                 continuous=False,
@@ -608,7 +633,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued = test_run_service.issue_test_run_request(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 locale=locale,
                 ai_run_id=ai_run_id,
             )
@@ -625,7 +650,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             return workflow_decision_service.request_workflow_decision(
                 doc_id=body.doc_ref or "",
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 locale=locale,
                 continuous=is_continuous,
                 continuation_review_mode=body.continuation_review_mode,
@@ -645,7 +670,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             adv = workflow_decision_service.advance_workflow(
                 doc_id=body.doc_ref,
                 issued_to=user_id,
-                api_base_url=_token_routes._build_api_base(request),
+                api_base_url=_operator_facing_api_base(request),
                 locale=locale,
                 continuous=True,
                 continuation_target_seq=body.continuation_target_seq,
@@ -687,7 +712,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_instruction_mode=body.continuation_instruction_mode,
             continuation_locale=locale if is_continuous else None,
             issued_to=user_id,
-            api_base_url=_token_routes._build_api_base(request),
+            api_base_url=_operator_facing_api_base(request),
             mention_builder=_mention_builder,
             provider_id=body.provider_id,
             provider_pinned=body.provider_pinned,
@@ -789,14 +814,13 @@ def resume_ai_invoke(body: dict, request: Request):
     if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
-    from modules.flow_gate.api import token_routes as _token_routes
 
     locale = request.headers.get("x-locale") or "ko"
     try:
         result = ai_invoke_service.resume_chain(
             group_id=group_id,
             user_id=user_id,
-            api_base_url=_token_routes._build_api_base(request),
+            api_base_url=_operator_facing_api_base(request),
             locale=locale,
             is_admin=bool(auth.get("is_admin")),
         )

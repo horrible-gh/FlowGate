@@ -140,11 +140,12 @@ class Settings(BaseSettings):
     # migrations are applied at deploy time instead.
     AUTO_MIGRATION: bool = True
 
-    # Group 0235 D0005 §3-4 / L0008 §2-5: submission base for the EXTERNAL AGENT
-    # (CLI provider) inbox POST. Origin only (scheme://host[:port]); the server
-    # appends CONTEXT + /api/v1. When unset, the agent api base is derived by
-    # swapping the operator host for loopback (same-host run). Set this when the
-    # agent cannot reach the loopback:port (e.g. behind a reverse proxy).
+    # Canonical origin for EXTERNAL CLI providers, not the browser/operator URL.
+    # Origin only (scheme://host[:port]); conversation/help/document/inbox paths
+    # are appended from the operator base. When unset, the resolver uses loopback
+    # with the operator's explicit port or FLOWGATE_PORT (normally 8089). A local
+    # deployment should normally use http://127.0.0.1:8089. Invalid configured
+    # values fail fast rather than risking bearer-token delivery to another origin.
     FLOWGATE_AGENT_API_BASE: str | None = None
 
     @field_validator("FLOWGATE_INBOX_CONTENT_MAX", mode="before")
