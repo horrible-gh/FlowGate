@@ -57,7 +57,7 @@ def test_edit_mention_includes_target_review_and_valid_payload():
     assert "## Revision instructions" in mention
     assert "## Instruction to include next document header" not in mention
     assert "test.none.0002.0004-D: GET http://127.0.0.1:8088/flowgate/api/v1/document/test.none.0002.0004-D" in mention
-    assert "## Review feedback" in mention
+    assert "## Automated review feedback" in mention
     assert "Verdict: issues" in mention
     assert "- Verification method: Document the one-time token constraint." in mention
     assert "GET http://127.0.0.1:8088/flowgate/api/v1/document/test.none.0002.0004-D/reviews" in mention
@@ -81,7 +81,7 @@ def test_edit_mention_includes_target_review_and_valid_payload():
 
 def test_edit_mention_without_review_still_references_target():
     mention = _build_edit_mention()
-    assert "## Review feedback" not in mention
+    assert "## Automated review feedback" not in mention
     assert "test.none.0002.0004-D: GET " in mention
 
 
@@ -580,3 +580,162 @@ def test_automatic_rejection_carries_both_ids_from_same_history_item():
     )
     assert payload["rejection_id"] == "rej_auto"
     assert payload["review_id"] == 244
+
+
+# ── T0009 §2-1/§2-2/§2-3: human rejection vs. automated review, required-response notice ──
+
+
+def _build_edit_mention_from_token(history, current_review=None, edit_reason="rejected"):
+    return build_mention_from_token_rec(
+        token_rec={
+            "project": "test", "group_id": "test.none.0002",
+            "scratch_dir": "D:/scratch/token",
+        },
+        head_type="", head_status="",
+        parent_doc={
+            "doc_id": "test.none.0002.0004-D", "type_code": "D", "seq": 4,
+            "title": "Rejected design", "module": "none", "revision_no": 2,
+            "rejection_history": json.dumps(history),
+        },
+        api_base_url="http://127.0.0.1:8088/flowgate/api/v1",
+        raw_token="raw-token", action_scope="edit", edit_reason=edit_reason,
+        current_review=current_review,
+    )
+
+
+def test_human_rejection_section_shows_latest_reason_and_matches_post_target():
+    mention = _build_edit_mention_from_token([
+        {"rejection_id": "rej_old", "reason": "Old reason, superseded."},
+        {"rejection_id": "rej_manual", "reason": "Fix the missing changed-files section."},
+    ])
+    assert mention is not None
+    assert "## Human rejection (latest)" in mention
+    assert "Fix the missing changed-files section." in mention
+    assert "Old reason, superseded." not in mention
+    assert "rejection_id: rej_manual" in mention
+    registration = mention[mention.index("## Artifact registration"):]
+    payload = json.loads(registration[registration.index("{"):registration.index("}") + 1])
+    assert payload["rejection_id"] == "rej_manual"
+
+
+def test_human_rejection_and_automated_review_render_as_two_distinct_sections():
+    mention = _build_edit_mention_from_token(
+        [{"rejection_id": "rej_manual", "reason": "Please add a rollback test."}],
+        current_review={
+            "id": 501, "revision_no": 2, "verdict": "issues",
+            "findings": [{"locus": "server/x.py:10", "note": "Missing guard."}],
+            "comment": "Automated notes.",
+        },
+    )
+    assert mention is not None
+    assert "## Human rejection (latest)" in mention
+    assert "## Automated review feedback" in mention
+    human_section = mention[
+        mention.index("## Human rejection (latest)"):mention.index("## Automated review feedback")
+    ]
+    automated_section = mention[mention.index("## Automated review feedback"):]
+    assert "Please add a rollback test." in human_section
+    assert "Automated notes." not in human_section
+    assert "Automated notes." in automated_section
+    assert "Missing guard." in automated_section
+    assert "Please add a rollback test." not in automated_section
+
+
+def test_human_rejection_alone_still_renders_without_automated_review():
+    mention = _build_edit_mention_from_token(
+        [{"rejection_id": "rej_manual", "reason": "Human-only rejection reason."}],
+        current_review=None,
+    )
+    assert mention is not None
+    assert "## Human rejection (latest)" in mention
+    assert "Human-only rejection reason." in mention
+    assert "## Automated review feedback" not in mention
+
+
+def test_automated_review_alone_still_renders_without_human_rejection():
+    mention = _build_edit_mention_from_token([], current_review={
+        "id": 501, "revision_no": 2, "verdict": "issues", "findings": [],
+        "comment": "Automated only.",
+    })
+    assert mention is not None
+    assert "## Automated review feedback" in mention
+    assert "## Human rejection (latest)" not in mention
+
+
+def test_malformed_rejection_history_omits_the_section_without_failing():
+    mention = build_mention_from_token_rec(
+        token_rec={"project": "test", "group_id": "test.none.0002", "scratch_dir": "D:/scratch/token"},
+        head_type="", head_status="",
+        parent_doc={
+            "doc_id": "test.none.0002.0004-D", "type_code": "D", "seq": 4,
+            "title": "Rejected design", "module": "none", "revision_no": 2,
+            "rejection_history": "not valid json",
+        },
+        api_base_url="http://127.0.0.1:8088/flowgate/api/v1",
+        raw_token="raw-token", action_scope="edit", edit_reason="rejected",
+    )
+    assert mention is not None
+    assert "## Human rejection (latest)" not in mention
+
+
+def test_empty_rejection_history_omits_the_section_without_failing():
+    mention = _build_edit_mention_from_token([])
+    assert mention is not None
+    assert "## Human rejection (latest)" not in mention
+
+
+def test_rejection_history_last_item_not_a_dict_omits_the_section():
+    mention = build_mention_from_token_rec(
+        token_rec={"project": "test", "group_id": "test.none.0002", "scratch_dir": "D:/scratch/token"},
+        head_type="", head_status="",
+        parent_doc={
+            "doc_id": "test.none.0002.0004-D", "type_code": "D", "seq": 4,
+            "title": "Rejected design", "module": "none", "revision_no": 2,
+            "rejection_history": json.dumps(["not-a-dict"]),
+        },
+        api_base_url="http://127.0.0.1:8088/flowgate/api/v1",
+        raw_token="raw-token", action_scope="edit", edit_reason="rejected",
+    )
+    assert mention is not None
+    assert "## Human rejection (latest)" not in mention
+
+
+def test_rejected_edit_mention_carries_the_required_response_notice():
+    mention = _build_edit_mention_from_token([{"rejection_id": "rej_manual", "reason": "Add tests."}])
+    assert mention is not None
+    registration = mention[mention.index("## Artifact registration"):]
+    assert "422" in registration
+    assert "content" in registration and "rejection_response" in registration
+
+
+def test_normal_edit_mention_omits_the_required_response_notice_and_human_section():
+    mention = _build_edit_mention_from_token(
+        [{"rejection_id": "rej_manual", "reason": "Add tests."}], edit_reason="user_comment"
+    )
+    assert mention is not None
+    assert "## Human rejection (latest)" not in mention
+    registration = mention[mention.index("## Artifact registration"):]
+    assert "422" not in registration
+    payload = json.loads(registration[registration.index("{"):registration.index("}") + 1])
+    assert "rejection_response" not in payload
+    assert "rejection_id" not in payload
+    assert "review_id" not in payload
+
+
+def test_required_response_notice_present_in_every_supported_locale():
+    for locale in ("ko", "ja", "en"):
+        payload = _rejected_edit_payload({"id": 244, "revision_no": 0, "findings": []}, locale=locale)
+        assert "rejection_response" in payload
+        assert payload["review_id"] == 244
+
+        mention = build_mention(
+            project="test", module="none", group="0002", parent_type="D",
+            parent_doc_number="D0004", parent_title="Rejected design", parent_doc_id="D0004",
+            parent_canonical_doc_id="test.none.0002.0004-D", parent_revision_no=0,
+            head_type="", head_status="", scratch_dir="D:/scratch/token", raw_token="raw-token",
+            api_base_url="http://127.0.0.1:8088/flowgate/api/v1", action_scope="edit",
+            edit_reason="rejected", locale=locale,
+        )
+        assert mention is not None
+        registration = mention[mention.index("## Artifact registration"):]
+        assert "422" in registration
