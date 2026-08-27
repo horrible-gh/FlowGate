@@ -15,6 +15,10 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.db.document_type_labels import get_type_name
+from modules.flow_gate.documents.constants import (
+    SERVER_ASSEMBLED_DOC_TYPES,
+    is_server_assembled_type,
+)
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import mention_service
@@ -37,7 +41,12 @@ AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
 # expand_steps_with_reports() below, and commit 178b21b2 (0434 T0004 F1) changed only one of
 # them — which is how the two sibling functions came to disagree about the same row. One name,
 # read in both places, is the fix that keeps the next edit from splitting them again.
-SERVER_ASSEMBLED_REPORT_TYPES = frozenset({"TSR"})
+#
+# 0441 T0004 item 3: that one name now lives in documents.constants, because the same fact
+# also decides whether a person may CREATE the document (next-empty / inbox action:new /
+# the ordinary 'new' token). Kept exported under this name — work_plan_sequence_service
+# imports it from here.
+SERVER_ASSEMBLED_REPORT_TYPES = SERVER_ASSEMBLED_DOC_TYPES
 
 
 class SequenceChanged(Exception):
@@ -911,8 +920,20 @@ def advance_workflow(
                 "continuation_remaining": remaining,
                 "head_item_seq": head_item_seq,
             }
-        # No approved TS predecessor behind this TSR head → fall through to the ordinary
-        # 'new' hand-off (the worker writes the TSR from context — pre-0150 behavior).
+        # No approved TS predecessor behind this TSR head → there is nothing to hand off,
+        # and the guard below refuses rather than falling through to a 'new' token.
+
+    # ── Server-assembled head → no manual authoring token (0441 T0004 item 3) ─────────
+    # Everything past this point mints an ordinary action_scope='new' token whose entire
+    # meaning is "go and write the head document by hand". For a TSR that is an invitation
+    # to do the one thing the policy forbids: the TSR is assembled by test_run_service out
+    # of a finished run (SERVER_ASSEMBLED_DOC_TYPES). NR0003 §2 traced the reported manual
+    # TSR to exactly this fall-through — the managed [copy mention] / [invoke AI] path never
+    # reached the test-run hand-off above, so it dropped here and handed out the token.
+    # Refuse before the token exists; the caller is told to run the test on its TS instead.
+    # The official assembly path calls assemble_tsr() directly and never comes through here.
+    if is_server_assembled_type(head_type):
+        raise ValueError(f"server_assembled_head:{head_type.upper()}:{doc_id}")
 
     # Continuation metadata rides on the next token only in continuous mode; otherwise
     # the token is an ordinary single-step token (NULL/0 columns — migration 050).

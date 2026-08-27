@@ -921,4 +921,412 @@ describe('ReviewActionBar', () => {
       expect(navBtn.attributes('disabled')).toBeUndefined()
     })
   })
+
+  // ── 0441 TR0005 rework (rejection: "테스트 중일때는 액션바를 전부 비활성화 해놔야
+  // 할거아냐"): TestRunStrip's 0163/0169 re-run relaxation lets a run be bound and
+  // running/cancelling while the TS document itself is still pending_review/revised
+  // (mode='review') or rejected (mode='rejected') — i.e. this document's OWN test run,
+  // not an AI-invoke run for the group. Before this fix, isGroupBusy was the only lock
+  // consulted in those modes, so approve/reject/review-request/rework stayed clickable
+  // for the run's entire duration. No group-wide AI-invoke run is started in any of
+  // these tests — the lock must fire from testRunStatus alone.
+  describe('Test-run lock (this document busy)', () => {
+    it('L10. review mode busy from a running test on THIS doc: approve/reject/review-request split are all disabled and the Test Running pill shows', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: 'running',
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('Test Running')
+      expect(wrapper.text()).not.toContain('AI Running')
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L11. review mode not busy when testRunStatus is null: no Test Running pill and buttons stay enabled (positive control for L10)', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: null,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).not.toContain('Test Running')
+      const approveBtn = wrapper.findAll('.sfb-actions button').find(b => b.text().includes('Approve'))!
+      expect(approveBtn.attributes('disabled')).toBeUndefined()
+    })
+
+    it.each(['running', 'cancelling'])('L12. rejected mode busy from a %s test on THIS doc: rework tools and mark-revised are disabled', (status) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'rejected',
+          mode: 'rejected',
+          testRunStatus: status,
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.text()).toContain('Test Running')
+      const buttons = wrapper.findAll('.sfb-actions--rework button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it.each(['failed', 'passed', 'cancelled', null])('L13. review mode NOT busy once the bound run reaches a terminal status (%s): buttons stay enabled', (status) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: status,
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.text()).not.toContain('Test Running')
+      const approveBtn = wrapper.findAll('.sfb-actions button').find(b => b.text().includes('Approve'))!
+      expect(approveBtn.attributes('disabled')).toBeUndefined()
+    })
+  })
+
+  // Rejection rev2: "테스트 중일때는 '그룹 내 다른 문서의' 액션바'도' 전부 비활성화 해놓아야 할거아냐".
+  // rev1 keyed the lock on props.testRunStatus, which is the ACTIVE tab's own run embed and is
+  // therefore null on every sibling document — switching tabs mid-run handed back a fully live
+  // action bar. The lock is now keyed on groupTestRunActive, the group-scoped flag the server
+  // ships on the document detail of EVERY document of the group. No AI-invoke group lock is set
+  // anywhere in this block, so a failure here cannot be the isGroupBusy path passing by accident.
+  describe('Test-run lock (another document in the group busy)', () => {
+    const siblingProps = {
+      ...defaultProps,
+      docId: 'test.p.0441.0005-TR',
+      groupId: 'test.p.0441',
+      docType: 'TR',
+    }
+
+    it('L14. review mode on a SIBLING doc: its own testRunStatus is null, yet the group run disables every action and shows the pill', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...siblingProps,
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: null,
+          groupTestRunActive: true,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('Test Running')
+      expect(wrapper.text()).not.toContain('AI Running')
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L15. positive control for L14: the identical sibling mount with no group run keeps its buttons live', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...siblingProps,
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: null,
+          groupTestRunActive: false,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).not.toContain('Test Running')
+      const approveBtn = wrapper.findAll('.sfb-actions button').find(b => b.text().includes('Approve'))!
+      expect(approveBtn.attributes('disabled')).toBeUndefined()
+    })
+
+    it('L16. rejected mode on a SIBLING doc: the rework tools and mark-revised go inert for the group run', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...siblingProps,
+          docType: 'D',
+          reviewStatus: 'rejected',
+          mode: 'rejected',
+          testRunStatus: null,
+          groupTestRunActive: true,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('Test Running')
+      const buttons = wrapper.findAll('.sfb-actions--rework button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+
+    it('L17. next mode on the R root: the [next step] button, its caret and every drop-up item are disabled by the group run', async () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0001-R',
+          groupId: 'test.p.0441',
+          docType: 'R',
+          reviewStatus: 'wf_in_progress',
+          mode: 'next',
+          canNextAction: true,
+          nextStepCode: 'D',
+          nextStepLabel: 'D',
+          groupTestRunActive: true,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('Test Running')
+      const toggle = wrapper.find('.ab-dd-toggle')
+      expect(toggle.exists()).toBe(true)
+      expect(toggle.attributes('disabled')).toBeDefined()
+      // The caret is disabled, so open the menu the only way left in a unit test and assert
+      // the items behind it are inert too — a disabled trigger in front of live items is
+      // still a live path once anything re-enables the trigger.
+      await toggle.trigger('click')
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+      expect(wrapper.emitted('create-empty')).toBeUndefined()
+    })
+
+    it('L18. a TS tab whose OWN run is in flight still locks (rev1 behaviour preserved when the group flag is absent)', () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...defaultProps,
+          docId: 'test.p.0441.0004-TS',
+          groupId: 'test.p.0441',
+          docType: 'TS',
+          reviewStatus: 'pending_review',
+          mode: 'review',
+          testRunStatus: 'running',
+          groupTestRunActive: false,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.text()).toContain('Test Running')
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons.length).toBeGreaterThan(0)
+      for (const btn of buttons) {
+        expect(btn.attributes('disabled')).toBeDefined()
+      }
+    })
+  })
+
+  // ── 0441 T0004 item 4 (B0001 / NR0003 §4) ────────────────────────────────────────────
+  // The workflow head is a pending TSR slot. The head is a property of the GROUP, so every
+  // open tab of that group receives nextStepCode='TSR'. Before this fix only the TS tab was
+  // special-cased, and every other tab rendered the generic [next step] drop-up whose
+  // [Create Empty Doc] really did create a manual TSR — B0001's "a test report shows up on
+  // other documents" and "the action bar differs from the TS document's".
+  //
+  // NR0003 §4 measured the gap this closes: across the whole client suite there was no
+  // ReviewActionBar mount with nextStepCode='TSR' and a docType other than 'TS'.
+  describe('0441: pending TSR head renders per tab type', () => {
+    const tsrHeadProps = {
+      ...defaultProps,
+      docId: 'test.p.0441.0001-R',
+      groupId: 'test.p.0441',
+      mode: 'next' as const,
+      canNextAction: true,
+      nextStepCode: 'TSR',
+      nextStepLabel: 'Test Report',
+    }
+
+    // A positive control for the negative assertions below: with an ordinary next step the
+    // very same mount DOES produce the drop-up and all three manual items. Without it the
+    // "no create-empty" expectations would also pass against a component rendering nothing.
+    it('control: an ordinary (non server-assembled) next step still offers the manual items', async () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...tsrHeadProps,
+          docType: 'R',
+          reviewStatus: 'wf_in_progress',
+          nextStepCode: 'D',
+          nextStepLabel: 'D',
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.find('.ab-dd-wrap').exists()).toBe(true)
+      await wrapper.find('.ab-dd-toggle').trigger('click')
+      const labels = wrapper.findAll('.ab-split-dd .ab-split-item').map(i => i.text())
+      expect(labels.some(l => l.includes('Create Empty Doc'))).toBe(true)
+      expect(labels.some(l => l.includes('Copy Mention'))).toBe(true)
+      expect(labels.some(l => l.includes('Invoke AI'))).toBe(true)
+      expect(wrapper.find('[data-test="ab-server-assembled-hint"]').exists()).toBe(false)
+    })
+
+    it.each([
+      ['R', 'wf_in_progress'],
+      ['B', 'wf_in_progress'],
+      ['D', 'approved'],
+    ])('%s tab on a TSR head with no run in flight: the next-step control is present and ENABLED, no manual create/copy/invoke, and no run-it-on-TS explanation is exposed', async (docType, reviewStatus) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: { ...tsrHeadProps, docType, reviewStatus },
+        global: { plugins: [i18n] },
+      })
+
+      // 0441 TR0005 rev6 (rejection: "아예 없애버리면 어떻게해"): a bare hint with zero
+      // buttons reads as "the feature vanished". Exactly one button stays visible here.
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons).toHaveLength(1)
+      expect(wrapper.find('.ab-split-wrap').exists()).toBe(false)
+
+      // 0441 TR0005 rev9 (rejection: "테스트 실행중 아닌데 왜 버튼 비활성화 되냐?"):
+      // rev6..rev8 hard-coded `disabled` here, so the control was dead even with nothing
+      // running. Idle now means pressable, and pressing it navigates to the TS document.
+      expect(buttons[0].attributes('disabled')).toBeUndefined()
+      await buttons[0].trigger('click')
+      expect(wrapper.emitted('open-test-scenario')).toHaveLength(1)
+      expect(wrapper.emitted('open-test-scenario')![0][0]).toMatchObject({
+        groupId: 'test.p.0441',
+        docId: 'test.p.0441.0001-R',
+      })
+      // Navigation only — none of the three manual-authoring events may ride along.
+      expect(wrapper.emitted('create-empty')).toBeUndefined()
+      expect(wrapper.emitted('copy-next-mention')).toBeUndefined()
+      expect(wrapper.emitted('continuous-work')).toBeUndefined()
+
+      const text = wrapper.text()
+      expect(text).not.toContain('Create Empty Doc')
+      expect(text).not.toContain('Copy Mention')
+      expect(text).not.toContain('Invoke AI')
+
+      // 0441 TR0005 rev8: the rejected explanation is absent both as standing text and as
+      // hover text; only the next-step control remains.
+      expect(wrapper.find('[data-test="ab-server-assembled-hint"]').exists()).toBe(false)
+      expect(buttons[0].attributes('title')).toBeUndefined()
+    })
+
+    // The other half of the same contract, and the one rejections 1-5 were about: while the
+    // group has a run in flight the very same control IS disabled (and still not removed).
+    it.each([
+      ['R', 'wf_in_progress'],
+      ['B', 'wf_in_progress'],
+      ['D', 'approved'],
+    ])('%s tab on a TSR head while the group is running a test: the same control is visible but disabled', async (docType, reviewStatus) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: { ...tsrHeadProps, docType, reviewStatus, groupTestRunActive: true },
+        global: { plugins: [i18n] },
+      })
+
+      const buttons = wrapper.findAll('.sfb-actions button')
+      expect(buttons).toHaveLength(1)
+      expect(buttons[0].attributes('disabled')).toBeDefined()
+      await buttons[0].trigger('click')
+      expect(wrapper.emitted('open-test-scenario')).toBeUndefined()
+    })
+
+    it.each([
+      ['R', 'wf_in_progress'],
+      ['B', 'wf_in_progress'],
+      ['D', 'approved'],
+    ])('%s tab on a TSR head emits neither create-empty nor copy-next-mention', (docType, reviewStatus) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: { ...tsrHeadProps, docType, reviewStatus },
+        global: { plugins: [i18n] },
+      })
+      // Asserted on the emit contract itself, not just on an absent selector, because these
+      // are the events MainPanel turns into server requests.
+      expect(wrapper.emitted('create-empty')).toBeUndefined()
+      expect(wrapper.emitted('copy-next-mention')).toBeUndefined()
+      expect(wrapper.emitted('continuous-work')).toBeUndefined()
+    })
+
+    it('TS tab on a TSR head keeps the idle [Run tests] split button and its allowed menu', async () => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...tsrHeadProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'approved',
+          testRunStatus: null,
+        },
+        global: { plugins: [i18n] },
+      })
+
+      expect(wrapper.find('[data-test="ab-server-assembled-hint"]').exists()).toBe(false)
+      const main = wrapper.find('.ab-split-main')
+      expect(main.exists()).toBe(true)
+      expect(main.text()).toContain('Run tests')
+      expect(main.classes()).not.toContain('ab-split-main--status')
+
+      await wrapper.find('.ab-split-caret').trigger('click')
+      const labels = wrapper.findAll('.ab-split-dd .ab-split-item').map(i => i.text())
+      expect(labels.some(l => l.includes('Copy Mention'))).toBe(true)
+      expect(labels.some(l => l.includes('Invoke AI'))).toBe(true)
+      // The manual escape hatch the TS branch has always withheld stays withheld.
+      expect(labels.some(l => l.includes('Create Empty Doc'))).toBe(false)
+
+      await main.trigger('click')
+      expect(wrapper.emitted('run-test')).toHaveLength(1)
+      expect(wrapper.emitted('create-empty')).toBeUndefined()
+    })
+
+    it.each(['running', 'cancelling'])('TS tab on a TSR head shows the %s status indicator, not a menu', (status) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...tsrHeadProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'approved',
+          testRunStatus: status,
+        },
+        global: { plugins: [i18n] },
+      })
+      const main = wrapper.find('.ab-split-main')
+      expect(main.exists()).toBe(true)
+      expect(main.classes()).toContain('ab-split-main--status')
+      expect(main.attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.ab-dd-wrap').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Create Empty Doc')
+    })
+
+    // The same hole reached from the TS tab: a RED run leaves the head on TSR with a
+    // terminal status, which used to drop out of the TS branch (it only matched
+    // null/running/cancelling) and into the generic manual-creation drop-up.
+    it.each(['failed', 'passed', 'cancelled'])('TS tab on a TSR head after a %s run offers a re-run, never the manual menu', (status) => {
+      const wrapper = mount(ReviewActionBar, {
+        props: {
+          ...tsrHeadProps,
+          docId: 'test.p.0441.0004-TS',
+          docType: 'TS',
+          reviewStatus: 'approved',
+          testRunStatus: status,
+        },
+        global: { plugins: [i18n] },
+      })
+      expect(wrapper.find('.ab-dd-wrap').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Create Empty Doc')
+      const main = wrapper.find('.ab-split-main')
+      expect(main.exists()).toBe(true)
+      expect(main.text()).toContain('Run tests')
+    })
+  })
 })

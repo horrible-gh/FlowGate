@@ -30,7 +30,11 @@ from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service
-from modules.flow_gate.documents.constants import AUTO_COMPLETE_TYPES, WORK_PLAN_TYPE
+from modules.flow_gate.documents.constants import (
+    AUTO_COMPLETE_TYPES,
+    WORK_PLAN_TYPE,
+    is_server_assembled_type,
+)
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import (
     conversation_markdown_service,
@@ -1096,6 +1100,21 @@ def create_next_empty_document(
         raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
     if type_code in {"AC", "RJ", "V", "C"}:
         raise HTTPException(status_code=422, detail=f"Cannot create an empty document for type: {type_code}")
+    # 0441 T0004 item 3 (NR0003 §2): a TSR is assembled by test_run_service out of a finished
+    # run, so there is no such thing as an empty one to fill in. Until now the type list above
+    # did not name it and the head-type comparison below happily passed a TSR request through
+    # (head=TSR, requested=TSR), which is how a hand-made TSR took the slot the run was going
+    # to fill. Refused HERE — before the number is reserved, the file is written, the document
+    # row is created and the workflow slot is bound — so a refused request leaves nothing
+    # behind. The official assembly path does not come through this route.
+    if is_server_assembled_type(type_code):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{type_code} is assembled by the server from a test run and cannot be "
+                "created as an empty document. Run the test on the approved TS document."
+            ),
+        )
 
     prev_doc = document_service.get_document(body.prev_doc_id)
     if prev_doc is None:
@@ -2371,6 +2390,23 @@ def _load_ai_reviews(doc_id: str) -> tuple[Optional[dict], list[dict]]:
     return (shaped[0] if shaped else None), shaped
 
 
+def _load_group_test_run(doc: dict) -> dict:
+    """0441 TR0005 rev2: "a test is running somewhere in this group" for the action bar.
+
+    0441 TR0005 rev10: on failure this reports ``active=None`` (unconfirmed), not ``False``
+    (confirmed idle) — see the matching note on ``test_run_service.load_group_test_run``,
+    whose own internal except already answers the same way. This except only remains as a
+    second, independent fail-closed layer (e.g. if the import itself ever failed) and must
+    not contradict it.
+    """
+    try:
+        from modules.flow_gate.services import test_run_service as _test_run_service
+
+        return _test_run_service.load_group_test_run(doc.get("group_id"))
+    except Exception:  # noqa: BLE001 - display-only extra must not break document lookup
+        return {"active": None, "run_id": None, "doc_id": None, "status": None}
+
+
 def _load_test_runs(doc_id: str) -> tuple[Optional[dict], list[dict]]:
     try:
         from modules.flow_gate.services import test_run_service as _test_run_service
@@ -2416,6 +2452,9 @@ def get_document(
     # AI review results (document_reviews child records), variant C: latest review plus full history.
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
     out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
+    # Group-scoped, NOT document-scoped: every document of the group gets the same answer,
+    # so the action bar of a sibling tab can lock itself while a run is in flight elsewhere.
+    out["group_test_run"] = _load_group_test_run(doc)
     # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the
     # screen never parses the meta string itself. 0390 TR0005 rev2: with no stored verdict, if
     # the type is checked and the body has a changed-files section, an unevaluated verdict

@@ -35,6 +35,15 @@
               v-if="showAiArrivedPill"
               class="sfb-status-pill ai-arrived"
             ><AppIcon name="robot" /> {{ t('main.review_action_bar.ai_arrived') }}</span>
+            <!-- 0441 TR0005 rework (rejection: test-in-progress must lock the WHOLE action
+                 bar; rev2: for ANY document of the group): mirrors the ai-running pill below, so the
+                 review/rejected-mode buttons that go inert via isActionBarBusy still explain
+                 why -- including on a sibling tab whose own test_run embed is null. -->
+            <span
+              v-if="isAnyTestRunActive"
+              class="sfb-status-pill test-running"
+              :title="t('main.review_action_bar.test_running_hint')"
+            ><AppIcon name="spinner" spin /> {{ t('main.review_action_bar.test_running') }}</span>
             <span
               v-if="isGroupBusy && !isLeaseOrphaned"
               class="sfb-status-pill ai-running"
@@ -77,7 +86,7 @@
                mirroring the NextActionModal proceed dropdown (the proceed caret). Clicking it
                no longer opens a dialog; it expands the dropdown of workflow actions. -->
           <div class="ab-dd-wrap">
-            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isActionBarBusy" @click.stop="toggleDropdown">
               <AppIcon name="tree-structure" /> {{ t('main.review_action_bar.btn_decide_workflow') }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
             </button>
@@ -90,18 +99,18 @@
                 @click.stop
               >
                 <!-- R0001 rev4: reviewer-specified order — Copy mention → Run command → Manual decision. -->
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowMentionCopyClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onWorkflowMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowCommandClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onWorkflowCommandClick">
                   <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
                 </button>
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onWorkflowManualClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onWorkflowManualClick">
                   <AppIcon name="sliders-horizontal" /> {{ t('main.review_action_bar.btn_manual_decision') }}
                 </button>
                 <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                      current head to a chosen step without a human re-issuing tokens each step. -->
-                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isActionBarBusy" @click="onContinuousWorkClick">
                   <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
                 </button>
               </div>
@@ -120,7 +129,7 @@
             class="btn btn-primary btn-sm"
             type="button"
             data-test="review-action-final-approval"
-            :disabled="canNextAction === false || isGroupBusy"
+            :disabled="canNextAction === false || isActionBarBusy"
             @click="$emit('next-action')"
           >
             <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.final_approval') }}
@@ -134,7 +143,7 @@
             v-else-if="isNextConversation"
             class="btn btn-primary btn-sm"
             type="button"
-            :disabled="canNextAction === false || isGroupBusy"
+            :disabled="canNextAction === false || isActionBarBusy"
             @click="$emit('create-conversation')"
           >
             <AppIcon name="chats" /> {{ t('main.review_action_bar.btn_create_conversation') }}
@@ -152,10 +161,10 @@
               <AppIcon name="spinner" spin /> {{ testRunStatusLabel }}
             </button>
             <template v-else>
-              <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false || isGroupBusy" @click="onRunTestClick">
+              <button class="btn btn-primary btn-sm ab-split-main" type="button" :disabled="canNextAction === false || isActionBarBusy" @click="onRunTestClick">
                 <AppIcon name="play" /> {{ t('main.test_run_strip.run') }}
               </button>
-              <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+              <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isActionBarBusy" @click.stop="toggleDropdown">
                 <AppIcon name="caret-up" />
               </button>
               <Teleport to="body">
@@ -167,16 +176,52 @@
                   @click.stop
                 >
                   <!-- TS -> TSR is auto-assembled by a test run. Keep escape hatches, but do not offer a manual empty TSR. -->
-                  <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                  <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onNextMentionCopyClick">
                     <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                   </button>
-                  <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                  <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isActionBarBusy" @click="onContinuousWorkClick">
                     <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
                   </button>
                 </div>
               </Teleport>
             </template>
           </div>
+          <!-- 0441 T0004 item 1 (NR0003 recommendation A): the workflow head is a report the
+               SERVER assembles from a test run. The branch above owns that state on the TS
+               tab, with the real [Run] control. On every OTHER tab of the same group — the
+               R/B root and any approved sibling document — the identical head used to fall
+               through to the generic drop-up below, whose [Create empty doc] / [Copy mention]
+               / [Invoke AI] are three ways to hand-write the one document nobody may
+               hand-write. That is the reported "a test report shows up on other documents".
+               There is no correct action to put here instead: MainPanel reads both the run
+               target and testRunStatus off the ACTIVE tab, so a [Run] button on a non-TS tab
+               would be a dead button reporting another document's status.
+               0441 TR0005 rev6 (rejection: "아예 없애버리면 어떻게해 ... 비활성화 ... 해야할거아냐"):
+               an earlier revision rendered only a standalone hint with no control at all.
+               Every other locked state in this bar (isActionBarBusy) keeps its buttons visible
+               and disabled instead of removing them, so this slot keeps the button too.
+               0441 TR0005 rev8 (repeated rejection: remove the quoted explanation entirely):
+               keep the disabled next-step control required by rev6, but expose no standing text
+               and no hover tooltip. Manual TSR creation remains unavailable.
+               0441 TR0005 rev9 (rejection: the quoted sentence again, plus "그리고 테스트 실행중
+               아닌데 왜 버튼 비활성화 되냐?"): rev6..rev8 left this control disabled unconditionally,
+               so it read as broken whenever no run was in flight. The 6th rejection named the two
+               acceptable shapes -- "테스트 실행하면 다른문서에 비활성화 아니면 문서로 이동" -- and
+               this slot now does both: it opens the TS document the run is started from, and it is
+               disabled only while the group is busy (test run / AI run), exactly like every other
+               control in this bar. It still emits no create/copy/invoke path, so manual TSR
+               authoring stays unavailable. -->
+          <button
+            v-else-if="isNextServerAssembled"
+            class="btn btn-primary btn-sm ab-dd-toggle"
+            type="button"
+            data-test="ab-server-assembled-toggle"
+            :disabled="isActionBarBusy"
+            @click="onOpenTestScenarioClick"
+          >
+            <AppIcon name="arrow-right" />
+            {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
+          </button>
           <!-- 0405 T0011 rev2 (rejection: "액션바에 [작업계획 생성] 추가해서 바로 작업계획
                생성할수 있게 해야지"): when the next step is a work plan, this slot is not a
                button that opens a list — it IS [작업계획 생성] itself. One click opens the
@@ -188,12 +233,12 @@
               class="btn btn-primary btn-sm ab-split-main ab-wp-main"
               type="button"
               data-test="ab-create-work-plan"
-              :disabled="canNextAction === false || isGroupBusy"
+              :disabled="canNextAction === false || isActionBarBusy"
               @click="onNextCreateEmptyClick"
             >
               <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.btn_create_work_plan') }}
             </button>
-            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-split-caret" type="button" :disabled="isActionBarBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-up" />
             </button>
             <Teleport to="body">
@@ -204,13 +249,13 @@
                 :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
                 @click.stop
               >
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onNextMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
                 <!-- 0405 T0011 rev1 (rejection: "AI 호출을 없애고 그자리에 넣어야할거아냐"):
                      [작업계획 생성] now occupies the bottom slot where [AI 호출] used to sit.
                      It does the same thing as the action-bar button. -->
-                <button class="ab-split-item ab-split-item--continuous ab-split-item--main" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
+                <button class="ab-split-item ab-split-item--continuous ab-split-item--main" type="button" :disabled="isActionBarBusy" @click="onNextCreateEmptyClick">
                   <AppIcon name="clipboard-text" /> {{ t('main.review_action_bar.btn_create_work_plan') }}
                 </button>
               </div>
@@ -224,7 +269,7 @@
                  Create approved doc → Create empty doc → Copy mention.
                  T0007: [다음 단계 진행] (proceed) is no longer an item here — the current-step
                  cell in the workflow strip (DocWorkflow.vue) is the sole entry to NextActionModal. -->
-            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" class="btn btn-primary btn-sm ab-dd-toggle" type="button" :disabled="isActionBarBusy" @click.stop="toggleDropdown">
               <AppIcon name="arrow-right" />
               {{ t('main.review_action_bar.btn_next_step', { step: nextStepLabel || t('main.review_action_bar.next_doc') }) }}
               <AppIcon class="ab-dd-chevron" :name="dropdownOpen ? 'caret-down' : 'caret-up'" />
@@ -237,20 +282,20 @@
                 :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
                 @click.stop
               >
-                <button v-if="canCreateApproved" class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateApprovedClick">
+                <button v-if="canCreateApproved" class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onNextCreateApprovedClick">
                   <AppIcon name="seal-check" /> {{ t('main.review_action_bar.btn_create_approved') }}
                 </button>
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextCreateEmptyClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onNextCreateEmptyClick">
                   <AppIcon name="file" /> {{ t(nextCreateLabelKey) }}
                 </button>
                 <!-- R0001 ③-b: copy the "R + previous + 2-previous" next-step mention without
                      opening the proceed dialog. -->
-                <button class="ab-split-item" type="button" :disabled="isGroupBusy" @click="onNextMentionCopyClick">
+                <button class="ab-split-item" type="button" :disabled="isActionBarBusy" @click="onNextMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
                 <!-- R0001 (0086): continuous (unmanned) work entry — runs the sequence from the
                      current head to a chosen step without a human re-issuing tokens each step. -->
-                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isGroupBusy" @click="onContinuousWorkClick">
+                <button class="ab-split-item ab-split-item--continuous" type="button" :disabled="isActionBarBusy" @click="onContinuousWorkClick">
                   <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
                 </button>
               </div>
@@ -280,19 +325,19 @@
         </div>
 
         <div v-else-if="currentMode === 'rejected'" class="sfb-actions sfb-actions--rework">
-          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onReworkMentionCopyClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isActionBarBusy" @click="onReworkMentionCopyClick">
             <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
           </button>
-          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onInvokeCommandClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isActionBarBusy" @click="onInvokeCommandClick">
             <AppIcon name="terminal" /> {{ t('main.review_action_bar.btn_invoke_command') }}
           </button>
           <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
-          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isGroupBusy" @click="onReworkInvokeAiClick">
+          <button class="btn btn-sm sfb-rework-tool" type="button" :disabled="isActionBarBusy" @click="onReworkInvokeAiClick">
             <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
           </button>
           <button
             class="btn btn-sm sfb-rework-complete"
-            :disabled="markRevising || isGroupBusy"
+            :disabled="markRevising || isActionBarBusy"
             @click="onMarkRevisedClick"
           >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_mark_revised') }}
@@ -307,21 +352,21 @@
                v3 screen 1. -->
 
           <!-- Approve -->
-          <button class="btn btn-success btn-sm" :disabled="!canApprove || isGroupBusy" @click="onApproveClick">
+          <button class="btn btn-success btn-sm" :disabled="!canApprove || isActionBarBusy" @click="onApproveClick">
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
 
           <!-- Reject -->
-          <button class="btn btn-danger btn-sm" :disabled="approving || isGroupBusy" @click="onRejectClick">
+          <button class="btn btn-danger btn-sm" :disabled="approving || isActionBarBusy" @click="onRejectClick">
             <AppIcon name="prohibit" /> {{ t('main.review_action_bar.btn_reject') }}
           </button>
 
           <!-- Review request ▼ split button (excluding R type) -->
           <div v-if="canShowReviewRequestAction" class="ab-split-wrap">
-            <button :class="reviewRequestMainClass" :disabled="isGroupBusy" @click="onReviewRequestMainClick">
+            <button :class="reviewRequestMainClass" :disabled="isActionBarBusy" @click="onReviewRequestMainClick">
               <AppIcon :name="reviewRequestIconClass" /> {{ reviewRequestButtonLabel }}
             </button>
-            <button ref="dropdownTriggerRef" :class="reviewRequestCaretClass" :disabled="isGroupBusy" @click.stop="toggleDropdown">
+            <button ref="dropdownTriggerRef" :class="reviewRequestCaretClass" :disabled="isActionBarBusy" @click.stop="toggleDropdown">
               <AppIcon name="caret-down" />
             </button>
             <Teleport to="body">
@@ -332,11 +377,11 @@
                 :style="{ top: dropdownPos.top + 'px', left: dropdownPos.left + 'px' }"
                 @click.stop
               >
-                <button class="ab-split-item" :disabled="isGroupBusy" @click="onMentionCopyClick">
+                <button class="ab-split-item" :disabled="isActionBarBusy" @click="onMentionCopyClick">
                   <AppIcon name="copy" /> {{ t('main.review_action_bar.btn_copy_mention') }}
                 </button>
                 <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
-                <button class="ab-split-item" :disabled="isGroupBusy" @click="onReviewInvokeAiClick">
+                <button class="ab-split-item" :disabled="isActionBarBusy" @click="onReviewInvokeAiClick">
                   <AppIcon name="robot" /> {{ t('main.review_action_bar.btn_invoke_ai') }}
                 </button>
                 <button class="ab-split-item" disabled :title="t('main.review_action_bar.tooltip_coming_soon')">
@@ -478,6 +523,12 @@ const props = defineProps<{
   canNextAction?: boolean
   /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
   testRunStatus?: string | null
+  /**
+   * 0441 TR0005 rev2: whether ANY document of this group has a run in flight. Sourced from
+   * the document detail's group-scoped `group_test_run` block, so a sibling tab gets the
+   * same true that the running document's own tab gets.
+   */
+  groupTestRunActive?: boolean
   // T813: head doc label fields
   headDocId?: string | null
   /** D031: head step type code (replaces headDocType), sourced from workflowViewState.headDocLabel. */
@@ -507,6 +558,13 @@ const emit = defineEmits<{
   'run-test': [] // test contract marker for shell-based TS: run-test: []
   'continuous-work': []
   'open-head-doc': [payload: { docId: string; title: string; typeCode: string | null }]
+  /**
+   * 0441 TR0005 rev9: the next-step slot for a server-assembled head (TSR). Navigation only --
+   * MainPanel opens the group's test-scenario document, where the run that assembles that head
+   * actually starts. Deliberately NOT create-empty / copy-next-mention / continuous-work: those
+   * are the three manual-authoring paths this head must never offer.
+   */
+  'open-test-scenario': [payload: { docId: string; projectId: string; groupId: string }]
 }>()
 
 const { t } = useI18n()
@@ -780,23 +838,57 @@ const isNextFinalApproval = computed(() =>
   (props.nextStepCode ?? '').toUpperCase() === 'AC',
 )
 
+// 0441 T0004 item 1 (NR0003 §1): the workflow head is a report the SERVER assembles from a
+// test run — nobody writes it. This is a fact about the HEAD alone, so it is computed from
+// nextStepCode alone. Mixing the current tab's type into it (as isNextTestReportPending did,
+// and still does below for a different question) is what made one pending TSR head render as
+// a test-run button on the TS tab and as a generic [next step] drop-up — [create empty doc]
+// included — on every other tab of the same group. Mirrors the server's
+// documents.constants.SERVER_ASSEMBLED_DOC_TYPES.
+const SERVER_ASSEMBLED_NEXT_STEP_CODES = ['TSR']
+const isNextServerAssembled = computed(() =>
+  SERVER_ASSEMBLED_NEXT_STEP_CODES.includes((props.nextStepCode ?? '').toUpperCase()),
+)
+
 // flowgate.default.0358 T0004 §9 (NR0003): before this fix, isNextTestReportPending
 // only matched testRunStatus == null, so the instant a run left that state the split
 // button collapsed to the generic "다음 단계" dropdown — the exact spot the user just
 // started a run from turning into an unrelated document-creation menu. running/
 // cancelling now stay inside the same TS→TSR branch (rendered as a status indicator,
 // not the generic menu); the real cancel affordance itself lives in TestRunStrip.
+//
+// 0441 T0004 item 1: the testRunStatus list is gone for the same reason 0358 shortened it.
+// A finished-but-not-advanced run (a RED run leaves the head on TSR with status 'failed')
+// dropped out of this branch and landed in the generic drop-up too — the same manual-TSR
+// menu, just reached from the TS tab instead of a sibling tab. The question this answers is
+// now only "is this the tab the run is started from", and idle is the correct rendering for
+// every non-running status: the user re-runs. isTestRunActive still decides run-in-flight.
 const isNextTestReportPending = computed(() =>
-  (props.docType ?? '').toUpperCase() === 'TS' &&
-  (props.nextStepCode ?? '').toUpperCase() === 'TSR' &&
-  (props.testRunStatus == null ||
-    props.testRunStatus === 'running' ||
-    props.testRunStatus === 'cancelling'),
+  (props.docType ?? '').toUpperCase() === 'TS' && isNextServerAssembled.value,
 )
 
 const isTestRunActive = computed(
   () => props.testRunStatus === 'running' || props.testRunStatus === 'cancelling',
 )
+
+// 0441 TR0005 rework (rejection: "테스트 중일때는 액션바를 전부 비활성화 해놔야
+// 할거아냐"): isGroupBusy alone only locks the bar for an AI-invoke run. TestRunStrip's
+// 0163/0169 re-run relaxation lets a run start while the TS document itself is still
+// pending_review/revised (mode='review') or rejected (mode='rejected') -- every
+// approve/reject/review-request/rework button in those modes ignored the run entirely
+// and stayed clickable for its whole duration. isTestRunActive is already scoped to the
+// active tab's own document (props.testRunStatus), so folding it into the same lock the
+// AI-invoke path uses closes that gap without any group-wide test-run tracking.
+//
+// 0441 TR0005 rev2 (rejection: "테스트 중일때는 \"그룹 내 다른 문서의\" 액션바\"도\" 전부
+// 비활성화 해놓아야 할거아냐"): props.testRunStatus is the ACTIVE tab's own embed, so rev1's lock
+// stopped at the tab the run was started from -- switch to any sibling document of the same
+// group and its bar was fully live again. groupTestRunActive carries the group-wide answer
+// (documents detail -> group_test_run.active), which is what the lock is keyed on now. Both
+// are OR-ed: the per-document status is the fresher of the two on the running tab itself.
+const isAnyTestRunActive = computed(() => isTestRunActive.value || props.groupTestRunActive === true)
+
+const isActionBarBusy = computed(() => isGroupBusy.value || isAnyTestRunActive.value)
 
 const testRunStatusLabel = computed(() =>
   props.testRunStatus === 'cancelling'
@@ -827,6 +919,19 @@ function onNextMentionCopyClick() {
   emit('copy-next-mention')
 }
 
+
+// 0441 TR0005 rev9 (rejection: "테스트 실행중 아닌데 왜 버튼 비활성화 되냐?"): the only
+// action that is correct in this slot. A TSR head cannot be written by hand, but the user
+// still has somewhere to go -- the TS document whose run assembles it. Like
+// [헤드 문서로 이동] above, this just navigates; the template still disables it while the
+// group is busy so a run in flight keeps the whole bar inert (rejections 1-5).
+function onOpenTestScenarioClick() {
+  emit('open-test-scenario', {
+    docId: props.docId,
+    projectId: props.projectId,
+    groupId: props.groupId,
+  })
+}
 
 function onOpenHeadDocClick() {
   if (!props.headDocId) return
@@ -1270,6 +1375,12 @@ onBeforeUnmount(() => {
 }
 
 .sfb-status-pill.ai-running {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+}
+
+.sfb-status-pill.test-running {
   background: #e0f2fe;
   color: #0284c7;
   border: 1px solid #bae6fd;

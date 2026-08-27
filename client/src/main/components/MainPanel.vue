@@ -845,6 +845,7 @@
       :review-request-label="getReviewRequestLabel(activeTabId)"
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
+      :group-test-run-active="exposedValue(docHeaderRefs[activeTabId]?.groupTestRunActive) ?? true"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
       :head-doc-label="exposedValue(docHeaderRefs[activeTabId]?.workflowHeadType) ?? getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
@@ -868,6 +869,7 @@
       @run-test="onActionBarRunTest(activeTabId)"
       @continuous-work="onActionBarContinuousWork(activeTabId)"
       @open-head-doc="onOpenHeadDocClick"
+      @open-test-scenario="onOpenTestScenarioDoc"
     />
 
     <!-- flowgate.default.0405 P0004: the work-plan-only proposal dialog. The next-action
@@ -2308,6 +2310,11 @@ function onEditInvokeAi(tab: Tab) {
 // (ContinuousWorkDialog → consent gate → AiInvokeDialog), so both entries open the same dialog.
 function onNextActionInvokeAi(_selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
+  // 0441 T0004 item 2: [Invoke AI] on a next step the server assembles would open the
+  // continuous-work dialog whose run mints the very token this policy withholds. The TS tab
+  // is exempt (tabId is passed): from there the unmanned chain reaches the TSR head through
+  // advance_workflow's test-run hand-off, which is the supported route, not manual authoring.
+  if (blockServerAssembledNextStep(nextActionModalTypeCode.value || getNextStepCode(tabId), tabId)) return
   const h = docHeaderRefs[tabId]
   const project = nextActionModalProjectId.value || (exposedValue<string>(h?.docProjectId) ?? projectStore.currentProjectId)
   const groupId = nextActionModalGroupId.value || exposedValue<string>(h?.groupId)
@@ -2533,6 +2540,52 @@ function guardNextActionAvailable(tabId: string): boolean {
   return false
 }
 
+// ── Server-assembled next step (0441 T0004 item 2 / NR0003 recommendation A §4) ───────
+// A TSR is assembled by the server out of a finished test run; nobody writes one. The
+// action bar no longer OFFERS the manual items for such a head on a non-TS tab, but the
+// bar is only the display — these handlers are also reached from the workflow strip's
+// next-action list, and a template or event-wiring edit must not be able to re-open the
+// hole on its own. Mirrors the server's documents.constants.SERVER_ASSEMBLED_DOC_TYPES,
+// which refuses the same requests at /documents/next-empty (422), inbox action:new (409)
+// and /workflow/advance (409). Two independent defenses for one policy.
+const SERVER_ASSEMBLED_DOC_TYPES = ['TSR']
+
+function isServerAssembledType(typeCode: string | null | undefined): boolean {
+  return SERVER_ASSEMBLED_DOC_TYPES.includes(String(typeCode ?? '').toUpperCase())
+}
+
+/**
+ * True when a manual-authoring action aimed at `typeCode` must be abandoned. Never a silent
+ * return: the refusal always goes through the ordinary toast so the user is told which
+ * document type it is and where the real action lives.
+ *
+ * Pass `tabId` for the actions the TS document legitimately keeps ([Copy mention] /
+ * [Invoke AI] in the test-run split caret, which hand off to the run). Omit it for
+ * [Create empty doc], which is wrong for a server-assembled type on every tab.
+ *
+ * 0441 TR0005 rev12: this function only ever decides whether to show the refusal toast —
+ * it never mints anything itself. [Invoke AI] hands off correctly on its own (the
+ * continuous-work dialog sets continuous=true). [Copy mention] does NOT: its caller,
+ * onNextActionCopyMention, must branch to the dedicated /documents/test-run-request
+ * endpoint for the TS+TSR case BEFORE reaching this check, because the ordinary
+ * action_scope='new' token path this function guards can never produce that mention
+ * (the server only hands off a TSR to a continuous=true advance, which nothing here sets).
+ */
+function blockServerAssembledNextStep(
+  typeCode: string | null | undefined,
+  tabId?: string,
+): boolean {
+  if (!isServerAssembledType(typeCode)) return false
+  if (tabId && (getTabTypeCode(tabId) ?? '').toUpperCase() === 'TS') return false
+  showToast(
+    t('main.main_panel.error_server_assembled_doc', {
+      docType: String(typeCode ?? '').toUpperCase(),
+    }),
+    'warning',
+  )
+  return true
+}
+
 // AC (final approval) is a file-less workflow step rendered as a real document
 // tab. Proceeding to it opens that tab — reusing the existing AC doc when one is
 // already the head, else creating it via the BE — so the reviewer approves or
@@ -2705,6 +2758,49 @@ function getActionBarMode(tabId: string) {
   // so the bar disappears immediately rather than after F5.
   if (exposedValue(docHeaderRefs[tabId]?.groupDisposed) === true) return null
   return getWorkflowViewState(tabId).mode
+}
+
+// 0441 TR0005 rev9 (rejection: the removed hint sentence, and "테스트 실행중 아닌데 왜 버튼
+// 비활성화 되냐?"): the action bar's next-step slot for a server-assembled head (TSR) used to
+// be a permanently disabled button next to a paragraph telling the user, in words, to go open
+// the TS document and run the test. The paragraph is gone; this is the same instruction turned
+// into the button itself ("문서로 이동", the alternative the 6th rejection named). The group tree
+// the sidebar already loads is the source for the TS document -- no new endpoint. Nothing here
+// creates, copies or invokes anything, so the manual-TSR ban (§2-§4) is untouched.
+async function onOpenTestScenarioDoc(payload: { docId: string; projectId: string; groupId: string }) {
+  const pid = payload.projectId
+  const gid = payload.groupId
+  if (!pid || !gid) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'warning')
+    return
+  }
+  let target: { id: string; title?: string; label: string; type_code: string | null } | null = null
+  try {
+    const nodes = await explorerStore.fetchGroupTree(pid)
+    const candidates = nodes.filter(
+      n => n.node_type === 'document'
+        && n.parent_id === gid
+        && String(n.type_code ?? '').toUpperCase() === 'TS',
+    )
+    // Several TS documents can sit in one group (a re-scenario after a rejected run). The run
+    // that assembles the pending TSR head is started from the newest one.
+    candidates.sort((a, b) => String(a.number ?? a.id).localeCompare(String(b.number ?? b.id)))
+    target = candidates[candidates.length - 1] ?? null
+  } catch {
+    target = null
+  }
+  if (!target) {
+    showToast(t('main.main_panel.error_info_unavailable'), 'warning')
+    return
+  }
+  const title = target.title || target.label || ''
+  tabsStore.openTab({
+    id: target.id,
+    title: title ? `${target.id} — ${title}` : target.id,
+    path: '',
+    type: 'md',
+    typeCode: target.type_code ?? undefined,
+  })
 }
 
 function onOpenHeadDocClick(payload: { docId: string; title: string; typeCode: string | null }) {
@@ -3505,6 +3601,11 @@ function onNonRNextActionClick(tabId: string) {
 
 async function onNextActionInvokeCommand(_selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
+  // 0441 T0004 item 2 rev11: the proceed dialog's [Invoke command] mints an
+  // action_scope='new' token the same as [Copy mention] does, but has no TS-caret
+  // counterpart (the split caret only ever offers copy-mention / invoke-ai for a TSR
+  // head) — so unlike those two, this one is unconditional, matching create-empty.
+  if (blockServerAssembledNextStep(nextActionModalTypeCode.value || getNextStepCode(tabId))) return
   const docRef = nextActionModalDocRef.value || tabId
   const project = nextActionModalProjectId.value || (exposedValue<string>(docHeaderRefs[tabId]?.docProjectId) ?? projectStore.currentProjectId)
   const groupId = nextActionModalGroupId.value || exposedValue<string>(docHeaderRefs[tabId]?.groupId)
@@ -3531,6 +3632,44 @@ async function onNextActionInvokeCommand(_selectedDocs?: string[]) {
 async function onNextActionCopyMention(selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
   const docRef = nextActionModalDocRef.value || tabId
+  const typeCode = nextActionModalTypeCode.value || getNextStepCode(tabId)
+  // 0441 TR0005 rev12 (review finding on rev11): a TSR head reached from the TS tab is not
+  // an instruction to hand-write the report — it hands off to the same run the [Run] button
+  // starts, just copied as a mention instead of fired immediately. That hand-off already
+  // exists server-side as the manned POST /documents/test-run-request route
+  // (test_run_service.issue_test_run_request), which mints an action_scope='test_run' token
+  // keyed to the TS document itself. The exemption below used to fall through to the shared
+  // action_scope='new' + doc_ref=root-R path instead: issueToken maps that to a
+  // non-continuous /workflow/advance call, and the server refuses ANY non-continuous advance
+  // on a server-assembled head (workflow_decision_service.py:935) — continuous=true is only
+  // ever set by the separate continuous-work dialog. So the exempted button always 409'd and
+  // never produced a mention. Route it through the endpoint built for this instead.
+  if (isServerAssembledType(typeCode) && (getTabTypeCode(tabId) ?? '').toUpperCase() === 'TS') {
+    let requestFailed = false
+    await copyMentionDeferred(
+      async () => {
+        try {
+          const res = await postRequest<any>('/api/v1/documents/test-run-request', { doc_id: tabId })
+          return String(res.data?.mention ?? '')
+        } catch (e: unknown) {
+          requestFailed = true
+          showToast(testRunErrorMessage(e), 'danger')
+          throw new ClipboardAbort()
+        }
+      },
+      {
+        tabId,
+        kind: 'next_step',
+        successToast: t('main.next_action_modal.copy_mention_toast'),
+        aborted: () => requestFailed,
+      },
+    )
+    return
+  }
+  // 0441 T0004 item 2: the shared mention-issuing delegate. onActionBarCopyNextMention
+  // already refuses before seeding the refs; guarding the delegate too covers the
+  // next-action list, which reaches this function without passing through the action bar.
+  if (blockServerAssembledNextStep(typeCode, tabId)) return
   const project = nextActionModalProjectId.value || (exposedValue<string>(docHeaderRefs[tabId]?.docProjectId) ?? projectStore.currentProjectId)
   const groupId = nextActionModalGroupId.value || exposedValue<string>(docHeaderRefs[tabId]?.groupId)
   if (!project || !groupId) {
@@ -3575,6 +3714,12 @@ async function copyTokenMention(token: IssuedToken, selectedDocs?: string[], app
 // plain mention copy + fallback toast. Otherwise: open the dialog to pick a message.
 async function onNextActionCopyMentionWithMessage(selectedDocs?: string[]) {
   const tabId = nextActionModalTabId.value
+  // 0441 T0004 item 2 rev11: [Copy mention (add message)] issues the same
+  // action_scope='new' token as plain [Copy mention], but — like [Invoke command] —
+  // has no TS-caret counterpart, so it is refused unconditionally rather than
+  // exempting the TS tab. Guard before the message-candidate fetch, not just before
+  // the token call, so a server-assembled head triggers no request at all.
+  if (blockServerAssembledNextStep(nextActionModalTypeCode.value || getNextStepCode(tabId))) return
   const docRef = nextActionModalDocRef.value || tabId
   const project = nextActionModalProjectId.value || (exposedValue<string>(docHeaderRefs[tabId]?.docProjectId) ?? projectStore.currentProjectId)
   const groupId = nextActionModalGroupId.value || exposedValue<string>(docHeaderRefs[tabId]?.groupId)
@@ -3703,6 +3848,11 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
     showToast(t('main.main_panel.error_empty_doc_not_allowed', { docType }), 'warning')
     return
   }
+  // 0441 T0004 item 2: no tab has a legitimate [Create empty doc] for a server-assembled
+  // type — not even the TS tab, whose split caret deliberately omits it — so this one is
+  // unconditional. Stops before /documents/next-empty is called at all; the server refuses
+  // the same request with 422 if this ever gets bypassed.
+  if (blockServerAssembledNextStep(docType)) return
   // 0395 T0026 rework: a work plan has no "empty document". Creating one from just a title
   // leaves a file with neither quantities nor a provider decided, and the work-plan screen
   // cannot open that file as a table (user-reported). The same [Create Empty Document] entry
@@ -3759,6 +3909,10 @@ function nextActionDocRef(tabId: string): string {
 // dialog directly (the dialog was previously buried in the proceed modal, D0004 §3-2-A).
 function onActionBarCreateEmpty(tabId: string) {
   if (!guardNextActionAvailable(tabId)) return
+  // 0441 T0004 item 2: refuse here as well as inside onNextActionCreateEmpty below. This
+  // entry point seeds the modal-scoped refs before delegating, so stopping only at the
+  // delegate would leave those refs pointing at a document that must never be created.
+  if (blockServerAssembledNextStep(getNextStepCode(tabId))) return
   const h = docHeaderRefs[tabId]
   const groupId = exposedValue<string>(h?.groupId) ?? ''
   nextActionModalTabId.value = tabId
@@ -3779,6 +3933,11 @@ function onActionBarCreateEmpty(tabId: string) {
 // by onNextActionCopyMention as usual.
 function onActionBarCopyNextMention(tabId: string) {
   if (!guardNextActionAvailable(tabId)) return
+  // 0441 T0004 item 2: a next-step mention for a server-assembled head is an instruction to
+  // write that document by hand, carried by an action_scope='new' token — NR0003 §2 named
+  // this the second way the reported manual TSR could be produced. The TS tab keeps its own
+  // caret items (they belong to the test run), so tabId is passed.
+  if (blockServerAssembledNextStep(getNextStepCode(tabId), tabId)) return
   const h = docHeaderRefs[tabId]
   const groupId = exposedValue<string>(h?.groupId) ?? ''
   nextActionModalTabId.value = tabId
@@ -3980,6 +4139,11 @@ function onWorkPlanCreated(payload: { docId: string; title: string }) {
 // the dialog reads /workflow/sequence by the ROOT R (nextActionDocRef) and handles the
 // undecided/all-done cases itself, so this is NOT gated by guardNextActionAvailable.
 function onActionBarContinuousWork(tabId: string) {
+  // 0441 T0004 item 2: same rule as the next-action list's [Invoke AI] above — a non-TS tab
+  // sitting on a server-assembled head has no manual entry, and the dialog it would open is
+  // the AI-invoke token path. Started from the TS tab, the chain still reaches the TSR head
+  // through the server's test-run hand-off.
+  if (blockServerAssembledNextStep(getNextStepCode(tabId), tabId)) return
   const h = docHeaderRefs[tabId]
   continuousTabId.value = tabId
   continuousDocRef.value = nextActionDocRef(tabId)
