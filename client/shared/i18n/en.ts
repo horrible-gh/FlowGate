@@ -1388,6 +1388,17 @@ export default {
       error_not_found: 'That attachment no longer exists. Reloading the list.',
       error_server: 'The server could not store the file. Please try again shortly — the cause was written to the server log.',
     },
+    step_verification_card: {
+      title: 'Step Verification',
+      collapse: 'Collapse step verification',
+      expand: 'Expand step verification',
+      count: '{count}',
+      fold_summary_empty: '· none',
+      fold_summary_one: '· {title}',
+      fold_summary_many: '· {title} and {rest} more',
+      not_applicable: 'This document has no step-verification section.',
+      declared_none: 'Registered as: nothing to verify.',
+    },
     file_upload_modal: {
       title: 'File Upload',
       drop_zone: 'Drag files here or click to select',

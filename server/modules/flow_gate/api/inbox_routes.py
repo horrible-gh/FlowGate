@@ -45,6 +45,7 @@ from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
+from modules.flow_gate.services import step_verification_service
 from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services import work_plan_service
@@ -1823,6 +1824,12 @@ _TR_SCOPE_FALLBACK_COPY = {
     "ja": "TR作業範囲検証却下",
 }
 
+_STEP_VERIFICATION_FALLBACK_COPY = {
+    "ko": "TR 단계별 확인 섹션 검증 반려",
+    "en": "TR step-verification section validation rejected",
+    "ja": "TR 段階別確認セクション検証却下",
+}
+
 
 _DESIGN_TEMPLATE_SUBMISSION_COPY = {
     "ko": {
@@ -3440,6 +3447,28 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             project, group["group_id"]
         )
 
+    # ── Step 5.71: [단계별 확인] section validation (0467 R0001) ────────────────
+    # TR-only (not TSR/TS — the reader's complaint was specifically about work reports).
+    # No git/worktree comparison: the section's own structure is the only input, so it is
+    # judged the same way on new and edit, and (unlike tr_scope) never needs a stored
+    # verdict — the document screen recomputes it live from the body on every read.
+    step_verification_result: Optional[dict] = None
+    if doc_type.upper() == "TR":
+        try:
+            sv_body = body_for_guards
+            if sv_body is None:
+                sv_body = _submission_text(doc_path, content)
+            step_verification_result = step_verification_service.evaluate(
+                sv_body or "", locale=_locale,
+            )
+        except Exception:  # noqa: BLE001 — a validation failure must not block TR intake
+            step_verification_result = None
+        if step_verification_result and step_verification_result.get("verdict") == step_verification_service.VERDICT_REJECT:
+            return _fail(
+                422,
+                step_verification_result.get("notice") or _STEP_VERIFICATION_FALLBACK_COPY[_locale],
+            )
+
     # ── Step 5.75: Server-assembled type guard (0441 T0004 item 3) ─────────
     # A TSR is built by test_run_service.assemble_tsr() out of a finished run and is
     # registered through document_service directly — it never arrives here. So an
@@ -3547,6 +3576,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if tr_scope_result is not None:
         new_checks.append("tr_scope")
         would_register["tr_scope"] = tr_scope_result
+    if step_verification_result is not None:
+        new_checks.append("step_verification")
+        would_register["step_verification"] = step_verification_result
     if worktree_untracked is not None:
         would_register["worktree_untracked"] = worktree_untracked
     if normalizations:
@@ -4369,6 +4401,26 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             project, group["group_id"]
         )
 
+    # ── Step 5.71: [단계별 확인] section validation (0467 R0001) ────────────────
+    # Same rule as _handle_new's Step 5.71 — attaching this to new alone would let a
+    # rejected-then-resubmitted TR drop the section again on the edit path.
+    edit_step_verification: Optional[dict] = None
+    if str(existing_doc.get("type_code") or "").upper() == "TR":
+        try:
+            sv_body = edit_body_for_guards
+            if sv_body is None:
+                sv_body = _submission_text(doc_path, content)
+            edit_step_verification = step_verification_service.evaluate(
+                sv_body or "", locale=_locale,
+            )
+        except Exception:  # noqa: BLE001 — a validation failure must not block resubmission
+            edit_step_verification = None
+        if edit_step_verification and edit_step_verification.get("verdict") == step_verification_service.VERDICT_REJECT:
+            return _fail(
+                422,
+                edit_step_verification.get("notice") or _STEP_VERIFICATION_FALLBACK_COPY[_locale],
+            )
+
     _edit_encoding_fields: dict[str, Optional[str]] = {"body": _edit_raw_submission_text}
     if edit_reason:
         _edit_encoding_fields["edit_reason"] = edit_reason
@@ -4413,6 +4465,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if edit_tr_scope is not None:
         edit_checks.append("tr_scope")
         edit_would_register["tr_scope"] = edit_tr_scope
+    if edit_step_verification is not None:
+        edit_checks.append("step_verification")
+        edit_would_register["step_verification"] = edit_step_verification
     if edit_worktree_untracked is not None:
         edit_would_register["worktree_untracked"] = edit_worktree_untracked
     if edit_normalizations:

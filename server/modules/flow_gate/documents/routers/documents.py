@@ -40,6 +40,7 @@ from modules.flow_gate.services import (
     conversation_markdown_service,
     conversation_query_service,
     conversation_turn_service,
+    step_verification_service,
 )
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.storage.paths import get_storage_root
@@ -2535,6 +2536,35 @@ def get_document_content(
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document file not found.")
     return {"content": file_path.read_text(encoding="utf-8")}
+
+
+@router.get("/{doc_id}/step-verification")
+@require_permission("perm_document_read")
+def get_step_verification(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """The `## 단계별 확인` section of a document's body, parsed into sections/steps
+    (flowgate.default.0467 R0001). Computed live from the body file on every call — the
+    section's own text is the only input, so unlike ``tr_scope`` there is nothing to freeze
+    at submission time. A document with no such section (wrong type, or predates the
+    feature) answers 200 with ``found: false`` rather than 404 — the card draws its own
+    "no section" state from that, the same way the attachments list draws its empty state
+    from a 200 + empty array.
+    """
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    file_path = _document_file_path(doc)
+    body = file_path.read_text(encoding="utf-8") if file_path.is_file() else ""
+    parsed = step_verification_service.parse_step_verification(body)
+    data = {
+        "found": parsed.found,
+        "declared_none": parsed.declared_none,
+        "sections": [s.to_dict() for s in parsed.sections],
+        "format_errors": parsed.format_errors,
+    }
+    return {"data": data}
 
 
 @router.patch("/{doc_id}/content")

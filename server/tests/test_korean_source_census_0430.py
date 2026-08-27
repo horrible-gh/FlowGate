@@ -49,18 +49,25 @@ SCANNED_ROOTS = ["modules", "templates"]
 # all in a file with none today fails the census the moment it appears. An existing
 # file's cap is exactly its measured count; one more line above that is new Korean.
 FILE_LINE_CAPS: dict[str, int] = {
-    "modules/flow_gate/api/inbox_routes.py": 21,
-    "modules/flow_gate/documents/routers/documents.py": 2,
+    # 21 -> 45, 2 -> 13, 61 -> 70: flowgate.default.0467 T0002 added the [단계별 확인]
+    # required-section gate (step_verification_service, wired into both inbox handlers'
+    # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
+    # comments, not the kind of stray Korean this census exists to catch.
+    "modules/flow_gate/api/inbox_routes.py": 45,
+    "modules/flow_gate/documents/routers/documents.py": 13,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
     "modules/flow_gate/services/ai_invoke_service.py": 4,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
-    "modules/flow_gate/services/help_catalog.py": 61,
+    "modules/flow_gate/services/help_catalog.py": 70,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     "modules/flow_gate/services/mention_service.py": 157,
     "modules/flow_gate/services/q_answer_invoke_service.py": 24,
     "modules/flow_gate/services/remote_tool_service.py": 14,
+    # New file (flowgate.default.0467 T0002) — mirrors tr_scope_service.py's shape
+    # (required-section parser + ko/en notice text), so a comparable line count.
+    "modules/flow_gate/services/step_verification_service.py": 49,
     "modules/flow_gate/services/test_run_service.py": 28,
     "modules/flow_gate/services/tool_registry.py": 45,
     "modules/flow_gate/services/tr_scope_service.py": 53,

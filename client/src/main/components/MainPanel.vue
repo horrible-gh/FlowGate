@@ -130,6 +130,16 @@
             :doc-id="tab.id"
             :read-only="aiRunDocumentLocked"
           />
+          <!-- 0467 R0001 — [단계별 확인]: sits between [첨부 파일] above and the [문서 내용
+               미리보기] chain below, the one gap the current card order actually has (see the
+               0060 comment above — attachments already sits above the preview chain, so this
+               is where "between" the two lands). TR-only: the section itself is TR-specific
+               (R0001's complaint was about work reports), and step_verification_service only
+               validates TR submissions. -->
+          <StepVerificationCard
+            v-if="tab.typeCode === 'TR'"
+            :doc-id="tab.id"
+          />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
                the tree the tab type resolves to 'unsupported' (no md), which would
@@ -1363,6 +1373,7 @@ import TestRunStrip from './TestRunStrip.vue'
 import DocWorkflow from './DocWorkflow.vue'
 import GitFinalizePanel from './GitFinalizePanel.vue'
 import AttachmentCard from './AttachmentCard.vue'
+import StepVerificationCard from './StepVerificationCard.vue'
 import ReviewActionBar from './ReviewActionBar.vue'
 import ReviewRejectDialog from './ReviewRejectDialog.vue'
 import TimeMachineDialog from './TimeMachineDialog.vue'

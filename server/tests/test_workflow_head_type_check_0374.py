@@ -50,6 +50,7 @@ def _patch_validation(monkeypatch, head):
     )
     monkeypatch.setattr(inbox_routes, "_find_body_twin", lambda *_a, **_k: None)
     monkeypatch.setattr(inbox_routes.tr_scope_service, "evaluate", lambda **_k: None)
+    monkeypatch.setattr(inbox_routes.step_verification_service, "evaluate", lambda **_k: None)
     get_head = MagicMock(return_value=head)
     monkeypatch.setattr(inbox_routes.db_wfseq, "get_pending_head_by_group", get_head)
     increment = MagicMock()

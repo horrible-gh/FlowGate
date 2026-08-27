@@ -1388,6 +1388,17 @@ export default {
       error_not_found: '해당 첨부가 없습니다. 목록을 다시 불러옵니다.',
       error_server: '서버가 파일을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요. 원인은 서버 로그에 기록되었습니다.',
     },
+    step_verification_card: {
+      title: '단계별 확인',
+      collapse: '단계별 확인 접기',
+      expand: '단계별 확인 펼치기',
+      count: '{count}개',
+      fold_summary_empty: '· 없음',
+      fold_summary_one: '· {title}',
+      fold_summary_many: '· {title} 외 {rest}개',
+      not_applicable: '이 문서에는 단계별 확인 섹션이 없습니다.',
+      declared_none: '확인할 것이 없다고 등록되었습니다.',
+    },
     file_upload_modal: {
       title: '파일 업로드',
       drop_zone: '파일을 여기에 끌어놓거나 클릭하여 선택하세요',

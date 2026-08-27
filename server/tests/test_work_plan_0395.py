@@ -1267,7 +1267,7 @@ def test_ai_inbox_is_not_blocked_by_a_mismatched_workflow_head(seed, tmp_path):
         assert resp.status_code == 201, resp.text
 
         control = _inbox_post(
-            tmp_path, "# 작업 레포트\n\n## 변경 파일\n\n없음\n",
+            tmp_path, "# 작업 레포트\n\n## 변경 파일\n\n없음\n\n## 단계별 확인\n\n없음\n",
             doc_code="0005-TR", doc_type="TR",
         )
         assert control.status_code == 409
