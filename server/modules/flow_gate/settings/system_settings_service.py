@@ -115,21 +115,36 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
 
 
 
-def get_system_info() -> dict:
-    """Return app version, build ID, DB path, DB status, and server time."""
+def _runtime_build() -> tuple[str, str]:
     app_version = os.environ.get("APP_VERSION", "dev")
     build_id = "(unknown)"
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=3,
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=3,
         )
         if result.returncode == 0:
             build_id = result.stdout.strip()
     except Exception:
         pass
+    return app_version, build_id
+
+
+def record_deployment_started() -> dict:
+    """Persist this process deployment identity once from the startup hook."""
+    from modules.flow_gate.workflow import event_logger
+
+    app_version, build_id = _runtime_build()
+    started_at = datetime.now(_JST).isoformat(timespec="seconds")
+    return event_logger.log_event(
+        event_type=event_logger.EVT_DEPLOYMENT_STARTED,
+        project_id="__SYSTEM__", actor_user_id="u-system",
+        metadata={"app_version": app_version, "build_id": build_id, "started_at": started_at},
+    )
+
+
+def get_system_info() -> dict:
+    """Return app version, build ID, DB status, server time, and annotation counters."""
+    app_version, build_id = _runtime_build()
 
     try:
         from config import settings as _cfg
@@ -151,4 +166,13 @@ def get_system_info() -> dict:
         "db_path": db_path,
         "db_status": "ok" if db_ok else "error",
         "server_time": datetime.now(_JST).isoformat(timespec="seconds"),
+        "annotation_failures": _annotation_failure_counts(),
     }
+
+
+def _annotation_failure_counts() -> dict:
+    try:
+        from modules.flow_gate.workflow.event_logger import count_review_annotation_failures
+        return count_review_annotation_failures()
+    except Exception:
+        return {"read_failed": 0, "write_failed": 0, "total": 0, "since": None}

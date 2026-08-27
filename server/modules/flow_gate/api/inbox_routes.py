@@ -3091,6 +3091,24 @@ def _build_change_summary(**kwargs) -> dict:
         return {"changed": None, "error": "summary unavailable"}
 
 
+def _record_change_summary(doc_id: str, revision_no: int, summary: dict, actor_user_id: str | None) -> None:
+    """Best-effort durable copy of the response summary; save success stays independent."""
+    try:
+        from modules.flow_gate.workflow import event_logger
+        doc = db_docs.get_by_id(doc_id) or {}
+        core = {key: summary.get(key) for key in
+                ("changed", "lines_added", "lines_removed", "error") if key in summary}
+        core.update({"doc_id": doc_id, "revision_no": revision_no})
+        event_logger.log_event(
+            event_type=event_logger.EVT_CHANGE_SUMMARY_RECORDED,
+            project_id=doc.get("project_id") or "__SYSTEM__", actor_user_id=actor_user_id or "u-system",
+            group_id=doc.get("group_id"), document_id=doc.get("id"), metadata=core,
+        )
+    except Exception as exc:  # noqa: BLE001
+        import LogAssist.log as logger
+        logger.warning(f"[inbox] change summary event failed (ignored): {exc}")
+
+
 def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: new (D020 §3-3-2)."""
 
@@ -3840,6 +3858,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             after_path=stored_path,
             after_revision_no=0,
         )
+    _record_change_summary(canonical_doc_id, 0, resp_content["change_summary"], token_rec.get("issued_to"))
     # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
@@ -4722,6 +4741,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             before_path=backup_path_str,
             before_revision_no=current_revision_no,
         )
+    _record_change_summary(doc_id, new_revision_no, resp_body["change_summary"], token_rec.get("issued_to"))
     return JSONResponse(content=resp_body)
 
 

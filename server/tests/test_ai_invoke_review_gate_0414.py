@@ -1675,6 +1675,34 @@ class TestOneRejectionPerReviewRow:
         assert gate_exec["rejected_review_ids"] == [1, 2, 3]
         assert [item["review_id"] for item in world.history("doc-5")] == [1, 2, 3]
 
+    # ── R11 ───────────────────────────────────────────────────────────────────
+    def test_r11_cold_resume_stops_when_review_history_is_unreadable(
+            self, world, gate_exec, monkeypatch):
+        world.fill(5, "doc-5", status="revised", revision_no=1)
+        world.review("doc-5", "issues", revision_no=0)
+        world.docs["doc-5"].update({"id": 55, "project_id": "flowgate", "group_id": GROUP})
+        world.docs["doc-5"]["rejection_history"] = json.dumps([{
+            "rejection_id": "rej_existing", "review_id": 1,
+            "reason": svc.build_auto_reject_reason(world.reviews["doc-5"][0], {"doc_id": "doc-5"}, API_BASE),
+        }])
+        calls = {"n": 0}
+        def unreadable(doc_id):
+            calls["n"] += 1
+            raise RuntimeError("pool warming")
+        events = []
+        monkeypatch.setattr(svc.db_reviews, "list_by_doc", unreadable)
+        monkeypatch.setattr(svc, "_log_review_annotation_failure",
+                            lambda kind, slot, bundle, error: events.append((kind, slot["doc_id"], str(error))))
+        cold = bundle(group_id=GROUP)
+        gate = svc.resolve_review_gate(cold)
+        assert gate["stage"] == "stop"
+        assert gate["stop_code"] == "review_history_unreadable"
+        assert gate["detail"] == "pool warming"
+        assert calls["n"] == 1
+        assert events == [("read", "doc-5", "pool warming")]
+        assert gate_exec["rejected"] == []
+        assert len(world.history("doc-5")) == 1
+
 
 class TestRejectionHistoryCompatibility:
     """The recorded identity (B), the legacy fallback (B'), and what neither may touch."""
