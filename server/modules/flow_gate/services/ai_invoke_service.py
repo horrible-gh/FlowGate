@@ -5953,7 +5953,24 @@ def _check_expected_progress(
     return None
 
 
-def resolve_review_gate(bundle: dict) -> dict:
+def _log_review_annotation_failure(kind: str, slot: dict, bundle: dict, error) -> None:
+    """Best-effort durable signal; observability must not replace the original outcome."""
+    try:
+        from modules.flow_gate.workflow import event_logger
+
+        doc = db_docs.get_by_id(slot["doc_id"]) or {}
+        group_id = bundle.get("group_id") or doc.get("group_id")
+        project_id = doc.get("project_id") or (str(group_id).split(".", 1)[0] if group_id else "__SYSTEM__")
+        event_logger.log_review_annotation_failed(
+            kind=kind, project_id=project_id,
+            actor_user_id=bundle.get("issued_to") or "u-system", group_id=group_id,
+            document_id=doc.get("id"), doc_id=slot["doc_id"], error=error,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("review gate could not persist annotation %s failure", kind, exc_info=True)
+
+
+def resolve_review_gate(bundle: dict) -> dict:
     """What happens next for the slot this chain is standing on (L0008 §2.3).
 
     Returns {stage: work|review|rework|stop, ...}. Every fact it reads is re-derived here
@@ -5973,11 +5990,13 @@ def resolve_review_gate(bundle: dict) -> dict:
     limit = resolve_round_limit(count)
     try:
         reviews = db_reviews.list_by_doc(slot["doc_id"]) or []      # newest first
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.warning("review gate could not read reviews for %s", slot["doc_id"],
                        exc_info=True)
-        reviews = []
-    rounds_used = len(reviews)
+        _log_review_annotation_failure("read", slot, bundle, exc)
+        return {"stage": "stop", "stop_code": "review_history_unreadable",
+                "slot": slot, "count": count, "limit": limit, "detail": str(exc)}
+    rounds_used = len(reviews)
     latest = reviews[0] if rounds_used else None
     common = {"slot": slot, "count": count, "limit": limit, "rounds_used": rounds_used}
 
@@ -6148,31 +6167,28 @@ def _auto_reject(slot: dict, review: Optional[dict], bundle: dict) -> dict:
         permissions = _resolve_user_permissions(actor)
     except Exception as exc:  # noqa: BLE001
         logger.exception("review gate permission resolution failed for %s", actor_user_id)
+        _log_review_annotation_failure("write", slot, bundle, exc)
         return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE, "detail": str(exc)}
-    if "document.reject" not in permissions:
-        return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE,
-                "detail": "issuer lacks document.reject"}
-    reason = build_auto_reject_reason(review, slot, bundle.get("api_base_url"))
-    try:
-        from modules.flow_gate.workflow.pipeline_service import transition_document_review
-
-        transition_document_review(
-            doc_id=slot["doc_id"],
-            action="reject",
-            actor_user_id=actor_user_id,
-            user_permissions=permissions,
-            comment=reason,
-            # 0458 NR0003 (B). A missing review, or a row without an id, passes None — which
-            # is exactly the pre-existing behaviour: the item is written without the key and
-            # the gate falls back to B' / the status check for it.
-            review_id=(review or {}).get("id"),
-        )
-    except Exception as exc:  # noqa: BLE001 — the stored document is never touched
-        logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)
-        return {"ok": False, "stop_code": REVIEW_REJECT_FAILED_STOP_CODE, "detail": str(exc)}
-    return {"ok": True}
-
-
+    if "document.reject" not in permissions:
+        detail = "issuer lacks document.reject"
+        _log_review_annotation_failure("write", slot, bundle, detail)
+        return {"ok": False, "stop_code": REVIEW_REJECT_DENIED_STOP_CODE,
+                "detail": detail}
+    reason = build_auto_reject_reason(review, slot, bundle.get("api_base_url"))
+    try:
+        from modules.flow_gate.workflow.pipeline_service import transition_document_review
+
+        transition_document_review(
+            doc_id=slot["doc_id"], action="reject", actor_user_id=actor_user_id,
+            user_permissions=permissions, comment=reason, review_id=(review or {}).get("id"),
+        )
+    except Exception as exc:  # noqa: BLE001 — the stored document is never touched
+        logger.warning("review gate auto-reject failed for %s", slot["doc_id"], exc_info=True)
+        _log_review_annotation_failure("write", slot, bundle, exc)
+        return {"ok": False, "stop_code": REVIEW_REJECT_FAILED_STOP_CODE, "detail": str(exc)}
+    return {"ok": True}
+
+
 def _latest_review_of(slot: dict) -> Optional[dict]:
     try:
         return db_reviews.get_latest_by_doc(slot["doc_id"])

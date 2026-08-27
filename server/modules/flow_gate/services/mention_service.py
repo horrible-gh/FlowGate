@@ -736,6 +736,31 @@ _REJECTION_RESPONSE_PLACEHOLDER = {
     "en": "<response to each rejection reason: describe how each one was addressed>",
 }
 
+# T0009 §2-3: emphasize `rejection_response` as a required field separate from `content`,
+# inlined right above the artifact POST example (not only at the top of a long mention).
+# Structural keys (`rejection_response`/`rejection_id`/`review_id`) are never translated;
+# only this prose follows the worker locale.
+_REJECTION_RESPONSE_REQUIRED_NOTICE: dict[str, str] = {
+    "ko": (
+        "`rejection_response`는 `content`와 별개의 필수 문자열입니다 — 최신 반려 사유를 어떻게 "
+        "반영했는지 설명하십시오. `content` 안에 섞어 쓰거나 생략하지 마십시오: 공백만 있어도 "
+        "비어 있는 것으로 보아 서버가 422로 거절합니다. 서버가 제공한 `rejection_id`/`review_id`는 "
+        "그대로 유지하고 임의로 바꾸지 마십시오."
+    ),
+    "ja": (
+        "`rejection_response` は `content` とは別の必須文字列です — 最新の却下理由にどう対応した"
+        "か記述してください。`content` に混ぜたり省略したりしないでください: 空白のみでも空とみな"
+        "され、サーバーが422で拒否します。サーバーが提供した `rejection_id`/`review_id` はそのまま"
+        "保持し、勝手に変更しないでください。"
+    ),
+    "en": (
+        "`rejection_response` is a required string separate from `content` — describe how you "
+        "addressed the latest rejection reason. Do not merge it into `content` or omit it: a "
+        "whitespace-only value counts as empty and is rejected with 422. Keep the "
+        "`rejection_id`/`review_id` the server provided exactly as given; do not alter them."
+    ),
+}
+
 
 # ── Authoring guide / submission pointers (group 0372 set 3 — D-0003 §3-2) ───────────
 # The full "how to write it" content (TS/N/T grammar, the POST body format+example, the
@@ -1605,6 +1630,9 @@ def build_mention(
     action_scope: str = "new",
     # Latest AI review for the document's current revision (edit mentions only).
     current_review: Optional[dict] = None,
+    # Latest rejection_history item. None preserves direct-caller compatibility; the
+    # token-record path always supplies a dict (possibly empty) and is authoritative.
+    rejection_target: Optional[dict] = None,
     parent_revision_no: int = 0,
     edit_reason: str = "user_comment",
     # Display locale for human-readable doc-type names (ko/ja/en). Codes stay bare
@@ -1797,13 +1825,37 @@ def build_mention(
         s3_lines.extend(_reference_doc_lines(doc_dot_dash_path, base, locale))
     s3_body = f"Note: All GET requests require an Authorization: Bearer {raw_token} header\n\n" + "\n".join(s3_lines)
 
-    # ── Edit-only review feedback for the current document revision ─────────
+    # ── Edit-only human rejection feedback (T0009 §2-1) ──────────────────────
+    # Rendered only for a rejection rework (action_scope="edit", edit_reason="rejected"),
+    # from the SAME rejection_target object that fills the POST's rejection_id/review_id
+    # below — the display here and the answered target can never name different
+    # rejections. Malformed/absent history already surfaces as an empty
+    # rejection_target (build_mention_from_token_rec), so no reason means no section,
+    # never a failed mention.
+    human_rejection_section = ""
+    if is_edit and edit_reason == "rejected" and rejection_target:
+        human_reason = rejection_target.get("reason")
+        if isinstance(human_reason, str) and human_reason.strip():
+            human_rejection_lines = [human_reason]
+            human_rejection_id = rejection_target.get("rejection_id")
+            if isinstance(human_rejection_id, str) and human_rejection_id.strip():
+                human_rejection_lines.extend(["", f"rejection_id: {human_rejection_id.strip()}"])
+            human_rejection_section = _section(
+                "Human rejection (latest)", "\n".join(human_rejection_lines)
+            )
+
+    # ── Edit-only automated review feedback for the current document revision ──
+    # Renamed from "Review feedback" (T0009 §2-2): header and lead line now say
+    # AUTOMATED so a worker cannot mistake this for the human rejection section
+    # above — the two feedback sources render as separate, adjacent sections and are
+    # never merged into one body.
     review_section = ""
     if is_edit and current_review:
         findings = current_review.get("findings")
         if not isinstance(findings, list):
             findings = []
         review_lines = [
+            "Automated AI review of this revision (not a human rejection):",
             f"Target revision: {current_review.get('revision_no', parent_revision_no)}",
             f"Verdict: {current_review.get('verdict', '')}",
         ]
@@ -1823,7 +1875,7 @@ def build_mention(
                 "",
                 f"Full review history: GET {base}/document/{target_doc_id}/reviews",
             ])
-        review_section = _section("Review feedback", "\n".join(review_lines))
+        review_section = _section("Automated review feedback", "\n".join(review_lines))
 
     # ── Section 4: recent documents in the group — REMOVED (D-0003 §3-2, dropped) ──
     # The list is now the `group_documents` help item, always visible in the index — a
@@ -1848,30 +1900,49 @@ def build_mention(
             "body_chars": "<optional: character count of content>",
             "force_encoding_reason": "<optional: only if a genuinely-flagged content must go through anyway>",
         }
-        # Rejection rework: the resubmission must carry the worker's response to the
-        # rejection. Surfacing `rejection_response` here in the copy mention is the
-        # ONLY thing that prompts the AI to send it — the server (inbox _handle_edit
-        # → record_rejection_response) then attaches it to the latest rejection item
-        # for read-only display. Without this field the response is never collected,
-        # so the reviewer sees no "response content" and cannot tell what changed.
-        # D-0003 §3-1 question 2 ("would not reading it make the start itself wrong?") keeps this whole
-        # example inline for the edit path — unlike `new` below, it is not boilerplate.
+        # Rejection rework (T0009 §2-3): the resubmission must carry the worker's
+        # response to the rejection as a field SEPARATE from `content`. The JSON
+        # placeholder below is no longer the only prompt for it —
+        # `_REJECTION_RESPONSE_REQUIRED_NOTICE`, inlined right above the POST example
+        # via `rejection_required_notice`, states in worker-facing prose that the field
+        # is required, distinct from `content`, and rejected with 422 when blank.
+        # The server (inbox_routes pre-validation → pipeline_service
+        # .resolve_rejection_target, folded into the Step 6/7 revision CAS — 0468
+        # T0007/0008-TR) then records the answer against the same rejection_history
+        # item this mention names below; an unresolvable target is rejected with 409
+        # before anything is saved.
+        rejection_required_notice = ""
         if edit_reason == "rejected":
             post_body["rejection_response"] = _REJECTION_RESPONSE_PLACEHOLDER[
                 template_provision.normalize_locale(locale)
             ]
-            # 0458 T0007 §2.2-1: name the review row this response answers. Without it the
-            # server can only attach the response to the LAST rejection_history item, so a
-            # human rejection (or another review row's) landing after the one being answered
-            # takes the answer instead. `review_row_id` was resolved above, from the SAME
-            # query that produced the `current_review` this mention prints above ("## Review
-            # feedback") — worker and server agree on the target by construction, because the
-            # printed content and this id can never come from different rows (0458 T0008 rev4).
-            # Unidentifiable → the field is omitted rather than invented, and
-            # record_rejection_response keeps its legacy latest-item behaviour instead of
+            # 0458 T0007 §2.2-1 / 0468 T0007 §2-1: name the rejection this response
+            # answers with the SAME priority the server's resolve_rejection_target uses —
+            # an explicit `rejection_id` first, the legacy `review_id` when that is
+            # absent, and the latest `rejection_history` item when neither identifier is
+            # given. `rejection_target` is the single source for both what the "## Human
+            # rejection (latest)" section above prints and what is sent here, so display
+            # and answer can never name different rejections. `review_row_id` was
+            # resolved above, from the SAME query that produced the `current_review` this
+            # mention prints in "## Automated review feedback" — it is used only as a
+            # compatibility fallback for low-level callers that supply no
+            # `rejection_target` at all. Unidentifiable → the field is omitted rather than
+            # invented, and the server keeps its legacy latest-item fallback instead of
             # matching against a made-up identifier.
-            if review_row_id is not None:
+            if rejection_target is not None:
+                rejection_id = rejection_target.get("rejection_id")
+                if isinstance(rejection_id, str) and rejection_id.strip():
+                    post_body["rejection_id"] = rejection_id.strip()
+                if "review_id" in rejection_target:
+                    post_body["review_id"] = rejection_target.get("review_id")
+            elif review_row_id is not None:
+                # Compatibility for low-level callers that have not supplied parent history.
                 post_body["review_id"] = review_row_id
+            rejection_required_notice = (
+                "\n" + _REJECTION_RESPONSE_REQUIRED_NOTICE[
+                    template_provision.normalize_locale(locale)
+                ] + "\n"
+            )
         post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
         commit_hint = ""
         # 0299: a resubmission (edit) goes through the work-scope check too. If the rework
@@ -1890,6 +1961,7 @@ def build_mention(
             f"Authorization: Bearer {raw_token}\n"
             f"\n"
             f"{content_source_hint}\n"
+            f"{rejection_required_notice}"
             f"\n"
             f"{post_json}\n"
             f"{commit_hint}"
@@ -2042,6 +2114,8 @@ def build_mention(
     # guidance into the `document_access` help item (D-0003 §3-2, "reference documents: drop the
     # lookup-method explanation" + M0009), so the inline section must NOT come back when this branch
     # merges — resolve any conflict here by keeping NO inline lookup section.
+    if human_rejection_section:
+        sections.append(human_rejection_section)
     if review_section:
         sections.append(review_section)
     # Review phase suppresses the action:new artifact POST section: the worker must
@@ -2116,6 +2190,19 @@ def build_mention_from_token_rec(
     parent_title = parent_doc.get("title", "")
     parent_doc_number = parent_doc_id
 
+    # The response target comes from one rejection_history item, never from a separate
+    # document_reviews lookup. An empty dict is intentional: it suppresses the low-level
+    # compatibility fallback when history is absent or malformed.
+    rejection_target: dict = {}
+    raw_history = parent_doc.get("rejection_history")
+    if isinstance(raw_history, str):
+        try:
+            raw_history = json.loads(raw_history)
+        except (TypeError, ValueError):
+            raw_history = []
+    if isinstance(raw_history, list) and raw_history and isinstance(raw_history[-1], dict):
+        rejection_target = raw_history[-1]
+
     # Section 1 override: when a distinct predecessor document is supplied, derive its
     # display fields (type / short doc_number / title). When it is the same object as
     # parent_doc (the first-step fallback), leave the override empty so Section 1 keeps
@@ -2152,6 +2239,7 @@ def build_mention_from_token_rec(
         ref_doc_ids=ref_doc_ids,
         action_scope=action_scope,
         current_review=current_review,
+        rejection_target=rejection_target,
         parent_revision_no=int(parent_doc.get("revision_no") or 0),
         edit_reason=edit_reason,
         locale=locale,

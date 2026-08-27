@@ -67,9 +67,19 @@ def encrypt_ai_provider_keys():
         logger.warning(f"[startup] AI provider api_key encryption failed: {exc}")
 
 
+def record_deployment():
+    """0468 T0013: durable SHA/version/JST process-start marker."""
+    try:
+        from modules.flow_gate.settings.system_settings_service import record_deployment_started
+        record_deployment_started()
+    except Exception as exc:
+        logger.warning(f"[startup] deployment marker failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
+    record_deployment()
     preload_singletons()
     recover_ai_invoke_leases()
     recover_git_sessions()

@@ -1053,6 +1053,7 @@ class TestInboxForwardsTheReviewId:
             "recorded_by": "u001",
             "revision_no": 3,
             "review_id": 244,
+            "rejection_id": None,
         }]
 
     def test_a_string_id_is_forwarded_as_the_string_it_arrived_as(self, monkeypatch):
@@ -1145,7 +1146,7 @@ class TestInboxForwardsTheReviewId:
             )
         assert calls == []
 
-    def test_a_recorder_failure_never_breaks_the_saved_submission(self, monkeypatch):
+    def test_a_recorder_failure_propagates_instead_of_becoming_success(self, monkeypatch):
         import modules.flow_gate.workflow.pipeline_service as ps
         from modules.flow_gate.api import inbox_routes
 
@@ -1153,10 +1154,11 @@ class TestInboxForwardsTheReviewId:
             raise RuntimeError("history column is gone")
 
         monkeypatch.setattr(ps, "record_rejection_response", _boom)
-        inbox_routes._attach_rejection_response(
-            doc_id="D001", response_text="done", review_id=244,
-            actor_user_id="u001", revision_no=3,
-        )   # no raise
+        with pytest.raises(RuntimeError, match="history column is gone"):
+            inbox_routes._attach_rejection_response(
+                doc_id="D001", response_text="done", review_id=244,
+                actor_user_id="u001", revision_no=3,
+            )
 
     def test_the_edit_handler_actually_goes_through_that_boundary(self):
         """A helper nothing calls proves nothing. Step 7.5 must reach the recorder through
@@ -1166,10 +1168,107 @@ class TestInboxForwardsTheReviewId:
         from modules.flow_gate.api import inbox_routes
 
         source = inspect.getsource(inbox_routes._handle_edit)
-        assert "_attach_rejection_response(" in source
+        assert "resolve_rejection_target(" in source
         assert "_submitted_review_id(body)" in source, (
             "the whole body must go in — the boundary decides on the field's PRESENCE"
         )
         assert "record_rejection_response" not in source, (
-            "the handler must call the recorder through the boundary, not around it"
+            "the handler must prepare the response for the atomic CAS, not call the recorder"
         )
+
+
+class TestRecordRejectionResponseByRejectionId:
+    def test_manual_after_automatic_targets_manual_not_old_review(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        automatic = _item(244, reason="automatic")
+        automatic["ai_response"] = "already handled"
+        manual = _item(reason="manual")
+        _seed_history(db_conn, [automatic, manual])
+
+        result = record_rejection_response(
+            doc_id="D001", response_text="fixed manually requested issue",
+            recorded_by="u001", revision_no=3,
+            rejection_id=manual["rejection_id"], review_id=244,
+        )
+        items = _read_history(db_conn)
+        assert result["rejection_id"] == manual["rejection_id"]
+        assert items[0]["ai_response"] == "already handled"
+        assert items[1]["ai_response"] == "fixed manually requested issue"
+
+    def test_manual_without_review_row_is_targeted(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        manual = _item(reason="manual")
+        _seed_history(db_conn, [manual])
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, rejection_id=manual["rejection_id"],
+        )["rejection_id"] == manual["rejection_id"]
+
+    def test_automatic_rejection_is_targeted_by_rejection_id(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        automatic = _item(244)
+        other = _item(245)
+        _seed_history(db_conn, [automatic, other])
+        record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, rejection_id=automatic["rejection_id"],
+        )
+        items = _read_history(db_conn)
+        assert items[0]["ai_response"] == "done"
+        assert items[1]["ai_response"] is None
+
+    def test_unknown_rejection_id_is_byte_stable(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        _seed_history(db_conn, [_item(), _item()])
+        before = _read_history(db_conn)
+        assert record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, rejection_id="rej_unknown",
+        ) is None
+        assert _read_history(db_conn) == before
+
+    def test_rejection_id_outranks_conflicting_review_id(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        by_review = _item(244)
+        by_rejection = _item(245)
+        _seed_history(db_conn, [by_review, by_rejection])
+        record_rejection_response(
+            doc_id="D001", response_text="done", recorded_by="u001",
+            revision_no=2, rejection_id=by_rejection["rejection_id"], review_id=244,
+        )
+        items = _read_history(db_conn)
+        assert items[0]["ai_response"] is None
+        assert items[1]["ai_response"] == "done"
+
+    def test_same_rejection_id_overwrites_idempotently(self, db_conn, monkeypatch):
+        _patch_store_everywhere(db_conn, monkeypatch)
+        target = _item()
+        _seed_history(db_conn, [target])
+        for text in ("first", "second"):
+            record_rejection_response(
+                doc_id="D001", response_text=text, recorded_by="u001",
+                revision_no=2, rejection_id=target["rejection_id"],
+            )
+        items = _read_history(db_conn)
+        assert len(items) == 1
+        assert items[0]["ai_response"] == "second"
+
+
+def test_inbox_rejection_id_boundary_and_forwarding(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    import modules.flow_gate.workflow.pipeline_service as ps
+
+    calls = []
+    monkeypatch.setattr(ps, "record_rejection_response", lambda **kw: calls.append(kw))
+    body = {"rejection_id": "  rej_manual  ", "review_id": 244}
+    inbox_routes._attach_rejection_response(
+        doc_id="D001", response_text="done",
+        review_id=inbox_routes._submitted_review_id(body),
+        rejection_id=inbox_routes._submitted_rejection_id(body),
+        actor_user_id="u001", revision_no=3,
+    )
+    assert calls[0]["rejection_id"] == "rej_manual"
+    assert calls[0]["review_id"] == 244
+    assert inbox_routes._submitted_rejection_id({}) is None
+    assert inbox_routes._submitted_rejection_id({"rejection_id": " "}) is None
+    assert inbox_routes._submitted_rejection_id({"rejection_id": True}) is not None

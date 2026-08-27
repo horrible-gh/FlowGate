@@ -2345,6 +2345,8 @@ export default {
       rejection_expand: '반려 사유 펼치기',
       rejection_collapse: '반려 사유 접기',
       ai_response_label: 'AI 대응',
+      ai_response_missing: 'AI 대응 미기록',
+      ai_response_missing_warn: '대응 기록 없음 — 문서가 이미 수정/승인되었지만 이 반려에 대한 AI 대응이 기록되어 있지 않습니다.',
       review_reject_empty: 'AI 검수 의견·반려 사유 없음',
       review_reject_hint: '검수요청 또는 반려 처리 후 여기에 표시됩니다.',
       ai_review_view_history: '전체 이력 보기',

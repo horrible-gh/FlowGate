@@ -2342,6 +2342,8 @@ export default {
       rejection_expand: '差し戻し理由を開く',
       rejection_collapse: '差し戻し理由を閉じる',
       ai_response_label: 'AI対応',
+      ai_response_missing: 'AI対応 未記録',
+      ai_response_missing_warn: '対応記録なし — この文書はすでに修正・承認済みですが、この差し戻しに対するAI対応が記録されていません。',
       review_reject_empty: 'AIレビュー・差し戻し理由なし',
       review_reject_hint: 'レビュー依頼または差し戻しの後にここに表示されます。',
       ai_review_view_history: '全履歴を表示',

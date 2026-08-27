@@ -226,7 +226,12 @@ def _create_rejected_doc(doc_id: str, type_code: str, seq: int, stored_path: Pat
         "revision_no": 0,
     })
     # create() does not persist doc_review_status — set the rejected state explicitly.
-    db_docs.update(doc_id, {"doc_review_status": "rejected"})
+    db_docs.update(doc_id, {
+        "doc_review_status": "rejected",
+        "rejection_history": json.dumps([
+            {"rejection_id": f"rej-{doc_id}", "reason": "needs rework"}
+        ]),
+    })
 
 
 def _post_edit_reject(raw: str, doc_id: str, group_code: str):
@@ -250,6 +255,7 @@ def _post_edit_reject(raw: str, doc_id: str, group_code: str):
                 "doc_id": doc_id,
                 "edit_reason": "rejected",
                 "content": "# Reworked content",
+                "rejection_response": "addressed review feedback",
             },
             headers={"Authorization": f"Bearer {raw}"},
         )
