@@ -839,6 +839,7 @@ def record_rejection_response(
     recorded_by: str,
     revision_no: int | None,
     review_id: Any = None,
+    rejection_id: str | None = None,
 ) -> dict | None:
     """Annotate the rejection this response answers with how the AI addressed it.
 
@@ -873,10 +874,9 @@ def record_rejection_response(
     text = (response_text or "").strip()
     if not text:
         return None
-    if review_id is not None and not rejection_review_key(review_id):
-        # Field present, value unusable (§2.2-2). Decided BEFORE the document is read:
-        # there is no reading of this submission under which some item should be updated,
-        # and the legacy fallback below must never see it.
+    if rejection_id is None and review_id is not None and not rejection_review_key(review_id):
+        # A rejection_id, when supplied, is the authoritative opaque target. Only validate
+        # the legacy review-row target when no rejection_id can decide the item.
         return None
     if len(text) > AI_RESPONSE_MAX_LEN:
         text = text[:AI_RESPONSE_MAX_LEN]
@@ -896,18 +896,21 @@ def record_rejection_response(
     if not history:
         return None
 
-    if review_id is None:
-        # THE one legacy case (§2.2-6): no field at all — a mention minted before
-        # `review_id` existed, and every internal caller with no review row to name. Every
-        # other shape was resolved above, so this branch can no longer be reached by a
-        # submission that named a row and named it wrong.
+    if rejection_id is not None:
+        # The server-issued opaque rejection id is authoritative. An explicit unknown id
+        # never falls back to review_id or to the latest item.
+        target = next(
+            (item for item in history
+             if isinstance(item, dict) and item.get("rejection_id") == rejection_id),
+            None,
+        )
+        if target is None:
+            return None
+    elif review_id is None:
+        # Fully legacy mentions name neither identifier and keep the latest-item policy.
         target = history[-1]
     else:
-        # An explicit, usable target (the guard above proved the key is non-empty). Scan
-        # FORWARD so the first item written for this review row wins if a defensive
-        # duplicate exists (§2.2-4), and never fall back to the last item when nothing
-        # matches (§2.2-5) — no item, no record. Position in the array and the reason text
-        # are both ignored: only the stored identifier decides.
+        # Pre-rejection_id mentions still target the automatic-review source row.
         wanted = rejection_review_key(review_id)
         target = next(
             (item for item in history

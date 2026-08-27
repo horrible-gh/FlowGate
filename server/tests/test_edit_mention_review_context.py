@@ -15,7 +15,10 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 
 from modules.flow_gate.api.token_routes import _load_current_revision_review  # noqa: E402
 from modules.flow_gate.api.v1.document_routes import _shape_review  # noqa: E402
-from modules.flow_gate.services.mention_service import build_mention  # noqa: E402
+from modules.flow_gate.services.mention_service import (  # noqa: E402
+    build_mention,
+    build_mention_from_token_rec,
+)
 
 
 def _build_edit_mention(current_review: dict | None = None) -> str:
@@ -529,3 +532,51 @@ def test_the_lookup_never_runs_for_a_normal_edit(monkeypatch):
     )
     assert mention is not None
     assert asked == []
+
+
+def _token_path_payload(history: list, current_review: dict | None = None) -> dict:
+    mention = build_mention_from_token_rec(
+        token_rec={
+            "project": "test", "group_id": "test.none.0002",
+            "scratch_dir": "D:/scratch/token",
+        },
+        head_type="", head_status="",
+        parent_doc={
+            "doc_id": "test.none.0002.0004-D", "type_code": "D", "seq": 4,
+            "title": "Rejected design", "module": "none", "revision_no": 2,
+            "rejection_history": json.dumps(history),
+        },
+        api_base_url="http://127.0.0.1:8088/flowgate/api/v1",
+        raw_token="raw-token", action_scope="edit", edit_reason="rejected",
+        current_review=current_review,
+    )
+    assert mention is not None
+    registration = mention[mention.index("## Artifact registration"):]
+    return json.loads(registration[registration.index("{"):registration.index("}") + 1])
+
+
+def test_latest_manual_rejection_ignores_current_automatic_review_id():
+    payload = _token_path_payload(
+        [
+            {"rejection_id": "rej_auto", "review_id": 244},
+            {"rejection_id": "rej_manual"},
+        ],
+        current_review={"id": 244, "revision_no": 2, "findings": []},
+    )
+    assert payload["rejection_id"] == "rej_manual"
+    assert "review_id" not in payload
+
+
+def test_manual_rejection_without_review_row_carries_rejection_id():
+    payload = _token_path_payload([{"rejection_id": "rej_manual"}])
+    assert payload["rejection_id"] == "rej_manual"
+    assert "review_id" not in payload
+
+
+def test_automatic_rejection_carries_both_ids_from_same_history_item():
+    payload = _token_path_payload(
+        [{"rejection_id": "rej_auto", "review_id": 244}],
+        current_review={"id": 999, "revision_no": 2, "findings": []},
+    )
+    assert payload["rejection_id"] == "rej_auto"
+    assert payload["review_id"] == 244

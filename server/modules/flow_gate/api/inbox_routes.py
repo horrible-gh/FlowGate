@@ -3896,6 +3896,17 @@ def _submitted_review_id(body: dict) -> Optional[Any]:
     return UNIDENTIFIABLE_REVIEW_ID
 
 
+def _submitted_rejection_id(body: dict) -> Optional[str]:
+    """Return the explicit opaque rejection target, preserving legacy absence."""
+    if not isinstance(body, dict) or "rejection_id" not in body:
+        return None
+    value = body.get("rejection_id")
+    if isinstance(value, str):
+        return value.strip() or None
+    # An explicit malformed value must match nothing rather than borrow a fallback.
+    return "__unidentifiable_rejection_id__"
+
+
 def _attach_rejection_response(
     *,
     doc_id: str,
@@ -3903,6 +3914,7 @@ def _attach_rejection_response(
     review_id: Optional[Any],
     actor_user_id: str,
     revision_no: Optional[int],
+    rejection_id: Optional[str] = None,
 ) -> None:
     """Step 7.5's rejection-response half — the boundary into pipeline_service (T0007 §2.2-2).
 
@@ -3923,6 +3935,7 @@ def _attach_rejection_response(
             recorded_by=actor_user_id,
             revision_no=revision_no,
             review_id=review_id,
+            rejection_id=rejection_id,
         )
     except Exception as _rr_exc:  # noqa: BLE001
         logger.warning(
@@ -3982,6 +3995,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # no row is a different case and records nothing; the boundary keeps the two apart, so
     # the whole body goes in rather than the value.
     rejection_review_id = _submitted_review_id(body)
+    rejection_id_value = _submitted_rejection_id(body)
 
     # ── Step 2: Authentication ─────────────────────────────────────────────────────────
     try:
@@ -4542,6 +4556,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             review_id=rejection_review_id,
             actor_user_id=actor_user_id,
             revision_no=new_revision_no,
+            rejection_id=rejection_id_value,
         )
 
     # ── Step 8: Token consumption ────────────────────────────────────────────────────

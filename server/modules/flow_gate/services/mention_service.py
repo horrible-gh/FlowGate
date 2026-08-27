@@ -1605,6 +1605,9 @@ def build_mention(
     action_scope: str = "new",
     # Latest AI review for the document's current revision (edit mentions only).
     current_review: Optional[dict] = None,
+    # Latest rejection_history item. None preserves direct-caller compatibility; the
+    # token-record path always supplies a dict (possibly empty) and is authoritative.
+    rejection_target: Optional[dict] = None,
     parent_revision_no: int = 0,
     edit_reason: str = "user_comment",
     # Display locale for human-readable doc-type names (ko/ja/en). Codes stay bare
@@ -1870,7 +1873,14 @@ def build_mention(
             # Unidentifiable → the field is omitted rather than invented, and
             # record_rejection_response keeps its legacy latest-item behaviour instead of
             # matching against a made-up identifier.
-            if review_row_id is not None:
+            if rejection_target is not None:
+                rejection_id = rejection_target.get("rejection_id")
+                if isinstance(rejection_id, str) and rejection_id.strip():
+                    post_body["rejection_id"] = rejection_id.strip()
+                if "review_id" in rejection_target:
+                    post_body["review_id"] = rejection_target.get("review_id")
+            elif review_row_id is not None:
+                # Compatibility for low-level callers that have not supplied parent history.
                 post_body["review_id"] = review_row_id
         post_json = json.dumps(post_body, ensure_ascii=False, indent=2)
         commit_hint = ""
@@ -2116,6 +2126,19 @@ def build_mention_from_token_rec(
     parent_title = parent_doc.get("title", "")
     parent_doc_number = parent_doc_id
 
+    # The response target comes from one rejection_history item, never from a separate
+    # document_reviews lookup. An empty dict is intentional: it suppresses the low-level
+    # compatibility fallback when history is absent or malformed.
+    rejection_target: dict = {}
+    raw_history = parent_doc.get("rejection_history")
+    if isinstance(raw_history, str):
+        try:
+            raw_history = json.loads(raw_history)
+        except (TypeError, ValueError):
+            raw_history = []
+    if isinstance(raw_history, list) and raw_history and isinstance(raw_history[-1], dict):
+        rejection_target = raw_history[-1]
+
     # Section 1 override: when a distinct predecessor document is supplied, derive its
     # display fields (type / short doc_number / title). When it is the same object as
     # parent_doc (the first-step fallback), leave the override empty so Section 1 keeps
@@ -2152,6 +2175,7 @@ def build_mention_from_token_rec(
         ref_doc_ids=ref_doc_ids,
         action_scope=action_scope,
         current_review=current_review,
+        rejection_target=rejection_target,
         parent_revision_no=int(parent_doc.get("revision_no") or 0),
         edit_reason=edit_reason,
         locale=locale,
