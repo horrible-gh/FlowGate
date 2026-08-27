@@ -308,8 +308,16 @@
 
               <!-- P0005/T0006: the AI's response to THIS rejection, threaded as a reply
                    directly under the quote (a sibling, not nested inside it) — the same
-                   placement the standalone rejection section already used. -->
-              <div v-if="entry.reject!.ai_response" class="dip-ai-response" :class="{ open: foldOpen.response[entry.key] }">
+                   placement the standalone rejection section already used.
+                   T0011 §2-1/§2-2: a rejection whose ai_response is null/undefined/blank
+                   no longer disappears silently — it renders a compact "미기록" (not
+                   recorded) notice in this same sibling slot instead of a real response
+                   thread. When the document itself is already revised/approved, the
+                   notice escalates into a stronger warning (a completed-looking status
+                   with no response actually on record is a data mismatch worth calling
+                   out, not something to hide). Items that DO have a response are
+                   unaffected either way. -->
+              <div v-if="hasAiResponse(entry.reject!)" class="dip-ai-response" :class="{ open: foldOpen.response[entry.key] }">
                 <button
                   type="button"
                   class="dip-ai-response-head"
@@ -325,6 +333,15 @@
                   <AppIcon name="caret-down" class="dip-ai-response-chevron" />
                 </button>
                 <div class="dip-ai-response-body">{{ entry.reject!.ai_response }}</div>
+              </div>
+              <div
+                v-else
+                class="dip-ai-response-missing"
+                :class="{ 'dip-ai-response-missing-warn': isMissingResponseWarn(entry.reject!) }"
+                :role="isMissingResponseWarn(entry.reject!) ? 'status' : undefined"
+              >
+                <AppIcon :name="isMissingResponseWarn(entry.reject!) ? 'warning' : 'info'" />
+                <span>{{ t(isMissingResponseWarn(entry.reject!) ? 'main.doc_info_panel.ai_response_missing_warn' : 'main.doc_info_panel.ai_response_missing') }}</span>
               </div>
             </template>
 
@@ -839,6 +856,20 @@ const foldOpen = reactive<Record<'comment' | 'response' | 'reason', Record<strin
 })
 function toggleFold(kind: 'comment' | 'response' | 'reason', key: string) {
   foldOpen[kind][key] = !foldOpen[kind][key]
+}
+
+// T0011 §2-1: null/undefined AND whitespace-only both count as "not recorded" — the
+// server rejects a whitespace-only rejection_response with 422 (0468 T0009/T0010), so
+// the display side normalizes to that same "empty string" boundary.
+function hasAiResponse(reject: RejectionHistoryItem): boolean {
+  const v = reject.ai_response
+  return typeof v === 'string' && v.trim().length > 0
+}
+// T0011 §2-2: escalates only when THIS item has no recorded response AND the document
+// as a whole already reads as done (revised/approved) — a still-`rejected` document is
+// mid-rework, so a missing response there is expected, not a mismatch.
+function isMissingResponseWarn(reject: RejectionHistoryItem): boolean {
+  return !hasAiResponse(reject) && (props.reviewStatus === 'revised' || props.reviewStatus === 'approved')
 }
 
 // A review's real time column, in the order the server fills them.
@@ -1739,6 +1770,31 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-ai-response.open .dip-ai-response-body {
   max-height: 10em;
   -webkit-line-clamp: 6;
+}
+
+/* T0011 §2-1/§2-2: the "미기록" (not recorded) notice that fills the same sibling slot
+   as .dip-ai-response when a rejection has no response. Neutral (muted, same family as
+   .dip-trs-skipped) for a still-rejected document; the -warn modifier borrows the amber
+   .dip-orphan-warning treatment once the document is revised/approved, since a
+   completed-looking status with no response on record is a data mismatch, not routine. */
+.dip-ai-response-missing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 0 0 12px; /* same reply indent as .dip-ai-response */
+  padding: 6px 9px;
+  border-radius: 6px;
+  font-size: .72rem;
+  line-height: 1.45;
+  background: var(--muted-bg, #f1f5f9);
+  color: var(--muted, #64748b);
+  border: 1px solid var(--muted-border, #e2e8f0);
+}
+.dip-ai-response-missing-warn {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #f59e0b;
+  font-weight: 600;
 }
 
 /* Mockup xc32frrg screen 1 — provider assignment (by step) */

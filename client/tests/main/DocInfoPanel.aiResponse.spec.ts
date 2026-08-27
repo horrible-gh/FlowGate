@@ -13,7 +13,7 @@
 // each review is the existing .dip-ai-entry, so this spec asserts against those — a
 // regression here means the merge grew its own markup again.
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import DocInfoPanel from '@main/components/DocInfoPanel.vue'
@@ -29,12 +29,12 @@ type RejItem = {
   response_revision_no?: number | null
 }
 
-function mountPanel(history: RejItem[], reviews: AiReview[] = []) {
+function mountPanel(history: RejItem[], reviews: AiReview[] = [], reviewStatus = 'rejected') {
   return mount(DocInfoPanel, {
     props: {
       docId: 'test.test.0014.0002-D',
       typeCode: 'D',
-      reviewStatus: 'rejected',
+      reviewStatus,
       rejectReason: history[history.length - 1]?.reason ?? null,
       rejectionHistory: history,
       aiReview: reviews[reviews.length - 1] ?? null,
@@ -97,13 +97,19 @@ describe('DocInfoPanel AI response inside the merged AI검수·반려 section (0
     expect(entry.querySelector('.dip-reject-quote .dip-ai-response')).toBeFalsy()
   })
 
-  it('renders no response box when no AI response was submitted', () => {
+  it('renders a neutral "미기록" notice instead of a response box when no AI response was submitted (T0011 §2-1)', () => {
     const wrapper = mountPanel([
       { rejection_id: 'rej_1', reason: '고쳐주세요', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null,
         ai_response: null },
     ])
     expect(wrapper.find('.dip-rr-entry .dip-reject-quote').exists()).toBe(true)
     expect(wrapper.find('.dip-ai-response').exists()).toBe(false)
+    const missing = wrapper.find('.dip-ai-response-missing')
+    expect(missing.exists()).toBe(true)
+    expect(missing.classes()).not.toContain('dip-ai-response-missing-warn')
+    expect(missing.text()).toBe(i18n.global.t('main.doc_info_panel.ai_response_missing'))
+    // still 'rejected' — rework is in progress, so no escalated warning
+    expect(missing.attributes('role')).toBeUndefined()
   })
 
   it('folds each rejection card independently — opening one does not open the other', async () => {
@@ -257,6 +263,178 @@ describe('DocInfoPanel merged AI검수·반려 feed (0311 T0004 rev1 §2)', () =
     await flushPromises()
     expect(document.body.querySelector('.modal-qhd')).toBeTruthy()
     wrapper.unmount()
+  })
+})
+
+// T0011: null/undefined/blank ai_response no longer disappears silently. A neutral
+// "미기록" (not recorded) notice fills the same sibling slot the response thread uses;
+// it escalates into a stronger warning once the document itself is revised/approved,
+// since a completed-looking status with no response on record is a data mismatch.
+describe('DocInfoPanel unrecorded-response badge and escalated warning (T0011)', () => {
+  afterEach(() => {
+    i18n.global.locale.value = 'ko'
+  })
+
+  it('treats null, undefined, empty-string, and whitespace-only ai_response the same (§2-1, completion criterion 1)', () => {
+    // the merged feed caps at 3 visible cards (rev5 §4), so the four boundary values
+    // are split across two mounts rather than risking one of them being cap-truncated.
+    const firstThree = mountPanel([
+      { rejection_id: 'rej_null', reason: '사유0', rejected_at: '2026-06-12T19:59:00+09:00', rejected_by: null, ai_response: null },
+      { rejection_id: 'rej_undef', reason: '사유1', rejected_at: '2026-06-12T20:00:00+09:00', rejected_by: null },
+      { rejection_id: 'rej_empty', reason: '사유2', rejected_at: '2026-06-12T20:00:30+09:00', rejected_by: null, ai_response: '' },
+    ])
+    expect(() => firstThree.html()).not.toThrow()
+    const firstBadges = firstThree.findAll('.dip-ai-response-missing')
+    expect(firstBadges.length).toBe(3)
+    expect(firstThree.find('.dip-ai-response').exists()).toBe(false)
+
+    const blankOnly = mountPanel([
+      { rejection_id: 'rej_blank', reason: '사유3', rejected_at: '2026-06-12T20:01:00+09:00', rejected_by: null, ai_response: '   ' },
+    ])
+    expect(() => blankOnly.html()).not.toThrow()
+    const blankBadges = blankOnly.findAll('.dip-ai-response-missing')
+    expect(blankBadges.length).toBe(1)
+    expect(blankOnly.find('.dip-ai-response').exists()).toBe(false)
+
+    for (const b of [...firstBadges, ...blankBadges]) {
+      expect(b.find('button').exists()).toBe(false)
+      expect(b.attributes('aria-expanded')).toBeUndefined()
+    }
+  })
+
+  it('escalates to a warning when reviewStatus is revised, but not when it is rejected (§2-2, completion criterion 2)', () => {
+    const rejected = mountPanel(
+      [{ rejection_id: 'rej_1', reason: '고쳐주세요', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null }],
+      [],
+      'rejected',
+    )
+    const rejectedBadge = rejected.find('.dip-ai-response-missing')
+    expect(rejectedBadge.classes()).not.toContain('dip-ai-response-missing-warn')
+    expect(rejectedBadge.text()).toBe(i18n.global.t('main.doc_info_panel.ai_response_missing'))
+
+    const revised = mountPanel(
+      [{ rejection_id: 'rej_1', reason: '고쳐주세요', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null }],
+      [],
+      'revised',
+    )
+    const revisedBadge = revised.find('.dip-ai-response-missing')
+    expect(revisedBadge.classes()).toContain('dip-ai-response-missing-warn')
+    expect(revisedBadge.attributes('role')).toBe('status')
+    expect(revisedBadge.text()).toBe(i18n.global.t('main.doc_info_panel.ai_response_missing_warn'))
+  })
+
+  it('escalates to a warning when reviewStatus is approved (§2-2)', () => {
+    const wrapper = mountPanel(
+      [{ rejection_id: 'rej_1', reason: '고쳐주세요', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null }],
+      [],
+      'approved',
+    )
+    expect(wrapper.find('.dip-ai-response-missing').classes()).toContain('dip-ai-response-missing-warn')
+  })
+
+  it('only escalates the items that actually lack a response, leaving recorded ones untouched (completion criterion 3)', () => {
+    const wrapper = mountPanel(
+      [
+        { rejection_id: 'rej_old', reason: '예전', rejected_at: '2026-06-12T20:00:00+09:00', rejected_by: null, ai_response: '예전 대응' },
+        { rejection_id: 'rej_new', reason: '최신', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null },
+      ],
+      [],
+      'approved',
+    )
+    const entries = wrapper.findAll('.dip-rr-entry')
+    expect(entries.length).toBe(2)
+    // newest first: rej_new (no response, escalated) then rej_old (recorded response, untouched)
+    expect(entries[0].find('.dip-ai-response-missing').exists()).toBe(true)
+    expect(entries[0].find('.dip-ai-response-missing').classes()).toContain('dip-ai-response-missing-warn')
+    expect(entries[0].find('.dip-ai-response').exists()).toBe(false)
+    expect(entries[1].find('.dip-ai-response').exists()).toBe(true)
+    expect(entries[1].find('.dip-ai-response-missing').exists()).toBe(false)
+    expect(entries[1].find('.dip-ai-response-body').text()).toBe('예전 대응')
+  })
+
+  it('does not create a wrapper box around the quote — the badge stays a sibling, not nested (§2-1/§2-3)', () => {
+    const wrapper = mountPanel([
+      { rejection_id: 'rej_1', reason: '고쳐주세요', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null },
+    ], [], 'approved')
+    const entry = wrapper.find('.dip-rr-entry').element
+    expect(entry.querySelector('.dip-reject-quote .dip-ai-response-missing')).toBeFalsy()
+    expect(entry.querySelector('.dip-ai-response-missing')).toBeTruthy()
+  })
+
+  it('does not disturb the fold of a recorded response elsewhere in the feed (completion criterion 5)', async () => {
+    const wrapper = mountPanel(
+      [
+        { rejection_id: 'rej_old', reason: '예전', rejected_at: '2026-06-12T20:00:00+09:00', rejected_by: null, ai_response: '예전 대응' },
+        { rejection_id: 'rej_new', reason: '최신', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null },
+      ],
+      [],
+      'revised',
+    )
+    const responseBox = wrapper.find('.dip-ai-response')
+    expect(responseBox.classes()).not.toContain('open')
+    await responseBox.find('.dip-ai-response-head').trigger('click')
+    expect(wrapper.find('.dip-ai-response').classes()).toContain('open')
+    // the missing badge on the other entry is unaffected by the toggle
+    expect(wrapper.find('.dip-ai-response-missing').classes()).toContain('dip-ai-response-missing-warn')
+  })
+
+  it('opening one of two recorded responses leaves the other response AND both rejection reasons folded (completion criterion 5)', async () => {
+    const wrapper = mountPanel([
+      { rejection_id: 'rej_old', reason: '예전 사유', rejected_at: '2026-06-12T20:00:00+09:00', rejected_by: null, ai_response: '예전 대응' },
+      { rejection_id: 'rej_new', reason: '최신 사유', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: '최신 대응' },
+    ])
+    const responseBoxes = wrapper.findAll('.dip-ai-response')
+    const quotes = wrapper.findAll('.dip-reject-quote')
+    expect(responseBoxes.length).toBe(2)
+    expect(quotes.length).toBe(2)
+    // everything starts folded
+    for (const box of responseBoxes) expect(box.classes()).not.toContain('open')
+    for (const quote of quotes) expect(quote.classes()).not.toContain('open')
+
+    await wrapper.findAll('.dip-ai-response-head')[0].trigger('click')
+
+    const afterBoxes = wrapper.findAll('.dip-ai-response')
+    expect(afterBoxes[0].classes()).toContain('open')
+    expect(afterBoxes[1].classes()).not.toContain('open')
+    // response fold (`foldOpen.response`) and reason fold (`foldOpen.reason`) are
+    // separate keys — opening a response must not also open either rejection quote.
+    const afterQuotes = wrapper.findAll('.dip-reject-quote')
+    expect(afterQuotes[0].classes()).not.toContain('open')
+    expect(afterQuotes[1].classes()).not.toContain('open')
+  })
+
+  it.each(['ko', 'en', 'ja'] as const)('renders both the neutral rejected label and the revised/approved escalated warning in %s without key leakage (completion criterion 4)', (locale) => {
+    i18n.global.locale.value = locale
+
+    // neutral 「미기록」 label — must actually render (not just resolve via i18n.t) in
+    // every locale, not only the default ko one other tests happen to run in.
+    const rejected = mountPanel(
+      [{ rejection_id: 'rej_1', reason: 'x', rejected_at: '2026-06-12T20:43:00+09:00', rejected_by: null, ai_response: null }],
+      [],
+      'rejected',
+    )
+    const neutralBadge = rejected.find('.dip-ai-response-missing')
+    expect(neutralBadge.classes()).not.toContain('dip-ai-response-missing-warn')
+    const neutralText = neutralBadge.text()
+    expect(neutralText.length).toBeGreaterThan(0)
+    expect(neutralText).not.toContain('main.doc_info_panel')
+    expect(neutralText).toBe(i18n.global.t('main.doc_info_panel.ai_response_missing'))
+
+    // escalated warning — both statuses that trigger it, not just one.
+    for (const reviewStatus of ['revised', 'approved'] as const) {
+      const wrapper = mountPanel(
+        [{ rejection_id: 'rej_2', reason: 'y', rejected_at: '2026-06-12T20:44:00+09:00', rejected_by: null, ai_response: null }],
+        [],
+        reviewStatus,
+      )
+      const warnBadge = wrapper.find('.dip-ai-response-missing')
+      expect(warnBadge.classes()).toContain('dip-ai-response-missing-warn')
+      const warnText = warnBadge.text()
+      expect(warnText.length).toBeGreaterThan(0)
+      expect(warnText).not.toContain('main.doc_info_panel')
+      expect(warnText).toBe(i18n.global.t('main.doc_info_panel.ai_response_missing_warn'))
+      expect(warnText).not.toBe(neutralText)
+    }
   })
 })
 

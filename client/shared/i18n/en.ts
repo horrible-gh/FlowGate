@@ -2342,6 +2342,8 @@ export default {
       rejection_expand: 'Expand rejection reason',
       rejection_collapse: 'Collapse rejection reason',
       ai_response_label: 'AI Response',
+      ai_response_missing: 'AI response not recorded',
+      ai_response_missing_warn: 'No response on record — this document is already revised/approved, but no AI response was recorded for this rejection.',
       review_reject_empty: 'No AI review or rejection',
       review_reject_hint: 'Appears here after a review request or a rejection.',
       ai_review_view_history: 'View full history',
