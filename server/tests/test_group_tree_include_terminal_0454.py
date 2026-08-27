@@ -27,6 +27,8 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +46,23 @@ _SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
 sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.api.v1 import tree_routes  # noqa: E402
-from modules.flow_gate.api.v1.tree_routes import prune_terminal_subtrees  # noqa: E402
+from modules.flow_gate.api.v1.tree_routes import build_overview_summary, prune_terminal_subtrees  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_raw_tree_cache():
+    """`_get_raw_tree_nodes` (T0007 rev4, `force`-aware since rev5) joins concurrent NON-FORCED
+    callers for the same project_id onto one in-flight `process_service.get_group_tree()` call,
+    but keeps nothing once that call returns (rev3's flat TTL cache was replaced — see the module
+    comment above `_get_raw_tree_nodes`). `_raw_tree_inflight` is normally empty between tests
+    since every fetch clears its own entry in a `finally`, but a test that raises mid-fetch (or a
+    future one added without going through the fixture) could leave an entry behind and silently
+    serve a stale join to the next test's stub — cleared before AND after every test in this file
+    as a guard against that.
+    """
+    tree_routes._raw_tree_inflight.clear()
+    yield
+    tree_routes._raw_tree_inflight.clear()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -272,12 +290,36 @@ class TestRouteContract:
         assert "p.default.0002.sub.0001-T" in ids
 
     def test_the_envelope_and_the_branch_argument_are_unchanged(self, stub_tree):
-        body = tree_routes.get_groups_tree("p", branch="feature-x", include_terminal=False)
+        # `include_summary` is passed explicitly (False) here, not omitted: a direct call (this
+        # whole TestRouteContract class) hands an omitted parameter FastAPI's `Query(False, ...)`
+        # sentinel object rather than the literal `False` it resolves to over real HTTP — and
+        # that sentinel is truthy, so omitting it here would wrongly add `overview_summary`. See
+        # the class comment above TestRouteOverHttp for the same quirk on `include_terminal`,
+        # and TestRouteOverHttp.test_the_tree_route_over_http_omits_the_summary_by_default below
+        # for the real-HTTP omission case this class cannot exercise.
+        body = tree_routes.get_groups_tree("p", branch="feature-x", include_terminal=False, include_summary=False)
         assert set(body) == {"data"}
+        # 0454 T0007 rev3 review fix: rev2 had added `overview_summary` here UNCONDITIONALLY,
+        # which changed the `include_terminal=true` (default) response for every pre-existing
+        # caller — exactly what T0006 §1.1 ("그대로 반환한다") rules out (review finding on rev2).
+        # rev5 folds the aggregate back into this same envelope, but ONLY behind the opt-in
+        # `include_summary` flag — see TestOverviewSummary below.
         assert set(body["data"]) == {"nodes"}
         assert isinstance(body["data"]["nodes"], list)
         # The compatibility `branch` argument is still accepted and still changes nothing.
-        assert body == tree_routes.get_groups_tree("p", include_terminal=False)
+        assert body == tree_routes.get_groups_tree("p", include_terminal=False, include_summary=False)
+
+    def test_include_summary_is_opt_in_and_additive_only(self, stub_tree):
+        # The rev2 mistake, precisely: adding `overview_summary` must never change what a caller
+        # who does not ask for it receives. Same nodes, same order — `include_summary` only ever
+        # ADDS a key, never alters `nodes`. (`include_summary=False` passed explicitly — see the
+        # Query-sentinel note in test_the_envelope_and_the_branch_argument_are_unchanged above.)
+        without = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=False)
+        with_summary = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        assert set(without["data"]) == {"nodes"}
+        assert set(with_summary["data"]) == {"nodes", "overview_summary"}
+        assert with_summary["data"]["nodes"] == without["data"]["nodes"]
+        assert with_summary["data"]["overview_summary"] == build_overview_summary(MIXED_TREE)
 
     def test_pruning_issues_no_extra_tree_query(self, stub_tree):
         tree_routes.get_groups_tree("p", include_terminal=False)
@@ -348,13 +390,483 @@ class TestRouteOverHttp:
         for truthy in ("true", "True", "1"):
             assert client.get(self.URL, params={"include_terminal": truthy}).json() == full, truthy
 
-    def test_a_nonsense_value_is_rejected_rather_than_silently_read_as_hidden(self, client):
-        res = client.get(self.URL, params={"include_terminal": "maybe"})
-        assert res.status_code == 422
+    def test_include_summary_false_is_byte_identical_to_omitting_it(self, client):
+        # Unlike TestRouteContract's direct calls, a real HTTP request that omits
+        # `include_summary` resolves FastAPI's `Query(False, ...)` default to the actual
+        # boolean, so omission and an explicit `false` are genuinely identical here.
+        omitted = client.get(self.URL, params={"include_terminal": "false"})
+        explicit = client.get(self.URL, params={"include_terminal": "false", "include_summary": "false"})
+        assert explicit.status_code == 200
+        assert explicit.content == omitted.content
+
+    def test_force_true_over_real_http_bypasses_an_in_flight_non_forced_request(self, monkeypatch):
+        # The end-to-end version of TestRawTreeNodes's
+        # test_a_forced_caller_never_joins_an_in_flight_fetch_however_recent — through the actual
+        # router, over actual HTTP, using TestClient's own thread pool for concurrency, so the
+        # `force` Query parameter's real-HTTP boolean parsing is exercised too, not just the
+        # plain-Python default this class exists to cover for `include_terminal`.
+        from fastapi.testclient import TestClient
+        from app import app
+
+        calls: list[str] = []
+        entered_db_call = threading.Event()
+        release_db_call = threading.Event()
+
+        def _slow_fake(project_id: str):
+            calls.append(project_id)
+            if len(calls) == 1:
+                entered_db_call.set()
+                assert release_db_call.wait(timeout=5), "test deadlocked waiting to be released"
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _slow_fake)
+        client = TestClient(app)
+
+        results: dict[str, object] = {}
+
+        def _call_non_forced():
+            results["a"] = client.get(self.URL)
+
+        first = threading.Thread(target=_call_non_forced)
+        first.start()
+        assert entered_db_call.wait(timeout=5), "the non-forced request never reached the DB call"
+
+        results["b"] = client.get(self.URL, params={"force": "true"})
+        assert calls == ["p", "p"], "force=true must not have joined the in-flight non-forced request"
+        assert results["b"].status_code == 200
+
+        release_db_call.set()
+        first.join(timeout=5)
+        assert results["a"].status_code == 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Load-scale measurement (T0006 completion criteria) — one fixture, both variants
+# Overview summary (T0007) — the aggregate that replaced the full-tree preload
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 0007-TR rev0 kept the MainPanel overview cards (총 문서 수 / 진행 중 / 타입 분포) populated by
+# warming the FULL group tree on every default-screen entry, alongside the sidebar's own pruned
+# default fetch — inverting the point of the display-state pruning work (rev0 review finding).
+# rev1 fixed the transfer cost with a SEPARATE `/groups/tree/overview_summary` route, but that
+# route called process_service.get_group_tree() a second time whenever it ran alongside
+# `/groups/tree` on the same page — which the default overview screen always does — and its
+# client cache was never refetched on an ordinary refresh (both rev1 review findings). rev2 rode
+# `overview_summary` inside the `/groups/tree` response itself UNCONDITIONALLY, which fixed both
+# of rev1's problems but changed the `include_terminal=true` (default) response for every
+# pre-existing `/groups/tree` caller — exactly what T0006 §1.1 rules out (review finding on rev2).
+#
+# rev3 put `get_groups_tree_overview_summary` back as its own route (rev1's shape), and had both
+# it and `get_groups_tree` read the raw node list through `_get_raw_tree_nodes`. rev3's version of
+# that function memoized `process_service.get_group_tree()` per project_id for a flat 5-second
+# TTL, which the rev3 review rejected on two counts (cache-then-DB-call ordering let two requests
+# on an empty cache both miss; nothing invalidated on a write). rev4 replaced the TTL cache with a
+# single-flight JOIN — concurrent callers share the ONE call actually in flight, nothing is kept
+# once it returns — but the rev4 review found two remaining gaps: the join did not know about
+# writes (a post-write caller could still join a pre-write fetch), and because the tree route and
+# the summary route were fetched by two INDEPENDENT Vue watchers, nothing guaranteed the two
+# requests actually overlapped — a sequential arrival cost two full DB reads every time, which
+# this file's own `test_sequential_tree_then_summary_calls_each_cost_their_own_db_call` (removed
+# below) had been asserting as the INTENTIONAL behavior.
+#
+# rev5 removes both gaps at the root:
+#
+# 1. `get_groups_tree_overview_summary` is GONE. `overview_summary` folds into `/groups/tree`
+#    itself behind the OPT-IN `include_summary` query flag (default `False`) — see
+#    TestRouteContract.test_include_summary_is_opt_in_and_additive_only above. This is NOT rev2's
+#    design: rev2 changed the default envelope; here the key only ever appears on a request that
+#    explicitly asks for it, so every pre-existing caller (none of which could pass a flag that
+#    did not exist yet) is unaffected. The client's ONE caller that wants the aggregate
+#    (GroupExplorer.vue, via explorer.ts's fetchGroupTree) now gets it on the SAME request it
+#    already makes for the sidebar tree — there is no second request left to race or duplicate.
+# 2. `_get_raw_tree_nodes` gains a write-generation guard (see the module note above it) so a
+#    caller arriving after a write can never join a fetch that predates that write.
+#
+# What is left to pin here: the aggregate's own math, that `include_summary` behaves identically
+# regardless of `include_terminal`, and the write-generation guard's actual race behavior — the
+# concurrent-join and failure-propagation tests migrate to TestRawTreeNodes below since they
+# exercise `_get_raw_tree_nodes` directly and no longer need two different routes to do it.
+
+class TestOverviewSummary:
+    def test_the_aggregate_matches_a_hand_counted_fixture(self):
+        # MIXED_TREE has 12 document nodes: R x5, T x6, DC x1 (counted by hand against the
+        # fixture above). working_groups is 5 -- every parent whose LAST document (by `number`,
+        # ties keep the first-seen one) is type T; a plain single-letter R head does not
+        # count (xR-family needs length >= 2), and terminal groups' documents never carry
+        # is_final_approved/is_discarded (those are group-only fields) so nothing is excluded
+        # on that account here either -- same as the MainPanel computation this replaces.
+        summary = build_overview_summary(MIXED_TREE)
+        assert summary == {
+            "total_documents": 12,
+            "working_groups": 5,
+            "type_distribution": [
+                {"type": "R", "count": 5},
+                {"type": "T", "count": 6},
+                {"type": "DC", "count": 1},
+            ],
+        }
+
+    def test_the_summary_is_identical_regardless_of_which_tree_variant_asked_for_it(self, stub_tree):
+        # Project-wide by construction (built from raw_nodes, before pruning runs) -- a caller
+        # that fetched the pruned tree for the sidebar gets the same totals as one that fetched
+        # the full tree, not a partial count scoped to whichever subtree it happened to ask for.
+        pruned = tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
+        full = tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        assert (
+            pruned["data"]["overview_summary"]
+            == full["data"]["overview_summary"]
+            == build_overview_summary(MIXED_TREE)
+        )
+
+    def test_the_summary_counts_documents_the_pruned_nodes_would_drop(self, stub_tree):
+        # This is the property that lets the overview cards stay accurate off the pruned
+        # sidebar load alone: the summary (from the unpruned tree) counts MORE documents than
+        # the SAME response's pruned `nodes` carries, because it still includes the terminal
+        # subtrees pruning drops from `nodes`.
+        body = tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
+        pruned_doc_count = len([n for n in body["data"]["nodes"] if n["node_type"] == "document"])
+        assert body["data"]["overview_summary"]["total_documents"] > pruned_doc_count
+
+    def test_one_request_costs_exactly_one_db_call_regardless_of_arrival_order(self, stub_tree):
+        # The rev4 review finding, closed at the root: since `overview_summary` now rides the
+        # SAME request as `nodes` (rev5), there is no second, independently-timed request left to
+        # cost a second DB call — in EITHER arrival order, because there is only one arrival.
+        tree_routes.get_groups_tree("p", include_terminal=False, include_summary=True)
+        assert stub_tree == ["p"]
+        tree_routes.get_groups_tree("p", include_terminal=True, include_summary=True)
+        assert stub_tree == ["p", "p"]  # a SECOND screen load still costs its own call, as before
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from app import app
+
+        monkeypatch.setattr(
+            tree_routes.process_service,
+            "get_group_tree",
+            lambda _pid: {"nodes": [dict(node) for node in MIXED_TREE]},
+        )
+        return TestClient(app)
+
+    def test_the_summary_field_over_real_http_matches_the_helper(self, client):
+        res = client.get(
+            "/flowgate/api/v1/projects/p/groups/tree",
+            params={"include_terminal": "false", "include_summary": "true"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert set(body["data"]) == {"nodes", "overview_summary"}
+        assert body["data"]["overview_summary"] == build_overview_summary(MIXED_TREE)
+
+    def test_the_tree_route_over_http_omits_the_summary_by_default(self, client):
+        res = client.get("/flowgate/api/v1/projects/p/groups/tree", params={"include_terminal": "false"})
+        assert res.status_code == 200
+        assert set(res.json()["data"]) == {"nodes"}
+
+    def test_the_removed_route_is_gone(self, client):
+        res = client.get("/flowgate/api/v1/projects/p/groups/tree/overview_summary")
+        assert res.status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# `_get_raw_tree_nodes` — single-flight join, and the rev5 `force` freshness guard
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The review on rev4 found the plain single-flight join did not distinguish "any recent-enough
+# read will do" from "this read must not predate a write I already know completed": a caller
+# whose request arrives strictly AFTER a document was created could still join a raw-tree fetch
+# that had started — and, worse, could STILL BE RUNNING — before that write, and be handed nodes
+# that do not include it. This is exactly the case `force=true` reveal-after-create calls
+# (DashboardView.vue's `handleRequirementCreated` / `handleRelatedDocCreated`) exist to avoid, and
+# rev5 makes `force` carry that guarantee all the way to the DB read: a forced fetch NEVER joins
+# an already in-flight one, however recent, so it cannot have started before its own caller's
+# request arrived — and that caller only issues its request after awaiting the write's own HTTP
+# response, so the write is guaranteed to have already committed by then.
+
+class TestRawTreeNodes:
+    def test_concurrent_first_loads_for_the_same_project_join_into_one_db_call(self, monkeypatch):
+        # The case single-flight exists for: two NON-forced callers landing on an EMPTY join
+        # point at nearly the same instant — they must still share one DB call. A slow fake DB
+        # call lets the test hold the first caller inside `process_service.get_group_tree` until
+        # the second caller has had a chance to register as a joiner, instead of racing two real
+        # requests.
+        calls: list[str] = []
+        entered_db_call = threading.Event()
+        release_db_call = threading.Event()
+
+        def _slow_fake(project_id: str):
+            calls.append(project_id)
+            entered_db_call.set()
+            assert release_db_call.wait(timeout=5), "test deadlocked waiting to be released"
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _slow_fake)
+
+        results: dict[str, object] = {}
+        errors: list[Exception] = []
+
+        def _call_a():
+            try:
+                results["a"] = tree_routes._get_raw_tree_nodes("p")
+            except Exception as exc:  # pragma: no cover - surfaced via `errors` below
+                errors.append(exc)
+
+        def _call_b():
+            try:
+                results["b"] = tree_routes._get_raw_tree_nodes("p")
+            except Exception as exc:  # pragma: no cover - surfaced via `errors` below
+                errors.append(exc)
+
+        first = threading.Thread(target=_call_a)
+        first.start()
+        assert entered_db_call.wait(timeout=5), "first caller never reached the DB call"
+
+        second = threading.Thread(target=_call_b)
+        second.start()
+        # Give the second caller time to acquire the join lock and start waiting on the first
+        # call's completion event before that first call is allowed to finish (established
+        # pattern in this suite for pinning a race window — see e.g. test_auth_preamble_0291.py).
+        time.sleep(0.05)
+        release_db_call.set()
+
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert not errors, f"unexpected exception(s) from a joined caller: {errors}"
+        assert calls == ["p"], "the second caller should have joined the first instead of starting its own DB call"
+        assert results["a"] is results["b"]  # the SAME list instance, not just an equal one
+
+    def test_a_forced_caller_never_joins_an_in_flight_fetch_however_recent(self, monkeypatch):
+        # The rev4 review's exact scenario, generalized: caller A's fetch is already running
+        # (it may have started a microsecond ago) when caller B arrives with `force=True` —
+        # B must NOT join A's fetch, no matter how fresh A's fetch actually is, because B has no
+        # way to know whether A started before or after whatever B's caller needs reflected.
+        calls: list[str] = []
+        entered_db_call = threading.Event()
+        release_db_call = threading.Event()
+
+        def _slow_fake(project_id: str):
+            calls.append(project_id)
+            if len(calls) > 1:
+                # B's own DB call (if it happens) must not block on A's release gate — only A's
+                # FIRST call is slow; B arrives and reads synchronously on the test's main thread.
+                return {"nodes": [dict(node) for node in MIXED_TREE] + [_doc("p.default.0002.new", "p.default.0002")]}
+            entered_db_call.set()
+            assert release_db_call.wait(timeout=5), "test deadlocked waiting to be released"
+            # Distinguish A's read from what B's read would look like: a document "created"
+            # between the two calls only appears in a query that ran AFTER B's own call started,
+            # never in one already in flight beforehand.
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _slow_fake)
+
+        results: dict[str, list] = {}
+        errors: list[Exception] = []
+
+        def _call_a():
+            try:
+                results["a"] = tree_routes._get_raw_tree_nodes("p")
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+
+        first = threading.Thread(target=_call_a)
+        first.start()
+        assert entered_db_call.wait(timeout=5), "first caller never reached the DB call"
+
+        # B arrives with force=True while A is STILL running. It must not join A — it must start
+        # its own fresh read even though that means a second concurrent DB call.
+        results["b"] = tree_routes._get_raw_tree_nodes("p", force=True)
+        assert calls == ["p", "p"], "the forced caller must not have joined the in-flight fetch"
+        assert {n["id"] for n in results["b"]} == {n["id"] for n in MIXED_TREE} | {"p.default.0002.new"}
+
+        release_db_call.set()
+        first.join(timeout=5)
+        assert not errors, f"unexpected exception from caller A: {errors}"
+        # A's own (non-forced) read is unaffected — it started before B and is allowed to finish
+        # with whatever it already had in hand. Only B's join eligibility changes.
+        assert {n["id"] for n in results["a"]} == {n["id"] for n in MIXED_TREE}
+
+    def test_a_non_forced_caller_may_join_a_forced_fetch(self, monkeypatch):
+        # The restriction is one-directional: force=True means "I will not join", not "no one
+        # may join me". A plain (non-forced) caller arriving while a forced fetch is running
+        # still shares it — sharing is only given up on the side that actually needs the
+        # guarantee.
+        calls: list[str] = []
+        entered_db_call = threading.Event()
+        release_db_call = threading.Event()
+
+        def _slow_fake(project_id: str):
+            calls.append(project_id)
+            entered_db_call.set()
+            assert release_db_call.wait(timeout=5), "test deadlocked waiting to be released"
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _slow_fake)
+
+        results: dict[str, object] = {}
+
+        def _call_a():
+            results["a"] = tree_routes._get_raw_tree_nodes("p", force=True)
+
+        first = threading.Thread(target=_call_a)
+        first.start()
+        assert entered_db_call.wait(timeout=5), "the forced caller never reached the DB call"
+
+        second = threading.Thread(target=lambda: results.__setitem__("b", tree_routes._get_raw_tree_nodes("p")))
+        second.start()
+        time.sleep(0.05)
+        release_db_call.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert calls == ["p"], "the non-forced caller should have joined the forced fetch"
+        assert results["a"] is results["b"]
+
+    def test_two_concurrently_overlapping_forced_callers_do_not_join_each_other(self, monkeypatch):
+        # Each `force=True` caller insists on its own guarantee independently, even against
+        # ANOTHER force=True fetch that is already running — two overlapping forced calls cost
+        # two DB calls, not one. (The client already collapses two SAME-key force calls into one
+        # HTTP request before either reaches the server — see explorerGroupTreeVariants.0454.spec
+        # .ts's 0449-contract test — so this is the server-level property that composition relies
+        # on, not a case expected to fire often in practice.)
+        calls: list[str] = []
+        entered_a = threading.Event()
+        release_a = threading.Event()
+
+        def _fake(project_id: str):
+            calls.append(project_id)
+            if len(calls) == 1:
+                entered_a.set()
+                assert release_a.wait(timeout=5), "A deadlocked waiting to be released"
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _fake)
+
+        results: dict[str, object] = {}
+
+        def _call_a():
+            results["a"] = tree_routes._get_raw_tree_nodes("p", force=True)
+
+        first = threading.Thread(target=_call_a)
+        first.start()
+        assert entered_a.wait(timeout=5), "the first forced caller never reached the DB call"
+
+        # B arrives with force=True WHILE A (also forced) is still running.
+        results["b"] = tree_routes._get_raw_tree_nodes("p", force=True)
+        assert calls == ["p", "p"], "two overlapping forced callers must each cost their own DB call"
+
+        release_a.set()
+        first.join(timeout=5)
+
+    def test_a_failed_fetch_propagates_to_the_joiner_and_leaves_no_entry_behind(self, monkeypatch):
+        # The join point must not swallow an error into "silently return nothing", and must not
+        # leave a dead entry that would make every later call for this project_id hang forever.
+        entered_db_call = threading.Event()
+        release_db_call = threading.Event()
+
+        def _failing_fake(project_id: str):
+            entered_db_call.set()
+            assert release_db_call.wait(timeout=5), "test deadlocked waiting to be released"
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _failing_fake)
+
+        errors: list[Exception] = []
+
+        def _call_a():
+            try:
+                tree_routes._get_raw_tree_nodes("p")
+            except Exception as exc:
+                errors.append(exc)
+
+        def _call_b():
+            try:
+                tree_routes._get_raw_tree_nodes("p")
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=_call_a)
+        first.start()
+        assert entered_db_call.wait(timeout=5), "first caller never reached the DB call"
+
+        second = threading.Thread(target=_call_b)
+        second.start()
+        time.sleep(0.05)
+        release_db_call.set()
+
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert len(errors) == 2, f"both the original caller and its joiner should see the error: {errors}"
+        assert all(str(e) == "boom" for e in errors)
+        assert "p" not in tree_routes._raw_tree_inflight  # no dead entry left for the next caller
+
+    def test_a_failed_fetch_that_lost_its_inflight_slot_to_a_forced_caller_does_not_evict_the_new_entry(self, monkeypatch):
+        # If a `force=True` caller (B) arrives while a fetch (A) is running, B installs a NEW
+        # `_RawTreeFetch` in `_raw_tree_inflight[project_id]` for future joiners (see the module
+        # note above `_get_raw_tree_nodes`). A's own `finally` must not blindly pop that slot when
+        # A later finishes (here, by failing) — it must check it still owns it — or A's completion
+        # would evict B's live entry and strand a THIRD caller (C), who arrives while B is still
+        # running, into starting a redundant fourth fetch instead of joining B.
+        entered_a = threading.Event()
+        release_a = threading.Event()
+        entered_b = threading.Event()
+        release_b = threading.Event()
+        calls: list[str] = []
+
+        def _fake(project_id: str):
+            calls.append(project_id)
+            if len(calls) == 1:  # A: slow, then fails
+                entered_a.set()
+                assert release_a.wait(timeout=5), "A deadlocked waiting to be released"
+                raise RuntimeError("boom")
+            entered_b.set()  # B: slow, then succeeds
+            assert release_b.wait(timeout=5), "B deadlocked waiting to be released"
+            return {"nodes": [dict(node) for node in MIXED_TREE]}
+
+        monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _fake)
+
+        results: dict[str, object] = {}
+
+        def _run(fn):
+            try:
+                fn()
+                return None
+            except Exception as exc:  # pragma: no cover - collected via `results`
+                return exc
+
+        a_thread = threading.Thread(target=lambda: results.__setitem__("a_error", _run(lambda: tree_routes._get_raw_tree_nodes("p"))))
+        a_thread.start()
+        assert entered_a.wait(timeout=5), "A never reached the DB call"
+
+        # B arrives with force=True while A is still running: B must NOT join A.
+        b_thread = threading.Thread(target=lambda: results.__setitem__("b", tree_routes._get_raw_tree_nodes("p", force=True)))
+        b_thread.start()
+        assert entered_b.wait(timeout=5), "B never reached the DB call (it wrongly joined A instead)"
+        assert calls == ["p", "p"]
+
+        # A fails now, WHILE B is still the live inflight entry. The bug this test guards
+        # against: A's `finally` unconditionally pops `_raw_tree_inflight["p"]`, deleting B's
+        # entry out from under it.
+        release_a.set()
+        a_thread.join(timeout=5)
+        assert isinstance(results["a_error"], RuntimeError) and str(results["a_error"]) == "boom"
+
+        # C arrives (non-forced) while B is still running. If A's failure had evicted B's entry,
+        # C would see no in-flight fetch and start a third DB call.
+        c_thread = threading.Thread(target=lambda: results.__setitem__("c", tree_routes._get_raw_tree_nodes("p")))
+        c_thread.start()
+        time.sleep(0.05)
+        release_b.set()
+        b_thread.join(timeout=5)
+        c_thread.join(timeout=5)
+
+        assert calls == ["p", "p"], "C must have joined B, not started its own DB call"
+        assert results["b"] is results["c"]
+        assert "p" not in tree_routes._raw_tree_inflight
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Load-scale measurement (T0006 completion criteria) -- one fixture, both variants
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Same shape and size as the 0449 load fixture (2 modules x 84 groups x 34 documents +

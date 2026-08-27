@@ -149,6 +149,21 @@ export interface GroupNode {
   origin_ai_run_id?: string | null
 }
 
+// 0454 T0007 rev5 — project-wide totals for the MainPanel overview cards. Fetched by passing
+// `includeSummary: true` to fetchGroupTree below, which rides the SAME `/groups/tree` request
+// GroupExplorer already makes rather than a separate route: rev1's dedicated
+// `/groups/tree/overview_summary` route and rev3's revival of it both left this cache filled by
+// a SECOND, independently-triggered request that was not guaranteed to overlap the tree fetch —
+// a sequential (non-overlapping) arrival cost a second full `process_service.get_group_tree()`
+// call every time (rev4 review finding). `includeSummary` is opt-in and defaults to false on the
+// server, so this does not repeat rev2's mistake of changing what `include_terminal=true`
+// callers receive by default — see tree_routes.get_groups_tree's docstring.
+export interface GroupOverviewSummary {
+  total_documents: number
+  working_groups: number
+  type_distribution: Array<{ type: string; count: number }>
+}
+
 const isMockMode = (): boolean => {
   if (import.meta.env.VITE_MOCK_MODE === 'true') return true
   if (typeof window !== 'undefined') {
@@ -206,7 +221,56 @@ export const useExplorerStore = defineStore('explorer', () => {
   // re-approval's doc_review_status_changed) each owned a first GET *and* a retry GET, so a
   // single reopen could put four multi-MB tree requests on the wire. Keyed by cacheKey(pid),
   // which already carries the branch — requests for a different branch never join.
-  const groupTreeInflight = new Map<string, Promise<GroupNode[]>>()
+  //
+  // 0454 T0007 rev5: each entry also remembers whether IT asked the server for a forced
+  // (never-join) read — see fetchGroupTree's docstring. A force=true caller must not silently
+  // join a NON-forced in-flight request (whose URL never carries `force=true`, so the server
+  // could hand it back a fetch that predates a write this caller already knows completed) — it
+  // is only allowed to join another force=true fetch.
+  //
+  // 0454 T0007 rev6 (rev5 review finding 1): "only join another force=true fetch" is not
+  // enough on its own — GroupExplorer's own reload() (initial load, SSE refresh, the hide-toggle)
+  // ALSO always calls with force=true, so a force=true reveal-after-create call could still join
+  // one of THOSE, and that fetch may have started before the write this caller needs reflected.
+  // `order` timestamps each entry with its position in `groupTreeOrder` (see below) so a joiner
+  // can tell whether the in-flight fetch is new enough to trust.
+  const groupTreeInflight = new Map<string, { force: boolean; order: number; promise: Promise<GroupNode[]> }>()
+  // 0454 T0007 rev6 — a single ever-increasing counter shared by every key/variant. Two roles:
+  // (1) `groupTreeWriteOrder` below records the order value as of the last known write
+  // (invalidateProject), so a force=true join can refuse an in-flight fetch that predates it
+  // (rev5 review finding 1); (2) each own (non-joining) fetch's `order` also gates which
+  // response is allowed to WIN the cache write (finding 2) — see groupTreeCommittedOrder.
+  // Global rather than per-key/per-project: a stray extra fetch on an unrelated key after some
+  // other project's write is a wasted request, not a correctness bug: the alternative (a
+  // per-key/per-project marker) adds bookkeeping for a race this codebase has not hit in
+  // practice across projects.
+  let groupTreeOrder = 0
+  let groupTreeWriteOrder = 0
+  // 0454 T0007 rev6 (rev5 review finding 2) — `fetchGroupTree`'s cache write used to be
+  // unconditional: a request that started before a write, but which happens to RESOLVE after a
+  // request that started after that write, would overwrite the newer cache with its own stale
+  // result. Deleting a settled inflight entry already checks ownership (line ~363 below) — that
+  // only stops a stale promise from evicting a fresher one from the inflight map, it says
+  // nothing about the CACHE the stale promise is about to write into. These two maps hold the
+  // `order` of whichever response last won each cache slot, so a later-resolving but
+  // earlier-started response can never regress it. Kept outside groupTreeCache/
+  // groupOverviewSummaryCache (and NOT cleared by invalidateProject) because the ordering must
+  // survive a cache clear.
+  //
+  // On its own this map does NOT stop a stale response from repopulating a slot
+  // invalidateProject just emptied: a key nothing has committed to since the clear (first load,
+  // or the clear happened before anything else committed) still reads as `?? 0`, so a pre-write
+  // response's `order` can satisfy `order >= committedOrder` even though it predates the write.
+  // `groupTreeWriteOrder` above is the other half of that check (rev7, see fetchGroupTree's
+  // docstring) — every commit also requires `order >= groupTreeWriteOrder`.
+  const groupTreeCommittedOrder = new Map<string, number>()
+  const overviewSummaryCommittedOrder = new Map<string, number>()
+  // 0454 T0007 — the overview-summary aggregate, populated as a side effect of fetchGroupTree
+  // (rev5: every call now asks for it). Keyed like the file tree (pid+branch only): the summary
+  // describes the whole project and does not vary by include_terminal, so whichever variant a
+  // caller happens to fetch (full or pruned — the sidebar's default hidden load included) still
+  // refreshes this cache.
+  const groupOverviewSummaryCache = ref<Record<string, GroupOverviewSummary>>({})
   // 0186 L0006 §2.4 — checkout-free group-branch explorer caches, keyed by the
   // branch HEAD commit so a branch advance auto-invalidates the stale snapshot.
   // activeGroupBranch: currently viewed group_id in the file explorer (null = base).
@@ -264,9 +328,23 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   /** Fetch a project's group tree. `force` means "bypass the completed cache" — it does NOT
-   *  mean "own a private request": a caller arriving while a fetch for the same project+branch
-   *  is still running joins that fetch (and the single getTreeWithRetry retry inside it), and
-   *  receives the same resolved nodes or the same error. 0449 T0004 item 2.
+   *  ALWAYS mean "own a private request": a NON-forced caller arriving while a fetch for the
+   *  same project+branch+variant is still running joins that fetch (and the single
+   *  getTreeWithRetry retry inside it), and receives the same resolved nodes or the same error
+   *  (0449 T0004 item 2).
+   *
+   *  0454 T0007 rev5: `force` now ALSO rides the request itself (`&force=true`) and changes what
+   *  a caller is willing to JOIN, not only what it reads from the local cache. A `force=true`
+   *  call means "I need a read that cannot predate this call" — the shape DashboardView.vue's
+   *  two reveal-after-create paths need, since they call this right after awaiting the create
+   *  request's own response, specifically to find the document that create just made. Joining an
+   *  already in-flight request that (for all this caller knows) started BEFORE that create would
+   *  silently defeat the guarantee, so a `force=true` caller only joins another `force=true`
+   *  fetch — never a plain one — and always sends `force=true` to the server, which applies the
+   *  same rule to `_get_raw_tree_nodes` (tree_routes.py) so the DB read itself cannot predate the
+   *  request either. A forced fetch still BECOMES the shared in-flight entry once it starts, so
+   *  later callers (forced or not) may join it — only the "am I allowed to join" direction is
+   *  restricted, not sharing in general.
    *
    *  `includeTerminal` (0454 T0006 §2.1) picks the SERVER variant: `true` (default, so every
    *  pre-existing caller keeps its full-tree meaning) returns the whole flat tree; `false`
@@ -275,7 +353,46 @@ export const useExplorerStore = defineStore('explorer', () => {
    *  URL — never left to the server default — so a request and its cache variant are
    *  identifiable in a network log and in a test's captured URL. Cache AND inflight registry
    *  are keyed per variant, so the two never share a completed array or join one another's
-   *  request; two callers on the SAME variant join as before. */
+   *  request; two callers on the SAME variant (and the same `force` eligibility) join as before.
+   *
+   *  Every call also asks the server for the project-wide `overview_summary` aggregate, folded
+   *  into the same response (tree_routes.py's `include_summary` query flag) — a response that
+   *  carries it updates groupOverviewSummaryCache as a side effect (0454 T0007 rev5). This is
+   *  UNCONDITIONAL, not opt-in per caller: `include_summary` only ever adds a few hundred bytes
+   *  of already-in-memory aggregation (no extra DB call — see `_get_raw_tree_nodes`), and making
+   *  it conditional per call site would reopen the exact bug rev5 removes. Every joiner of a
+   *  given in-flight request gets the SAME response by construction, so (unlike a per-call
+   *  opt-in would) it can never depend on which caller happened to win the join race.
+   *
+   *  0454 T0007 rev6 (rev5 review, both findings): rev5 gated the join purely on `force`
+   *  matching, and let whichever response happened to RESOLVE last win the cache write. Neither
+   *  is enough:
+   *
+   *  - A force=true caller could still join an existing force=true in-flight fetch that started
+   *    BEFORE the write this caller needs reflected — e.g. GroupExplorer's own reload() (initial
+   *    load / SSE refresh / hide-toggle) is also always force=true, so it can already be running
+   *    when DashboardView's reveal-after-create fires. Joining it defeats force=true's entire
+   *    purpose. Fixed by `order`/`groupTreeWriteOrder`: a force=true join is only allowed onto an
+   *    in-flight fetch whose start-order is at or after the last known write (invalidateProject).
+   *  - Two overlapping fetches for the same key that do NOT join each other (a non-forced one
+   *    superseded by a forced one — see the join check below) both write `groupTreeCache[key]`
+   *    unconditionally on success. Whichever happens to finish LAST wins, regardless of which one
+   *    started (and therefore read the server's state) more recently — an older, stale response
+   *    can overwrite a newer one just by resolving later. Fixed by `groupTreeCommittedOrder`
+   *    (and `overviewSummaryCommittedOrder`): a response may only write into a cache slot if its
+   *    own `order` is at least as high as whatever last won that slot.
+   *
+   *  0454 T0007 rev7 (rev6 review): `order >= committedOrder` only defends a slot that something
+   *  has already committed to. A slot invalidateProject just emptied (or one nothing has ever
+   *  committed to — e.g. the very first load) still reads as `committedOrder ?? 0`, so a fetch
+   *  that STARTED before the invalidating write but resolves after it can pass that check and
+   *  refill the just-cleared slot with pre-write data — even though a fresh, later-started fetch
+   *  has not committed anything yet (still in flight, or failed). Both commit checks below now
+   *  also require `order >= groupTreeWriteOrder`: since every write bumps that floor to a value
+   *  higher than any fetch already running at that moment, no pre-write response can ever commit
+   *  again, regardless of whether anything newer has committed in its place yet. A response that
+   *  loses this way still returns its own `data.nodes`/`data.overview_summary` to its own caller
+   *  — only the shared cache write is refused. */
   async function fetchGroupTree(pid: string, force = false, includeTerminal = true): Promise<GroupNode[]> {
     const key = groupTreeKey(pid, includeTerminal)
     if (!force && groupTreeCache.value[key]) return groupTreeCache.value[key]
@@ -284,28 +401,67 @@ export const useExplorerStore = defineStore('explorer', () => {
       groupTreeCache.value[key] = MOCK_GROUP_NODES
       return MOCK_GROUP_NODES
     }
-    const joined = groupTreeInflight.get(key)
-    if (joined) return joined
-    const request = (async () => {
+    const inflight = groupTreeInflight.get(key)
+    // A force=true caller may only join another force=true fetch that is itself new enough
+    // (started at or after the last known write) — see the docstring above.
+    if (inflight && (!force || (inflight.force && inflight.order >= groupTreeWriteOrder))) return inflight.promise
+    const order = ++groupTreeOrder
+    // Definite-assignment: `request` is assigned synchronously below, before the IIFE's first
+    // `await` suspends it — the `finally` block (which closes over `request`) only runs after
+    // that suspension resumes, by which time the assignment has long since completed.
+    let request!: Promise<GroupNode[]>
+    request = (async () => {
       loadingGroup.value = true
       groupError.value = null
       try {
-        const res = await getTreeWithRetry<{ nodes: GroupNode[] }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}&include_terminal=${includeTerminal ? 'true' : 'false'}`)
-        const nodes = (res.data as any).data.nodes as GroupNode[]
-        groupTreeCache.value[key] = nodes
-        return groupTreeCache.value[key]
+        const res = await getTreeWithRetry<{ nodes: GroupNode[]; overview_summary?: GroupOverviewSummary }>(`/api/v1/projects/${pid}/groups/tree?branch=${encodeURIComponent(currentBranch.value)}&include_terminal=${includeTerminal ? 'true' : 'false'}&include_summary=true&force=${force ? 'true' : 'false'}`)
+        const data = (res.data as any).data as { nodes: GroupNode[]; overview_summary?: GroupOverviewSummary }
+        const summaryKey = cacheKey(pid)
+        // 0454 T0007 rev7 (rev6 review) — `order >= committedOrder` alone only defends a cache
+        // slot against an EARLIER-started response that is still resolving; it says nothing
+        // about a slot that invalidateProject just EMPTIED without anything having committed to
+        // it yet (first load, or the only prior commit was itself for the pre-write data).
+        // committedOrder for such a key can sit below this response's `order` even though this
+        // response started before the write — so it must also clear the global write floor
+        // (`groupTreeWriteOrder`, bumped by invalidateProject) or a request that started before
+        // an invalidation, but only resolves after it, refills the just-cleared slot with
+        // pre-write data.
+        if (data.overview_summary && order >= (overviewSummaryCommittedOrder.get(summaryKey) ?? 0) && order >= groupTreeWriteOrder) {
+          overviewSummaryCommittedOrder.set(summaryKey, order)
+          groupOverviewSummaryCache.value[summaryKey] = data.overview_summary
+        }
+        // A response only overwrites the cache if no later-started fetch already committed one
+        // for this key — a stale response finishing last must not undo a fresher one that
+        // finished first. A response that loses this race still returns ITS OWN data.nodes: the
+        // caller that made this exact call gets what it asked for either way. A response that
+        // wins returns `groupTreeCache.value[key]` (not the local `data.nodes`) so that a caller
+        // reading the reactive cache afterwards gets back the identical (===) reference this
+        // call resolved with, exactly as callers of getCachedGroupTree already expect.
+        if (order >= (groupTreeCommittedOrder.get(key) ?? 0) && order >= groupTreeWriteOrder) {
+          groupTreeCommittedOrder.set(key, order)
+          groupTreeCache.value[key] = data.nodes
+          return groupTreeCache.value[key]
+        }
+        return data.nodes
       } catch (e) {
         groupError.value = 'tree_load_failed'
         throw e
       } finally {
         // Cleared on BOTH outcomes, before any joined caller is resumed, so the next
-        // reload starts a fresh request instead of re-joining a settled one.
+        // reload starts a fresh request instead of re-joining a settled one. Only OUR OWN
+        // entry is retired: a force=true call that arrived while a non-forced fetch was still
+        // running (and therefore could not join it) may already have installed a fresher entry
+        // in our place — deleting unconditionally would strand its own joiners.
         loadingGroup.value = false
-        groupTreeInflight.delete(key)
+        if (groupTreeInflight.get(key)?.promise === request) groupTreeInflight.delete(key)
       }
     })()
-    groupTreeInflight.set(key, request)
+    groupTreeInflight.set(key, { force, order, promise: request })
     return request
+  }
+
+  function getCachedGroupOverviewSummary(pid: string): GroupOverviewSummary | undefined {
+    return groupOverviewSummaryCache.value[cacheKey(pid)]
   }
 
   /** Fetch (and share) a project's git/status. Always hits the server — the
@@ -338,6 +494,24 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   function invalidateProject(pid: string) {
+    // 0454 T0007 rev6 (rev5 review finding 1) — record that a write happened, so any force=true
+    // fetchGroupTree call arriving after this line refuses to join an in-flight fetch that
+    // started before it (see fetchGroupTree's docstring and groupTreeWriteOrder above). Every
+    // production write path that needs a subsequent force=true reveal/refresh to be trustworthy
+    // already calls invalidateProject first (DashboardView.vue's handleRequirementCreated /
+    // handleRelatedDocCreated do so before their reveal fetch as of this revision; refreshAll /
+    // manualRefresh already called it before bumping the refresh tokens that trigger reload()).
+    //
+    // rev7 (rev6 review) — this same bump is also the commit floor fetchGroupTree's two
+    // `order >= groupTreeWriteOrder` checks read. Any fetch already running when this line
+    // executes has an `order` strictly below the new value (it was assigned earlier, from the
+    // same monotonic counter), so it can never win a cache write after this point even if the
+    // key it targets has no committed entry to compare against (a cleared or never-populated
+    // slot). The clears below intentionally do NOT try to also bump groupTreeCommittedOrder /
+    // overviewSummaryCommittedOrder per key — this single global counter already covers every
+    // key of every project, including ones with no entry in those maps yet.
+    groupTreeOrder += 1
+    groupTreeWriteOrder = groupTreeOrder
     for (const key of Object.keys(fileTreeCache.value)) {
       if (key === pid || key.startsWith(`${pid}:`)) delete fileTreeCache.value[key]
     }
@@ -347,6 +521,12 @@ export const useExplorerStore = defineStore('explorer', () => {
     // an invalidation the caller made precisely because the tree changed.
     for (const key of Object.keys(groupTreeCache.value)) {
       if (key === pid || key.startsWith(`${pid}:`)) delete groupTreeCache.value[key]
+    }
+    // 0454 T0007 review fix — the overview-summary cache is keyed like the file tree
+    // (pid+branch), so it needs the same sweep as groupTreeCache: a stale summary must not
+    // outlive the invalidation that caused it (git archive refresh, project-tree change, ...).
+    for (const key of Object.keys(groupOverviewSummaryCache.value)) {
+      if (key === pid || key.startsWith(`${pid}:`)) delete groupOverviewSummaryCache.value[key]
     }
     for (const key of Object.keys(groupBranchTreeCache.value)) {
       if (key.startsWith(`${pid}:`)) delete groupBranchTreeCache.value[key]
@@ -755,6 +935,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     gitStatus, fetchGitStatus,
     fetchFileTree, fetchGroupTree, invalidateProject,
     getCachedFileTree, getCachedGroupTree,
+    groupOverviewSummaryCache, getCachedGroupOverviewSummary,
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
     fetchGroupBranchChangeSet, fetchGroupBranchDiff,
     currentGroupCommit, groupChangedFiles, groupChangeStatuses,
