@@ -88,6 +88,8 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 
 AI CLI integrations (such as Claude and Codex) and configured test runners are deliberately arbitrary-command execution surfaces: executing repository commands is the feature, not a capability FlowGate can safely remove. Treat anyone who can configure or launch them as having command-execution authority inside the FlowGate service account and its filesystem/container boundary, and isolate that boundary and grant it only the credentials and paths it needs. Newly registered providers keep **Skip permission confirmation** off by default; an operator must explicitly enable the warning-marked option. Leaving it off can pause unmanned work at an approval prompt, while enabling it allows the CLI to act without per-command confirmation.
 
+`FLOWGATE_AGENT_API_BASE` is the canonical origin reachable by spawned CLI workers, not the browser-facing/operator URL. Set it to an HTTP(S) origin only; for a same-host default deployment the recommended value is `http://127.0.0.1:8089`. If it is absent, FlowGate keeps an explicit operator port or otherwise uses the trusted `FLOWGATE_PORT` fallback. Blank or malformed configured values stop CLI startup instead of silently sending a work token to a different origin.
+
 ---
 
 ## Quick start (local, SQLite)

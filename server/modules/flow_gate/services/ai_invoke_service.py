@@ -3324,40 +3324,77 @@ def _truncate_front(text: Optional[str], max_bytes: int = LAST_MESSAGE_MAX_BYTES
 
 
 def _resolve_agent_api_base(operator_api_base: str) -> str:
-    """Agent-reachable inbox base for the EXTERNAL AGENT (CLI) path (D0005 §3-4 /
-    L0008 §2-5).
+    """Return the canonical API base used only by external CLI providers.
 
-    ``operator_api_base`` is the operator-facing base the mention was built with
-    ({scheme}://{host}:{port}{CONTEXT}/api/v1). Priority:
-      1. FLOWGATE_AGENT_API_BASE setting (origin) + the operator base's path.
-      2. Same-host loopback: swap the host for 127.0.0.1, keep scheme/port/path.
-      3. Fall back to the operator base unchanged.
-    Server-direct (exec_type=api) runs never call this - they post to themselves.
+    The browser/operator origin remains in the stored run and in server-direct API
+    execution. A configured agent origin wins; otherwise the operator scheme and
+    explicit port are retained while the host becomes loopback. When the operator
+    origin has no explicit port, the trusted local ``FLOWGATE_PORT`` is used.
     """
     from urllib.parse import urlsplit, urlunsplit
 
     if not operator_api_base:
         return operator_api_base
     parts = urlsplit(operator_api_base)
-
-    setting = ""
     try:
-        from config import settings as _settings
-        setting = (getattr(_settings, "FLOWGATE_AGENT_API_BASE", None) or "").strip()
-    except Exception:
-        setting = ""
-    if setting:
-        if "://" not in setting:
-            setting = "http://" + setting
-        s = urlsplit(setting)
-        if s.netloc:
-            return urlunsplit((s.scheme or parts.scheme, s.netloc, parts.path, "", ""))
+        operator_port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid operator API base port: {exc}") from exc
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(
+            "operator API base must be an absolute http(s) URL with a hostname"
+        )
 
-    host = parts.hostname
-    if not host:
-        return operator_api_base
-    netloc = "127.0.0.1" + (f":{parts.port}" if parts.port else "")
-    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    from config import settings as _settings
+
+    configured = getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
+    if configured is not None:
+        setting = str(configured).strip()
+        if not setting:
+            raise ValueError(
+                "FLOWGATE_AGENT_API_BASE must not be empty or whitespace"
+            )
+        agent = urlsplit(setting)
+        try:
+            agent_port = agent.port
+        except ValueError as exc:
+            raise ValueError(f"Invalid FLOWGATE_AGENT_API_BASE port: {exc}") from exc
+        if (
+            agent.scheme not in ("http", "https")
+            or not agent.hostname
+            or agent.username is not None
+            or agent.password is not None
+            or agent.path not in ("", "/")
+            or agent.query
+            or agent.fragment
+        ):
+            raise ValueError(
+                "FLOWGATE_AGENT_API_BASE must be an http(s) origin "
+                "(scheme://host[:port])"
+            )
+        netloc = agent.hostname
+        if ":" in netloc:
+            netloc = f"[{netloc}]"
+        if agent_port is not None:
+            netloc += f":{agent_port}"
+        path = parts.path.rstrip("/")
+        return urlunsplit((agent.scheme, netloc, path, parts.query, ""))
+
+    port = operator_port
+    if port is None:
+        port = int(_settings.FLOWGATE_PORT)
+        if not 1 <= port <= 65535:
+            raise ValueError("FLOWGATE_PORT must be between 1 and 65535")
+    path = parts.path.rstrip("/")
+    return urlunsplit((parts.scheme, f"127.0.0.1:{port}", path, parts.query, ""))
+
+
+def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
+    """Rewrite only exact operator-base occurrences and return the exported base."""
+    agent_api_base = _resolve_agent_api_base(operator_api_base)
+    if agent_api_base and operator_api_base and agent_api_base != operator_api_base:
+        prompt = prompt.replace(operator_api_base, agent_api_base)
+    return prompt, agent_api_base or operator_api_base
 
 
 # ── No-progress watchdog (0446 T0014 §3) ─────────────────────────────────────
@@ -3600,9 +3637,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # with the operator-facing base; rewrite it (and export it) to an agent-reachable
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
-    agent_api_base = _resolve_agent_api_base(operator_api_base)
-    if agent_api_base and operator_api_base and agent_api_base != operator_api_base:
-        prompt = prompt.replace(operator_api_base, agent_api_base)
+    prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {

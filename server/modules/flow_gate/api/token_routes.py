@@ -437,7 +437,24 @@ def _derive_status(result_doc_id, result_review: str | None) -> str:
 
 
 def _build_api_base(request: Request) -> str:
-    """Build API base URL from the request."""
+    """Build the OPERATOR-FACING API base URL from the request.
+
+    Operator-facing means: the origin the caller's browser actually reached this
+    server on. That is the correct base for mention text a person copies and for
+    URLs the browser itself will call back.
+
+    It is NOT the agent-facing base, and it must not be handed to a CLI worker
+    process as its API base. A CLI worker runs on the server host and may not be
+    able to reach the operator origin at all: in the 0472 B0001 deployment this
+    base carries no explicit port, so reusing it for the CLI produced
+    ``http://127.0.0.1/flowgate/api/v1``, which falls outside the reverse proxy's
+    ``Host: flowgate.stg`` route and answered every worker request with an empty
+    200. The agent-facing canonical base is derived from this value in exactly one
+    place, ``ai_invoke_service._resolve_agent_api_base``
+    (``FLOWGATE_AGENT_API_BASE`` when set, otherwise loopback keeping the explicit
+    operator port or ``settings.FLOWGATE_PORT``). Callers pass this operator base
+    down and let that resolver do the rewrite; never rewrite it here.
+    """
     base = str(request.base_url).rstrip("/")
     context = settings.CONTEXT.rstrip("/")
     return f"{base}{context}/api/v1"
