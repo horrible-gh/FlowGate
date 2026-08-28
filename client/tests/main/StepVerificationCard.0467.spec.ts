@@ -27,16 +27,6 @@ function apiResponse(data: unknown) {
   return { data: { data } }
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
-}
-
 beforeEach(() => {
   i18n.global.locale.value = 'ko'
   getRequest.mockReset()
@@ -56,60 +46,7 @@ describe('[단계별 확인] 카드', () => {
     const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
     await flushPromises()
 
-    expect(wrapper.find('.step-verify-empty-note').text()).toBe('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
-  })
-
-  it('형식 오류로 비어 있는 절은 명시적 없음과 분리한다', async () => {
-    getRequest.mockResolvedValue(apiResponse({ found: true, declared_none: false, sections: [] }))
-    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
-    await flushPromises()
-
-    expect(wrapper.find('.step-verify-empty-note').text()).toBe('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
-    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다.')
-    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
-  })
-
-  it('조회 실패는 절 누락 및 명시적 없음과 분리한다', async () => {
-    getRequest.mockRejectedValue(new Error('network down'))
-    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
-    await flushPromises()
-
-    expect(wrapper.find('.step-verify-empty-note').text()).toContain('확인 정보를 불러오지 못했습니다. 다시 시도해 주세요')
-    expect(wrapper.text()).not.toContain('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
-    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다.')
-    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
-  })
-
-  it('응답 전에는 직전 내용을 지우고 로딩 상태만 표시한다', async () => {
-    const pending = deferred<ReturnType<typeof apiResponse>>()
-    getRequest.mockReturnValue(pending.promise)
-    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
-
-    expect(wrapper.find('.step-verify-fold-summary').text()).toBe('불러오는 중')
-    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
-    await wrapper.find('.card-hd-toggle').trigger('click')
-    expect(wrapper.find('.step-verify-empty-note').text()).toBe('불러오는 중')
-
-    pending.resolve(apiResponse({ found: true, declared_none: true, sections: [] }))
-    await flushPromises()
-    expect(wrapper.find('.step-verify-empty-note').text()).toBe('확인할 것이 없다고 등록되었습니다.')
-  })
-
-  it('늦게 도착한 이전 조회 응답은 최신 화면을 덮지 않는다', async () => {
-    const first = deferred<ReturnType<typeof apiResponse>>()
-    const second = deferred<ReturnType<typeof apiResponse>>()
-    getRequest.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
-
-    await wrapper.setProps({ docId: 'flowgate.default.0467.0009-TR' })
-    second.resolve(apiResponse({ found: true, declared_none: true, sections: [] }))
-    await flushPromises()
-    expect(wrapper.text()).toContain('확인할 것이 없다고 등록되었습니다.')
-
-    first.resolve(apiResponse({ found: false, declared_none: false, sections: [] }))
-    await flushPromises()
-    expect(wrapper.text()).toContain('확인할 것이 없다고 등록되었습니다.')
-    expect(wrapper.vm.$el.textContent).not.toContain('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
+    expect(wrapper.find('.step-verify-empty-note').text()).toBe('이 문서에는 단계별 확인 섹션이 없습니다.')
   })
 
   it('없음으로 등록된 문서는 그 사실을 보여준다', async () => {

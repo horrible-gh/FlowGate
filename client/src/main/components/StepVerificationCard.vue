@@ -24,7 +24,7 @@
         <AppIcon name="caret-down" class="card-hd-caret" />
         <span class="step-verify-fold-summary">{{ foldSummary }}</span>
       </button>
-      <div v-if="status === 'sections'" class="card-actions">
+      <div v-if="sections.length" class="card-actions">
         <span class="step-verify-count-pill">
           {{ t('main.step_verification_card.count', { count: sections.length }) }}
         </span>
@@ -32,17 +32,10 @@
     </div>
 
     <div :id="bodyId" class="card-bd step-verify-card-bd">
-      <p v-if="status === 'loading'" class="step-verify-empty-note">
-        {{ t('main.step_verification_card.loading') }}
-      </p>
-      <p v-else-if="status === 'missing'" class="step-verify-empty-note">
+      <p v-if="!found" class="step-verify-empty-note">
         {{ t('main.step_verification_card.not_applicable') }}
       </p>
-      <p v-else-if="status === 'error'" class="step-verify-empty-note step-verify-error-note">
-        <AppIcon name="warning" />
-        {{ t('main.step_verification_card.fetch_error') }}
-      </p>
-      <p v-else-if="status === 'none'" class="step-verify-empty-note">
+      <p v-else-if="declaredNone || sections.length === 0" class="step-verify-empty-note">
         {{ t('main.step_verification_card.declared_none') }}
       </p>
       <ul v-else class="step-verify-sections">
@@ -102,19 +95,17 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-type StepVerificationStatus = 'loading' | 'sections' | 'none' | 'missing' | 'error'
-
-const status = ref<StepVerificationStatus>('loading')
+const found = ref(false)
+const declaredNone = ref(false)
 const sections = ref<StepVerificationSection[]>([])
 const collapsed = ref(true)
 const sectionCollapsed = ref<boolean[]>([])
 const bodyId = computed(() => `step-verify-body-${props.docId.replace(/[^A-Za-z0-9_-]/g, '-')}`)
 
 const foldSummary = computed(() => {
-  if (status.value === 'loading') return t('main.step_verification_card.loading')
-  if (status.value === 'missing') return t('main.step_verification_card.fold_summary_missing')
-  if (status.value === 'error') return t('main.step_verification_card.fold_summary_error')
-  if (status.value === 'none') return t('main.step_verification_card.fold_summary_empty')
+  if (!found.value || declaredNone.value || sections.value.length === 0) {
+    return t('main.step_verification_card.fold_summary_empty')
+  }
   const list = sections.value
   if (list.length === 1) return t('main.step_verification_card.fold_summary_one', { title: list[0].title })
   return t('main.step_verification_card.fold_summary_many', {
@@ -131,31 +122,20 @@ function toggleSection(idx: number) {
   sectionCollapsed.value = sectionCollapsed.value.map((v, i) => (i === idx ? !v : v))
 }
 
-let requestSeq = 0
-
 /** Read-only: renders whatever the document body's `## 단계별 확인` section already says. */
 async function fetchData() {
-  const seq = ++requestSeq
-  status.value = 'loading'
-  sections.value = []
-  sectionCollapsed.value = []
-
   try {
     const res = await getRequest<any>(apiBase())
-    if (seq !== requestSeq) return
     const data = (res.data as any)?.data ?? res.data
+    found.value = !!data?.found
+    declaredNone.value = !!data?.declared_none
     sections.value = (data?.sections ?? []) as StepVerificationSection[]
     sectionCollapsed.value = sections.value.map(() => true)
-    if (data?.found && !data?.declared_none && sections.value.length > 0) {
-      status.value = 'sections'
-    } else if (data?.found && data?.declared_none) {
-      status.value = 'none'
-    } else {
-      status.value = 'missing'
-    }
   } catch {
-    if (seq !== requestSeq) return
-    status.value = 'error'
+    found.value = false
+    declaredNone.value = false
+    sections.value = []
+    sectionCollapsed.value = []
   }
 }
 

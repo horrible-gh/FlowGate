@@ -1394,11 +1394,7 @@ export default {
       fold_summary_empty: '· なし',
       fold_summary_one: '· {title}',
       fold_summary_many: '· {title} 他{rest}件',
-      loading: '読み込み中',
-      fold_summary_missing: '· 確認セクションが登録されていません',
-      fold_summary_error: '· 確認情報を読み込めませんでした',
-      not_applicable: 'この文書には段階別確認セクションがないか、空です。',
-      fetch_error: '確認情報を読み込めませんでした。もう一度お試しください。',
+      not_applicable: 'この文書には段階別確認セクションがありません。',
       declared_none: '確認することがないと登録されました。',
     },
     file_upload_modal: {

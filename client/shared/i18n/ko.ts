@@ -1396,11 +1396,7 @@ export default {
       fold_summary_empty: '· 없음',
       fold_summary_one: '· {title}',
       fold_summary_many: '· {title} 외 {rest}개',
-      loading: '불러오는 중',
-      fold_summary_missing: '· 확인 절이 등록되지 않음',
-      fold_summary_error: '· 확인 정보를 불러오지 못함',
-      not_applicable: '이 문서에는 단계별 확인 절이 없거나 비어 있습니다',
-      fetch_error: '확인 정보를 불러오지 못했습니다. 다시 시도해 주세요',
+      not_applicable: '이 문서에는 단계별 확인 섹션이 없습니다.',
       declared_none: '확인할 것이 없다고 등록되었습니다.',
     },
     file_upload_modal: {
