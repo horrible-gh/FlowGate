@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.rbac.permission_service import has_permission
@@ -261,6 +262,16 @@ def _issue_token(
     resolved_action_scope = _WIRE_TOKEN_SCOPE.get(wire_scope, wire_scope)
     if resolved_action_scope == "resolve_conflict" and group_id is None:
         raise HTTPException(status_code=404, detail=f"Group not found: {canonical_group_id}")
+    if resolved_action_scope == "resolve_conflict":
+        active_lease = db_group_ai_leases.get_active(group_id)
+        if active_lease is not None:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Cannot issue a resolve_conflict token while group '{group_id}' has an "
+                    f"active AI-run lease (run_id={active_lease.get('run_id')})."
+                ),
+            )
 
     # The dialog request carries the chosen locale in x-locale; persist it on a continuation
     # token so the unmanned self-chain honors it on every hop (group 0099 B0001).
