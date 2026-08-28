@@ -3646,15 +3646,51 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, source_root)
+    is_unc = eff_cwd is None
+    if is_unc:
+        # unc_safe_shell leaves cwd unset while cmd.exe performs pushd. Keep the
+        # bootstrap shell inside the run's managed local scratch until that happens.
+        if not scratch.is_absolute() or str(scratch).startswith("\\\\"):
+            return "spawn_failed", "managed scratch directory is unavailable"
+        try:
+            effective_scratch = scratch.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return "spawn_failed", "managed scratch directory is unavailable"
+        if (
+            not effective_scratch.is_absolute()
+            or not effective_scratch.is_dir()
+            or str(effective_scratch).startswith("\\\\")
+        ):
+            return "spawn_failed", "managed scratch directory is unavailable"
+        eff_cwd = str(effective_scratch)
     kwargs = process_runner.popen_kwargs(source_root, env)
     kwargs["cwd"] = eff_cwd
     kwargs["stdin"] = subprocess.PIPE
 
+    # JSON encoding keeps CR/LF and other control characters escaped in one event.
+    # Deliberately omit prompt, command, token, environment, and provider credentials.
+    try:
+        logger.info(
+            "ai-invoke cli spawn decision %s",
+            json.dumps(
+                {
+                    "run_id": run.get("run_id"),
+                    "resolved_root": str(resolved_root) if resolved_root is not None else None,
+                    "effective_cwd": kwargs["cwd"],
+                    "is_unc": is_unc,
+                },
+                ensure_ascii=True,
+            ),
+        )
+    except Exception:
+        # Observability must never become a new execution dependency.
+        pass
+
     launched = time.monotonic()
     try:
         proc = subprocess.Popen(eff_cmd, **kwargs)
-    except Exception as exc:
-        return "spawn_failed", str(exc)[:500]
+    except Exception:
+        return "spawn_failed", "unable to start CLI process"
 
     run["proc"] = proc
     # Close the cancel-vs-spawn race: a cancel that landed between admission and
