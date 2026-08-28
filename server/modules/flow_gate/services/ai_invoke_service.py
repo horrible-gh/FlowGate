@@ -565,6 +565,36 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     })
 
 
+def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
+    """Best-effort revoke of a dead lease's still-active token (0447 T0007).
+
+    A lease alone only blocks re-entry into the group; the `token_id` it was issued
+    with is a separate credential that otherwise survives a restart until its own
+    TTL, letting a human replay it back into the same group. No-op when the lease
+    carries no token_id, the token cannot be found, or the token is already
+    consumed or revoked -- a consumed single-use token must never be flipped to
+    revoked after the fact (that would rewrite a settled audit trail for a token
+    nobody can replay anyway), and an already-revoked token must not draw a second
+    `token_revoked` event. Whether an end record exists or was written for this
+    victim's run plays no part in this decision; only the token's own
+    consumed/revoked state does. Goes through token_service.revoke() (never
+    db/tokens.py directly) so the existing workflow_events.token_revoked audit
+    contract is preserved, and that call is itself idempotent under a race --
+    including a race against a sibling process, decided by the atomic claim
+    marker in db_tokens.revoke() rather than any in-process lock (0447 T0007
+    review rev1).
+    """
+    token_id = lease_row.get("token_id")
+    if not token_id:
+        return
+    token = db_tokens.get_by_id(token_id)
+    if token is None:
+        return
+    if token.get("consumed_at") or token.get("revoked_at"):
+        return
+    token_service.revoke(token_id, reason=reason)
+
+
 def startup_recover_leases() -> int:
     """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 item 1).
 
@@ -582,6 +612,17 @@ def startup_recover_leases() -> int:
         except Exception:
             logger.warning(
                 "orphaned-lease end record failed for run %s", row.get("run_id"), exc_info=True
+            )
+        # Independent of the end-record write above (0447 T0007 item 2): a victim
+        # whose run already has a normal end record -- e.g. the process died after
+        # persisting ai_invoke_runs but before releasing the lease -- still carries
+        # an active orphan token that must be reclaimed here.
+        try:
+            _reclaim_orphan_lease_token(row, "orphaned_by_restart")
+        except Exception:
+            logger.warning(
+                "orphaned-lease token revoke failed for run %s token %s",
+                row.get("run_id"), row.get("token_id"), exc_info=True,
             )
     if victims:
         logger.warning("[ai_invoke] startup reclaimed %d orphaned group lease(s)", len(victims))

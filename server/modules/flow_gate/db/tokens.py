@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json as _json
+import uuid as _uuid
 from typing import Any, Optional
 
 from .connection import get_store, now_iso, iso_days_ago
@@ -174,12 +175,41 @@ def increment_dry_run(token_id: str) -> None:
     _invalidate_token_cache()
 
 
-def revoke(token_id: str) -> Optional[dict]:
-    """Record revoked_at = now()."""
+def revoke(token_id: str, claim: Optional[str] = None) -> Optional[dict]:
+    """Record revoked_at = now(), stamping a per-call claim marker atomically.
+
+    0447 T0007 review rev1: the guarded UPDATE can only ever apply once per
+    token_id, and a single UPDATE statement is atomic against every other
+    writer regardless of process boundary -- so when two different processes
+    race this call against the same active token_id, only one caller's
+    ``claim`` value can land in ``revoke_claim``, decided by the DB engine
+    itself. The caller (token_service.revoke) compares the returned row's
+    ``revoke_claim`` against the value it passed in to learn whether it was
+    the one who actually caused the transition, without needing rowcount
+    (which this store does not expose -- see FlowGateStore._execute).
+    ``claim`` defaults to a fresh UUID for call sites that only care about the
+    revoked_at side effect.
+
+    0447 T0007 review rev2: the guard also requires ``consumed_at IS NULL``.
+    ``WHERE revoked_at IS NULL`` alone only protects against a second revoke --
+    it says nothing about a token that was consumed in between the caller's
+    query (token_service.revoke's db_tokens.get_by_id read) and this UPDATE.
+    Without the consumed_at predicate, that race would still flip
+    revoked_at/revoke_claim on an already-consumed token, and the caller would
+    then (wrongly) record a token_revoked event for a consumed-then-revoked
+    token, which T0007 forbids: a consumed token must never be revoked after
+    the fact, and an event is only emitted for a genuine active->revoked
+    transition. Adding the predicate here means the same single atomic
+    statement decides both "not already revoked" and "not already consumed" --
+    no separate consumed_at check can itself race the UPDATE.
+    """
+    if claim is None:
+        claim = _uuid.uuid4().hex
     store = get_store()
     store._execute(
-        "UPDATE tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at IS NULL",
-        [now_iso(), token_id],
+        "UPDATE tokens SET revoked_at = ?, revoke_claim = ? "
+        "WHERE token_id = ? AND revoked_at IS NULL AND consumed_at IS NULL",
+        [now_iso(), claim, token_id],
     )
     _invalidate_token_cache()
     return get_by_id(token_id)
