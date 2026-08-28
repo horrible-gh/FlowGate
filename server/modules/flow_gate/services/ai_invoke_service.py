@@ -929,27 +929,173 @@ def _project_scratch_root(project_id: str) -> Path:
     return storage_paths.get_storage_root(project_id, create=True) / "scratch" / _sanitize_project_name(project_name)
 
 
+SCRATCH_MANIFEST_NAME = ".flowgate-ai-scratch.json"
+SCRATCH_MANIFEST_SCHEMA = 1
+_RUN_ID_RE = re.compile(r"\Aaiv_[0-9]{8}_[0-9]{6}\Z")
+
+
+def _safe_scratch_log(project_id: str, run_id: str, scratch: Path, action: str, reason: str) -> None:
+    """Emit one escaped event without prompts, commands, credentials, or raw paths."""
+    try:
+        root = _project_scratch_root(project_id).resolve(strict=False)
+        relative = scratch.resolve(strict=False).relative_to(root).as_posix()
+    except Exception:
+        relative = "<outside-managed-root>"
+    logger.info("ai-invoke scratch %s", json.dumps({
+        "run_id": str(run_id) if _RUN_ID_RE.fullmatch(str(run_id)) else "<invalid>",
+        "scratch": relative,
+        "action": action,
+        "reason": reason,
+    }, ensure_ascii=True))
+
+
+def _is_reparse_or_symlink(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        attrs = getattr(path.lstat(), "st_file_attributes", 0)
+        reparse_flag = getattr(__import__("stat"), "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        return bool(attrs & reparse_flag)
+    except OSError:
+        return True
+
+
+def _atomic_write_manifest(scratch: Path, manifest: dict) -> None:
+    target = scratch / SCRATCH_MANIFEST_NAME
+    temporary = scratch / (SCRATCH_MANIFEST_NAME + ".tmp")
+    data = json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(data)
+        handle.flush()
+    temporary.replace(target)
+
+
+def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
+    return {
+        "schema": SCRATCH_MANIFEST_SCHEMA,
+        "owner": "flowgate.ai-invoke",
+        "project_id": project_id,
+        "run_id": run_id,
+        "scratch_path": str(scratch.resolve(strict=True)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "policy": {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+    }
+
+
 def _create_scratch(project_id: str, run_id: str) -> Path:
-    scratch = _project_scratch_root(project_id) / run_id
-    scratch.mkdir(parents=True, exist_ok=True)
+    if not _RUN_ID_RE.fullmatch(str(run_id)):
+        raise ValueError("invalid ai-invoke run id")
+    root = _project_scratch_root(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    root_resolved = root.resolve(strict=True)
+    scratch = root / run_id
+    scratch.mkdir(exist_ok=False)
+    try:
+        if _is_reparse_or_symlink(scratch) or scratch.resolve(strict=True).parent != root_resolved:
+            raise ValueError("scratch is not a direct managed child")
+        (scratch / "tmp").mkdir()
+        (scratch / "cache").mkdir()
+        _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch))
+    except Exception:
+        if scratch.exists() and not _is_reparse_or_symlink(scratch):
+            shutil.rmtree(scratch)
+        raise
+    _safe_scratch_log(project_id, run_id, scratch, "created", "manifest_written")
     return scratch
 
 
+def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> tuple[Optional[dict], str]:
+    if not _RUN_ID_RE.fullmatch(str(run_id)):
+        return None, "invalid_run_id"
+    try:
+        root = _project_scratch_root(project_id).resolve(strict=True)
+        if _is_reparse_or_symlink(scratch):
+            return None, "reparse_or_symlink"
+        resolved = scratch.resolve(strict=True)
+        if resolved == root or resolved.parent != root or scratch.parent.resolve(strict=True) != root:
+            return None, "outside_or_nested"
+        if not resolved.is_dir() or resolved.name != run_id:
+            return None, "path_identity_mismatch"
+        manifest_path = resolved / SCRATCH_MANIFEST_NAME
+        if _is_reparse_or_symlink(manifest_path) or not manifest_path.is_file():
+            return None, "manifest_missing"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_policy = {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True}
+        if manifest.get("schema") != SCRATCH_MANIFEST_SCHEMA or manifest.get("owner") != "flowgate.ai-invoke":
+            return None, "manifest_identity_invalid"
+        if manifest.get("project_id") != project_id or manifest.get("run_id") != run_id:
+            return None, "manifest_owner_mismatch"
+        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") != expected_policy:
+            return None, "manifest_path_or_policy_mismatch"
+        return manifest, "valid"
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return None, "manifest_unreadable"
+
+
+def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str) -> bool:
+    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+    if manifest is None:
+        _safe_scratch_log(project_id, run_id, scratch, "retained", reason)
+        return False
+    manifest["completed_at"] = completed_at
+    try:
+        target = scratch / SCRATCH_MANIFEST_NAME
+        temporary = scratch / (SCRATCH_MANIFEST_NAME + ".update")
+        temporary.write_text(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        temporary.replace(target)
+        return True
+    except OSError:
+        _safe_scratch_log(project_id, run_id, scratch, "retained", "manifest_update_failed")
+        return False
+
+
+def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[bool, str]:
+    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+    if manifest is None:
+        return False, reason
+    try:
+        shutil.rmtree(scratch)
+    except Exception:
+        return False, "delete_failed"
+    if scratch.exists() or scratch.is_symlink():
+        return False, "delete_incomplete"
+    _safe_scratch_log(project_id, run_id, scratch, "deleted", "verified_absent")
+    return True, "deleted"
+
+
 def _cleanup_retained_scratches(project_id: str) -> None:
-    """Best-effort: drop retained scratches older than SCRATCH_RETENTION_DAYS."""
+    """Delete only manifest-proven direct children retained for at least seven days."""
     try:
         root = _project_scratch_root(project_id)
-        if not root.is_dir():
+        if not root.is_dir() or _is_reparse_or_symlink(root):
             return
-        cutoff = time.time() - SCRATCH_RETENTION_DAYS * 86400
+        now = datetime.now(timezone.utc)
         for child in root.iterdir():
+            run_id = child.name
+            if not child.is_dir() or _is_reparse_or_symlink(child):
+                _safe_scratch_log(project_id, run_id, child, "skipped", "not_owned_directory")
+                continue
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, child)
+            if manifest is None:
+                _safe_scratch_log(project_id, run_id, child, "skipped", reason)
+                continue
             try:
-                if child.is_dir() and child.stat().st_mtime < cutoff:
-                    shutil.rmtree(child, ignore_errors=True)
-            except Exception:
-                logger.warning("scratch retention sweep failed for %s", child, exc_info=True)
+                completed = datetime.fromisoformat(str(manifest.get("completed_at")))
+                if completed.tzinfo is None:
+                    raise ValueError
+                age = now - completed.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                _safe_scratch_log(project_id, run_id, child, "skipped", "completion_time_invalid")
+                continue
+            if age < timedelta(days=SCRATCH_RETENTION_DAYS):
+                _safe_scratch_log(project_id, run_id, child, "retained", "retention_active")
+                continue
+            deleted, delete_reason = _delete_owned_scratch(project_id, run_id, child)
+            if not deleted:
+                _safe_scratch_log(project_id, run_id, child, "retained", delete_reason)
     except Exception:
-        logger.warning("scratch retention sweep failed for project %s", project_id, exc_info=True)
+        logger.warning("ai-invoke scratch sweep failed")
 
 
 # ── Source-spill check (L0006 §2.8) ──────────────────────────────────────────
@@ -3643,6 +3789,12 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     env = {
         "FLOWGATE_TOKEN": run["raw_token"],
         "FLOWGATE_SCRATCH": run["scratch_dir"],
+        "TMP": str(scratch / "tmp"),
+        "TEMP": str(scratch / "tmp"),
+        "TMPDIR": str(scratch / "tmp"),
+        "XDG_CACHE_HOME": str(scratch / "cache"),
+        "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
+        "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, source_root)
@@ -4487,18 +4639,26 @@ def _finalize_run(run: dict) -> None:
     run["resumable"] = is_resumable(run["stop_code"])
     run["stop_reason"] = _stop_reason_text(run["stop_code"], run)
 
-    # Scratch lifecycle (§2.7): success cleans up, everything else retains.
+    # Scratch lifecycle: every deletion passes the manifest/identity boundary again.
     scratch = Path(run["scratch_dir"])
-    if run["outcome"] == "complete":
-        try:
-            shutil.rmtree(scratch, ignore_errors=True)
-        except Exception:
-            logger.warning("ai-invoke scratch cleanup failed: %s", scratch, exc_info=True)
-    else:
+    completed_at = datetime.now(timezone.utc).isoformat()
+    manifest_updated = _mark_scratch_completed(
+        run["project_id"], run["run_id"], scratch, completed_at
+    )
+    deleted = False
+    cleanup_reason = "non_complete_outcome"
+    if run["outcome"] == "complete" and manifest_updated:
+        deleted, cleanup_reason = _delete_owned_scratch(
+            run["project_id"], run["run_id"], scratch
+        )
+    if not deleted:
         try:
             run["scratch_retained"] = storage_paths.to_storage_relative(scratch, run["project_id"])
         except Exception:
             run["scratch_retained"] = run["scratch_dir"]
+        _safe_scratch_log(
+            run["project_id"], run["run_id"], scratch, "retained", cleanup_reason
+        )
 
     # Source-spill check (§2.8): only the delta vs the start-time snapshot.
     baseline = run.get("dirty_baseline")

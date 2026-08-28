@@ -36,7 +36,7 @@ def _decision(caplog):
 
 
 def test_windows_unc_cli_uses_managed_scratch_and_safe_observation(monkeypatch, caplog):
-    run_id = "unc-" + uuid.uuid4().hex
+    run_id = "aiv_20260828_999998"
     managed_base = Path.home() / ".flowgate-test-managed-0475" / run_id
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda _project_id: {"project_name": "p0475"})
     monkeypatch.setattr(svc.storage_paths, "get_storage_root", lambda *_a, **_kw: managed_base)
