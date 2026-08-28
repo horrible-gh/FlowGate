@@ -30,7 +30,6 @@ from modules.flow_gate.storage.paths import (
 
 TOKEN_TTL_HOURS = 24
 
-
 # ── Internal helpers ─────────────────────────────────────────────────────────────────
 
 def _pepper_env(name: str) -> str:
@@ -369,12 +368,47 @@ def increment_dry_run(token_id: str) -> None:
 
 
 def revoke(token_id: str, reason: str = "user_cancel") -> None:
-    """revoked_at = now() + workflow_events.token_revoked (D020 §2-5)."""
+    """revoked_at = now() + workflow_events.token_revoked (D020 §2-5).
+
+    Idempotent (0447 T0007) and race-safe across process boundaries (0447 T0007
+    review rev1): revoking a token that is already revoked is a successful
+    no-op -- it does not raise and does not write a second token_revoked event,
+    even when the caller racing to revoke it runs in a different OS process
+    (e.g. the startup orphan sweep and a concurrent human cancel, or two
+    sibling workers both reclaiming the same dead lease).
+
+    An in-process threading.Lock alone cannot make that guarantee: two
+    processes that both read this token_id as not-yet-revoked before either
+    writes would both proceed to call db_tokens.revoke() and both append a
+    token_revoked event. The winner is instead decided inside
+    db_tokens.revoke()'s own guarded UPDATE, which stamps a fresh per-call
+    claim marker into ``revoke_claim`` atomically alongside ``revoked_at`` in
+    the same statement -- a single UPDATE is atomic against every other writer
+    regardless of process boundary, so at most one caller's claim can ever
+    land. Only the caller whose claim actually landed writes the event; a
+    caller that raced and lost (whether against a concurrent call or a token
+    that was already revoked beforehand) sees its own claim absent from the
+    re-read row and returns silently. A missing token_id still raises 404,
+    inside or outside a race.
+
+    0447 T0007 review rev2: the same race can land between this function's own
+    query (the ``db_tokens.get_by_id`` read above) and the guarded UPDATE if a
+    concurrent caller *consumes* the token in that window instead of revoking
+    it. The query alone cannot see that consume -- only the UPDATE's own WHERE
+    clause runs at the instant of the write, so db_tokens.revoke() guards on
+    ``consumed_at IS NULL`` too. A token consumed in that window loses the
+    race the same way an already-revoked token does: the claim doesn't land,
+    this function returns silently, and no token_revoked event is written for
+    what is actually a consumed token.
+    """
     token_rec = db_tokens.get_by_id(token_id)
     if token_rec is None:
         raise HTTPException(status_code=404, detail=f"Token not found: {token_id}")
 
-    db_tokens.revoke(token_id)
+    claim = secrets.token_hex(16)
+    updated = db_tokens.revoke(token_id, claim)
+    if updated is None or updated.get("revoke_claim") != claim:
+        return
 
     db_events.create({
         "event_type": "token_revoked",

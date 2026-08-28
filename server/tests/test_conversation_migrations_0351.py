@@ -21,10 +21,11 @@ def test_all_migrations_create_21_column_token_and_conversation_schema():
     _apply(conn)
     columns = [row[1] for row in conn.execute("PRAGMA table_info(tokens)")]
     # 0352 T0004 §3.1 / migration 078 added continuation_auto_approve_item_seqs (21 -> 22).
-    assert len(columns) == 22
+    # 0447 T0007 review rev1 / migration 089 added revoke_claim (22 -> 23).
+    assert len(columns) == 23
     assert {
         "continuation_instruction_mode", "provider_id", "ai_run_id",
-        "continuation_auto_approve_item_seqs",
+        "continuation_auto_approve_item_seqs", "revoke_claim",
     } <= set(columns)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"conversation_turns", "conversation_participants", "conversation_docs"} <= tables
