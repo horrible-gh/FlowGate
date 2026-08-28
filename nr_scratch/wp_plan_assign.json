@@ -1,0 +1,1 @@
+{"ok":true,"op":"grep","server_ts":"2026-08-28T12:23:55+09:00","matches":[{"file":"server/modules/flow_gate/api/inbox_routes.py","line":3325,"text":"            wp_plan = work_plan_service.validate("},{"file":"server/modules/flow_gate/api/inbox_routes.py","line":4291,"text":"            wp_plan = work_plan_service.validate("}],"total":2,"truncated":false}

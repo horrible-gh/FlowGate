@@ -3458,8 +3458,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             sv_body = body_for_guards
             if sv_body is None:
                 sv_body = _submission_text(doc_path, content)
-            step_verification_result = step_verification_service.evaluate(
-                sv_body or "", locale=_locale,
+            step_verification_result = step_verification_service.enforce_on_save(
+                doc_type, sv_body or "", locale=_locale,
             )
         except Exception:  # noqa: BLE001 — a validation failure must not block TR intake
             step_verification_result = None
@@ -4410,8 +4410,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             sv_body = edit_body_for_guards
             if sv_body is None:
                 sv_body = _submission_text(doc_path, content)
-            edit_step_verification = step_verification_service.evaluate(
-                sv_body or "", locale=_locale,
+            edit_step_verification = step_verification_service.enforce_on_save(
+                existing_doc.get("type_code"), sv_body or "", locale=_locale,
             )
         except Exception:  # noqa: BLE001 — a validation failure must not block resubmission
             edit_step_verification = None

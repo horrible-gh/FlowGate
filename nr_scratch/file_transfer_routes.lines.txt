@@ -1,0 +1,275 @@
+1	"""T534 — File upload endpoint (multipart + directory structure restoration).
+2	
+3	Endpoint:
+4	  POST /api/v1/projects/{project_id}/files/upload
+5	
+6	Note:
+7	  T533 download endpoint is implemented in tree_routes.py.
+8	"""
+9	from __future__ import annotations
+10	
+11	import os
+12	import re
+13	
+14	import anyio.to_thread
+15	from fastapi import APIRouter, HTTPException
+16	from fastapi.responses import JSONResponse
+17	from starlette.requests import Request
+18	
+19	from modules.flow_gate.rbac.permission_service import has_permission
+20	from modules.flow_gate.services.auth_outbound import verify_bearer
+21	
+22	router = APIRouter(prefix="/api/v1", tags=["FileTransfer"])
+23	
+24	_MAX_FILE_BYTES = 100 * 1024 * 1024   # 100 MB
+25	_MAX_TOTAL_BYTES = 500 * 1024 * 1024  # 500 MB
+26	
+27	
+28	# ── Internal Utilities ───────────────────────────────────────────────────────
+29	
+30	def _get_src_root(project_id: str, group_id: str | None = None):
+31	    """Returns normalized absolute src_root path for the given project_id.
+32	
+33	    0115: delegates to the shared resolver (storage.paths) so an optional
+34	    group_id routes to the group's git worktree when one is registered; the
+35	    group-less call keeps the pre-0115 project-branch behavior unchanged.
+36	
+37	    0327 T0004 (B0001): when a group_id IS supplied the resolution is fail-closed.
+38	    The shared resolver falls back to the base checkout whenever a worktree cannot
+39	    be resolved — harmless for the internal callers it was built for, but now that
+40	    the file explorer uploads into a selected group, that fallback would drop the
+41	    user's files into the base checkout under a group-branch tab and dirty it for
+42	    every other group's finalize. Same contract as the src-content editor: resolve
+43	    the group's worktree exactly, or refuse (409).
+44	    """
+45	    from modules.flow_gate.storage.paths import resolve_project_src_root
+46	
+47	    if group_id:
+48	        from modules.flow_gate.db import groups as _groups
+49	        from modules.flow_gate.services import git_service
+50	
+51	        group = _groups.get_by_id(group_id)
+52	        if group is None or group.get("project_id") != project_id:
+53	            raise HTTPException(
+54	                status_code=404,
+55	                detail={"error": {"code": "GROUP_NOT_FOUND", "message": "Group not found in this project"}},
+56	            )
+57	        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+58	        if root is None:
+59	            raise HTTPException(
+60	                status_code=409,
+61	                detail={"error": {
+62	                    "code": "WORKTREE_UNAVAILABLE",
+63	                    "message": f"Group worktree is unavailable ({reason}); base checkout was not used",
+64	                }},
+65	            )
+66	        return root.resolve()
+67	
+68	    root = resolve_project_src_root(project_id)
+69	    if root is None:
+70	        raise HTTPException(
+71	            status_code=404,
+72	            detail={"error": {"code": "PROJECT_NOT_FOUND", "message": "Project not found"}},
+73	        )
+74	    return root
+75	
+76	
+77	def _is_valid_relative_path(path: str) -> bool:
+78	    """Validates a relative path.
+79	
+80	    - Empty string (project root) is allowed.
+81	    - Rejects ``..`` segments, absolute paths, and drive prefixes.
+82	    """
+83	    if not path:
+84	        return True
+85	    normalized = path.replace("\\", "/")
+86	    if normalized.startswith("/"):
+87	        return False
+88	    if re.match(r"^[A-Za-z]:", normalized):
+89	        return False
+90	    for seg in normalized.split("/"):
+91	        if seg == "..":
+92	            return False
+93	    return True
+94	
+95	
+96	def _is_safe_filename_path(relative_filename: str) -> bool:
+97	    """Checks path segment safety within a filename.
+98	
+99	    Rejects empty segments, ``.``, ``..``, and drive prefixes.
+100	    """
+101	    for part in relative_filename.split("/"):
+102	        if part in ("", ".", ".."):
+103	            return False
+104	        if re.match(r"^[A-Za-z]:", part):
+105	            return False
+106	    return True
+107	
+108	
+109	def _under_root(full_path: str, root: str) -> bool:
+110	    """Returns True if full_path is under root (prefix check including os.sep)."""
+111	    root_prefix = root if root.endswith(os.sep) else root + os.sep
+112	    return full_path.startswith(root_prefix) or full_path == root
+113	
+114	
+115	def _save_file(full_path_str: str, data: bytes) -> None:
+116	    """Create intermediate directories and write one uploaded file (overwrite).
+117	
+118	    0279 T0005 (NR0003 cause 1): split out of upload_files so the blocking mkdir +
+119	    write can be pushed through anyio.to_thread. Run on the event loop it froze
+120	    every other request for the duration of the write — up to 100 MB per file and
+121	    500 MB per request.
+122	    """
+123	    os.makedirs(os.path.dirname(full_path_str), exist_ok=True)
+124	    with open(full_path_str, "wb") as fh:
+125	        fh.write(data)
+126	
+127	
+128	def _err(status: int, code: str, message: str) -> JSONResponse:
+129	    """P007 §3 error response format."""
+130	    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+131	
+132	
+133	def _check_project_auth(request: Request, project_id: str):
+134	    """Verifies Bearer token and checks project_id permissions.
+135	
+136	    - Worker token: perm_document_read is verified inside verify_bearer() against the token's project.
+137	    - User JWT: after verify_bearer() verification, additionally checks perm_document_read for the requested project_id.
+138	
+139	    On success: returns token_rec dict.
+140	    On failure: returns JSONResponse (caller must return immediately).
+141	    """
+142	    token_rec = verify_bearer(request)
+143	    if isinstance(token_rec, JSONResponse):
+144	        return token_rec
+145	
+146	    if token_rec.get("_is_user_jwt"):
+147	        user_id: str = token_rec["issued_to"]
+148	        if not has_permission(user_id, project_id, "perm_document_read"):
+149	            return _err(403, "FORBIDDEN", "Insufficient permissions for this action")
+150	
+151	    return token_rec
+152	
+153	
+154	# ── Endpoint ─────────────────────────────────────────────────────
+155	
+156	@router.post("/projects/{project_id}/files/upload", response_class=JSONResponse)
+157	async def upload_files(request: Request, project_id: str):
+158	    """Uploads files via multipart/form-data — restores directory structure.
+159	
+160	    Form fields:
+161	      - target_path: target upload directory (relative path, empty string = root)
+162	      - files[]: list of files to upload. Filename may include a webkitRelativePath-style prefix.
+163	
+164	    Returns:
+165	      { "uploaded": [{ "path": str, "size": int }],
+166	        "skipped":  [{ "path": str, "reason": str }] }
+167	
+168	    skip reason codes:
+169	      - "PATH_TRAVERSAL" : path traversal or invalid path
+170	    """
+171	    # Authenticate and verify project permissions
+172	    auth_result = _check_project_auth(request, project_id)
+173	    if isinstance(auth_result, JSONResponse):
+174	        return auth_result
+175	
+176	    # Parse form data
+177	    # Starlette's multipart parser loads the entire body into memory.
+178	    # Pre-reject requests over 500 MB using the Content-Length header.
+179	    content_length = request.headers.get("content-length")
+180	    if content_length is not None:
+181	        try:
+182	            if int(content_length) > _MAX_TOTAL_BYTES:
+183	                return JSONResponse(
+184	                    status_code=413,
+185	                    content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Request size exceeds 500 MB"}},
+186	                )
+187	        except ValueError:
+188	            pass
+189	
+190	    form = await request.form()
+191	    target_path = str(form.get("target_path") or "").strip()
+192	    file_fields = form.getlist("files[]")
+193	
+194	    # files[] absent or empty → 400
+195	    if not file_fields:
+196	        return JSONResponse(
+197	            status_code=400,
+198	            content={"error": {"code": "INVALID_PARAM", "message": "files[] field is empty"}},
+199	        )
+200	
+201	    # Validate target_path
+202	    if not _is_valid_relative_path(target_path):
+203	        return JSONResponse(
+204	            status_code=400,
+205	            content={"error": {"code": "INVALID_PARAM", "message": "target_path is invalid"}},
+206	        )
+207	
+208	    # Resolve project src_root (0115: an optional group_id form field targets the
+209	    # group's git worktree; absent → unchanged project-branch upload behavior).
+210	    # 0327 T0004: the group branch of _get_src_root hits the git ledger and stats the
+211	    # worktree, so the resolution runs off the event loop (0279 T0005 rule) — this is
+212	    # an async handler and that work would freeze every other in-flight request.
+213	    group_id = str(form.get("group_id") or "").strip() or None
+214	    src_root_path = await anyio.to_thread.run_sync(_get_src_root, project_id, group_id)
+215	    root_str = str(src_root_path)
+216	
+217	    uploaded = []
+218	    skipped = []
+219	    total_bytes = 0
+220	
+221	    for upload in file_fields:
+222	        # Ignore scalar values that are not UploadFile
+223	        if not hasattr(upload, "filename"):
+224	            continue
+225	
+226	        raw_filename = upload.filename or ""
+227	        # Normalize path separators (Windows \ → POSIX /)
+228	        relative_filename = raw_filename.replace("\\", "/").lstrip("/")
+229	
+230	        # Validate path segment safety in filename
+231	        if not relative_filename or not _is_safe_filename_path(relative_filename):
+232	            skipped.append({"path": raw_filename, "reason": "PATH_TRAVERSAL"})
+233	            continue
+234	
+235	        # Final relative path = target_path + relative_filename
+236	        if target_path:
+237	            combined_rel = target_path.replace("\\", "/").rstrip("/") + "/" + relative_filename
+238	        else:
+239	            combined_rel = relative_filename
+240	
+241	        # Normalize with os.path.realpath and check for root escape
+242	        full_path_str = os.path.realpath(os.path.join(root_str, combined_rel))
+243	        if not _under_root(full_path_str, root_str):
+244	            skipped.append({"path": combined_rel, "reason": "PATH_TRAVERSAL"})
+245	            continue
+246	
+247	        # Read file data
+248	        data = await upload.read()
+249	        file_size = len(data)
+250	
+251	        # Single file size limit — P007 §decision rule 1: return 413 if exceeded
+252	        if file_size > _MAX_FILE_BYTES:
+253	            return JSONResponse(
+254	                status_code=413,
+255	                content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Single file exceeds 100 MB"}},
+256	            )
+257	
+258	        # Cumulative size limit
+259	        total_bytes += file_size
+260	        if total_bytes > _MAX_TOTAL_BYTES:
+261	            return JSONResponse(
+262	                status_code=413,
+263	                content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Total request size exceeds 500 MB"}},
+264	            )
+265	
+266	        # Create intermediate directories (if needed) and save the file
+267	        # (overwrite) — off the event loop, see _save_file.
+268	        await anyio.to_thread.run_sync(_save_file, full_path_str, data)
+269	
+270	        # Return POSIX relative path from project root in the response
+271	        saved_rel = os.path.relpath(full_path_str, root_str).replace("\\", "/")
+272	        uploaded.append({"path": saved_rel, "size": file_size})
+273	
+274	    return {"uploaded": uploaded, "skipped": skipped}
+275	

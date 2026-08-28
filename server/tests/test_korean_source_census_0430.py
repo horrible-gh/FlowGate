@@ -54,7 +54,12 @@ FILE_LINE_CAPS: dict[str, int] = {
     # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
     # comments, not the kind of stray Korean this census exists to catch.
     "modules/flow_gate/api/inbox_routes.py": 45,
-    "modules/flow_gate/documents/routers/documents.py": 13,
+    # 13 -> 15: flowgate.default.0467 T0010 added the PATCH /content step-verification
+    # gate's ko fallback notice (_STEP_VERIFICATION_FALLBACK_COPY) and a docstring line
+    # naming the [단계별 확인] section -- product copy and design-rationale text, the
+    # same category T0002's own inbox_routes.py/step_verification_service.py entries above
+    # and below already cover.
+    "modules/flow_gate/documents/routers/documents.py": 15,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
     "modules/flow_gate/services/ai_invoke_service.py": 4,

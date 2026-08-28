@@ -1,0 +1,1510 @@
+1	"""Project-control remote tool — processing pipeline (L0006).
+2	
+3	Orchestrates the 7-step pipeline (L0006 §2) for the remote tool API defined by
+4	P0005 (message format) and DB0007 (storage):
+5	
+6	  ① Authentication → 401 unauthorized        (not logged: subject unidentified)
+7	  ② Permission     → 403 forbidden            (logged as denied)
+8	  ③ Path validation → 422 invalid_request     (logged as error)
+9	  ④ Request validity → 422 invalid_request     (logged as error)
+10	  ⑤ Execute operation → 404 / 409 / 413 / 503  (logged per result)
+11	  ⑥ History logging (both success and failure, after authentication passes)
+12	  ⑦ Completion ment (on mutating-op success) → 200 response
+13	
+14	0347 (P0004 / L0005) adds `patch` (exact old_string/new_string edit), `stat`
+15	(metadata only) and a byte window (`offset`/`length`) on `read`.
+16	
+17	The router is thin and delegates everything here. This module owns the P0005
+18	common envelope, the fail-fast error ordering (L0006 §7), op-logging timing
+19	(L0006 §5.1), and the completion-ment condition (L0006 §6).
+20	
+21	Branch resolution note (NR0009 §8.3): the operation target is the project
+22	*source root* `src_root(project_name, branch)`. P0005 carries no branch in the
+23	request and DB0007's grant has no branch column, so branch is taken from
+24	`project_settings.branch` (default 'main') — the only spec-available source,
+25	matching file_transfer_routes._get_src_root.
+26	"""
+27	from __future__ import annotations
+28	
+29	import codecs
+30	import logging
+31	import os
+32	import re
+33	import shutil
+34	import stat
+35	import sys
+36	from datetime import datetime, timedelta, timezone
+37	from pathlib import Path
+38	from typing import Optional
+39	
+40	from modules.flow_gate.db import documents as db_documents
+41	from modules.flow_gate.db import remote_tool_grants as db_grants
+42	from modules.flow_gate.db import remote_tool_op_log as db_oplog
+43	from modules.flow_gate.db import projects as db_projects
+44	# 0382 proposal 5-c: uses the same rule as the screens and the check so that only debris cleanup may delete recursively.
+45	from modules.flow_gate.services import path_exclusion_rules
+46	from modules.flow_gate.db import tokens as db_tokens
+47	from modules.flow_gate.db import workflow_sequences as db_wfseq
+48	from modules.flow_gate.db.connection import now_iso
+49	from modules.flow_gate.services import token_service
+50	from modules.flow_gate.storage.paths import src_root
+51	from modules.flow_gate import template_provision
+52	from modules.flow_gate.storage.safe_path import (
+53	    is_safe_relative,
+54	    resolve_in_root,
+55	    _under_root,
+56	)
+57	
+58	_logger = logging.getLogger(__name__)
+59	
+60	# ── Constants ────────────────────────────────────────────────────────────────
+61	
+62	OPS = ("read", "write", "grep", "glob", "remove", "patch", "stat")
+63	_WORKER_GRANT_PREFIX = "worker_"
+64	# The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
+65	# point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
+66	# Types whose own document type decides their source scope, ignoring any workflow
+67	# sequence they happen to sit in (see _worker_token_step_type).
+68	_SELF_SCOPED_WORK_TYPES = {"CH"}
+69	
+70	# 0279 T0005 (NR0003 cause 2): directory names never worth walking for a source
+71	# scan. `server/.venv` alone dominated the measured 40s grep — it is dependency
+72	# code, not project source, and every byte of it was being read and regex-matched.
+73	# Skipped for grep and glob only; read/write/remove address files directly and are
+74	# unaffected, so an explicit path into one of these directories still works.
+75	_SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pycache__"})
+76	
+77	# operation → required scope (P0005 §3.2 / L0006 §3.2 / DB0007 §5). glob shares the grep scope.
+78	# 0347 P0004 §0.4: patch/stat deliberately reuse the existing write/read scopes — no new
+79	# scope value, so remote_tool_grant_scope needs no migration and an investigation token that
+80	# only holds read/grep is barred from patch automatically.
+81	OP_SCOPE = {
+82	    "read": "read",
+83	    "write": "write",
+84	    "grep": "grep",
+85	    "glob": "grep",
+86	    "remove": "remove",
+87	    "patch": "write",
+88	    "stat": "read",
+89	}
+90	
+91	# 0347 L0005 §1: the mutating-op set used to be the literal ("write", "remove") repeated at
+92	# three decision points (mutation source-root gate / explorer SSE / continuation ment). patch
+93	# has to appear at all three, and a single constant is what stops a future op from reaching
+94	# two of them and silently landing in the base checkout (0205). `stat` is NOT here — it reads.
+95	_MUTATING_OPS = frozenset({"write", "remove", "patch"})
+96	
+97	# ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
+98	# pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
+99	_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "write", "remove", "patch", "stat"})
+100	
+101	# HTTP status → P0005 §6 error code.
+102	ERROR_CODE_BY_STATUS = {
+103	    401: "unauthorized",
+104	    403: "forbidden",
+105	    404: "not_found",
+106	    409: "conflict",
+107	    413: "too_large",
+108	    422: "invalid_request",
+109	    503: "unavailable",
+110	}
+111	
+112	# HTTP status → op_log result value (DB0007 §7.3·§7.5). 200 → success, 401 not logged.
+113	RESULT_BY_STATUS = {
+114	    403: "denied",
+115	    422: "error",
+116	    404: "not_found",
+117	    409: "conflict",
+118	    413: "too_large",
+119	    503: "unavailable",
+120	}
+121	
+122	_MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write/patch result guard (413)
+123	_MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard (413, 0347 P0004 §7.3)
+124	_GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning (NR0011 §2)
+125	_STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
+126	
+127	_JST = timezone(timedelta(hours=9))
+128	
+129	
+130	class _OpError(Exception):
+131	    """Signals a fail-fast pipeline stop with an HTTP status (L0006 §7).
+132	
+133	    ``details`` / ``message`` are optional (0205 P scenario 5): a write/remove
+134	    rejected for a missing worktree carries a structured cause so the worker can
+135	    cite exactly what is blocking it. Absent → the generic per-status envelope."""
+136	
+137	    def __init__(
+138	        self, status: int, *, details: Optional[dict] = None, message: Optional[str] = None
+139	    ):
+140	        super().__init__(f"remote tool op error: {status}")
+141	        self.status = status
+142	        self.details = details
+143	        self.message = message
+144	
+145	
+146	# ── ① Authentication ───────────────────────────────────────────────────────
+147	
+148	def _authenticate(raw_token: Optional[str]) -> Optional[dict]:
+149	    """Return the active grant for the token, or None (→ 401).
+150	
+151	    Reuses token_service hashing/pepper/constant-time compare (NR0009 §4.2 — no
+152	    duplicate crypto). A grant is valid when its token_hash matches and
+153	    status='active' and (expires_at IS NULL OR in the future) (DB0007 §4).
+154	    """
+155	    if not raw_token:
+156	        return None
+157	    try:
+158	        _pepper_id, pepper = token_service._active_pepper()
+159	    except RuntimeError:
+160	        return None
+161	    candidate_hash = token_service._hash_token(raw_token, pepper)
+162	    grant = db_grants.get_by_token_hash(candidate_hash)
+163	    if grant is None:
+164	        return _worker_grant_from_flowgate_token(raw_token)
+165	    if not token_service._verify_hash(grant["token_hash"], candidate_hash):
+166	        return None
+167	    if not _worker_grant_still_valid(grant):
+168	        return None
+169	    if grant.get("status") != "active":
+170	        return None
+171	    expires_at = grant.get("expires_at")
+172	    if expires_at:
+173	        try:
+174	            exp = datetime.fromisoformat(expires_at)
+175	            if exp.tzinfo is None:
+176	                exp = exp.replace(tzinfo=timezone.utc)
+177	            if exp < datetime.now(timezone.utc):
+178	                return None
+179	        except ValueError:
+180	            return None
+181	    if _is_worker_grant(grant) and not _reconcile_worker_grant_scopes(grant):
+182	        return None
+183	    return grant
+184	
+185	
+186	def _is_worker_grant(grant: dict) -> bool:
+187	    return str(grant.get("grant_id") or "").startswith(_WORKER_GRANT_PREFIX)
+188	
+189	
+190	def _worker_token_for_grant(grant: dict) -> Optional[dict]:
+191	    grant_id = str(grant.get("grant_id") or "")
+192	    if not grant_id.startswith(_WORKER_GRANT_PREFIX):
+193	        return None
+194	    token_id = grant_id[len(_WORKER_GRANT_PREFIX):]
+195	    return db_tokens.get_by_id(token_id)
+196	
+197	
+198	def _worker_grant_still_valid(grant: dict) -> bool:
+199	    """Worker-token grants are valid only while the backing inbox token is active."""
+200	    if not _is_worker_grant(grant):
+201	        return True
+202	    token_rec = _worker_token_for_grant(grant)
+203	    if not token_rec:
+204	        return False
+205	    if token_rec.get("revoked_at") or token_rec.get("consumed_at"):
+206	        return False
+207	    expires_at = token_rec.get("expires_at")
+208	    if not expires_at:
+209	        return False
+210	    try:
+211	        exp = datetime.fromisoformat(expires_at)
+212	        if exp.tzinfo is None:
+213	            exp = exp.replace(tzinfo=timezone.utc)
+214	        return exp >= datetime.now(timezone.utc)
+215	    except ValueError:
+216	        return False
+217	
+218	
+219	def _reconcile_worker_grant_scopes(grant: dict) -> bool:
+220	    """Keep an existing lazy worker grant aligned with the current token type policy."""
+221	    token_rec = _worker_token_for_grant(grant)
+222	    if not token_rec:
+223	        return False
+224	    scopes = _scopes_for_worker_token(token_rec)
+225	    if not scopes:
+226	        return False
+227	    grant_id = str(grant.get("grant_id") or "")
+228	    try:
+229	        if db_grants.get_scopes(grant_id) != set(scopes):
+230	            db_grants.replace_scopes(grant_id, scopes)
+231	    except Exception:
+232	        return False
+233	    return True
+234	
+235	
+236	def _worker_grant_from_flowgate_token(raw_token: Optional[str]) -> Optional[dict]:
+237	    """Create a remote-tool grant lazily for a normal FlowGate worker token.
+238	
+239	    Copy mentions hand workers a single Bearer token for document reads and inbox
+240	    submission. The remote source API stores its own grant rows for auditing, so
+241	    the first remote call creates a grant tied to that worker token. The grant id
+242	    embeds the token id, and _worker_grant_still_valid keeps it from outliving the
+243	    backing token after inbox consumption or revocation.
+244	    """
+245	    if not raw_token:
+246	        return None
+247	    try:
+248	        token_rec = token_service.verify(raw_token)
+249	    except Exception:
+250	        return None
+251	
+252	    token_id = token_rec.get("token_id")
+253	    token_hash = token_rec.get("hash")
+254	    project = token_rec.get("project")
+255	    if not token_id or not token_hash or not project:
+256	        return None
+257	
+258	    grant_id = f"{_WORKER_GRANT_PREFIX}{token_id}"
+259	    existing = db_grants.get_by_id(grant_id)
+260	    if existing:
+261	        if not _worker_grant_still_valid(existing):
+262	            return None
+263	        return existing if _reconcile_worker_grant_scopes(existing) else None
+264	
+265	    scopes = _scopes_for_worker_token(token_rec)
+266	    if not scopes:
+267	        return None
+268	
+269	    group_id = token_rec.get("group_id") or ""
+270	    parts = group_id.split(".", 2)
+271	    module = parts[1] if len(parts) == 3 else "default"
+272	    try:
+273	        grant = db_grants.create(
+274	            {
+275	                "grant_id": grant_id,
+276	                "token_hash": token_hash,
+277	                "project": project,
+278	                "module": module,
+279	                # 0115 G1: carry the FULL group id so source resolution can route
+280	                # this worker to its group worktree (L0006 §2.2). Legacy grants
+281	                # keep NULL and fall back to the project branch (L0006 §4.1).
+282	                "group_id": group_id or None,
+283	                "report_doc_id": None,
+284	                "session_id": token_rec.get("issued_to"),
+285	                "status": "active",
+286	                "issued_at": token_rec.get("created_at"),
+287	                "expires_at": token_rec.get("expires_at"),
+288	            },
+289	            scopes,
+290	        )
+291	    except Exception:
+292	        # Another request may have created it concurrently, or storage may reject it.
+293	        existing = db_grants.get_by_id(grant_id)
+294	        if not existing or not _worker_grant_still_valid(existing):
+295	            return None
+296	        return existing if _reconcile_worker_grant_scopes(existing) else None
+297	
+298	    # 0115 H2: mutating (T/TR/TSR) workers get their group worktree (re)guaranteed at
+299	    # the kind judgement point — the backstop for a failed or
+300	    # restarted H1 (decide-time) provisioning. Idempotent and never raises; on
+301	    # failure source access simply keeps resolving to the fallback branch folder.
+302	    if group_id and "write" in scopes:
+303	        try:
+304	            from modules.flow_gate.services import git_service  # lazy — import cycle
+305	
+306	            git_service.ensure_worktree(project, module, group_id)
+307	        except Exception:
+308	            pass
+309	    return grant
+310	
+311	
+312	_SCOPES_BY_KIND = {
+313	    "read_write": ["read", "write", "grep", "remove"],
+314	    "read": ["read", "grep"],
+315	    "none": [],
+316	}
+317	
+318	
+319	def _scopes_for_worker_token(token_rec: dict) -> list[str]:
+320	    """Map a document worker token to remote source scopes.
+321	
+322	    0349 D0004 D-2: the judgement itself lives in the tool registry — the same call the
+323	    mention builders and /help/tools make — and this function only renames its answer into
+324	    scope vocabulary. When the two judged independently (they did until now), the mention
+325	    could advertise a tool this function then refused.
+326	
+327	    Implementation work (T/TR/TSR) receives full CRUD. Investigation/review/design
+328	    handoffs receive read/search only so their source-access instructions cannot
+329	    silently override the document-level "do not modify source" scope.
+330	    """
+331	    from modules.flow_gate.services import tool_registry  # lazy — import cycle
+332	
+333	    kind, _reason = tool_registry.kind_for_token(token_rec)
+334	    return list(_SCOPES_BY_KIND.get(kind, []))
+335	
+336	
+337	def _worker_token_step_type_result(token_rec: dict) -> tuple[Optional[str], bool]:
+338	    """Resolve the workflow head type and preserve whether lookup raised.
+339	
+340	    A chat document answers for itself. Chat is auto-completed the moment it is
+341	    created, so when a CH sits in a workflow sequence get_effective_head() already
+342	    points at the NEXT pending slot — and if that slot is T/TR/TSR the chat token
+343	    would inherit source write/remove, while its mention says read/search only.
+344	    The worker acts on the mention it was given, so a CH doc_ref is pinned to its
+345	    own type here.
+346	    """
+347	    doc_ref = token_rec.get("doc_ref")
+348	    if not doc_ref:
+349	        return None, False
+350	    try:
+351	        doc = db_documents.get_by_id(doc_ref)
+352	        own_type = str(doc["type_code"]) if doc and doc.get("type_code") else None
+353	        if own_type in _SELF_SCOPED_WORK_TYPES:
+354	            return own_type, False
+355	        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+356	        if seq is None:
+357	            seq = db_wfseq.get_sequence_by_doc_id(doc_ref)
+358	        if seq is not None:
+359	            head = db_wfseq.get_effective_head(seq["id"])
+360	            if head and head.get("type"):
+361	                return str(head["type"]), False
+362	        return own_type, False
+363	    except Exception:
+364	        return None, True
+365	
+366	
+367	def _worker_token_step_type(token_rec: dict) -> Optional[str]:
+368	    """Backward-compatible value-only wrapper for existing callers."""
+369	    return _worker_token_step_type_result(token_rec)[0]
+370	
+371	
+372	# ── ③ Path safety / ④ request validity ───────────────────────────────────────
+373	
+374	def _present_path_fields(op: str, body: dict) -> list[str]:
+375	    """Path-bearing input values that are *present* (L0006 §4.1) — for ③.
+376	
+377	    Missing required fields are ④'s concern, so only values that exist (the key
+378	    is present and not None) are returned here.
+379	    """
+380	    out: list[str] = []
+381	    if op in _PATH_VALIDATE_SINGLE_FIELD_OPS:
+382	        if body.get("path") is not None:
+383	            out.append(body["path"])
+384	    elif op == "grep":
+385	        if body.get("path") is not None:
+386	            out.append(body["path"])
+387	        if body.get("glob") is not None:
+388	            out.append(body["glob"])
+389	    elif op == "glob":
+390	        if body.get("path") is not None:
+391	            out.append(body["path"])
+392	        if body.get("pattern") is not None:
+393	            out.append(body["pattern"])
+394	    return out
+395	
+396	
+397	def _validate_paths(op: str, body: dict) -> None:
+398	    """③ — every present path-bearing value must be root-relative & escape-free."""
+399	    for value in _present_path_fields(op, body):
+400	        if not is_safe_relative(value):
+401	            raise _OpError(422)
+402	
+403	
+404	def _require_str(body: dict, key: str, *, allow_empty: bool = False) -> str:
+405	    val = body.get(key)
+406	    if not isinstance(val, str):
+407	        raise _OpError(422)
+408	    if not allow_empty and val == "":
+409	        raise _OpError(422)
+410	    return val
+411	
+412	
+413	def _validate_required(op: str, body: dict) -> None:
+414	    """④ — required fields present & well-typed (P0005 per-operation field table)."""
+415	    if op == "read":
+416	        _require_str(body, "path")
+417	        _validate_max_int(body, "max_bytes")
+418	        # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
+419	        _validate_max_int(body, "offset")
+420	        _validate_max_int(body, "length")
+421	    elif op == "write":
+422	        _require_str(body, "path")
+423	        # content is required but an empty body (empty file) is legal.
+424	        if not isinstance(body.get("content"), str):
+425	            raise _OpError(422)
+426	        mode = body.get("mode")
+427	        if mode is not None and mode not in ("create", "overwrite", "append"):
+428	            raise _OpError(422)
+429	        _validate_encoding(body)
+430	    elif op == "remove":
+431	        _require_str(body, "path")
+432	        if body.get("recursive") is not None and not isinstance(body["recursive"], bool):
+433	            raise _OpError(422)
+434	    elif op == "grep":
+435	        _require_str(body, "pattern")
+436	        _validate_max_int(body, "max_results")
+437	        if body.get("ignore_case") is not None and not isinstance(body["ignore_case"], bool):
+438	            raise _OpError(422)
+439	        # invalid regex → request form error (422)
+440	        try:
+441	            re.compile(body["pattern"])
+442	        except re.error:
+443	            raise _OpError(422)
+444	    elif op == "glob":
+445	        _require_str(body, "pattern")
+446	    elif op == "patch":
+447	        _require_str(body, "path")
+448	        # An empty old_string would match everywhere (and at every character
+449	        # boundary) — the one input that makes exact-match patching meaningless.
+450	        old_string = _require_str(body, "old_string")
+451	        if not isinstance(body.get("new_string"), str):
+452	            raise _OpError(422)
+453	        if body.get("replace_all") is not None and not isinstance(body["replace_all"], bool):
+454	            raise _OpError(422)
+455	        if old_string == body["new_string"]:
+456	            raise _OpError(
+457	                422,
+458	                details={"reason": "no_op_edit"},
+459	            )
+460	        _validate_encoding(body)
+461	    elif op == "stat":
+462	        _require_str(body, "path")
+463	
+464	
+465	def _validate_max_int(body: dict, key: str) -> None:
+466	    val = body.get(key)
+467	    if val is None:
+468	        return
+469	    if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+470	        raise _OpError(422)
+471	
+472	
+473	def _validate_encoding(body: dict) -> None:
+474	    enc = body.get("encoding")
+475	    if enc is None:
+476	        return
+477	    if not isinstance(enc, str):
+478	        raise _OpError(422)
+479	    try:
+480	        "".encode(enc)
+481	    except LookupError:
+482	        raise _OpError(422)
+483	
+484	
+485	# ── Source-root resolution ────────────────────────────────────────────────────
+486	
+487	def _fallback_project_root(grant: dict) -> Optional[Path]:
+488	    """The ordinary project-branch source folder (no worktree), or None (→ 503).
+489	
+490	    Branch comes from project_settings.branch (default 'main') — the only
+491	    spec-available source (NR0009 §8.3)."""
+492	    project_id = grant.get("project")
+493	    row = db_projects.get_by_id(project_id)
+494	    project_name = (row.get("project_name") or "").strip() if row else ""
+495	    if not project_name:
+496	        return None
+497	    settings = db_projects.get_settings(project_id)
+498	    branch = (settings.get("branch") or "main").strip() if settings else "main"
+499	    return src_root(project_name, branch).resolve()
+500	
+501	
+502	def _read_worktree_expected_reasons(git_service) -> frozenset:
+503	    """SRC_ROOT_* fallback reasons that mean an integrated group's worktree was
+504	    *expected* but could not be resolved (0301 T0004 / NR0003 §6-3).
+505	
+506	    The benign reasons are deliberately excluded: SRC_ROOT_NO_GROUP (legacy
+507	    grant with no group context) and SRC_ROOT_INTEGRATION_OFF (project is not
+508	    git-integrated) are ordinary fallback-first outcomes, so a read that lands on
+509	    the base tree for either of them stays silent and untouched.
+510	    """
+511	    return frozenset({
+512	        git_service.SRC_ROOT_NO_STATE,
+513	        git_service.SRC_ROOT_UNREGISTERED,
+514	        git_service.SRC_ROOT_NO_BRANCH,
+515	        git_service.SRC_ROOT_NO_PROJECT_NAME,
+516	        git_service.SRC_ROOT_DIR_MISSING,
+517	        git_service.SRC_ROOT_DIR_BROKEN,
+518	        git_service.SRC_ROOT_ERROR,
+519	    })
+520	
+521	
+522	def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
+523	    """Resolve the project source root for the grant, or None (→ 503).
+524	
+525	    0115: a grant that carries a group_id is routed to that group's git worktree
+526	    when the project is git-integrated and the worktree is registered (L0006
+527	    §2.2). Everything else — no group on the grant (legacy rows), no config,
+528	    disabled integration, missing worktree — falls back to the ordinary
+529	    project-branch folder exactly as before (fallback-first principle). Used by
+530	    read/grep/glob; write/remove use _resolve_root_for_mutation (0205 L §2.3).
+531	
+532	    0301 T0004 (NR0003 §6-3): the read path used to return the base tree with no
+533	    self-heal and no trace, so a worker that read source in the window before its
+534	    group worktree was provisioned (the first-group timing gap, NR0003 §4.4)
+535	    silently read `main` and began editing on top of that state — the very
+536	    "it keeps working on the main branch" symptom of B0001. Reads must NEVER be blocked (that
+537	    would break legacy and non-integrated access), but when an integrated group
+538	    falls back for a reason that means the worktree was *expected*, we now mirror
+539	    the write gate: one synchronous ensure_worktree self-heal retry, and if it is
+540	    still unresolved a warning is logged so this is no longer the one traceless
+541	    fallback path. Benign fallbacks (legacy grant / integration off) stay silent.
+542	    """
+543	    project_id = grant.get("project")
+544	    group_id = grant.get("group_id")
+545	    if not group_id:
+546	        return _fallback_project_root(grant)   # legacy grant — silent fallback
+547	    try:
+548	        from modules.flow_gate.services import git_service  # lazy — import cycle
+549	
+550	        wt, reason = git_service.effective_src_root_ex(project_id, group_id)
+551	        if wt is not None:
+552	            return wt
+553	        if reason in _read_worktree_expected_reasons(git_service):
+554	            # Provisioning-timing window: one self-heal retry (symmetric with
+555	            # _resolve_root_for_mutation), then re-resolve. ensure_worktree is
+556	            # idempotent and never raises fatally; on failure we keep serving the
+557	            # base tree so the read still succeeds.
+558	            module = grant.get("module") or "default"
+559	            try:
+560	                if git_service.ensure_worktree(
+561	                    project_id, module, group_id, trigger="remote_read_retry"
+562	                ) == "ok":
+563	                    wt = git_service.effective_src_root(project_id, group_id)
+564	                    if wt is not None:
+565	                        return wt
+566	            except Exception:
+567	                pass
+568	            _logger.warning(
+569	                "remote read fell back to base tree for group %s (op=%s, "
+570	                "reason=%s) — worktree expected but unresolved after self-heal; "
+571	                "serving base checkout (read not blocked)",
+572	                group_id, op, reason,
+573	            )
+574	    except Exception:
+575	        pass  # resolution problems must never break the fallback path
+576	    return _fallback_project_root(grant)
+577	
+578	
+579	def _mutation_block_message(
+580	    op: str, group_id: str, cause: str, blocking_group_id: Optional[str],
+581	    provision_error: Optional[str],
+582	) -> str:
+583	    """Human-readable reason a write/remove was blocked (0205 P scenario 5)."""
+584	    if cause == "merge_conflict_open":
+585	        why = f"unresolved merge of group '{blocking_group_id}'"
+586	    elif cause == "provision_failed":
+587	        why = f"worktree provisioning failed: {provision_error}"
+588	    else:
+589	        why = "worktree missing"
+590	    return (
+591	        f"git worktree unavailable for group '{group_id}' — {op} blocked (cause: {why})"
+592	    )
+593	
+594	
+595	def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
+596	    """Source root for a write/remove, with the silent base fallback REMOVED
+597	    (0205 L §2.3 / P scenario 5).
+598	
+599	    A worker whose group worktree is unavailable used to have its edits land in
+600	    the base checkout — outside git management — which is exactly how the 0203
+601	    tangle spread. Now the write is REJECTED (409) with the blocking cause, after
+602	    one synchronous self-heal ensure_worktree retry. Legacy grants (no group_id)
+603	    and non-integrated projects still fall back, unchanged.
+604	    """
+605	    project_id = grant.get("project")
+606	    group_id = grant.get("group_id")
+607	    if not group_id:
+608	        return _fallback_project_root(grant)   # legacy grant — unchanged
+609	
+610	    from modules.flow_gate.services import git_service  # lazy — import cycle
+611	    from modules.flow_gate.db import git_integration as db_git
+612	
+613	    wt = git_service.effective_src_root(project_id, group_id)
+614	    if wt is not None:
+615	        return wt
+616	
+617	    cfg = db_git.get_config(project_id)
+618	    if cfg is None or not cfg.get("enabled"):
+619	        return _fallback_project_root(grant)   # non-integrated project — unchanged
+620	
+621	    # Self-heal: one synchronous ensure_worktree retry (WRITE_GATE_PROVISION_RETRY=1).
+622	    module = grant.get("module") or "default"
+623	    try:
+624	        if git_service.ensure_worktree(
+625	            project_id, module, group_id, trigger="remote_write_retry"
+626	        ) == "ok":
+627	            wt = git_service.effective_src_root(project_id, group_id)
+628	            if wt is not None:
+629	                return wt
+630	    except Exception:
+631	        pass
+632	
+633	    # Still unavailable — reject with the cause (priority: open session, then a
+634	    # recorded provisioning failure, else a bare missing worktree).
+635	    session = git_service.open_merge_session_of_project(project_id)
+636	    state = db_git.get_state(group_id)
+637	    provision_error = state.get("provision_error") if state else None
+638	    if session is not None:
+639	        cause, blocking = "merge_conflict_open", session.get("group_id")
+640	    elif provision_error:
+641	        cause, blocking = "provision_failed", None
+642	    else:
+643	        cause, blocking = "worktree_missing", None
+644	    raise _OpError(
+645	        409,
+646	        details={
+647	            "group_id": group_id, "cause": cause,
+648	            "blocking_group_id": blocking, "provision_error": provision_error,
+649	        },
+650	        message=_mutation_block_message(op, group_id, cause, blocking, provision_error),
+651	    )
+652	
+653	
+654	# ── ⑤ Execution ───────────────────────────────────────────────────────────────
+655	
+656	def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
+657	    """Run the operation. Returns (response_extra_fields, bytes_processed)."""
+658	    if op == "read":
+659	        return _exec_read(body, root)
+660	    if op == "write":
+661	        return _exec_write(body, root)
+662	    if op == "remove":
+663	        return _exec_remove(body, root)
+664	    if op == "grep":
+665	        return _exec_grep(body, root)
+666	    if op == "glob":
+667	        return _exec_glob(body, root)
+668	    if op == "patch":
+669	        return _exec_patch(body, root)
+670	    if op == "stat":
+671	        return _exec_stat(body, root)
+672	    raise _OpError(422)  # unreachable (op validated earlier)
+673	
+674	
+675	# ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
+676	
+677	def _detect_dominant_eol(sample: bytes) -> str:
+678	    """'lf' / 'crlf' / 'mixed' / 'none' for a byte sample.
+679	
+680	    patch (the CRLF retry decision, P0004 §1.5) and stat (its `eol` field) must
+681	    share ONE definition — two private variants produce the contradiction "patch
+682	    retried because the file is crlf, but stat reports mixed".
+683	    """
+684	    crlf = sample.count(b"\r\n")
+685	    lone_lf = sample.count(b"\n") - crlf
+686	    if crlf and lone_lf:
+687	        return "mixed"
+688	    if crlf:
+689	        return "crlf"
+690	    if lone_lf:
+691	        return "lf"
+692	    return "none"
+693	
+694	
+695	def _contains_only_lf_newline(text: str) -> bool:
+696	    return "\n" in text and "\r\n" not in text
+697	
+698	
+699	def _is_utf8_encoding(encoding: str) -> bool:
+700	    """True for the UTF-8 family, where the continuation-byte rule below holds.
+701	
+702	    Other multi-byte encodings (UTF-16 …) are left unadjusted — L0005 DEFERRED.
+703	    """
+704	    try:
+705	        return codecs.lookup(encoding).name in ("utf-8", "utf-8-sig")
+706	    except LookupError:
+707	        return False
+708	
+709	
+710	def _utf8_sequence_len(byte: int) -> int:
+711	    """Bytes in the UTF-8 sequence this lead byte starts, or 0 if not a lead byte."""
+712	    if byte < 0x80:
+713	        return 1
+714	    if 0xC0 <= byte < 0xE0:
+715	        return 2
+716	    if 0xE0 <= byte < 0xF0:
+717	        return 3
+718	    if 0xF0 <= byte < 0xF8:
+719	        return 4
+720	    return 0  # continuation byte (0x80–0xBF) or invalid lead
+721	
+722	
+723	def _leading_continuation_len(raw: bytes) -> int:
+724	    i = 0
+725	    while i < len(raw) and 0x80 <= raw[i] < 0xC0:
+726	        i += 1
+727	    return i
+728	
+729	
+730	def _trim_incomplete_trailing_sequence(raw: bytes) -> bytes:
+731	    """Drop a multi-byte sequence the window cut in half, so the caller can
+732	    re-read it whole from `offset + returned_bytes`."""
+733	    for k in (1, 2, 3):
+734	        if len(raw) < k:
+735	            break
+736	        seq_len = _utf8_sequence_len(raw[len(raw) - k])
+737	        if seq_len > k:
+738	            return raw[: len(raw) - k]
+739	    return raw
+740	
+741	
+742	def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+743	    """0347 P0004 §7: byte window (`offset`/`length`) on top of the original read.
+744	
+745	    `offset`/`length` absent → byte-identical to the previous behaviour, plus the
+746	    three new report-only fields (`offset`/`returned_bytes`/`eof`).
+747	    """
+748	    target = resolve_in_root(root, body["path"])
+749	    if target is None:
+750	        raise _OpError(422)  # symlink/realpath escape (③ category)
+751	    if not target.is_file():
+752	        raise _OpError(404)
+753	    size = target.stat().st_size
+754	    max_bytes = body.get("max_bytes")
+755	    length = body.get("length")
+756	    offset = body.get("offset") or 0
+757	    encoding = body.get("encoding") or "utf-8"
+758	
+759	    window_start = min(offset, size)   # past EOF → empty window, not an error (§8)
+760	    if offset == 0 and length is None and max_bytes is None:
+761	        # Legacy call: the 413 guard still judges the WHOLE file, exactly as before.
+762	        if size > _MAX_READ_BYTES:
+763	            raise _OpError(413)
+764	        window_size = size
+765	    else:
+766	        bounds = [v for v in (length, max_bytes) if v is not None]
+767	        window_size = min(bounds) if bounds else size - window_start
+768	        # P0004 §7.3: the guard now measures the effective WINDOW, so a 200MB file
+769	        # can be walked in slices. Intended behaviour change — a max_bytes above
+770	        # 100MB used to skip the guard entirely and now raises 413.
+771	        if window_size > _MAX_READ_BYTES:
+772	            raise _OpError(413)
+773	
+774	    to_read = max(min(window_start + window_size, size) - window_start, 0)
+775	    with open(target, "rb") as fh:
+776	        if window_start:
+777	            fh.seek(window_start)
+778	        raw = fh.read(to_read)
+779	
+780	    # Report the offset as requested (P0004 §8 echoes an out-of-range offset back);
+781	    # only the character-boundary correction moves it.
+782	    adj_start = offset
+783	    if _is_utf8_encoding(encoding):
+784	        if window_start > 0:
+785	            skipped = _leading_continuation_len(raw)
+786	            adj_start += skipped
+787	            raw = raw[skipped:]
+788	        # Only trim when more of the file follows. At EOF the trailing bytes are
+789	        # all there is, and dropping them would leave eof=False forever — the
+790	        # caller's walk would never terminate.
+791	        if adj_start + len(raw) < size:
+792	            raw = _trim_incomplete_trailing_sequence(raw)
+793	
+794	    content = raw.decode(encoding, errors="replace")
+795	    returned_bytes = len(raw)
+796	    consumed = adj_start + returned_bytes
+797	    return (
+798	        {
+799	            "path": body["path"],
+800	            "content": content,
+801	            "encoding": encoding,
+802	            "size": size,
+803	            "offset": adj_start,
+804	            "returned_bytes": returned_bytes,
+805	            "eof": consumed >= size,
+806	            "truncated": consumed < size,
+807	        },
+808	        returned_bytes,
+809	    )
+810	
+811	
+812	def _atomic_write_bytes(target: Path, data: bytes, mode: Optional[int] = None) -> None:
+813	    """Write via a sibling temp file + os.replace, so a crash mid-write can never
+814	    leave the original half-written (0347 L0005 §2.5).
+815	
+816	    The replacement is a brand-new file, so the original's permission bits are
+817	    carried over explicitly — otherwise patching an executable script would
+818	    silently drop its +x.
+819	    """
+820	    tmp = target.with_name(target.name + ".flowgate-patch.tmp")
+821	    try:
+822	        with open(tmp, "wb") as fh:
+823	            fh.write(data)
+824	            fh.flush()
+825	            os.fsync(fh.fileno())
+826	        if mode is not None:
+827	            try:
+828	                os.chmod(tmp, mode)
+829	            except OSError:
+830	                pass   # best-effort (no-op on Windows) — never fail the patch for this
+831	        os.replace(tmp, target)
+832	    except BaseException:
+833	        try:
+834	            os.remove(tmp)
+835	        except OSError:
+836	            pass
+837	        raise
+838	
+839	
+840	def _exec_patch(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+841	    """0347 P0004 §1 — exact-match partial edit.
+842	
+843	    Line-numbered patching silently edits the wrong place once an earlier change
+844	    shifts the file, and still answers 200. So: exact match only, 0 hits → 404,
+845	    2+ hits without replace_all → 409, and nothing is written in either case.
+846	    Untouched bytes are never rewritten, which is what keeps a CRLF file from
+847	    turning into a whole-file diff the way full-overwrite `write` did.
+848	    """
+849	    target = resolve_in_root(root, body["path"])
+850	    if target is None:
+851	        raise _OpError(422)
+852	    if not target.exists():
+853	        raise _OpError(404, details={"reason": "file_not_found", "path": body["path"]})
+854	    if target.is_dir():
+855	        raise _OpError(404, details={"reason": "not_a_file", "path": body["path"]})
+856	    if not target.is_file():
+857	        raise _OpError(404, details={"reason": "file_not_found", "path": body["path"]})
+858	
+859	    encoding = body.get("encoding") or "utf-8"
+860	    replace_all = bool(body.get("replace_all"))
+861	    old_string = body["old_string"]
+862	    new_string = body["new_string"]   # ④ already guaranteed old != new
+863	
+864	    original_mode = target.stat().st_mode
+865	    with open(target, "rb") as fh:
+866	        raw_bytes = fh.read()
+867	    try:
+868	        # strict, never errors="replace": a lenient decode would write U+FFFD back
+869	        # over the untouched part of the file and corrupt the original (P0004 §12.1-5).
+870	        text = raw_bytes.decode(encoding)
+871	    except (UnicodeDecodeError, ValueError):
+872	        raise _OpError(422, details={"reason": "not_text", "path": body["path"]})
+873	
+874	    eol = _detect_dominant_eol(raw_bytes)
+875	    match_count = text.count(old_string)
+876	    eol_normalized = False
+877	
+878	    # 2nd pass (P0004 §1.5): a CRLF file with an old_string copied as LF. Skipped
+879	    # for 'mixed' files, where guessing which newline was meant is not safe.
+880	    if match_count == 0 and eol == "crlf" and _contains_only_lf_newline(old_string):
+881	        alt_old = old_string.replace("\n", "\r\n")
+882	        alt_count = text.count(alt_old)
+883	        if alt_count > 0:
+884	            old_string = alt_old
+885	            new_string = new_string.replace("\n", "\r\n")
+886	            match_count = alt_count
+887	            eol_normalized = True
+888	
+889	    if match_count == 0:
+890	        raise _OpError(
+891	            404,
+892	            details={"reason": "no_match", "match_count": 0, "path": body["path"]},
+893	        )
+894	    if match_count >= 2 and not replace_all:
+895	        raise _OpError(
+896	            409,
+897	            details={
+898	                "reason": "multiple_matches",
+899	                "match_count": match_count,
+900	                "path": body["path"],
+901	            },
+902	        )
+903	
+904	    if replace_all:
+905	        new_text = text.replace(old_string, new_string)
+906	        replacements = match_count
+907	    else:
+908	        new_text = text.replace(old_string, new_string, 1)
+909	        replacements = 1
+910	
+911	    try:
+912	        new_bytes = new_text.encode(encoding, errors="strict")
+913	    except UnicodeError:
+914	        # new_string cannot be represented in the file's encoding — same 422 the
+915	        # write op returns for the identical situation.
+916	        raise _OpError(422)
+917	    if len(new_bytes) > _MAX_WRITE_BYTES:
+918	        raise _OpError(413)
+919	
+920	    # All-or-nothing: match, replace and encode all succeeded, so this is the one
+921	    # and only touch of the disk (P0004 §1.4).
+922	    _atomic_write_bytes(target, new_bytes, original_mode)
+923	
+924	    return (
+925	        {
+926	            "path": body["path"],
+927	            "replacements": replacements,
+928	            "size_before": len(raw_bytes),
+929	            "size_after": len(new_bytes),
+930	            "bytes_written": len(new_bytes),
+931	            "encoding": encoding,
+932	            "eol": eol,
+933	            "eol_normalized": eol_normalized,
+934	        },
+935	        len(new_bytes),
+936	    )
+937	
+938	
+939	def _exec_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+940	    """0347 P0004 §9 — existence/kind/size/mtime/EOL without the content.
+941	
+942	    Absence answers 200 with exists=false, the one deliberate exception to the
+943	    pipeline's "target missing → 404": the whole point of stat is to report "not
+944	    there", and 404 would force every caller into exception handling and blur the
+945	    line against a permission or path error. An *unsafe* path is still 422 —
+946	    "unsafe path" is not "path that does not exist" (§9.2).
+947	    """
+948	    target = resolve_in_root(root, body["path"])
+949	    if target is None:
+950	        raise _OpError(422)
+951	
+952	    absent = {
+953	        "path": body["path"], "exists": False, "type": None,
+954	        "size": None, "mtime": None, "eol": None, "binary": None,
+955	    }
+956	    if not target.exists():
+957	        return absent, None
+958	
+959	    try:
+960	        st = target.stat()
+961	    except OSError:
+962	        return absent, None
+963	    mtime_iso = datetime.fromtimestamp(st.st_mtime, _JST).isoformat(timespec="seconds")
+964	
+965	    if target.is_dir():
+966	        return (
+967	            {
+968	                "path": body["path"], "exists": True, "type": "dir",
+969	                "size": None, "mtime": mtime_iso, "eol": None, "binary": None,
+970	            },
+971	            None,
+972	        )
+973	    if not target.is_file():
+974	        return (
+975	            {
+976	                "path": body["path"], "exists": True, "type": "other",
+977	                "size": None, "mtime": mtime_iso, "eol": None, "binary": None,
+978	            },
+979	            None,
+980	        )
+981	
+982	    with open(target, "rb") as fh:
+983	        sample = fh.read(_STAT_SAMPLE_BYTES)
+984	    binary = b"\x00" in sample
+985	    return (
+986	        {
+987	            "path": body["path"],
+988	            "exists": True,
+989	            "type": "file",
+990	            "size": st.st_size,
+991	            "mtime": mtime_iso,
+992	            "eol": None if binary else _detect_dominant_eol(sample),
+993	            "binary": binary,
+994	        },
+995	        None,   # bytes_processed always NULL — stat does not return content
+996	    )
+997	
+998	
+999	def _exec_write(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+1000	    target = resolve_in_root(root, body["path"])
+1001	    if target is None:
+1002	        raise _OpError(422)
+1003	    mode = body.get("mode") or "overwrite"
+1004	    encoding = body.get("encoding") or "utf-8"
+1005	    try:
+1006	        data = body["content"].encode(encoding, errors="strict")
+1007	    except UnicodeError:
+1008	        # content cannot be represented in the requested narrow encoding (e.g. ascii) → request validity error (④).
+1009	        # Surface as 422 to preserve the P0005 envelope + ⑥ history contract (prevents a bare 500 leak).
+1010	        raise _OpError(422)
+1011	    if len(data) > _MAX_WRITE_BYTES:
+1012	        raise _OpError(413)
+1013	
+1014	    existed = target.exists()
+1015	    if mode == "create" and existed:
+1016	        raise _OpError(409)
+1017	
+1018	    target.parent.mkdir(parents=True, exist_ok=True)
+1019	    file_mode = "ab" if mode == "append" else "wb"
+1020	    with open(target, file_mode) as fh:
+1021	        fh.write(data)
+1022	
+1023	    created = not existed
+1024	    return (
+1025	        {
+1026	            "path": body["path"],
+1027	            "bytes_written": len(data),
+1028	            "created": created,
+1029	        },
+1030	        len(data),
+1031	    )
+1032	
+1033	
+1034	def _clear_readonly_and_retry(func, path, _exc_info) -> None:
+1035	    """Retry hook for ``shutil.rmtree`` and single deletes — clear the read-only bit and try again.
+1036	
+1037	    0382 §3-2: object files git has just created are read-only, so ``os.remove`` raises
+1038	    PermissionError. Python's standard idiom is to grant permission and call again, and that
+1039	    alone removed the 21 files that "would never delete" in this incident.
+1040	    """
+1041	    os.chmod(path, stat.S_IWRITE)
+1042	    func(path)
+1043	
+1044	
+1045	def _delete_file(target: Path) -> None:
+1046	    """Delete even when read-only; if still blocked, answer with 'retrying will not help'."""
+1047	    try:
+1048	        os.remove(target)
+1049	    except PermissionError:
+1050	        try:
+1051	            _clear_readonly_and_retry(os.remove, str(target), None)
+1052	        except OSError:
+1053	            raise _OpError(409, details={"reason": "path_locked"})
+1054	
+1055	
+1056	def _delete_tree(target: Path) -> int:
+1057	    """Delete a whole directory and return how many files were removed."""
+1058	    count = sum(1 for path in target.rglob("*") if path.is_file())
+1059	    failures: list[str] = []
+1060	
+1061	    def _on_error(func, path, exc_info):
+1062	        try:
+1063	            _clear_readonly_and_retry(func, path, exc_info)
+1064	        except OSError:
+1065	            failures.append(str(path))
+1066	
+1067	    # Python 3.12+ deprecates onerror in favour of onexc. The handler ignores the third argument.
+1068	    if sys.version_info >= (3, 12):
+1069	        shutil.rmtree(str(target), onexc=_on_error)
+1070	    else:
+1071	        shutil.rmtree(str(target), onerror=_on_error)
+1072	    if failures:
+1073	        raise _OpError(409, details={"reason": "path_locked"})
+1074	    return count
+1075	
+1076	
+1077	def _exec_remove(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+1078	    target = resolve_in_root(root, body["path"])
+1079	    if target is None:
+1080	        raise _OpError(422)
+1081	    # _validate_required guards HTTP input types, but the executing function itself also refuses
+1082	    # to promote the string "false" to true. A delete must be safe from tests and internal calls too.
+1083	    recursive = body.get("recursive", False) is True
+1084	    if target.is_dir():
+1085	        # 0382 NR0003 proposal 5-c (debris cleanup). With no way to delete a folder wholesale,
+1086	        # removing 261 files meant calling remove 261 times. Recursive delete is opened, but
+1087	        # **only for paths judged to be tool debris** — the same rule the screens and the
+1088	        # submission check use, so the mis-deletion risk narrows to one question: what counts as debris.
+1089	        if not recursive:
+1090	            raise _OpError(404)  # existing contract kept: a directory without recursive is a 404
+1091	        normalized = path_exclusion_rules.normalize_repo_path(body["path"])
+1092	        # An empty normalised result is the source root itself, and the root .git is recovery
+1093	        # data. Neither may ever be deleted recursively, whatever the debris rule says.
+1094	        if not normalized or normalized == ".git" or normalized.startswith(".git/"):
+1095	            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
+1096	        if not path_exclusion_rules.is_excluded_path(normalized):
+1097	            raise _OpError(422, details={"reason": "not_tool_artifact", "path": body["path"]})
+1098	        removed = _delete_tree(target)
+1099	        return (
+1100	            {"path": body["path"], "removed": True, "recursive": True,
+1101	             "removed_file_count": removed},
+1102	            None,
+1103	        )
+1104	    if not target.is_file():
+1105	        raise _OpError(404)  # missing, or not a regular file (single-file removal, P0005 §4.4)
+1106	    _delete_file(target)
+1107	    return ({"path": body["path"], "removed": True}, None)
+1108	
+1109	
+1110	def _is_excluded(real: str, base_real: str) -> bool:
+1111	    """True when `real` sits inside an excluded directory *below* `base_real`.
+1112	
+1113	    0279 T0005: the check is relative to the requested base, not to the source
+1114	    root, so pointing a scan AT `.venv` (path=".venv") still scans it — only
+1115	    incidental descent into one of these directories is skipped.
+1116	    """
+1117	    rel = os.path.relpath(real, base_real)
+1118	    if rel.startswith(".."):
+1119	        return False
+1120	    segments = rel.replace("\\", "/").split("/")[:-1]  # directory segments only
+1121	    return any(seg in _SCAN_EXCLUDE_DIRS for seg in segments)
+1122	
+1123	
+1124	def _iter_files(root: Path, base: Path, glob_filter: Optional[str]):
+1125	    """Yield (posix_relpath_from_root, abspath) for files under base, jailed to root."""
+1126	    root_real = os.path.realpath(str(root))
+1127	    base_real = os.path.realpath(str(base))
+1128	    candidates = base.glob(glob_filter) if glob_filter else base.rglob("*")
+1129	    for cand in candidates:
+1130	        real = os.path.realpath(str(cand))
+1131	        if not _under_root(real, root_real):
+1132	            continue  # symlink escape — skip
+1133	        if _is_excluded(real, base_real):
+1134	            continue  # dependency/VCS directory — not project source (0279 T0005)
+1135	        if not os.path.isfile(real):
+1136	            continue
+1137	        rel = os.path.relpath(real, root_real).replace("\\", "/")
+1138	        yield rel, real
+1139	
+1140	
+1141	def _exec_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+1142	    base = resolve_in_root(root, body.get("path") or "")
+1143	    if base is None:
+1144	        raise _OpError(422)
+1145	    if not base.is_dir():
+1146	        # NR0003 §2: pathlib's glob()/rglob() silently yield nothing for a file
+1147	        # or a nonexistent path, so a wrong `path` used to look identical to a
+1148	        # genuine zero-match search (both `ok:true, total:0`). Mirror _exec_read's
+1149	        # precedent (a bad target collapses to 404, whether missing or wrong type).
+1150	        raise _OpError(404)
+1151	    flags = re.IGNORECASE if body.get("ignore_case") else 0
+1152	    pattern = re.compile(body["pattern"], flags)
+1153	    max_results = body.get("max_results")
+1154	    glob_filter = body.get("glob")
+1155	
+1156	    matches: list[dict] = []
+1157	    total = 0
+1158	    truncated = False
+1159	    # 0279 T0005 (NR0003 cause 2): scanning used to continue after max_results was
+1160	    # reached so that `total` was an exact full count. That made a max_results=1
+1161	    # call walk the entire source root — the measured 40s freeze was exactly such
+1162	    # a call, and the cost grew linearly as the repo grew. Stop at the first file
+1163	    # that fills the quota instead.
+1164	    #
+1165	    # `total` therefore changes meaning: it is exact when truncated is False, and a
+1166	    # LOWER BOUND (matches counted before the scan stopped) when truncated is True.
+1167	    # A truncated response already told the caller the result set was incomplete, so
+1168	    # no caller could have been relying on an exact count in that branch.
+1169	    for rel, real in _iter_files(root, base, glob_filter):
+1170	        try:
+1171	            if os.path.getsize(real) > _GREP_FILE_SKIP_BYTES:
+1172	                continue
+1173	            with open(real, "rb") as fh:
+1174	                blob = fh.read()
+1175	            if b"\x00" in blob:
+1176	                continue  # binary — skip
+1177	            text = blob.decode("utf-8", errors="replace")
+1178	        except OSError:
+1179	            continue
+1180	        for lineno, line in enumerate(text.splitlines(), start=1):
+1181	            if pattern.search(line):
+1182	                total += 1
+1183	                if max_results is not None and len(matches) >= max_results:
+1184	                    truncated = True
+1185	                else:
+1186	                    matches.append({"file": rel, "line": lineno, "text": line})
+1187	        if truncated:
+1188	            # Finish the current file (its matches are already counted), then stop
+1189	            # walking the tree — the quota is full and every further file is pure cost.
+1190	            break
+1191	    return ({"matches": matches, "total": total, "truncated": truncated}, None)
+1192	
+1193	
+1194	def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+1195	    base = resolve_in_root(root, body.get("path") or "")
+1196	    if base is None:
+1197	        raise _OpError(422)
+1198	    if not base.is_dir():
+1199	        # NR0003 §2/§3 — same silent-zero defect as _exec_grep, same fix.
+1200	        raise _OpError(404)
+1201	    root_real = os.path.realpath(str(root))
+1202	    base_real = os.path.realpath(str(base))
+1203	    paths: list[str] = []
+1204	    for cand in sorted(base.glob(body["pattern"])):
+1205	        real = os.path.realpath(str(cand))
+1206	        if not _under_root(real, root_real):
+1207	            continue
+1208	        if _is_excluded(real, base_real):
+1209	            continue  # dependency/VCS directory — not project source (0279 T0005)
+1210	        rel = os.path.relpath(real, root_real).replace("\\", "/")
+1211	        paths.append(rel)
+1212	    return ({"paths": paths, "total": len(paths)}, None)
+1213	
+1214	
+1215	# ── Envelope / logging / continuation ─────────────────────────────────────────
+1216	
+1217	def _envelope(
+1218	    ok: bool,
+1219	    op: str,
+1220	    *,
+1221	    extra: Optional[dict] = None,
+1222	    error: Optional[dict] = None,
+1223	    continuation: Optional[dict] = None,
+1224	) -> dict:
+1225	    """P0005 §3.3 common response envelope."""
+1226	    env: dict = {"ok": ok, "op": op, "server_ts": now_iso()}
+1227	    if error is not None:
+1228	        env["error"] = error
+1229	    if continuation is not None:
+1230	        env["continuation"] = continuation
+1231	    if extra:
+1232	        env.update(extra)
+1233	    return env
+1234	
+1235	
+1236	# Generic per-status envelope text (P0005 §6), one set per worker display locale
+1237	# (0355 T0015: this dict used to carry only Korean text regardless of the worker's
+1238	# requested locale — the 7 status codes below were always rendered in Korean even
+1239	# when the calling worker's continuation_locale was ja/en).
+1240	_ERROR_MESSAGES = {
+1241	    "ko": {
+1242	        401: "토큰이 없거나 유효하지 않습니다.",
+1243	        403: "해당 작업을 수행할 권한이 없습니다.",
+1244	        404: "대상 경로를 찾을 수 없습니다.",
+1245	        409: "대상 파일이 이미 존재합니다 (mode=create).",
+1246	        413: "요청 또는 대상 크기가 허용치를 초과했습니다.",
+1247	        422: "요청 형식이 올바르지 않습니다.",
+1248	        503: "서버가 일시적으로 요청을 처리할 수 없습니다.",
+1249	    },
+1250	    "en": {
+1251	        401: "The token is missing or invalid.",
+1252	        403: "You do not have permission to perform this operation.",
+1253	        404: "The target path could not be found.",
+1254	        409: "The target file already exists (mode=create).",
+1255	        413: "The request or target size exceeds the allowed limit.",
+1256	        422: "The request format is invalid.",
+1257	        503: "The server is temporarily unable to process the request.",
+1258	    },
+1259	    "ja": {
+1260	        401: "トークンが存在しないか無効です。",
+1261	        403: "この操作を行う権限がありません。",
+1262	        404: "対象のパスが見つかりません。",
+1263	        409: "対象のファイルは既に存在します (mode=create)。",
+1264	        413: "リクエストまたは対象のサイズが許容範囲を超えています。",
+1265	        422: "リクエストの形式が正しくありません。",
+1266	        503: "サーバーが一時的にリクエストを処理できません。",
+1267	    },
+1268	}
+1269	
+1270	
+1271	_CUSTOM_ERROR_MESSAGES = {
+1272	    # 0382 §3-3: permission/lock failures went out as a 503 "the server cannot handle the
+1273	    # request temporarily". The AI believed "temporarily", knocked three more times, and it was
+1274	    # never going to work. What a retry can fix and what it cannot must give different answers.
+1275	    "path_locked": {
+1276	        "ko": "읽기 전용이거나 다른 프로세스가 잡고 있어 지울 수 없습니다. 재시도해도 같은 결과입니다 — 잠금을 푼 뒤 다시 요청하세요.",
+1277	        "en": "The path is read-only or held by another process and cannot be deleted. Retrying will not help — release the lock first.",
+1278	        "ja": "読み取り専用か他のプロセスが掴んでいるため削除できません。再試行しても同じ結果です — ロックを解除してから再度要求してください。",
+1279	    },
+1280	    "not_tool_artifact": {
+1281	        "ko": "재귀 삭제는 도구가 남긴 흔적에만 허용됩니다. '{path}' 는 작업 산출물로 판정되므로 파일 단위로 지우세요.",
+1282	        "en": "Recursive delete is allowed only for tool-generated artifacts. '{path}' is judged real work — delete it file by file.",
+1283	        "ja": "再帰削除はツールが残した痕跡にのみ許可されます。'{path}' は作業成果物と判定されるため、ファイル単位で削除してください。",
+1284	    },
+1285	    "no_op_edit": {
+1286	        "ko": "old_string과 new_string이 동일합니다.",
+1287	        "en": "old_string and new_string must be different.",
+1288	        "ja": "old_string と new_string は異なる値にしてください。",
+1289	    },
+1290	    "no_match": {
+1291	        "ko": "old_string과 일치하는 내용을 찾지 못했습니다 (0건).",
+1292	        "en": "No content matching old_string was found (0 matches).",
+1293	        "ja": "old_string に一致する内容が見つかりませんでした (0件)。",
+1294	    },
+1295	    "multiple_matches": {
+1296	        "ko": "old_string이 {match_count}곳에서 일치합니다. 앞뒤 문맥을 포함해 유일하게 만들거나 replace_all=true를 지정하세요.",
+1297	        "en": "old_string matches {match_count} locations. Include surrounding context to make it unique, or set replace_all=true.",
+1298	        "ja": "old_string は {match_count} 箇所に一致します。前後の文脈を含めて一意にするか、replace_all=true を指定してください。",
+1299	    },
+1300	}
+1301	
+1302	_CONTINUATION_MESSAGES = {
+1303	    "ko": {
+1304	        "with_report": "작업을 완료했습니다. 변경 내용을 레포트({report_doc_id})에 이어 정리해 제출을 계속해 주세요.",
+1305	        "without_report": "작업을 완료했습니다. 변경 내용을 작업 레포트(TR)로 정리해 제출을 이어가 주세요.",
+1306	    },
+1307	    "en": {
+1308	        "with_report": "The operation is complete. Continue by documenting and submitting the changes in report {report_doc_id}.",
+1309	        "without_report": "The operation is complete. Continue by documenting and submitting the changes in a task report (TR).",
+1310	    },
+1311	    "ja": {
+1312	        "with_report": "作業が完了しました。変更内容をレポート({report_doc_id})にまとめ、提出を続けてください。",
+1313	        "without_report": "作業が完了しました。変更内容を作業レポート(TR)にまとめ、提出を続けてください。",
+1314	    },
+1315	}
+1316	
+1317	
+1318	def _locale_for_grant(grant: Optional[dict]) -> str:
+1319	    """Worker display locale for a resolved grant, or the ko fallback.
+1320	
+1321	    Mirrors mention_service's continuation_locale convention: a worker grant is
+1322	    backed by an inbox token carrying `continuation_locale` (set from the
+1323	    unmanned chain's chosen locale, group 0099 B0001), so the error envelope
+1324	    should match the same language the worker's mentions are already in. A
+1325	    grant with no backing token (legacy / non-worker grant, or auth failure
+1326	    where `grant` is None) has no locale signal, so it falls back to ko —
+1327	    unchanged prior behavior.
+1328	    """
+1329	    if grant is None:
+1330	        return template_provision.FALLBACK_LOCALE
+1331	    token_rec = _worker_token_for_grant(grant)
+1332	    if not token_rec:
+1333	        return template_provision.FALLBACK_LOCALE
+1334	    return template_provision.normalize_locale(token_rec.get("continuation_locale"))
+1335	
+1336	
+1337	def _fail_envelope(op: str, status: int, locale: str = "ko") -> dict:
+1338	    code = ERROR_CODE_BY_STATUS[status]
+1339	    messages = _ERROR_MESSAGES.get(locale) or _ERROR_MESSAGES[template_provision.FALLBACK_LOCALE]
+1340	    return _envelope(
+1341	        False,
+1342	        op,
+1343	        error={"code": code, "message": messages.get(status, code)},
+1344	    )
+1345	
+1346	
+1347	def _op_error_message(exc: _OpError, locale: str) -> str:
+1348	    code = ERROR_CODE_BY_STATUS[exc.status]
+1349	    messages = _ERROR_MESSAGES.get(locale) or _ERROR_MESSAGES[template_provision.FALLBACK_LOCALE]
+1350	    reason = (exc.details or {}).get("reason")
+1351	    custom = _CUSTOM_ERROR_MESSAGES.get(reason, {}).get(locale)
+1352	    if custom:
+1353	        return custom.format(**(exc.details or {}))
+1354	    if exc.message and (locale == "ko" or not re.search(r"[가-힣]", exc.message)):
+1355	        return exc.message
+1356	    return messages.get(exc.status, code)
+1357	
+1358	
+1359	def _log_targets(op: str, body: dict) -> tuple[Optional[str], Optional[str]]:
+1360	    """(target_path, target_pattern) for op_log (DB0007 §6)."""
+1361	    path = body.get("path") if isinstance(body.get("path"), str) else None
+1362	    if op == "grep":
+1363	        pattern = body.get("glob") if isinstance(body.get("glob"), str) else None
+1364	    elif op == "glob":
+1365	        pattern = body.get("pattern") if isinstance(body.get("pattern"), str) else None
+1366	    else:
+1367	        pattern = None
+1368	    return path, pattern
+1369	
+1370	
+1371	def _log(
+1372	    grant: dict,
+1373	    op: str,
+1374	    target_path: Optional[str],
+1375	    target_pattern: Optional[str],
+1376	    *,
+1377	    status: int,
+1378	    bytes_processed: Optional[int] = None,
+1379	) -> None:
+1380	    """⑥ — record one op_log row (every attempt after authentication passes). Never raises."""
+1381	    if status == 200:
+1382	        result, error_code = "success", None
+1383	    else:
+1384	        result = RESULT_BY_STATUS[status]
+1385	        error_code = ERROR_CODE_BY_STATUS[status]
+1386	    try:
+1387	        db_oplog.insert(
+1388	            grant_id=grant["grant_id"],
+1389	            op=op,
+1390	            result=result,
+1391	            error_code=error_code,
+1392	            target_path=target_path,
+1393	            target_pattern=target_pattern,
+1394	            bytes_processed=bytes_processed,
+1395	        )
+1396	    except Exception:
+1397	        # A history-write failure must not block the user response (best-effort, L0006 §5).
+1398	        pass
+1399	
+1400	
+1401	def _continuation(grant: dict, locale: str = "ko") -> dict:
+1402	    """⑦ — locale-safe completion ment for mutation success (P0005 §5 / L0006 §6.2)."""
+1403	    report_doc_id = grant.get("report_doc_id")
+1404	    copy = _CONTINUATION_MESSAGES.get(locale) or _CONTINUATION_MESSAGES["ko"]
+1405	    key = "with_report" if report_doc_id else "without_report"
+1406	    ment = copy[key].format(report_doc_id=report_doc_id)
+1407	    return {"ment": ment, "report_doc_id": report_doc_id, "next_action": "write_report"}
+1408	
+1409	
+1410	# ── Pipeline entry ─────────────────────────────────────────────────────────────
+1411	
+1412	def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tuple[int, dict]:
+1413	    """Run the full pipeline. Returns (http_status, response_envelope).
+1414	
+1415	    Fail-fast order (L0006 §7): 401 ▶ 403 ▶ 422 ▶ 404 ▶ 409 ▶ 413 ▶ 503.
+1416	    """
+1417	    op = operation
+1418	    body = body if isinstance(body, dict) else {}
+1419	
+1420	    # ① Authentication — on failure the subject is unidentified, so no history is logged (L0006 §3.1).
+1421	    grant = _authenticate(raw_token)
+1422	    if grant is None:
+1423	        return 401, _fail_envelope(op, 401)
+1424	
+1425	    locale = _locale_for_grant(grant)
+1426	
+1427	    # Unknown operation name: no scope mapping + cannot be stored in the op enum, so not logged → 422.
+1428	    if op not in OP_SCOPE:
+1429	        return 422, _fail_envelope(op, 422, locale)
+1430	
+1431	    log_path, log_pattern = _log_targets(op, body)
+1432	    try:
+1433	        # ② Permission scope
+1434	        if OP_SCOPE[op] not in db_grants.get_scopes(grant["grant_id"]):
+1435	            raise _OpError(403)
+1436	        # ③ Path safety (existing path-like values)
+1437	        _validate_paths(op, body)
+1438	        # ④ Request validity (required fields)
+1439	        _validate_required(op, body)
+1440	        # Resolve the target source root. write/remove must not silently fall
+1441	        # back to the base checkout when the group worktree is missing (0205
+1442	        # §2.3) — they use the mutation gate, which raises a 409 with the cause.
+1443	        if op in _MUTATING_OPS:
+1444	            root = _resolve_root_for_mutation(grant, op)
+1445	        else:
+1446	            root = _resolve_src_root(grant, op)
+1447	        if root is None:
+1448	            raise _OpError(503)
+1449	        # ⑤ Execute the operation
+1450	        extra, nbytes = _execute(op, body, root)
+1451	    except _OpError as exc:
+1452	        _log(grant, op, log_path, log_pattern, status=exc.status)
+1453	        if exc.details is not None or exc.message is not None:
+1454	            code = ERROR_CODE_BY_STATUS[exc.status]
+1455	            error = {
+1456	                "code": code,
+1457	                "message": _op_error_message(exc, locale),
+1458	            }
+1459	            if exc.details is not None:
+1460	                error["details"] = exc.details
+1461	            return exc.status, _envelope(False, op, error=error)
+1462	        return exc.status, _fail_envelope(op, exc.status, locale)
+1463	    except OSError:
+1464	        # Unexpected I/O failure → 503 unavailable (logged to history).
+1465	        _log(grant, op, log_path, log_pattern, status=503)
+1466	        return 503, _fail_envelope(op, 503, locale)
+1467	    except Exception:
+1468	        # Trap every other unexpected exception in the envelope so it cannot leak to the
+1469	        # router as a bare 500 — since the attempt passed authentication, ⑥ history is also
+1470	        # recorded ('every response = P0005 envelope' contract).
+1471	        _log(grant, op, log_path, log_pattern, status=503)
+1472	        return 503, _fail_envelope(op, 503, locale)
+1473	
+1474	    # ⑥ Success history
+1475	    _log(grant, op, log_path, log_pattern, status=200, bytes_processed=nbytes)
+1476	    # 0192 T0005 §2-d: a worker's source mutation (write/remove) previously emitted
+1477	    # NO SSE, so an operator watching the file explorer saw the AI's edits only when
+1478	    # some unrelated document event happened to fire — the "changes don't show up
+1479	    # right away" complaint. Broadcast file_explorer_refresh on a successful mutation
+1480	    # so the tree, change list and '>' markers refresh live. Best-effort; a delivery
+1481	    # failure must never turn a successful op into an error.
+1482	    if op in _MUTATING_OPS:
+1483	        _emit_explorer_refresh(grant, op)
+1484	    # ⑦ Completion ment — only on successful state-changing operations (L0006 §6.1).
+1485	    continuation = _continuation(grant, locale) if op in _MUTATING_OPS else None
+1486	    return 200, _envelope(True, op, extra=extra, continuation=continuation)
+1487	
+1488	
+1489	def _emit_explorer_refresh(grant: dict, op: str) -> None:
+1490	    """Best-effort file_explorer_refresh broadcast after a worker source mutation
+1491	    (0192 T0005 §2-d). Scoped to the worker's project (and group when known) so
+1492	    the operator's explorer re-fetches the tree / change list / dirty markers."""
+1493	    try:
+1494	        from modules.flow_gate.api.v1.events.publisher import (
+1495	            FlowEvent,
+1496	            broadcast_event_threadsafe,
+1497	        )
+1498	        from modules.flow_gate.api.v1.events.event_types import EventType
+1499	
+1500	        broadcast_event_threadsafe(FlowEvent(
+1501	            event_type=EventType.FILE_EXPLORER_REFRESH,
+1502	            payload={"operation": op, "source": "remote_worker"},
+1503	            audience="*",
+1504	            project=grant.get("project"),
+1505	            group_id=grant.get("group_id"),
+1506	            doc_id=None,
+1507	        ))
+1508	    except Exception:
+1509	        pass
+1510	

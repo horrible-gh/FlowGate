@@ -1,0 +1,307 @@
+1	"""Digit-width change reformat service.
+2	
+3	Enqueue jobs into the numbering_jobs queue, and process them serially with a single worker.
+4	"""
+5	from __future__ import annotations
+6	
+7	import json
+8	import shutil
+9	import threading
+10	from datetime import datetime, timezone, timedelta
+11	from pathlib import Path
+12	from typing import Optional
+13	
+14	from ..db.connection import get_store, now_iso
+15	from ..db import numbering_jobs as db_jobs
+16	from ..db import projects as db_projects
+17	from .id_formatter import reformat_code
+18	from .verify import verify_id_widths
+19	
+20	_JST = timezone(timedelta(hours=9))
+21	_worker_lock = threading.Lock()
+22	
+23	
+24	# ── Enqueue ───────────────────────────────────────────────────────────────────
+25	
+26	def enqueue_reformat(
+27	    project_id: str,
+28	    requested_by: str,
+29	    target: str,
+30	    from_width: int,
+31	    to_width: int,
+32	) -> dict:
+33	    """Add a digit-width change job to the numbering_jobs queue.
+34	
+35	    Parameters
+36	    ----------
+37	    project_id : str
+38	    requested_by : str
+39	        Requesting user_id.
+40	    target : str
+41	        'group' | 'subgroup' | 'document'
+42	    from_width : int
+43	        Current digit width.
+44	    to_width : int
+45	        Digit width after the change.
+46	    """
+47	    if target not in ("group", "subgroup", "document"):
+48	        raise ValueError(f"target must be one of 'group'/'subgroup'/'document': {target!r}")
+49	    if from_width == to_width:
+50	        raise ValueError("from_width and to_width are the same.")
+51	    return db_jobs.create({
+52	        "project_id": project_id,
+53	        "requested_by": requested_by,
+54	        "target": target,
+55	        "from_width": from_width,
+56	        "to_width": to_width,
+57	        "status": "queued",
+58	    })
+59	
+60	
+61	# ── Execute reformat ──────────────────────────────────────────────────────────
+62	
+63	def _backup_db_snapshot(project_id: str, backup_dir: Path) -> Path:
+64	    """Save a snapshot of id_counter, groups, sub_groups, and documents as JSON."""
+65	    store = get_store()
+66	    snapshot = {
+67	        "groups": store._fetch_all(
+68	            "SELECT * FROM groups WHERE project_id=?", [project_id]
+69	        ),
+70	        "sub_groups": store._fetch_all(
+71	            "SELECT sg.* FROM sub_groups sg "
+72	            "JOIN groups g ON sg.group_id=g.group_id "
+73	            "WHERE g.project_id=?",
+74	            [project_id],
+75	        ),
+76	        "documents": store._fetch_all(
+77	            "SELECT * FROM documents WHERE project_id=?", [project_id]
+78	        ),
+79	        "id_counter": store._fetch_all(
+80	            "SELECT * FROM id_counter WHERE project_id=?", [project_id]
+81	        ),
+82	    }
+83	    backup_dir.mkdir(parents=True, exist_ok=True)
+84	    ts = datetime.now(_JST).strftime("%Y%m%d_%H%M%S")
+85	    snap_path = backup_dir / f"snapshot_{project_id}_{ts}.json"
+86	    snap_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+87	    return snap_path
+88	
+89	
+90	def _restore_from_snapshot(snapshot_path: Path) -> None:
+91	    """Restore group, subgroup, and document codes from the backup JSON."""
+92	    store = get_store()
+93	    data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+94	
+95	    for grp in data.get("groups", []):
+96	        store._execute(
+97	            "UPDATE groups SET group_id=?, updated_at=? WHERE group_id=?",
+98	            [grp["group_id"], now_iso(), grp["group_id"]],
+99	        )
+100	    for sg in data.get("sub_groups", []):
+101	        store._execute(
+102	            "UPDATE sub_groups SET sub_group_id=?, updated_at=? WHERE sub_group_id=?",
+103	            [sg["sub_group_id"], now_iso(), sg["sub_group_id"]],
+104	        )
+105	    for doc in data.get("documents", []):
+106	        store._execute(
+107	            "UPDATE documents SET doc_id=?, file_path=?, updated_at=? WHERE doc_id=?",
+108	            [doc["doc_id"], doc.get("file_path"), now_iso(), doc["doc_id"]],
+109	        )
+110	
+111	
+112	def _apply_reformat(
+113	    project_id: str,
+114	    target: str,
+115	    from_width: int,
+116	    to_width: int,
+117	) -> int:
+118	    """Reformat DB codes and filesystem paths to the new digit width.
+119	
+120	    Returns
+121	    -------
+122	    int
+123	        Number of changed entities.
+124	    """
+125	    from ..storage import filesystem as fs
+126	
+127	    store = get_store()
+128	    affected = 0
+129	
+130	    if target == "group":
+131	        rows = store._fetch_all(
+132	            "SELECT group_id FROM groups WHERE project_id=?", [project_id]
+133	        )
+134	        for row in rows:
+135	            old_id = row["group_id"]
+136	            if not old_id.isdigit():
+137	                continue
+138	            new_id = reformat_code(old_id, to_width, "group")
+139	            if old_id == new_id:
+140	                continue
+141	            store._execute(
+142	                "UPDATE groups SET group_id=?, updated_at=? WHERE group_id=?",
+143	                [new_id, now_iso(), old_id],
+144	            )
+145	            # Rename in the filesystem
+146	            try:
+147	                from ..storage.paths import project_root as get_proj_root
+148	                src = get_proj_root(project_id) / old_id
+149	                dst = get_proj_root(project_id) / new_id
+150	                if src.exists():
+151	                    fs.safe_rename(src, dst)
+152	            except Exception:
+153	                pass
+154	            affected += 1
+155	
+156	    elif target == "subgroup":
+157	        rows = store._fetch_all(
+158	            "SELECT sg.sub_group_id, sg.group_id FROM sub_groups sg "
+159	            "JOIN groups g ON sg.group_id=g.group_id "
+160	            "WHERE g.project_id=?",
+161	            [project_id],
+162	        )
+163	        for row in rows:
+164	            old_id = row["sub_group_id"]
+165	            numeric = old_id.split("-")[-1] if "-" in old_id else old_id
+166	            if not numeric.isdigit():
+167	                continue
+168	            new_numeric = reformat_code(numeric, to_width, "subgroup")
+169	            prefix = old_id[: -len(numeric)] if old_id.endswith(numeric) else ""
+170	            new_id = prefix + new_numeric
+171	            if old_id == new_id:
+172	                continue
+173	            store._execute(
+174	                "UPDATE sub_groups SET sub_group_id=?, updated_at=? WHERE sub_group_id=?",
+175	                [new_id, now_iso(), old_id],
+176	            )
+177	            affected += 1
+178	
+179	    elif target == "document":
+180	        import re
+181	        rows = store._fetch_all(
+182	            "SELECT doc_id, file_path FROM documents WHERE project_id=?", [project_id]
+183	        )
+184	        for row in rows:
+185	            old_id = row["doc_id"]
+186	            m = re.match(r'^(.*\.)(\d+)-([A-Za-z]+)$', old_id)
+187	            if not m:
+188	                continue
+189	            prefix, numeric, type_code = m.groups()
+190	            if len(numeric) == to_width:
+191	                continue
+192	            new_numeric = str(int(numeric)).zfill(to_width)
+193	            new_id = f"{prefix}{new_numeric}-{type_code}"
+194	
+195	            old_path = row.get("file_path")
+196	            new_path: Optional[str] = None
+197	            if old_path:
+198	                # file_path is persisted relative (L0054.0002): resolve to an
+199	                # absolute Path for the rename, then re-store the new value relative.
+200	                from ..storage.paths import resolve_storage_path, to_storage_relative
+201	                resolved_old = resolve_storage_path(old_path, project_id)
+202	                src = resolved_old if resolved_old is not None else Path(old_path)
+203	                new_fname = re.sub(r'\d+', lambda mo: str(int(mo.group(0))).zfill(to_width), src.name, count=1)
+204	                dst = src.parent / new_fname
+205	                new_path = to_storage_relative(dst, project_id)
+206	                try:
+207	                    if src.exists():
+208	                        fs.safe_rename(src, dst)
+209	                except Exception:
+210	                    new_path = old_path
+211	
+212	            store._execute(
+213	                "UPDATE documents SET doc_id=?, file_path=?, updated_at=? WHERE doc_id=?",
+214	                [new_id, new_path, now_iso(), old_id],
+215	            )
+216	            affected += 1
+217	
+218	    return affected
+219	
+220	
+221	# ── Worker ────────────────────────────────────────────────────────────────────
+222	
+223	def process_job(job_id: int, backup_dir: Optional[Path] = None) -> dict:
+224	    """Process a single numbering job.
+225	
+226	    1. Backup (DB snapshot + file tree)
+227	    2. DB UPDATE (reformat)
+228	    3. Validation
+229	    4. Recovery on failure
+230	
+231	    Returns
+232	    -------
+233	    dict
+234	        Completed numbering_job row.
+235	    """
+236	    job = db_jobs.get_by_id(job_id)
+237	    if job is None:
+238	        raise ValueError(f"job_id={job_id} not found")
+239	    if job["status"] != "queued":
+240	        raise RuntimeError(f"job_id={job_id} status={job['status']!r}: not queued")
+241	
+242	    project_id = job["project_id"]
+243	
+244	    # Ensure a single worker per project
+245	    with _worker_lock:
+246	        db_jobs.update(job_id, {"status": "running", "started_at": now_iso()})
+247	
+248	        # 1. Backup
+249	        if backup_dir is None:
+250	            from ..db import db as _db_module  # type: ignore
+251	            try:
+252	                storage_root = Path(_db_module.STORAGE_DIR)
+253	            except Exception:
+254	                storage_root = Path(".")
+255	            backup_dir = storage_root / "_backup" / "numbering"
+256	
+257	        snap_path: Optional[Path] = None
+258	        try:
+259	            snap_path = _backup_db_snapshot(project_id, backup_dir)
+260	        except Exception:
+261	            pass  # Continue even if backup fails (warning only)
+262	
+263	        # 2. Reformat
+264	        try:
+265	            affected = _apply_reformat(
+266	                project_id,
+267	                job["target"],
+268	                job["from_width"],
+269	                job["to_width"],
+270	            )
+271	
+272	            # 3. Validation
+273	            report = verify_id_widths(project_id)
+274	            if not report.ok:
+275	                raise RuntimeError(
+276	                    f"Validation failed: width_mismatches={report.width_mismatches}"
+277	                )
+278	
+279	            return db_jobs.update(job_id, {
+280	                "status": "succeeded",
+281	                "affected_count": affected,
+282	                "finished_at": now_iso(),
+283	            })
+284	
+285	        except Exception as exc:
+286	            # 4. Recovery
+287	            if snap_path and snap_path.exists():
+288	                try:
+289	                    _restore_from_snapshot(snap_path)
+290	                except Exception:
+291	                    pass
+292	
+293	            return db_jobs.update(job_id, {
+294	                "status": "failed",
+295	                "error_message": str(exc)[:500],
+296	                "finished_at": now_iso(),
+297	            })
+298	
+299	
+300	def run_pending_jobs(project_id: str, backup_dir: Optional[Path] = None) -> list[dict]:
+301	    """Process all queued jobs for the project."""
+302	    jobs = db_jobs.list_by_project(project_id, status="queued")
+303	    results = []
+304	    for job in reversed(jobs):  # Process oldest first
+305	        results.append(process_job(job["id"], backup_dir=backup_dir))
+306	    return results
+307	

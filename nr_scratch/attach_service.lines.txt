@@ -1,0 +1,927 @@
+1	"""Upload, list, download, delete, read and copy — the six attachment paths.
+2	
+3	flowgate.default.0060 L0012 §2-5 (A1~A9), §2-6~§2-10; P0011 §2~§7 for the wire shapes.
+4	
+5	Every blocking call — file read/write, mkdir, unlink, hashing, git worktree lookup — is
+6	pushed through ``anyio.to_thread``. L0012 §5 and ``file_transfer_routes.py:118-121`` give the
+7	same reason: a 100 MiB request handled on the event loop freezes every other request,
+8	SSE heartbeats included, for the whole transfer.
+9	"""
+10	from __future__ import annotations
+11	
+12	import base64
+13	import codecs
+14	import hashlib
+15	import os
+16	from datetime import datetime, timezone
+17	from pathlib import Path
+18	from typing import Any, Callable, Optional
+19	
+20	import anyio.to_thread
+21	from fastapi import HTTPException
+22	
+23	from .constants import (
+24	    ATTACH_COPY_CHUNK_BYTES,
+25	    ATTACH_DEFAULT_CONTENT_TYPE,
+26	    ATTACH_DOWNLOAD_FORCED_OCTET_TYPES,
+27	    ATTACH_MAX_COUNT_PER_DOC,
+28	    ATTACH_MAX_FILES_PER_REQUEST,
+29	    ATTACH_MAX_PATH_SEGMENT_BYTES,
+30	    ATTACH_MAX_REQUEST_BYTES,
+31	    ATTACH_MAX_TARGET_PATH_CHARS,
+32	    ATTACH_MAX_UPLOAD_BYTES,
+33	    ATTACH_READ_MAX_BYTES,
+34	    ATTACH_STREAM_CHUNK_BYTES,
+35	    ATTACH_TEXT_SNIFF_BYTES,
+36	    WINDOWS_RESERVED_NAMES,
+37	)
+38	from .errors import AttachmentError, unexpected
+39	from .locator import (
+40	    project_branch,
+41	    resolve_attach_dir,
+42	    resolve_registered_attachment,
+43	    storage_relative,
+44	)
+45	from .naming import (
+46	    check_request_size,
+47	    is_executable_extension,
+48	    original_display_name,
+49	    resolve_content_type,
+50	    resolve_unique_name,
+51	    rfc5987_disposition,
+52	    sanitize_attachment_name,
+53	)
+54	from .registry import (
+55	    registry_count,
+56	    registry_delete,
+57	    registry_has,
+58	    registry_insert,
+59	    registry_list,
+60	)
+61	
+62	_O_BINARY = getattr(os, "O_BINARY", 0)
+63	
+64	
+65	def _now_rfc3339() -> str:
+66	    """P0011 §1-2 — RFC 3339 UTC."""
+67	    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+68	
+69	
+70	# ── shared preamble ─────────────────────────────────────────────────────────────
+71	
+72	def load_document(doc_id: str) -> dict:
+73	    """A1 — 404 DOCUMENT_NOT_FOUND, the second rung of the L0012 §4-1 ladder."""
+74	    from modules.flow_gate.documents import document_service
+75	
+76	    doc = document_service.get_document(doc_id)
+77	    if doc is None:
+78	        raise AttachmentError(
+79	            404, "DOCUMENT_NOT_FOUND", "Document was not found.", doc_id=doc_id
+80	        )
+81	    return doc
+82	
+83	
+84	def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
+85	    """A3 / X2 / C3 — the change-class guard, reusing the existing two.
+86	
+87	    ``_reject_if_group_disposed`` and ``assert_group_mutation_allowed`` are the guards the
+88	    current upload already runs (NR0015 §6-1); this only re-labels their failures into the
+89	    P0011 ``DOCUMENT_NOT_MUTABLE`` envelope so every attachment error has one shape.
+90	    Imported lazily — ``documents.py`` imports this module, so a module-level import here
+91	    would close the cycle.
+92	    """
+93	    from fastapi import HTTPException
+94	
+95	    from modules.flow_gate.documents.routers import documents as _documents
+96	    from modules.flow_gate.services.mutation_policy import (
+97	        MutationPolicyError,
+98	        assert_group_mutation_allowed,
+99	        human_principal,
+100	    )
+101	
+102	    not_mutable = lambda reason: AttachmentError(  # noqa: E731
+103	        409,
+104	        "DOCUMENT_NOT_MUTABLE",
+105	        "Attachments cannot be changed in the current group state.",
+106	        doc_id=doc.get("doc_id"),
+107	        reason=reason,
+108	    )
+109	
+110	    try:
+111	        _documents._reject_if_group_disposed(doc)
+112	    except HTTPException:
+113	        raise not_mutable("group_disposed")
+114	
+115	    try:
+116	        assert_group_mutation_allowed(
+117	            doc.get("group_id"), human_principal(actor), operation
+118	        )
+119	    except MutationPolicyError:
+120	        raise not_mutable("group_ai_running")
+121	
+122	
+123	def _attachment_object(row: dict) -> dict:
+124	    """P0011 §1-3 — the one attachment object every JSON API returns."""
+125	    return {
+126	        "doc_id": row.get("doc_id"),
+127	        "original_filename": row.get("original_filename"),
+128	        "filename": row.get("filename"),
+129	        "size": int(row.get("size") or 0),
+130	        "content_type": row.get("content_type") or ATTACH_DEFAULT_CONTENT_TYPE,
+131	        "content_sha256": row.get("content_sha256"),
+132	        "path": row.get("file_path"),
+133	        "path_base": "storage",
+134	        "uploaded_by": row.get("uploaded_by"),
+135	        "uploaded_at": row.get("uploaded_at"),
+136	    }
+137	
+138	
+139	# ── §2-5 upload ─────────────────────────────────────────────────────────────────
+140	
+141	def _prepare_upload(doc_id: str, part_count: int, actor: Optional[dict]) -> tuple[dict, Path]:
+142	    """A1~A6 — everything before the first byte is written."""
+143	    doc = load_document(doc_id)
+144	    assert_mutable(doc, actor, "attachment upload")
+145	
+146	    if part_count == 0:
+147	        raise AttachmentError(
+148	            422, "INVALID_REQUEST", "At least one file part is required.", field="file"
+149	        )
+150	    if part_count > ATTACH_MAX_FILES_PER_REQUEST:
+151	        raise AttachmentError(
+152	            422,
+153	            "INVALID_REQUEST",
+154	            "Too many file parts in one request.",
+155	            field="file",
+156	            limit=ATTACH_MAX_FILES_PER_REQUEST,
+157	        )
+158	    if registry_count(doc_id) + part_count > ATTACH_MAX_COUNT_PER_DOC:
+159	        raise AttachmentError(
+160	            409,
+161	            "ATTACHMENT_EXISTS",
+162	            "This document already holds the maximum number of attachments.",
+163	            doc_id=doc_id,
+164	            reason="per_document_limit",
+165	            limit=ATTACH_MAX_COUNT_PER_DOC,
+166	        )
+167	
+168	    room = resolve_attach_dir(doc)
+169	    try:
+170	        room.mkdir(parents=True, exist_ok=True)
+171	    except OSError as exc:
+172	        raise unexpected(
+173	            exc,
+174	            operation="upload:mkdir",
+175	            code="ATTACHMENT_STORE_FAILED",
+176	            message="Could not create the attachment folder.",
+177	            reason="storage",
+178	            doc_id=doc_id,
+179	        )
+180	    return doc, room
+181	
+182	
+183	def _rollback(done: list[dict]) -> None:
+184	    """A9 — best effort. Never changes the error the caller is already returning.
+185	
+186	    Files left behind are not in the registry, so they appear in no list, no download and
+187	    no read, and §2-12 W3 keeps the numbering scan from calling them orphans.
+188	    """
+189	    for item in done:
+190	        try:
+191	            Path(item["abs_path"]).unlink()
+192	        except OSError:
+193	            pass
+194	
+195	
+196	async def upload_attachments(
+197	    doc_id: str,
+198	    parts: list,
+199	    actor: Optional[dict],
+200	    content_length: Optional[str] = None,
+201	) -> dict:
+202	    """A1~A9. A ``201`` means every file is on disk AND every row is committed.
+203	
+204	    A7 finishes for all parts before A8 starts. Registering each file as it lands would mean
+205	    a part that fails at #3 has to unwind two kinds of state (files and rows); writing all
+206	    the files first and then registering in one transaction keeps the undo to a single
+207	    "delete the rows, delete the files" pass — and with the rows in one transaction, a
+208	    failed commit leaves no rows at all, so the undo is really just the files
+209	    (DB0013 §4, transaction boundary).
+210	    """
+211	    done: list[dict] = []
+212	    reserved: set = set()
+213	    request_total = 0
+214	
+215	    # 0060 TR0017 rev2 — A1~A6 run INSIDE the try as well. They used to sit outside it, so
+216	    # anything unexpected in the preamble (registry query, path resolution, mkdir) was left
+217	    # for FastAPI to answer as a bare `500 Internal Server Error`: no P0011 envelope, no
+218	    # error code the card can read, and — because this package logged nothing — no trace in
+219	    # the server log either. That is exactly the symptom this document was rejected for.
+220	    try:
+221	        check_request_size(content_length)  # U1
+222	        doc, room = await anyio.to_thread.run_sync(
+223	            _prepare_upload, doc_id, len(parts), actor
+224	        )
+225	        project_id = doc.get("project_id")
+226	        actor_id = (actor or {}).get("user_id") or (actor or {}).get("id")
+227	
+228	        for part in parts:  # request order preserved
+229	            raw_name = getattr(part, "filename", None)
+230	            safe = sanitize_attachment_name(raw_name)
+231	            # E1~E2. No extension is refused here — see constants §1-3 and TR0017 rev3.
+232	            content_type = resolve_content_type(safe)
+233	
+234	            final_name, fd = await anyio.to_thread.run_sync(
+235	                resolve_unique_name, room, doc_id, safe, reserved, registry_has
+236	            )
+237	            dest = room / final_name
+238	            # Recorded BEFORE the first byte is written. D5 already created the file, so from
+239	            # here on it exists on disk and the rollback has to know about it — A9 says
+240	            # "unlink every done item, the unfinished open part included". Filling the entry
+241	            # in only after the stream completed is what left a 20 MiB carcass behind when
+242	            # the part was cut at U2.
+243	            item: dict = {"abs_path": str(dest)}
+244	            done.append(item)
+245	            digest = hashlib.sha256()
+246	            received = 0
+247	            try:
+248	                while True:
+249	                    chunk = await part.read(ATTACH_STREAM_CHUNK_BYTES)
+250	                    if not chunk:
+251	                        break
+252	                    received += len(chunk)
+253	                    if received > ATTACH_MAX_UPLOAD_BYTES:  # U2 — cut the moment it passes
+254	                        raise AttachmentError(
+255	                            413,
+256	                            "ATTACHMENT_TOO_LARGE",
+257	                            "Attachment exceeds the upload size limit.",
+258	                            filename=safe,
+259	                            size=received,
+260	                            limit_bytes=ATTACH_MAX_UPLOAD_BYTES,
+261	                        )
+262	                    if request_total + received > ATTACH_MAX_REQUEST_BYTES:  # U3
+263	                        raise AttachmentError(
+264	                            413,
+265	                            "ATTACHMENT_TOO_LARGE",
+266	                            "Attachment request exceeds the total size limit.",
+267	                            filename=safe,
+268	                            limit_bytes=ATTACH_MAX_REQUEST_BYTES,
+269	                        )
+270	                    digest.update(chunk)
+271	                    await anyio.to_thread.run_sync(os.write, fd, chunk)
+272	                await anyio.to_thread.run_sync(os.fsync, fd)
+273	            finally:
+274	                try:
+275	                    os.close(fd)
+276	                except OSError:
+277	                    pass
+278	
+279	            request_total += received
+280	            item.update({
+281	                "original_filename": original_display_name(raw_name),
+282	                "filename": final_name,
+283	                "file_path": storage_relative(dest, project_id),
+284	                "size": received,
+285	                "content_type": content_type,
+286	                "content_sha256": digest.hexdigest(),
+287	            })
+288	
+289	        rows = await anyio.to_thread.run_sync(
+290	            _commit_registry, doc_id, done, actor_id
+291	        )
+292	    except (AttachmentError, HTTPException):
+293	        # HTTPException is the group-lock answer (423 GROUP_AI_RUN_LOCKED) the mutability
+294	        # guard raises. Folding it into the 500 branch would hide "an AI run owns this
+295	        # group" behind a crash message.
+296	        await anyio.to_thread.run_sync(_rollback, done)
+297	        raise
+298	    except Exception as exc:
+299	        await anyio.to_thread.run_sync(_rollback, done)
+300	        raise unexpected(
+301	            exc,
+302	            operation="upload",
+303	            code="ATTACHMENT_STORE_FAILED",
+304	            message="Could not store the attachment.",
+305	            reason="storage",
+306	            doc_id=doc_id,
+307	        )
+308	
+309	    return {"doc_id": doc_id, "attachments": rows, "count": len(rows)}
+310	
+311	
+312	def _commit_registry(doc_id: str, done: list[dict], actor_id: Optional[str]) -> list[dict]:
+313	    """A8 — one transaction for the whole request."""
+314	    from modules.flow_gate.db.connection import get_store
+315	
+316	    store = get_store()
+317	    uploaded_at = _now_rfc3339()
+318	    try:
+319	        with store.transaction():
+320	            for item in done:
+321	                registry_insert(
+322	                    doc_id=doc_id,
+323	                    original_filename=item["original_filename"],
+324	                    filename=item["filename"],
+325	                    file_path=item["file_path"],
+326	                    size=item["size"],
+327	                    content_type=item["content_type"],
+328	                    content_sha256=item["content_sha256"],
+329	                    uploaded_by=actor_id,
+330	                    uploaded_at=uploaded_at,
+331	                    store=store,
+332	                )
+333	    except Exception as exc:
+334	        raise unexpected(
+335	            exc,
+336	            operation="upload:registry",
+337	            code="ATTACHMENT_METADATA_FAILED",
+338	            message="Could not record the attachment metadata.",
+339	            reason="registry",
+340	            doc_id=doc_id,
+341	        )
+342	
+343	    return [
+344	        _attachment_object({
+345	            "doc_id": doc_id,
+346	            "original_filename": item["original_filename"],
+347	            "filename": item["filename"],
+348	            "file_path": item["file_path"],
+349	            "size": item["size"],
+350	            "content_type": item["content_type"],
+351	            "content_sha256": item["content_sha256"],
+352	            "uploaded_by": actor_id,
+353	            "uploaded_at": uploaded_at,
+354	        })
+355	        for item in done
+356	    ]
+357	
+358	
+359	# ── §2-6 list (P0011 §3) ────────────────────────────────────────────────────────
+360	
+361	def list_attachments(doc_id: str) -> dict:
+362	    """A document with no attachments is a 200 and an empty array, never a 404."""
+363	    load_document(doc_id)
+364	    rows = registry_list(doc_id)
+365	    return {
+366	        "doc_id": doc_id,
+367	        "attachments": [_attachment_object(r) for r in rows],
+368	        "count": len(rows),
+369	    }
+370	
+371	
+372	# ── §2-7 download ───────────────────────────────────────────────────────────────
+373	
+374	def resolve_download(doc_id: str, name: str) -> tuple[Path, dict]:
+375	    """Returns (file path, response headers).
+376	
+377	    Not a change-class path, so a disposed group or a running AI run does NOT block it —
+378	    D0010 §6-1 keeps list and download alive while the document is read-only.
+379	    """
+380	    doc = load_document(doc_id)
+381	    row, path = resolve_registered_attachment(doc, name)
+382	
+383	    filename = row.get("filename") or name
+384	    media = row.get("content_type") or ATTACH_DEFAULT_CONTENT_TYPE
+385	    if media in ATTACH_DOWNLOAD_FORCED_OCTET_TYPES or is_executable_extension(filename):
+386	        # Never hand back an attachment in a shape the browser will render or run. The
+387	        # extension arm carries the weight now that §1-3 admits executable kinds: a row
+388	        # written before that change, or by the legacy migration, can still say
+389	        # ``text/javascript``, and this is the last place to say otherwise.
+390	        media = ATTACH_DEFAULT_CONTENT_TYPE
+391	
+392	    headers = {
+393	        "Content-Disposition": rfc5987_disposition(filename),
+394	        "ETag": f'"sha256-{row.get("content_sha256")}"',
+395	        "X-Content-Type-Options": "nosniff",
+396	    }
+397	    return path, {"media_type": media, "headers": headers}
+398	
+399	
+400	# ── §2-8 delete ─────────────────────────────────────────────────────────────────
+401	
+402	def delete_attachment(doc_id: str, name: str, actor: Optional[dict]) -> dict:
+403	    """X1~X6 — the file first, the row second.
+404	
+405	    Of the two half-done states this can leave, this order picks the recoverable one. If the
+406	    unlink fails nothing has changed yet, so "it failed and the state is untouched" is an
+407	    honest answer; the reverse order cannot say that. If the row removal fails the row
+408	    survives without a file (``ghost_row``) — visible in the list, 404 on click, and cleaned
+409	    up by repeating the very same delete (X3 finds the row, X4 sees no file and continues,
+410	    X5 removes the row).
+411	    """
+412	    doc = load_document(doc_id)
+413	    assert_mutable(doc, actor, "attachment delete")
+414	    # X3 — every jail check, but a missing file is not an error here: X4 treats it as the
+415	    # target state, which is what lets the next identical delete clear a ghost_row.
+416	    row, path = resolve_registered_attachment(doc, name, require_file=False)
+417	
+418	    try:
+419	        path.unlink()
+420	    except FileNotFoundError:
+421	        pass                                   # already the target state → keep going
+422	    except OSError as exc:
+423	        raise unexpected(
+424	            exc,
+425	            operation="delete:unlink",
+426	            code="ATTACHMENT_DELETE_FAILED",
+427	            message="Could not delete the attachment file.",
+428	            reason=None,
+429	            doc_id=doc_id,
+430	            filename=row.get("filename"),
+431	        )
+432	
+433	    last_error: Optional[Exception] = None
+434	    from .constants import ATTACH_DELETE_RETRY
+435	
+436	    for _ in range(ATTACH_DELETE_RETRY + 1):
+437	        try:
+438	            registry_delete(doc_id, row.get("filename"))
+439	            last_error = None
+440	            break
+441	        except Exception as exc:               # noqa: BLE001 — retried, then surfaced
+442	            last_error = exc
+443	    if last_error is not None:
+444	        raise unexpected(
+445	            last_error,
+446	            operation="delete:registry",
+447	            code="ATTACHMENT_METADATA_FAILED",
+448	            message="Could not remove the attachment metadata.",
+449	            reason=None,
+450	            doc_id=doc_id,
+451	            filename=row.get("filename"),
+452	        )
+453	
+454	    return {
+455	        "doc_id": doc_id,
+456	        "filename": row.get("filename"),
+457	        "path": row.get("file_path"),
+458	        "path_base": "storage",
+459	        "file_deleted": True,
+460	        "metadata_deleted": True,
+461	        "deleted_at": _now_rfc3339(),
+462	    }
+463	
+464	
+465	# ── §2-9 read ───────────────────────────────────────────────────────────────────
+466	
+467	_BOMS = (
+468	    (codecs.BOM_UTF32_LE, "utf-32"),
+469	    (codecs.BOM_UTF32_BE, "utf-32"),
+470	    (codecs.BOM_UTF8, "utf-8-sig"),
+471	    (codecs.BOM_UTF16_LE, "utf-16"),
+472	    (codecs.BOM_UTF16_BE, "utf-16"),
+473	)
+474	
+475	
+476	def _detect_bom(head: bytes) -> Optional[str]:
+477	    for bom, name in _BOMS:
+478	        if head.startswith(bom):
+479	            return name
+480	    return None
+481	
+482	
+483	def read_attachment(doc_id: str, name: str, mode: str = "auto", encoding: str = "utf-8") -> dict:
+484	    """R1~R8. The content is never truncated — over the ceiling the whole read is refused.
+485	
+486	    ``truncated`` exists in the contract and is always ``false``: handing back a cut-down
+487	    body as a success makes the caller treat a fragment as the whole file.
+488	    """
+489	    doc = load_document(doc_id)
+490	    row, path = resolve_registered_attachment(doc, name)
+491	
+492	    # R2
+493	    if mode not in ("auto", "text", "base64"):
+494	        raise AttachmentError(
+495	            422, "INVALID_REQUEST", "mode must be one of auto, text, base64.",
+496	            field="mode", value=mode,
+497	        )
+498	    try:
+499	        codec = codecs.lookup(encoding or "utf-8")
+500	    except LookupError:
+501	        raise AttachmentError(
+502	            422, "INVALID_REQUEST", "Unknown text encoding.", field="encoding", value=encoding
+503	        )
+504	
+505	    # R3 — gone. It used to answer 415 UNSUPPORTED_READ_TYPE for the §1-3 kinds, and its
+506	    #      whole justification was "upload already refused these, so this only catches a
+507	    #      legacy-migrated one". Upload accepts them now (TR0017 rev3), and refusing to read
+508	    #      back a file the same screen just accepted is the same wall one door further in.
+509	    #      ``mode=auto`` already answers correctly for these: R6 sniffs NUL bytes and hands
+510	    #      an executable back base64-encoded, exactly like any other binary.
+511	    filename = row.get("filename") or name
+512	
+513	    # R4 — before R5, so an oversized file is never loaded. '>' so the exact limit passes.
+514	    size = path.stat().st_size
+515	    if size > ATTACH_READ_MAX_BYTES:
+516	        raise AttachmentError(
+517	            413, "READ_TOO_LARGE", "Attachment exceeds the read size limit.",
+518	            filename=filename, size=size, limit_bytes=ATTACH_READ_MAX_BYTES,
+519	        )
+520	
+521	    data = path.read_bytes()                    # R5 — 1 MiB or less, guaranteed
+522	    meta = _attachment_object(row)
+523	
+524	    def _binary() -> dict:                      # R6
+525	        return {
+526	            "attachment": meta,
+527	            "kind": "binary",
+528	            "encoding": None,
+529	            "content_encoding": "base64",
+530	            "content": base64.b64encode(data).decode("ascii"),
+531	            "truncated": False,
+532	        }
+533	
+534	    def _text(decoded: str, enc_name: str) -> dict:
+535	        return {
+536	            "attachment": meta,
+537	            "kind": "text",
+538	            "encoding": enc_name,
+539	            "content_encoding": "identity",
+540	            "content": decoded.lstrip("\ufeff"),
+541	            "truncated": False,
+542	        }
+543	
+544	    if mode == "base64":
+545	        return _binary()
+546	
+547	    if mode == "text":                          # R7
+548	        try:
+549	            return _text(data.decode(codec.name, errors="strict"), codec.name)
+550	        except (UnicodeDecodeError, LookupError):
+551	            raise AttachmentError(
+552	                415, "INVALID_TEXT_ENCODING",
+553	                "Attachment cannot be decoded with the requested encoding.",
+554	                filename=filename, encoding=encoding,
+555	            )
+556	
+557	    # R8 — auto. Never answers 415: failing to decode IS the binary answer.
+558	    head = data[:ATTACH_TEXT_SNIFF_BYTES]
+559	    detected = _detect_bom(head)
+560	    if detected:
+561	        try:
+562	            return _text(data.decode(detected, errors="strict"), detected)
+563	        except UnicodeDecodeError:
+564	            pass
+565	    if b"\x00" in head:
+566	        return _binary()
+567	    try:
+568	        return _text(data.decode(codec.name, errors="strict"), codec.name)
+569	    except (UnicodeDecodeError, LookupError):
+570	        return _binary()
+571	
+572	
+573	# ── §2-10 copy ──────────────────────────────────────────────────────────────────
+574	
+575	def _validate_target_path(target_path: Optional[str]) -> list[str]:
+576	    """C2 — pure string checks. No disk, no DB; the cheapest rung runs first."""
+577	    if target_path is None or not str(target_path).strip():
+578	        raise AttachmentError(
+579	            422, "INVALID_REQUEST", "target_path is required.", field="target_path"
+580	        )
+581	    raw = str(target_path)
+582	    bad = lambda reason: AttachmentError(  # noqa: E731
+583	        400, "INVALID_PATH", "Target path must be a source-root-relative POSIX path.",
+584	        field="target_path", value=raw, reason=reason,
+585	    )
+586	    if len(raw) > ATTACH_MAX_TARGET_PATH_CHARS:
+587	        raise bad("too_long")
+588	    t = raw.replace("\\", "/")
+589	    if t.startswith("//"):
+590	        raise bad("unc")
+591	    if t.startswith("/"):
+592	        raise bad("absolute")
+593	    if len(t) >= 2 and t[1] == ":":
+594	        raise bad("drive")
+595	    if any(ch in t for ch in ("\x00",)) or any(ord(ch) < 0x20 for ch in t):
+596	        raise bad("control_chars")
+597	    if t.endswith("/"):
+598	        raise bad("no_filename")
+599	
+600	    segments = t.split("/")
+601	    for seg in segments:
+602	        if seg in ("", ".", ".."):
+603	            raise bad("empty_or_dot_segment")
+604	        if len(seg.encode("utf-8")) > ATTACH_MAX_PATH_SEGMENT_BYTES:
+605	            raise bad("segment_too_long")
+606	        if seg != seg.rstrip(" ."):
+607	            raise bad("trailing_dot_or_space")   # Windows renames it behind our back
+608	        if Path(seg).stem.upper() in WINDOWS_RESERVED_NAMES:
+609	            raise bad("windows_reserved_name")
+610	    return segments
+611	
+612	
+613	def resolve_copy_root(project_id: str, group_id: Optional[str]) -> Path:
+614	    """C5 — refuse, never substitute.
+615	
+616	    ``storage_paths.resolve_project_src_root`` is deliberately NOT used: it drops to the base
+617	    checkout whenever a worktree cannot be resolved (``paths.py:192-225``). A copy the caller
+618	    aimed at a group would then dirty the base checkout and jam every other group's finalize
+619	    — which is exactly why ``file_transfer_routes.py:37-43`` went fail-closed. Same judgement
+620	    here.
+621	    """
+622	    from modules.flow_gate.db import groups as _groups
+623	    from modules.flow_gate.services import git_service
+624	
+625	    if group_id:
+626	        group = _groups.get_by_id(group_id)
+627	        if group is None or group.get("project_id") != project_id:
+628	            raise AttachmentError(
+629	                404, "TARGET_GROUP_NOT_FOUND", "Group not found in this project.",
+630	                group_id=group_id,
+631	            )
+632	        root, reason = git_service.effective_src_root_ex(project_id, group_id)
+633	        if root is None:
+634	            raise AttachmentError(
+635	                409,
+636	                "WORKTREE_UNAVAILABLE",
+637	                "Group worktree is unavailable; the base checkout was not used.",
+638	                group_id=group_id,
+639	                reason=reason,
+640	            )
+641	        return root.resolve()
+642	
+643	    from modules.flow_gate.db import projects as _projects
+644	
+645	    project = _projects.get_by_id(project_id)
+646	    project_name = ((project or {}).get("project_name") or "").strip()
+647	    branch = project_branch(project_id)
+648	    root = None
+649	    if project_name:
+650	        try:
+651	            root = git_service.base_src_root(project_id, project_name, branch)
+652	        except Exception:
+653	            root = None
+654	    if root is None or not Path(root).exists():
+655	        raise AttachmentError(
+656	            409,
+657	            "WORKTREE_UNAVAILABLE",
+658	            "Group worktree is unavailable; the base checkout was not used.",
+659	            reason="base_checkout_unresolved",
+660	        )
+661	    return Path(root).resolve()
+662	
+663	
+664	def _seal_under_root(root: Path, segments: list[str]) -> Path:
+665	    """C6 — three passes, because each one misses something the next catches.
+666	
+667	    ① string containment. ``..`` was already refused in C2, but a link leaves no trace in
+668	       the string, so this alone is not enough.
+669	    ② per-component symlink check (the ``tree_routes._seal_under_root`` pattern).
+670	    ③ ``realpath`` of the deepest existing ancestor. Windows directory junctions do not
+671	       always report ``is_symlink()``; this is what catches those.
+672	
+673	    A link answers 403 SOURCE_PATH_OUTSIDE_ROOT rather than the 400
+674	    ``tree_routes.py:163`` uses, because P0011 §8 defines this code as "after normalization
+675	    and symlink checks the target is outside the root" — and a link can point outside
+676	    without our being able to prove cheaply that it does not.
+677	    """
+678	    outside = AttachmentError(
+679	        403, "SOURCE_PATH_OUTSIDE_ROOT", "Target resolves outside the selected source root.",
+680	        target_path="/".join(segments), path_base="source",
+681	    )
+682	    root_abs = root.resolve(strict=False)
+683	    dest = root_abs.joinpath(*segments)
+684	    try:
+685	        dest.relative_to(root_abs)                                   # ①
+686	    except ValueError:
+687	        raise outside
+688	    current = root_abs
+689	    for seg in segments:                                            # ②
+690	        current = current / seg
+691	        if current.exists() and current.is_symlink():
+692	            raise outside
+693	    ancestor = dest.parent
+694	    while not ancestor.exists() and ancestor != ancestor.parent:
+695	        ancestor = ancestor.parent
+696	    try:
+697	        Path(os.path.realpath(ancestor)).relative_to(root_abs)      # ③
+698	    except ValueError:
+699	        raise outside
+700	    return dest
+701	
+702	
+703	def copy_to_source(
+704	    doc_id: str,
+705	    name: str,
+706	    target_path: Optional[str],
+707	    group_id: Optional[str],
+708	    actor: Optional[dict],
+709	) -> dict:
+710	    """C1~C10. The only path that writes outside the storage tree, hence the longest guard.
+711	
+712	    Copy does NOT apply the upload extension deny-list to its target (C4). The destination is
+713	    a source tree, where ``.ps1``/``.sh``/``.js`` are ordinary files; blocking them would make
+714	    "put the script I was sent into the source" impossible. The risk the deny-list addresses
+715	    is a receiver clicking a download, and a copy result never goes to a browser.
+716	    """
+717	    doc = load_document(doc_id)
+718	    segments = _validate_target_path(target_path)                    # C2
+719	    assert_mutable(doc, actor, "attachment copy")                    # C3
+720	    row, src_path = resolve_registered_attachment(doc, name)         # C4
+721	
+722	    project_id = doc.get("project_id")
+723	    root = resolve_copy_root(project_id, group_id)                   # C5
+724	    dest = _seal_under_root(root, segments)                          # C6
+725	
+726	    created_dirs: list[Path] = []
+727	    parent = dest.parent
+728	    if parent.exists() and not parent.is_dir():                      # C7
+729	        raise AttachmentError(
+730	            409, "TARGET_EXISTS", "Copy target already exists.",
+731	            target_path="/".join(segments), path_base="source", group_id=group_id,
+732	            reason="parent_is_file",
+733	        )
+734	    if not parent.exists():
+735	        missing = []
+736	        probe = parent
+737	        while not probe.exists() and probe != probe.parent:
+738	            missing.append(probe)
+739	            probe = probe.parent
+740	        try:
+741	            parent.mkdir(parents=True, exist_ok=True)
+742	        except OSError as exc:
+743	            raise unexpected(
+744	                exc,
+745	                operation="copy:mkdir",
+746	                code="ATTACHMENT_COPY_FAILED",
+747	                message="Could not create the target folder.",
+748	                reason=None,
+749	                target_path="/".join(segments), path_base="source",
+750	            )
+751	        created_dirs = missing
+752	
+753	    _assert_target_absent(parent, segments[-1], segments, group_id)  # C8
+754	
+755	    # C9 — existence check and creation must be one atomic act. C8 stays because it is what
+756	    # tells apart `parent_is_file` and a case-only clash; O_EXCL closes the TOCTOU gap it
+757	    # cannot. A temp file plus rename is wrong here: rename OVERWRITES, and refusing is the
+758	    # contract.
+759	    digest = hashlib.sha256()
+760	    try:
+761	        fd = os.open(str(dest), os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY)
+762	    except FileExistsError:
+763	        _cleanup_dirs(created_dirs)
+764	        raise AttachmentError(
+765	            409, "TARGET_EXISTS", "Copy target already exists.",
+766	            target_path="/".join(segments), path_base="source", group_id=group_id,
+767	            reason="race",
+768	        )
+769	    except OSError as exc:
+770	        _cleanup_dirs(created_dirs)
+771	        raise unexpected(
+772	            exc,
+773	            operation="copy:create",
+774	            code="ATTACHMENT_COPY_FAILED",
+775	            message="Could not create the copy target.",
+776	            reason=None,
+777	            target_path="/".join(segments), path_base="source",
+778	        )
+779	
+780	    copied = 0
+781	    try:
+782	        with open(src_path, "rb") as src:
+783	            while True:
+784	                chunk = src.read(ATTACH_COPY_CHUNK_BYTES)
+785	                if not chunk:
+786	                    break
+787	                digest.update(chunk)
+788	                copied += len(chunk)
+789	                os.write(fd, chunk)
+790	        os.fsync(fd)
+791	    except OSError as exc:
+792	        os.close(fd)
+793	        _unlink_quiet(dest)
+794	        _cleanup_dirs(created_dirs)
+795	        raise unexpected(
+796	            exc,
+797	            operation="copy:write",
+798	            code="ATTACHMENT_COPY_FAILED",
+799	            message="Could not copy the attachment.",
+800	            reason=None,
+801	            target_path="/".join(segments), path_base="source",
+802	        )
+803	    else:
+804	        os.close(fd)
+805	
+806	    expected = row.get("content_sha256")
+807	    if expected and digest.hexdigest() != expected:
+808	        _unlink_quiet(dest)
+809	        _cleanup_dirs(created_dirs)
+810	        raise unexpected(
+811	            None,
+812	            operation="copy:verify",
+813	            code="ATTACHMENT_COPY_FAILED",
+814	            message="The attachment changed while it was copied.",
+815	            reason="source_changed",
+816	            target_path="/".join(segments), path_base="source",
+817	        )
+818	
+819	    return {
+820	        "doc_id": doc_id,
+821	        "filename": row.get("filename"),
+822	        "source": {"path": row.get("file_path"), "path_base": "storage"},
+823	        "destination": {
+824	            "project_id": project_id,
+825	            "group_id": group_id,
+826	            "target_path": "/".join(segments),
+827	            "path_base": "source",
+828	        },
+829	        "size": copied,
+830	        "content_sha256": digest.hexdigest(),
+831	        "copied_at": _now_rfc3339(),
+832	    }
+833	
+834	
+835	def _assert_target_absent(
+836	    parent: Path, filename: str, segments: list[str], group_id: Optional[str]
+837	) -> None:
+838	    """C8 — refuse. Never overwrite, never auto-rename.
+839	
+840	    Upload renames because the name came from a file and the result is visible in the list
+841	    the user is looking at. A copy path came from the caller, and later edits, tests and
+842	    commits key off it — quietly changing that key hands the caller a file they did not ask
+843	    for. And the case-insensitive sweep runs on every platform, so the same request cannot
+844	    overwrite on Windows and coexist on Linux.
+845	    """
+846	    target = parent / filename
+847	    conflict = lambda reason, **extra: AttachmentError(  # noqa: E731
+848	        409, "TARGET_EXISTS", "Copy target already exists.",
+849	        target_path="/".join(segments), path_base="source", group_id=group_id,
+850	        reason=reason, **extra,
+851	    )
+852	    # The directory listing comes FIRST. On a case-insensitive filesystem `lstat` succeeds
+853	    # for `Notes.txt` when only `notes.txt` exists, so leading with it would report a plain
+854	    # `exists` on Windows and `case_insensitive_match` on Linux for the very same request —
+855	    # the platform split C8 exists to close. Reading the real entry name settles it the same
+856	    # way everywhere.
+857	    folded = filename.casefold()
+858	    existing = None
+859	    try:
+860	        for entry in parent.iterdir():
+861	            if entry.name.casefold() == folded:
+862	                existing = entry.name
+863	                break
+864	    except OSError:
+865	        existing = None
+866	    if existing is not None:
+867	        if existing != filename:
+868	            raise conflict("case_insensitive_match", existing_name=existing)
+869	        raise conflict("exists")
+870	
+871	    # Belt and braces for anything the listing could not show.
+872	    try:
+873	        target.lstat()                       # lstat → a broken symlink also counts as present
+874	    except FileNotFoundError:
+875	        return
+876	    except OSError:
+877	        pass
+878	    raise conflict("exists")
+879	
+880	
+881	def _unlink_quiet(path: Path) -> None:
+882	    try:
+883	        path.unlink()
+884	    except OSError:
+885	        pass
+886	
+887	
+888	def _cleanup_dirs(created: list[Path]) -> None:
+889	    """Remove the directories this call created, deepest first, only while empty."""
+890	    for directory in created:
+891	        try:
+892	            directory.rmdir()
+893	        except OSError:
+894	            break
+895	
+896	
+897	# ── async wrappers — the routes call these ──────────────────────────────────────
+898	
+899	async def _in_thread(fn: Callable[..., Any], *args: Any) -> Any:
+900	    return await anyio.to_thread.run_sync(fn, *args)
+901	
+902	
+903	async def alist_attachments(doc_id: str) -> dict:
+904	    return await _in_thread(list_attachments, doc_id)
+905	
+906	
+907	async def aresolve_download(doc_id: str, name: str) -> tuple[Path, dict]:
+908	    return await _in_thread(resolve_download, doc_id, name)
+909	
+910	
+911	async def adelete_attachment(doc_id: str, name: str, actor: Optional[dict]) -> dict:
+912	    return await _in_thread(delete_attachment, doc_id, name, actor)
+913	
+914	
+915	async def aread_attachment(doc_id: str, name: str, mode: str, encoding: str) -> dict:
+916	    return await _in_thread(read_attachment, doc_id, name, mode, encoding)
+917	
+918	
+919	async def acopy_to_source(
+920	    doc_id: str,
+921	    name: str,
+922	    target_path: Optional[str],
+923	    group_id: Optional[str],
+924	    actor: Optional[dict],
+925	) -> dict:
+926	    return await _in_thread(copy_to_source, doc_id, name, target_path, group_id, actor)
+927	

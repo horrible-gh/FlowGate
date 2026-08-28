@@ -1,0 +1,1 @@
+{"ok":true,"op":"grep","server_ts":"2026-08-28T12:23:12+09:00","matches":[{"file":"server/modules/flow_gate/service.py","line":288,"text":"def apply_selected_inbox(filenames: list[str]) -> list[dict]:"}],"total":1,"truncated":false}

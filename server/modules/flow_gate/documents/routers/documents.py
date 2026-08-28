@@ -2237,12 +2237,14 @@ def get_mention_copy(
 def update_document_content_rpc(
     body: DocumentContentUpdateRpc,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
     """Save document content (RPC style — body)."""
     return update_document_content(
         body.doc_id,
         DocumentContentUpdate(content=body.content),
         current_user,
+        request,
     )
 
 
@@ -2567,14 +2569,28 @@ def get_step_verification(
     return {"data": data}
 
 
+_STEP_VERIFICATION_FALLBACK_COPY = {
+    "ko": "TR 단계별 확인 섹션 검증 반려",
+    "en": "TR step-verification section validation rejected",
+    "ja": "TR 段階別確認セクション検証却下",
+}
+
+
 @router.patch("/{doc_id}/content")
 @require_permission("perm_document_update")
 def update_document_content(
     doc_id: str,
     body: DocumentContentUpdate,
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict:
-    """Save the content of the Markdown file linked to the document."""
+    """Save the content of the Markdown file linked to the document.
+
+    Before the write, a TR body is judged by the same `## 단계별 확인` gate as inbox
+    intake (0467 R0001/T0010) via ``step_verification_service.enforce_on_save`` -- the
+    single shared call site for this route and its RPC alias (``update_document_content_rpc``
+    forwards here rather than duplicating the check).
+    """
     doc = document_service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
@@ -2600,6 +2616,18 @@ def update_document_content(
         else:
             detail = f"Modification not allowed for status: {doc.get('status')}"
         raise HTTPException(status_code=422, detail=detail)
+
+    from modules.flow_gate.template_provision import normalize_locale
+
+    locale = normalize_locale(request.headers.get("x-locale") if request is not None else None)
+    step_verification_result = step_verification_service.enforce_on_save(
+        doc.get("type_code"), body.content, locale=locale,
+    )
+    if step_verification_result and step_verification_result.get("verdict") == step_verification_service.VERDICT_REJECT:
+        raise HTTPException(
+            status_code=422,
+            detail=step_verification_result.get("notice") or _STEP_VERIFICATION_FALLBACK_COPY[locale],
+        )
 
     file_path = _document_file_path(doc)
     file_path.parent.mkdir(parents=True, exist_ok=True)

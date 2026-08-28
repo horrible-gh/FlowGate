@@ -1,0 +1,141 @@
+1	"""Safe filesystem operations — rename/move with collision avoidance.
+2	
+3	Utilities that handle Windows file locks (PermissionError) and path
+4	collisions.
+5	"""
+6	from __future__ import annotations
+7	
+8	import os
+9	import shutil
+10	import time
+11	import uuid
+12	from pathlib import Path
+13	from typing import Optional
+14	
+15	
+16	def ensure_dir(path: Path) -> None:
+17	    """Create the directory if it does not exist."""
+18	    path.mkdir(parents=True, exist_ok=True)
+19	
+20	
+21	def _tmp_name(path: Path) -> Path:
+22	    """Generate a temporary name for collision avoidance."""
+23	    return path.parent / f"{path.name}.__tmp_{uuid.uuid4().hex[:8]}"
+24	
+25	
+26	def safe_rename(
+27	    src: Path,
+28	    dst: Path,
+29	    retries: int = 3,
+30	    delay: float = 0.3,
+31	) -> None:
+32	    """Safely rename src to dst.
+33	
+34	    - If dst already exists, back it up under a temporary name first.
+35	    - Retries on Windows PermissionError.
+36	    """
+37	    if not src.exists():
+38	        raise FileNotFoundError(f"Source not found: {src}")
+39	
+40	    ensure_dir(dst.parent)
+41	
+42	    # Handle dst collision
+43	    tmp_backup: Optional[Path] = None
+44	    if dst.exists():
+45	        tmp_backup = _tmp_name(dst)
+46	        dst.rename(tmp_backup)
+47	
+48	    last_exc: Optional[Exception] = None
+49	    for attempt in range(retries):
+50	        try:
+51	            src.rename(dst)
+52	            # Delete the collision backup
+53	            if tmp_backup and tmp_backup.exists():
+54	                if tmp_backup.is_dir():
+55	                    shutil.rmtree(tmp_backup, ignore_errors=True)
+56	                else:
+57	                    tmp_backup.unlink(missing_ok=True)
+58	            return
+59	        except PermissionError as exc:
+60	            last_exc = exc
+61	            time.sleep(delay * (attempt + 1))
+62	        except OSError as exc:
+63	            # Cross-device move → copy + delete
+64	            if exc.errno == errno_EXDEV():
+65	                _cross_device_move(src, dst)
+66	                if tmp_backup and tmp_backup.exists():
+67	                    if tmp_backup.is_dir():
+68	                        shutil.rmtree(tmp_backup, ignore_errors=True)
+69	                    else:
+70	                        tmp_backup.unlink(missing_ok=True)
+71	                return
+72	            last_exc = exc
+73	            break
+74	
+75	    # Failed — restore backup
+76	    if tmp_backup and tmp_backup.exists():
+77	        try:
+78	            tmp_backup.rename(dst)
+79	        except Exception:
+80	            pass
+81	    raise OSError(f"Failed to rename: {src} → {dst}") from last_exc
+82	
+83	
+84	def errno_EXDEV() -> int:
+85	    """Return the cross-device errno value."""
+86	    import errno
+87	    return errno.EXDEV
+88	
+89	
+90	def _cross_device_move(src: Path, dst: Path) -> None:
+91	    """Cross-device move: copy → delete."""
+92	    if src.is_dir():
+93	        shutil.copytree(str(src), str(dst))
+94	        shutil.rmtree(str(src))
+95	    else:
+96	        shutil.copy2(str(src), str(dst))
+97	        src.unlink()
+98	
+99	
+100	def move_subtree(
+101	    src_dir: Path,
+102	    dst_dir: Path,
+103	    retries: int = 3,
+104	    delay: float = 0.3,
+105	) -> None:
+106	    """Move all files/folders under src_dir into dst_dir.
+107	
+108	    Creates dst_dir if it does not exist. Overwrites existing files.
+109	    """
+110	    if not src_dir.exists():
+111	        raise FileNotFoundError(f"Source directory not found: {src_dir}")
+112	
+113	    ensure_dir(dst_dir)
+114	
+115	    for item in src_dir.iterdir():
+116	        dst_item = dst_dir / item.name
+117	        last_exc: Optional[Exception] = None
+118	        for attempt in range(retries):
+119	            try:
+120	                if item.is_dir():
+121	                    if dst_item.exists():
+122	                        move_subtree(item, dst_item, retries=retries, delay=delay)
+123	                    else:
+124	                        safe_rename(item, dst_item, retries=retries, delay=delay)
+125	                else:
+126	                    safe_rename(item, dst_item, retries=retries, delay=delay)
+127	                last_exc = None
+128	                break
+129	            except PermissionError as exc:
+130	                last_exc = exc
+131	                time.sleep(delay * (attempt + 1))
+132	
+133	        if last_exc:
+134	            raise OSError(f"Failed to move subtree: {item}") from last_exc
+135	
+136	    # Remove src_dir when empty
+137	    try:
+138	        src_dir.rmdir()
+139	    except OSError:
+140	        pass  # ignore if not empty
+141	

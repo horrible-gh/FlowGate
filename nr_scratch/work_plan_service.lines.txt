@@ -1,0 +1,1665 @@
+1	"""Work plan (WP) domain service — flowgate.default.0395.
+2	
+3	One validator, one writer, two callers. The human API (documents/routers/work_plan.py)
+4	and the AI inbox branch (api/inbox_routes.py) both come through this module, because
+5	D0007 §2.2 makes that the whole point of the design: "the validator and the save service are
+6	the only channel for both the human and the AI path". Two validators would drift within a release.
+7	
+8	Contracts implemented here
+9	  * P0009 §2   — canonical JSON schema, key order, unknown-field policy
+10	  * P0009 §1.2 — ``{"code", "message", "errors": [{loc, key, code, msg}]}`` failures
+11	  * P0009 §4   — create / read / save shapes (the routes only marshal)
+12	  * P0009 §5   — inbox flavour: same verdicts, inbox's own failure envelope
+13	  * L0010 §1   — every threshold; this module is the only place they are written
+14	  * L0010 §2.1 — quantity → step expansion (the definition of the canonical body)
+15	  * L0010 §2.3 — layered validation; a layer with errors never runs the next one
+16	
+17	Deliberately NOT here: apply/preview/fill (P0009 §7) and the applications journal
+18	(P0009 §8). Those need the workflow sequence and belong to the next task set.
+19	"""
+20	from __future__ import annotations
+21	
+22	import json
+23	import os
+24	import re
+25	import tempfile
+26	import unicodedata
+27	from typing import Any, Iterable, Optional
+28	
+29	from modules.flow_gate.db import templates as db_templates
+30	from modules.flow_gate.documents.constants import (
+31	    STEP_NOTE_MAX_CHARS,
+32	    WORK_PLAN_COUNTABLE_ORDER,
+33	    WORK_PLAN_LOCKED_TYPES,
+34	    WORK_PLAN_PAIR_MAP,
+35	    WORK_PLAN_SHEET_TYPES,
+36	    WORK_PLAN_STEP_TYPES,
+37	    WORK_PLAN_TYPE,
+38	    WORK_PLAN_TYPE_UNITS,
+39	)
+40	
+41	# ── L0010 §1.1 thresholds — single source of truth ───────────────────────────
+42	WP_VERSION_SUPPORTED = 1
+43	COUNT_MIN = 0
+44	COUNT_MAX = 20
+45	STEPS_MAX = 100
+46	# 0406 T0022 item 6: documents.constants is the sole source of truth for the one-line note
+47	# cap. A separate 200 written here grew into three copies with the sequence's and the screen's.
+48	NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
+49	PROVIDER_CANDIDATES_MAX = 50
+50	ERRORS_REPORTED_MAX = 50
+51	
+52	BINDING_ADVISORY = "advisory"
+53	LOCKED_REASON_SERVER_ASSEMBLED = "server_assembled"
+54	
+55	KEY_PATTERN = re.compile(r"^([A-Z]{1,3})#([1-9][0-9]*)$")
+56	PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+57	# L0010 §1.1 note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
+58	# included on purpose — a one-line note never legitimately holds them, and
+59	# silently replacing them would tell the AI its body was stored verbatim.
+60	CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+61	
+62	PAIR_ROLES = ("instruction", "result", "single")
+63	ORIGINS = ("human", "ai_suggested", "system")
+64	
+65	TOP_LEVEL_ORDER = (
+66	    "wp_version",
+67	    "binding",
+68	    "counted_types",
+69	    "quantities",
+70	    "provider_candidates",
+71	    "defaults",
+72	    "steps",
+73	)
+74	STEP_FIELD_ORDER = (
+75	    "key",
+76	    "type",
+77	    "ordinal",
+78	    "pair_key",
+79	    "pair_role",
+80	    "provider_id",
+81	    "provider_display_name",
+82	    "note",
+83	    "locked",
+84	    "locked_reason",
+85	    "origin",
+86	)
+87	CANDIDATE_FIELD_ORDER = ("provider_id", "display_name", "group_label")
+88	DEFAULTS_FIELD_ORDER = ("provider_id", "note")
+89	
+90	LOCALES = ("ko", "en", "ja")
+91	FALLBACK_LOCALE = "ko"
+92	
+93	DOCUMENT_FILENAME = "document.json"
+94	HELP_TEMPLATE_PATH = "/help/items/design_template/WP"
+95	
+96	
+97	# ── Errors ───────────────────────────────────────────────────────────────────
+98	
+99	class WorkPlanValidationError(Exception):
+100	    """One or more rule violations. Carries every error, not just the first."""
+101	
+102	    def __init__(self, errors: list[dict], *, action: str = "save"):
+103	        self.errors = errors
+104	        self.action = action
+105	        super().__init__(f"{len(errors)} work plan validation error(s)")
+106	
+107	
+108	class WorkPlanUnreadable(Exception):
+109	    """The stored body cannot be opened as a table (P0009 §4.5)."""
+110	
+111	    def __init__(self, reason: str, detail: str = "", raw: Optional[str] = None):
+112	        self.reason = reason
+113	        self.detail = detail
+114	        self.raw = raw
+115	        super().__init__(f"{reason}: {detail}")
+116	
+117	
+118	# ── Copy (P0009 §1.3: message/msg follow the request locale) ─────────────────
+119	
+120	_ERROR_COPY: dict[str, dict[str, str]] = {
+121	    "json_parse_failed": {
+122	        "ko": "작업계획 본문이 JSON 객체가 아닙니다.",
+123	        "en": "The work plan body is not a JSON object.",
+124	        "ja": "作業計画の本文が JSON オブジェクトではありません。",
+125	    },
+126	    "wp_version_invalid": {
+127	        "ko": "wp_version 은 정수여야 합니다.",
+128	        "en": "wp_version must be an integer.",
+129	        "ja": "wp_version は整数でなければなりません。",
+130	    },
+131	    "wp_version_unsupported": {
+132	        "ko": "wp_version={value} 는 이 서버가 읽을 수 없습니다.",
+133	        "en": "wp_version={value} cannot be read by this server.",
+134	        "ja": "wp_version={value} はこのサーバーでは読めません。",
+135	    },
+136	    "missing_field": {
+137	        "ko": "필수 항목 {field} 가 없습니다.",
+138	        "en": "Required field {field} is missing.",
+139	        "ja": "必須項目 {field} がありません。",
+140	    },
+141	    "type_invalid": {
+142	        "ko": "{field} 의 형이 올바르지 않습니다.",
+143	        "en": "{field} has the wrong type.",
+144	        "ja": "{field} の型が正しくありません。",
+145	    },
+146	    "unknown_field": {
+147	        "ko": "모르는 항목 {field} 입니다. 실험용 항목은 x_ 로 시작해야 보존됩니다.",
+148	        "en": "Unknown field {field}. Experimental fields must start with x_ to be preserved.",
+149	        "ja": "未知の項目 {field} です。実験用の項目は x_ で始めてください。",
+150	    },
+151	    "enum_not_allowed": {
+152	        "ko": "{field} 에 쓸 수 없는 값입니다.",
+153	        "en": "{field} has a value that is not allowed.",
+154	        "ja": "{field} に使用できない値です。",
+155	    },
+156	    "binding_not_allowed": {
+157	        "ko": "binding 은 항상 advisory 여야 합니다. 작업계획은 실행을 강제하지 않습니다.",
+158	        "en": "binding must always be advisory. A work plan never forces execution.",
+159	        "ja": "binding は常に advisory でなければなりません。作業計画は実行を強制しません。",
+160	    },
+161	    "empty_selection": {
+162	        "ko": "{what} 을 하나 이상 체크해 주세요.",
+163	        "en": "Check at least one {what}.",
+164	        "ja": "{what} を一つ以上チェックしてください。",
+165	    },
+166	    "unknown_type_code": {
+167	        "ko": "{code} 는 수량을 셀 수 있는 타입이 아닙니다.",
+168	        "en": "{code} is not a countable document type.",
+169	        "ja": "{code} は数量を数えられるタイプではありません。",
+170	    },
+171	    "duplicate_type": {
+172	        "ko": "타입 {code} 가 두 번 나옵니다.",
+173	        "en": "Type {code} appears twice.",
+174	        "ja": "タイプ {code} が二回出てきます。",
+175	    },
+176	    "quantities_key_mismatch": {
+177	        "ko": "quantities 의 키가 counted_types 와 다릅니다.",
+178	        "en": "The keys of quantities differ from counted_types.",
+179	        "ja": "quantities のキーが counted_types と異なります。",
+180	    },
+181	    "unit_mismatch": {
+182	        "ko": "{code} 의 단위는 {expected} 입니다.",
+183	        "en": "The unit of {code} is {expected}.",
+184	        "ja": "{code} の単位は {expected} です。",
+185	    },
+186	    "count_not_integer": {
+187	        "ko": "수량은 정수여야 합니다.",
+188	        "en": "The count must be an integer.",
+189	        "ja": "数量は整数でなければなりません。",
+190	    },
+191	    "count_out_of_range": {
+192	        "ko": "수량은 {min} 이상 {max} 이하여야 합니다.",
+193	        "en": "The count must be between {min} and {max}.",
+194	        "ja": "数量は {min} 以上 {max} 以下でなければなりません。",
+195	    },
+196	    "key_format_invalid": {
+197	        "ko": "논리 키는 <타입코드>#<회차> 서식이어야 합니다. 받은 값: {value}",
+198	        "en": "A step key must look like <TYPE>#<ordinal>. Received: {value}",
+199	        "ja": "論理キーは <タイプコード>#<回次> の書式です。受け取った値: {value}",
+200	    },
+201	    "duplicate_key": {
+202	        "ko": "논리 키 {value} 가 두 번 나옵니다.",
+203	        "en": "Step key {value} appears twice.",
+204	        "ja": "論理キー {value} が二回出てきます。",
+205	    },
+206	    "steps_quantity_mismatch": {
+207	        "ko": "steps 가 quantities 에서 펼쳐지는 단계 목록과 다릅니다.",
+208	        "en": "steps does not match the list expanded from quantities.",
+209	        "ja": "steps が quantities から展開される段階リストと異なります。",
+210	    },
+211	    "steps_too_many": {
+212	        "ko": "단계는 최대 {max} 개까지입니다.",
+213	        "en": "A work plan may hold at most {max} steps.",
+214	        "ja": "段階は最大 {max} 個までです。",
+215	    },
+216	    "step_shape_mismatch": {
+217	        "ko": "이 단계의 type·ordinal·pair_key·pair_role 이 논리 키와 맞지 않습니다.",
+218	        "en": "This step's type/ordinal/pair_key/pair_role do not match its key.",
+219	        "ja": "この段階の type・ordinal・pair_key・pair_role がキーと一致しません。",
+220	    },
+221	    "locked_flag_mismatch": {
+222	        "ko": "잠금 표시가 타입과 다릅니다.",
+223	        "en": "The locked flag does not match the step type.",
+224	        "ja": "ロック表示がタイプと異なります。",
+225	    },
+226	    "provider_not_allowed": {
+227	        "ko": "테스트레포트(TSR)는 서버가 자동 조립하므로 공급자를 지정할 수 없습니다.",
+228	        "en": "TSR is assembled by the server, so it cannot take a provider.",
+229	        "ja": "テストレポート(TSR)はサーバーが自動組立するため提供者を指定できません。",
+230	    },
+231	    "note_not_allowed": {
+232	        "ko": "테스트레포트(TSR)는 서버가 자동 조립하므로 한줄 멘트를 적을 수 없습니다.",
+233	        "en": "TSR is assembled by the server, so it cannot take a note.",
+234	        "ja": "テストレポート(TSR)はサーバーが自動組立するため一行メモを書けません。",
+235	    },
+236	    "origin_not_allowed": {
+237	        "ko": "잠긴 단계의 origin 은 system 이어야 합니다.",
+238	        "en": "A locked step must have origin=system.",
+239	        "ja": "ロックされた段階の origin は system でなければなりません。",
+240	    },
+241	    # 0411 T0004: the code name stays (screens and tests pin this code) but the wording states
+242	    # the new rule — a candidate, or any provider registered in this project, may be chosen.
+243	    "provider_not_candidate": {
+244	        "ko": "{value} 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.",
+245	        "en": "{value} is neither one of this work plan's provider candidates nor a provider registered in this project.",
+246	        "ja": "{value} はこの作業計画の提供者候補でも、このプロジェクトに登録された提供者でもありません。",
+247	    },
+248	    "provider_id_format_invalid": {
+249	        "ko": "공급자 식별자 서식이 올바르지 않습니다: {value}",
+250	        "en": "Malformed provider id: {value}",
+251	        "ja": "提供者識別子の書式が正しくありません: {value}",
+252	    },
+253	    "duplicate_provider_candidate": {
+254	        "ko": "공급자 {value} 가 후보 목록에 두 번 있습니다.",
+255	        "en": "Provider {value} appears twice in the candidate list.",
+256	        "ja": "提供者 {value} が候補リストに二回あります。",
+257	    },
+258	    "provider_candidates_too_many": {
+259	        "ko": "공급자 후보는 최대 {max} 개까지입니다.",
+260	        "en": "At most {max} provider candidates are allowed.",
+261	        "ja": "提供者候補は最大 {max} 個までです。",
+262	    },
+263	    "note_too_long": {
+264	        "ko": "한줄 멘트는 {max} 자까지입니다.",
+265	        "en": "A note may be at most {max} characters.",
+266	        "ja": "一行メモは {max} 文字までです。",
+267	    },
+268	    "note_has_control_char": {
+269	        "ko": "한줄 멘트에 개행·탭 같은 제어문자를 쓸 수 없습니다.",
+270	        "en": "A note cannot contain control characters such as newline or tab.",
+271	        "ja": "一行メモに改行・タブなどの制御文字は使えません。",
+272	    },
+273	}
+274	
+275	_HEADLINE = {
+276	    "save": {
+277	        "ko": "작업계획을 저장하지 못했습니다. {n}개 항목이 규칙에 맞지 않습니다.",
+278	        "en": "The work plan was not saved. {n} item(s) break the rules.",
+279	        "ja": "作業計画を保存できませんでした。{n}件の項目が規則に合いません。",
+280	    },
+281	    "create": {
+282	        "ko": "작업계획을 만들지 못했습니다. {n}개 항목이 규칙에 맞지 않습니다.",
+283	        "en": "The work plan was not created. {n} item(s) break the rules.",
+284	        "ja": "作業計画を作成できませんでした。{n}件の項目が規則に合いません。",
+285	    },
+286	}
+287	
+288	_EMPTY_SELECTION_WHAT = {
+289	    "counted_types": {
+290	        "ko": "수량을 확인할 타입", "en": "document type to count", "ja": "数量を確認するタイプ",
+291	    },
+292	    "provider_candidates": {
+293	        "ko": "투입할 공급자", "en": "provider to use", "ja": "投入する提供者",
+294	    },
+295	}
+296	
+297	_INBOX_PREFIX = {
+298	    "ko": "작업계획을 저장할 수 없습니다.",
+299	    "en": "The work plan cannot be saved.",
+300	    "ja": "作業計画を保存できません。",
+301	}
+302	
+303	_INBOX_NOT_JSON = {
+304	    "ko": ("작업계획(WP)의 본문은 JSON 이어야 합니다. Markdown 표로 보낼 수 없습니다. "
+305	           "{where} 서식은 도움말 항목 design_template/WP 를 보세요."),
+306	    "en": ("The body of a work plan (WP) must be JSON, not Markdown. "
+307	           "{where} See the help item design_template/WP for the format."),
+308	    "ja": ("作業計画(WP)の本文は JSON でなければなりません。Markdown の表では送れません。"
+309	           "{where} 書式はヘルプ項目 design_template/WP を参照してください。"),
+310	}
+311	
+312	_INBOX_NOT_JSON_WHERE = {
+313	    "ko": "{line}행 {col}열에서 '{{' 가 아닌 '{char}' 을 만났습니다.",
+314	    "en": "At line {line}, column {col} the parser found '{char}' instead of '{{'.",
+315	    "ja": "{line}行{col}列で '{{' ではなく '{char}' に出会いました。",
+316	}
+317	
+318	
+319	def normalize_locale(value: Optional[str]) -> str:
+320	    raw = (value or "").strip().lower()
+321	    if not raw:
+322	        return FALLBACK_LOCALE
+323	    head = raw.split(",")[0].split("-")[0].split("_")[0]
+324	    return head if head in LOCALES else FALLBACK_LOCALE
+325	
+326	
+327	def _copy(table: dict, locale: str, key: str) -> str:
+328	    entry = table.get(key) or {}
+329	    return entry.get(locale) or entry.get(FALLBACK_LOCALE) or key
+330	
+331	
+332	def _error(code: str, loc: str, key: Optional[str] = None, **params) -> dict:
+333	    return {"loc": loc, "key": key, "code": code, "params": params}
+334	
+335	
+336	def empty_selection_error(field: str) -> dict:
+337	    """"Nothing was chosen at all" for a create request that skipped the dialog (P0009 §4.3)."""
+338	    return _error("empty_selection", field, what_key=field)
+339	
+340	
+341	def render_errors(errors: list[dict], locale: str) -> list[dict]:
+342	    """Attach the localized ``msg`` and drop the internal ``params`` carrier."""
+343	    locale = normalize_locale(locale)
+344	    rendered = []
+345	    for err in errors[:ERRORS_REPORTED_MAX]:
+346	        template = _copy(_ERROR_COPY, locale, err["code"])
+347	        params = dict(err.get("params") or {})
+348	        # The "please tick one" phrasing needs a localized noun, so the error carries the noun's key
+349	        # rather than a pre-rendered word — the error is built before the locale is known.
+350	        what_key = params.pop("what_key", None)
+351	        if what_key:
+352	            params["what"] = _copy(_EMPTY_SELECTION_WHAT, locale, what_key)
+353	        try:
+354	            msg = template.format(**params)
+355	        except (KeyError, IndexError, ValueError):
+356	            msg = template
+357	        rendered.append({
+358	            "loc": err.get("loc", ""),
+359	            "key": err.get("key"),
+360	            "code": err["code"],
+361	            "msg": msg,
+362	        })
+363	    return rendered
+364	
+365	
+366	def error_response(exc: WorkPlanValidationError, locale: str) -> dict:
+367	    """P0009 §1.2 body for the human routes."""
+368	    locale = normalize_locale(locale)
+369	    rendered = render_errors(exc.errors, locale)
+370	    payload = {
+371	        "code": "wp_validation_failed",
+372	        "message": _copy(_HEADLINE, locale, exc.action).format(n=len(exc.errors)),
+373	        "errors": rendered,
+374	    }
+375	    if len(exc.errors) > ERRORS_REPORTED_MAX:
+376	        payload["error_total"] = len(exc.errors)
+377	    return payload
+378	
+379	
+380	def inbox_error_message(exc: WorkPlanValidationError, locale: str) -> str:
+381	    """P0009 §5.3: the same verdicts, flattened into the inbox's one-line envelope."""
+382	    locale = normalize_locale(locale)
+383	    parts = []
+384	    for index, err in enumerate(render_errors(exc.errors, locale), start=1):
+385	        where = err["loc"] or "body"
+386	        if err.get("key"):
+387	            where = f"{where} ({err['key']})"
+388	        parts.append(f"({index}) {where}: {err['msg']}")
+389	    prefix = _INBOX_PREFIX.get(locale, _INBOX_PREFIX[FALLBACK_LOCALE])
+390	    return " ".join([prefix] + parts)
+391	
+392	
+393	def inbox_not_json_message(raw: str, exc: Optional[Exception], locale: str) -> str:
+394	    """P0009 §5.2: say where it broke, so an unattended worker can fix it."""
+395	    locale = normalize_locale(locale)
+396	    where = ""
+397	    line = getattr(exc, "lineno", None)
+398	    col = getattr(exc, "colno", None)
+399	    if line and col:
+400	        lines = (raw or "").splitlines() or [""]
+401	        text = lines[line - 1] if 0 < line <= len(lines) else ""
+402	        char = text[col - 1] if 0 < col <= len(text) else ""
+403	        if char:
+404	            where = _INBOX_NOT_JSON_WHERE.get(
+405	                locale, _INBOX_NOT_JSON_WHERE[FALLBACK_LOCALE]
+406	            ).format(line=line, col=col, char=char)
+407	    template = _INBOX_NOT_JSON.get(locale, _INBOX_NOT_JSON[FALLBACK_LOCALE])
+408	    return template.format(where=(where + " ") if where else "").strip()
+409	
+410	
+411	# ── Type registry (L0010 §2.1 decision 2: order comes from the table) ────────
+412	
+413	def _best_rows_by_code(rows: Iterable[dict]) -> dict[str, dict]:
+414	    """One row per countable code within a single project/global scope.
+415	
+416	    'L' exists twice (design "logic" / general "log"). Only the design one is a
+417	    countable design sheet; the series filter below drops the log row, and this guard
+418	    also covers a future duplicate design/instruction row sharing a code.
+419	    """
+420	    best: dict[str, dict] = {}
+421	    for row in rows:
+422	        code = str(row.get("type_code") or "").upper()
+423	        if code not in WORK_PLAN_TYPE_UNITS:
+424	            continue
+425	        series = str(row.get("series") or "")
+426	        if series not in ("design", "instruction"):
+427	            continue
+428	        if code in best and best[code].get("series") == "design":
+429	            continue
+430	        best[code] = row
+431	    return best
+432	
+433	
+434	def list_countable_types(project_id: Optional[str] = None, locale: str = "ko") -> list[dict]:
+435	    """Countable types in the order a work plan lists them.
+436	
+437	    The set of countable codes and their units are facts about the workflow and live
+438	    in documents.constants; the ORDER is read from document_types so that adding a
+439	    design type does not require editing this file (L0010 §2.1 decision 2).
+440	
+441	    Ordering rule: sheets before sets; within sheets the design *instruction* (DS)
+442	    leads the design series; within each group, the table's own sort_order decides.
+443	    That reproduces DS · D · P · L · DB · N · T · TS from the current table without
+444	    naming any of them here.
+445	
+446	    0429 T0004: project_id is no longer discarded. A project row overrides the global
+447	    row for the same code (display name, sort_order, active flag) — including turning it
+448	    off: an inactive project override drops the code from the registry rather than
+449	    falling back to the still-active global row. A code that is merely missing or
+450	    inactive after a successful DB read stays out of the registry; the
+451	    WORK_PLAN_COUNTABLE_ORDER fallback below only fires when the DB read itself failed,
+452	    so a plan can still be opened and read.
+453	    """
+454	    db_ok = True
+455	    try:
+456	        rows = db_templates.list_document_types(project_id=project_id, locale=locale)
+457	    except Exception:  # noqa: BLE001 — a registry outage must not crash the reader
+458	        rows = []
+459	        db_ok = False
+460	
+461	    global_best = _best_rows_by_code(row for row in rows if row.get("project_id") is None)
+462	    project_best = (
+463	        _best_rows_by_code(row for row in rows if row.get("project_id") is not None)
+464	        if project_id else {}
+465	    )
+466	
+467	    by_code: dict[str, dict] = {}
+468	    for code in set(global_best) | set(project_best):
+469	        row = project_best.get(code) or global_best[code]
+470	        if not row.get("is_active", 1):
+471	            continue
+472	        by_code[code] = {
+473	            "code": code,
+474	            "name": row.get("type_name") or code,
+475	            "series": str(row.get("series") or ""),
+476	            "sort_order": row.get("sort_order") or 0,
+477	        }
+478	
+479	    entries = list(by_code.values())
+480	    if not db_ok:
+481	        for code in WORK_PLAN_COUNTABLE_ORDER:
+482	            if code not in by_code:
+483	                entries.append({
+484	                    "code": code,
+485	                    "name": code,
+486	                    "series": "design" if code in WORK_PLAN_SHEET_TYPES else "instruction",
+487	                    "sort_order": WORK_PLAN_COUNTABLE_ORDER.index(code),
+488	                })
+489	
+490	    def _rank(entry: dict) -> tuple:
+491	        unit = WORK_PLAN_TYPE_UNITS[entry["code"]]
+492	        return (
+493	            0 if unit == "sheet" else 1,
+494	            0 if entry["series"] == "instruction" and unit == "sheet" else 1,
+495	            entry["sort_order"],
+496	            entry["code"],
+497	        )
+498	
+499	    ordered = sorted(entries, key=_rank)
+500	    result = []
+501	    for entry in ordered:
+502	        code = entry["code"]
+503	        item = {
+504	            "code": code,
+505	            "name": entry["name"],
+506	            "series": entry["series"],
+507	            "unit": WORK_PLAN_TYPE_UNITS[code],
+508	            "countable": True,
+509	        }
+510	        pair = WORK_PLAN_PAIR_MAP.get(code)
+511	        if pair:
+512	            item["pair_code"] = pair
+513	            item["pair_name"] = _type_name(rows, pair, locale, project_id) or pair
+514	        result.append(item)
+515	    return result
+516	
+517	
+518	def _type_name(
+519	    rows: Iterable[dict], code: str, locale: str, project_id: Optional[str] = None,
+520	) -> Optional[str]:
+521	    project_match: Optional[str] = None
+522	    global_match: Optional[str] = None
+523	    for row in rows:
+524	        if str(row.get("type_code") or "").upper() != code:
+525	            continue
+526	        if project_id and row.get("project_id") == project_id:
+527	            project_match = row.get("type_name")
+528	        elif row.get("project_id") is None:
+529	            global_match = row.get("type_name")
+530	    return project_match or global_match
+531	
+532	
+533	def annotate_types(rows: list[dict]) -> list[dict]:
+534	    """Add ``unit``/``countable``/``pair_code`` to a document-type list response.
+535	
+536	    P0009 §4.1: without this the create dialog would have to hardcode the type codes
+537	    and would need editing every time a type is added. Purely additive — existing
+538	    keys are untouched.
+539	    """
+540	    names = {
+541	        str(row.get("type_code") or "").upper(): row.get("type_name")
+542	        for row in rows
+543	        if row.get("type_name")
+544	    }
+545	    annotated = []
+546	    for row in rows:
+547	        item = dict(row)
+548	        code = str(row.get("type_code") or "").upper()
+549	        series = str(row.get("series") or "")
+550	        countable = code in WORK_PLAN_TYPE_UNITS and series in ("design", "instruction")
+551	        item["countable"] = countable
+552	        item["unit"] = WORK_PLAN_TYPE_UNITS[code] if countable else None
+553	        pair = WORK_PLAN_PAIR_MAP.get(code) if countable else None
+554	        if pair:
+555	            item["pair_code"] = pair
+556	            # P0009 §4.1 / §10: the create dialog shows the pair's name too ("3 sets of work
+557	            # instructions, work reports included"). It reuses names from the same response, so
+558	            # the locale matches automatically, and when the pair type is absent from the list no
+559	            # entry is built — better absent than showing a type code dressed up as a name.
+560	            pair_name = names.get(pair)
+561	            if pair_name:
+562	                item["pair_name"] = pair_name
+563	        annotated.append(item)
+564	    return annotated
+565	
+566	
+567	def _order_codes(project_id: Optional[str] = None) -> list[str]:
+568	    return [entry["code"] for entry in list_countable_types(project_id)]
+569	
+570	
+571	def type_order(counted_types: Iterable[str], project_id: Optional[str] = None) -> list[str]:
+572	    """L0010 §2.1 type_order: registry order first, then anything else by code.
+573	
+574	    0429 T0004: a stored plan can carry a code the active registry no longer lists (a
+575	    since-deactivated project override, say). That code still needs a deterministic
+576	    slot so read/save order never wobbles — WORK_PLAN_COUNTABLE_ORDER is the fallback
+577	    rank, the same table list_countable_types falls back to on a DB outage.
+578	    """
+579	    wanted = list(counted_types)
+580	    ordered = [code for code in _order_codes(project_id) if code in wanted]
+581	    remainder = sorted(
+582	        set(wanted) - set(ordered),
+583	        key=lambda code: (
+584	            WORK_PLAN_COUNTABLE_ORDER.index(code) if code in WORK_PLAN_COUNTABLE_ORDER
+585	            else len(WORK_PLAN_COUNTABLE_ORDER),
+586	            code,
+587	        ),
+588	    )
+589	    return ordered + remainder
+590	
+591	
+592	# ── Expansion (L0010 §2.1) ───────────────────────────────────────────────────
+593	
+594	def make_key(type_code: str, ordinal: int) -> str:
+595	    return f"{type_code}#{ordinal}"
+596	
+597	
+598	def make_step(type_code: str, ordinal: int, pair_key: Optional[str], pair_role: str) -> dict:
+599	    locked = type_code in WORK_PLAN_LOCKED_TYPES
+600	    return {
+601	        "key": make_key(type_code, ordinal),
+602	        "type": type_code,
+603	        "ordinal": ordinal,
+604	        "pair_key": pair_key,
+605	        "pair_role": pair_role,
+606	        "provider_id": None,
+607	        "provider_display_name": None,
+608	        "note": None,
+609	        "locked": locked,
+610	        "locked_reason": LOCKED_REASON_SERVER_ASSEMBLED if locked else None,
+611	        "origin": "system" if locked else "human",
+612	    }
+613	
+614	
+615	def expand_steps(
+616	    counted_types: Iterable[str],
+617	    quantities: dict,
+618	    project_id: Optional[str] = None,
+619	) -> list[dict]:
+620	    steps: list[dict] = []
+621	    for code in type_order(counted_types, project_id):
+622	        quantity = quantities.get(code) or {}
+623	        count = quantity.get("count")
+624	        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+625	            continue
+626	        if WORK_PLAN_TYPE_UNITS.get(code) == "set":
+627	            result_code = WORK_PLAN_PAIR_MAP[code]
+628	            for ordinal in range(1, count + 1):
+629	                steps.append(make_step(code, ordinal, make_key(result_code, ordinal), "instruction"))
+630	                steps.append(make_step(result_code, ordinal, make_key(code, ordinal), "result"))
+631	        else:
+632	            for ordinal in range(1, count + 1):
+633	                steps.append(make_step(code, ordinal, None, "single"))
+634	    return steps
+635	
+636	
+637	def initial_body(
+638	    counted_types: list[str],
+639	    provider_candidates: list[dict],
+640	    project_id: Optional[str] = None,
+641	    *,
+642	    quantities: Optional[dict[str, int]] = None,
+643	    defaults: Optional[dict] = None,
+644	    type_providers: Optional[dict[str, str]] = None,
+645	) -> dict:
+646	    """Build a creation-time plan. Types absent from ``quantities`` fall back to count 0
+647	    (flowgate.default.0423 T0005 item 5) — never guessed as 1. Callers that have a
+648	    workflow_type_counts-derived value should merge it into ``quantities`` themselves
+649	    before calling this, so an explicit request value still wins over the derivation.
+650	    """
+651	    ordered = type_order(counted_types, project_id)
+652	    requested_quantities = quantities or {}
+653	    canonical_quantities = {
+654	        code: {
+655	            "unit": WORK_PLAN_TYPE_UNITS.get(code, "sheet"),
+656	            "count": requested_quantities.get(code, 0),
+657	        }
+658	        for code in ordered
+659	    }
+660	    requested_defaults = defaults or {}
+661	    canonical_defaults = {
+662	        "provider_id": requested_defaults.get("provider_id"),
+663	        "note": requested_defaults.get("note", ""),
+664	    }
+665	    assignments = type_providers or {}
+666	    provider_by_type: dict[str, Optional[str]] = {}
+667	    for code in ordered:
+668	        provider_id = assignments.get(code, canonical_defaults["provider_id"])
+669	        provider_by_type[code] = provider_id
+670	        if WORK_PLAN_TYPE_UNITS.get(code) == "set":
+671	            paired = WORK_PLAN_PAIR_MAP.get(code)
+672	            if paired:
+673	                provider_by_type[paired] = provider_id
+674	
+675	    display_names = {
+676	        candidate.get("provider_id"): candidate.get("display_name")
+677	        for candidate in provider_candidates
+678	    }
+679	    steps = expand_steps(ordered, canonical_quantities, project_id)
+680	    for step in steps:
+681	        if step.get("locked"):
+682	            continue
+683	        provider_id = provider_by_type.get(step.get("type"))
+684	        step["provider_id"] = provider_id
+685	        step["provider_display_name"] = display_names.get(provider_id) if provider_id else None
+686	        step["origin"] = "human"
+687	
+688	    return {
+689	        "wp_version": WP_VERSION_SUPPORTED,
+690	        "binding": BINDING_ADVISORY,
+691	        "counted_types": ordered,
+692	        "quantities": canonical_quantities,
+693	        "provider_candidates": list(provider_candidates),
+694	        "defaults": canonical_defaults,
+695	        "steps": steps,
+696	    }
+697	
+698	
+699	def empty_recovery_body(project_id: Optional[str] = None) -> dict:
+700	    """A valid but undecided plan, for recovering a work plan whose file is missing.
+701	
+702	    Every countable type is on the table at 0 — "the plan exists, nothing is decided
+703	    yet". The alternative (a Markdown stub, which is what generic recovery writes) would
+704	    produce a canonical file the reader cannot open at all, and the alternative of
+705	    guessing counts would put numbers nobody chose in front of a reviewer.
+706	    """
+707	    ordered = [entry["code"] for entry in list_countable_types(project_id)]
+708	    quantities = {
+709	        code: {"unit": WORK_PLAN_TYPE_UNITS.get(code, "sheet"), "count": 0}
+710	        for code in ordered
+711	    }
+712	    return {
+713	        "wp_version": WP_VERSION_SUPPORTED,
+714	        "binding": BINDING_ADVISORY,
+715	        "counted_types": ordered,
+716	        "quantities": quantities,
+717	        "provider_candidates": [],
+718	        "defaults": {"provider_id": None, "note": ""},
+719	        "steps": [],
+720	    }
+721	
+722	
+723	# ── Plans created outside the create dialog (0395 T0026 rework) ──────────────
+724	#
+725	# The create dialog is not the only way a work-plan document appears. When the workflow head
+726	# slot is WP, "make an empty document" creates one too, and that path takes only a title and
+727	# writes a Markdown frontmatter skeleton. This module's reader cannot open that file, so
+728	# opening the document shows only a JSON parse error instead of a table — the reported symptom.
+729	#
+730	# That path has no user-chosen quantities or providers. So no numbers are invented; they are
+731	# read from where they are already settled: quantities from this group's workflow sequence
+732	# (the design-document count and work-set count currently held), and providers from the
+733	# project's run chain and per-doc-type assignment table (the very values a continuous run
+734	# would pick for that step). So a freshly opened plan holds "what this group is set to do right now", with no unset cells.
+735	
+736	def workflow_type_counts(items: Optional[Iterable[dict]]) -> dict[str, int]:
+737	    """Convert workflow sequence slots into work-plan quantities.
+738	
+739	    A paired report slot (NR/TR/TSR) belongs to the same set as its instruction slot. Even
+740	    with only the report slot left and no instruction slot, that set must still count, so the larger of the two is used.
+741	    """
+742	    direct: dict[str, int] = {}
+743	    paired: dict[str, int] = {}
+744	    result_to_instruction = {
+745	        result: instruction for instruction, result in WORK_PLAN_PAIR_MAP.items()
+746	    }
+747	    for item in items or []:
+748	        code = str((item or {}).get("type") or "").strip().upper()
+749	        if code in WORK_PLAN_TYPE_UNITS:
+750	            direct[code] = direct.get(code, 0) + 1
+751	        elif code in result_to_instruction:
+752	            instruction = result_to_instruction[code]
+753	            paired[instruction] = paired.get(instruction, 0) + 1
+754	    return {
+755	        code: min(max(direct.get(code, 0), paired.get(code, 0)), COUNT_MAX)
+756	        for code in set(direct) | set(paired)
+757	    }
+758	
+759	
+760	def _effective_chain(project_id: Optional[str]) -> dict:
+761	    """The project's run chain; an empty chain when unreadable — plan creation must not die."""
+762	    if not project_id:
+763	        return {}
+764	    try:
+765	        from modules.flow_gate.settings import ai_settings_service
+766	
+767	        return ai_settings_service.resolve_effective(project_id) or {}
+768	    except Exception:  # noqa: BLE001 — an unreadable provider list is not a failure here
+769	        return {}
+770	
+771	
+772	def _registered_providers(project_id: Optional[str]) -> list[dict]:
+773	    """The providers currently registered in this project; an empty list when unreadable."""
+774	    return [
+775	        provider for provider in (_effective_chain(project_id).get("providers") or [])
+776	        if provider.get("id")
+777	    ]
+778	
+779	
+780	def _registered_provider_ids(project_id: Optional[str]) -> set[str]:
+781	    """0411 T0004 (B0001 "each provider should be changeable from the full provider list").
+782	
+783	    What a human may pick by hand is not the provider_candidates frozen into the plan but
+784	    "candidates ∪ providers currently registered in this project". provider_candidates keeps
+785	    only its original role (the AI-delegation range plus a display-name snapshot) — a split of roles, not a removal.
+786	
+787	    With an unknown project_id or unreadable settings the set is empty and the rule narrows
+788	    back to the old one (candidates only). Unreadable settings never loosen a save.
+789	    """
+790	    return {str(provider["id"]) for provider in _registered_providers(project_id)}
+791	
+792	
+793	def _assigned_provider(project_id: Optional[str], type_code: str) -> Optional[str]:
+794	    """The provider the per-doc-type assignment table (0317 D0004) sets for this type, or None."""
+795	    if not project_id:
+796	        return None
+797	    try:
+798	        from modules.flow_gate.settings import ai_settings_service
+799	
+800	        return ai_settings_service.resolve_doctype_provider(project_id, type_code)
+801	    except Exception:  # noqa: BLE001 — degrade to the plan default
+802	        return None
+803	
+804	
+805	def auto_plan_body(
+806	    project_id: Optional[str] = None,
+807	    workflow_items: Optional[Iterable[dict]] = None,
+808	) -> dict:
+809	    """The first body of a work plan that skipped the create dialog — it opens already filled.
+810	
+811	    Quantities come from the workflow sequence; provider candidates, defaults and per-type
+812	    assignments from project settings. Nothing is invented, since no human chose it: a type
+813	    absent from the sequence stays 0 for the editor to raise, and a project with no providers is left unassigned.
+814	    """
+815	    counts = workflow_type_counts(workflow_items)
+816	    ordered = [entry["code"] for entry in list_countable_types(project_id)]
+817	    quantities = {code: counts.get(code, 0) for code in ordered}
+818	
+819	    chain = _effective_chain(project_id)
+820	    providers = [p for p in (chain.get("providers") or []) if p.get("id")]
+821	    provider_ids = [p["id"] for p in providers]
+822	    default_provider_id = chain.get("default_provider_id")
+823	    if default_provider_id not in provider_ids:
+824	        default_provider_id = provider_ids[0] if provider_ids else None
+825	
+826	    type_providers: dict[str, str] = {}
+827	    for code in ordered:
+828	        if quantities.get(code, 0) <= 0:
+829	            continue
+830	        assigned = _assigned_provider(project_id, code)
+831	        if assigned in provider_ids:
+832	            type_providers[code] = assigned
+833	
+834	    body = initial_body(
+835	        ordered,
+836	        snapshot_candidates(provider_ids, providers),
+837	        project_id,
+838	        quantities=quantities,
+839	        defaults={"provider_id": default_provider_id, "note": ""},
+840	        type_providers=type_providers,
+841	    )
+842	    try:
+843	        return validate(body, project_id=project_id, action="create")
+844	    except WorkPlanValidationError:
+845	        # A table with nothing decided beats no plan at all. Not leaving behind an unopenable
+846	        # file is the entire reason this function exists.
+847	        return empty_recovery_body(project_id)
+848	
+849	
+850	def is_unwritten_plan(raw: Optional[str]) -> bool:
+851	    """Has a plan never been written to this file (empty file / Markdown frontmatter skeleton)?
+852	
+853	    Reviving is permitted only here. A file with content that is merely broken is for a human
+854	    to inspect at source, not for the server to overwrite.
+855	    """
+856	    text = (raw or "").strip()
+857	    if not text:
+858	        return True
+859	    if not text.startswith("---"):
+860	        return False
+861	    rest = text[3:]
+862	    closing = rest.find("\n---")
+863	    if closing < 0:
+864	        return False
+865	    return rest[closing + 4:].strip() == ""
+866	
+867	
+868	# ── Validation (L0010 §2.3) ──────────────────────────────────────────────────
+869	
+870	def _is_int(value: Any) -> bool:
+871	    return isinstance(value, int) and not isinstance(value, bool)
+872	
+873	
+874	def _unknown_fields(obj: dict, known: Iterable[str], prefix: str) -> list[dict]:
+875	    known_set = set(known)
+876	    errors = []
+877	    for name in obj:
+878	        if name in known_set or str(name).startswith("x_"):
+879	            continue
+880	        loc = f"{prefix}.{name}" if prefix else str(name)
+881	        errors.append(_error("unknown_field", loc, field=loc))
+882	    return errors
+883	
+884	
+885	def _note_errors(note: Any, loc: str, key: Optional[str]) -> list[dict]:
+886	    if note is None:
+887	        return []
+888	    if not isinstance(note, str):
+889	        return [_error("type_invalid", loc, key, field=loc)]
+890	    if CONTROL_CHARS.search(note):
+891	        return [_error("note_has_control_char", loc, key)]
+892	    if len(unicodedata.normalize("NFC", note)) > NOTE_MAX_CHARS:
+893	        return [_error("note_too_long", loc, key, max=NOTE_MAX_CHARS)]
+894	    return []
+895	
+896	
+897	def _check_provider_candidates(candidates: Any) -> list[dict]:
+898	    errors: list[dict] = []
+899	    if not isinstance(candidates, list):
+900	        return [_error("type_invalid", "provider_candidates", field="provider_candidates")]
+901	    if len(candidates) > PROVIDER_CANDIDATES_MAX:
+902	        errors.append(_error("provider_candidates_too_many", "provider_candidates",
+903	                             max=PROVIDER_CANDIDATES_MAX))
+904	    seen: set[str] = set()
+905	    for index, entry in enumerate(candidates):
+906	        loc = f"provider_candidates[{index}]"
+907	        if not isinstance(entry, dict):
+908	            errors.append(_error("type_invalid", loc, field=loc))
+909	            continue
+910	        errors.extend(_unknown_fields(entry, CANDIDATE_FIELD_ORDER, loc))
+911	        provider_id = entry.get("provider_id")
+912	        if not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id):
+913	            errors.append(_error("provider_id_format_invalid", f"{loc}.provider_id",
+914	                                 value=provider_id))
+915	            continue
+916	        if provider_id in seen:
+917	            errors.append(_error("duplicate_provider_candidate", loc, value=provider_id))
+918	        seen.add(provider_id)
+919	        for name in ("display_name", "group_label"):
+920	            value = entry.get(name)
+921	            if value is not None and not isinstance(value, str):
+922	                errors.append(_error("type_invalid", f"{loc}.{name}", field=f"{loc}.{name}"))
+923	    return errors
+924	
+925	
+926	def _candidate_ids(candidates: Any) -> set[str]:
+927	    if not isinstance(candidates, list):
+928	        return set()
+929	    return {
+930	        entry.get("provider_id")
+931	        for entry in candidates
+932	        if isinstance(entry, dict) and isinstance(entry.get("provider_id"), str)
+933	    }
+934	
+935	
+936	def _check_defaults(
+937	    defaults: Any,
+938	    candidates: Any,
+939	    registered_ids: Optional[set[str]] = None,
+940	    enforce_scope: bool = True,
+941	) -> list[dict]:
+942	    if not isinstance(defaults, dict):
+943	        return [_error("type_invalid", "defaults", field="defaults")]
+944	    errors = _unknown_fields(defaults, DEFAULTS_FIELD_ORDER, "defaults")
+945	    provider_id = defaults.get("provider_id")
+946	    if provider_id is not None:
+947	        # 0411 T0004: a candidate, or any currently registered provider, is enough (NR0003 §6 option B).
+948	        allowed_ids = _candidate_ids(candidates) | (registered_ids or set())
+949	        if not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id):
+950	            errors.append(_error("provider_id_format_invalid", "defaults.provider_id",
+951	                                 value=provider_id))
+952	        elif enforce_scope and provider_id not in allowed_ids:
+953	            errors.append(_error("provider_not_candidate", "defaults.provider_id",
+954	                                 value=provider_id))
+955	    note = defaults.get("note", "")
+956	    errors.extend(_note_errors(note, "defaults.note", None))
+957	    return errors
+958	
+959	
+960	def _check_step_shape(step: Any, loc: str) -> list[dict]:
+961	    if not isinstance(step, dict):
+962	        return [_error("type_invalid", loc, field=loc)]
+963	    errors = _unknown_fields(step, STEP_FIELD_ORDER, loc)
+964	    key = step.get("key")
+965	    if not isinstance(key, str) or not KEY_PATTERN.match(key):
+966	        errors.append(_error("key_format_invalid", f"{loc}.key", value=key))
+967	        key = None
+968	    for field in STEP_FIELD_ORDER:
+969	        if field not in step:
+970	            errors.append(_error("missing_field", f"{loc}.{field}", key, field=f"{loc}.{field}"))
+971	    type_code = step.get("type")
+972	    if type_code not in WORK_PLAN_STEP_TYPES:
+973	        errors.append(_error("enum_not_allowed", f"{loc}.type", key, field=f"{loc}.type"))
+974	    if not _is_int(step.get("ordinal")):
+975	        errors.append(_error("type_invalid", f"{loc}.ordinal", key, field=f"{loc}.ordinal"))
+976	    pair_key = step.get("pair_key")
+977	    if pair_key is not None and (not isinstance(pair_key, str) or not KEY_PATTERN.match(pair_key)):
+978	        errors.append(_error("key_format_invalid", f"{loc}.pair_key", key, value=pair_key))
+979	    if step.get("pair_role") not in PAIR_ROLES:
+980	        errors.append(_error("enum_not_allowed", f"{loc}.pair_role", key, field=f"{loc}.pair_role"))
+981	    if step.get("origin") not in ORIGINS:
+982	        errors.append(_error("enum_not_allowed", f"{loc}.origin", key, field=f"{loc}.origin"))
+983	    if not isinstance(step.get("locked"), bool):
+984	        errors.append(_error("type_invalid", f"{loc}.locked", key, field=f"{loc}.locked"))
+985	    locked_reason = step.get("locked_reason")
+986	    if locked_reason is not None and locked_reason != LOCKED_REASON_SERVER_ASSEMBLED:
+987	        errors.append(_error("enum_not_allowed", f"{loc}.locked_reason", key,
+988	                             field=f"{loc}.locked_reason"))
+989	    provider_id = step.get("provider_id")
+990	    if provider_id is not None and (
+991	        not isinstance(provider_id, str) or not PROVIDER_ID_PATTERN.match(provider_id)
+992	    ):
+993	        errors.append(_error("provider_id_format_invalid", f"{loc}.provider_id", key,
+994	                             value=provider_id))
+995	    display = step.get("provider_display_name")
+996	    if display is not None and not isinstance(display, str):
+997	        errors.append(_error("type_invalid", f"{loc}.provider_display_name", key,
+998	                             field=f"{loc}.provider_display_name"))
+999	    errors.extend(_note_errors(step.get("note"), f"{loc}.note", key))
+1000	    return errors
+1001	
+1002	
+1003	def validate(
+1004	    body: Any,
+1005	    *,
+1006	    project_id: Optional[str] = None,
+1007	    action: str = "save",
+1008	    enforce_provider_scope: bool = True,
+1009	) -> dict:
+1010	    """Run every layer of L0010 §2.3 and return the canonical body.
+1011	
+1012	    Raises WorkPlanValidationError carrying all errors of the first failing layer.
+1013	    Layers are not merged on purpose (L0010 §2.3 decision 5): reporting "the count is out
+1014	    of range" together with "the steps do not match the counts" would show two places
+1015	    to fix where there is only one.
+1016	
+1017	    0411 T0004: enforce_provider_scope=False is used only when reading a plan *already on
+1018	    disk* (load_body). A plan that passed validation when written must not become entirely
+1019	    unopenable just because a provider was later deleted from the project — the editor already
+1020	    handles a vanished provider as a greyed name (unavailable_provider). Format checks still run.
+1021	    """
+1022	    def fail(errors: list[dict]):
+1023	        raise WorkPlanValidationError(errors, action=action)
+1024	
+1025	    # ── layer 1: can it be read at all ──────────────────────────────────────
+1026	    if not isinstance(body, dict):
+1027	        fail([_error("json_parse_failed", "")])
+1028	    version = body.get("wp_version")
+1029	    if not _is_int(version):
+1030	        fail([_error("wp_version_invalid", "wp_version")])
+1031	    if version > WP_VERSION_SUPPORTED:
+1032	        fail([_error("wp_version_unsupported", "wp_version", value=version)])
+1033	    # A lower version is read as the current one (P0009 §2.7). Only version 1 exists,
+1034	    # so the upgrade is the identity — the branch stays so version 2 has a home.
+1035	
+1036	    # ── layer 2: top-level fields ───────────────────────────────────────────
+1037	    errors: list[dict] = []
+1038	    expected_types = {
+1039	        "binding": str,
+1040	        "counted_types": list,
+1041	        "quantities": dict,
+1042	        "provider_candidates": list,
+1043	        "defaults": dict,
+1044	        "steps": list,
+1045	    }
+1046	    for field, expected in expected_types.items():
+1047	        if field not in body:
+1048	            errors.append(_error("missing_field", field, field=field))
+1049	        elif not isinstance(body[field], expected):
+1050	            errors.append(_error("type_invalid", field, field=field))
+1051	    errors.extend(_unknown_fields(body, TOP_LEVEL_ORDER, ""))
+1052	    if body.get("binding") != BINDING_ADVISORY:
+1053	        errors.append(_error("binding_not_allowed", "binding"))
+1054	    if errors:
+1055	        fail(errors)
+1056	
+1057	    counted_types = body["counted_types"]
+1058	    quantities = body["quantities"]
+1059	
+1060	    # ── layer 3: the quantity boxes ─────────────────────────────────────────
+1061	    if not counted_types:
+1062	        errors.append(_error("empty_selection", "counted_types", what_key="counted_types"))
+1063	    known_codes = set(WORK_PLAN_TYPE_UNITS)
+1064	    seen_codes: set[str] = set()
+1065	    for index, code in enumerate(counted_types):
+1066	        if not isinstance(code, str) or code not in known_codes:
+1067	            errors.append(_error("unknown_type_code", f"counted_types[{index}]", code=code))
+1068	            continue
+1069	        if code in seen_codes:
+1070	            errors.append(_error("duplicate_type", f"counted_types[{index}]", code=code))
+1071	        seen_codes.add(code)
+1072	    if set(quantities) != {c for c in counted_types if isinstance(c, str)}:
+1073	        errors.append(_error("quantities_key_mismatch", "quantities"))
+1074	    for code, quantity in quantities.items():
+1075	        loc = f"quantities.{code}"
+1076	        if not isinstance(quantity, dict):
+1077	            errors.append(_error("type_invalid", loc, field=loc))
+1078	            continue
+1079	        errors.extend(_unknown_fields(quantity, ("unit", "count"), loc))
+1080	        expected_unit = WORK_PLAN_TYPE_UNITS.get(code)
+1081	        if expected_unit and quantity.get("unit") != expected_unit:
+1082	            errors.append(_error("unit_mismatch", f"{loc}.unit", code=code, expected=expected_unit))
+1083	        count = quantity.get("count")
+1084	        if not _is_int(count):
+1085	            errors.append(_error("count_not_integer", f"{loc}.count"))
+1086	        elif count < COUNT_MIN or count > COUNT_MAX:
+1087	            errors.append(_error("count_out_of_range", f"{loc}.count",
+1088	                                 min=COUNT_MIN, max=COUNT_MAX))
+1089	    if errors:
+1090	        fail(errors)
+1091	
+1092	    # ── layer 4: providers ──────────────────────────────────────────────────
+1093	    # 0411 T0004: the registered list is read once per validation. The candidate list itself is
+1094	    # not widened here — candidates are "the AI-delegation range", the registered list is "what a human may pick".
+1095	    registered_ids = _registered_provider_ids(project_id) if enforce_provider_scope else set()
+1096	    errors.extend(_check_provider_candidates(body["provider_candidates"]))
+1097	    errors.extend(_check_defaults(
+1098	        body["defaults"], body["provider_candidates"], registered_ids, enforce_provider_scope,
+1099	    ))
+1100	    if errors:
+1101	        fail(errors)
+1102	
+1103	    # ── layer 5: one step at a time ─────────────────────────────────────────
+1104	    steps = body["steps"]
+1105	    for index, step in enumerate(steps):
+1106	        errors.extend(_check_step_shape(step, f"steps[{index}]"))
+1107	    seen_keys: set[str] = set()
+1108	    for index, step in enumerate(steps):
+1109	        if not isinstance(step, dict):
+1110	            continue
+1111	        key = step.get("key")
+1112	        if not isinstance(key, str):
+1113	            continue
+1114	        if key in seen_keys:
+1115	            errors.append(_error("duplicate_key", f"steps[{index}].key", key, value=key))
+1116	        seen_keys.add(key)
+1117	    if errors:
+1118	        fail(errors)
+1119	
+1120	    # ── layer 6: do the steps match the counts ──────────────────────────────
+1121	    expected_steps = expand_steps(counted_types, quantities, project_id)
+1122	    if [s["key"] for s in steps] != [s["key"] for s in expected_steps]:
+1123	        errors.append(_error("steps_quantity_mismatch", "steps"))
+1124	    if len(steps) > STEPS_MAX:
+1125	        errors.append(_error("steps_too_many", "steps", max=STEPS_MAX))
+1126	    if errors:
+1127	        fail(errors)
+1128	
+1129	    # ── layer 7: what the values mean ───────────────────────────────────────
+1130	    # 0411 T0004 (B0001): an unlocked step's provider need only be a candidate or currently registered.
+1131	    selectable_ids = _candidate_ids(body["provider_candidates"]) | registered_ids
+1132	    for index, step in enumerate(steps):
+1133	        loc = f"steps[{index}]"
+1134	        expected = expected_steps[index]
+1135	        key = step.get("key")
+1136	        if (
+1137	            step.get("type") != expected["type"]
+1138	            or step.get("ordinal") != expected["ordinal"]
+1139	            or step.get("pair_key") != expected["pair_key"]
+1140	            or step.get("pair_role") != expected["pair_role"]
+1141	        ):
+1142	            errors.append(_error("step_shape_mismatch", loc, key))
+1143	        if (
+1144	            step.get("locked") != expected["locked"]
+1145	            or step.get("locked_reason") != expected["locked_reason"]
+1146	        ):
+1147	            errors.append(_error("locked_flag_mismatch", f"{loc}.locked", key))
+1148	        if expected["locked"]:
+1149	            if step.get("provider_id") is not None:
+1150	                errors.append(_error("provider_not_allowed", f"{loc}.provider_id", key))
+1151	            if (step.get("note") or "").strip():
+1152	                errors.append(_error("note_not_allowed", f"{loc}.note", key))
+1153	            if step.get("origin") != "system":
+1154	                errors.append(_error("origin_not_allowed", f"{loc}.origin", key))
+1155	        elif step.get("provider_id") is not None:
+1156	            if enforce_provider_scope and step["provider_id"] not in selectable_ids:
+1157	                errors.append(_error("provider_not_candidate", f"{loc}.provider_id", key,
+1158	                                     value=step["provider_id"]))
+1159	    if errors:
+1160	        fail(errors)
+1161	
+1162	    return canonicalize(body)
+1163	
+1164	
+1165	# ── Canonical form (P0009 §2.6 decisions 3 and 4) ────────────────────────────
+1166	
+1167	def canonicalize(body: dict) -> dict:
+1168	    """Fixed key order, `x_` extras preserved at the end of their own object."""
+1169	    out: dict[str, Any] = {}
+1170	    out["wp_version"] = WP_VERSION_SUPPORTED
+1171	    out["binding"] = BINDING_ADVISORY
+1172	    out["counted_types"] = list(body.get("counted_types") or [])
+1173	    quantities = body.get("quantities") or {}
+1174	    out["quantities"] = {
+1175	        code: {
+1176	            "unit": quantities[code].get("unit"),
+1177	            "count": quantities[code].get("count"),
+1178	            **{k: v for k, v in quantities[code].items() if str(k).startswith("x_")},
+1179	        }
+1180	        for code in out["counted_types"]
+1181	        if code in quantities
+1182	    }
+1183	    out["provider_candidates"] = [
+1184	        {
+1185	            "provider_id": entry.get("provider_id"),
+1186	            "display_name": entry.get("display_name"),
+1187	            "group_label": entry.get("group_label"),
+1188	            **{k: v for k, v in entry.items() if str(k).startswith("x_")},
+1189	        }
+1190	        for entry in (body.get("provider_candidates") or [])
+1191	    ]
+1192	    defaults = body.get("defaults") or {}
+1193	    out["defaults"] = {
+1194	        "provider_id": defaults.get("provider_id"),
+1195	        "note": defaults.get("note", ""),
+1196	        **{k: v for k, v in defaults.items() if str(k).startswith("x_")},
+1197	    }
+1198	    out["steps"] = [
+1199	        {
+1200	            **{field: step.get(field) for field in STEP_FIELD_ORDER},
+1201	            **{k: v for k, v in step.items() if str(k).startswith("x_")},
+1202	        }
+1203	        for step in (body.get("steps") or [])
+1204	    ]
+1205	    for name, value in body.items():
+1206	        if str(name).startswith("x_"):
+1207	            out[name] = value
+1208	    return out
+1209	
+1210	
+1211	def dumps(body: dict) -> str:
+1212	    """UTF-8 JSON, 2-space indent, fixed key order, one trailing newline."""
+1213	    return json.dumps(body, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+1214	
+1215	
+1216	# ── Where a plan's canonical file lives ──────────────────────────────────────
+1217	
+1218	def canonical_path_for_doc(doc: dict):
+1219	    """Where this document's canonical file SHOULD be, not where the document record points."""
+1220	    from modules.flow_gate.storage import paths as storage_paths
+1221	
+1222	    group_id = doc.get("group_id") or ""
+1223	    doc_id = doc.get("doc_id") or ""
+1224	    doc_code = doc_id[len(group_id) + 1:] if doc_id.startswith(group_id + ".") else doc_id
+1225	    return storage_paths.document_path(
+1226	        project_id=doc.get("project_id"),
+1227	        group_code=group_id,
+1228	        doc_code=doc_code,
+1229	        filename=DOCUMENT_FILENAME,
+1230	        module=doc.get("module") or "none",
+1231	        branch=(doc.get("branch") or "main") or "main",
+1232	    )
+1233	
+1234	
+1235	def plan_path_for_doc(doc: dict):
+1236	    """Path of the canonical JSON file one work-plan document reads and writes.
+1237	
+1238	    0403 NR0004 F3: if the place that reads a plan (the document route) and the place that
+1239	    records applications (the sequence save) each computed the path, they would eventually point at different files. It is computed here only.
+1240	    """
+1241	    from modules.flow_gate.storage import paths as storage_paths
+1242	
+1243	    stored = (doc.get("file_path") or "").strip()
+1244	    branch = (doc.get("branch") or "main").strip() or "main"
+1245	    if stored:
+1246	        resolved = storage_paths.resolve_storage_path(stored, doc.get("project_id"), branch=branch)
+1247	        if resolved is not None:
+1248	            return resolved
+1249	        # The file may not exist yet (a reverted tree). Instead of answering "this is not a work
+1250	        # plan", it falls back to where the canonical file should be.
+1251	        loose = storage_paths.resolve_storage_dir(stored, doc.get("project_id"))
+1252	        if loose is not None:
+1253	            return loose
+1254	    return canonical_path_for_doc(doc)
+1255	
+1256	
+1257	# ── Reading a stored plan (P0009 §4.4 / §4.5) ────────────────────────────────
+1258	
+1259	def load_body(path, project_id: Optional[str] = None) -> dict:
+1260	    """Read + validate a canonical file. Raises WorkPlanUnreadable, never a 500.
+1261	
+1262	    0429 T0004: project_id now reaches validate() so a project's own countable-type
+1263	    registry (order, overrides) decides layer 6/7, not just the global one — every
+1264	    caller of this function passes the document's own project_id.
+1265	    """
+1266	    try:
+1267	        raw = path.read_text(encoding="utf-8")
+1268	    except (OSError, UnicodeError) as exc:
+1269	        raise WorkPlanUnreadable("file_missing", str(exc)) from exc
+1270	    try:
+1271	        parsed = json.loads(raw)
+1272	    except (json.JSONDecodeError, ValueError) as exc:
+1273	        raise WorkPlanUnreadable("not_json", str(exc), raw=raw) from exc
+1274	    if not isinstance(parsed, dict):
+1275	        raise WorkPlanUnreadable("not_json", "top level is not an object", raw=raw)
+1276	    version = parsed.get("wp_version")
+1277	    if _is_int(version) and version > WP_VERSION_SUPPORTED:
+1278	        raise WorkPlanUnreadable(
+1279	            "wp_version_unsupported", f"wp_version={version}", raw=raw
+1280	        )
+1281	    try:
+1282	        # 0411 T0004: reads do not re-ask about provider scope. The save already did, and if a
+1283	        # deleted provider blocked the plan from opening, the "vanished provider" marker could never be seen.
+1284	        return validate(parsed, project_id=project_id, enforce_provider_scope=False)
+1285	    except WorkPlanValidationError as exc:
+1286	        first = render_errors(exc.errors, FALLBACK_LOCALE)[0]
+1287	        raise WorkPlanUnreadable(
+1288	            "schema_invalid", f"{first['loc']}: {first['msg']}", raw=raw
+1289	        ) from exc
+1290	
+1291	
+1292	def write_body_atomically(path, body: dict) -> None:
+1293	    """Write through a temp file in the same directory, then replace.
+1294	
+1295	    A half-written canonical file would make the document unopenable, and the
+1296	    review pipeline reads this very file to decide whether the document has a body.
+1297	    """
+1298	    path.parent.mkdir(parents=True, exist_ok=True)
+1299	    handle, tmp_name = tempfile.mkstemp(
+1300	        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+1301	    )
+1302	    try:
+1303	        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
+1304	            fh.write(dumps(body))
+1305	        os.replace(tmp_name, str(path))
+1306	    except BaseException:
+1307	        try:
+1308	            os.unlink(tmp_name)
+1309	        except OSError:
+1310	            pass
+1311	        raise
+1312	
+1313	
+1314	# ── Derived views (P0009 §4.4: computed on read, never stored) ───────────────
+1315	
+1316	def totals(body: dict) -> dict:
+1317	    quantities = body.get("quantities") or {}
+1318	    design_sheets = sum(
+1319	        q.get("count") or 0
+1320	        for code, q in quantities.items()
+1321	        if WORK_PLAN_TYPE_UNITS.get(code) == "sheet"
+1322	    )
+1323	    work_sets = sum(
+1324	        q.get("count") or 0
+1325	        for code, q in quantities.items()
+1326	        if WORK_PLAN_TYPE_UNITS.get(code) == "set"
+1327	    )
+1328	    return {
+1329	        "design_sheets": design_sheets,
+1330	        "work_sets": work_sets,
+1331	        "steps": len(body.get("steps") or []),
+1332	    }
+1333	
+1334	
+1335	def unassigned_step_count(body: dict) -> int:
+1336	    return sum(
+1337	        1
+1338	        for step in (body.get("steps") or [])
+1339	        if not step.get("locked") and not step.get("provider_id")
+1340	    )
+1341	
+1342	
+1343	def assignment_summary(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
+1344	    """Per-provider step counts, named with the CURRENT display name when known.
+1345	
+1346	    0411 T0004: a non-candidate (merely registered) provider can now be assigned to a step.
+1347	    Name resolution runs registered list → candidate snapshot → id, so such a provider is
+1348	    counted under its current name rather than a raw id — this function has always counted steps, not the candidate list.
+1349	    """
+1350	    current = {p["id"]: p.get("name") for p in (providers or [])}
+1351	    snapshot = {
+1352	        entry.get("provider_id"): entry.get("display_name")
+1353	        for entry in (body.get("provider_candidates") or [])
+1354	    }
+1355	    counts: dict[str, int] = {}
+1356	    order: list[str] = []
+1357	    for step in body.get("steps") or []:
+1358	        provider_id = step.get("provider_id")
+1359	        if not provider_id:
+1360	            continue
+1361	        if provider_id not in counts:
+1362	            order.append(provider_id)
+1363	        counts[provider_id] = counts.get(provider_id, 0) + 1
+1364	    return [
+1365	        {
+1366	            "provider_id": provider_id,
+1367	            "display_name": current.get(provider_id) or snapshot.get(provider_id) or provider_id,
+1368	            "step_count": counts[provider_id],
+1369	        }
+1370	        for provider_id in order
+1371	    ]
+1372	
+1373	
+1374	def _used_provider_ids(body: dict) -> list[str]:
+1375	    """Provider ids the body actually uses — the default first, then step order, deduplicated."""
+1376	    used: list[str] = []
+1377	    seen: set[str] = set()
+1378	    candidates = [(body.get("defaults") or {}).get("provider_id")]
+1379	    candidates += [step.get("provider_id") for step in (body.get("steps") or [])]
+1380	    for provider_id in candidates:
+1381	        if not isinstance(provider_id, str) or not provider_id or provider_id in seen:
+1382	            continue
+1383	        seen.add(provider_id)
+1384	        used.append(provider_id)
+1385	    return used
+1386	
+1387	
+1388	def provider_status(body: dict, providers: Optional[list[dict]] = None) -> list[dict]:
+1389	    """P0009 §4.4: is each candidate still registered, and did its name change.
+1390	
+1391	    0411 T0004 (B0001): a step provider may now sit outside the candidates — merely registered
+1392	    in this project. The editor asks this list whether a provider "is still registered", so an
+1393	    id the body actually uses gets a row even when it is not a candidate. Without that, a
+1394	    perfectly registered provider gets labelled "unavailable provider". A non-candidate row has
+1395	    no snapshot name (none was ever frozen), so name_changed is always false for it.
+1396	    """
+1397	    current = {p["id"]: p.get("name") for p in (providers or [])}
+1398	
+1399	    def row(provider_id: Any, snapshot_name: Any) -> dict:
+1400	        registered = provider_id in current
+1401	        current_name = current.get(provider_id)
+1402	        return {
+1403	            "provider_id": provider_id,
+1404	            "registered": registered,
+1405	            "current_name": current_name,
+1406	            "snapshot_name": snapshot_name,
+1407	            "name_changed": bool(registered and snapshot_name and current_name != snapshot_name),
+1408	        }
+1409	
+1410	    status = []
+1411	    seen: set[Any] = set()
+1412	    for entry in body.get("provider_candidates") or []:
+1413	        provider_id = entry.get("provider_id")
+1414	        seen.add(provider_id)
+1415	        status.append(row(provider_id, entry.get("display_name")))
+1416	    for provider_id in _used_provider_ids(body):
+1417	        if provider_id in seen:
+1418	            continue
+1419	        seen.add(provider_id)
+1420	        status.append(row(provider_id, None))
+1421	    return status
+1422	
+1423	
+1424	def provider_group_label(provider: dict) -> str:
+1425	    """"Claude · CLI" from the effective-settings row (kind + exec_type)."""
+1426	    kind = str(provider.get("kind") or "").strip()
+1427	    exec_type = str(provider.get("exec_type") or "").strip()
+1428	    if kind and exec_type:
+1429	        return f"{kind.capitalize()} · {exec_type.upper()}"
+1430	    return kind.capitalize() or exec_type.upper() or ""
+1431	
+1432	
+1433	def snapshot_candidates(provider_ids: list[str], providers: list[dict]) -> list[dict]:
+1434	    """Freeze display names at the moment of choosing (DS0006 §7)."""
+1435	    by_id = {p["id"]: p for p in providers}
+1436	    snapshots = []
+1437	    for provider_id in provider_ids:
+1438	        provider = by_id.get(provider_id)
+1439	        snapshots.append({
+1440	            "provider_id": provider_id,
+1441	            "display_name": (provider or {}).get("name"),
+1442	            "group_label": provider_group_label(provider or {}),
+1443	        })
+1444	    return snapshots
+1445	
+1446	
+1447	# ── Change summary (P0009 §5.1 decision 10 / §5.4 decision 11) ───────────────
+1448	
+1449	_QUANTITY_SET_TEMPLATES = {
+1450	    "ko": "{code} {count}세트",
+1451	    "en": "{code} {count} sets",
+1452	    "ja": "{code} {count}セット",
+1453	}
+1454	_NOTE_CHANGED_TEMPLATES = {
+1455	    "ko": "steps[{key}].note 변경",
+1456	    "en": "steps[{key}].note changed",
+1457	    "ja": "steps[{key}].note 変更",
+1458	}
+1459	
+1460	
+1461	def _quantities_line(body: dict, locale: str = "ko") -> str:
+1462	    template = _QUANTITY_SET_TEMPLATES.get(locale) or _QUANTITY_SET_TEMPLATES["ko"]
+1463	    parts = []
+1464	    for code in body.get("counted_types") or []:
+1465	        quantity = (body.get("quantities") or {}).get(code) or {}
+1466	        count = quantity.get("count")
+1467	        if WORK_PLAN_TYPE_UNITS.get(code) == "set":
+1468	            parts.append(template.format(code=code, count=count))
+1469	        else:
+1470	            parts.append(f"{code} {count}")
+1471	    return " · ".join(parts)
+1472	
+1473	
+1474	def change_summary(after: dict, before: Optional[dict] = None, locale: str = "ko") -> dict:
+1475	    """The work-plan flavour of the inbox change summary.
+1476	
+1477	    A prose document is summarized by "how many lines landed in which section"; a
+1478	    work plan has neither. What an unattended worker needs to know is whether the
+1479	    counts and assignments it sent are the ones now stored — and, on an edit,
+1480	    whether it overwrote someone else's values.
+1481	    """
+1482	    steps = after.get("steps") or []
+1483	    # Both examples in P0009 §5.1 and §5.4 satisfy assigned_steps + unassigned_steps == steps.
+1484	    # "Unassigned" counts only cells a human has not chosen yet (a locked TSR cannot be chosen,
+1485	    # so it is not unassigned), and "assigned" is the remainder. Putting locked cells in
+1486	    # neither would make the two sum to less than the step count, leaving an unmanned worker
+1487	    # unable to verify by arithmetic that everything it sent was saved.
+1488	    unassigned = unassigned_step_count(after)
+1489	    summary: dict[str, Any] = {
+1490	        "kind": "work_plan",
+1491	        "quantities": _quantities_line(after, locale),
+1492	        "steps": len(steps),
+1493	        "assigned_steps": len(steps) - unassigned,
+1494	        "unassigned_steps": unassigned,
+1495	    }
+1496	    if before is None:
+1497	        summary["sections"] = ["quantities", "provider_candidates", "defaults", "steps"]
+1498	        return summary
+1499	
+1500	    note_changed_template = _NOTE_CHANGED_TEMPLATES.get(locale) or _NOTE_CHANGED_TEMPLATES["ko"]
+1501	    changed: list[str] = []
+1502	    before_q = before.get("quantities") or {}
+1503	    after_q = after.get("quantities") or {}
+1504	    for code in sorted(set(before_q) | set(after_q)):
+1505	        old = (before_q.get(code) or {}).get("count")
+1506	        new = (after_q.get(code) or {}).get("count")
+1507	        if old != new:
+1508	            changed.append(f"quantities.{code}.count {old} → {new}")
+1509	    if len(before.get("steps") or []) != len(steps):
+1510	        changed.append(f"steps {len(before.get('steps') or [])} → {len(steps)}")
+1511	    before_steps = {s.get("key"): s for s in (before.get("steps") or [])}
+1512	    for step in steps:
+1513	        old = before_steps.get(step.get("key"))
+1514	        if old is None:
+1515	            continue
+1516	        if old.get("provider_id") != step.get("provider_id"):
+1517	            changed.append(
+1518	                f"steps[{step.get('key')}].provider_id "
+1519	                f"{old.get('provider_id')} → {step.get('provider_id')}"
+1520	            )
+1521	        if (old.get("note") or "") != (step.get("note") or ""):
+1522	            changed.append(note_changed_template.format(key=step.get("key")))
+1523	    summary["changed"] = changed
+1524	    return summary
+1525	
+1526	
+1527	# ── Template served to AI workers (P0009 §6) ─────────────────────────────────
+1528	
+1529	def template_body(project_id: Optional[str] = None) -> str:
+1530	    """A minimal valid body with the project's real provider candidates.
+1531	
+1532	    All countable types render at count 0 here — this is a JSON *format* example, not a
+1533	    recommended quantity (flowgate.default.0423 T0005 item 4). The worker still has to
+1534	    derive real counts from evidence per TEMPLATE_RULES; do not copy these zeros either.
+1535	    """
+1536	    providers = [
+1537	        provider for provider in (_effective_chain(project_id).get("providers") or [])
+1538	        if provider.get("id")
+1539	    ]
+1540	    candidates = snapshot_candidates([provider["id"] for provider in providers], providers)
+1541	    body = initial_body(list(WORK_PLAN_COUNTABLE_ORDER), candidates, project_id)
+1542	    return dumps(body)
+1543	
+1544	
+1545	TEMPLATE_RULES = {
+1546	    "ko": [
+1547	        "본문은 Markdown 이 아니라 UTF-8 JSON 입니다.",
+1548	        "제목과 연결 대상은 인박스 요청의 title / prev_doc_id 를 쓰고 본문에 적지 않습니다.",
+1549	        "steps 의 key 는 <타입코드>#<회차> 서식이며 문서 안에서 유일해야 합니다.",
+1550	        "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
+1551	        "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시이며 TSR 외 모든 단계에 200자 이내로 채웁니다. 줄바꿈과 탭은 쓰지 않습니다.",
+1552	        "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
+1553	        "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다.",
+1554	        "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
+1555	        "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다. 요청 멘트의 '실행 프로바이더'는 그 멘트를 실행 중인 공급자일 뿐이므로 여기에 옮겨 적지 않습니다.",
+1556	        "TSR 단계에는 공급자와 멘트를 적지 않습니다.",
+1557	        "item_seq(실제 단계 번호)는 적지 않습니다.",
+1558	        "binding 은 항상 advisory 입니다.",
+1559	    ],
+1560	    "en": [
+1561	        "The body is UTF-8 JSON, not Markdown.",
+1562	        "Title and parent come from the inbox request (title / prev_doc_id); never write them in the body.",
+1563	        "Each steps[].key is <TYPE>#<ordinal> and must be unique in the document.",
+1564	        "steps must equal the list expanded from quantities, in the same order.",
+1565	        "steps[].note is a one-line instruction for the AI assigned to that step; fill it for every non-TSR step, within 200 characters and without newlines or tabs.",
+1566	        "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
+1567	        "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, copy that value verbatim.",
+1568	        "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
+1569	        "defaults.provider_id is one of provider_candidates or null. The mention's Execution provider is merely the provider running that mention, so never copy it here.",
+1570	        "A TSR step carries no provider and no note.",
+1571	        "Never write item_seq (the real workflow step number).",
+1572	        "binding is always advisory.",
+1573	    ],
+1574	    "ja": [
+1575	        "本文は Markdown ではなく UTF-8 の JSON です。",
+1576	        "タイトルと連結対象はインボックス要求の title / prev_doc_id を使い、本文には書きません。",
+1577	        "steps の key は <タイプコード>#<回次> の書式で、文書内で一意でなければなりません。",
+1578	        "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
+1579	        "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の全段階に200文字以内、改行・タブなしで記入します。",
+1580	        "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
+1581	        "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、その値をそのまま書き写します。",
+1582	        "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",
+1583	        "defaults.provider_id は provider_candidates 内の値または null です。要求メモの「実行プロバイダー」はそのメモを実行中の提供者にすぎないため、ここに書き写しません。",
+1584	        "TSR 段階には提供者と一行メモを書きません。",
+1585	        "item_seq(実際の段階番号)は書きません。",
+1586	        "binding は常に advisory です。",
+1587	    ],
+1588	}
+1589	
+1590	TEMPLATE_HEADING = {
+1591	    "ko": "## 다음 문서 템플릿 (WP / ko)",
+1592	    "en": "## Next document template (WP / en)",
+1593	    "ja": "## 次の文書テンプレート (WP / ja)",
+1594	}
+1595	
+1596	
+1597	def template_payload(locale: str, project_id: Optional[str] = None) -> dict:
+1598	    locale = normalize_locale(locale)
+1599	    return {
+1600	        "type_code": WORK_PLAN_TYPE,
+1601	        "requested_locale": locale,
+1602	        "resolved_locale": locale,
+1603	        "body_format": "json",
+1604	        "heading": TEMPLATE_HEADING.get(locale, TEMPLATE_HEADING[FALLBACK_LOCALE]),
+1605	        "body": template_body(project_id),
+1606	        "rules": TEMPLATE_RULES.get(locale, TEMPLATE_RULES[FALLBACK_LOCALE]),
+1607	    }
+1608	
+1609	def request_work_plan_fill(
+1610	    doc_id: str,
+1611	    issued_to: str,
+1612	    api_base_url: str,
+1613	    scope: dict,
+1614	    locale: str = "ko",
+1615	    ai_run_id: Optional[str] = None,
+1616	) -> dict:
+1617	    """Issue an edit token and bounded canonical-JSON prompt for a WP document."""
+1618	    from modules.flow_gate.db import documents as db_documents
+1619	    from modules.flow_gate.services import mention_service, token_service
+1620	    from modules.flow_gate.storage import paths as storage_paths
+1621	
+1622	    doc = db_documents.get_by_id(doc_id)
+1623	    if doc is None:
+1624	        raise LookupError(f"doc_not_found:{doc_id}")
+1625	    if str(doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
+1626	        raise ValueError(f"work_plan_required:{doc_id}")
+1627	    group_id = doc.get("group_id")
+1628	    if not group_id:
+1629	        raise ValueError(f"group_not_found:{doc_id}")
+1630	    stored = str(doc.get("file_path") or "").strip()
+1631	    path = storage_paths.resolve_storage_path(
+1632	        stored, doc.get("project_id"), branch=(doc.get("branch") or "main")
+1633	    )
+1634	    if path is None:
+1635	        raise ValueError(f"work_plan_body_not_found:{doc_id}")
+1636	    body = load_body(path, project_id=doc.get("project_id"))
+1637	    issued = token_service.issue(
+1638	        project=doc.get("project_id") or "",
+1639	        group_id=group_id,
+1640	        action_scope="edit",
+1641	        doc_ref=doc_id,
+1642	        issued_to=issued_to,
+1643	        ai_run_id=ai_run_id,
+1644	    )
+1645	    mention = mention_service.build_work_plan_fill_mention(
+1646	        token_rec={
+1647	            "project": doc.get("project_id") or "",
+1648	            "group_id": group_id,
+1649	            "scratch_dir": issued["scratch_dir"],
+1650	        },
+1651	        target_doc=doc,
+1652	        body=body,
+1653	        scope=scope,
+1654	        api_base_url=api_base_url,
+1655	        raw_token=issued["raw_token"],
+1656	        locale=locale,
+1657	    )
+1658	    return {
+1659	        "raw_token": issued["raw_token"],
+1660	        "token_id": issued["token_id"],
+1661	        "expires_at": issued["expires_at"],
+1662	        "scratch_dir": issued["scratch_dir"],
+1663	        "mention": mention,
+1664	    }
+1665	

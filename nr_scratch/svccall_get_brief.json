@@ -1,0 +1,1 @@
+{"ok":true,"op":"grep","server_ts":"2026-08-28T12:22:44+09:00","matches":[{"file":"server/modules/flow_gate/service.py","line":1311,"text":"def get_brief(ctx: BriefContext | None = None) -> dict:"},{"file":"server/modules/flow_gate/api/v1/legacy_misc_routes.py","line":50,"text":"    return service.envelope(\"brief\", service.get_brief())"}],"total":2,"truncated":false}

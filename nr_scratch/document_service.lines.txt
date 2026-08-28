@@ -1,0 +1,580 @@
+1	"""Document CRUD + state-machine service (aligned with D009 r3 / D017 r1).
+2	
+3	State-machine transition table (based on D017 r1, using DB CHECK values):
+4	  draft      → open, cancelled
+5	  open       → in_review, cancelled
+6	  in_review  → approved, rejected
+7	  rejected   → open, cancelled        (resubmission allowed)
+8	  approved   → closed, archived
+9	  closed     → archived
+10	  cancelled  → (terminal)
+11	  archived   → (terminal)
+12	
+13	Q auto-close rules:
+14	  - When an A-type document is created, the Q document referenced by target_id
+15	    → status='closed'
+16	  - When close_group_documents() is called, unfinished Q documents in the group
+17	    → status='closed'
+18	
+19	CAS pattern: transition_state() checks for changes with SELECT after
+20	UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
+21	"""
+22	from __future__ import annotations
+23	
+24	import os
+25	from typing import Any, Optional
+26	
+27	from fastapi import HTTPException
+28	
+29	from modules.flow_gate.db import documents as db_docs
+30	from modules.flow_gate.db import workflow_events as db_events
+31	from modules.flow_gate.db import workflow_sequences as db_sequences
+32	from modules.flow_gate.db.connection import get_store, now_iso
+33	from modules.flow_gate.numbering import id_formatter
+34	from modules.flow_gate.storage import paths as storage_paths
+35	
+36	# ── State-machine definitions ─────────────────────────────────────────────────
+37	
+38	_VALID_TRANSITIONS: dict[str, list[str]] = {
+39	    "draft":     ["open", "cancelled"],
+40	    "open":      ["in_review", "cancelled"],
+41	    "in_review": ["approved", "rejected"],
+42	    "rejected":  ["open", "cancelled"],
+43	    "approved":  ["closed", "archived"],
+44	    "closed":    ["archived"],
+45	    "cancelled": [],
+46	    "archived":  [],
+47	}
+48	
+49	# Q document type code (auto-close target)
+50	_Q_TYPE_CODE = "Q"
+51	_A_TYPE_CODE = "A"
+52	_TERMINAL_EDIT_STATUSES = frozenset({"cancelled", "archived"})
+53	_WORKFLOW_ROOT_TYPES = frozenset({"R", "B"})
+54	
+55	
+56	# ── CRUD ──────────────────────────────────────────────────────────────────────
+57	
+58	def create_document(data: dict[str, Any], actor_user_id: str) -> dict:
+59	    """Create a document and record workflow_event(doc_created).
+60	
+61	    If an A-type document has target_id, automatically close the linked Q document.
+62	    """
+63	    doc = db_docs.create(data)
+64	
+65	    db_events.create({
+66	        "event_type": "doc_created",
+67	        "project_id": doc["project_id"],
+68	        "group_id": doc.get("group_id"),
+69	        "document_id": doc["id"],
+70	        "actor_user_id": actor_user_id,
+71	        "to_state": doc["status"],
+72	    })
+73	
+74	    # Q auto-close: when an A document is created, close the Q document referenced by target_id
+75	    if doc.get("type_code") == _A_TYPE_CODE and doc.get("target_id"):
+76	        _auto_close_q(doc["target_id"], actor_user_id)
+77	
+78	    return doc
+79	
+80	
+81	def get_document(doc_id: str) -> Optional[dict]:
+82	    """Look up a document by doc_id. Return None when it does not exist."""
+83	    return db_docs.get_by_id(doc_id)
+84	
+85	
+86	def is_final_approved(document: dict[str, Any]) -> bool:
+87	    """Return whether the document's group completed final approval."""
+88	    if document.get("doc_review_status") == "wf_done":
+89	        return True
+90	
+91	    project_id = document.get("project_id")
+92	    group_id = document.get("group_id")
+93	    if not project_id or not group_id:
+94	        return False
+95	
+96	    if document.get("type_code") in _WORKFLOW_ROOT_TYPES:
+97	        return False
+98	
+99	    group_docs = db_docs.list_documents(
+100	        project_id=project_id,
+101	        group_id=group_id,
+102	        limit=200,
+103	    )
+104	    return any(
+105	        item.get("type_code") in _WORKFLOW_ROOT_TYPES
+106	        and item.get("doc_review_status") == "wf_done"
+107	        for item in group_docs
+108	    )
+109	
+110	
+111	def is_document_editable(
+112	    document: dict[str, Any],
+113	    *,
+114	    final_approved: bool | None = None,
+115	) -> bool:
+116	    """Allow edits until final approval, except for terminal lifecycle states."""
+117	    if document.get("status") in _TERMINAL_EDIT_STATUSES:
+118	        return False
+119	    if final_approved is None:
+120	        final_approved = is_final_approved(document)
+121	    return not final_approved
+122	
+123	
+124	def list_documents(
+125	    project_id: str,
+126	    module: str | None = None,
+127	    group_id: str | None = None,
+128	    type_code: str | None = None,
+129	    status: str | None = None,
+130	    limit: int = 100,
+131	    offset: int = 0,
+132	) -> list[dict]:
+133	    """Return the list of documents matching the conditions."""
+134	    return db_docs.list_documents(
+135	        project_id=project_id,
+136	        module=module,
+137	        group_id=group_id,
+138	        type_code=type_code,
+139	        status=status,
+140	        limit=limit,
+141	        offset=offset,
+142	    )
+143	
+144	
+145	def update_document(
+146	    doc_id: str,
+147	    updates: dict[str, Any],
+148	    actor_user_id: str,
+149	) -> dict:
+150	    """Update the document's non-state fields.
+151	
+152	    Use transition_state() for status changes.
+153	    """
+154	    existing = db_docs.get_by_id(doc_id)
+155	    if existing is None:
+156	        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+157	    final_approved = is_final_approved(existing)
+158	    if not is_document_editable(existing, final_approved=final_approved):
+159	        if final_approved:
+160	            detail = "Modification not allowed after final approval."
+161	        else:
+162	            detail = f"Modification not allowed for status: {existing.get('status')}"
+163	        raise HTTPException(status_code=422, detail=detail)
+164	
+165	    # Prevent direct status changes through update
+166	    updates.pop("status", None)
+167	    doc = db_docs.update(doc_id, updates)
+168	    if doc is None:
+169	        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+170	    return doc
+171	
+172	
+173	def delete_document(doc_id: str, actor_user_id: str) -> None:
+174	    """Delete a document and record workflow_event(doc_deleted).
+175	
+176	    Because of the workflow_events.document_id FK constraint, clear the reference
+177	    to NULL before deletion (preserving history while removing only the document
+178	    reference), then delete the document.
+179	    """
+180	    doc = db_docs.get_by_id(doc_id)
+181	    if doc is None:
+182	        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+183	
+184	    store = get_store()
+185	    # Run the whole deletion inside a transaction so it is atomic AND so the SQLite
+186	    # backend has `PRAGMA foreign_keys = ON` active (connection.transaction() turns it
+187	    # on only within the transaction context). Outside a transaction the live sqlite
+188	    # backend leaves FKs OFF, so declared ON DELETE SET NULL / CASCADE actions on the
+189	    # documents row would silently not fire, leaving orphan workflow_sequences /
+190	    # dangling result_doc_id references (NR0122 §5 "state C"). (B0001/0122 rec #3)
+191	    with store.transaction():
+192	        # Release the FK: set document_id to NULL (history is preserved)
+193	        store._execute(
+194	            "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
+195	            [doc["id"]],
+196	        )
+197	        db_docs.delete(doc_id)
+198	        db_events.create({
+199	            "event_type": "doc_deleted",
+200	            "project_id": doc["project_id"],
+201	            "group_id": doc.get("group_id"),
+202	            "document_id": None,
+203	            "actor_user_id": actor_user_id,
+204	            "from_state": doc["status"],
+205	        })
+206	
+207	
+208	# ── State machine ─────────────────────────────────────────────────────────────
+209	
+210	def transition_state(
+211	    doc_id: str,
+212	    to_state: str,
+213	    actor_user_id: str,
+214	    reason: str | None = None,
+215	) -> dict:
+216	    """Transition the document state (CAS UPDATE pattern).
+217	
+218	    After validating the transition, atomically update with
+219	    UPDATE … WHERE status=<current>.
+220	    Then SELECT to verify the state actually changed; return 409 on mismatch.
+221	    """
+222	    doc = db_docs.get_by_id(doc_id)
+223	    if doc is None:
+224	        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+225	
+226	    from_state = doc["status"]
+227	
+228	    if to_state not in _VALID_TRANSITIONS.get(from_state, []):
+229	        raise HTTPException(
+230	            status_code=422,
+231	            detail=(
+232	                f"Invalid transition: {from_state} → {to_state}. "
+233	                f"Allowed transitions: {_VALID_TRANSITIONS.get(from_state, [])}"
+234	            ),
+235	        )
+236	
+237	    store = get_store()
+238	    store.update_cas(
+239	        table="documents",
+240	        row_id=doc_id,
+241	        id_col="doc_id",
+242	        expected_col="status",
+243	        expected_val=from_state,
+244	        updates={"status": to_state, "updated_at": now_iso()},
+245	    )
+246	
+247	    # Verify the CAS result
+248	    refreshed = db_docs.get_by_id(doc_id)
+249	    if refreshed is None or refreshed["status"] != to_state:
+250	        raise HTTPException(
+251	            status_code=409,
+252	            detail="State transition conflict detected: another request changed the state first.",
+253	        )
+254	
+255	    db_events.create({
+256	        "event_type": "state_changed",
+257	        "project_id": refreshed["project_id"],
+258	        "group_id": refreshed.get("group_id"),
+259	        "document_id": refreshed["id"],
+260	        "actor_user_id": actor_user_id,
+261	        "from_state": from_state,
+262	        "to_state": to_state,
+263	        "metadata": reason,
+264	    })
+265	
+266	    return refreshed
+267	
+268	
+269	def close_group_documents(group_id: str, actor_user_id: str) -> int:
+270	    """When a group closes, bulk-close unfinished Q documents in that group.
+271	
+272	    Returns: number of processed documents
+273	    """
+274	    store = get_store()
+275	    open_q_docs = store._fetch_all(
+276	        "SELECT * FROM documents "
+277	        "WHERE group_id = ? AND type_code = ? AND status NOT IN (?, ?, ?)",
+278	        [group_id, _Q_TYPE_CODE, "closed", "cancelled", "archived"],
+279	    )
+280	
+281	    count = 0
+282	    for doc in open_q_docs:
+283	        doc_id = doc["doc_id"]
+284	        from_state = doc["status"]
+285	        store.update_cas(
+286	            table="documents",
+287	            row_id=doc_id,
+288	            id_col="doc_id",
+289	            expected_col="status",
+290	            expected_val=from_state,
+291	            updates={"status": "closed", "updated_at": now_iso()},
+292	        )
+293	        db_events.create({
+294	            "event_type": "state_changed",
+295	            "project_id": doc["project_id"],
+296	            "group_id": group_id,
+297	            "document_id": doc["id"],
+298	            "actor_user_id": actor_user_id,
+299	            "from_state": from_state,
+300	            "to_state": "closed",
+301	            "metadata": "group_closed",
+302	        })
+303	        count += 1
+304	
+305	    return count
+306	
+307	
+308	# ── Internal helpers ──────────────────────────────────────────────────────────
+309	
+310	def _auto_close_q(q_doc_id: str, actor_user_id: str) -> None:
+311	    """Automatically transition the linked Q document to closed when an A document is created."""
+312	    q_doc = db_docs.get_by_id(q_doc_id)
+313	    if q_doc is None:
+314	        return
+315	    if q_doc.get("type_code") != _Q_TYPE_CODE:
+316	        return
+317	    if q_doc["status"] in ("closed", "cancelled", "archived"):
+318	        return
+319	
+320	    store = get_store()
+321	    from_state = q_doc["status"]
+322	    store.update_cas(
+323	        table="documents",
+324	        row_id=q_doc_id,
+325	        id_col="doc_id",
+326	        expected_col="status",
+327	        expected_val=from_state,
+328	        updates={"status": "closed", "updated_at": now_iso()},
+329	    )
+330	    db_events.create({
+331	        "event_type": "state_changed",
+332	        "project_id": q_doc["project_id"],
+333	        "group_id": q_doc.get("group_id"),
+334	        "document_id": q_doc["id"],
+335	        "actor_user_id": actor_user_id,
+336	        "from_state": from_state,
+337	        "to_state": "closed",
+338	        "metadata": "q_answered",
+339	    })
+340	
+341	
+342	# ── Root-type conversion (R ↔ B) ──────────────────────────────────────────────
+343	#
+344	# Background (NR0066.0003): a workflow root's type code is part of its identity —
+345	# it is embedded in the doc_id ("…0001-R"), the stored filename ("0001-R_*.md")
+346	# and every inbound reference. There is no whitelist field that flips it, by
+347	# design. This implements the NR0003 §5 recommendation: an R↔B converter that is
+348	# allowed ONLY on a pristine root (before the workflow decision is taken) and
+349	# rewrites the identity atomically so referential integrity is preserved.
+350	
+351	# Every column anywhere in the schema that stores a documents.doc_id value. The
+352	# documents row itself is rewritten separately; this table covers inbound and
+353	# self-references. Each entry is rewritten old_id → new_id inside one
+354	# transaction. Unknown tables/columns (dialect or migration drift) are skipped.
+355	_DOC_REFERENCE_COLUMNS: tuple[tuple[str, str], ...] = (
+356	    ("documents", "target_id"),
+357	    ("documents", "triggered_by"),
+358	    ("documents", "superseded_by"),
+359	    ("documents", "previous_tv"),
+360	    ("documents", "previous_t"),
+361	    ("documents", "previous_ds"),
+362	    ("events", "doc_id"),
+363	    ("events", "related_doc_id"),
+364	    ("events", "related_target_id"),
+365	    ("tv_scenarios", "tv_doc_id"),
+366	    ("document_reviews", "doc_id"),
+367	    ("questions", "doc_id"),
+368	    ("document_mention_copies", "doc_id"),
+369	    ("document_revisions", "doc_id"),
+370	    ("document_revisions", "linked_doc_id"),
+371	    ("tokens", "doc_ref"),
+372	    ("test_runs", "doc_id"),
+373	    ("test_runs", "tsr_doc_id"),
+374	    ("workflow_sequences", "doc_id"),
+375	    ("workflow_sequence_items", "result_doc_id"),
+376	    ("remote_tool_grant", "report_doc_id"),
+377	)
+378	
+379	# Columns that reference the documents *integer* primary key (documents.id) rather
+380	# than the textual doc_id. The portable converter (NR0108.0003 §7 candidate b)
+381	# inserts a fresh identity row — which gets a new SERIAL id — and drops the old one,
+382	# so these must be repointed old_id → new_id too. (workflow_events.document_id is the
+383	# only such FK in the schema; doc_id-based references live in _DOC_REFERENCE_COLUMNS.)
+384	_DOC_REFERENCE_ID_COLUMNS: tuple[tuple[str, str], ...] = (
+385	    ("workflow_events", "document_id"),
+386	)
+387	
+388	
+389	def compute_converted_doc_id(doc_id: str, new_type: str) -> str:
+390	    """Return the doc_id with its trailing document-code type suffix swapped.
+391	
+392	    "flowgate.default.0066.0001-R" + "B" -> "flowgate.default.0066.0001-B".
+393	    The seq and every other segment are preserved (group seq is type-agnostic,
+394	    so only the suffix changes).
+395	    """
+396	    head, _, doc_code = doc_id.rpartition(".")
+397	    if not head:
+398	        raise ValueError(f"Malformed doc_id: {doc_id!r}")
+399	    _cur_type, seq = id_formatter.parse_doc_code(doc_code)
+400	    width = len(id_formatter.extract_numeric_suffix(doc_code))
+401	    return f"{head}.{id_formatter.format_doc_code(new_type, seq, width)}"
+402	
+403	
+404	def _converted_filename(filename: Optional[str], old_code: str, new_code: str) -> Optional[str]:
+405	    """Swap the leading doc-code prefix of a stored filename ("0001-R_x.md")."""
+406	    if not filename:
+407	        return filename
+408	    if filename.startswith(old_code):
+409	        return new_code + filename[len(old_code):]
+410	    return filename
+411	
+412	
+413	def _rename_document_file(doc: dict, old_code: str, new_code: str) -> Optional[str]:
+414	    """Rename the document's .md file to the new doc-code, returning the new
+415	    storage-relative path (or the unchanged stored value when there is no file)."""
+416	    stored = (doc.get("file_path") or "").strip()
+417	    if not stored:
+418	        return doc.get("file_path")
+419	    project_id = doc.get("project_id")
+420	    branch = (doc.get("branch") or "main") or "main"
+421	    abs_path = storage_paths.resolve_storage_path(stored, project_id, branch=branch)
+422	    if abs_path is None or not abs_path.is_file():
+423	        # No physical file (e.g. a memo-only root). Still update the stored string
+424	        # so the persisted path tracks the new code.
+425	        new_basename = _converted_filename(os.path.basename(stored), old_code, new_code)
+426	        return stored[: -len(os.path.basename(stored))] + new_basename if new_basename else stored
+427	    new_name = _converted_filename(abs_path.name, old_code, new_code)
+428	    new_abs = abs_path.with_name(new_name)
+429	    if new_abs != abs_path:
+430	        os.replace(abs_path, new_abs)
+431	    return storage_paths.to_storage_relative(new_abs, project_id)
+432	
+433	
+434	def convert_root_document_type(
+435	    doc_id: str,
+436	    new_type: str,
+437	    actor_user_id: str,
+438	) -> dict:
+439	    """Convert a workflow root document between R and B (NR0066.0003 §5).
+440	
+441	    Allowed only on a pristine root — i.e. before the workflow decision is taken
+442	    (no child documents reference it and no workflow sequence has been created).
+443	    Rewrites the doc_id, type_code, filename and every inbound reference atomically.
+444	
+445	    Raises HTTPException on every rejection path (404 missing, 409 not convertible,
+446	    422 invalid target type).
+447	    """
+448	    new_type = (new_type or "").strip().upper()
+449	    if new_type not in _WORKFLOW_ROOT_TYPES:
+450	        raise HTTPException(
+451	            status_code=422,
+452	            detail=f"Target type must be one of {sorted(_WORKFLOW_ROOT_TYPES)}; got {new_type!r}.",
+453	        )
+454	
+455	    doc = db_docs.get_by_id(doc_id)
+456	    if doc is None:
+457	        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+458	
+459	    current_type = (doc.get("type_code") or "").upper()
+460	    if current_type not in _WORKFLOW_ROOT_TYPES:
+461	        raise HTTPException(
+462	            status_code=422,
+463	            detail=f"Only workflow root documents (R/B) can be converted; {doc_id} is {current_type}.",
+464	        )
+465	    if current_type == new_type:
+466	        # Idempotent no-op: already the requested type.
+467	        return doc
+468	
+469	    # Gate: a workflow decision must not have been taken yet. The decision creates
+470	    # the workflow_sequence and the first child document(s) referencing this root.
+471	    if db_sequences.get_sequence_by_doc_id(doc_id) is not None:
+472	        raise HTTPException(
+473	            status_code=409,
+474	            detail="Cannot convert root type after the workflow decision was taken.",
+475	        )
+476	    store = get_store()
+477	    group_id = doc.get("group_id")
+478	    if group_id:
+479	        children = store._fetch_all(
+480	            "SELECT doc_id FROM documents "
+481	            "WHERE group_id = ? AND doc_id != ? AND (triggered_by = ? OR target_id = ?)",
+482	            [group_id, doc_id, doc_id, doc_id],
+483	        )
+484	        if children:
+485	            raise HTTPException(
+486	                status_code=409,
+487	                detail="Cannot convert root type: child documents already reference it.",
+488	            )
+489	
+490	    new_doc_id = compute_converted_doc_id(doc_id, new_type)
+491	    if db_docs.get_by_id(new_doc_id) is not None:
+492	        raise HTTPException(
+493	            status_code=409,
+494	            detail=f"Target doc_id already exists: {new_doc_id}.",
+495	        )
+496	
+497	    old_code = doc_id.rpartition(".")[2]
+498	    new_code = new_doc_id.rpartition(".")[2]
+499	    new_file_path = _rename_document_file(doc, old_code, new_code)
+500	    new_filename = _converted_filename(doc.get("filename"), old_code, new_code)
+501	
+502	    old_int_id = doc.get("id")
+503	
+504	    try:
+505	        with store.transaction():
+506	            # Portable identity rewrite (NR0108.0003 §7 candidate b). An in-place
+507	            # UPDATE of documents.doc_id is impossible under IMMEDIATE foreign keys
+508	            # (PostgreSQL/MySQL): the rename momentarily diverges from the rows that
+509	            # reference it — and every document keeps at least its `created` event —
+510	            # so the FK check aborts the transaction (B0108). The earlier SQLite-only
+511	            # `PRAGMA defer_foreign_keys` masked this on SQLite but had no equivalent
+512	            # on other backends. Instead create the new identity row FIRST, repoint
+513	            # every reference to it, then drop the old row: a parent-first ordering
+514	            # that satisfies IMMEDIATE FKs on every dialect and needs no deferral.
+515	            new_row = dict(doc)
+516	            new_row.pop("id", None)  # let the backend assign a fresh SERIAL id
+517	            new_row["doc_id"] = new_doc_id
+518	            new_row["type_code"] = new_type
+519	            new_row["file_path"] = new_file_path
+520	            new_row["filename"] = new_filename
+521	            new_row["updated_at"] = now_iso()
+522	            inserted = db_docs.create(new_row)
+523	            new_int_id = (inserted or {}).get("id")
+524	
+525	            # Repoint every inbound / self reference keyed on the textual doc_id.
+526	            for table, column in _DOC_REFERENCE_COLUMNS:
+527	                try:
+528	                    store._execute(
+529	                        f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+530	                        [new_doc_id, doc_id],
+531	                    )
+532	                except Exception:
+533	                    # Table/column absent for this dialect or migration level — skip.
+534	                    continue
+535	
+536	            # Repoint references keyed on the integer documents.id (new SERIAL).
+537	            if old_int_id is not None and new_int_id is not None:
+538	                for table, column in _DOC_REFERENCE_ID_COLUMNS:
+539	                    try:
+540	                        store._execute(
+541	                            f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+542	                            [new_int_id, old_int_id],
+543	                        )
+544	                    except Exception:
+545	                        continue
+546	
+547	            # Drop the old identity row; nothing references it anymore.
+548	            store._execute("DELETE FROM documents WHERE doc_id = ?", [doc_id])
+549	    except HTTPException:
+550	        raise
+551	    except Exception as exc:  # pragma: no cover - defensive: surface as 409, file already moved is best-effort
+552	        # Best-effort rollback of the file rename so disk and DB stay consistent.
+553	        if new_file_path and new_file_path != doc.get("file_path"):
+554	            try:
+555	                back = storage_paths.resolve_storage_path(
+556	                    new_file_path, doc.get("project_id"), branch=(doc.get("branch") or "main")
+557	                )
+558	                old_abs = storage_paths.resolve_storage_path(
+559	                    doc.get("file_path"), doc.get("project_id"), branch=(doc.get("branch") or "main")
+560	                )
+561	                if back is not None and back.is_file() and old_abs is not None:
+562	                    os.replace(back, old_abs)
+563	            except Exception:
+564	                pass
+565	        raise HTTPException(status_code=409, detail=f"Conversion failed: {exc}") from exc
+566	
+567	    refreshed = db_docs.get_by_id(new_doc_id)
+568	    if refreshed is None:
+569	        raise HTTPException(status_code=409, detail="Conversion failed: document missing after rewrite.")
+570	
+571	    db_events.create({
+572	        "event_type": "doc_type_converted",
+573	        "project_id": refreshed["project_id"],
+574	        "group_id": refreshed.get("group_id"),
+575	        "document_id": refreshed["id"],
+576	        "actor_user_id": actor_user_id,
+577	        "metadata": f"{current_type}->{new_type} ({doc_id} -> {new_doc_id})",
+578	    })
+579	    return refreshed
+580	

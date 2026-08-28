@@ -1,0 +1,687 @@
+## 다음 문서 헤더
+
+```text
+next_type: NR
+next_type_detail: 조사레포트
+project: flowgate
+module: default
+group: 0467
+title: TR 본문 쓰기 경로 전수조사 결과 및 단계별 확인 적용 범위 판정
+target_id: R0001
+```
+
+# TR 본문 쓰기 경로 전수조사 결과 (NR)
+
+> 참조: N0008(flowgate.default.0467.0008-N), R0001(flowgate.default.0467.0001-R),
+> L0007(flowgate.default.0467.0007-L), P0006(flowgate.default.0467.0006-P)
+>
+> 조사 방법(rev1 — 반려 사유 반영): 원격 소스 도구(`read`/`grep`/`glob`, 토큰 스코프
+> `src/`)와 문서 조회/검색 API(`read`/`document`/`search/documents/content`, 토큰
+> 스코프 `flowgate` 프로젝트 전체)로 rev0 이후 다시 조사했다. rev0은 `write_text`
+> 23건/`write_bytes` 4건만 전수 근거로 삼아 "정확히 #3/#4"라는 결론을 내렸는데,
+> 이는 N0008 §3이 요구한 "쓰기 모드 `open`, `rename`/`replace`/`copy`, atomic-write
+> 및 저장 헬퍼 전체 호출부"를 다루지 않은 것이었다. rev1은 §1-A에서 그 나머지
+> 쓰기 primitive 전 계열(`shutil.move`/`shutil.copy*`/`os.replace`/`os.rename`/
+> `Path.rename`/쓰기 모드 `open`)을 `server/modules/flow_gate` 전체에서 전수
+> 검색하고, 각 호출부를 문서 본문 트리(`documents/{project}/{branch}/...`) 도달
+> 여부로 순방향(호출부→쓰기 대상)·역방향(쓰기 대상→호출자 전수 grep) 모두 추적했다.
+> §6도 계약·생성주체·파서 근거만으로 멈추지 않고, `step_verification_service.py`의
+> 실제 판정 정규식을 그대로 재현해 `search/documents/content?type=<T>` 문서검색
+> API로 TR/NR/TSR/TS 모집단 전체에서 해당 절 헤딩을 포함한 문서를 프로젝트 전체
+> 범위로 찾아 실제 통과 여부를 검사했다(표본이 아니라 전수 검색). 모든 검색은
+> `total`/`truncated:false`를 근거로 남겼고, Korean 정규식이 원격 grep에서
+> 거부되는(`invalid_request`) 문제와 별개로 이번 조사에서는 미해결 괄호·백슬래시
+> 이스케이프가 있는 패턴도 `invalid_request`를 유발함을 확인해 대괄호 문자
+> 클래스(`rename[(]`)로 우회했다 — 8절에 도구 사용상 주의점으로 남긴다.
+>
+> 조사 방법(rev2 — 반려 사유 반영): rev1의 §6 타입별 모집단(609/427/271/516)은
+> `search/documents/content`(본문 검색)에 `q="의"`를 넣어 얻은 `total`을 그대로
+> 모집단으로 썼는데, 그 API의 `total`은 `search_document_bodies(q, doc_type)`가
+> 돌려주는 **쿼리 일치 문서 수**이지 전체 문서 수가 아니다(본문에 "의"가 없는
+> 문서는 분모에서 빠진다). rev2는 대신 **제목/문서ID 검색 API**
+> (`GET /search/documents`, 본문을 읽지 않는 엔드포인트)에 doc_id에 항상 등장하는
+> 문자열(`.`, `flowgate`)을 질의어로 넣어 — 서로 다른 질의어에도 `total`이 변하지
+> 않음을 확인해 이것이 텍스트 매칭이 아니라 순수 `COUNT(*)`임을 검증한 뒤 —
+> 타입별 진짜 모집단을 다시 셌다(§6-2). 그 과정에서 `type_code LIKE '{type}%'`
+> 접두사 매칭이 `TS` 질의에 `TSR` 문서까지 함께 세는 두 번째 함정을 발견해,
+> 550건 전체를 페이지 단위로 받아 실제 `type` 필드를 전수 집계하는 방식으로
+> 바로잡았다(§6-2).
+
+---
+
+## 1. TR 본문 쓰기 경로 전수표 (`write_text`/`write_bytes` 및 라우트 계열 — rev0 유지)
+
+한 행 = 한 진입점(또는 내부 쓰기 지점). "게이트" 열은
+`step_verification_service.evaluate()`(또는 그 결과를 그대로 쓰는 동등 함수) 호출
+여부만 표시한다. 이 표는 rev0에서 검증됐고 반려 사유에서 정확성 자체는 지적되지
+않았으므로 그대로 유지하며, §1-A가 그 바깥의 쓰기 primitive를 보강한다.
+
+| # | 트리거(외부) | 라우트/함수 | 최종 쓰기 대상 | TR 본문 변경 가능? | 신규 텍스트/빈 스텁/과거 복원 | `evaluate()` 통과? | fail-open? | 근거(파일:행) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `POST /inbox` action=new, doc_type=TR | `inbox_routes.py` `_handle_new` | `stored_path` (documents 트리) | 예 | 신규 텍스트 | **예** | 예 — `evaluate()` 예외 시 게이트를 건너뛴다 | 게이트 3455~3470, `evaluate()` 호출 3461~3463, 쓰기(`_write_submission_body`) 3638 |
+| 2 | `POST /inbox` action=edit, 대상 문서 type_code=TR | `inbox_routes.py` `_handle_edit` | `stored_path` (documents 트리) | 예 | 신규 텍스트(전체 치환) | **예** | 예 — 동일 | 게이트 4407~4422, `evaluate()` 호출 4413~4415, 쓰기 4535 |
+| 3 | `PATCH /documents/{doc_id}/content` | `documents.py` `update_document_content` | `file_path`(=documents 트리) | **예 — 타입 무관, 무조건** | 신규 텍스트(전체 치환) | **아니오** | 해당 없음(게이트 자체가 없음) | 함수 2570~2615, 가드 2581~2602, 쓰기 2606; `evaluate` 호출 0건(전수 확인, 3절 근거) |
+| 4 | `PATCH /documents/content`(RPC 별칭, body에 doc_id) | `documents.py` `update_document_content_rpc` | 위 #3과 동일 함수로 위임 | 위 #3과 동일 | 위 #3과 동일 | **아니오**(#3에 위임되므로 동일하게 무검증) | 해당 없음 | 2235~2246 (`return update_document_content(...)`) |
+| 5 | `POST /documents/{doc_id}/regenerate` | `documents.py` `regenerate_document_file` | `_regenerate_target_path(doc)` | 조건부 — 리비전 백업이 있으면 그 과거 본문, 없으면 메타데이터 스텁 | **과거 리비전 복원** 또는 **빈 프런트매터 스텁**(신규 사용자 텍스트 아님) | 아니오(의도적 제외) | 해당 없음(콘텐츠 자체가 사용자 제출이 아님) | 함수 2618~2698, 우선순위 주석 2632~2634, 리비전 조회 2652(`_latest_revision_body`), 스텁 분기 2664~2675, 쓰기 2679 |
+| 6 | `POST /documents`(범용 생성) | `documents.py` `create_document` | `doc_file_path`(파일 존재 시에만; `file_path` 제공되면 쓰기 자체 없음) | 불가 — `DocumentCreate`에 `content` 필드 없음 | 고정 프런트매터만 | 해당 없음 | 해당 없음 | 모델 317~337(필드 목록에 `content` 없음), 함수 812~870, 쓰기 847 |
+| 7 | `POST /documents/related` | `documents.py` `create_related_document` | `doc_file_path` | 불가 — 허용 타입 `{DS,N,T,TS,M,Q}`에 TR 없음(그 외 422) | 고정 프런트매터 또는 빈 문자열 | 해당 없음 | 해당 없음 | 화이트리스트 875 `_RELATED_ALLOWED_TYPES`, 함수 970~1079, 쓰기 1042 |
+| 8 | `POST /documents/next-empty` | `documents.py` `create_next_empty_document` | `doc_file_path` | 가능(TR이 배제 목록 `{AC,RJ,V,C}`·서버조립 타입에 없음)이나 본문은 항상 빈 프런트매터 | 빈 프런트매터(`_build_next_empty_content`, 자유 텍스트 파라미터 없음) | 해당 없음(콘텐츠 주입 경로 아님) | 해당 없음 | 배제 목록 1102, 서버조립 가드 1111, 함수 1083~1281, 쓰기 1202; 모델 `NextEmptyDocumentCreate` 392~402(자유 본문 필드 없음) |
+| 9 | `POST /documents/next-approved` | `documents.py` `create_next_approved_document`→`create_next_approved_core` | `doc_file_path` | 불가 — 타입 화이트리스트 `{N,T}`가 라우트와 코어 양쪽에서 강제 | 서버 생성 정형 문구 | 해당 없음 | 해당 없음 | 코어 화이트리스트 **1339**행, 라우트 화이트리스트 **1591**행, 쓰기 1415 |
+| 10 | 내부 헬퍼(R 문서 자동 초안 생성 경로에서 호출) | `documents.py` `_create_next_empty_document_for_auto_draft` | `doc_file_path` | 위 #8과 동일 패턴 | 빈 프런트매터 | 해당 없음 | 해당 없음 | 함수 2024~2130대, 쓰기 2099 |
+| 11 | `POST /workflow/restore`(시간여행 되돌리기의 역방향) | `documents.py` `restore_workflow` | 없음 — `documents.doc_review_status` DB 컬럼만 UPDATE | 불가 — 파일 쓰기 자체가 없음 | 해당 없음 | 해당 없음 | 해당 없음 | 함수 1904~2021, DB만 갱신 1957·1976 |
+| 12 | `.../return-point/cancel-commits` | `documents.py` `retry_cancel_tr_commits`→`tr_commit_service.cancel_retry` | 그룹 `src/` 워크트리의 git 커밋(취소) | 불가 — TR `.md`는 자기보고 목록 파싱을 위해 **읽기만** 함 | 해당 없음 | 해당 없음 | 해당 없음 | 라우트 1789~1822, 서비스 함수 687~719, 읽기 지점 `tr_commit_service.py` 126~141 |
+| 13 | `.../return-point/reapply-commits` | `documents.py` `retry_reapply_tr_commits`→`tr_commit_service.reapply_retry` | 그룹 `src/` 워크트리의 git 커밋(재적용) | 불가 — 동일하게 TR 파일은 안 건드림 | 해당 없음 | 해당 없음 | 해당 없음 | 라우트 1825~1856, 서비스 함수 892~919 |
+| 14 | git 병합/충돌해결/복구 전체(`resolve_conflicts` 포함) | `git_service.py` 전역 | `git_service`가 다루는 root는 항상 `src_root()`계열 | 불가 — 구조적으로 documents 트리에 닿지 않음 | 해당 없음 | 해당 없음 | 해당 없음 | `resolve_conflicts` 4582~4620; `src_root` 사용 **52건**, `project_root`/`document_path` 사용 **0건**(전수 grep) |
+| 15 | `PATCH /projects/{project_id}/files/src-content`(tree_routes) | `tree_routes.py` `update_src_file_content`→`_resolve_src_path` | `full_path`(src 트리 전용) | 불가 | 해당 없음 | 해당 없음 | 해당 없음 | 라우트 185~206, 쓰기 196, 루트 해석 58~102 |
+| 16 | `PATCH /projects/{project_id}/files/src-content`(inbox_routes에도 동일 경로가 별도 등록) | `inbox_routes.py` `update_editable_source_content`→`_editable_source_root` | `full_path`(src 트리 전용) | 불가 | 해당 없음 | 해당 없음 | 해당 없음 | 라우트 393~424, 쓰기 415, 루트 해석 271~297 |
+| 17 | 원격 CRUD 도구 `write`/`patch`(본 조사에서 사용 중인 도구 자신) | `remote_tool_service.py` `_exec_write`/`_exec_patch` | `_resolve_root_for_mutation`이 돌려준 root(항상 src 계열) | 불가 | 해당 없음 | 해당 없음 | 해당 없음 | `_resolve_root_for_mutation` 595~651, `_fallback_project_root` 487~499(`storage_paths.project_root`/`document_path` 참조 0건) |
+| 18 | 레거시 `POST /flowgate/api/v1/outbox/create`(폼 인코딩, `doc_type` 클라이언트 지정 가능) | `legacy_misc_routes.py` `api_outbox_create`→`process_service.create_requirement`→`create_workflow_root` | `storage_filepath`(documents 트리, R/B 전용 슬롯) | 불가 — `doc_type not in WORKFLOW_ROOT_TYPES={"R","B"}`면 400 | 신규 텍스트(단 R/B만) | 해당 없음(TR 도달 불가) | 해당 없음 | rev1 재확인: `process_service.py:635`(`create_workflow_root` 정의)에서 `doc_type = (doc_type or "R").strip().upper()` 직후 **648~650행**에 `if doc_type not in WORKFLOW_ROOT_TYPES: errors.append(...)`가 있고, **794행**의 `storage_filepath.write_text(...)`보다 한참 앞선 **668행** `if errors: return {"status": "error", "errors": errors}`에서 즉시 반환한다 — `doc_type=TR`을 보내면 그룹/파일 생성 로직에 진입하기 전에 400이 난다. 전체 함수 본문을 직접 읽어 실행 순서로 재확인(원문 인용은 §1-A 참조) |
+| 19 | `assemble_tsr()`(테스트 실행 완료 시 서버 자동 생성/개정) | `test_run_service.py` `assemble_tsr`/`_revise_active_tsr` | `path`(documents 트리, type_code 하드코딩 "TSR") | 불가(TR 아님) | 서버 합성 텍스트 | 해당 없음(TSR은 이 게이트의 대상이 아님, 6절) | 해당 없음 | `type_code: "TSR"` 하드코딩 1619, 신규 쓰기 1611, 개정 쓰기 1674 |
+| 20 | Q&A 답변 등록 | `qa_service.py` (create_answer 계열) | `stored_path`(documents 트리, type_code 하드코딩 "A") | 불가(TR 아님) | 신규 텍스트, 단 타입은 항상 "A" | 해당 없음 | 해당 없음 | `doc_type="A"` 하드코딩 70·102, 쓰기 90 |
+| 21 | CH(대화) 그룹 파이널라이즈 스냅샷 | `conversation_markdown_service.py` 그룹 CH 프리즈 함수 | `path`(documents 트리, `type_code="CH"`만 조회) | 불가(TR 아님) | CH 턴을 렌더링한 텍스트 | 해당 없음 | 해당 없음(개별 문서 실패는 흡수) | `type_code="CH"` 필터 97, 쓰기 111 |
+| 22 | 레거시 `create_workflow_root`(R/B 생성) | `process_service.py` `create_workflow_root` | `storage_filepath` | 불가 — 위 #18과 동일 화이트리스트(rev1: 648~650행 검사가 794행 쓰기보다 먼저 실행됨을 원문으로 재확인) | 신규 텍스트, R/B만 | 해당 없음 | 해당 없음 | 화이트리스트 검사 648~650, 쓰기 794 |
+| 23 | 번호 마이그레이션 스냅샷/복원(그룹/서브그룹 코드) | `numbering/migration_service.py` `_backup_db_snapshot`/`_restore_from_snapshot` | `snap_path`(JSON, id_counter/documents 테이블의 **행 데이터** 백업 — 문서 본문 파일이 아님) | 불가 — TR 본문 파일과 무관한 DB 스냅샷 | 해당 없음 | 해당 없음 | 해당 없음 | 쓰기 86, 대상은 `documents` 테이블 SELECT 결과의 JSON 직렬화일 뿐 `.md` 파일이 아님. **단, 이 파일에는 별도로 문서 본문 파일 자체를 rename하는 `_apply_reformat(target="document")`가 있다 — §1-A #A6 참조(신규 발견, rev0 미기재)** |
+| 24 | 작업계획(WP) PATCH 저장 시 리비전 백업 | `work_plan.py` PATCH 핸들러 | `backup`(WP 전용 `revisions/` 디렉터리) | 불가(TR 아님, WP는 JSON 정본이며 별도 라우터) | 기존 파일의 바이트 복사(백업) | 해당 없음 | 해당 없음 | 백업 생성 669~679, 쓰기 676 |
+| 25 | 원격 CRUD 도구 `stat`/`read`/`grep`/`glob`(본 조사 도구) | `remote_tool_service.py` | 쓰기 없음(읽기 전용 스코프) | 불가 | 해당 없음 | 해당 없음 | 해당 없음 | `help/tools` 응답에서 스코프가 `read`/`grep`으로 고정, `_exec_write`/`_exec_patch`는 별도 `write`/`patch` op만 호출 |
+
+---
+
+## 1-A. `write_text`/`write_bytes` 외 쓰기 primitive 전수조사 (신규 — 반려 사유 §1 대응)
+
+N0008 §3이 요구한 "쓰기 모드 `open`, `rename`/`replace`/`copy`, atomic-write 및 저장
+헬퍼 전체 호출부"를 `server/modules/flow_gate` 전체에서 검색했다. 정규식 이스케이프
+문제(백슬래시·미이스케이프 괄호가 원격 grep에서 `invalid_request`를 유발)를 피하려고
+대괄호 문자 클래스(예: `rename[(]`)를 썼으며, 모든 결과는 `truncated:false`(전수)다.
+
+### 1-A-1. 검색한 primitive 계열과 원시 매치 수
+
+| 계열 | 검색 패턴 | 매치 수(전수) |
+|---|---|---|
+| `shutil.move` | `shutil.move` | 13 (그 중 1건은 `inbox_routes.py:3630`의 **주석**, 실코드 아님 — 12건 실코드) |
+| `shutil.copy*` | `shutil.copy` | 6 |
+| `os.replace` | `os.replace` | 5 |
+| `os.rename` | `os.rename` | 2 |
+| `Path.rename`(간접 포함) | `rename[(]` | 10(위 `os.rename` 2건 포함, 나머지 8건은 `storage/filesystem.py`의 `safe_rename` 정의·재귀호출 및 `numbering/migration_service.py`의 호출부) |
+| 쓰기 모드 `open(...)` | `open[(]` | 80(전체 `open(` 호출 — 읽기 모드 포함, 아래서 쓰기 모드만 분류) |
+| `tempfile` 기반 atomic write | `tempfile` | 9 |
+
+### 1-A-2. 문서 본문 트리(`documents/{project}/{branch}/...`)에 실제로 닿는 호출부 — 개별 판정
+
+| # | 파일:행 | primitive | 최종 쓰기 대상 | TR 본문 도달 가능? | `evaluate()` 게이트 | 근거 |
+|---|---|---|---|---|---|---|
+| A1 | `api/inbox_routes.py:4509` | `shutil.copy2` | `revisions/{doc_id}.r{rev}{ext}`(documents 트리 내 리비전 백업) | 예(백업 사본) | 예 — `_handle_edit`의 게이트(4413) 통과 후에만 도달 | 이미 §1 #2와 같은 트랜잭션 내부 |
+| A2 | `api/inbox_routes.py:4575` | `shutil.copy2` | `stored_path`(TR 본문 파일 자체, DB CAS 충돌 시 롤백 복원) | 예 | 예 — 동일 트랜잭션, 새 본문이 이미 게이트를 통과해 성공적으로 쓰인 뒤 DB 쓰기만 실패했을 때의 롤백 | 동일 |
+| A3 | `documents/document_service.py:430,562` | `os.replace` | 문서 `.md` 파일의 **파일명만** 변경(R/B 워크플로 루트 타입 전환, `convert_root_document_type`) | **불가** — 진입부터 `current_type`/`new_type` 둘 다 `_WORKFLOW_ROOT_TYPES = frozenset({"R","B"})`(53행)에 들어야 하고, `current_type not in _WORKFLOW_ROOT_TYPES`면 460행에서 즉시 422 — TR은 애초에 `current_type`이 될 수 없음 | 없음(적용 대상 자체가 아님) | 함수 전체(약 405~575행)를 원문으로 읽어 재확인: 449·460행의 화이트리스트 체크가 431행의 실제 `os.replace` 실행보다 앞서 실행되는 흐름을 직접 확인 |
+| A4 | `services/remote_tool_service.py:822,831,1020` | `open(tmp,"wb")` + `os.replace(tmp,target)` | `_resolve_root_for_mutation`의 root(항상 `src_root()`) | 불가 | 없음(대상 자체가 TR과 무관) | §1 #17과 동일 root 해석 로직(595~651행) — 이미 §1에서 다룬 경로의 내부 구현 세부 |
+| A5 | `services/work_plan_service.py:1303,1305` | `os.fdopen(...,"w")` + `os.replace` | WP JSON 본문(`write_body_atomically`) | 불가 — 모든 호출부가 `doc_type.upper()==WORK_PLAN_TYPE` 또는 `is_work_plan` 가드로 좁혀짐 | 없음(WP는 이 게이트 대상이 아님) | §1 #24와 동일 계열 |
+| A6 | `numbering/migration_service.py:151,208`→`storage/filesystem.py:26(safe_rename)` | `Path.rename`(충돌 시 `shutil.copytree`/`copy2` EXDEV 폴백) | **`documents.file_path`가 가리키는 실제 문서 파일 — 타입 제한 없이 프로젝트의 모든 문서**(TR 포함) | **예(파일명 rename만, 본문 바이트는 변경되지 않음)** | **아니오 — 이 파일 전체에 `step_verification_service` import·호출이 0건** | 신규 발견(rev0 미기재). `_apply_reformat(target="document")`가 `SELECT doc_id, file_path FROM documents WHERE project_id=?`로 프로젝트의 **전체 문서**(타입 무관)를 순회하며 자릿수(digit-width)가 다르면 `fs.safe_rename(src, dst)`로 파일명을 바꾼다. 원문 208행 앞뒤를 직접 읽어 타입 필터가 없음을 확인했다. §1-A-3에서 실행 경로(라이브 여부)를 별도로 검증한다 |
+| A7 | `documents/template_service.py:42(_safe_write)`→136행(`render_template`) | `open(path, mode, encoding=encoding)` | `storage_paths.document_path(...)` — **documents 트리에 직접, 타입 무관** | **예(구조적으로 가능)** | **아니오 — 이 파일에 `step_verification_service` 참조 0건** | 신규 발견(rev0 미기재). `render_template(doc_id, type_code, project_id, ...)`이 Jinja2 렌더 결과를 `_safe_write`로 문서 저장 경로에 직접 쓴다. §1-A-3에서 이 함수의 실제 호출자 존재 여부를 확인한다 |
+
+### 1-A-3. A6·A7의 라이브/데드 코드 판정 (신규 발견 두 건에 대한 실행 가능성 확인)
+
+**A6 — 번호(자릿수) 마이그레이션 리포맷.** 호출 체인을 역방향으로 전수 추적했다.
+
+- `POST /flowgate/api/v1/projects/{project_id}/numbering/migrate`(status_code=202,
+  `settings/routers/project_settings.py`, 권한 `project.settings.edit`)는 **살아있는
+  라우트**이며, 원문을 직접 읽어 확인한 바 `body.target="document"`를 받아
+  `enqueue_numbering_migrate(...)`(`project_settings_service.py:287`)를 호출하고
+  결과를 **그대로 202로 반환할 뿐, 동기적으로 처리하지 않는다.**
+- `enqueue_numbering_migrate`는 `numbering_jobs` 테이블에 `status='queued'` 행을
+  INSERT하는 것으로 끝난다(전수 grep, `db/numbering_jobs.py` 확인).
+- 이 큐를 실제로 소비하는 코드는 `numbering/jobs.py`의 `NumberingWorker`
+  (폴링 스레드, `_process_one_batch()`가 `process_job()`을 호출해 비로소
+  `_apply_reformat()`→`safe_rename`을 실행한다)뿐이다.
+- `NumberingWorker`/`get_worker()`/`.start()`를 **`server` 전체**(flow_gate 모듈
+  밖 포함)에서 전수 grep한 결과, 호출부는 **자기 자신의 정의(jobs.py 내부)뿐**이고
+  외부 호출자가 0건이다(`total:11`의 매치 전부가 `jobs.py` 자기 파일 안의 클래스
+  정의·로그 문자열·싱글턴 헬퍼였다).
+- 앱 부팅 경로(`server/routers/main.py`의 `lifespan()`)를 원문으로 읽었으나
+  콘솔 인코딩 부트스트랩과 SSE 종료 이벤트만 설정할 뿐 어떤 워커 스레드도
+  시작하지 않는다(`start()` 호출 자체가 이 파일에도, 다른 어떤 파일에도 없다).
+- **결론**: `POST .../numbering/migrate`는 요청을 **접수(202)**하지만, 이 소스
+  트리 안에서 그 접수된 작업을 실제로 실행할 코드 경로가 현재 **어디에도 연결돼
+  있지 않다.** 즉 A6은 "인큐까지는 라이브, 실행(=`safe_rename` 발동)은 이 소스
+  범위에서 죽어 있음"이라는, 순수 라이브도 순수 데드도 아닌 중간 상태다 — 소스
+  코드 조사만으로는 배포 환경에 별도 크론/운영 스크립트가 이 워커를 기동하는지
+  확인할 수 없다(8절 불확실성에 추가).
+
+**A7 — `render_template()`.** `render_template`을 `server` 전체에서 전수 grep한
+결과(9건) 중 실제 호출은 `server/tests/test_documents.py`의 두 테스트 함수
+(`test_render_template`, `test_render_template_not_found`)뿐이고, 나머지는 자기
+정의(`template_service.py:80`)와 `documents/__init__.py`의 재노출 2줄이다. **어떤
+라우터·서비스·워크플로 코드도 `render_template`을 호출하지 않는다** — 현재는
+완전한 데드 코드다. 다만 공개 API로 재노출돼 있어(`documents/__init__.py`),
+향후 어떤 타입(TR 포함)의 문서 생성 경로가 이 함수를 연결하면 게이트 없이
+바로 documents 트리에 쓰는 새 우회가 생긴다는 점을 T#1 구현자에게 남긴다.
+
+### 1-A-4. 문서 본문 트리에 닿지 않는 나머지 호출부 (그룹 요약)
+
+나머지 primitive 호출부는 두 가지 독립적인 이유 중 하나 이상으로 documents 트리와
+무관함을 확인했다 — (a) 쓰기 대상이 애초에 서로 다른 디스크 트리
+(`{storage_root}/{inbox,outbox,processed,accept,reject,cancelled,error,conflict}`인
+레거시 OutBox/InBox 큐, `src/{project}/{branch}`, `templates/...`,
+`_documents/FlowGate/{90_test_reports,10_requirements}`, 첨부파일 룸, WP
+`revisions/`·`_applications.jsonl`, sqlite 백업)이거나, (b) 그 primitive를 감싼
+함수 자체가 **전수 grep으로 외부 호출자 0건**임을 확인한 죽은 코드다.
+
+- **레거시 OutBox/InBox/Preview/Apply/Error 서브시스템**(`process_service.py`의
+  `cancel_document`/`approve_document`/`reject_document`/`resume_document`/
+  `create_review_request`/`create_revision_request`/`_migrate_single_file`/
+  `_batch_migrate`/`_dc_approve_artifacts`/`_strip_status_header_inplace`/
+  `_create_ac_file`/`_create_rj_file`/`_create_inbox_result_file`/
+  `_create_auto_result_inbox_draft`/`_create_rerun_t_inbox_draft`/
+  `_create_design_reopen_ds_draft`/`_move_test_report_to_archive`, 그리고
+  `service.py`의 `apply_file`/`_move_to_error`/`_move_to_conflict`/
+  `save_memo_template_to_inbox`): 이 함수들 각각을 함수명으로 전수 grep했을 때
+  자기 자신의 `def` 줄 외에 다른 호출부가 하나도 없었다(각각 `total:1`). 이 중
+  `shutil.move` 12건, `open(...,"w")` 15건, `os.rename` 2건이 여기 속한다.
+  대상도 위 (a)의 레거시 버킷 디렉터리이거나 `_documents/FlowGate/...`라는 별도
+  저장소로, documents/ 트리도 아니다.
+- **`process_service.py:943`(`create_answer`)**: `qa_routes.py`가 실제로는 별도의
+  `qa_service.create_answer_doc`을 쓰므로 이 구버전 함수는 호출자가 없다(§1 #20은
+  살아있는 `qa_service` 경로를 다룬다).
+- **`storage/filesystem.py:93,96`(`_cross_device_move`)**: `safe_rename`의 교차
+  디바이스(EXDEV) 폴백이며 A6과 같은 도달 가능성 판정을 그대로 따른다(같은 함수의
+  일부이므로 별도 행을 만들지 않았다).
+- **`storage/migration.py:219`**: `apply_storage_change`(project_settings 라우터의
+  `POST .../storage/migrate`)에서 살아있게 호출되지만, `COPY_SUBDIRS`에
+  `documents`가 없어(inbox/outbox/processed/accept/reject/cancelled/error/conflict만
+  포함) documents 트리를 건드리지 않는다.
+- **`db/migrations/migrate.py:29`, `numbering/migration_service.py:86`
+  (`_backup_db_snapshot`)**: 둘 다 sqlite 파일 또는 DB 행의 JSON 스냅샷 백업이며
+  CLI 마이그레이션 전용, `.md` 문서 파일이 아니다.
+- **`documents/attachments/*.py`(`legacy.py:142`의 `shutil.move`, `service.py:761`·
+  `naming.py:221`의 `os.open(O_CREAT|O_EXCL|O_WRONLY)`)**: 첨부파일 원본/바이너리
+  경로이며 문서 **본문**과는 별개의 저장 공간(첨부파일 룸)이다.
+- **`api/v1/file_transfer_routes.py:124`, `settings/project_settings_service.py:94`,
+  `documents/template_service.py:42`(`save_template` 경유)**: 각각 `_get_src_root`
+  (src 트리), 템플릿 스토어(`templates/document_type_templates`), 템플릿 파일
+  저장소(`templates/{project}/{type}.j2`)로, 셋 다 documents 트리 밖이다.
+
+### 1-A-5. §1-A 요약
+
+- 문서 본문 트리(`documents/`)에 새 텍스트를 쓸 수 있는 경로는 §1의 결론과
+  동일하게 **여전히 정확히 #3/#4(PATCH content) 한 곳**이다 — 이번 primitive
+  전수조사로 새로운 **콘텐츠 쓰기** 우회는 발견되지 않았다.
+- 다만 이번 조사로 두 가지를 새로 발견해 rev0의 "전수" 공백을 메운다:
+  1. **A6**: 문서 **파일명**(본문 바이트 아님)을 게이트 없이 바꿀 수 있는 경로가
+     하나 있다(`numbering/migration_service.py`의 자릿수 리포맷). 다만 접수
+     라우트는 살아있어도 실제 실행 워커가 이 소스 트리 안에서는 시작되지 않는
+     상태임을 확인했다.
+  2. **A7**: 게이트 없이 documents 트리에 임의 콘텐츠를 쓸 수 있는 함수
+     (`render_template`)가 공개 API로 존재하지만 현재는 어디서도 호출되지
+     않는 죽은 코드다.
+  두 항목 모두 "정확히 #3/#4"라는 §5 결론 자체를 무효화하지는 않지만(콘텐츠
+  변조가 아니거나 실행되지 않으므로), N0008 §3이 요구한 전수성 기준을 충족하려면
+  표에 반드시 포함되어야 하는 항목이라 이번 rev1에서 추가했다.
+
+---
+
+## 2. 두 PATCH URL의 수렴, 그리고 documents/src 트리 경계
+
+### 2-1. PATCH 수렴
+
+`update_document_content_rpc`(documents.py 2237~2246)는 자신의 바디를
+`DocumentContentUpdate`로 감싸 `update_document_content(doc_id, ..., current_user)`를
+**그대로 호출**하며, 별도의 저장 로직을 갖지 않는다. 따라서 REST 경로
+(`PATCH /documents/{doc_id}/content`)와 RPC 별칭(`PATCH /documents/content`)은 실제
+쓰기 로직이 완전히 하나(2570~2615)로 수렴한다 — 어느 한쪽만 게이트를 추가하면 나머지
+하나가 뚫린 채로 남는 실수는, 게이트를 라우트 핸들러가 아니라 `update_document_content`
+함수 본문(2604~2606, 쓰기 직전)에 넣으면 구조적으로 불가능해진다. 이는 L0007 §2 (C)의
+설계와 정확히 일치하며, 이번 조사에서 소스로 재확인했다.
+
+### 2-2. documents/ vs src/ 트리 분리의 코드 근거
+
+`storage/paths.py`:
+- `src_root(project_name, branch)` — `{storage_root}/src/{project_name}/{branch}` (110~115행)
+- `project_root(project_id, ...)` — `{storage_root}/documents/{project_name_slug}/{branch}` (290~301행)
+- `document_path(...)` — `project_root()`를 거쳐 최종 `.md` 경로를 만든다 (360~379행)
+
+`git_service.py` 전체에서 `src_root`(및 그 파생 `effective_src_root`/`effective_src_root_ex`/
+`base_src_root`)는 **52곳**에서 쓰이고, `project_root`/`document_path`는 **0곳**에서
+쓰인다(둘 다 전수 grep, `truncated:false`로 확인). git 통합·병합·충돌해결·복구
+기능 전체가 이 파일 하나에 몰려 있으므로, git 관련 어떤 동작도 구조적으로
+`documents/` 트리에 쓸 수 없다는 결론이 코드 수준에서 성립한다.
+
+같은 패턴이 `tree_routes.py`(`_resolve_src_path`, 58~102행)와 `inbox_routes.py`의
+두 번째 src-content 편집 라우트(`_editable_source_root`, 271~297행), 그리고
+`remote_tool_service.py`(`_resolve_root_for_mutation`/`_fallback_project_root`,
+487~633행)에서도 반복된다 — 넷 모두 최종 루트를 `git_service.effective_src_root_ex`/
+`base_src_root` 또는 `storage_paths.src_root()`로만 계산하며, `project_root`/
+`document_path`를 참조하는 코드는 이 네 파일 어디에도 없다(개별 전수 grep으로 확인).
+즉 "문서 본문 트리에 닿을 수 있는 fallback이 없는가"라는 N0008 §6의 질문에 대한
+답은, 지금 소스에는 **없다**이다 — 단, 이는 코드 스캔으로 확인 가능한 범위의 결론이며
+런타임 설정(예: `storage_root`가 문서와 소스에 대해 실제로 물리적으로 다른 마운트를
+가리키는지)까지는 이번 조사의 도구(정적 코드 읽기)로 검증하지 못했다(8절 불확실성).
+
+---
+
+## 3. 게이트 호출 지점의 전수 확인
+
+`grep(pattern="SECTION_HEADING|step_verification_service", path="server/modules/flow_gate")`
+결과(26건, truncated=false) 중 `step_verification_service.evaluate(` 형태의 실제 판정
+호출은 **`inbox_routes.py` 3461행과 4413행 두 곳뿐**이다. `documents.py`가
+`step_verification_service`를 import(43행)하는 목적은 `parse_step_verification`
+(2560행, `GET /{doc_id}/step-verification` 전용 읽기 API)뿐이며, `evaluate` 호출은
+0건이다. `VERDICT_PASS`/`VERDICT_REJECT` 상수는 `step_verification_service.py` 38~39행,
+`evaluate()` 함수 본체는 202행에 있고 이 좌표는 L0007과 정확히 일치한다.
+
+rev1에서 §1-A로 새로 조사한 파일들(`numbering/migration_service.py`,
+`documents/template_service.py`, `documents/document_service.py`,
+`process_service.py`, `service.py`) 각각에 대해서도
+`step_verification_service`를 개별 grep했고, 다섯 파일 모두 참조 0건이다 —
+즉 이 문서가 문서 본문 트리에 닿는다고 판정한 모든 경로(§1의 #1~#5, §1-A의
+A1~A7)를 통틀어 `evaluate()`를 실제로 호출하는 곳은 여전히 inbox_routes.py의
+두 곳뿐임을 재확인했다.
+
+---
+
+## 4. 복구(regenerate) 경로의 안전성 재검토 — N0008 §5
+
+`/regenerate`(documents.py 2618~2698)는 `_regenerate_target_path`로 대상 경로를 잡고
+(217~255행), `_latest_revision_body(doc_id, project_id)`(258~281행)로 "가장 최신의
+읽을 수 있는 리비전 백업"을 찾는다. 이 함수의 docstring(261행)은 "On every **inbox
+edit** the prior file is copied to `revisions/{doc_id}.r{n}.md`"라고 명시한다.
+
+`document_revisions` 테이블에 실제로 INSERT하는 코드를 전수 검색(`grep(pattern="document_revisions", path="server/modules/flow_gate")`,
+17건)한 결과, INSERT는 **`inbox_routes.py`의 edit 처리 경로**(4497·4620행 부근의
+"document_revisions INSERT" 주석)와 **`work_plan.py`의 WP 전용 저장 경로**
+(669~679행, WP는 별도 라우터·별도 타입) 두 곳뿐이다. `documents.py`의
+`update_document_content`(PATCH content, #3/#4)는 `document_revisions`를 **읽기만**
+하고(266행, `_latest_revision_body` 내부) 쓰지는 않는다 — PATCH로 TR 본문을 덮어써도
+그 결과는 리비전 백업으로 남지 않는다.
+
+이로부터 두 가지가 함께 성립한다.
+
+- **좋은 소식**: PATCH가 게이트 없이 TR 본문을 훼손하더라도, 그 훼손된 버전이
+  `/regenerate`의 복구 소스(리비전 백업)로 저장되지는 않는다 — PATCH 자체가 백업을
+  만들지 않기 때문이다. 따라서 "PATCH로 나쁜 본문을 심고 파일을 지운 뒤 regenerate로
+  그 나쁜 본문을 다시 복구시킨다"는 경로는 성립하지 않는다(백업이 없으면 metadata
+  스텁으로 떨어진다).
+- **남는 위험(N0008 §5가 지목한 바로 그 위험, §6-3에서 실측으로 재확인)**:
+  `document_revisions`는 게이트 도입 이전부터 존재해온 테이블이므로, **inbox
+  edit로 만들어진 과거 리비전 백업 중에는 이 게이트(오늘 그룹 0467에서 도입)보다
+  먼저 저장된 것이 반드시 존재한다.** 그런 과거 리비전은 `## 단계별 확인` 절이
+  아예 없던 시절 게이트 없이 저장됐을 수 있고, `/regenerate`는 리비전 존재 여부와
+  시점을 검사하지 않고 "가장 최신의 읽을 수 있는 백업"만 본다(271~280행에
+  시점/게이트 조건 없음). 즉 파일이 사라진 TR을 복구하면, 그 TR이 게이트 도입
+  이전에 마지막으로 저장됐을 경우 **절이 없는 본문이 그대로 되살아날 수 있다** —
+  이는 가정이 아니라 `_latest_revision_body`의 실제 로직에서 코드로 확인되는
+  사실이며, §6-3의 프로젝트 전체 검색 결과(현재 저장된 TR 620건 중 619건이
+  애초에 이 절 자체를 갖고 있지 않다)가 이 위험이 이론적 우려가 아니라 실제
+  모집단의 압도적 다수 상태임을 재확인해준다. `/regenerate`는 편집 가능/최종승인
+  게이트조차 의도적으로 건너뛰므로(2626~2630행 주석), 이 복구 자체를 이 문서
+  하나로 막는 것은 "파일이 사라진 TR을 복구할 방법이 없어진다"는 더 나쁜 상태를
+  만든다 — L0007의 판단과 동일하게, 이 문서도 이를 **의도적 예외로 유지**할 것을
+  권고하되, 복구된 본문이 게이트 도입 이전 상태일 수 있다는 사실 자체는 회신에
+  표시하는 편이 안전하다는 점을 유지한다(8절 권고).
+
+---
+
+## 5. 실제 우회 가능 경로 — 결론
+
+**콘텐츠(신규 텍스트) 쓰기 우회는 정확히 한 곳(#3/#4, PATCH content)이며, 이미
+L0007이 지목한 것과 동일하다.** §1-A에서 `write_text`/`write_bytes` 외의 전체
+쓰기 primitive 계열(`shutil.move`/`shutil.copy*`/`os.replace`/`os.rename`/
+`Path.rename`/쓰기 모드 `open`, 총 12+6+5+2+8+80건 원시 매치, 중복 제외 실질
+호출부 49곳)을 전수 추적한 결과, **문서 본문에 새로운 사용자 텍스트를 심을 수
+있는 경로는 여전히 #1·#2(게이트됨)·#3=#4(무검증) 세 곳뿐**이고 새로운 콘텐츠
+우회는 발견되지 않았다.
+
+다만 이번 rev1 조사로 콘텐츠 변조는 아니지만 반려 사유가 요구한 "전수" 기준에서
+반드시 밝혀야 할 두 항목을 추가로 확인했다(§1-A-2/1-A-3):
+
+- **문서 파일명 변경 우회(A6)**: `numbering/migration_service.py`의 자릿수
+  리포맷이 `step_verification_service` 게이트 없이 TR을 포함한 모든 문서의
+  파일을 rename할 수 있다. 접수 라우트(`POST .../numbering/migrate`)는 살아있지만,
+  실제로 rename을 실행하는 `NumberingWorker`는 이 소스 트리 안 어디에서도
+  시작되지 않아, 소스 코드만으로는 "접수는 가능하나 실행은 확인되지 않는다"는
+  중간 상태로 판정한다.
+- **구조적으로 가능하나 죽어 있는 콘텐츠 쓰기 경로(A7)**: `render_template()`이
+  게이트 없이 documents 트리에 임의 콘텐츠를 쓸 수 있지만, 현재 호출자가
+  테스트 코드 두 곳뿐이라 프로덕션 경로에서는 도달 불가능하다.
+
+**근본 원인.** 판정 게이트(`step_verification_service.evaluate`)가 각 호출부에 개별
+인라인으로 박혀 있고 공유 강제 함수가 없다 — inbox_routes.py의 신규/수정 두 곳은
+이미 서로 거의 동일한 코드를 중복하고 있으며(3455~3470 대 4407~4422), PATCH 경로가
+추가되는 순간 세 번째 복붙이 필요해진다. 이 구조에서는 "새 저장 경로를 추가하면서
+게이트 호출을 깜빡한다"는 실수가 언어/프레임워크 수준에서 전혀 방지되지 않는다 —
+A7(`render_template`)이 정확히 이 실수가 아직 일어나지 않았을 뿐인 잠재 사례다.
+
+**최소 공통 저장 앵커.** `update_document_content`(documents.py 2570~2615)가 유일한
+남은 무검증 **콘텐츠** 경로이자, RPC 별칭까지 포함해 정확히 한 지점에서 게이트를 걸 수 있는
+곳이다(2-1절). `step_verification_service` 모듈에 `enforce_on_save(type_code, content,
+locale)`류의 공유 함수를 두고 inbox 신규/수정/PATCH 세 호출부가 모두 이것 하나만
+부르게 하면, 세 곳의 판정 로직이 항상 같은 코드 경로를 타게 되어 향후 표류를 막을 수
+있다 — 이는 L0007 §2.1의 설계이며, 이번 조사로 그 전제(3곳이 유일한 실질적 진입점)가
+사실임을 소스로 재확인했으므로 그대로 유효하다. 구현 자체는 T#1의 범위다.
+
+---
+
+## 6. 적용 범위 — TR 외 타입으로 확대할 근거가 있는가 (rev1 전면 재작성)
+
+반려 사유는 계약·생성주체·파서 근거만으로는 부족하며, **기존 콘텐츠 호환성**과
+**타입별 오탐/차단 위험**을 실측 근거로 제시하라고 요구했다. rev1은
+`step_verification_service.py`의 실제 판정 로직을 그대로 옮겨 적용 대상 후보
+문서들을 검사하고, 문서검색 API(`GET /search/documents/content?q=<keyword>&type=<T>`)로
+TR/NR/TSR/TS 모집단 전체에서 해당 절이 실제로 존재하는 문서를 찾아 통과 여부를
+확인했다. 다만 rev1은 이 본문검색 API의 `total`(검색어 일치 문서 수)을 그대로
+모집단으로 오인했다는 반려를 받았다 — rev2는 §6-2에서 본문을 읽지 않는
+제목/문서ID 검색 API(`GET /search/documents?q=<모든 doc_id에 등장하는 문자열>
+&type=<T>`)로 모집단을 다시 세고, 그 과정에서 발견한 타입 필터 접두사 매칭
+함정(TS↔TSR)까지 바로잡았다.
+
+### 6-1. `evaluate()`가 실제로 요구하는 것 (정확한 규칙)
+
+`step_verification_service.py`(전체 15,416바이트, `truncated:false`로 읽음)의
+핵심 정규식을 그대로 인용한다.
+
+```python
+_HEADING_RE = re.compile(r"^\s{0,3}#{2}\s*(단계별\s*확인|Step\s+Verification)\s*$", re.IGNORECASE)
+_NEXT_TOP_HEADING_RE = re.compile(r"^\s{0,3}#{1,2}\s")  # 레벨1~2 헤딩만 섹션을 끝냄; ### 는 하위섹션 시작
+_SUB_HEADING_RE = re.compile(r"^\s{0,3}###\s+(.+?)\s*$")
+_SUMMARY_RE = re.compile(r"^-\s*(?:개요|summary)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_STEP_RE = re.compile(r"^-\s*(?:스텝|step)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_EXPECT_RE = re.compile(r"^\s{2,}-\s*(?:기대치|expected)\s*:\s*(.+?)\s*$", re.IGNORECASE)
+```
+
+핵심 특성: 헤딩은 **한 줄 전체**를 차지해야 하고(줄 안에 섞여 있거나 백틱 인용
+안에 있으면 인정되지 않는다), 섹션 안에서 `###` 하위섹션마다 **모든 물리적
+줄**이 개요(`- 개요:`)·스텝(`- 스텝:`)·기대치(2칸 이상 들여쓴 `  - 기대치:`) 중
+하나와 정확히 일치해야 한다 — **긴 문장이 줄바꿈으로 다음 줄에 걸치면 그 이어진
+줄은 세 패턴 어디에도 안 걸려 `SVV-002`(형식 오류, `unrecognized_line`)가 된다.**
+판정은 `SVV-001`(헤딩 없음/있어도 빈 채로 `없음` 선언 없음) 또는 `SVV-002`(개요
+누락/중복, 스텝 없음, 기대치 없는 스텝, 짝 없는 기대치, 인식 불가 줄, `없음`과
+실섹션 동시 선언)가 하나라도 있으면 `reject`, 없으면 `pass`다. 게이트 호출은
+여전히 `inbox_routes.py:3461`/`:4413` 두 곳뿐이고, `help_catalog.py:989~992`는
+"## 단계별 확인" 플레이스홀더 자동 삽입을 `doc_type.upper()=="TR"`일 때만 하도록
+좁혀 놓았다(grep+원문 확인).
+
+### 6-2. 검색 방법 — 모집단과 표본이 아닌 전수 검색 (rev2 — 반려 사유 반영)
+
+**rev1의 결함.** rev1은 타입별 모집단을 본문검색 API(`GET
+/search/documents/content`)에 `q="의"`를 넣어 얻은 `total`로 산정했다. 그러나
+`search_documents_content`(`list_routes.py:457~520`)는 `q`(빈 문자열이면 400)를
+필수로 받아 `content_search_service.search_document_bodies(q=query,
+doc_type=type, ...)`(`content_search_service.py:456`)를 호출하고, 그 함수가
+돌려주는 `total`은 **본문에 `q`가 실제로 일치하는 문서 수**다 — 모집단 전체가
+아니라 검색어 일치 표본이었다. 본문에 "의"가 단 한 글자도 없는 문서는 분모에서
+통째로 빠지므로, 609/427/271/516이라는 수치와 거기서 나온 1/609·0/427·0/271·
+0/516 통과율·99.84%/100% 차단 결론은 입증되지 않는다는 반려가 정확하다.
+
+**rev2의 방법.** 본문을 전혀 읽지 않는 **제목/문서ID 검색 API**(`GET
+/search/documents`, `list_routes.py:398~455`)로 바꿨다. 이 엔드포인트도 `q`가
+필수이지만, `db_docs.search_documents()`(`db/documents.py:380~421`)의 SQL을
+직접 읽어 확인한 바 `q`는 `(LOWER(title) LIKE %q% OR LOWER(doc_id) LIKE %q%)`
+조건 하나만 추가할 뿐이고, `project`(`project_id = ?`)와 `type`
+(`type_code LIKE '{type}%'`)은 `q`와 무관하게 별도 파라미터로 걸리는
+`AND` 조건이다. 즉 `q`에 이 프로젝트의 모든 `doc_id`(형식
+`{project}.{module}.{group}.{seq}-{type}`)가 항상 포함하는 문자열을 넣으면,
+그 응답의 `total`은 `SELECT COUNT(*) FROM documents WHERE project_id=? AND
+type_code LIKE ?`와 값이 같아진다 — 본문 내용과 무관한 진짜 모집단 카운트다.
+
+이를 실제로 검증하기 위해 서로 다른 두 질의어(`q="flowgate"`, `q="."` — 둘 다
+모든 `doc_id`에 항상 등장) 각각으로 타입별 `total`을 받아 **완전히 동일함**을
+확인했다(질의어를 바꿔도 값이 흔들리지 않으면, 그 값은 텍스트 매칭 결과가
+아니라 텍스트와 무관한 카운트라는 뜻이다). 결과:
+`type=TR` → **620**건, `type=NR` → **431**건, `type=TSR` → **277**건,
+`type=TS` → **550**건(단, 아래 두 번째 함정 참조).
+
+**두 번째 함정(신규 발견) — `type=TS`의 550건은 그 자체가 오염값이다.**
+`db_docs.search_documents`와 `list_documents`(`list_routes.py`의
+`/list/groups/{gid}/documents`) 둘 다 타입 필터를 정확한 일치가 아니라
+`type_code LIKE '{doc_type}%'`(접두사 매칭)로 구현한다. `/list/doc-types`로
+전수 조회한 이 프로젝트의 타입 코드 목록(`AC,RJ,DC,D,P,L,DB,R,M,CH,WP,B,DS,N,
+T,TS,NR,TR,TSR,C`)에서 `TSR`은 `TS`로 시작하므로, `type=TS` 질의는 TS 문서와
+TSR 문서를 **함께** 센다(TR/NR/TSR은 각각을 접두사로 갖는 다른 타입 코드가
+목록에 없어 이 문제가 없음을 같은 목록으로 확인했다). 이를 가정이 아니라
+실측으로 확정하기 위해 `type=TS` 결과 550건 전체를 `limit=200`씩 3페이지로
+나눠 받아 각 항목의 실제 `type` 필드를 전수 집계했다: `{"TSR": 277, "TS":
+273}`. 277은 `type=TSR` 질의의 총계와 정확히 일치하므로, **TS 단독 모집단은
+273건**이다.
+
+**확정 모집단(전수, 질의어 무관·본문 무관 순수 COUNT):**
+`TR=620`, `NR=431`, `TSR=277`, `TS=273`.
+
+- 절 헤딩이 실제로 본문에 존재하는 문서(검색어 `"단계별 확인"`, 공백 포함 형태;
+  글자 붙임형 `"단계별확인"`은 0건이라 별도 취급 불필요, 영문 별칭
+  `"Step Verification"`은 전체 프로젝트에서 1건뿐이고 그마저 P0006이 규칙
+  자체를 설명하며 인용한 것이라 TR/NR/TSR/TS 어디에도 속하지 않는다):
+  `type=TR` → **1**건(`flowgate.default.0467.0003-TR`), `type=NR` → **1**건
+  (`flowgate.default.0467.0009-NR`, 즉 이 문서 자기 자신의 이전 리비전),
+  `type=TSR` → **0**건, `type=TS` → **0**건. 이 헤딩 검색도 본문검색 API를
+  쓰므로 `type=TS` 결과에 TSR 문서가 섞일 수 있지만, TSR 쪽 헤딩 일치가
+  0건이라 TS 단독 헤딩 수(0건)에는 영향이 없음을 확인했다.
+- 즉 헤딩 텍스트를 포함하지 않는 문서(TR 619건, NR 430건, TSR 277건 전부, TS
+  273건 전부)는 정규식이 줄 전체 일치를 요구하므로 개별 파싱 없이도 결정적으로
+  `SVV-001`(헤딩 없음)이 된다.
+
+### 6-3. 헤딩을 포함한 두 문서를 실제 규칙으로 검사
+
+헤딩이 존재하는 TR 1건, NR 1건의 본문을 6-1의 정규식 그대로 줄 단위로 검사했다.
+
+- **`flowgate.default.0467.0003-TR`**: 본문 88행에 헤딩, 5개 `###` 하위섹션이
+  각각 정확히 하나의 `- 개요:`, 하나의 `- 스텝:`, 1개 이상의 `  - 기대치:`를
+  갖는다. **판정: `pass`.** (이 절 기능을 구현한 TR 자신이므로 규칙을 의도적으로
+  준수해 작성됐다고 볼 수 있다.)
+- **`flowgate.default.0467.0009-NR`(=이 문서의 이전 리비전 본문)**: 본문
+  302행에 헤딩, 3개 하위섹션. 그러나 세 하위섹션 모두에서 긴 문장이 다음 줄로
+  줄바꿈되며 `unrecognized_line` 오류가 발생한다 — 예를 들어 첫 하위섹션의
+  스텝 줄 `` - 스텝: `## 단계별 확인` 절이 없는 TR 문서에 대해 ``가 다음 줄
+  `` `PATCH /flowgate/api/v1/documents/{doc_id}/content`로 절 없는 본문을 저장한다 ``
+  로 이어지는데, 이 이어진 줄은 `-`로 시작하지 않아 `_STEP_RE`/`_SUMMARY_RE`
+  어디에도 매치되지 않는다. 기대치 줄도 같은 방식으로 두 줄에 걸쳐
+  `unrecognized_line`을 유발한다. **판정: `reject`(`SVV-002`).** 이 문서는
+  이 문서 자신이 되며, N0008이 요구한 실측 증거를 만들어낸 셈이다 — 규칙의
+  정확한 문법을 인용하며 의도적으로 절을 작성한 같은 그룹의 저자조차
+  가독성을 위해 문장을 줄바꿈했다는 이유만으로 기계적으로 반려된다는 사실을
+  직접 자기 사례로 확인했다.
+
+### 6-4. 호환성 표
+
+| 타입 | 모집단(전수, §6-2 정정) | 헤딩 텍스트 포함 문서 | 그중 규칙 통과 | 통과/모집단 |
+|---|---:|---:|---:|---:|
+| TR | 620 | 1 (`0467.0003-TR`) | 1 | 1/620 (0.16%) |
+| NR | 431 | 1 (`0467.0009-NR`, 이 문서 자신) | 0 (`SVV-002`) | 0/431 (0%) |
+| TSR | 277 | 0 | — | 0/277 (0%) |
+| TS | 273 | 0 | — | 0/273 (0%) |
+
+### 6-5. 계약·생성주체·파서 근거 (rev0 유지)
+
+| 타입 | `## 단계별 확인`(또는 `SECTION_HEADING`) 절 문법이 정의돼 있는가 | 현재 생성/수정 경로 | 게이트(`evaluate`) 적용 대상인가 |
+|---|---|---|---|
+| TR | 예 — `step_verification_service.py` 20~21행 `SECTION_HEADING`/`SECTION_HEADING_EN`이 유일한 정의처 | inbox new/edit(게이트) + PATCH(무검증, 이 게이트가 닫으려는 구멍) | 예 (R0001 원 요구사항) |
+| TSR | 없음 — `SECTION_HEADING` 참조 0건. `help_catalog.py` 989~992행이 플레이스홀더를 `doc_type.upper()=="TR"`일 때만 추가하도록 명시적으로 좁힌다 | `test_run_service.assemble_tsr()`가 서버에서 완성된 테스트 결과로 합성 — 사람이 자유 텍스트를 작성해 제출하는 경로 자체가 없다 | 아니오 |
+| TS | 없음 | inbox 경로로 AI 토큰이 작성(사전 시나리오 정의 문서) | 아니오 |
+| NR(이 문서 타입) | 없음 | inbox new/edit, PATCH | 아니오 |
+
+### 6-6. 타입별 오탐/차단 위험 판정 (신규 — 반려 사유 대응 핵심)
+
+- **TR**: 게이트는 이미 TR *제출 시점*에는 실제로 작동하고 있지만, 6-4의 결과는
+  그와 다른 질문 — "**이미 저장된** TR 본문에 같은 규칙을 소급 적용하면 어떻게
+  되는가" — 에 답한다. 답은 **620건 중 619건(99.84%)이 즉시 `SVV-001`로
+  저장 불가 판정**을 받는다는 것이다. 이는 §4가 코드로 지목한 위험(`/regenerate`가
+  게이트 이전 리비전을 그대로 복원할 수 있다)이 이론적 우려가 아니라 모집단의
+  압도적 다수 상태임을 실측으로 확인해준다. 규칙의 **형태**(무엇을 어떻게
+  검증했는지 구조화된 절) 자체는 TR의 목적과 의미상 부합하지만, 기계적
+  엄격함(줄바꿈 하나로 반려)이 실제 채택률을 0.16%로 묶어두는 실질적 장벽이다.
+- **NR**: 확대하면 TR보다 더 나쁘다. 모집단 통과율이 0/431(0%)이고, 그 중
+  유일하게 절을 자발적으로 채택한 문서(이 NR 자신, 정확한 문법을 직접 인용하며
+  작성)조차 순수 문장 줄바꿈만으로 반려된다(6-3). NR의 본래 콘텐츠는 "무엇을
+  어떻게 검증했는가"의 체크리스트가 아니라 표·코드 인용·다단락 논증으로 구성된
+  서술형 조사 산문이다(이 문서 자체의 §1/§1-A 표들이 그 예다) — 그 형태에
+  체크리스트 문법을 강제하면 최대한 성실하게 시도한 저자에게조차 오탐이
+  발생한다. 위험: 거의 전면 차단.
+- **TSR**: 확대는 통계적 위험을 넘어 구조적으로 성립하지 않는다 — 277건 전부
+  헤딩 텍스트가 없다. 표본으로 직접 읽은 `flowgate.default.0472.0007-TSR`의
+  섹션 구조는 `## 실행 환경`(프로젝트/브랜치/포트/스크래치 메타데이터),
+  `## 준비 / 정리`, `## 케이스별 결과`(마크다운 **표**), `## 케이스별 출력
+  발췌`(하위 `### TC-N: ...`에 pytest/CLI 콘솔 원문 코드블록)로, `- 개요:`/
+  `- 스텝:`/`  - 기대치:` 불릿 문법과 대응되는 요소가 전혀 없다. TSR은 그
+  자체로 이미 검증(테스트 케이스별 pass/fail)의 기록이므로, 그 위에 "이를 어떻게
+  검증했는가"를 다시 서술하라고 요구하는 것 자체가 목적상 중복이고 작성 주체도
+  없다(서버 합성). 위험: 100% 차단, 성립 가능한 준수 경로 자체가 없다.
+- **TS**: 273건 전부 헤딩 텍스트가 없다. TS는 "무엇을 어떻게 확인했는가"의
+  사후 보고가 아니라 "무엇을 확인할 것인가"의 사전 시나리오 정의이므로 개념
+  자체가 다르다. 명시적 절 계약도 없다(6-5). 위험: 근거 없음 + 개념 부적합.
+
+### 6-7. 요약 판정
+
+`## 단계별 확인` 게이트를 TR 밖으로 넓힐 명시적 계약·파서 근거는 현재 소스
+어디에도 없으며(6-5), 설령 계약을 새로 만들더라도 6-4/6-6의 실측 호환성은 NR·
+TSR·TS 어느 쪽으로도 확대가 즉시 실무 차단으로 귀결됨을 보여준다. N0008 §7이
+요구한 "근거 없음"을 검색 증거·호환성 수치·오탐 판정과 함께 남긴다 — 확대는 새
+R(요구사항) 없이는 이 조사 범위에서 결정할 사안이 아니라는 rev0의 결론을
+유지하되, 이번에는 "근거 없음"이 계약 부재만이 아니라 실측 호환성 붕괴로도
+뒷받침된다.
+
+---
+
+## 7. L0007과의 대조
+
+### 7-1. 확인된 내용(소스로 재검증하여 일치)
+- inbox new/edit 게이트 좌표(3461/3466/3638, 4413/4418/4535) 및
+  `_STEP_VERIFICATION_FALLBACK_COPY`(1827~1831) — 전부 정확히 일치.
+- `DocumentContentUpdate`(352~354)/`DocumentContentUpdateRpc`(423~426)/RPC 위임
+  (2235~2246) — 정확히 일치.
+- PATCH content 함수 범위(2570~2615)와 쓰기 지점(2606), `evaluate` 미호출 —
+  정확히 일치.
+- `/regenerate` 함수 범위(2618~2698), "편집 가능/최종승인 게이트를 의도적으로
+  건너뛴다" 주석 위치(2626~2630) — 정확히 일치.
+- `create_document`에 `content` 파라미터가 없다는 주장 — 모델 정의(317~337)로
+  직접 확인, 일치.
+- `create_related_document` 화이트리스트 `{DS,N,T,TS,M,Q}`(875) — 일치.
+- `create_next_empty_document` 배제 목록 `{AC,RJ,V,C}`(1102)와 서버조립 가드
+  (1111) — 일치.
+- `retry_cancel_tr_commits`/`retry_reapply_tr_commits`/`restore_workflow`가 TR
+  파일을 쓰지 않는다는 주장 — 소스로 직접 확인, 일치.
+- git_service의 `src_root` 52곳 / `project_root`·`document_path` 0곳 — 전수
+  grep으로 정확히 일치(52, truncated=false).
+- `AUTO_COMPLETE_TYPES`(constants.py 5)/`SERVER_ASSEMBLED_DOC_TYPES`(23) — 일치.
+- 승인 게이트가 절 유효성을 검사하지 않는다는 [DEFERRED] 서술 —
+  `test_empty_body_approval_guard_0374.py`의 `test_approve_allows_non_empty_body`
+  (84~101행)가 `## 단계별 확인` 없는 TR 본문의 승인을 실제로 허용함을 실행 로직
+  수준에서 확인, 일치.
+
+### 7-2. 보완된 내용(L0007에 없던 것을 이번 조사로 추가)
+- 병합·되돌리기·API 밖 직접 쓰기 경로의 **전수 나열**이 L0007에는 없었다(L0007은
+  "구조적으로 무관하다"는 결론만 서술). §1의 #11~#18, #22~#25와 §1-A 전체가 그
+  표를 채운다.
+- `PATCH /projects/{project_id}/files/src-content`가 **두 라우터에 중복 등록**돼
+  있다는 사실(tree_routes.py와 inbox_routes.py 각각, §1 #15/#16) — L0007 미기재.
+- 레거시 `POST /flowgate/api/v1/outbox/create`(§1 #18)가 여전히 살아있는 라우트이고
+  `doc_type`을 클라이언트가 폼 파라미터로 지정할 수 있다는 사실 — L0007 미기재.
+  `WORKFLOW_ROOT_TYPES={"R","B"}` 화이트리스트가 그룹/파일 생성보다 먼저
+  실행되어 TR 도달을 막음을 원문으로 재확인했다(§1 #18 rev1 주석).
+- `/regenerate`의 복구 소스(`document_revisions`)에 **누가 실제로 INSERT하는지**를
+  전수 확인(inbox edit와 work_plan.py 저장 경로 둘뿐, PATCH content는 쓰지 않음) —
+  L0007은 "과거 저장본이므로 검증됨이라고 가정하지 않는다"는 원칙만 세웠고 실제
+  INSERT 지점은 조사하지 않았다. 4절이 그 공백을 메운다.
+- TSR이 `MUTATING_STEP_TYPES`에 TR과 함께 속해 있으면서도 `help_catalog.py`가
+  단계별 확인 플레이스홀더만 별도로 TR에 한정하는 분기(989~992행) — L0007은 TSR을
+  "서버 조립"이라는 이유만으로 제외했는데, 이번 조사는 그 판단을 코드상의 명시적
+  분기와 6-4/6-6의 실측 호환성(0/277)으로 한 번 더 뒷받침한다.
+- **(rev1 신규)** §1-A의 A6(`numbering/migration_service.py`의 게이트 없는 문서
+  파일명 rename, 접수는 라이브·실행 워커는 미기동)와 A7(`render_template()`의
+  게이트 없는 documents-트리 쓰기 능력, 현재 데드 코드) — 둘 다 L0007에도
+  rev0에도 없던 항목이다.
+- **(rev1 신규, rev2에서 모집단 정정)** §6의 실측 호환성 census(TR 1/620,
+  NR 0/431, TSR 0/277, TS 0/273 — rev2가 §6-2에서 검색어 일치 표본이 아니라
+  본문 무관 순수 COUNT로 재산정한 모집단)와 이 NR 문서 자기 자신이 반려 사례가
+  된 6-3의 자기참조 검증 — L0007·rev0 둘 다 계약/파서 근거까지만 다루고 실측
+  호환성은 다루지 않았다.
+- **(rev2 신규)** `type_code LIKE '{type}%'` 접두사 매칭이 `type=TS` 질의에
+  `TSR` 문서를 함께 세는 함정을 발견해 페이지 전수 집계로 바로잡음(§6-2) —
+  rev1에도 L0007에도 없던 항목이다.
+
+### 7-3. 좌표 불일치(L0007의 인용이 현재 소스와 다른 곳)
+- `create_next_approved_core`의 타입 화이트리스트: L0007은 "코어(1325행)"라고
+  썼으나 재확인한 실제 좌표는 **1339행**이다(7행 차이).
+- `create_next_approved_document`의 타입 화이트리스트: L0007은 "라우트(1598행)"라고
+  썼으나 실제 좌표는 **1591행**이다(7행 차이).
+- 두 경우 모두 **주장 자체(화이트리스트가 라우트와 코어 양쪽에 있다는 것)는 맞고**,
+  인용된 행 번호만 소스와 어긋난다 — N0008 §8이 요구한 "잘못된 행 번호"에 해당하는
+  사례로 기록한다. 원인은 추정하지 않는다.
+
+### 7-4. 반박된 내용
+없음 — L0007의 실질적 결론(콘텐츠 우회 경로는 PATCH content 한 곳, git/tree/원격CRUD는
+구조적으로 무관, TR 외 확대 근거 없음) 중 이번 조사로 뒤집힌 것은 없다. rev1이
+추가한 A6/A7과 §6의 실측 호환성은 L0007의 결론을 보강할 뿐 반박하지 않는다.
+
+### 7-5. P0006과의 대조
+P0006 §3은 "PATCH로 TR 본문을 직접 고치는 경로는 이 검증을 거치지 않는다",
+"T/TSR/TS 등 다른 문서 타입은 걸리지 않는다"를 이미 명시하고 있다 — L0007·이번
+조사와 결론이 일치하며 상충하는 서술은 발견되지 않았다.
+
+---
+
+## 8. 남은 불확실성
+
+- **런타임 스토리지 마운트**: `storage_root`가 실제 배포 환경에서 `documents/`와
+  `src/`에 대해 물리적으로 분리된 경로/볼륨을 가리키는지는 정적 코드 읽기로는
+  검증하지 못했다. 코드 상의 함수 분리(`project_root`/`document_path` vs
+  `src_root`)는 확인했으나, 두 루트가 같은 마운트 아래 있고 심볼릭 링크나 별도
+  설정으로 우연히 겹치는 경우까지는 배제하지 못한다.
+- **`document_revisions`에 게이트 이전 리비전이 실제로 존재하는지**는 이번 조사가
+  코드 로직(가능성) + §6-4의 모집단 실측(619/620건이 절 자체가 없음)까지 확인했지만,
+  라이브 DB의 `document_revisions` 행을 실제로 조회해 "게이트 도입 이전에 저장된
+  TR 리비전이 몇 건인가"까지는 확인하지 않았다(이 문서는 소스 코드·문서검색 API
+  조사로 범위가 한정된 N0008의 지시를 따름 — 원시 DB 조회는 범위 밖으로 판단했다).
+- 레거시 `/outbox/create`·`create_workflow_root` 경로가 실제로 프런트엔드 어디에서
+  호출되는지(사용 중 vs 죽은 코드)는 서버 소스만으로는 판정할 수 없었다.
+- **(rev2 신규) 모집단 수치는 이 프로젝트가 다른 그룹에서도 동시에 문서를
+  생성·수정하는 라이브 시스템이라는 점의 스냅샷이다**: §6-2의 `TR=620/NR=431/
+  TSR=277/TS=273`은 이 리비전을 작성하는 동안 실행한 질의 결과이며, 조사
+  직후에도 다른 그룹의 새 TR/NR 제출로 총계가 소폭 바뀔 수 있다. 다만 §6-2에서
+  서로 다른 질의어로 같은 총계를 재현해 확인했듯 이 값은 특정 검색어에 대한
+  표본이 아니라 순수 COUNT이므로, 절대 수치가 며칠 뒤 달라지더라도 그 성격
+  (본문 무관 전수 카운트)과 §6-4/6-6의 정성적 결론(NR·TSR·TS로의 확대가 실무
+  전면 차단이라는 판정)은 바뀌지 않는다.
+- **(rev1 신규) `NumberingWorker`가 배포 환경에서 실제로 기동되는지**: 소스
+  트리 전체(`server` 전체, flow_gate 모듈 밖 포함)를 전수 grep해 `get_worker()`/
+  `.start()`의 외부 호출자가 0건임과 `lifespan()`이 어떤 워커도 시작하지 않음을
+  확인했지만, 배포 환경에 이 소스 트리에 포함되지 않는 별도 운영 스크립트나
+  systemd 타이머 같은 외부 기동 수단이 있는지는 정적 코드 읽기로 배제할 수
+  없다. 만약 그런 외부 기동 수단이 없다면 A6의 인큐 자체가 사실상 죽은
+  기능(작업이 영원히 `queued` 상태로 남는다)이라는 뜻이므로, 이 불확실성은
+  A6의 위험 등급을 "게이트 없는 라이브 우회"에서 "게이트 없는 잠재적 우회"로
+  낮출 수도, 반대로 실제로 기동된다면 그대로 유지할 수도 있다 — T#1/후속 조사가
+  배포 환경 로그나 운영 문서로 확인해야 한다.
+- **(rev1 신규) 도구 사용상 주의점**: 원격 grep은 Korean 정규식뿐 아니라
+  백슬래시 이스케이프(`\.`류)와 미이스케이프 괄호(`rename(`류)가 있는 패턴도
+  `invalid_request`로 거부한다 — 이번 조사는 대괄호 문자 클래스(`rename[(]`)로
+  우회했다. 이후 조사자를 위해 남긴다.
+
+---
+
+## 단계별 확인
+
+### 게이트 미적용 경로(#3/#4 PATCH content)가 실제로 무검증임을 재현한다
+- 개요: evaluate 호출이 PATCH 경로에 없다는 주장을 실행으로 재확인한다
+- 스텝: 절이 없는 TR 문서에 대해 PATCH content로 절 없는 본문을 저장한다
+  - 기대치: 422가 아니라 200으로 저장되고 저장된 파일에 여전히 절이 없다
+
+### `/regenerate`가 게이트 이전 리비전을 복원할 수 있음을 재현한다
+- 개요: 4절과 6절에서 코드·모집단 실측으로 확인한 위험을 실제 데이터로 재현한다
+- 스텝: 게이트 도입 이전 마지막으로 inbox edit된 TR 문서 하나를 찾아 파일을 삭제한 뒤 regenerate를 호출한다
+  - 기대치: 200으로 복구되며 복구된 본문에 단계별 확인 절이 없어도 호출 자체는 성공한다
+
+### 레거시 outbox create가 TR을 실제로 거부하는지 재현한다
+- 개요: 표 18행의 화이트리스트 판단을 실행으로 재확인한다
+- 스텝: outbox create에 doc_type=TR을 포함한 폼 데이터를 보낸다
+  - 기대치: 400과 함께 invalid workflow root type 메시지가 포함되고 파일이 생성되지 않는다
+
+### 번호 마이그레이션 큐가 실제로 소비되는지 재현한다
+- 개요: A6에서 확인한 접수-실행 단절을 실제 호출로 재현한다
+- 스텝: numbering migrate 라우트를 호출해 job을 큐에 넣고 잠시 뒤 job 상태 조회 API로 다시 확인한다
+  - 기대치: 202로 접수되지만 일정 시간이 지나도 상태가 queued에서 바뀌지 않는다
+
+### 이 NR 문서 자신이 단계별 확인 규칙에 반려됨을 재현한다
+- 개요: 6-3에서 코드로 재현한 판정을 실제 evaluate 호출로 재확인한다
+- 스텝: 이 NR 문서의 저장된 본문을 evaluate 함수에 그대로 통과시킨다
+  - 기대치: reject 판정과 SVV-002 코드, 그리고 줄바꿈으로 갈라진 스텝/기대치 줄들이 unrecognized_line으로 보고된다
+
+### 타입별 모집단이 검색어와 무관한 순수 카운트임을 재현한다
+- 개요: §6-2에서 확인한, 본문 검색 API의 total을 모집단으로 오인한 rev1의 오류를 재현하고 정정된 방법을 재확인한다
+- 스텝: type=TR로 GET /search/documents/content에 q="의"를 넣은 결과와 GET /search/documents에 q="flowgate"·q="."를 각각 넣은 결과를 나란히 비교한다
+  - 기대치: 본문검색 total은 609 부근(검색어 의존)으로 나오고, 제목/문서ID 검색 total은 질의어를 바꿔도 620으로 동일하게 나온다

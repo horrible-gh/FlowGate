@@ -1,0 +1,138 @@
+1	﻿"""Template upload / linking / render service (aligned with D009 r3 / D013 r1).
+2	
+3	Template files are in Jinja2 format, computed via storage/paths.py
+4	and safely written with filesystem.safe_write.
+5	
+6	Render output is stored at the path pointed to by document_path().
+7	"""
+8	from __future__ import annotations
+9	
+10	import os
+11	from pathlib import Path
+12	from typing import Any, Optional
+13	
+14	from fastapi import HTTPException
+15	
+16	from modules.flow_gate.db.templates import (
+17	    get_template_by_type,
+18	    create_template,
+19	    delete_template,
+20	    get_template,
+21	)
+22	from modules.flow_gate.storage import paths as storage_paths
+23	
+24	
+25	# ── Internal helpers ─────────────────────────────────────────────────────────────────
+26	
+27	def _template_storage_path(type_code: str, project_id: str | None) -> Path:
+28	    """Compute the storage path for a template file.
+29	
+30	    {storage_root}/templates/{project_id or '_global'}/{type_code}.j2
+31	    """
+32	    root = storage_paths.get_storage_root()
+33	    proj_dir = project_id if project_id else "_global"
+34	    return root / "templates" / proj_dir / f"{type_code}.j2"
+35	
+36	
+37	def _safe_write(path: Path, content: bytes | str) -> None:
+38	    """Safely write content to path (auto-creating parent directories)."""
+39	    path.parent.mkdir(parents=True, exist_ok=True)
+40	    mode = "wb" if isinstance(content, bytes) else "w"
+41	    encoding = None if isinstance(content, bytes) else "utf-8"
+42	    with open(path, mode, encoding=encoding) as f:
+43	        f.write(content)
+44	
+45	
+46	# ── Public API ──────────────────────────────────────────────────────────────────
+47	
+48	def save_template(
+49	    content: bytes | str,
+50	    type_code: str,
+51	    project_id: str | None,
+52	    uploaded_by: str,
+53	) -> dict:
+54	    """Save a template file to storage and register it in the DB.
+55	
+56	    If a template is already registered, only overwrite the file and reuse the
+57	    DB record (template_path is deterministic, so no duplicate INSERT or UPDATE).
+58	    """
+59	    tmpl_path = _template_storage_path(type_code, project_id)
+60	    _safe_write(tmpl_path, content)
+61	
+62	    existing = get_template_by_type(type_code, project_id)
+63	    if existing:
+64	        return existing
+65	
+66	    return create_template({
+67	        "project_id": project_id,
+68	        "type_code": type_code,
+69	        "template_path": str(tmpl_path),
+70	        "is_active": 1,
+71	        "uploaded_by": uploaded_by,
+72	    })
+73	
+74	
+75	def get_template(type_code: str, project_id: str | None = None) -> Optional[dict]:
+76	    """Return registered template info. Returns None if not found."""
+77	    return get_template_by_type(type_code, project_id)
+78	
+79	
+80	def render_template(
+81	    doc_id: str,
+82	    type_code: str,
+83	    project_id: str,
+84	    context: dict[str, Any],
+85	    group_code: str,
+86	    doc_code: str,
+87	    filename: str,
+88	    subgroup_code: str | None = None,
+89	    module: str = "none",
+90	) -> Path:
+91	    """Render a template and save the output file to the document storage path.
+92	
+93	    Raises 404 if no template is found. Raises 500 on Jinja2 rendering failure.
+94	
+95	    Returns: Path of the saved output file
+96	    """
+97	    tmpl_record = get_template_by_type(type_code, project_id)
+98	    if tmpl_record is None:
+99	        # global fallback
+100	        tmpl_record = get_template_by_type(type_code, None)
+101	    if tmpl_record is None:
+102	        raise HTTPException(
+103	            status_code=404,
+104	            detail=f"No active template found for type '{type_code}'.",
+105	        )
+106	
+107	    tmpl_path = Path(tmpl_record["template_path"])
+108	    if not tmpl_path.exists():
+109	        raise HTTPException(
+110	            status_code=500,
+111	            detail=f"Template file not found: {tmpl_path}",
+112	        )
+113	
+114	    try:
+115	        from jinja2 import Environment, FileSystemLoader, select_autoescape
+116	        env = Environment(
+117	            loader=FileSystemLoader(str(tmpl_path.parent)),
+118	            autoescape=select_autoescape(["html", "xml"]),
+119	        )
+120	        tmpl = env.get_template(tmpl_path.name)
+121	        rendered = tmpl.render(**context)
+122	    except Exception as exc:
+123	        raise HTTPException(
+124	            status_code=500,
+125	            detail=f"Template rendering failed: {exc}",
+126	        ) from exc
+127	
+128	    out_path = storage_paths.document_path(
+129	        project_id=project_id,
+130	        group_code=group_code,
+131	        doc_code=doc_code,
+132	        filename=filename,
+133	        subgroup_code=subgroup_code,
+134	        module=module,
+135	    )
+136	    _safe_write(out_path, rendered)
+137	    return out_path
+138	

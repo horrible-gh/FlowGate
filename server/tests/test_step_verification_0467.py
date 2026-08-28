@@ -5,6 +5,10 @@ import os
 import re
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -317,3 +321,360 @@ def test_inbox_gate_is_scoped_to_tr_only():
             "step_verification_format", dict(base, doc_type=other)
         )
         assert decision.visible is False, other
+
+
+# ── enforce_on_save — shared call-site contract (T0010) ─────────────────────
+
+def test_enforce_on_save_passes_non_tr_types_without_calling_evaluate(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        svs, "evaluate",
+        lambda *a, **k: called.append((a, k)) or {"verdict": svs.VERDICT_REJECT},
+    )
+    for doc_type in ("T", "TSR", "TS", "NR", "N", "", None, "   "):
+        assert svs.enforce_on_save(doc_type, "no section", locale="ko") is None
+    assert called == []
+
+
+def test_enforce_on_save_is_case_and_whitespace_insensitive_for_tr():
+    for doc_type in ("TR", "tr", " Tr ", "tR", "  tr"):
+        result = svs.enforce_on_save(doc_type, "no section here", locale="ko")
+        assert result is not None, doc_type
+        assert result["verdict"] == svs.VERDICT_REJECT
+
+
+def test_enforce_on_save_tr_result_is_evaluate_verbatim():
+    good_body = "## 단계별 확인\n\n### 섹션\n- 개요: 하나\n- 스텝: 해봐라\n  - 기대치: 된다\n"
+    bad_body = "no section here"
+    assert svs.enforce_on_save("TR", good_body, locale="ko") == svs.evaluate(good_body, locale="ko")
+    assert svs.enforce_on_save("TR", bad_body, locale="ko") == svs.evaluate(bad_body, locale="ko")
+
+
+def test_enforce_on_save_tr_passes_a_declared_none():
+    body = "## 단계별 확인\n\n없음\n"
+    result = svs.enforce_on_save("TR", body, locale="ko")
+    assert result is not None
+    assert result["verdict"] == svs.VERDICT_PASS
+    assert result["codes"] == []
+
+
+# ── PATCH /documents/{doc_id}/content — TR gate runs before the write (T0010) ─
+# Same harness shape as test_document_content_editability.py (get_document/update_document/
+# _document_file_path stubbed; is_final_approved/is_document_editable stubbed too so a
+# type_code that is not a workflow-root type does not fall through to a real DB query).
+
+def _tr_doc(tmp_path: Path, *, type_code: str = "TR", doc_id: str = "flowgate.default.0467.9001-TR") -> dict:
+    return {
+        "doc_id": doc_id,
+        "project_id": "flowgate",
+        "group_id": "flowgate.default.0467",
+        "type_code": type_code,
+        "status": "closed",
+        "doc_review_status": "wf_in_progress",
+        "file_path": str(tmp_path / "TR9001.md"),
+    }
+
+
+def _stub_update_content_route(monkeypatch, documents_router, doc: dict, *, existing_body: str = "# original\n"):
+    from unittest.mock import MagicMock as _MagicMock
+
+    doc_file = Path(doc["file_path"])
+    doc_file.parent.mkdir(parents=True, exist_ok=True)
+    doc_file.write_text(existing_body, encoding="utf-8")
+    update_mock = _MagicMock(return_value=doc)
+    monkeypatch.setattr(documents_router.document_service, "get_document", lambda _doc_id: doc)
+    monkeypatch.setattr(documents_router.document_service, "update_document", update_mock)
+    monkeypatch.setattr(documents_router.document_service, "is_final_approved", lambda _doc: False)
+    monkeypatch.setattr(
+        documents_router.document_service, "is_document_editable",
+        lambda _doc, final_approved=None: True,
+    )
+    monkeypatch.setattr(documents_router, "_document_file_path", lambda _doc: doc_file)
+    return doc_file, update_mock
+
+
+def test_patch_content_rejects_a_tr_missing_the_section(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path)
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+
+    with pytest.raises(HTTPException) as exc_info:
+        documents_router.update_document_content(
+            doc["doc_id"],
+            documents_router.DocumentContentUpdate(content="no section at all"),
+            {"user_id": "u"},
+        )
+
+    assert exc_info.value.status_code == 422
+    assert "단계별 확인" in exc_info.value.detail
+    # the gate ran before the write: original file untouched, DB never called
+    assert doc_file.read_text(encoding="utf-8") == "# original\n"
+    update_mock.assert_not_called()
+
+
+def test_patch_content_rejects_a_tr_with_a_malformed_section(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path)
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    malformed = "## 단계별 확인\n\n### 섹션\n- 스텝: 해봐라\n  - 기대치: 된다\n"  # no summary line
+
+    with pytest.raises(HTTPException) as exc_info:
+        documents_router.update_document_content(
+            doc["doc_id"],
+            documents_router.DocumentContentUpdate(content=malformed),
+            {"user_id": "u"},
+        )
+
+    assert exc_info.value.status_code == 422
+    assert doc_file.read_text(encoding="utf-8") == "# original\n"
+    update_mock.assert_not_called()
+
+
+def test_patch_content_accepts_a_well_formed_tr_section(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path)
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    good = "## 단계별 확인\n\n### 섹션\n- 개요: 하나\n- 스텝: 해봐라\n  - 기대치: 된다\n"
+
+    result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=good),
+        {"user_id": "u"},
+    )
+
+    assert result["content"] == good
+    assert doc_file.read_text(encoding="utf-8") == good
+    update_mock.assert_called_once()
+
+
+def test_patch_content_accepts_a_tr_declaring_none(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path)
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    none_body = "## 단계별 확인\n\n없음\n"
+
+    result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=none_body),
+        {"user_id": "u"},
+    )
+
+    assert result["content"] == none_body
+    update_mock.assert_called_once()
+
+
+def test_patch_content_ignores_the_gate_for_non_tr_types(monkeypatch, tmp_path):
+    """R0001/T0010 scope the check to TR only; NR0009 found no compatibility grounds
+    to extend it to NR/TSR/TS or any other type."""
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path, type_code="NR", doc_id="flowgate.default.0467.9002-NR")
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    garbage = "no section, not a TR, never gated"
+
+    result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=garbage),
+        {"user_id": "u"},
+    )
+
+    assert result["content"] == garbage
+    assert doc_file.read_text(encoding="utf-8") == garbage
+    update_mock.assert_called_once()
+
+
+def test_patch_content_honors_x_locale_header_for_the_notice(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path, doc_id="flowgate.default.0467.9003-TR")
+    _stub_update_content_route(monkeypatch, documents_router, doc)
+
+    class _Req:
+        headers = {"x-locale": "en"}
+
+    with pytest.raises(HTTPException) as exc_info:
+        documents_router.update_document_content(
+            doc["doc_id"],
+            documents_router.DocumentContentUpdate(content="no section at all"),
+            {"user_id": "u"},
+            _Req(),
+        )
+
+    assert "Step Verification" in exc_info.value.detail
+    assert not _HANGUL.search(exc_info.value.detail)
+
+
+# ── PATCH /documents/content (RPC alias) — same result as the REST route (T0010) ──
+
+def test_patch_content_rpc_rejects_identically_to_the_rest_route(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as documents_router
+
+    doc = _tr_doc(tmp_path, doc_id="flowgate.default.0467.9004-TR")
+    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    body_text = "no section at all"
+
+    with pytest.raises(HTTPException) as rest_exc:
+        documents_router.update_document_content(
+            doc["doc_id"],
+            documents_router.DocumentContentUpdate(content=body_text),
+            {"user_id": "u"},
+        )
+    with pytest.raises(HTTPException) as rpc_exc:
+        documents_router.update_document_content_rpc(
+            documents_router.DocumentContentUpdateRpc(doc_id=doc["doc_id"], content=body_text),
+            {"user_id": "u"},
+        )
+
+    assert rest_exc.value.status_code == rpc_exc.value.status_code == 422
+    assert rest_exc.value.detail == rpc_exc.value.detail
+    assert doc_file.read_text(encoding="utf-8") == "# original\n"
+    update_mock.assert_not_called()
+
+
+# ── inbox action=new / action=edit — real HTTP-level regression through the shared
+# enforce_on_save call site (T0010). Harness mirrors test_workflow_head_type_check_0374's
+# _patch_validation, but leaves step_verification_service untouched — that gate is
+# exactly what these tests probe, unlike the 0374 tests which bypass it on purpose.
+
+def _patch_new_validation(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+
+    token = {
+        "token_id": "tok-0467-sv-new",
+        "project": "flowgate",
+        "issued_to": "worker-0467",
+        "action_scope": "new",
+        "doc_ref": "flowgate.default.9467.0001-T",
+        "dry_run_count": 0,
+    }
+    monkeypatch.setattr(inbox_routes, "_normalize_group_name", lambda _p, _m, g: g)
+    monkeypatch.setattr(inbox_routes, "_normalize_doc_id", lambda _g, d: d)
+    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: token)
+    monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
+    monkeypatch.setattr(inbox_routes, "_is_valid_doc_type", lambda *_a, **_k: True)
+    monkeypatch.setattr(inbox_routes.template_provision, "is_design_type", lambda _t: False)
+    monkeypatch.setattr(inbox_routes, "_disposed_group_fail", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        inbox_routes, "_resolve_group", lambda *_a, **_k: {"group_id": "flowgate.default.9467"}
+    )
+    monkeypatch.setattr(
+        inbox_routes.db_docs, "get_by_id",
+        lambda doc_id: {"doc_id": doc_id, "doc_review_status": "pending_review"},
+    )
+    monkeypatch.setattr(inbox_routes, "_find_body_twin", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.tr_scope_service, "evaluate", lambda **_k: None)
+    # step_verification_service is intentionally left real — it is what these tests probe.
+    monkeypatch.setattr(inbox_routes.db_wfseq, "get_pending_head_by_group", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.token_service, "increment_dry_run", MagicMock())
+
+
+def _tr_new_body(content: str, *, dry_run: bool) -> dict:
+    return {
+        "action": "new",
+        "project": "flowgate",
+        "module": "default",
+        "group_name": "flowgate.default.9467",
+        "prev_doc_id": "flowgate.default.9467.0001-T",
+        "doc_type": "TR",
+        "title": "step verification gate wiring",
+        "content": content,
+        "dry_run": dry_run,
+    }
+
+
+def test_inbox_new_rejects_a_tr_missing_the_section_before_any_storage(monkeypatch):
+    from inbox_client import post_inbox
+    from modules.flow_gate.api import inbox_routes
+
+    _patch_new_validation(monkeypatch)
+    reserve = MagicMock()
+    create = MagicMock()
+    consume = MagicMock()
+    monkeypatch.setattr(inbox_routes.numbering_service, "reserve_document", reserve)
+    monkeypatch.setattr(inbox_routes.db_docs, "create", create)
+    monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+
+    response = post_inbox(_tr_new_body("no verification section at all", dry_run=False))
+    payload = response.json()
+
+    assert response.status_code == 422, response.text
+    assert payload["ok"] is False
+    assert "단계별 확인" in payload["error_message"]
+    reserve.assert_not_called()
+    create.assert_not_called()
+    consume.assert_not_called()
+
+
+def test_inbox_new_dry_run_passes_a_tr_declaring_none(monkeypatch):
+    from inbox_client import post_inbox
+
+    _patch_new_validation(monkeypatch)
+
+    response = post_inbox(_tr_new_body("# TR\n\n## 단계별 확인\n\n없음\n", dry_run=True))
+    payload = response.json()
+
+    assert response.status_code == 200, response.text
+    assert payload["ok"] is True
+
+
+def test_inbox_edit_rejects_a_tr_missing_the_section_before_any_write(monkeypatch):
+    from inbox_client import post_inbox
+    from modules.flow_gate.api import inbox_routes
+
+    existing = {
+        "doc_id": "flowgate.default.9467.0002-TR",
+        "project_id": "flowgate",
+        "group_id": "flowgate.default.9467",
+        "type_code": "TR",
+        "status": "closed",
+        "doc_review_status": "pending_review",
+        "revision_no": 0,
+        "file_path": "x",
+    }
+    token = {
+        "token_id": "tok-0467-sv-edit",
+        "project": "flowgate",
+        "issued_to": "worker-0467",
+        "action_scope": "edit",
+        "doc_ref": existing["doc_id"],
+        "scratch_dir": None,
+    }
+    monkeypatch.setattr(inbox_routes, "_normalize_group_name", lambda _p, _m, g: g)
+    monkeypatch.setattr(inbox_routes, "_normalize_doc_id", lambda _g, d: d)
+    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: token)
+    monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
+    monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _doc_id: dict(existing))
+    monkeypatch.setattr(
+        inbox_routes, "_resolve_group", lambda *_a, **_k: {"group_id": existing["group_id"]}
+    )
+    monkeypatch.setattr(inbox_routes.document_service, "is_final_approved", lambda _doc: False)
+    monkeypatch.setattr(
+        inbox_routes.document_service, "is_document_editable",
+        lambda _doc, final_approved=None: True,
+    )
+    monkeypatch.setattr(inbox_routes, "_disposed_group_fail", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes, "_conversation_full_body_edit_fail", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes, "_frontmatter_submission_guard", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes, "_design_template_submission_error", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes, "_find_body_twin", lambda *_a, **_k: None)
+    monkeypatch.setattr(inbox_routes.tr_scope_service, "evaluate", lambda **_k: None)
+    monkeypatch.setattr(inbox_routes.git_service, "worktree_untracked_summary", lambda *_a, **_k: {})
+    # step_verification_service is intentionally left real — it is what this test probes.
+
+    response = post_inbox({
+        "action": "edit",
+        "project": "flowgate",
+        "module": "default",
+        "group_name": "flowgate.default.9467",
+        "doc_id": existing["doc_id"],
+        "edit_reason": "worker_self",
+        "content": "no verification section at all",
+    })
+    payload = response.json()
+
+    assert response.status_code == 422, response.text
+    assert "단계별 확인" in payload["error_message"]

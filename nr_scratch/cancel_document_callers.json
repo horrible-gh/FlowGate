@@ -1,0 +1,1 @@
+{"ok":true,"op":"grep","server_ts":"2026-08-28T12:19:00+09:00","matches":[{"file":"server/modules/flow_gate/process_service.py","line":1229,"text":"def cancel_document(doc_pk: int, cancel_reason: str, followup_action: str) -> dict:"}],"total":1,"truncated":false}

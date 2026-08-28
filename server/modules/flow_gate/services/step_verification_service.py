@@ -225,6 +225,22 @@ def evaluate(body: str, locale: str = "ko") -> dict:
     return result
 
 
+def enforce_on_save(doc_type: Optional[str], body: str, locale: str = "ko") -> Optional[dict]:
+    """Judge a body against the TR step-verification rule before it is written to disk.
+
+    Single call-site contract for every save path (inbox new/edit, PATCH content and its
+    RPC alias -- T0010): the type comparison is case/blank-safe and every type other than
+    TR passes straight through (returns None, nothing to reject). When ``doc_type`` is TR,
+    this is exactly ``evaluate(body, locale)`` -- the verdict, SVV-001/SVV-002 codes and
+    notice text are neither reshaped nor substituted, so callers keep treating the result
+    the same way they already do for ``evaluate()``.
+    """
+    normalized_type = (doc_type or "").strip().upper()
+    if normalized_type != "TR":
+        return None
+    return evaluate(body, locale=locale)
+
+
 def _spelling_heading(locale: str) -> str:
     """Per-language heading (T2/TR2 pattern): an EN request never sees the Korean form."""
     return SECTION_HEADING_EN if locale == "en" else SECTION_HEADING
