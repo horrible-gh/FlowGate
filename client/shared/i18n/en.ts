@@ -1201,6 +1201,12 @@ export default {
     notif_center: {
       title: 'Notifications',
       mark_all_read: 'Mark all read',
+      section_general: 'General',
+      section_ai: 'AI',
+      section_questions: 'Q&A',
+      section_failed: 'This section could not be loaded.',
+      details: 'Details',
+      view_all: 'View all →',
       empty: 'No notifications',
       load_failed: 'Could not load notifications.',
       live: 'LIVE',

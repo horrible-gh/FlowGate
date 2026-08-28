@@ -1201,6 +1201,12 @@ export default {
     notif_center: {
       title: '通知',
       mark_all_read: 'すべて既読',
+      section_general: '一般',
+      section_ai: 'AI',
+      section_questions: 'Q&A',
+      section_failed: 'このセクションを読み込めませんでした。',
+      details: '詳細',
+      view_all: 'すべて表示 →',
       empty: '通知はありません',
       load_failed: '通知を読み込めませんでした。',
       live: 'LIVE',

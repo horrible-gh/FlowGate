@@ -11,12 +11,24 @@ import type { DashboardActivity } from './dashboard'
 // count derived from a per-user last-seen watermark; "mark all read" (opening the panel) POSTs the
 // watermark forward. SSE inflow events only trigger a refetch (DashboardView), keeping the server
 // the single source of truth for the badge so live and persistent counts never drift.
+export interface AiNotificationItem {
+  run_id: string; success: boolean; outcome: string | null; doc_ref: string | null
+  doc_title: string | null; finished_at: string; result_line: string; provider_name: string | null
+  stop_code: string | null; stop_reason: string | null
+}
+export interface OpenQuestionItem { doc_id: string; doc_title: string | null; type_code: string }
+export interface NotificationPage<T> { limit: number; total: number; has_more: boolean; items: T[] }
+
 export interface NotificationFeed {
   ok: true
   project_id: string
   generated_at: string
   last_seen_at: string | null
   unread_count: number
+  badge_count: number
+  degraded_sections: string[]
+  ai_runs: NotificationPage<AiNotificationItem>
+  open_questions: NotificationPage<OpenQuestionItem>
   recent_activities: {
     limit: number
     total: number
@@ -28,6 +40,12 @@ export interface NotificationFeed {
 export const useNotificationsStore = defineStore('notifications', () => {
   const items = ref<DashboardActivity[]>([])
   const unreadCount = ref(0)
+  const badgeCount = ref(0)
+  const aiRuns = ref<AiNotificationItem[]>([])
+  const aiRunsTotal = ref(0)
+  const openQuestions = ref<OpenQuestionItem[]>([])
+  const openQuestionsTotal = ref(0)
+  const degradedSections = ref<string[]>([])
   const lastSeenAt = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -50,6 +68,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const data = response.data
       items.value = data.recent_activities?.items ?? []
       unreadCount.value = data.unread_count ?? 0
+      badgeCount.value = data.badge_count ?? unreadCount.value
+      aiRuns.value = data.ai_runs?.items ?? []
+      aiRunsTotal.value = data.ai_runs?.total ?? 0
+      openQuestions.value = data.open_questions?.items ?? []
+      openQuestionsTotal.value = data.open_questions?.total ?? 0
+      degradedSections.value = data.degraded_sections ?? []
       lastSeenAt.value = data.last_seen_at ?? null
       loadedProjectId.value = projectId
     } catch (err: any) {
@@ -67,6 +91,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   async function markSeen(projectId: string): Promise<void> {
     if (!projectId) return
     unreadCount.value = 0
+    badgeCount.value = openQuestionsTotal.value
     try {
       const response = await postRequest<{ ok: boolean; last_seen_at: string }>(
         `/api/v1/projects/${encodeURIComponent(projectId)}/notifications/seen`,
@@ -92,12 +117,18 @@ export const useNotificationsStore = defineStore('notifications', () => {
     requestVersion++
     items.value = []
     unreadCount.value = 0
+    badgeCount.value = 0
+    aiRuns.value = []
+    aiRunsTotal.value = 0
+    openQuestions.value = []
+    openQuestionsTotal.value = 0
+    degradedSections.value = []
     lastSeenAt.value = null
     error.value = null
     loadedProjectId.value = null
   }
 
-  return { items, unreadCount, lastSeenAt, loading, error, loadedProjectId, fetchFeed, markSeen, isUnread, reset }
+  return { items, unreadCount, badgeCount, aiRuns, aiRunsTotal, openQuestions, openQuestionsTotal, degradedSections, lastSeenAt, loading, error, loadedProjectId, fetchFeed, markSeen, isUnread, reset }
 })
 
 

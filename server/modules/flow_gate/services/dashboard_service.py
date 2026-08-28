@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
+from modules.flow_gate.db import documents as db_documents
+from modules.flow_gate.services import q_service
 
 _log = logging.getLogger(__name__)
 
@@ -552,27 +555,82 @@ def _count_unread(items: list[dict], last_seen_at: Any) -> int:
     return unread
 
 
-def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
-    """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
+def _notification_ai_runs(project_id: str, limit: int) -> dict:
+    total = db_ai_invoke_runs.count_by_project(project_id)
+    rows = db_ai_invoke_runs.list_finished_by_project(project_id, limit)
+    docs = db_documents.get_documents_by_ids(
+        [row.get("doc_ref") for row in rows if row.get("doc_ref")]
+    )
+    items = []
+    for row in rows:
+        try:
+            finished_at = _utc_iso(row.get("finished_at"))
+        except (TypeError, ValueError):
+            _log.warning("AI notification excluded due to invalid time run_id=%s", row.get("run_id"))
+            continue
+        doc = docs.get(row.get("doc_ref")) or {}
+        parts = []
+        if row.get("end_reason"):
+            parts.append(str(row["end_reason"]))
+        if row.get("provider_name"):
+            parts.append(str(row["provider_name"]))
+        if row.get("docs_target") is not None:
+            parts.append(f"docs {row.get('docs_reached', 0)}/{row['docs_target']}")
+        items.append({
+            "run_id": row["run_id"], "success": row.get("outcome") == "complete",
+            "outcome": row.get("outcome"), "doc_ref": row.get("doc_ref"),
+            "doc_title": doc.get("title"), "finished_at": finished_at,
+            "result_line": " · ".join(parts), "provider_name": row.get("provider_name"),
+            "stop_code": row.get("stop_code"), "stop_reason": row.get("stop_reason"),
+        })
+    return {"limit": limit, "total": max(total, len(items)),
+            "has_more": total > limit, "items": items}
 
-    Returns the persistent document-inflow feed (newest first) plus the unread count derived from
-    last_seen_at, so the header bell can render an unread badge. The watermark itself is owned by the
-    caller (notification_seen table) and passed in, keeping this service decoupled from user-state
-    storage and testable against workflow_events alone.
-    """
+
+def _notification_open_questions(project_id: str, limit: int) -> dict:
+    rows = q_service.list_open_items(project_id)
+    docs = db_documents.get_documents_by_ids(
+        [row.get("doc_id") for row in rows if row.get("doc_id")]
+    )
+    by_doc = {}
+    for row in rows:
+        doc_id = row.get("doc_id")
+        if not doc_id or doc_id in by_doc:
+            continue
+        doc = docs.get(doc_id) or {}
+        by_doc[doc_id] = {"doc_id": doc_id, "doc_title": doc.get("title"),
+                          "type_code": row.get("type_code")}
+    all_items = sorted(by_doc.values(), key=lambda item: item["doc_id"])
+    return _page(all_items, limit)
+
+
+def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
     with get_store().transaction():
-        items = _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
-        items = _without_terminal_group_items(project_id, items)
+        items = _without_terminal_group_items(
+            project_id, _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
+        )
     feed = _page(items, limit)
+    degraded_sections = []
+    try:
+        ai_runs = _notification_ai_runs(project_id, limit)
+    except Exception:
+        _log.exception("AI notification section failed project=%s", project_id)
+        ai_runs = _page([], limit)
+        degraded_sections.append("ai_runs")
+    try:
+        open_questions = _notification_open_questions(project_id, limit)
+    except Exception:
+        _log.exception("Question notification section failed project=%s", project_id)
+        open_questions = _page([], limit)
+        degraded_sections.append("open_questions")
+    unread_count = _count_unread(items, last_seen_at)
     return {
-        "ok": True,
-        "project_id": project_id,
-        "generated_at": datetime.now(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z"),
+        "ok": True, "project_id": project_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "last_seen_at": _utc_iso(last_seen_at) if last_seen_at else None,
-        "unread_count": _count_unread(items, last_seen_at),
-        "recent_activities": feed,
+        "unread_count": unread_count, "badge_count": unread_count + open_questions["total"],
+        "degraded_sections": degraded_sections, "recent_activities": feed,
+        "ai_runs": ai_runs, "open_questions": open_questions,
     }
 
 

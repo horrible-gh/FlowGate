@@ -21,6 +21,7 @@
         class="git-menu-badge"
       >{{ status.pending_count }}</span>
     </button>
+    <div class="hdr-div"></div>
 
     <div v-if="dropdownOpen" class="git-menu-dd" @click.stop>
       <div class="git-menu-dd-hd">

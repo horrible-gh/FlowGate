@@ -101,7 +101,7 @@
         "get_next_q_number": "SELECT COUNT(*) as count FROM questions WHERE q_id LIKE 'Q%'",
         "get_container_by_doc": "SELECT * FROM questions WHERE doc_id = ?",
         "insert_container_for_doc": "INSERT INTO questions (q_id, doc_id, project_id, title, created_by, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-        "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id JOIN documents d ON d.doc_id = q.doc_id LEFT JOIN groups g ON g.group_id = d.group_id WHERE qi.answer_count = 0 AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) AND COALESCE(d.doc_review_status, '') <> 'wf_done' AND COALESCE(UPPER(g.status), '') NOT IN ('CLOSED', 'DISCARDED') AND g.closed_at IS NULL AND g.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM documents rd WHERE rd.group_id = d.group_id AND ((rd.type_code IN ('R', 'B') AND rd.doc_review_status = 'wf_done') OR rd.type_code = 'DC')) ORDER BY q.updated_at DESC"
+        "list_open_items_by_project": "SELECT q.doc_id, qi.seq, qi.title, d.type_code FROM question_items qi JOIN questions q ON qi.question_id = q.id JOIN documents d ON d.doc_id = q.doc_id LEFT JOIN groups g ON g.group_id = d.group_id WHERE qi.answer_count = 0 AND COALESCE(q.status, '') = 'pending' AND q.doc_id IS NOT NULL AND (? IS NULL OR q.project_id = ?) AND COALESCE(d.doc_review_status, '') <> 'wf_done' AND COALESCE(UPPER(g.status), '') NOT IN ('CLOSED', 'DISCARDED') AND g.closed_at IS NULL AND g.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM documents rd WHERE rd.group_id = d.group_id AND ((rd.type_code IN ('R', 'B') AND rd.doc_review_status = 'wf_done') OR rd.type_code = 'DC')) ORDER BY q.updated_at DESC"
     },
     "question_items": {
         "insert_question_item": "INSERT INTO question_items (question_id, seq, title, body, asker_kind, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -166,6 +166,10 @@
         "find_by_engine": "SELECT id, engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at FROM engine_recipes WHERE engine = ?",
         "insert": "INSERT INTO engine_recipes (engine, label, setup, run_example, notes, origin, status, last_success_run_id, last_success_at, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         "update_row": "UPDATE engine_recipes SET label = ?, setup = ?, run_example = ?, notes = ?, origin = ?, status = ?, last_success_run_id = ?, last_success_at = ?, updated_by = ?, updated_at = ? WHERE id = ?"
+    },
+    "ai_invoke_runs": {
+        "count_by_project": "SELECT COUNT(*) AS cnt FROM ai_invoke_runs WHERE project_id = ? AND finished_at IS NOT NULL",
+        "list_finished_by_project": "SELECT * FROM ai_invoke_runs WHERE project_id = ? AND finished_at IS NOT NULL ORDER BY finished_at DESC, run_id DESC LIMIT ?"
     },
     "test_commands": {
         "list_active": "SELECT id, project, command, description, origin, status, last_success_at, verified_os, created_at, updated_at FROM project_test_commands WHERE project = ? AND status = 'active' ORDER BY CASE WHEN last_success_at IS NULL THEN 1 ELSE 0 END ASC, last_success_at DESC, id ASC",

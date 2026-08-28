@@ -202,3 +202,42 @@ def test_feed_unread_counts_full_history_not_just_page(feed_store):
     assert result["unread_count"] == 2
     assert len(result["recent_activities"]["items"]) == 1
     assert result["recent_activities"]["has_more"] is True
+
+
+def test_feed_returns_three_sections_badge_and_finished_ai_totals(feed_store, monkeypatch):
+    """Three-section contract: only finished AI runs count, and open Q docs contribute to the badge."""
+    monkeypatch.setattr(dashboard_service.db_ai_invoke_runs, "count_by_project", lambda _project: 1)
+    monkeypatch.setattr(dashboard_service.db_ai_invoke_runs, "list_finished_by_project", lambda _project, _limit: [{
+        "run_id": "run-finished", "finished_at": "2026-06-12T00:06:00Z", "outcome": "complete",
+        "doc_ref": "flowgate.default.0045.0006-D", "end_reason": "done", "provider_name": "codex",
+    }])
+    monkeypatch.setattr(dashboard_service.db_documents, "get_documents_by_ids", lambda _ids: {
+        "flowgate.default.0045.0006-D": {"title": "Design"},
+        "flowgate.default.0045.0007-Q": {"title": "Question"},
+    })
+    monkeypatch.setattr(dashboard_service.q_service, "list_open_items", lambda _project: [
+        {"doc_id": "flowgate.default.0045.0007-Q", "type_code": "Q"},
+        {"doc_id": "flowgate.default.0045.0007-Q", "type_code": "Q"},
+    ])
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["degraded_sections"] == []
+    assert result["ai_runs"]["total"] == 1
+    assert result["ai_runs"]["has_more"] is False
+    assert [item["run_id"] for item in result["ai_runs"]["items"]] == ["run-finished"]
+    assert result["open_questions"]["total"] == 1
+    assert [item["doc_id"] for item in result["open_questions"]["items"]] == ["flowgate.default.0045.0007-Q"]
+    assert result["badge_count"] == result["unread_count"] + 1
+
+
+def test_feed_degrades_ai_and_question_sections_independently(feed_store, monkeypatch):
+    monkeypatch.setattr(dashboard_service, "_notification_ai_runs", lambda *_args: (_ for _ in ()).throw(RuntimeError("ai")))
+    monkeypatch.setattr(dashboard_service, "_notification_open_questions", lambda *_args: (_ for _ in ()).throw(RuntimeError("q")))
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 10)
+
+    assert result["degraded_sections"] == ["ai_runs", "open_questions"]
+    assert result["ai_runs"] == {"limit": 10, "total": 0, "has_more": False, "items": []}
+    assert result["open_questions"] == {"limit": 10, "total": 0, "has_more": False, "items": []}
+    assert result["badge_count"] == result["unread_count"]
