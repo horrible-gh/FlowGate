@@ -74,13 +74,11 @@ def test_windows_unc_cli_uses_managed_scratch_and_safe_observation(monkeypatch, 
         assert seen["cmd"].endswith(command)
         assert seen["kwargs"]["env"]["FLOWGATE_SCRATCH"] == str(scratch)
         event = _decision(caplog)
-        assert event == {
-            "run_id": "run-0475",
-            "resolved_root": unc,
-            "effective_cwd": expected,
-            "is_unc": True,
-        }
-        assert event["effective_cwd"] == seen["kwargs"]["cwd"]
+        assert event["run_id"] == "run-0475"
+        assert event["agent_cwd"] == unc and event["spawn_cwd"] == expected
+        assert event["cwd_transition"] == "pushd" and event["is_unc"] is True
+        assert event["shell_kind"] == "windows_cmd"
+        assert event["spawn_cwd"] == seen["kwargs"]["cwd"]
         assert Path(tempfile.gettempdir()).resolve() not in scratch.resolve().parents
         assert Path.cwd().resolve() not in scratch.resolve().parents
         exposed = caplog.text + detail
@@ -114,8 +112,8 @@ def test_local_root_keeps_root_cwd_without_pushd(monkeypatch, tmp_path, caplog, 
     assert seen["cmd"] == "worker"
     assert seen["kwargs"]["cwd"] == str(root)
     event = _decision(caplog)
-    assert event["resolved_root"] == str(root)
-    assert event["effective_cwd"] == seen["kwargs"]["cwd"]
+    assert event["agent_cwd"] == str(root)
+    assert event["spawn_cwd"] == seen["kwargs"]["cwd"]
     assert event["is_unc"] is False
 
 
@@ -137,10 +135,10 @@ def test_missing_root_falls_back_to_scratch_and_warns(monkeypatch, tmp_path, cap
     assert status == "spawn_failed"
     assert seen["kwargs"]["cwd"] == str(scratch)
     assert seen["kwargs"]["env"]["FLOWGATE_SCRATCH"] == str(scratch)
-    assert "source mirror missing" in caplog.text
+    assert _decision(caplog)["cwd_source"] == "run_scratch"
     event = _decision(caplog)
-    assert event["resolved_root"] == str(missing)
-    assert event["effective_cwd"] == seen["kwargs"]["cwd"]
+    assert event["agent_cwd"] == str(scratch.resolve())
+    assert event["spawn_cwd"] == seen["kwargs"]["cwd"]
     assert event["is_unc"] is False
 
 
@@ -153,8 +151,8 @@ def test_observation_escapes_crlf_as_one_log_event(monkeypatch, tmp_path, caplog
     svc._cli_execute({"kind": "custom", "cli_command": "worker"}, "prompt", _run(scratch, malicious))
     records = [r for r in caplog.records if "cli spawn decision" in r.getMessage()]
     assert len(records) == 1
-    assert "\\r\\nFAKE_LOG_SENTINEL" in records[0].getMessage()
-    assert "\r\nFAKE_LOG_SENTINEL" not in records[0].getMessage()
+    assert "FAKE_LOG_SENTINEL" not in records[0].getMessage()
+    assert "\r\n" not in records[0].getMessage()
 
 
 @pytest.mark.parametrize("scratch_value", ["relative-scratch", r"\\server\share\scratch"])
@@ -166,4 +164,5 @@ def test_unc_rejects_nonlocal_or_relative_scratch_without_spawn(monkeypatch, scr
     status, detail = svc._cli_execute(
         {"kind": "custom", "cli_command": "worker"}, "prompt", _run(Path(scratch_value), unc)
     )
-    assert (status, detail) == ("spawn_failed", "managed scratch directory is unavailable")
+    assert status == "spawn_failed"
+    assert detail == "CLI launch blocked: scratch_unavailable"

@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -3741,6 +3742,107 @@ def _stop_progress_watchdog(stop_event: Optional[threading.Event], thread,
 
 # ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
 
+_CLI_LAUNCH_AUDIT_SCHEMA = "flowgate.external-cli-launch.v1"
+
+
+def _shell_kind() -> str:
+    return "windows_cmd" if os.name == "nt" else "posix_sh"
+
+
+def _stable_provider_kind(provider: dict) -> str:
+    kind = str(provider.get("kind") or "").lower()
+    return kind if kind in {"codex", "claude"} else "other"
+
+
+def _audit_cli_launch(decision: dict) -> None:
+    """Emit exactly one secret-free, line-safe launch decision event."""
+    allowed = {
+        "schema", "event", "decision", "reason", "run_id", "provider_kind",
+        "cwd_source", "spawn_cwd", "agent_cwd", "cwd_transition",
+        "shell_kind", "is_unc",
+    }
+    event = {key: decision.get(key) for key in allowed}
+    event["schema"] = _CLI_LAUNCH_AUDIT_SCHEMA
+    event["event"] = "external_cli_launch_decision"
+    try:
+        logger.info("ai-invoke cli spawn decision %s", json.dumps(event, ensure_ascii=True))
+    except Exception:
+        pass  # logging must never affect the launch outcome
+
+
+def _blocked_cli_launch(run: dict, provider: dict, reason: str) -> dict:
+    return {
+        "decision": "blocked", "reason": reason,
+        "run_id": run.get("run_id") if _RUN_ID_RE.fullmatch(str(run.get("run_id") or "")) else "<invalid>",
+        "provider_kind": _stable_provider_kind(provider),
+        "cwd_source": None, "spawn_cwd": None, "agent_cwd": None,
+        "cwd_transition": None, "shell_kind": _shell_kind(),
+        "is_unc": None,
+    }
+
+
+def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Optional[dict], str]:
+    """Resolve the sole product CLI spawn contract, or fail closed with a fixed code.
+
+    Product runs always carry project_id and therefore must prove the current run scratch
+    manifest even when a group worktree is the agent cwd (the scratch is still the UNC
+    bootstrap and temp/cache boundary). The project-less compatibility branch exists only
+    for older isolated unit harnesses; start_run never creates such a run.
+    """
+    scratch = Path(run.get("scratch_dir") or "")
+    project_id = run.get("project_id")
+    run_id = str(run.get("run_id") or "")
+    if project_id:
+        manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+        if manifest is None:
+            return None, f"scratch_{reason}"
+    try:
+        scratch_abs = scratch.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "scratch_unavailable"
+    if not scratch_abs.is_absolute() or not scratch_abs.is_dir() or _is_reparse_or_symlink(scratch):
+        return None, "scratch_unavailable"
+
+    source = Path(run["source_root"]) if run.get("source_root") else None
+    agent_cwd = scratch_abs
+    cwd_source = "run_scratch"
+    if source is not None and source.is_dir() and run.get("group_id") and project_id:
+        try:
+            integrated = bool((db_git.get_config(project_id) or {}).get("enabled"))
+        except Exception:
+            integrated = False
+        if integrated:
+            if not _is_group_worktree(project_id, run["group_id"], source):
+                return None, "group_worktree_identity_invalid"
+            agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
+            cwd_source = "group_worktree"
+    elif source is not None and source.is_dir() and not project_id:
+        # Test-only legacy run shape; real runs are covered by the manifest branch above.
+        agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
+        cwd_source = "group_worktree"
+
+    effective_command, effective_cwd = process_runner.unc_safe_shell(command, agent_cwd)
+    is_unc = str(agent_cwd).startswith("\\\\")
+    if effective_cwd is None:
+        if not scratch_abs.is_absolute() or str(scratch_abs).startswith("\\\\"):
+            return None, "unc_bootstrap_unavailable"
+        spawn_cwd = scratch_abs
+        transition = "pushd"
+    else:
+        spawn_cwd = Path(effective_cwd).resolve(strict=True)
+        transition = "none"
+    if not spawn_cwd.is_absolute() or not spawn_cwd.is_dir():
+        return None, "spawn_cwd_unavailable"
+    return {
+        "decision": "launch", "reason": None, "run_id": run_id,
+        "provider_kind": _stable_provider_kind(provider), "cwd_source": cwd_source,
+        "spawn_cwd": str(spawn_cwd), "agent_cwd": str(agent_cwd),
+        "cwd_transition": transition,
+        "shell_kind": _shell_kind(),
+        "is_unc": is_unc, "effective_command": effective_command,
+    }, "valid"
+
+
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
@@ -3760,24 +3862,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if kind == "codex":
         cmd = f'{cmd} --output-last-message "{last_message_file}"'
 
-    # 0278 NR0003: resolve_project_src_root() returns the project's source-mirror path
-    # WITHOUT checking that it exists, and only git provisioning ever creates that
-    # directory. A non-git project therefore yields a real-looking path to a folder
-    # that is not there, and Popen(cwd=...) raises for every provider in the chain --
-    # the run dies as all_providers_failed with no last message. The mirror is not
-    # required for a CLI worker (it registers through the inbox API, not the tree),
-    # so fall back to the run scratch dir. The bare `else scratch` never covered this
-    # case because the resolver hands back a path, not None.
-    resolved_root = Path(run["source_root"]) if run.get("source_root") else None
-    if resolved_root is not None and resolved_root.is_dir():
-        source_root = resolved_root
-    else:
-        if resolved_root is not None:
-            logger.warning(
-                "ai-invoke %s: source mirror missing at %s - running in scratch %s",
-                run["run_id"], resolved_root, scratch,
-            )
-        source_root = scratch
+    # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
+    # installation directory, base checkout, or OS temp fallback is permitted.
     # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
     # must post results to an address it can actually reach. The mention was built
     # with the operator-facing base; rewrite it (and export it) to an agent-reachable
@@ -3797,46 +3883,17 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
-    eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, source_root)
-    is_unc = eff_cwd is None
-    if is_unc:
-        # unc_safe_shell leaves cwd unset while cmd.exe performs pushd. Keep the
-        # bootstrap shell inside the run's managed local scratch until that happens.
-        if not scratch.is_absolute() or str(scratch).startswith("\\\\"):
-            return "spawn_failed", "managed scratch directory is unavailable"
-        try:
-            effective_scratch = scratch.resolve(strict=True)
-        except (OSError, RuntimeError):
-            return "spawn_failed", "managed scratch directory is unavailable"
-        if (
-            not effective_scratch.is_absolute()
-            or not effective_scratch.is_dir()
-            or str(effective_scratch).startswith("\\\\")
-        ):
-            return "spawn_failed", "managed scratch directory is unavailable"
-        eff_cwd = str(effective_scratch)
-    kwargs = process_runner.popen_kwargs(source_root, env)
-    kwargs["cwd"] = eff_cwd
+    decision, reason = _resolve_cli_launch(provider, run, cmd)
+    if decision is None:
+        blocked = _blocked_cli_launch(run, provider, reason)
+        _audit_cli_launch(blocked)
+        return "spawn_failed", f"CLI launch blocked: {reason}"
+    eff_cmd = decision.pop("effective_command")
+    agent_cwd = Path(decision["agent_cwd"])
+    kwargs = process_runner.popen_kwargs(agent_cwd, env)
+    kwargs["cwd"] = decision["spawn_cwd"]
     kwargs["stdin"] = subprocess.PIPE
-
-    # JSON encoding keeps CR/LF and other control characters escaped in one event.
-    # Deliberately omit prompt, command, token, environment, and provider credentials.
-    try:
-        logger.info(
-            "ai-invoke cli spawn decision %s",
-            json.dumps(
-                {
-                    "run_id": run.get("run_id"),
-                    "resolved_root": str(resolved_root) if resolved_root is not None else None,
-                    "effective_cwd": kwargs["cwd"],
-                    "is_unc": is_unc,
-                },
-                ensure_ascii=True,
-            ),
-        )
-    except Exception:
-        # Observability must never become a new execution dependency.
-        pass
+    _audit_cli_launch(decision)
 
     launched = time.monotonic()
     try:
