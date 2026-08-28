@@ -46,12 +46,7 @@ async function mountOpen(items: DashboardActivity[]) {
   const wrapper = mount(NotificationCenter, { global: { plugins: [i18n] } })
   // Seed after mount so onMounted's refresh (stubbed) doesn't clobber it; keep watermark null so
   // isUnread stays true for the fresh/unread paths.
-store.items = items
-  store.aiRuns = [{ run_id: 'run-1', success: true, outcome: 'complete', doc_ref: 'doc-ai', doc_title: 'AI doc', finished_at: '2026-07-02T00:06:00Z', result_line: 'done', provider_name: 'codex', stop_code: null, stop_reason: null }]
-  store.aiRunsTotal = 1
-  store.openQuestions = [{ doc_id: 'doc-q', doc_title: 'Question doc', type_code: 'Q' }]
-  store.openQuestionsTotal = 1
-  store.badgeCount = items.length + 1
+  store.items = items
   store.lastSeenAt = null
   await wrapper.find('.notif-bell').trigger('click')
   await flushPromises()
@@ -76,34 +71,6 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     const tabCounts = wrapper.findAll('.notif-tab .notif-tab-n').map((n) => n.text())
     // 전체 3 / 확인 필요 1 (only the `issues` row) / 미확인 3 (no watermark → all unread)
     expect(tabCounts).toEqual(['3', '1', '3'])
-  })
-
-  it('renders and switches all three notification sections with section totals', async () => {
-    const wrapper = await mountOpen([activity({ event_id: 1 })])
-
-    const sectionTabs = wrapper.findAll('.notif-section-tab')
-    expect(sectionTabs.map((tab) => tab.find('.notif-section-n').text())).toEqual(['1', '1', '1'])
-    expect(wrapper.find('.notif-badge').text()).toBe('2')
-
-    await sectionTabs[1].trigger('click')
-    expect(wrapper.text()).toContain('doc-ai')
-    expect(wrapper.text()).toContain('AI doc')
-    expect(wrapper.find('.notif-tabs:not(.notif-section-tabs)').exists()).toBe(false)
-
-    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
-    expect(wrapper.text()).toContain('doc-q')
-    expect(wrapper.text()).toContain('Question doc')
-  })
-
-  it('renders a section-local degraded state without hiding the other sections', async () => {
-    const wrapper = await mountOpen([activity({ event_id: 1 })])
-    const store = useNotificationsStore()
-    store.degradedSections = ['ai_runs']
-    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
-    expect(wrapper.find('.notif-empty').text()).toContain('불러오지 못했습니다')
-
-    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
-    expect(wrapper.text()).toContain('doc-q')
   })
 
   it('paints trust colours + AI badge and warns on a completed-but-issues row', async () => {

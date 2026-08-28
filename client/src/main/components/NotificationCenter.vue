@@ -12,8 +12,8 @@
       @click="toggle"
     >
       <AppIcon name="bell" />
-      <span v-if="store.badgeCount > 0" class="notif-badge">
-        {{ store.badgeCount > 99 ? '99+' : store.badgeCount }}
+      <span v-if="store.unreadCount > 0" class="notif-badge">
+        {{ store.unreadCount > 99 ? '99+' : store.unreadCount }}
       </span>
     </button>
 
@@ -23,7 +23,7 @@
         <!-- Mockup 3: live indicator — the feed refreshes in place as workflow inflow arrives over SSE. -->
         <span class="notif-live"><span class="notif-live-dot"></span> {{ t('main.notif_center.live') }}</span>
         <button
-          v-if="activeSection === 'general' && store.items.length > 0"
+          v-if="store.items.length > 0"
           class="notif-mark-read"
           type="button"
           @click="markAllRead"
@@ -32,14 +32,8 @@
         </button>
       </div>
 
-      <div class="notif-tabs notif-section-tabs" role="tablist">
-        <button v-for="tab in sectionTabs" :key="tab.key" class="notif-section-tab"
-          :class="{ active: activeSection === tab.key }" type="button" role="tab"
-          @click="activeSection = tab.key">{{ tab.label }} <span class="notif-section-n">{{ tab.count }}</span></button>
-      </div>
-
       <!-- Mockup 3: filter tabs (all / needs attention / unread) with live counts. -->
-      <div v-if="activeSection === 'general' && store.items.length > 0" class="notif-tabs" role="tablist">
+      <div v-if="store.items.length > 0" class="notif-tabs" role="tablist">
         <button
           v-for="tab in tabs"
           :key="tab.key"
@@ -55,7 +49,7 @@
       </div>
 
       <div class="notif-panel-body">
-        <div v-if="store.loading && store.items.length === 0 && store.aiRuns.length === 0 && store.openQuestions.length === 0" class="notif-empty">
+        <div v-if="store.loading && store.items.length === 0" class="notif-empty">
           <AppIcon name="spinner" spin />
           <p>{{ t('main.overview.loading') }}</p>
         </div>
@@ -66,27 +60,17 @@
             {{ t('main.overview.retry') }}
           </button>
         </div>
-        <div v-else-if="activeSection === 'general' && store.items.length === 0" class="notif-empty">
+        <div v-else-if="store.items.length === 0" class="notif-empty">
           <AppIcon name="bell-slash" />
           <p>{{ t('main.notif_center.empty') }}</p>
         </div>
-        <div v-else-if="activeSection === 'general' && visibleItems.length === 0" class="notif-empty">
+        <div v-else-if="visibleItems.length === 0" class="notif-empty">
           <AppIcon name="check-circle" />
           <p>{{ t('main.notif_center.filter_empty') }}</p>
         </div>
-        <template v-if="activeSection === 'ai'">
-          <div v-if="store.degradedSections.includes('ai_runs')" class="notif-empty"><AppIcon name="warning" /><p>{{ t('main.notif_center.section_failed') }}</p></div>
-          <div v-else-if="store.aiRuns.length === 0" class="notif-empty"><AppIcon name="bell-slash" /><p>{{ t('main.notif_center.empty') }}</p></div>
-          <button v-for="item in store.aiRuns" v-else :key="item.run_id" class="notif-item" type="button" @click="openAiDetail(item.run_id)"><span class="notif-dot" :style="{ background: item.success ? '#16a34a' : '#dc2626' }"></span><span class="notif-content"><span class="notif-target"><strong class="notif-doc-id">{{ item.doc_ref }}</strong><span class="notif-target-title">— {{ item.doc_title }}</span></span><span class="notif-msg">{{ item.result_line }}</span><span class="notif-time">{{ formatDashboardTime(item.finished_at) }}</span><span>{{ t('main.notif_center.details') }}</span></span></button>
-        </template>
-        <template v-else-if="activeSection === 'questions'">
-          <div v-if="store.degradedSections.includes('open_questions')" class="notif-empty"><AppIcon name="warning" /><p>{{ t('main.notif_center.section_failed') }}</p></div>
-          <div v-else-if="store.openQuestions.length === 0" class="notif-empty"><AppIcon name="bell-slash" /><p>{{ t('main.notif_center.empty') }}</p></div>
-          <button v-for="item in store.openQuestions" v-else :key="item.doc_id" class="notif-item" type="button" @click="openQuestionDoc(item.doc_id)"><span class="doc-tag" :class="`c-${item.type_code}`">{{ item.type_code }}</span><span class="notif-content"><span class="notif-target"><strong class="notif-doc-id">{{ item.doc_id }}</strong><span class="notif-target-title">— {{ item.doc_title }}</span></span><span>{{ t('main.notif_center.view_all') }}</span></span></button>
-        </template>
         <button
           v-for="item in visibleItems"
-          v-else-if="activeSection === 'general'"
+          v-else
           :key="item.event_id"
           class="notif-item"
           :class="[
@@ -153,8 +137,6 @@ const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, rev
   useActivityFormat()
 
 const open = ref(false)
-type NotificationSection = 'general' | 'ai' | 'questions'
-const activeSection = ref<NotificationSection>('general')
 const rootEl = ref<HTMLElement | null>(null)
 
 // Mockup 3 filter tabs. All = everything; needs attention = rows whose AI verdict flags attention
@@ -169,12 +151,6 @@ function needsAttention(item: DashboardActivity): boolean {
 
 const attentionCount = computed(() => store.items.filter(needsAttention).length)
 const unreadItemsCount = computed(() => store.items.filter((i) => store.isUnread(i)).length)
-
-const sectionTabs = computed(() => [
-  { key: 'general' as const, label: t('main.notif_center.section_general'), count: store.items.length },
-  { key: 'ai' as const, label: t('main.notif_center.section_ai'), count: store.aiRunsTotal },
-  { key: 'questions' as const, label: t('main.notif_center.section_questions'), count: store.openQuestionsTotal },
-])
 
 const tabs = computed(() => [
   { key: 'all' as const, label: t('main.notif_center.filter_all'), count: store.items.length },
@@ -207,30 +183,17 @@ function refresh() {
   if (pid) void store.fetchFeed(pid)
 }
 
-async function toggle() {
+function toggle() {
   open.value = !open.value
   if (open.value) {
-    const pid = projectStore.currentProjectId
-    if (pid) {
-      await store.fetchFeed(pid)
-      await store.markSeen(pid)
-    }
+    refresh()
+    void markAllRead()
   }
 }
 
 async function markAllRead() {
   const pid = projectStore.currentProjectId
   if (pid) await store.markSeen(pid)
-}
-
-function openAiDetail(runId: string) {
-  window.dispatchEvent(new CustomEvent('fg:ai-run-detail', { detail: { runId } }))
-}
-
-function openQuestionDoc(docId: string) {
-  void openDashboardTarget({ kind: 'document', doc_id: docId, group_id: null })
-  window.dispatchEvent(new CustomEvent('fg:open-document-qa', { detail: { docId } }))
-  open.value = false
 }
 
 function onItemClick(item: DashboardActivity) {
@@ -418,8 +381,7 @@ onBeforeUnmount(() => {
   padding: 9px 12px;
   border-bottom: 1px solid var(--border, #e2e8f0);
 }
-.notif-tab,
-.notif-section-tab {
+.notif-tab {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -431,8 +393,8 @@ onBeforeUnmount(() => {
   font-size: .72rem;
   font-weight: 600;
 }
-.notif-tab:hover, .notif-section-tab:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); }
-.notif-tab.active, .notif-section-tab.active {
+.notif-tab:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); }
+.notif-tab.active {
   color: #fff;
   background: var(--primary, #2563eb);
   border-color: var(--primary, #2563eb);
@@ -449,7 +411,7 @@ onBeforeUnmount(() => {
   font-size: .62rem;
   font-weight: 800;
 }
-.notif-tab.active .notif-tab-n, .notif-section-tab.active .notif-section-n { background: rgba(255, 255, 255, .28); }
+.notif-tab.active .notif-tab-n { background: rgba(255, 255, 255, .28); }
 
 /* Trust-tone rows: left accent + faint tint from the document's AI verdict. */
 .notif-item--ok { border-left: 3px solid #22c55e; }

@@ -1202,12 +1202,6 @@ export default {
     notif_center: {
       title: '알림',
       mark_all_read: '모두 읽음',
-      section_general: '일반',
-      section_ai: 'AI',
-      section_questions: '질의응답',
-      section_failed: '이 섹션을 불러오지 못했습니다.',
-      details: '상세보기',
-      view_all: '전체보기 →',
       empty: '새 알림이 없습니다',
       load_failed: '알림을 불러오지 못했습니다.',
       live: 'LIVE',

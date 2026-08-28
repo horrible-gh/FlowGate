@@ -31,13 +31,6 @@ function feed(unread: number, lastSeen: string | null, items: DashboardActivity[
     generated_at: '2026-06-12T01:00:00Z',
     last_seen_at: lastSeen,
     unread_count: unread,
-    badge_count: unread + 1,
-    degraded_sections: ['open_questions'],
-    ai_runs: {
-      limit: 50, total: 1, has_more: false,
-      items: [{ run_id: 'run-1', success: true, outcome: 'complete', doc_ref: 'doc-ai', doc_title: 'AI doc', finished_at: '2026-06-12T00:04:00Z', result_line: 'complete', provider_name: 'codex', stop_code: null, stop_reason: null }],
-    },
-    open_questions: { limit: 50, total: 1, has_more: false, items: [{ doc_id: 'doc-q', doc_title: 'Question doc', type_code: 'Q' }] },
     recent_activities: { limit: 50, total: items.length, has_more: false, items },
   }
 }
@@ -63,12 +56,6 @@ describe('notifications store', () => {
     expect(store.items).toHaveLength(2)
     expect(store.unreadCount).toBe(2)
     expect(store.lastSeenAt).toBe('2026-06-12T00:00:00Z')
-    expect(store.badgeCount).toBe(3)
-    expect(store.aiRuns.map((item) => item.run_id)).toEqual(['run-1'])
-    expect(store.aiRunsTotal).toBe(1)
-    expect(store.openQuestions.map((item) => item.doc_id)).toEqual(['doc-q'])
-    expect(store.openQuestionsTotal).toBe(1)
-    expect(store.degradedSections).toEqual(['open_questions'])
     expect(store.loadedProjectId).toBe('flowgate')
   })
 
@@ -84,7 +71,6 @@ describe('notifications store', () => {
     await store.markSeen('flowgate')
 
     expect(store.unreadCount).toBe(0)
-    expect(store.badgeCount).toBe(1)
     expect(store.lastSeenAt).toBe('2026-06-12T02:00:00Z')
   })
 

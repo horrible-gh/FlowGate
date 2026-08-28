@@ -64,7 +64,7 @@
           v-for="entry in entries"
           :key="entry.groupId"
           class="aiv-mini__card"
-          :class="`aiv-mini__card--${entry.phase}`"
+          :class="[`aiv-mini__card--${entry.phase}`, { 'aiv-mini__card--awaiting': isAwaitingQ(entry) }]"
         >
           <div class="aiv-mini__row">
             <AppIcon
@@ -75,7 +75,10 @@
               <div class="aiv-mini__title">{{ titleFor(entry) }}</div>
               <div class="aiv-mini__doc">{{ entry.docRef || entry.groupId }}</div>
             </div>
-            <span class="aiv-mini__badge">{{ modeLabel(entry) }}</span>
+            <span v-if="isAwaitingQ(entry)" class="aiv-mini__badge aiv-mini__badge--q">
+              {{ t('main.ai_miniplayer.awaiting_q_badge', { count: entry.pendingQDocIds.length }) }}
+            </span>
+            <span v-else class="aiv-mini__badge">{{ modeLabel(entry) }}</span>
           </div>
 
           <!-- Progress moves ONLY on document/step arrival (D0007 decision 5); the
@@ -139,6 +142,9 @@
             data-test="ai-miniplayer-release-error"
           >
             {{ releaseErrors[entry.groupId] }}
+          </div>
+          <div v-if="isAwaitingQ(entry)" class="aiv-mini__meta aiv-mini__meta--q">
+            {{ t('main.ai_miniplayer.awaiting_q_line') }}
           </div>
           <div v-if="entry.phase === 'pause_requested'" class="aiv-mini__meta">
             {{ t('main.ai_miniplayer.pause_scheduled') }}
@@ -279,6 +285,7 @@ import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import {
   compareRunEntries,
+  isAwaitingQ,
   openTargetDocId,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
@@ -310,7 +317,7 @@ const fabText = computed(() => {
   if (idle.value) return t('main.ai_miniplayer.idle_summary')
   const counts = {
     running: store.activeCount,
-    waiting: store.pausedCount,
+    waiting: store.awaitingQCount + store.pausedCount,
     done: store.finishedCount,
   }
   // The finished clause only joins the summary while such a card exists, so the tooltip
@@ -326,13 +333,16 @@ const fabText = computed(() => {
 // Leaving the finished ones out (0294 B0001) made the badge vanish at the exact moment
 // the run ended, so with the popover closed a completion was never visible at all.
 const badgeCount = computed(() =>
-  store.activeCount + store.pausedCount + store.finishedCount,
+  store.awaitingQCount > 0
+    ? store.awaitingQCount
+    : store.activeCount + store.pausedCount + store.finishedCount,
 )
 
 // The count alone cannot say WHICH state it stands for, so the chip carries a colour with
 // it. Same priority as the badge: unanswered inquiries first, then live work, then the
 // transient end-of-run tone (danger for partial/none/lost, success for a clean finish).
 const chipState = computed(() => {
+  if (store.awaitingQCount > 0) return 'awaiting'
   if (store.activeCount > 0 || store.pausedCount > 0) return 'live'
   if (store.finishedAlertCount > 0) return 'alert'
   if (store.finishedCount > 0) return 'done'
@@ -353,6 +363,7 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 function cardIcon(entry: AiInvokeRunEntry): string {
+  if (isAwaitingQ(entry)) return 'question'
   if (entry.phase === 'paused' || entry.phase === 'pause_requested') return 'pause'
   if (entry.phase === 'finished') return entry.outcome === 'complete' ? 'check-circle' : 'warning'
   if (entry.phase === 'lost') return 'warning'
@@ -667,6 +678,19 @@ watch(entries, list => {
   text-align: center;
 }
 
+/* The outline stays neutral in every state — splitting static/running by border would
+   double up on a signal the badge already carries, so awaiting rides on the glyph
+   colour and the badge alone (CH0016). */
+.aiv-mini__chip--awaiting,
+.aiv-mini__chip--awaiting:hover,
+.aiv-mini__chip--awaiting.active {
+  color: var(--warning);
+}
+
+.aiv-mini__chip--awaiting .aiv-mini__chip-badge {
+  background: var(--warning);
+}
+
 /* End-of-run tone (0294 B0001): the card survives its TTL, so the closed chip does too —
    recoloured, because a completion left in the running tone reads as "still going". */
 .aiv-mini__chip--done,
@@ -793,6 +817,11 @@ watch(entries, list => {
   border-bottom: none;
 }
 
+.aiv-mini__card--awaiting {
+  background: var(--warning-l);
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
 .aiv-mini__card--paused {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary) 60%, transparent);
 }
@@ -806,6 +835,10 @@ watch(entries, list => {
 .aiv-mini__row > .app-icon {
   margin-top: 2px;
   color: var(--primary);
+}
+
+.aiv-mini__card--awaiting .aiv-mini__row > .app-icon {
+  color: var(--warning);
 }
 
 .aiv-mini__title-wrap {

@@ -337,17 +337,10 @@ def count_by_group(group_id: str) -> int:
     return row["cnt"] if row else 0
 
 
-def list_finished_by_project(project_id: str, limit: int) -> list[dict]:
-    store = get_store()
-    rows = store._fetch_all(
-        store._sql("ai_invoke_runs.list_finished_by_project"), [project_id, limit]
-    )
-    return [_row_to_payload(row) for row in rows]
-
-
 def count_by_project(project_id: str) -> int:
-    store = get_store()
-    row = store._fetch_one(store._sql("ai_invoke_runs.count_by_project"), [project_id])
+    row = get_store()._fetch_one(
+        "SELECT COUNT(*) AS cnt FROM ai_invoke_runs WHERE project_id = ?", [project_id]
+    )
     return row["cnt"] if row else 0
 
 

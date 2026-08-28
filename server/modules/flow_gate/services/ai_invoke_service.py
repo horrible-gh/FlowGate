@@ -675,24 +675,15 @@ def get_run_detail(run_id: str) -> dict:
     if get_run_record(run_id) is not None:
         payload = get_status(run_id)
         payload["persisted"] = False
-    else:
-        from modules.flow_gate.db import ai_invoke_runs as db_runs
+        return payload
 
-        row = db_runs.get(run_id)
-        if row is None:
-            raise _http_error(404, "run_not_found", "Unknown or expired run id.")
-        payload = _run_detail_from_row(row)
-        payload["persisted"] = True
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-    if payload.get("status") == "finished":
-        from modules.flow_gate.db import documents as db_documents
-
-        doc_ref = payload.get("doc_ref")
-        try:
-            doc = db_documents.get_by_id(doc_ref) if doc_ref else None
-            payload["doc_title"] = doc.get("title") if doc else None
-        except Exception:
-            payload["doc_title"] = None
+    row = db_runs.get(run_id)
+    if row is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    payload = _run_detail_from_row(row)
+    payload["persisted"] = True
     return payload
 
 
