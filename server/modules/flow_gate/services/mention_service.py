@@ -2003,6 +2003,9 @@ def build_mention(
     # the token-owned directory so file submissions satisfy the server boundary.
     s6_body = (
         f"{scratch_dir}\n\n"
+        "Write every non-source artifact (temporary files, dumps, generated JSON, caches, "
+        "and notes) inside this run-owned directory; never place them in the source tree, "
+        "server cwd, or OS temp.\n\n"
         "For file-based inbox submissions, `{SCRATCH}` means the path above. "
         "Create the file inside it and send that file's absolute path as `doc_path`."
     )
@@ -2653,8 +2656,9 @@ def build_review_mention(
     # the same {SCRATCH} terminology used by task/test worker instructions.
     s6_body = (
         f"{scratch_dir}\n\n"
-        "`{SCRATCH}` means the token-owned path above. Keep temporary review "
-        "artifacts inside this directory."
+        "`{SCRATCH}` means the token-owned path above. Write every non-source artifact, "
+        "review dump, JSON, cache, and note inside this run scratch only; do not leave "
+        "them in the source tree, server cwd, or OS temp."
     )
 
     # ── Section 7: verdict guide (inline — no help endpoint for verdicts) ────
