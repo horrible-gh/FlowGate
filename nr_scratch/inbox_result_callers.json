@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:21:49+09:00","matches":[{"file":"server/modules/flow_gate/process_service.py","line":1210,"text":"        rj_inbox_file = _create_inbox_result_file("},{"file":"server/modules/flow_gate/process_service.py","line":3597,"text":"def _create_inbox_result_file("}],"total":2,"truncated":false}

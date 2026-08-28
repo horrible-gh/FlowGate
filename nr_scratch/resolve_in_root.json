@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:16:12+09:00","matches":[{"file":"server/modules/flow_gate/storage/safe_path.py","line":56,"text":"def resolve_in_root(root: Path, rel: str) -> Optional[Path]:"}],"total":1,"truncated":false}

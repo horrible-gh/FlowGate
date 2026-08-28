@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:22:44+09:00","matches":[{"file":"server/modules/flow_gate/service.py","line":301,"text":"def get_document_detail(doc_id: str) -> dict | None:"},{"file":"server/modules/flow_gate/api/v1/legacy_misc_routes.py","line":81,"text":"    detail = service.get_document_detail(doc_id)"}],"total":2,"truncated":false}

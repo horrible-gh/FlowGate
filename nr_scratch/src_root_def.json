@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:16:12+09:00","matches":[{"file":"server/modules/flow_gate/storage/paths.py","line":110,"text":"def src_root(project_name: str, branch: str = 'main') -> Path:"}],"total":1,"truncated":false}

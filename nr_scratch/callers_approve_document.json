@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:19:47+09:00","matches":[{"file":"server/modules/flow_gate/process_service.py","line":969,"text":"def approve_document("}],"total":1,"truncated":false}

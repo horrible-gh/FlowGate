@@ -1,1 +1,0 @@
-{"ok":true,"op":"grep","server_ts":"2026-08-28T12:16:23+09:00","matches":[{"file":"server/modules/flow_gate/services/remote_tool_service.py","line":487,"text":"def _fallback_project_root(grant: dict) -> Optional[Path]:"}],"total":1,"truncated":false}
