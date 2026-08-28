@@ -435,13 +435,16 @@ def _require_group_worktree(
     if cfg is None or not cfg.get("enabled"):
         return  # non-integrated project: the base tree IS the source of truth
 
+    # Always finish on a fresh resolve. Even when the first lookup names the worktree,
+    # cleanup can remove it before launch; allowing that first answer to return early
+    # makes the stale value win and can send the worker into the fallback base checkout.
     root = storage_paths.resolve_project_src_root(project_id, branch, group_id=group_id)
-    if _is_group_worktree(project_id, group_id, root):
-        return
+    initial_valid = _is_group_worktree(project_id, group_id, root)
     try:
-        if git_service.ensure_worktree(
+        ensured = git_service.ensure_worktree(
             project_id, module or "default", group_id, trigger="ai_invoke_retry"
-        ) == "ok":
+        )
+        if initial_valid or ensured == "ok":
             root = storage_paths.resolve_project_src_root(project_id, branch, group_id=group_id)
             if _is_group_worktree(project_id, group_id, root):
                 return
@@ -3626,11 +3629,10 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if resolved_root is not None and resolved_root.is_dir():
         source_root = resolved_root
     else:
-        if resolved_root is not None:
-            logger.warning(
-                "ai-invoke %s: source mirror missing at %s - running in scratch %s",
-                run["run_id"], resolved_root, scratch,
-            )
+        logger.warning(
+            "ai-invoke %s: source mirror unavailable at %s - running in scratch %s",
+            run["run_id"], resolved_root, scratch,
+        )
         source_root = scratch
     # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
     # must post results to an address it can actually reach. The mention was built
