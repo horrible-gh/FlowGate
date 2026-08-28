@@ -139,6 +139,7 @@
           <StepVerificationCard
             v-if="tab.typeCode === 'TR'"
             :doc-id="tab.id"
+            :ref="(el) => bindActiveRef(stepVerificationCardRefs, tab.id, el)"
           />
           <!-- AC (final approval): file-less workflow step — no body file, so it
                must render by typeCode regardless of tab.type. When reopened from
@@ -1593,6 +1594,7 @@ const activeTab = computed(() => tabsStore.activeTab)
 const docHeaderRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
 const textViewerRefs = reactive<Record<string, any>>({})
+const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
 const qStatuses = reactive<Record<string, string>>({})
@@ -4733,6 +4735,7 @@ async function saveEditContent() {
     }
     await mdViewerRefs[editTab.value.id]?.loadContent?.()
     await textViewerRefs[editTab.value.id]?.loadContent?.()
+    await stepVerificationCardRefs[editTab.value.id]?.fetchData?.()
     // 0177 NR0016 §1: a successful save always closes the modal — a source-file
     // save on the base checkout is dirty by definition, so the former keep-open
     // warning (0176 T0010 §a) held the dialog hostage on every save. The tree

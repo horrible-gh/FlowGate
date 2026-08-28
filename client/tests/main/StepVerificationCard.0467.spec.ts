@@ -41,14 +41,6 @@ describe('[단계별 확인] 카드', () => {
     expect(wrapper.find('.step-verify-card').classes()).toContain('collapsed')
   })
 
-  it('섹션이 없는 문서(구버전 TR 등)는 "해당 없음" 문구를 보여준다', async () => {
-    getRequest.mockResolvedValue(apiResponse({ found: false, declared_none: false, sections: [] }))
-    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
-    await flushPromises()
-
-    expect(wrapper.find('.step-verify-empty-note').text()).toBe('이 문서에는 단계별 확인 섹션이 없습니다.')
-  })
-
   it('없음으로 등록된 문서는 그 사실을 보여준다', async () => {
     getRequest.mockResolvedValue(apiResponse({ found: true, declared_none: true, sections: [] }))
     const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
@@ -121,5 +113,88 @@ describe('[단계별 확인] 카드', () => {
     expect(getRequest).toHaveBeenCalledWith(
       '/api/v1/documents/flowgate.default.0467.0009-TR/step-verification',
     )
+  })
+})
+
+// flowgate.default.0467 T0012 — D0005 §3/§6 상태 E(절 누락/형식 오류)·상태 F(조회 실패)·전환
+// 상태(로딩)·재조회 경합 규칙. 위 5개는 승인된 시안 opg4tsar의 상태 A~D 회귀만 지킨다;
+// 아래는 D0005가 재반려를 거쳐 확정한, opg4tsar에는 없던 계약들을 각각 독립적으로 고정한다 —
+// 상태 E는 `found: false`(절 헤딩 자체 없음)·`found: true, sections: []`(형식 오류) 두 서버
+// 응답 분기를 모두 다룬다.
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
+describe('[단계별 확인] 카드 — 로딩·절 누락/형식 오류·조회 실패·재조회 경합 (D0005 §3/§6)', () => {
+  it('조회가 시작된 직후부터 응답 전까지는 배지 없이 "불러오는 중" 문구만 보인다', async () => {
+    const { promise } = deferred<any>()
+    getRequest.mockReturnValue(promise)
+    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
+    await Promise.resolve()
+
+    expect(wrapper.find('.step-verify-fold-summary').text()).toBe('불러오는 중')
+    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다')
+  })
+
+  it('섹션 자체가 없는 문서(구버전 TR 등)도 "없음"(상태 D)이 아니라 절 누락/형식 오류 문구를 보여준다', async () => {
+    getRequest.mockResolvedValue(apiResponse({ found: false, declared_none: false, sections: [] }))
+    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
+    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다')
+    expect(wrapper.find('.step-verify-fold-summary').text()).toBe('· 확인 절이 등록되지 않음')
+    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
+  })
+
+  it('절 헤딩은 있지만 하위 섹션도 명시적 "없음"도 없으면, "없음"(상태 D)과 다른 절 누락/형식 오류 문구를 보여준다', async () => {
+    getRequest.mockResolvedValue(apiResponse({ found: true, declared_none: false, sections: [] }))
+    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('이 문서에는 단계별 확인 절이 없거나 비어 있습니다')
+    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다')
+    expect(wrapper.find('.step-verify-fold-summary').text()).toBe('· 확인 절이 등록되지 않음')
+    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
+  })
+
+  it('조회 자체가 실패하면, "없음"·절 누락 문구와 모두 다른 전용 오류 문구를 보여준다', async () => {
+    getRequest.mockRejectedValue(new Error('network down'))
+    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('확인 정보를 불러오지 못했습니다. 다시 시도해 주세요')
+    expect(wrapper.find('.step-verify-fold-summary').text()).toBe('· 확인 정보를 불러오지 못함')
+    expect(wrapper.find('.step-verify-count-pill').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('확인할 것이 없다고 등록되었습니다')
+    expect(wrapper.text()).not.toContain('단계별 확인 절이 없거나 비어 있습니다')
+  })
+
+  it('나중에 시작한 조회만 반영되고, 먼저 시작된 조회의 늦은 응답은 버려진다', async () => {
+    const first = deferred<any>()
+    const second = deferred<any>()
+    getRequest.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+
+    const wrapper = mount(StepVerificationCard, { props: { docId: DOC_ID }, global: { plugins: [i18n] } })
+    await Promise.resolve()
+    ;(wrapper.vm as any).fetchData()
+    await Promise.resolve()
+
+    second.resolve(apiResponse({ found: true, declared_none: true, sections: [] }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('확인할 것이 없다고 등록되었습니다')
+
+    first.resolve(apiResponse({
+      found: true,
+      declared_none: false,
+      sections: [{ title: '먼저 시작된 낡은 응답', summary: '', steps: [] }],
+    }))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('먼저 시작된 낡은 응답')
+    expect(wrapper.text()).toContain('확인할 것이 없다고 등록되었습니다')
   })
 })

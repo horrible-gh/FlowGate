@@ -1396,8 +1396,12 @@ export default {
       fold_summary_empty: '· none',
       fold_summary_one: '· {title}',
       fold_summary_many: '· {title} and {rest} more',
-      not_applicable: 'This document has no step-verification section.',
+      loading: 'Loading…',
+      fold_summary_missing: '· Verification section not registered',
+      fold_summary_error: '· Could not load verification information',
+      not_applicable: 'This document has no step-verification section or it is empty.',
       declared_none: 'Registered as: nothing to verify.',
+      fetch_error: 'Could not load verification information. Please try again.',
     },
     file_upload_modal: {
       title: 'File Upload',
