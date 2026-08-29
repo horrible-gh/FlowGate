@@ -1399,6 +1399,26 @@ class TestReviewHopNoVerdictRecovery0466:
         assert run["docs_reached"] == 0
         assert DOC_REF not in env["reviews"].rows or env["reviews"].rows[DOC_REF] == []
 
+    def test_a_users_restart_pick_does_not_widen_the_fixed_review_cap(
+            self, env, monkeypatch):
+        """flowgate.default.0476 T0007 §2: the general continuous-chain "재시작 횟수" pick
+        (here, 3, which `_resolve_restart_max_attempts` would turn into 4 total attempts for
+        an ordinary edit/rework hop) must not reach a review hop at all — `attempts_max`
+        stays the fixed review-only cap of 2, and only two attempts are ever launched, even
+        when `continuation_restart_max_attempts=3` is injected directly into `start_run`
+        exactly as `_spawn_review_hop` would receive it were the guard removed."""
+        launches = _scripted_review_worker(env, monkeypatch, [
+            (None, 1, None),
+            (None, 1, None),
+        ])
+        res = _start_review(env, provider_id="aip_2", continuation_restart_max_attempts=3)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2", "aip_2"]
+        assert run["attempts_used"] == 2
+        assert run["attempts_max"] == 2
+        assert run["outcome"] == "none"
+
     def test_a_late_verdict_between_judge_and_retry_cancels_the_second_attempt(
             self, env, monkeypatch):
         """T0007 §3.1.3: the recheck right before opening attempt 2 must ask the oracle

@@ -1959,6 +1959,37 @@ class TestReviewNoVerdictExcerpt0466:
         assert "[redacted prompt]" in excerpt
 
 
+class TestReviewNoVerdictStopReasonAttempts0476:
+    """flowgate.default.0476 T0007 §3: `stop_reason` on REVIEW_NO_VERDICT_STOP_CODE must let
+    a human reading the record after the fact tell "both attempts ran and still left no
+    verdict" apart from "the second attempt never opened because of budget/provider/token
+    exhaustion" — same `blocked_text` composition `no_output_exhausted` already uses."""
+
+    def test_both_attempts_used_with_no_block_reason_has_no_tail(self):
+        run = _run(attempts_used=2, attempts_max=2, retry_block_reason=None)
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "2 of 2 attempts used" in text
+        assert "No further attempt was opened" not in text
+
+    def test_a_budget_exhausted_block_reason_names_itself(self):
+        run = _run(attempts_used=1, attempts_max=2, retry_block_reason="budget_exhausted")
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "1 of 2 attempts used" in text
+        assert "No further attempt was opened: budget_exhausted." in text
+
+    def test_a_providers_exhausted_block_reason_names_itself(self):
+        run = _run(attempts_used=1, attempts_max=2,
+                   retry_block_reason="providers_exhausted_for_retry")
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "1 of 2 attempts used" in text
+        assert "No further attempt was opened: providers_exhausted_for_retry." in text
+
+    def test_a_run_with_no_attempts_max_falls_back_to_the_fixed_constant(self):
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, {})
+        assert svc.NO_OUTPUT_MAX_ATTEMPTS == 2
+        assert "0 of 2 attempts used" in text
+
+
 # ══════════════════════════════════════════════════════════════════════════════════════
 # flowgate.default.0466 TR0008 rev8 review finding — `_park_handoff`'s notify call is
 # scoped to REVIEW_NO_VERDICT_STOP_CODE. T0007 §3.2.5 only asks for a failure signal on

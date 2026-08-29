@@ -2070,6 +2070,17 @@ def start_run(
         # general continuous-chain "재시작 횟수" pick (which may be 0 or -1). It is checked
         # BEFORE the continuous/edit branch below so a review hop never inherits either the
         # user's restart pick or the plain single-run cap of 1.
+        # flowgate.default.0476 T0007: kept as-is, not made to follow the user's restart pick.
+        # Checked before writing this T whether B0001 had registered a query/answer asking to
+        # change that — GET .../0001-B/meta and GET .../0001-B/relations both read
+        # `"answers_count": 0` at the time — so there is no answer to follow; the fixed cap
+        # stands on NR0003's original finding alone. The "2" here is also not the only guard:
+        # `_spawn_review_hop` always calls `start_run` with `mode="single"` and never passes
+        # `continuation_restart_max_attempts` at all, so even if this ternary's branch order
+        # were reversed, a review hop's `continuation_restart_max_attempts` argument would
+        # still be `None` (the parameter's own default) by the time it reached here — the
+        # branch order and the missing argument are two independent reasons the user's pick
+        # never reaches a review hop, not one reason stated twice.
         "attempts_max": (
             2
             if _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
@@ -4933,8 +4944,18 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         return ("The review loop stopped making progress: the rework hop raised no new "
                 "revision, or the same findings came back twice. A human must triage.")
     if stop_code == REVIEW_NO_VERDICT_STOP_CODE:
-        return ("The review hop finished without recording a verdict. "
-                "The chain stopped and can be resumed.")
+        # flowgate.default.0476 T0007 §3: same blocked_text pattern as no_output_exhausted
+        # above — retry_block_reason has no column of its own, so this is the only durable
+        # place a human can tell "both attempts ran and still left no verdict" apart from
+        # "budget/provider/token exhaustion cut the second attempt before it ever opened".
+        attempts_max = run.get("attempts_max")
+        if attempts_max is None:
+            attempts_max = NO_OUTPUT_MAX_ATTEMPTS
+        blocked = run.get("retry_block_reason")
+        blocked_text = f" No further attempt was opened: {blocked}." if blocked else ""
+        return ("The review hop finished without recording a verdict "
+                f"({int(run.get('attempts_used') or 0)} of {attempts_max} attempts used). "
+                f"The chain stopped and can be resumed.{blocked_text}")
     if stop_code == REVIEW_REJECT_DENIED_STOP_CODE:
         return ("The chain issuer lacks document.reject, so the reviewer's issues could not "
                 "be turned into a rejection. The document is left unapproved.")
