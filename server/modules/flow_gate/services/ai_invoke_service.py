@@ -7141,6 +7141,10 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         chain_docs_target=bundle.get("chain_docs_target"),
         chain_docs_reached=bundle.get("chain_docs_reached"),
         continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+        # flowgate.default.0476 NR0003 defect1 / T0005: sibling hops (_spawn_auto_resume,
+        # _write_handoff_row) already forward this; without it here every rework hop
+        # silently fell back to RESTART_MAX_ATTEMPTS_DEFAULT regardless of the user's pick.
+        continuation_restart_max_attempts=bundle.get("restart_max_attempts"),
         continuation_review_count_overrides=bundle.get("review_count_overrides"),
         continuation_reviewer_overrides=bundle.get("reviewer_overrides"),
         hop_kind=REWORK_HOP_KIND,

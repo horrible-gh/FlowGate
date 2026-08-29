@@ -1416,6 +1416,50 @@ class TestResumeReviewGateDispatch0466:
         assert spawned["bundle"]["last_stage"] == svc.REWORK_HOP_KIND
         assert spawned["bundle"]["revision_before"] == 0
 
+    def test_a_resumed_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, paused, monkeypatch):
+        """0476 NR0003 defect1 / T0005 end-to-end: a rework hop parked mid-chain must not
+        lose the "재실행 횟수" pick across a cold resume_chain() dispatch. Mirrors
+        test_spawn_auto_resume_does_not_crash_on_the_resumed_bundle's two-step shape
+        (dispatch, then feed the dispatched bundle to the real hop spawner), applied to
+        the REWORK hop instead of the WORK hop."""
+        world.fill(5, "doc-5", status="rejected", revision_no=0)
+        world.review("doc-5", "issues", revision_no=0)
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None, continuation_restart_max_attempts=3)
+        svc._park_handoff(
+            run,
+            bundle(last_stage=svc.REWORK_HOP_KIND, revision_before=0),
+            svc.REVIEW_CAP_REACHED_STOP_CODE,
+        )
+        assert paused.rows[GROUP]["stop_code"] == svc.REVIEW_CAP_REACHED_STOP_CODE
+
+        real_spawn_rework_hop = svc._spawn_rework_hop
+        dispatched = {}
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: dispatched.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        queued_bundle = dispatched["bundle"]
+        gate = dispatched["gate"]
+        assert queued_bundle["restart_max_attempts"] == 3
+
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        captured: dict = {}
+        monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"ok": True})
+
+        # the real spawner, saved BEFORE it was stubbed above to intercept resume_chain's
+        # own internal dispatch — svc._spawn_rework_hop is still that stub at this point.
+        real_spawn_rework_hop(GROUP, queued_bundle, gate)
+        assert captured["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
+
     def test_the_review_and_reviewer_maps_reach_the_dispatched_gate_bundle(
             self, world, paused, monkeypatch):
         """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
@@ -2577,6 +2621,22 @@ class TestHopLaunchContract:
         assert kw["provider_id"] == "aip_step5", "the author fixes it, not the reviewer"
         assert kw["hop_kind"] == svc.REWORK_HOP_KIND
         assert kw["doc_ref"] == "doc-5"
+
+    def test_the_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, launched, monkeypatch):
+        """0476 NR0003 defect1 / T0005: `_spawn_rework_hop` must forward the bundle's
+        `restart_max_attempts` to `start_run` exactly like `_spawn_auto_resume` already
+        does, and `_resolve_restart_max_attempts` must turn a pick of 3 restarts into a
+        total attempts ceiling of 4 (1 initial + 3 restarts)."""
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        world.fill(5, "doc-5", status="rejected", revision_no=1)
+        world.review("doc-5", "issues", revision_no=1)
+        gate = svc.resolve_review_gate(bundle())
+        svc._spawn_rework_hop(GROUP, bundle(restart_max_attempts=3), gate)
+        kw = launched[0]
+        assert kw["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
 
     def test_the_review_hop_appends_its_clause_to_the_shared_mention(
             self, world, launched, monkeypatch):
