@@ -22,6 +22,11 @@
     >
       {{ titleText }}
     </span>
+    <div v-if="run.documentReviewLoop" class="ai-review-loop-card" data-test="review-loop-card">
+      <strong>{{ t('main.ai_invoke_dialog.review_loop_round', { n: run.documentReviewLoop.roundNo }) }} · {{ reviewLoopStageLabel(run.documentReviewLoop.currentStage) }}</strong>
+      <ol><li v-for="(item,index) in run.documentReviewLoop.history" :key="index">{{ t('main.ai_invoke_dialog.review_loop_round', { n: item.round_no }) }} · {{ reviewLoopHistoryStageLabel(item.stage) }} · {{ reviewLoopHistoryResultLabel(item.result) }}</li></ol>
+      <p v-if="run.documentReviewLoop.currentStage === 'stopped'">{{ reviewLoopStopLabel(run.documentReviewLoop.stopReason) }}<span v-if="run.documentReviewLoop.stopDetail"> — {{ run.documentReviewLoop.stopDetail }}</span></p>
+    </div>
     <div class="ai-invoke-status-actions">
       <button
         v-if="run.phase === 'running'"
@@ -202,6 +207,32 @@ function providerSwitchLabel(item: AiInvokeProviderSwitch): string {
   const from = item.fromProviderName ?? item.providerName ?? item.fromProviderId ?? item.providerId ?? '—'
   const to = item.toProviderName ?? item.toProviderId
   return to ? `${from} → ${to}` : from
+}
+
+function reviewLoopStageLabel(stage: string): string {
+  if (stage === 'review') return t('main.ai_invoke_dialog.review_loop_stage_review')
+  if (stage === 'rework') return t('main.ai_invoke_dialog.review_loop_stage_rework')
+  return t('main.ai_invoke_dialog.review_loop_stage_stopped')
+}
+
+function reviewLoopHistoryStageLabel(stage: unknown): string {
+  if (stage === 'review') return t('main.ai_invoke_dialog.review_loop_history_stage_review')
+  if (stage === 'rework') return t('main.ai_invoke_dialog.review_loop_history_stage_rework')
+  return t('main.ai_invoke_dialog.review_loop_history_stage_unknown')
+}
+
+function reviewLoopHistoryResultLabel(result: unknown): string {
+  if (result === 'issues') return t('main.ai_invoke_dialog.review_loop_history_result_issues')
+  if (result === 'passed') return t('main.ai_invoke_dialog.review_loop_history_result_passed')
+  if (result === 'complete') return t('main.ai_invoke_dialog.review_loop_history_result_complete')
+  return t('main.ai_invoke_dialog.review_loop_history_result_unknown')
+}
+
+function reviewLoopStopLabel(reason: string | null): string {
+  if (reason === 'review_passed') return t('main.ai_invoke_dialog.review_loop_stop_review_passed')
+  if (reason === 'review_count_exhausted') return t('main.ai_invoke_dialog.review_loop_stop_review_count_exhausted')
+  if (reason === 'retry_exhausted') return t('main.ai_invoke_dialog.review_loop_stop_retry_exhausted')
+  return t('main.ai_invoke_dialog.review_loop_stop_total_timeout')
 }
 
 function fallbackReason(reason: string): string {
@@ -393,4 +424,5 @@ watch(
   .ai-invoke-status-card { padding: 10px; }
   .ai-invoke-status-actions .btn { padding-inline: 7px; }
 }
+.ai-review-loop-card{flex:0 0 100%;padding:10px;border:1px solid #bfdbfe;border-radius:var(--r);background:var(--surface)}.ai-review-loop-card ol{margin:6px 0;padding-left:20px}.ai-review-loop-card p{margin:6px 0 0}
 </style>

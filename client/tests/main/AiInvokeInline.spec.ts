@@ -247,3 +247,84 @@ describe('AiInvokeInline', () => {
     }
   })
 })
+
+describe('AiInvokeInline document review loop cards (0417 T0013)', () => {
+  it.each([
+    ['ko', '검수', '지적 있음', '반려대응', '통과'],
+    ['en', 'Review', 'Issues found', 'Rework', 'Passed'],
+    ['ja', 'レビュー', '指摘あり', '差し戻し対応', '合格'],
+  ] as const)('localizes prior review/rework/result rows in %s without raw backend identifiers', async (locale, review, issues, rework, passed) => {
+    const previousLocale = i18n.global.locale.value
+    i18n.global.locale.value = locale
+    const groupId = 'flowgate.default.0417.history-' + locale
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-history-' + locale, group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'review',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues' },
+          { round_no: 2, stage: 'rework', result: 'passed' },
+        ],
+      },
+    })
+    await nextTick()
+
+    const rows = wrapper.findAll('[data-test="review-loop-card"] li').map(row => row.text())
+    expect(rows[0]).toContain(review)
+    expect(rows[0]).toContain(issues)
+    expect(rows[1]).toContain(rework)
+    expect(rows[1]).toContain(passed)
+    expect(rows.join(' ')).not.toMatch(/\b(review|rework|issues|passed)\b/)
+    wrapper.unmount()
+    i18n.global.locale.value = previousLocale
+  })
+
+  it.each([
+    'review_passed',
+    'review_count_exhausted',
+    'retry_exhausted',
+    'total_timeout',
+  ] as const)('renders accumulated rounds, %s, and stop detail without duplicate history', async (reason) => {
+    const groupId = 'flowgate.default.0417.' + reason
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-' + reason, group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'rework',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues' },
+          { round_no: 2, stage: 'rework', result: 'complete' },
+        ],
+      },
+    })
+    store.trackFinished({
+      run_id: 'loop-' + reason, group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 2, current_stage: 'stopped', stop_reason: reason,
+        stop_detail: 'server detail',
+        history: [{ round_no: 2, stage: 'rework', result: 'complete' }],
+      },
+    })
+    await nextTick()
+
+    const card = wrapper.find('[data-test="review-loop-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.findAll('li')).toHaveLength(2)
+    expect(card.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_stop_' + reason))
+    expect(card.text()).toContain('server detail')
+    wrapper.unmount()
+  })
+})
+

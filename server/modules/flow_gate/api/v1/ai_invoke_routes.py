@@ -553,6 +553,21 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # (mutation_policy: GROUP_AI_RUN_OWNER_MISMATCH). `_issue_first_hop` below is the
         # shape every issuer in this file has to keep.
         def _issue_review(ai_run_id: Optional[str] = None):
+            # 0417 T0013: a document_review_loop hop currently at the rework stage needs an
+            # edit-scoped token — its worker calls POST /inbox action=edit, which 403s
+            # ("Context binding mismatch") on anything but an edit-scoped token. This mirrors
+            # _spawn_rework_hop's issue_rework_request for the continuous-chain review gate.
+            # start_run/_worker set this attribute to the loop's current stage before every
+            # issue/reissue call for a loop run; a plain (non-loop) review invocation never
+            # sets it, so it keeps issuing a review-scoped token exactly as before.
+            if getattr(_issue_review, "loop_stage", None) == ai_invoke_service.REWORK_HOP_KIND:
+                return invoke_mention_service.issue_rework_request(
+                    doc_id=body.doc_ref,
+                    issued_to=user_id,
+                    api_base_url=_token_routes._build_api_base(request),
+                    locale=locale,
+                    ai_run_id=ai_run_id,
+                )
             issued = workflow_decision_service.request_review(
                 doc_id=body.doc_ref,
                 issued_to=user_id,

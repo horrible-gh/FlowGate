@@ -916,3 +916,87 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
     wrapper.unmount()
   })
 })
+
+
+describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
+  it('mounts the review-only three-tab flow, resets it, and posts independent stage providers', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'reviewer',
+        providers: [
+          { id: 'reviewer', name: 'Reviewer AI', exec_type: 'cli', kind: 'codex', enabled: true },
+          { id: 'reworker', name: 'Reworker AI', exec_type: 'cli', kind: 'codex', enabled: true },
+        ],
+      },
+    })
+    const providerStore = useAiProviderStore()
+    await providerStore.loadForProject('flowgate')
+
+    const wrapper = mountDialog({ actionScope: 'review' })
+    await flushPromises()
+    expect(document.querySelector('[data-test="review-loop-settings"]')).not.toBeNull()
+
+    const loopRadio = document.querySelector('input[value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]')) as HTMLButtonElement[]
+    expect(tabs).toHaveLength(3)
+    const select = (query: string) => document.querySelector(query) as HTMLSelectElement
+    const text = (query: string) => document.querySelector(query)?.textContent ?? ''
+    expect(select('[data-test="review-loop-review-count"]').value).toBe('3')
+    expect(select('[data-test="review-loop-criteria"]').value).toBe('document_type_default')
+    expect(text('[data-test="review-loop-review-summary"]')).toContain('Reviewer AI')
+
+    tabs[1].click()
+    await flushPromises()
+    expect(text('[data-test="review-loop-rework-summary"]')).toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_rework_summary'),
+    )
+    select('[data-test="review-loop-reworker"]').value = 'reworker'
+    select('[data-test="review-loop-reworker"]').dispatchEvent(new Event('change'))
+    await flushPromises()
+    tabs[0].click()
+    await flushPromises()
+    select('[data-test="review-loop-review-count"]').value = '-1'
+    select('[data-test="review-loop-review-count"]').dispatchEvent(new Event('change'))
+    select('[data-test="review-loop-criteria"]').value = 'last_rejection_only'
+    select('[data-test="review-loop-criteria"]').dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(text('[data-test="review-loop-review-summary"]')).toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_review_summary_until_pass', { provider: 'Reviewer AI' }),
+    )
+
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(startBody()).toMatchObject({
+      provider_id: null,
+      provider_pinned: false,
+      document_review_loop: {
+        review_count: -1,
+        reviewer_provider_id: 'reviewer',
+        review_criteria: 'last_rejection_only',
+        rework_provider_id: 'reworker',
+        rework_timeout_sec: 3600,
+        rework_message: '',
+        failure_restart_max_attempts: 1,
+        total_timeout_sec: 7200,
+      },
+    })
+
+    await wrapper.setProps({ visible: false })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    expect((document.querySelector('input[value="single"]') as HTMLInputElement).checked).toBe(true)
+    expect(document.querySelector('[data-test="review-loop-review-panel"]')).toBeNull()
+    wrapper.unmount()
+
+    const other = mountDialog({ actionScope: 'edit' })
+    await flushPromises()
+    expect(document.querySelector('[data-test="review-loop-settings"]')).toBeNull()
+    other.unmount()
+  })
+})
+

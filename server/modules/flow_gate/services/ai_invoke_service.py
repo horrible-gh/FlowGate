@@ -1475,6 +1475,11 @@ def start_run(
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active.get("run_id"))
 
+    if document_review_loop is not None and issue_builder is not None:
+        # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
+        # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
+        # not a review-scoped one. See the matching comment on ai_invoke_routes._issue_review.
+        issue_builder.loop_stage = initial_stage
     if issue_builder is not None:
         # 0359 L0007 §2.9: hand the run identity to the builder so the token it mints carries
         # ai_run_id. NR0003 §4 measured 1,346 continuous tokens with an EMPTY ai_run_id — every
@@ -2531,6 +2536,14 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 run["document_review_loop_checkpointed"] = True
                 if not loop or loop.get("current_stage") == "stopped":
                     break
+                # 0417 T0013: the reissue inside _prepare_retry_token calls this SAME
+                # issue_builder the run started with — without this, a rework hop's reissued
+                # token kept the prior review-scope, and POST /inbox action=edit 403'd
+                # ("Context binding mismatch") on every rework attempt, so the loop could
+                # never reach review_passed. See ai_invoke_routes._issue_review.
+                loop_issue_builder = run.get("issue_builder")
+                if loop_issue_builder is not None:
+                    loop_issue_builder.loop_stage = loop["current_stage"]
                 prepared = _prepare_retry_token(run)
                 selected_id = resolve_loop_provider(loop, loop["current_stage"])
                 enabled = ai_settings_service.resolve_effective(run["project_id"]).get("providers") or []
@@ -2976,7 +2989,19 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     before = token_id
     run["token_id"] = issue.get("token_id")
     if run.get("group_id"):
-        db_group_ai_leases.update_token(run["group_id"], run["run_id"], run["token_id"])
+        # 0417 T0013: a document_review_loop hop's reissued token can carry a DIFFERENT
+        # action_scope than the run started with (review <-> edit as the loop alternates
+        # stages) — refresh the lease's recorded scope to match, or mutation_policy's
+        # owner-match check 403s the very next real call this token makes. Every other
+        # (non-loop) run keeps one scope for its whole lifetime, so this lookup is skipped
+        # for them and update_token's action_scope stays None (no behavior change).
+        reissued_action_scope = None
+        if run.get("document_review_loop") and run["token_id"]:
+            reissued_token = db_tokens.get_by_id(run["token_id"])
+            reissued_action_scope = reissued_token.get("action_scope") if reissued_token else None
+        db_group_ai_leases.update_token(
+            run["group_id"], run["run_id"], run["token_id"], action_scope=reissued_action_scope,
+        )
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
     run["mention"] = mention
     run["prompt_final_length"], run["prompt_final_sha256"] = prompt_digest(mention)

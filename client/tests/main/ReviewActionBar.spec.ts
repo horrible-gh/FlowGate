@@ -922,3 +922,26 @@ describe('ReviewActionBar', () => {
     })
   })
 })
+
+
+describe('review request caret regression (0417 T0013)', () => {
+  it('keeps exactly three review request actions in the caret menu', async () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        docId: 'flowgate.default.0417.0014-TR',
+        projectId: 'flowgate',
+        groupId: 'flowgate.default.0417',
+        docRef: 'flowgate.default.0417.0014-TR',
+        docType: 'TR',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+        hasAiProvider: true,
+      },
+      global: { plugins: [i18n] },
+    })
+    await wrapper.find('.ab-split-caret').trigger('click')
+    expect(wrapper.findAll('.ab-split-dd .ab-split-item')).toHaveLength(3)
+    wrapper.unmount()
+  })
+})
+

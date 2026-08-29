@@ -35,7 +35,27 @@
             </div>
             <!-- 0234 B0001 RC2: confirm/change which provider this run uses, at the
                  invocation point itself (not only the global header dropdown). -->
-            <div class="aiv-provider-row">
+            <section v-if="reviewLoopAvailable" class="aiv-review-loop" data-test="review-loop-settings">
+              <label><input v-model="reviewInvocation" type="radio" value="single" />{{ t('main.ai_invoke_dialog.mode_single') }}</label>
+              <label><input v-model="reviewInvocation" type="radio" value="loop" />{{ t('main.ai_invoke_dialog.review_loop_mode') }}</label>
+              <template v-if="reviewLoopActive">
+                <p>{{ t('main.ai_invoke_dialog.review_loop_flow') }}</p>
+                <div role="tablist"><button v-for="tab in reviewLoopTabs" :key="tab" type="button" role="tab" :aria-selected="reviewLoopTab===tab" @click="reviewLoopTab=tab">{{ reviewLoopTabLabel(tab) }}</button></div>
+                <div v-if="reviewLoopTab==='review'" data-test="review-loop-review-panel">
+                  <select v-model.number="reviewCount" data-test="review-loop-review-count"><option v-for="n in [-1,1,2,3]" :key="n" :value="n">{{ n }}</option></select>
+                  <select v-model="reviewerProviderId" data-test="review-loop-reviewer"><option v-for="p in enabledProviders" :key="p.id" :value="p.id">{{ p.name }}</option></select>
+                  <select v-model="reviewCriteria" data-test="review-loop-criteria"><option value="document_type_default">{{ t('main.ai_invoke_dialog.review_loop_criteria_default') }}</option><option value="last_rejection_only">{{ t('main.ai_invoke_dialog.review_loop_criteria_last_rejection') }}</option></select>
+                  <p data-test="review-loop-review-summary">{{ reviewCount === -1 ? t('main.ai_invoke_dialog.review_loop_review_summary_until_pass', { provider: reviewerProviderName }) : t('main.ai_invoke_dialog.review_loop_review_summary', { provider: reviewerProviderName, count: reviewCount }) }}</p>
+                </div>
+                <div v-else-if="reviewLoopTab==='rework'" data-test="review-loop-rework-panel">
+                  <select v-model="reworkProviderId" data-test="review-loop-reworker"><option v-for="p in enabledProviders" :key="p.id" :value="p.id">{{ p.name }}</option></select>
+                  <select v-model.number="reworkTimeoutSec" data-test="review-loop-rework-timeout"><option v-for="n in [1800,3600,7200]" :key="n" :value="n">{{ n }}</option></select><textarea v-model="reworkMessage" data-test="review-loop-rework-message"></textarea>
+                  <p data-test="review-loop-rework-summary">{{ t('main.ai_invoke_dialog.review_loop_rework_summary') }}</p>
+                </div>
+                <div v-else><input type="checkbox" checked disabled /><select v-model.number="failureRestartMaxAttempts"><option v-for="n in [0,1,2,-1]" :key="n" :value="n">{{ n }}</option></select><select v-model.number="totalTimeoutSec"><option v-for="n in [3600,7200,14400]" :key="n" :value="n">{{ n }}</option></select><p>{{ t('main.ai_invoke_dialog.review_loop_no_auto_approve') }}</p></div>
+              </template>
+            </section>
+            <div v-if="!reviewLoopActive" class="aiv-provider-row">
               <AiProviderSelect
                 :providers="aiProviderStore.providers"
                 :model-value="aiProviderStore.selectedProviderId"
@@ -216,6 +236,27 @@ const aiProviderStore = useAiProviderStore()
 const aiInvokeStore = useAiInvokeRunsStore()
 
 const mode = ref<'single' | 'continuous'>('single')
+type ReviewLoopTab = 'review' | 'rework' | 'stop'
+const reviewLoopTabs: ReviewLoopTab[] = ['review', 'rework', 'stop']
+const reviewInvocation = ref<'single' | 'loop'>('single')
+const reviewLoopTab = ref<ReviewLoopTab>('review')
+const reviewCount = ref(3)
+const reviewerProviderId = ref('')
+const reviewCriteria = ref<'document_type_default' | 'last_rejection_only'>('document_type_default')
+const reworkProviderId = ref('')
+const reworkTimeoutSec = ref(3600)
+const reworkMessage = ref('')
+const failureRestartMaxAttempts = ref(1)
+const totalTimeoutSec = ref(7200)
+function reviewLoopTabLabel(tab: ReviewLoopTab): string {
+  if (tab === 'review') return t('main.ai_invoke_dialog.review_loop_tab_review')
+  if (tab === 'rework') return t('main.ai_invoke_dialog.review_loop_tab_rework')
+  return t('main.ai_invoke_dialog.review_loop_tab_stop')
+}
+const reviewLoopAvailable = computed(() => props.actionScope === 'review' && mode.value === 'single')
+const reviewLoopActive = computed(() => reviewLoopAvailable.value && reviewInvocation.value === 'loop')
+const enabledProviders = computed(() => aiProviderStore.providers.filter((provider: any) => provider.enabled !== false))
+const reviewerProviderName = computed(() => enabledProviders.value.find((provider: any) => provider.id === reviewerProviderId.value)?.name ?? '')
 const starting = ref(false)
 const startError = ref('')
 const singleStepNote = ref('')
@@ -379,7 +420,7 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
     : null
 })
 
-const canStart = computed(() => mode.value === 'single' || resolvedTarget.value != null)
+const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
 
 const pickerSummary = computed(() => {
   if (picker.value.loading || picker.value.errorKey) return ''
@@ -396,6 +437,16 @@ function onPickerChange(state: WorkflowStepPickerState) {
 
 function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
+  reviewInvocation.value = 'single'
+  reviewLoopTab.value = 'review'
+  reviewCount.value = 3
+  reviewCriteria.value = 'document_type_default'
+  reworkTimeoutSec.value = 3600
+  reworkMessage.value = ''
+  failureRestartMaxAttempts.value = 1
+  totalTimeoutSec.value = 7200
+  reviewerProviderId.value = String(aiProviderStore.selectedProviderId ?? enabledProviders.value[0]?.id ?? '')
+  reworkProviderId.value = reviewerProviderId.value
   starting.value = false
   startError.value = ''
   lockedGroupId.value = null
@@ -458,8 +509,19 @@ async function start() {
     //                            longer be set by a selector's change event, so an ordinary
     //                            pick sends provider_id alone and the server keeps running each
     //                            step's stored provider (start_run tier 3 beats tier 4).
-    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
-    if (aiProviderStore.pinned) body.provider_pinned = true
+    if (reviewLoopActive.value) {
+      body.provider_id = null
+      body.provider_pinned = false
+      body.document_review_loop = {
+        review_count: reviewCount.value, reviewer_provider_id: reviewerProviderId.value,
+        review_criteria: reviewCriteria.value, rework_provider_id: reworkProviderId.value,
+        rework_timeout_sec: reworkTimeoutSec.value, rework_message: reworkMessage.value,
+        failure_restart_max_attempts: failureRestartMaxAttempts.value, total_timeout_sec: totalTimeoutSec.value,
+      }
+    } else {
+      if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+      if (aiProviderStore.pinned) body.provider_pinned = true
+    }
     if (props.module != null) body.module = props.module
     if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
     if (props.messages?.length) body.messages = props.messages

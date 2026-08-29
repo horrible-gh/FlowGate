@@ -368,6 +368,7 @@ describe('aiInvokeRuns store', () => {
     store.trackFinished({
       run_id: 'run-old', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
     })
+    vi.mocked(getRequest).mockClear()
     const rejection = {
       response: {
         status: 409,
@@ -440,6 +441,7 @@ describe('aiInvokeRuns store', () => {
     it('preserves the card and rethrows on 403 ownership rejection', async () => {
       const groupId = 'flowgate.default.0459.release-403'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const rejection = {
         response: { status: 403, data: { code: 'paused_chain_forbidden' } },
       }
@@ -502,6 +504,7 @@ describe('aiInvokeRuns store', () => {
     it('preserves the card and rethrows on a network failure without bootstrapping', async () => {
       const groupId = 'flowgate.default.0459.release-network'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const failure = new Error('network down')
       vi.mocked(deleteRequest).mockRejectedValueOnce(failure)
 
@@ -516,6 +519,7 @@ describe('aiInvokeRuns store', () => {
       // response (status 500), not a rejected promise with no response object at all.
       const groupId = 'flowgate.default.0459.release-5xx'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const rejection = {
         response: { status: 500, data: { code: 'internal_error', message: 'db unavailable' } },
       }
@@ -611,6 +615,7 @@ describe('aiInvokeRuns store', () => {
     store.trackFinished({
       run_id: 'run-stale', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
     })
+    vi.mocked(getRequest).mockClear()
     const rejection = {
       response: {
         status: 422,
@@ -1423,3 +1428,54 @@ describe('aiInvokeRuns store — per-user retention', () => {
     immediate.$dispose()
   })
 })
+
+
+describe('document review loop state normalization (0417 T0013)', () => {
+  it('preserves monotonic rounds across start, poll/SSE-shaped updates, finish, and duplicate history', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0417'
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review',
+        history: [{ round_no: 1, stage: 'review', result: 'issues' }],
+      },
+    })
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'rework',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues' },
+          { round_no: 2, stage: 'rework', result: 'complete' },
+        ],
+      },
+    })
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review' },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'rework',
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(2)
+
+    store.trackFinished({
+      run_id: 'loop-1', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 2, current_stage: 'stopped', stop_reason: 'review_passed',
+        stop_detail: 'passed on round 2',
+        history: [{ round_no: 2, stage: 'rework', result: 'complete' }],
+      },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'stopped', stopReason: 'review_passed',
+      stopDetail: 'passed on round 2',
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(2)
+    store.$dispose()
+  })
+})
+
