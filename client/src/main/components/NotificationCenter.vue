@@ -161,8 +161,26 @@
           <button class="notif-ai-detail-btn" type="button" @click="openAiDetail(item.run_id, $event)">{{ t('main.notif_center.ai_detail') }}</button>
         </article>
       </div>
-      <div v-else class="notif-section-body notif-section-placeholder">
-        <p>{{ t(`main.notif_center.${activeSection}_empty`) }}</p>
+      <div v-else class="notif-section-body notif-qa-section">
+        <div v-if="store.loading" class="notif-loading"><span class="spinner"></span></div>
+        <div v-else-if="store.error" class="notif-empty">
+          <AppIcon name="warning" /><p>{{ t('main.notif_center.load_failed') }}</p>
+          <button class="btn btn-outline btn-sm" type="button" @click="refresh">{{ t('main.overview.retry') }}</button>
+        </div>
+        <div v-else-if="store.degradedSections.includes('open_questions')" class="notif-empty">
+          <AppIcon name="warning" /><p>{{ t('main.notif_center.qa_load_failed') }}</p>
+          <button class="btn btn-outline btn-sm" type="button" @click="refresh">{{ t('main.overview.retry') }}</button>
+        </div>
+        <div v-else-if="store.qaItems.length === 0" class="notif-empty">
+          <AppIcon name="bell-slash" /><p>{{ t('main.notif_center.qa_empty') }}</p>
+        </div>
+        <article v-for="item in store.qaItems" v-else :key="item.doc_id" class="notif-qa-row">
+          <div class="notif-target notif-qa-target">
+            <span v-if="item.type_code" class="doc-tag" :class="'c-' + item.type_code">{{ item.type_code }}</span>
+            <strong class="notif-doc-id">{{ item.doc_id }}<template v-if="item.title?.trim()"> — {{ item.title.trim() }}</template></strong>
+          </div>
+          <button class="notif-qa-open" type="button" @click="openQaDocument(item.doc_id)">{{ t('main.notif_center.qa_open') }} →</button>
+        </article>
       </div>
     </div>
     <div v-if="detailOpen" class="notif-dialog-backdrop" @click.stop>
@@ -191,17 +209,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useProjectStore } from '../stores/project'
 import { useNotificationsStore } from '../stores/notifications'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
+import { useQaOpenIntent } from '../composables/useQaOpenIntent'
 import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 
 const { t } = useI18n()
+const router = useRouter()
 const projectStore = useProjectStore()
 const store = useNotificationsStore()
 const { openDashboardTarget } = useDashboardNavigation()
+const { requestQaOpen } = useQaOpenIntent()
 const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, reviewBadge } =
   useActivityFormat()
 
@@ -274,7 +296,7 @@ const activeSection = ref<NotifSection>('general')
 const sections = computed(() => [
   { key: 'general' as const, label: t('main.notif_center.section_general') },
   { key: 'ai' as const, label: t('main.notif_center.section_ai') + ' ' + store.aiItems.length },
-  { key: 'qa' as const, label: t('main.notif_center.section_qa') },
+  { key: 'qa' as const, label: t('main.notif_center.section_qa') + ' ' + store.qaTotal },
 ])
 
 // Mockup 3 filter tabs. All = everything; needs attention = rows whose AI verdict flags attention
@@ -334,6 +356,13 @@ function toggle() {
 async function markAllRead() {
   const pid = projectStore.currentProjectId
   if (pid) await store.markSeen(pid)
+}
+
+async function openQaDocument(docId: string) {
+  requestQaOpen(docId)
+  open.value = false
+  if (router.currentRoute.value.path !== '/') await router.push('/')
+  await openDashboardTarget({ kind: 'document', doc_id: docId })
 }
 
 function onItemClick(item: DashboardActivity) {
@@ -639,4 +668,15 @@ onBeforeUnmount(() => {
   from { transform: translateY(-10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+.notif-qa-row {
+  min-height: 58px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-subtle, #f1f5f9);
+}
+.notif-qa-target { min-width: 0; flex: 1; }
+.notif-qa-open { flex: none; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
+.notif-qa-open:hover { text-decoration: underline; }
 </style>

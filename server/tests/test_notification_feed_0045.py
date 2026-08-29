@@ -10,18 +10,27 @@ cover both: the unread math AND the new event-type filtering / decoupling.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
 from modules.flow_gate.services import dashboard_service
+
+_REAL_LIST_OPEN_ITEMS = dashboard_service.db_questions.list_open_items
+_QUERIES = json.loads((Path(__file__).parents[1] / 'sql' / 'queries' / 'queries.json').read_text(encoding='utf-8'))
 
 
 class _Store:
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
+
+    def _sql(self, key):
+        section, name = key.split('.', 1)
+        return _QUERIES[section][name]
 
     def _fetch_all(self, sql, params=None):
         return [dict(row) for row in self.conn.execute(sql, params or []).fetchall()]
@@ -44,12 +53,20 @@ def feed_store(monkeypatch):
         CREATE TABLE projects (project_id TEXT PRIMARY KEY, project_name TEXT, is_active INTEGER);
         CREATE TABLE groups (
             group_id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
-            title TEXT NOT NULL, deleted_at TEXT
+            title TEXT NOT NULL, status TEXT, closed_at TEXT, deleted_at TEXT
         );
         CREATE TABLE documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id TEXT UNIQUE NOT NULL,
             project_id TEXT NOT NULL, group_id TEXT, type_code TEXT NOT NULL,
             title TEXT NOT NULL, doc_review_status TEXT, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, q_id TEXT, doc_id TEXT,
+            project_id TEXT, status TEXT, updated_at TEXT
+        );
+        CREATE TABLE question_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, question_id INTEGER,
+            seq INTEGER, title TEXT, answer_count INTEGER DEFAULT 0
         );
         CREATE TABLE workflow_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
@@ -59,7 +76,7 @@ def feed_store(monkeypatch):
         );
         INSERT INTO users VALUES ('u1', 'developer');
         INSERT INTO projects VALUES ('flowgate', 'FlowGate', 1);
-        INSERT INTO groups VALUES ('flowgate.default.0045', 'flowgate', 'SSE inflow', NULL);
+        INSERT INTO groups VALUES ('flowgate.default.0045', 'flowgate', 'SSE inflow', NULL, NULL, NULL);
         INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
         VALUES ('flowgate.default.0045.0006-D', 'flowgate', 'flowgate.default.0045',
                 'D', 'Design', 'pending_review', '2026-06-12T00:03:00Z');
@@ -90,6 +107,7 @@ def feed_store(monkeypatch):
     )
     store.conn.commit()
     monkeypatch.setattr(dashboard_service, "get_store", lambda: store)
+    monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", lambda _project_id: [])
     return store
 
 
@@ -264,3 +282,176 @@ def test_feed_degrades_only_ai_section(feed_store, monkeypatch):
         "limit": 50, "total": 0, "has_more": False, "items": [],
     }
     assert result["degraded_sections"] == ["ai_runs"]
+
+
+def test_feed_open_questions_collapses_sorts_limits_and_uses_document_titles(feed_store, monkeypatch):
+    monkeypatch.setattr(
+        dashboard_service.db_questions,
+        "list_open_items",
+        lambda _project_id: [
+            {"doc_id": "flowgate.default.0045.0008-T", "title": "question title", "type_code": "T"},
+            {"doc_id": "flowgate.default.0045.0007-P", "title": "other question", "type_code": "P"},
+            {"doc_id": "flowgate.default.0045.0008-T", "title": "duplicate item", "type_code": "T"},
+        ],
+    )
+    docs = {
+        "flowgate.default.0045.0007-P": {"title": "Plan title"},
+        "flowgate.default.0045.0008-T": {"title": "Task title"},
+    }
+    monkeypatch.setattr(dashboard_service.db_documents, "get_by_id", docs.get)
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 1)
+
+    assert result["open_questions"] == {
+        "limit": 1,
+        "total": 2,
+        "has_more": True,
+        "items": [{
+            "doc_id": "flowgate.default.0045.0007-P",
+            "title": "Plan title",
+            "type_code": "P",
+        }],
+    }
+    assert result["badge_count"] == result["unread_count"] + 2
+
+
+def test_feed_open_question_title_failure_keeps_row(feed_store, monkeypatch):
+    monkeypatch.setattr(
+        dashboard_service.db_questions,
+        "list_open_items",
+        lambda _project_id: [{"doc_id": "deleted-doc", "title": "question", "type_code": "T"}],
+    )
+    monkeypatch.setattr(
+        dashboard_service.db_documents,
+        "get_by_id",
+        lambda _doc_id: (_ for _ in ()).throw(RuntimeError("documents unavailable")),
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["open_questions"]["items"] == [
+        {"doc_id": "deleted-doc", "title": None, "type_code": "T"}
+    ]
+    assert "open_questions" not in result["degraded_sections"]
+
+
+def test_feed_degraded_section_order_is_ai_then_open_questions(feed_store, monkeypatch):
+    monkeypatch.setattr(
+        dashboard_service.db_ai_invoke_runs,
+        "list_finished_for_notifications",
+        lambda _project_id, _limit: (_ for _ in ()).throw(RuntimeError("ai unavailable")),
+    )
+    monkeypatch.setattr(
+        dashboard_service.db_questions,
+        "list_open_items",
+        lambda _project_id: (_ for _ in ()).throw(RuntimeError("questions unavailable")),
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["degraded_sections"] == ["ai_runs", "open_questions"]
+    assert result["open_questions"] == {
+        "limit": 50, "total": 0, "has_more": False, "items": [],
+    }
+
+
+def test_feed_degrades_only_open_questions_section(feed_store, monkeypatch):
+    """The single-section (not concurrent-with-AI) degraded case T0017 5-1/5-5 call for:
+    open_questions fails alone while the general and AI sections stay healthy."""
+    monkeypatch.setattr(
+        dashboard_service.db_ai_invoke_runs,
+        "list_finished_for_notifications",
+        lambda _project_id, _limit: ([], 0),
+    )
+    monkeypatch.setattr(
+        dashboard_service.db_questions,
+        "list_open_items",
+        lambda _project_id: (_ for _ in ()).throw(RuntimeError("questions unavailable")),
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["ok"] is True
+    assert result["recent_activities"]["total"] == 2
+    assert result["ai_invoke_runs"] == {
+        "limit": 50, "total": 0, "has_more": False, "items": [],
+    }
+    assert result["degraded_sections"] == ["open_questions"]
+    assert result["open_questions"] == {
+        "limit": 50, "total": 0, "has_more": False, "items": [],
+    }
+    assert result["badge_count"] == result["unread_count"]
+
+
+def test_feed_badge_count_after_seen_still_includes_open_questions(feed_store, monkeypatch):
+    """badge_count formula + 'seen 불변': catching up on the general feed (unread_count -> 0)
+    must not also clear the open_questions total baked into badge_count."""
+    monkeypatch.setattr(
+        dashboard_service.db_questions,
+        "list_open_items",
+        lambda _project_id: [{"doc_id": "flowgate.default.0045.0008-T", "title": "question", "type_code": "T"}],
+    )
+    monkeypatch.setattr(
+        dashboard_service.db_documents, "get_by_id", lambda _doc_id: {"title": "Task title"}
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", "2026-06-12T23:59:00Z", 50)
+
+    assert result["unread_count"] == 0
+    assert result["open_questions"]["total"] == 1
+    assert result["badge_count"] == 1
+
+
+def test_feed_open_questions_real_sql_enforces_pending_status_and_group_exclusion(feed_store, monkeypatch):
+    """Runs the actual `questions.list_open_items_by_project` SQL registered in queries.json
+    (not a python stub) against the test sqlite store, proving the pending/answer_count WHERE
+    clause and the terminal-group exclusion are enforced by the query itself. Covers T0017 5-1's
+    'pending/answer_count 조건'과 '종료·폐기 그룹 제외' for the open_questions path specifically —
+    the pre-existing exclusion tests at the top of this file only exercise the general activity feed."""
+    store = feed_store
+    monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", _REAL_LIST_OPEN_ITEMS)
+    monkeypatch.setattr(dashboard_service.db_questions, "get_store", lambda: store)
+    monkeypatch.setattr(dashboard_service.db_documents, "get_store", lambda: store)
+
+    store.conn.executescript(
+        """
+        INSERT INTO groups VALUES
+            ('flowgate.default.0045.closed', 'flowgate', 'Closed group', 'CLOSED', NULL, NULL);
+
+        INSERT INTO documents (doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at)
+        VALUES
+            ('flowgate.default.0045.0020-P', 'flowgate', 'flowgate.default.0045',
+             'P', 'Pending plan', 'pending_review', '2026-06-12T00:05:00Z'),
+            ('flowgate.default.0045.0021-P', 'flowgate', 'flowgate.default.0045',
+             'P', 'Answered-container plan', 'pending_review', '2026-06-12T00:05:00Z'),
+            ('flowgate.default.0045.0022-P', 'flowgate', 'flowgate.default.0045',
+             'P', 'Already-answered item plan', 'pending_review', '2026-06-12T00:05:00Z'),
+            ('flowgate.default.0045.0023-P', 'flowgate', 'flowgate.default.0045.closed',
+             'P', 'Closed-group plan', 'pending_review', '2026-06-12T00:05:00Z');
+
+        INSERT INTO questions (q_id, doc_id, project_id, status, updated_at) VALUES
+            ('Q1', 'flowgate.default.0045.0020-P', 'flowgate', 'pending', '2026-06-12T00:05:00Z'),
+            ('Q2', 'flowgate.default.0045.0021-P', 'flowgate', 'answered', '2026-06-12T00:05:00Z'),
+            ('Q3', 'flowgate.default.0045.0022-P', 'flowgate', 'pending', '2026-06-12T00:05:00Z'),
+            ('Q4', 'flowgate.default.0045.0023-P', 'flowgate', 'pending', '2026-06-12T00:05:00Z');
+        """
+    )
+    q_ids = {row["q_id"]: row["id"] for row in store._fetch_all("SELECT id, q_id FROM questions")}
+    store.conn.executemany(
+        "INSERT INTO question_items (question_id, seq, title, answer_count) VALUES (?, 1, 'item', ?)",
+        [
+            (q_ids["Q1"], 0),  # pending status, unanswered -> included
+            (q_ids["Q2"], 0),  # status='answered' -> excluded by the pending WHERE clause
+            (q_ids["Q3"], 1),  # pending status but answer_count=1 -> excluded
+            (q_ids["Q4"], 0),  # pending + unanswered but group CLOSED -> excluded
+        ],
+    )
+    store.conn.commit()
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert [item["doc_id"] for item in result["open_questions"]["items"]] == [
+        "flowgate.default.0045.0020-P"
+    ]
+    assert result["open_questions"]["total"] == 1
+    assert result["open_questions"]["items"][0]["title"] == "Pending plan"

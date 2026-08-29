@@ -11,6 +11,12 @@ import type { DashboardActivity } from './dashboard'
 // count derived from a per-user last-seen watermark; "mark all read" (opening the panel) POSTs the
 // watermark forward. SSE inflow events only trigger a refetch (DashboardView), keeping the server
 // the single source of truth for the badge so live and persistent counts never drift.
+export interface OpenQuestionNotification {
+  doc_id: string
+  title: string | null
+  type_code: string | null
+}
+
 export interface AiInvokeNotification {
   run_id: string
   doc_ref: string | null
@@ -47,6 +53,7 @@ export interface NotificationFeed {
   generated_at: string
   last_seen_at: string | null
   unread_count: number
+  badge_count: number
   recent_activities: {
     limit: number
     total: number
@@ -59,12 +66,20 @@ export interface NotificationFeed {
     has_more: boolean
     items: AiInvokeNotification[]
   }
+  open_questions: {
+    limit: number
+    total: number
+    has_more: boolean
+    items: OpenQuestionNotification[]
+  }
   degraded_sections: string[]
 }
 
 export const useNotificationsStore = defineStore('notifications', () => {
   const items = ref<DashboardActivity[]>([])
   const aiItems = ref<AiInvokeNotification[]>([])
+  const qaItems = ref<OpenQuestionNotification[]>([])
+  const qaTotal = ref(0)
   const degradedSections = ref<string[]>([])
   const unreadCount = ref(0)
   const lastSeenAt = ref<string | null>(null)
@@ -89,8 +104,10 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const data = response.data
       items.value = data.recent_activities?.items ?? []
       aiItems.value = data.ai_invoke_runs?.items ?? []
+      qaItems.value = data.open_questions?.items ?? []
+      qaTotal.value = data.open_questions?.total ?? 0
       degradedSections.value = data.degraded_sections ?? []
-      unreadCount.value = data.unread_count ?? 0
+      unreadCount.value = data.badge_count ?? data.unread_count ?? 0
       lastSeenAt.value = data.last_seen_at ?? null
       loadedProjectId.value = projectId
     } catch (err: any) {
@@ -107,7 +124,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   // returned timestamp becomes the highlight cutoff so already-read items stop showing as "new".
   async function markSeen(projectId: string): Promise<void> {
     if (!projectId) return
-    unreadCount.value = 0
+    unreadCount.value = qaTotal.value
     try {
       const response = await postRequest<{ ok: boolean; last_seen_at: string }>(
         `/api/v1/projects/${encodeURIComponent(projectId)}/notifications/seen`,
@@ -133,6 +150,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
     requestVersion++
     items.value = []
     aiItems.value = []
+    qaItems.value = []
+    qaTotal.value = 0
     degradedSections.value = []
     unreadCount.value = 0
     lastSeenAt.value = null
@@ -141,7 +160,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   }
 
   return {
-    items, aiItems, degradedSections, unreadCount, lastSeenAt, loading, error,
+    items, aiItems, qaItems, qaTotal, degradedSections, unreadCount, lastSeenAt, loading, error,
     loadedProjectId, fetchFeed, markSeen, isUnread, reset,
   }
 })

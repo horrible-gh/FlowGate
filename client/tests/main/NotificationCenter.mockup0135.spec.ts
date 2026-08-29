@@ -6,6 +6,7 @@ import NotificationCenter from '@main/components/NotificationCenter.vue'
 import { useNotificationsStore } from '@main/stores/notifications'
 import { useProjectStore } from '@main/stores/project'
 import type { DashboardActivity } from '@main/stores/dashboard'; import { getRequest } from '@shared/api'
+import { useQaOpenIntent } from '@main/composables/useQaOpenIntent'
 
 // R0001 group 0135 / N0008 — 시안 3 (라이브 피드) actually applied to the notification center.
 // These lock the VISIBLE mockup features the user asked for: filter tabs with live counts, per-row
@@ -19,8 +20,16 @@ vi.mock('@shared/api', () => ({
   patchRequest: vi.fn(),
 }))
 
+const { openDashboardTarget, routerPush, currentRoute } = vi.hoisted(() => ({
+  openDashboardTarget: vi.fn(),
+  routerPush: vi.fn(),
+  currentRoute: { value: { path: '/' } },
+}))
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: routerPush, currentRoute }),
+}))
 vi.mock('@main/composables/useDashboardNavigation', () => ({
-  useDashboardNavigation: () => ({ openDashboardTarget: vi.fn() }),
+  useDashboardNavigation: () => ({ openDashboardTarget }),
 }))
 
 function activity(over: Partial<DashboardActivity> & { event_id: number }): DashboardActivity {
@@ -58,6 +67,10 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     setActivePinia(createPinia())
     i18n.global.locale.value = 'ko'
     vi.mocked(getRequest).mockReset()
+    openDashboardTarget.mockReset()
+    routerPush.mockReset()
+    routerPush.mockResolvedValue(undefined)
+    currentRoute.value.path = '/'
   })
 
   it('renders the LIVE indicator and filter tabs with live counts', async () => {
@@ -104,7 +117,7 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     const wrapper = await mountOpen([activity({ event_id: 1 })])
 
     const sectionTabs = wrapper.findAll('.notif-section-tab')
-    expect(sectionTabs.map((tab) => tab.text())).toEqual(['일반', 'AI 0', '질의응답'])
+    expect(sectionTabs.map((tab) => tab.text())).toEqual(['일반', 'AI 0', '질의응답 0'])
     expect(sectionTabs.map((tab) => tab.attributes('role'))).toEqual(['tab', 'tab', 'tab'])
     expect(sectionTabs.map((tab) => tab.attributes('aria-selected'))).toEqual(['true', 'false', 'false'])
     expect(wrapper.find('.notif-tabs').exists()).toBe(true)
@@ -132,13 +145,84 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     expect(wrapper.find('.notif-ai-section .notif-empty').text()).toContain('완료된 AI 호출')
 
     await wrapper.findAll('.notif-section-tab')[2].trigger('click')
-    expect(wrapper.find('.notif-section-placeholder').text()).toContain('질의응답 알림 목록')
+    expect(wrapper.find('.notif-qa-section .notif-empty').text()).toContain('대기 중인 질의응답')
 
     await wrapper.findAll('.notif-section-tab')[0].trigger('click')
     expect(wrapper.find('.notif-tabs').exists()).toBe(true)
     expect(wrapper.findAll('.notif-item')).toHaveLength(1)
     expect(wrapper.find('.notif-mark-read').exists()).toBe(true)
     expect(fetchFeed).toHaveBeenCalledTimes(callsBeforeSwitch)
+  })
+
+  it('renders Q&A document rows and records navigation intent before opening the document', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.qaItems = [{ doc_id: 'flowgate.default.0135.0017-T', title: 'Task title', type_code: 'T' }]
+    store.qaTotal = 3
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+
+    expect(wrapper.findAll('.notif-section-tab')[2].text()).toBe('질의응답 3')
+    expect(wrapper.find('.notif-qa-row').text()).toContain('flowgate.default.0135.0017-T — Task title')
+    currentRoute.value.path = '/requirements/create'
+    await wrapper.find('.notif-qa-open').trigger('click')
+
+    expect(routerPush).toHaveBeenCalledWith('/')
+    expect(routerPush.mock.invocationCallOrder[0]).toBeLessThan(openDashboardTarget.mock.invocationCallOrder[0])
+    expect(openDashboardTarget).toHaveBeenCalledWith({
+      kind: 'document', doc_id: 'flowgate.default.0135.0017-T',
+    })
+    expect(useQaOpenIntent().intent.value?.docId).toBe('flowgate.default.0135.0017-T')
+    expect(wrapper.find('.notif-panel').exists()).toBe(false)
+  })
+
+  it('renders title-less Q&A rows and distinguishes loading, feed error, degraded, and genuine empty states', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.qaItems = [{ doc_id: 'flowgate.default.0135.0018-TR', title: '   ', type_code: 'TR' }]
+    store.qaTotal = 1
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+    const rowText = wrapper.find('.notif-qa-row').text()
+    expect(rowText).toContain('flowgate.default.0135.0018-TR')
+    expect(rowText).not.toContain('—')
+    expect(rowText).not.toContain('null')
+
+    store.qaItems = []
+    store.loading = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.notif-loading').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('대기 중인 질의응답이 없습니다')
+
+    store.loading = false
+    store.error = 'offline'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('알림을 불러오지 못했습니다')
+    expect(wrapper.find('.notif-empty button').exists()).toBe(true)
+
+    store.error = null
+    store.degradedSections = ['open_questions']
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('질의응답 목록을 불러오지 못했습니다')
+    expect(wrapper.find('.notif-empty button').exists()).toBe(true)
+
+    store.degradedSections = []
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('대기 중인 질의응답이 없습니다')
+  })
+
+  it('assigns a fresh intent sequence when the same Q&A document is opened again', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.qaItems = [{ doc_id: 'same-doc', title: 'Same', type_code: 'T' }]
+    store.qaTotal = 1
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+    await wrapper.find('.notif-qa-open').trigger('click')
+    const first = useQaOpenIntent().intent.value!.sequence
+
+    await wrapper.find('.notif-bell').trigger('click')
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+    await wrapper.find('.notif-qa-open').trigger('click')
+    expect(useQaOpenIntent().intent.value!.sequence).toBeGreaterThan(first)
+    expect(openDashboardTarget).toHaveBeenCalledTimes(2)
   })
 
   it('resets the default section and filter when the panel is reopened', async () => {
