@@ -129,7 +129,7 @@ describe('AiInvokeMiniplayer', () => {
     await flushPromises()
 
     const chip = wrapper.find('[data-test="ai-miniplayer-chip"]')
-    expect(chip.classes()).not.toContain('aiv-mini__chip--awaiting')
+    expect(chip.classes()).toContain('aiv-mini__chip--awaiting')
     expect(wrapper.find('[data-test="ai-miniplayer-chip-badge"]').text()).toBe('1')
     wrapper.unmount()
   })
@@ -536,9 +536,11 @@ describe('AiInvokeMiniplayer', () => {
     store.trackQuestionRegistered('flowgate.default.3004.0005-Q')
     await flushPromises()
     await openPopover(wrapper)
-    expect(wrapper.find('.aiv-mini__card--awaiting').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain(t('main.ai_miniplayer.awaiting_q_line'))
-    expect(wrapper.find('.app-icon--question').exists()).toBe(false)
+    expect(wrapper.find('.aiv-mini__card--awaiting').exists()).toBe(true)
+    expect(wrapper.text()).toContain(
+      t('main.ai_miniplayer.awaiting_q_badge', { count: 1 }),
+    )
+    expect(wrapper.text()).toContain(t('main.ai_miniplayer.awaiting_q_line'))
     wrapper.unmount()
   })
 
@@ -907,8 +909,8 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
     // An unanswered 질의 still outranks everything: it is the only state needing the user.
     store.trackQuestionRegistered('flowgate.default.3023.0005-Q')
     await nextTick()
-    expect(badge(wrapper).text()).toBe('3')
-    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--live')
+    expect(badge(wrapper).text()).toBe('1')
+    expect(wrapper.find('.aiv-mini__chip').classes()).toContain('aiv-mini__chip--awaiting')
     wrapper.unmount()
   })
 

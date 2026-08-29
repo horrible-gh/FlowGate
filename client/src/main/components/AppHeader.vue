@@ -21,11 +21,6 @@
     <!-- Project Selector -->
     <ProjectSelector @projectChanged="onProjectChanged" />
 
-    <!-- Header actions -->
-    <GitActionMenu />
-    <NotificationCenter />
-    <div class="hdr-div"></div>
-
     <!-- Run mini-player (0269 NR0011): the run monitor lives here, immediately left of
          the provider selector — "지금 뭐가 돌고 있나" next to "어느 프로바이더로 돌릴까".
          It is the only robot glyph in this group: the selector used to carry an identical
@@ -66,6 +61,17 @@
           @click="setLocale(lang)"
         >{{ lang.toUpperCase() }}</button>
       </div>
+
+      <div class="hdr-div"></div>
+
+      <!-- ⑂ Git action menu (flowgate.default.0162 §3.3 "안전망") — self-hides unless
+           the current project is git-integrated; carries the finalize-backlog badge. -->
+      <GitActionMenu />
+
+      <div class="hdr-div"></div>
+
+      <!-- 🔔 Notification center (R0001 group 0045 / NR0003 option A) -->
+      <NotificationCenter />
 
       <div class="hdr-div"></div>
 
