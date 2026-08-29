@@ -133,21 +133,69 @@
       </div>
       </div>
 
+      <div v-else-if="activeSection === 'ai'" class="notif-section-body notif-ai-section">
+        <div v-if="store.loading" class="notif-loading"><span class="spinner"></span></div>
+        <div v-else-if="store.error" class="notif-empty">
+          <AppIcon name="warning" /><p>{{ store.error }}</p>
+          <button class="btn btn-outline btn-sm" type="button" @click="refresh">{{ t('main.overview.retry') }}</button>
+        </div>
+        <div v-else-if="store.degradedSections.includes('ai_runs')" class="notif-empty">
+          <AppIcon name="warning" /><p>{{ t('main.notif_center.ai_load_failed') }}</p>
+          <button class="btn btn-outline btn-sm" type="button" @click="refresh">{{ t('main.overview.retry') }}</button>
+        </div>
+        <div v-else-if="store.aiItems.length === 0" class="notif-empty">
+          <AppIcon name="bell-slash" /><p>{{ t('main.notif_center.ai_empty') }}</p>
+        </div>
+        <article v-for="item in store.aiItems" v-else :key="item.run_id" class="notif-ai-row" :class="item.succeeded ? 'notif-ai-row--success' : 'notif-ai-row--failure'">
+          <AppIcon :name="item.succeeded ? 'check-circle' : 'warning'" class="notif-ai-status-icon" />
+          <div class="notif-ai-content">
+            <strong class="notif-ai-status">{{ item.succeeded ? t('main.notif_center.ai_success') : t('main.notif_center.ai_failure') }}</strong>
+            <div class="notif-target">
+              <span v-if="item.doc_type_code" class="doc-tag" :class="'c-' + item.doc_type_code">{{ item.doc_type_code }}</span>
+              <span v-if="item.doc_ref" class="notif-doc-id">{{ item.doc_ref }}</span>
+              <span v-if="item.doc_title" class="notif-target-title">{{ item.doc_title }}</span>
+            </div>
+            <p v-if="aiSummary(item)" class="notif-msg">{{ aiSummary(item) }}</p>
+            <span class="notif-time">{{ [item.provider_name, formatDashboardTime(item.finished_at)].filter(Boolean).join(' · ') }}</span>
+          </div>
+          <button class="notif-ai-detail-btn" type="button" @click="openAiDetail(item.run_id, $event)">{{ t('main.notif_center.ai_detail') }}</button>
+        </article>
+      </div>
       <div v-else class="notif-section-body notif-section-placeholder">
         <p>{{ t(`main.notif_center.${activeSection}_empty`) }}</p>
       </div>
+    </div>
+    <div v-if="detailOpen" class="notif-dialog-backdrop" @click.stop>
+      <section ref="detailDialogEl" class="notif-dialog" role="dialog" aria-modal="true" aria-labelledby="notif-ai-detail-title" tabindex="-1">
+        <header class="notif-dialog-hd">
+          <div>
+            <strong id="notif-ai-detail-title">{{ t('main.notif_center.ai_detail_title') }}</strong>
+            <span v-if="detail" :class="detail.succeeded ? 'detail-success' : 'detail-failure'">{{ detail.succeeded ? t('main.notif_center.ai_success') : t('main.notif_center.ai_failure') }}</span>
+          </div>
+          <button type="button" :aria-label="t('main.notif_center.close')" @click="closeAiDetail">×</button>
+        </header>
+        <div class="notif-dialog-meta">
+          <p v-if="detail?.doc_ref"><strong>{{ detail.doc_ref }}</strong><template v-if="detail.doc_title"> · {{ detail.doc_title }}</template></p>
+          <p v-if="detail">{{ [detail.stop_code || detail.end_reason, detail.finished_at ? formatDashboardTime(detail.finished_at) : null, detail.provider_name].filter(Boolean).join(' · ') }}</p>
+        </div>
+        <pre class="notif-dialog-message">{{ detailMessage }}</pre>
+        <footer class="notif-dialog-actions">
+          <button v-if="detail?.doc_ref" class="btn btn-outline btn-sm" type="button" @click="openDetailDocument">{{ t('main.notif_center.open_document') }}</button>
+          <button class="btn btn-primary btn-sm" type="button" @click="closeAiDetail">{{ t('main.notif_center.close') }}</button>
+        </footer>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useProjectStore } from '../stores/project'
 import { useNotificationsStore } from '../stores/notifications'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
 import { useActivityFormat } from '../composables/useActivityFormat'
-import type { DashboardActivity } from '../stores/dashboard'
+import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 
 const { t } = useI18n()
@@ -159,12 +207,73 @@ const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, rev
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
+const detailOpen = ref(false)
+const detail = ref<AiInvokeDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref(false)
+const detailDialogEl = ref<HTMLElement | null>(null)
+let detailVersion = 0
+let detailReturnFocus: HTMLElement | null = null
+
+const detailMessage = computed(() => {
+  if (detailLoading.value) return t('main.notif_center.ai_detail_loading')
+  if (detailError.value) return t('main.notif_center.ai_detail_failed')
+  const message = detail.value?.last_message?.trim()
+  if (message) return detail.value!.last_message!
+  const reason = detail.value?.stop_reason?.trim()
+  return reason || t('main.notif_center.ai_no_message')
+})
+
+function aiSummary(item: AiInvokeNotification): string {
+  const parts: string[] = []
+  if (item.stop_code || item.end_reason) parts.push(item.stop_code || item.end_reason || '')
+  if (item.docs_reached != null && item.docs_target != null) {
+    parts.push(t('main.notif_center.ai_docs', { reached: item.docs_reached, target: item.docs_target }))
+  }
+  const excerpt = item.last_message_excerpt?.trim()
+  if (excerpt) parts.push(excerpt)
+  return parts.filter(Boolean).join(' · ')
+}
+
+async function openAiDetail(runId: string, event: Event) {
+  detailReturnFocus = event.currentTarget as HTMLElement
+  const version = ++detailVersion
+  detailOpen.value = true
+  detail.value = null
+  detailError.value = false
+  detailLoading.value = true
+  await nextTick()
+  detailDialogEl.value?.focus()
+  try {
+    const response = await getRequest<AiInvokeDetail>('/api/v1/ai-invoke/' + encodeURIComponent(runId))
+    if (version === detailVersion) detail.value = response.data
+  } catch {
+    if (version === detailVersion) detailError.value = true
+  } finally {
+    if (version === detailVersion) detailLoading.value = false
+  }
+}
+
+function closeAiDetail() {
+  detailVersion++
+  detailOpen.value = false
+  detail.value = null
+  nextTick(() => detailReturnFocus?.focus())
+}
+
+async function openDetailDocument() {
+  const docRef = detail.value?.doc_ref
+  if (!docRef) return
+  closeAiDetail()
+  open.value = false
+  await openDashboardTarget({ kind: 'document', doc_id: docRef })
+}
 
 type NotifSection = 'general' | 'ai' | 'qa'
 const activeSection = ref<NotifSection>('general')
 const sections = computed(() => [
   { key: 'general' as const, label: t('main.notif_center.section_general') },
-  { key: 'ai' as const, label: t('main.notif_center.section_ai') },
+  { key: 'ai' as const, label: t('main.notif_center.section_ai') + ' ' + store.aiItems.length },
   { key: 'qa' as const, label: t('main.notif_center.section_qa') },
 ])
 
@@ -239,7 +348,12 @@ function onClickOutside(e: MouseEvent) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && open.value) open.value = false
+  if (e.key !== 'Escape') return
+  if (detailOpen.value) {
+    closeAiDetail()
+    return
+  }
+  if (open.value) open.value = false
 }
 
 // SSE inflow signal: refetch the feed (and thus the unread badge) without entering the dashboard.
@@ -500,6 +614,24 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: #dc2626;
 }
+
+.notif-ai-section { max-height: min(70vh, 480px); overflow-y: auto; }
+.notif-ai-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle, #f1f5f9); border-left: 3px solid; }
+.notif-ai-row--success { border-left-color: #22c55e; }
+.notif-ai-row--failure { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }
+.notif-ai-status-icon { margin-top: 2px; }
+.notif-ai-row--success .notif-ai-status-icon, .detail-success { color: #15803d; }
+.notif-ai-row--failure .notif-ai-status-icon, .detail-failure { color: #b91c1c; }
+.notif-ai-content { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.notif-ai-status { font-size: .78rem; }
+.notif-ai-detail-btn { align-self: center; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.notif-dialog-backdrop { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .42); }
+.notif-dialog { width: min(640px, calc(100vw - 48px)); max-height: min(720px, calc(100vh - 48px)); overflow: auto; border-radius: 12px; background: var(--surface, #fff); box-shadow: 0 24px 64px rgba(0,0,0,.28); outline: none; }
+.notif-dialog-hd, .notif-dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border, #e2e8f0); }
+.notif-dialog-hd div { display: flex; gap: 10px; align-items: center; }
+.notif-dialog-meta { padding: 12px 18px 0; color: var(--text-secondary, #475569); font-size: .78rem; }
+.notif-dialog-message { min-height: 180px; margin: 12px 18px; padding: 14px; overflow: auto; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: #f8fafc; color: var(--text, #0f172a); font: .8rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notif-dialog-actions { justify-content: flex-end; border-top: 1px solid var(--border, #e2e8f0); border-bottom: 0; }
 
 /* Newly arrived (unread) rows slide in — the mockup's "완료가 리스트로 흘러 들어온다". */
 .notif-item--fresh { animation: notifFreshIn .45s ease-out; }

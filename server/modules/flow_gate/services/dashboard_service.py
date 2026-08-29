@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 
 _log = logging.getLogger(__name__)
 
@@ -552,6 +553,31 @@ def _count_unread(items: list[dict], last_seen_at: Any) -> int:
     return unread
 
 
+def _ai_run_succeeded(row: dict) -> bool:
+    """Delegate to the one success oracle shared with AI run detail."""
+    from modules.flow_gate.services.ai_invoke_service import ai_run_succeeded
+
+    return ai_run_succeeded(row)
+
+
+def _ai_run_item(row: dict) -> dict:
+    return {
+        "run_id": row["run_id"],
+        "doc_ref": row.get("doc_ref"),
+        "doc_title": row.get("doc_title"),
+        "doc_type_code": row.get("doc_type_code"),
+        "succeeded": _ai_run_succeeded(row),
+        "outcome": row.get("outcome"),
+        "docs_reached": row.get("docs_reached"),
+        "docs_target": row.get("docs_target"),
+        "end_reason": row.get("end_reason"),
+        "stop_code": row.get("stop_code"),
+        "provider_name": row.get("provider_name"),
+        "finished_at": _utc_iso(row["finished_at"]),
+        "last_message_excerpt": row.get("last_message_excerpt"),
+    }
+
+
 def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
     """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
 
@@ -564,6 +590,20 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
         items = _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
         items = _without_terminal_group_items(project_id, items)
     feed = _page(items, limit)
+    degraded_sections: list[str] = []
+    try:
+        ai_rows, ai_total = db_ai_invoke_runs.list_finished_for_notifications(project_id, limit)
+        ai_items = [_ai_run_item(row) for row in ai_rows]
+        ai_runs = {
+            "limit": limit,
+            "total": ai_total,
+            "has_more": ai_total > len(ai_items),
+            "items": ai_items,
+        }
+    except Exception:  # noqa: BLE001 -- additive section must not break the general feed
+        _log.exception("notification AI runs degraded project=%s", project_id)
+        degraded_sections.append("ai_runs")
+        ai_runs = {"limit": limit, "total": 0, "has_more": False, "items": []}
     return {
         "ok": True,
         "project_id": project_id,
@@ -573,6 +613,8 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
         "last_seen_at": _utc_iso(last_seen_at) if last_seen_at else None,
         "unread_count": _count_unread(items, last_seen_at),
         "recent_activities": feed,
+        "ai_invoke_runs": ai_runs,
+        "degraded_sections": degraded_sections,
     }
 
 

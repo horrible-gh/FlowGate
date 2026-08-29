@@ -5,7 +5,7 @@ import i18n from '@shared/i18n'
 import NotificationCenter from '@main/components/NotificationCenter.vue'
 import { useNotificationsStore } from '@main/stores/notifications'
 import { useProjectStore } from '@main/stores/project'
-import type { DashboardActivity } from '@main/stores/dashboard'
+import type { DashboardActivity } from '@main/stores/dashboard'; import { getRequest } from '@shared/api'
 
 // R0001 group 0135 / N0008 — 시안 3 (라이브 피드) actually applied to the notification center.
 // These lock the VISIBLE mockup features the user asked for: filter tabs with live counts, per-row
@@ -57,6 +57,7 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     i18n.global.locale.value = 'ko'
+    vi.mocked(getRequest).mockReset()
   })
 
   it('renders the LIVE indicator and filter tabs with live counts', async () => {
@@ -103,7 +104,7 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     const wrapper = await mountOpen([activity({ event_id: 1 })])
 
     const sectionTabs = wrapper.findAll('.notif-section-tab')
-    expect(sectionTabs.map((tab) => tab.text())).toEqual(['일반', 'AI', '질의응답'])
+    expect(sectionTabs.map((tab) => tab.text())).toEqual(['일반', 'AI 0', '질의응답'])
     expect(sectionTabs.map((tab) => tab.attributes('role'))).toEqual(['tab', 'tab', 'tab'])
     expect(sectionTabs.map((tab) => tab.attributes('aria-selected'))).toEqual(['true', 'false', 'false'])
     expect(wrapper.find('.notif-tabs').exists()).toBe(true)
@@ -128,7 +129,7 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     expect(wrapper.find('.notif-tabs').exists()).toBe(false)
     expect(wrapper.find('.notif-item').exists()).toBe(false)
     expect(wrapper.find('.notif-mark-read').exists()).toBe(false)
-    expect(wrapper.find('.notif-section-placeholder').text()).toContain('AI 알림 목록')
+    expect(wrapper.find('.notif-ai-section .notif-empty').text()).toContain('완료된 AI 호출')
 
     await wrapper.findAll('.notif-section-tab')[2].trigger('click')
     expect(wrapper.find('.notif-section-placeholder').text()).toContain('질의응답 알림 목록')
@@ -149,6 +150,128 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
 
     expect(wrapper.findAll('.notif-section-tab')[0].attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('.notif-tab')[0].attributes('aria-selected')).toBe('true')
+  })
+
+  it('opens one AI row and shows the complete multiline message', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = [{ run_id: 'run-1', doc_ref: 'flowgate.default.0135.0010-TR', doc_title: 'Report', doc_type_code: 'TR', succeeded: true, outcome: 'complete', docs_reached: 1, docs_target: 1, end_reason: 'completed', stop_code: null, provider_name: 'Codex', finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: 'summary only' }]
+    vi.mocked(getRequest).mockResolvedValueOnce({ data: { run_id: 'run-1', doc_ref: 'flowgate.default.0135.0010-TR', doc_title: 'Report', succeeded: true, outcome: 'complete', end_reason: 'completed', stop_code: null, stop_reason: null, provider_name: 'Codex', finished_at: '2026-07-02T00:05:00Z', last_message: 'FULL LINE 1\n  indented line 2\nFULL LINE 3' } } as any)
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+    expect(wrapper.findAll('.notif-ai-row')).toHaveLength(1)
+    await wrapper.find('.notif-ai-detail-btn').trigger('click')
+    await flushPromises()
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/run-1')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+    expect(wrapper.find('.notif-dialog-message').text()).toBe('FULL LINE 1\n  indented line 2\nFULL LINE 3')
+    expect(wrapper.find('.notif-panel').exists()).toBe(true)
+  })
+
+  it('renders success and failure rows without separators for omitted fragments', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = [
+      { run_id: 'ok', doc_ref: null, doc_title: null, doc_type_code: null, succeeded: true, outcome: 'complete', docs_reached: null, docs_target: null, end_reason: null, stop_code: null, provider_name: null, finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: null },
+      { run_id: 'bad', doc_ref: 'doc-bad', doc_title: null, doc_type_code: null, succeeded: false, outcome: 'failed', docs_reached: null, docs_target: null, end_reason: 'failed', stop_code: null, provider_name: null, finished_at: '2026-07-02T00:04:00Z', last_message_excerpt: null },
+    ]
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+
+    const rows = wrapper.findAll('.notif-ai-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].classes()).toContain('notif-ai-row--success')
+    expect(rows[1].classes()).toContain('notif-ai-row--failure')
+    expect(rows[0].find('.notif-msg').exists()).toBe(false)
+    expect(rows[0].text()).not.toContain('·')
+  })
+
+  it('distinguishes loading, feed error, degraded, and genuine empty AI states', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+
+    store.loading = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.notif-loading').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('완료된 AI 호출이 없습니다')
+
+    store.loading = false
+    store.error = 'feed unavailable'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('feed unavailable')
+    expect(wrapper.find('.notif-empty button').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('완료된 AI 호출이 없습니다')
+
+    store.error = null
+    store.degradedSections = ['ai_runs']
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('AI 호출 목록을 불러오지 못했습니다')
+    expect(wrapper.find('.notif-empty button').exists()).toBe(true)
+
+    store.degradedSections = []
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('완료된 AI 호출이 없습니다')
+  })
+
+  it('shows detail loading, error, stop reason, and no-message fallback in order', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = [{ run_id: 'run-1', doc_ref: null, doc_title: null, doc_type_code: null, succeeded: false, outcome: 'failed', docs_reached: null, docs_target: null, end_reason: 'failed', stop_code: null, provider_name: null, finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: null }]
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+
+    let rejectDetail!: (error: unknown) => void
+    vi.mocked(getRequest).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectDetail = reject }))
+    await wrapper.find('.notif-ai-detail-btn').trigger('click')
+    expect(wrapper.find('.notif-dialog-message').text()).toContain('불러오는 중')
+    rejectDetail(new Error('offline'))
+    await flushPromises()
+    expect(wrapper.find('.notif-dialog-message').text()).toContain('불러오지 못했습니다')
+
+    await wrapper.find('.notif-dialog-actions button').trigger('click')
+    vi.mocked(getRequest).mockResolvedValueOnce({ data: { run_id: 'run-1', doc_ref: null, doc_title: null, succeeded: false, outcome: 'failed', end_reason: 'failed', stop_code: null, stop_reason: 'provider stopped', provider_name: null, finished_at: null, last_message: null } } as any)
+    await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
+    expect(wrapper.find('.notif-dialog-message').text()).toBe('provider stopped')
+
+    await wrapper.find('.notif-dialog-actions button').trigger('click')
+    vi.mocked(getRequest).mockResolvedValueOnce({ data: { run_id: 'run-1', doc_ref: null, doc_title: null, succeeded: false, outcome: 'failed', end_reason: 'failed', stop_code: null, stop_reason: null, provider_name: null, finished_at: null, last_message: null } } as any)
+    await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
+    expect(wrapper.find('.notif-dialog-message').text()).toContain('남은 메시지가 없습니다')
+  })
+
+  it('discards a late detail response after a faster row selection', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = ['slow', 'fast'].map((run_id) => ({ run_id, doc_ref: null, doc_title: null, doc_type_code: null, succeeded: true, outcome: 'complete', docs_reached: 1, docs_target: 1, end_reason: 'completed', stop_code: null, provider_name: null, finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: null }))
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+    let resolveSlow!: (value: unknown) => void
+    vi.mocked(getRequest)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSlow = resolve }))
+      .mockResolvedValueOnce({ data: { run_id: 'fast', doc_ref: null, doc_title: null, succeeded: true, outcome: 'complete', end_reason: 'completed', stop_code: null, stop_reason: null, provider_name: null, finished_at: null, last_message: 'FAST' } } as any)
+
+    await wrapper.findAll('.notif-ai-detail-btn')[0].trigger('click')
+    await wrapper.findAll('.notif-ai-detail-btn')[1].trigger('click')
+    await flushPromises()
+    resolveSlow({ data: { run_id: 'slow', last_message: 'STALE' } })
+    await flushPromises()
+    expect(wrapper.find('.notif-dialog-message').text()).toBe('FAST')
+  })
+
+  it('closes detail by the footer button and Escape while keeping the notification panel', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = [{ run_id: 'run-1', doc_ref: null, doc_title: null, doc_type_code: null, succeeded: true, outcome: 'complete', docs_reached: 1, docs_target: 1, end_reason: 'completed', stop_code: null, provider_name: null, finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: null }]
+    vi.mocked(getRequest).mockResolvedValue({ data: { run_id: 'run-1', doc_ref: null, doc_title: null, succeeded: true, outcome: 'complete', end_reason: 'completed', stop_code: null, stop_reason: null, provider_name: null, finished_at: null, last_message: 'done' } } as any)
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+
+    await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
+    await wrapper.find('.notif-dialog-actions button').trigger('click')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.notif-panel').exists()).toBe(true)
+
+    await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.find('.notif-panel').exists()).toBe(true)
   })
 
   it('gives the terminal continuous-completed row its distinct emerald signal', async () => {

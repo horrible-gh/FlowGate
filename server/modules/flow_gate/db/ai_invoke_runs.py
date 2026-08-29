@@ -330,6 +330,24 @@ def list_by_project(project_id: str, limit: int) -> list[dict]:
     return [_row_to_payload(row) for row in rows]
 
 
+def list_finished_for_notifications(project_id: str, limit: int) -> tuple[list[dict], int]:
+    """Finished-only project page for the notification AI section.
+
+    This intentionally does not merge process memory: only durable rows with a
+    completion timestamp belong in the completed-call history.
+    """
+    store = get_store()
+    rows = store._fetch_all(
+        store._sql("ai_invoke_runs.list_finished_for_notifications"),
+        [project_id, limit],
+    )
+    count = store._fetch_one(
+        store._sql("ai_invoke_runs.count_finished_for_notifications"),
+        [project_id],
+    )
+    return [_row_to_payload(row) for row in rows], int(count["cnt"] if count else 0)
+
+
 def count_by_group(group_id: str) -> int:
     row = get_store()._fetch_one(
         "SELECT COUNT(*) AS cnt FROM ai_invoke_runs WHERE group_id = ?", [group_id]

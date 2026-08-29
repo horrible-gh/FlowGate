@@ -32,6 +32,8 @@ function feed(unread: number, lastSeen: string | null, items: DashboardActivity[
     last_seen_at: lastSeen,
     unread_count: unread,
     recent_activities: { limit: 50, total: items.length, has_more: false, items },
+    ai_invoke_runs: { limit: 50, total: 0, has_more: false, items: [] },
+    degraded_sections: [],
   }
 }
 
@@ -57,6 +59,29 @@ describe('notifications store', () => {
     expect(store.unreadCount).toBe(2)
     expect(store.lastSeenAt).toBe('2026-06-12T00:00:00Z')
     expect(store.loadedProjectId).toBe('flowgate')
+  })
+
+  it('atomically adopts and resets AI items and degraded sections', async () => {
+    const store = useNotificationsStore()
+    const value = feed(0, null, [])
+    value.ai_invoke_runs.items = [{
+      run_id: 'run-1', doc_ref: 'doc-1', doc_title: 'Document', doc_type_code: 'T',
+      succeeded: true, outcome: 'complete', docs_reached: 1, docs_target: 1,
+      end_reason: 'completed', stop_code: null, provider_name: 'Codex',
+      finished_at: '2026-06-12T00:05:00Z', last_message_excerpt: 'done',
+    }]
+    value.ai_invoke_runs.total = 1
+    value.degraded_sections = ['ai_runs']
+    getRequest.mockResolvedValueOnce({ data: value })
+
+    await store.fetchFeed('flowgate')
+    expect(store.aiItems).toHaveLength(1)
+    expect(store.degradedSections).toEqual(['ai_runs'])
+
+    store.reset()
+    expect(store.items).toEqual([])
+    expect(store.aiItems).toEqual([])
+    expect(store.degradedSections).toEqual([])
   })
 
   it('marks read optimistically and advances the watermark', async () => {
@@ -104,5 +129,7 @@ describe('notifications store', () => {
     // The later (beta) response wins; the stale alpha response is discarded.
     expect(store.loadedProjectId).toBe('beta')
     expect(store.unreadCount).toBe(5)
+    expect(store.aiItems).toEqual([])
+    expect(store.degradedSections).toEqual([])
   })
 })

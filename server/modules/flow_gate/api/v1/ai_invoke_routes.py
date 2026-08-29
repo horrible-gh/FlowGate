@@ -1012,7 +1012,7 @@ def get_ai_invoke_status(run_id: str, request: Request):
     # 0359 L0007 §2.10.2: a persisted run outlives its worktree session, so a run id
     # alone could otherwise open another project's run — checked after the lookup,
     # so an unknown id is still a 404 regardless of the caller's permissions.
-    project_id = str(payload.get("group_id") or "").split(".", 1)[0]
+    project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
     user_id = auth["issued_to"]
     if not (bool(auth.get("is_admin")) or has_permission(user_id, project_id, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",

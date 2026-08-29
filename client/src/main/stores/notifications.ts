@@ -11,6 +11,36 @@ import type { DashboardActivity } from './dashboard'
 // count derived from a per-user last-seen watermark; "mark all read" (opening the panel) POSTs the
 // watermark forward. SSE inflow events only trigger a refetch (DashboardView), keeping the server
 // the single source of truth for the badge so live and persistent counts never drift.
+export interface AiInvokeNotification {
+  run_id: string
+  doc_ref: string | null
+  doc_title: string | null
+  doc_type_code: string | null
+  succeeded: boolean
+  outcome: string | null
+  docs_reached: number | null
+  docs_target: number | null
+  end_reason: string | null
+  stop_code: string | null
+  provider_name: string | null
+  finished_at: string
+  last_message_excerpt: string | null
+}
+
+export interface AiInvokeDetail {
+  run_id: string
+  doc_ref: string | null
+  doc_title: string | null
+  succeeded: boolean
+  outcome: string | null
+  end_reason: string | null
+  stop_code: string | null
+  stop_reason: string | null
+  provider_name: string | null
+  finished_at: string | null
+  last_message: string | null
+}
+
 export interface NotificationFeed {
   ok: true
   project_id: string
@@ -23,10 +53,19 @@ export interface NotificationFeed {
     has_more: boolean
     items: DashboardActivity[]
   }
+  ai_invoke_runs: {
+    limit: number
+    total: number
+    has_more: boolean
+    items: AiInvokeNotification[]
+  }
+  degraded_sections: string[]
 }
 
 export const useNotificationsStore = defineStore('notifications', () => {
   const items = ref<DashboardActivity[]>([])
+  const aiItems = ref<AiInvokeNotification[]>([])
+  const degradedSections = ref<string[]>([])
   const unreadCount = ref(0)
   const lastSeenAt = ref<string | null>(null)
   const loading = ref(false)
@@ -49,6 +88,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
       if (version !== requestVersion) return
       const data = response.data
       items.value = data.recent_activities?.items ?? []
+      aiItems.value = data.ai_invoke_runs?.items ?? []
+      degradedSections.value = data.degraded_sections ?? []
       unreadCount.value = data.unread_count ?? 0
       lastSeenAt.value = data.last_seen_at ?? null
       loadedProjectId.value = projectId
@@ -91,13 +132,18 @@ export const useNotificationsStore = defineStore('notifications', () => {
   function reset(): void {
     requestVersion++
     items.value = []
+    aiItems.value = []
+    degradedSections.value = []
     unreadCount.value = 0
     lastSeenAt.value = null
     error.value = null
     loadedProjectId.value = null
   }
 
-  return { items, unreadCount, lastSeenAt, loading, error, loadedProjectId, fetchFeed, markSeen, isUnread, reset }
+  return {
+    items, aiItems, degradedSections, unreadCount, lastSeenAt, loading, error,
+    loadedProjectId, fetchFeed, markSeen, isUnread, reset,
+  }
 })
 
 

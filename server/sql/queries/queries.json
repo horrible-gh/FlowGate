@@ -5,6 +5,10 @@
         "test1": "test/test.sql",
         "test2": "SELECT * FROM test WHERE test_var = %s"
     },
+    "ai_invoke_runs": {
+        "list_finished_for_notifications": "SELECT r.*, d.title AS doc_title, d.type_code AS doc_type_code FROM ai_invoke_runs r LEFT JOIN documents d ON d.doc_id = r.doc_ref AND d.project_id = r.project_id WHERE r.project_id = ? AND r.finished_at IS NOT NULL ORDER BY r.finished_at DESC, r.run_id DESC LIMIT ?",
+        "count_finished_for_notifications": "SELECT COUNT(*) AS cnt FROM ai_invoke_runs WHERE project_id = ? AND finished_at IS NOT NULL"
+    },
     "documents": {
         "get_next_number": "SELECT COUNT(*) as count FROM documents WHERE doc_id LIKE ?",
         "get_document_by_id": "SELECT * FROM documents WHERE doc_id = ?",

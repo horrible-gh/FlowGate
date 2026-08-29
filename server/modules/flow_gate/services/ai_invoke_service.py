@@ -664,6 +664,16 @@ def force_release_group_lease(group_id: str) -> dict:
 # process. Memory wins whenever both would answer — the moment right after
 # finalize persists the row is the only overlap, and it is the freshest source.
 
+def ai_run_succeeded(row: dict) -> bool:
+    """Return the single terminal success verdict used by list and detail views."""
+    outcome = str(row.get("outcome") or "").strip().lower()
+    stop_code = str(row.get("stop_code") or "").strip()
+    end_reason = str(row.get("end_reason") or "").strip().lower()
+    return outcome == "complete" and not stop_code and end_reason not in {
+        "cancelled", "canceled", "failed", "error", "stopped", "timeout",
+    }
+
+
 def get_run_detail(run_id: str) -> dict:
     """Detail lookup for GET /ai-invoke/{run_id} (L0007 §2.10.2).
 
@@ -675,15 +685,26 @@ def get_run_detail(run_id: str) -> dict:
     if get_run_record(run_id) is not None:
         payload = get_status(run_id)
         payload["persisted"] = False
-        return payload
+    else:
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-    from modules.flow_gate.db import ai_invoke_runs as db_runs
+        row = db_runs.get(run_id)
+        if row is None:
+            raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+        payload = _run_detail_from_row(row)
+        payload["persisted"] = True
 
-    row = db_runs.get(run_id)
-    if row is None:
-        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
-    payload = _run_detail_from_row(row)
-    payload["persisted"] = True
+    project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
+    payload["project_id"] = project_id
+    payload["succeeded"] = ai_run_succeeded(payload)
+    payload["doc_title"] = None
+    if payload.get("doc_ref"):
+        try:
+            doc = db_docs.get_by_id(payload["doc_ref"])
+            if doc and doc.get("project_id") == project_id:
+                payload["doc_title"] = doc.get("title")
+        except Exception:
+            logger.debug("AI detail document enrichment skipped", exc_info=True)
     return payload
 
 
@@ -696,6 +717,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "status": "finished",
         "mode": row["mode"],
         "group_id": row["group_id"],
+        "project_id": row.get("project_id"),
         "doc_ref": row.get("doc_ref"),
         "outcome": row.get("outcome"),
         "docs_reached": row.get("docs_reached"),
@@ -5199,6 +5221,7 @@ def finished_payload(run: dict) -> dict:
     payload = {
         "run_id": run["run_id"],
         "group_id": run["group_id"],
+        "doc_ref": run.get("doc_ref"),
         "outcome": run["outcome"],
         "docs_reached": run["docs_reached"],
         "docs_target": run["docs_target"],
@@ -5213,6 +5236,7 @@ def finished_payload(run: dict) -> dict:
         "provider_id": run["provider_id"],
         "provider_name": (run.get("provider") or {}).get("name"),
         "started_at": run.get("started_at"),
+        "finished_at": run.get("finished_at"),
         "attempt_no": run["attempt_no"],
         "fallback_history": run["fallback_history"],
         "register_errors": run.get("register_errors", []),

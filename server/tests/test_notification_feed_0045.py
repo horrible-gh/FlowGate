@@ -202,3 +202,65 @@ def test_feed_unread_counts_full_history_not_just_page(feed_store):
     assert result["unread_count"] == 2
     assert len(result["recent_activities"]["items"]) == 1
     assert result["recent_activities"]["has_more"] is True
+
+
+def test_feed_includes_finished_ai_page_with_exact_contract(feed_store, monkeypatch):
+    rows = [
+        {
+            "run_id": "run-002", "doc_ref": "flowgate.default.0045.0006-D",
+            "doc_title": "Design", "doc_type_code": "D", "outcome": "complete",
+            "docs_reached": 2, "docs_target": 2, "end_reason": "completed",
+            "stop_code": None, "provider_name": "Codex",
+            "finished_at": "2026-06-12T00:06:00Z", "last_message_excerpt": "all done",
+        },
+        {
+            "run_id": "run-001", "doc_ref": "deleted-doc",
+            "doc_title": None, "doc_type_code": None, "outcome": "partial",
+            "docs_reached": 1, "docs_target": 2, "end_reason": "stopped",
+            "stop_code": "worker_failed", "provider_name": "Claude",
+            "finished_at": "2026-06-12T00:05:00Z", "last_message_excerpt": "failed",
+        },
+    ]
+    monkeypatch.setattr(
+        dashboard_service.db_ai_invoke_runs,
+        "list_finished_for_notifications",
+        lambda project_id, limit: (rows[:limit], 3),
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 2)
+
+    page = result["ai_invoke_runs"]
+    assert page["limit"] == 2
+    assert page["total"] == 3
+    assert page["has_more"] is True
+    assert [item["run_id"] for item in page["items"]] == ["run-002", "run-001"]
+    assert page["items"][0]["succeeded"] is True
+    assert page["items"][1]["succeeded"] is False
+    assert page["items"][1]["doc_title"] is None
+    assert set(page["items"][0]) == {
+        "run_id", "doc_ref", "doc_title", "doc_type_code", "succeeded", "outcome",
+        "docs_reached", "docs_target", "end_reason", "stop_code", "provider_name",
+        "finished_at", "last_message_excerpt",
+    }
+    assert "last_message" not in page["items"][0]
+    assert result["degraded_sections"] == []
+
+
+def test_feed_degrades_only_ai_section(feed_store, monkeypatch):
+    def fail(_project_id, _limit):
+        raise RuntimeError("AI store unavailable")
+
+    monkeypatch.setattr(
+        dashboard_service.db_ai_invoke_runs,
+        "list_finished_for_notifications",
+        fail,
+    )
+
+    result = dashboard_service.get_notification_feed("flowgate", None, 50)
+
+    assert result["ok"] is True
+    assert result["recent_activities"]["total"] == 2
+    assert result["ai_invoke_runs"] == {
+        "limit": 50, "total": 0, "has_more": False, "items": [],
+    }
+    assert result["degraded_sections"] == ["ai_runs"]
